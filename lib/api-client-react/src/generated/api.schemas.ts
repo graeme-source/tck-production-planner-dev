@@ -13,7 +13,8 @@ export interface Ingredient {
   id: number;
   name: string;
   unit: string;
-  costPerUnit: number;
+  packWeight: number;
+  costPerPack: number;
   notes?: string | null;
   createdAt: string;
 }
@@ -21,7 +22,8 @@ export interface Ingredient {
 export interface CreateIngredient {
   name: string;
   unit: string;
-  costPerUnit: number;
+  packWeight: number;
+  costPerPack: number;
   notes?: string | null;
 }
 

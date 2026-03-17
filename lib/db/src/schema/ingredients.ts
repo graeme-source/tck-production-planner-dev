@@ -6,7 +6,8 @@ export const ingredientsTable = pgTable("ingredients", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   unit: text("unit").notNull(),
-  costPerUnit: numeric("cost_per_unit", { precision: 10, scale: 4 }).notNull().default("0"),
+  packWeight: numeric("pack_weight", { precision: 10, scale: 4 }).notNull().default("0"),
+  costPerPack: numeric("cost_per_pack", { precision: 10, scale: 4 }).notNull().default("0"),
   notes: text("notes"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

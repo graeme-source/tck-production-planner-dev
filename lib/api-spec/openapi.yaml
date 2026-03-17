@@ -637,7 +637,9 @@ components:
           type: string
         unit:
           type: string
-        costPerUnit:
+        packWeight:
+          type: number
+        costPerPack:
           type: number
         notes:
           type: string
@@ -648,7 +650,8 @@ components:
         - id
         - name
         - unit
-        - costPerUnit
+        - packWeight
+        - costPerPack
         - createdAt
 
     CreateIngredient:
@@ -658,7 +661,9 @@ components:
           type: string
         unit:
           type: string
-        costPerUnit:
+        packWeight:
+          type: number
+        costPerPack:
           type: number
         notes:
           type: string
@@ -666,7 +671,8 @@ components:
       required:
         - name
         - unit
-        - costPerUnit
+        - packWeight
+        - costPerPack
 
     SubRecipe:
       type: object

@@ -21,7 +21,8 @@ export const ListIngredientsResponseItem = zod.object({
   id: zod.number(),
   name: zod.string(),
   unit: zod.string(),
-  costPerUnit: zod.number(),
+  packWeight: zod.number(),
+  costPerPack: zod.number(),
   notes: zod.string().nullish(),
   createdAt: zod.string(),
 });
@@ -33,7 +34,8 @@ export const ListIngredientsResponse = zod.array(ListIngredientsResponseItem);
 export const CreateIngredientBody = zod.object({
   name: zod.string(),
   unit: zod.string(),
-  costPerUnit: zod.number(),
+  packWeight: zod.number(),
+  costPerPack: zod.number(),
   notes: zod.string().nullish(),
 });
 
@@ -48,7 +50,8 @@ export const GetIngredientResponse = zod.object({
   id: zod.number(),
   name: zod.string(),
   unit: zod.string(),
-  costPerUnit: zod.number(),
+  packWeight: zod.number(),
+  costPerPack: zod.number(),
   notes: zod.string().nullish(),
   createdAt: zod.string(),
 });
@@ -63,7 +66,8 @@ export const UpdateIngredientParams = zod.object({
 export const UpdateIngredientBody = zod.object({
   name: zod.string(),
   unit: zod.string(),
-  costPerUnit: zod.number(),
+  packWeight: zod.number(),
+  costPerPack: zod.number(),
   notes: zod.string().nullish(),
 });
 
@@ -71,7 +75,8 @@ export const UpdateIngredientResponse = zod.object({
   id: zod.number(),
   name: zod.string(),
   unit: zod.string(),
-  costPerUnit: zod.number(),
+  packWeight: zod.number(),
+  costPerPack: zod.number(),
   notes: zod.string().nullish(),
   createdAt: zod.string(),
 });

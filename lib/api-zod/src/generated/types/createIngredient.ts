@@ -9,6 +9,7 @@
 export interface CreateIngredient {
   name: string;
   unit: string;
-  costPerUnit: number;
+  packWeight: number;
+  costPerPack: number;
   notes?: string | null;
 }
