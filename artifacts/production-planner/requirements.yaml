@@ -1,0 +1,19 @@
+packages:
+  "framer-motion": "For page transitions and smooth micro-interactions"
+  "recharts": "For dashboard charts and sales data visualization"
+  "date-fns": "For formatting dates in plans, sales, and dispatches"
+  "react-hook-form": "For complex forms like nested recipe ingredients"
+  "@hookform/resolvers": "For Zod validation integration with forms"
+
+images:
+  - path: "artifacts/production-planner/public/images/auth-bg.png"
+    description: "Abstract minimal kitchen background, warm soft lighting, out of focus sage green and cream tones, highly aesthetic"
+    aspect_ratio: "16:9"
+  - path: "artifacts/production-planner/public/images/logo-mark.png"
+    description: "Minimalist geometric leaf and bowl logo mark, sage green, transparent background, premium food brand"
+    aspect_ratio: "1:1"
+
+notes:
+  - Using generated Orval hooks from @workspace/api-client-react
+  - Creating wrapper hooks for mutations to handle query invalidation and toast notifications
+  - Standard Shadcn UI components assumed to be present in src/components/ui/

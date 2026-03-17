@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Food Production Planner"
+version = "1.0.0"
+id = "artifacts/production-planner"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+localPort = 19896
+name = "web"
+paths = ["/"]
+
+[services.development]
+run = "pnpm --filter @workspace/production-planner run dev"
+
+[services.env]
+PORT = "19896"
+BASE_PATH = "/"
+
+[services.production]
+build = ["pnpm", "--filter", "@workspace/production-planner", "run", "build"]
+publicDir = "artifacts/production-planner/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"

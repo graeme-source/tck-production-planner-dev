@@ -1,22 +1,34 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Food Production Planner API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: ingredients
+    description: Ingredient management
+  - name: recipes
+    description: Recipe management
+  - name: subRecipes
+    description: Sub-recipe management
+  - name: productionPlans
+    description: Production plan management
+  - name: stockEntries
+    description: Stock management
+  - name: salesEntries
+    description: Sales data management
+  - name: dispatchOrders
+    description: Dispatch order management
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +36,588 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /ingredients:
+    get:
+      operationId: listIngredients
+      tags: [ingredients]
+      summary: List all ingredients
+      responses:
+        "200":
+          description: List of ingredients
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Ingredient"
+    post:
+      operationId: createIngredient
+      tags: [ingredients]
+      summary: Create an ingredient
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateIngredient"
+      responses:
+        "201":
+          description: Created ingredient
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ingredient"
+
+  /ingredients/{id}:
+    get:
+      operationId: getIngredient
+      tags: [ingredients]
+      summary: Get ingredient by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Ingredient
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ingredient"
+    put:
+      operationId: updateIngredient
+      tags: [ingredients]
+      summary: Update an ingredient
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateIngredient"
+      responses:
+        "200":
+          description: Updated ingredient
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ingredient"
+    delete:
+      operationId: deleteIngredient
+      tags: [ingredients]
+      summary: Delete an ingredient
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /sub-recipes:
+    get:
+      operationId: listSubRecipes
+      tags: [subRecipes]
+      summary: List all sub-recipes
+      responses:
+        "200":
+          description: List of sub-recipes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SubRecipe"
+    post:
+      operationId: createSubRecipe
+      tags: [subRecipes]
+      summary: Create a sub-recipe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSubRecipe"
+      responses:
+        "201":
+          description: Created sub-recipe
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubRecipe"
+
+  /sub-recipes/{id}:
+    get:
+      operationId: getSubRecipe
+      tags: [subRecipes]
+      summary: Get sub-recipe by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Sub-recipe with ingredients
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubRecipeDetail"
+    put:
+      operationId: updateSubRecipe
+      tags: [subRecipes]
+      summary: Update a sub-recipe
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSubRecipe"
+      responses:
+        "200":
+          description: Updated sub-recipe
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubRecipe"
+    delete:
+      operationId: deleteSubRecipe
+      tags: [subRecipes]
+      summary: Delete a sub-recipe
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /recipes:
+    get:
+      operationId: listRecipes
+      tags: [recipes]
+      summary: List all recipes
+      responses:
+        "200":
+          description: List of recipes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Recipe"
+    post:
+      operationId: createRecipe
+      tags: [recipes]
+      summary: Create a recipe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRecipe"
+      responses:
+        "201":
+          description: Created recipe
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recipe"
+
+  /recipes/{id}:
+    get:
+      operationId: getRecipe
+      tags: [recipes]
+      summary: Get recipe by ID with full details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Recipe with full ingredient/sub-recipe breakdown
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecipeDetail"
+    put:
+      operationId: updateRecipe
+      tags: [recipes]
+      summary: Update a recipe
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRecipe"
+      responses:
+        "200":
+          description: Updated recipe
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recipe"
+    delete:
+      operationId: deleteRecipe
+      tags: [recipes]
+      summary: Delete a recipe
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /production-plans:
+    get:
+      operationId: listProductionPlans
+      tags: [productionPlans]
+      summary: List production plans
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of production plans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProductionPlan"
+    post:
+      operationId: createProductionPlan
+      tags: [productionPlans]
+      summary: Create a production plan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductionPlan"
+      responses:
+        "201":
+          description: Created production plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionPlan"
+
+  /production-plans/{id}:
+    get:
+      operationId: getProductionPlan
+      tags: [productionPlans]
+      summary: Get production plan by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Production plan detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionPlanDetail"
+    put:
+      operationId: updateProductionPlan
+      tags: [productionPlans]
+      summary: Update a production plan
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProductionPlan"
+      responses:
+        "200":
+          description: Updated production plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionPlan"
+    delete:
+      operationId: deleteProductionPlan
+      tags: [productionPlans]
+      summary: Delete a production plan
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /stock-entries:
+    get:
+      operationId: listStockEntries
+      tags: [stockEntries]
+      summary: List stock entries
+      responses:
+        "200":
+          description: List of stock entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StockEntry"
+    post:
+      operationId: createStockEntry
+      tags: [stockEntries]
+      summary: Create or update a stock entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStockEntry"
+      responses:
+        "201":
+          description: Created stock entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockEntry"
+
+  /stock-entries/{id}:
+    put:
+      operationId: updateStockEntry
+      tags: [stockEntries]
+      summary: Update a stock entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStockEntry"
+      responses:
+        "200":
+          description: Updated stock entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockEntry"
+    delete:
+      operationId: deleteStockEntry
+      tags: [stockEntries]
+      summary: Delete a stock entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /sales-entries:
+    get:
+      operationId: listSalesEntries
+      tags: [salesEntries]
+      summary: List sales entries
+      parameters:
+        - name: startDate
+          in: query
+          schema:
+            type: string
+        - name: endDate
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of sales entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SalesEntry"
+    post:
+      operationId: createSalesEntry
+      tags: [salesEntries]
+      summary: Create a sales entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSalesEntry"
+      responses:
+        "201":
+          description: Created sales entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SalesEntry"
+
+  /sales-entries/{id}:
+    put:
+      operationId: updateSalesEntry
+      tags: [salesEntries]
+      summary: Update a sales entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSalesEntry"
+      responses:
+        "200":
+          description: Updated sales entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SalesEntry"
+    delete:
+      operationId: deleteSalesEntry
+      tags: [salesEntries]
+      summary: Delete a sales entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /dispatch-orders:
+    get:
+      operationId: listDispatchOrders
+      tags: [dispatchOrders]
+      summary: List dispatch orders
+      parameters:
+        - name: startDate
+          in: query
+          schema:
+            type: string
+        - name: endDate
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of dispatch orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DispatchOrder"
+    post:
+      operationId: createDispatchOrder
+      tags: [dispatchOrders]
+      summary: Create a dispatch order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDispatchOrder"
+      responses:
+        "201":
+          description: Created dispatch order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchOrder"
+
+  /dispatch-orders/{id}:
+    put:
+      operationId: updateDispatchOrder
+      tags: [dispatchOrders]
+      summary: Update a dispatch order
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDispatchOrder"
+      responses:
+        "200":
+          description: Updated dispatch order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchOrder"
+    delete:
+      operationId: deleteDispatchOrder
+      tags: [dispatchOrders]
+      summary: Delete a dispatch order
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +628,566 @@ components:
       required:
         - status
 
+    Ingredient:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        unit:
+          type: string
+        costPerUnit:
+          type: number
+        notes:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+      required:
+        - id
+        - name
+        - unit
+        - costPerUnit
+        - createdAt
+
+    CreateIngredient:
+      type: object
+      properties:
+        name:
+          type: string
+        unit:
+          type: string
+        costPerUnit:
+          type: number
+        notes:
+          type: string
+          nullable: true
+      required:
+        - name
+        - unit
+        - costPerUnit
+
+    SubRecipe:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        yield:
+          type: number
+        yieldUnit:
+          type: string
+        notes:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+      required:
+        - id
+        - name
+        - yield
+        - yieldUnit
+        - createdAt
+
+    SubRecipeIngredient:
+      type: object
+      properties:
+        id:
+          type: integer
+        ingredientId:
+          type: integer
+        ingredientName:
+          type: string
+        unit:
+          type: string
+        quantity:
+          type: number
+      required:
+        - id
+        - ingredientId
+        - ingredientName
+        - unit
+        - quantity
+
+    SubRecipeDetail:
+      allOf:
+        - $ref: "#/components/schemas/SubRecipe"
+        - type: object
+          properties:
+            ingredients:
+              type: array
+              items:
+                $ref: "#/components/schemas/SubRecipeIngredient"
+          required:
+            - ingredients
+
+    CreateSubRecipe:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        yield:
+          type: number
+        yieldUnit:
+          type: string
+        notes:
+          type: string
+          nullable: true
+        ingredients:
+          type: array
+          items:
+            type: object
+            properties:
+              ingredientId:
+                type: integer
+              quantity:
+                type: number
+            required:
+              - ingredientId
+              - quantity
+      required:
+        - name
+        - yield
+        - yieldUnit
+        - ingredients
+
+    Recipe:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        servings:
+          type: number
+        servingUnit:
+          type: string
+        category:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+      required:
+        - id
+        - name
+        - servings
+        - servingUnit
+        - createdAt
+
+    RecipeIngredient:
+      type: object
+      properties:
+        id:
+          type: integer
+        ingredientId:
+          type: integer
+        ingredientName:
+          type: string
+        unit:
+          type: string
+        quantity:
+          type: number
+      required:
+        - id
+        - ingredientId
+        - ingredientName
+        - unit
+        - quantity
+
+    RecipeSubRecipe:
+      type: object
+      properties:
+        id:
+          type: integer
+        subRecipeId:
+          type: integer
+        subRecipeName:
+          type: string
+        quantity:
+          type: number
+        unit:
+          type: string
+      required:
+        - id
+        - subRecipeId
+        - subRecipeName
+        - quantity
+        - unit
+
+    RecipeDetail:
+      allOf:
+        - $ref: "#/components/schemas/Recipe"
+        - type: object
+          properties:
+            ingredients:
+              type: array
+              items:
+                $ref: "#/components/schemas/RecipeIngredient"
+            subRecipes:
+              type: array
+              items:
+                $ref: "#/components/schemas/RecipeSubRecipe"
+          required:
+            - ingredients
+            - subRecipes
+
+    CreateRecipe:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        servings:
+          type: number
+        servingUnit:
+          type: string
+        category:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        ingredients:
+          type: array
+          items:
+            type: object
+            properties:
+              ingredientId:
+                type: integer
+              quantity:
+                type: number
+            required:
+              - ingredientId
+              - quantity
+        subRecipes:
+          type: array
+          items:
+            type: object
+            properties:
+              subRecipeId:
+                type: integer
+              quantity:
+                type: number
+            required:
+              - subRecipeId
+              - quantity
+      required:
+        - name
+        - servings
+        - servingUnit
+        - ingredients
+        - subRecipes
+
+    ProductionPlanItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        recipeId:
+          type: integer
+        recipeName:
+          type: string
+        targetQuantity:
+          type: number
+        actualQuantity:
+          type: number
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [pending, in_progress, completed]
+      required:
+        - id
+        - recipeId
+        - recipeName
+        - targetQuantity
+        - status
+
+    ProductionPlan:
+      type: object
+      properties:
+        id:
+          type: integer
+        planDate:
+          type: string
+        name:
+          type: string
+        notes:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [draft, active, completed]
+        createdAt:
+          type: string
+      required:
+        - id
+        - planDate
+        - name
+        - status
+        - createdAt
+
+    ProductionPlanDetail:
+      allOf:
+        - $ref: "#/components/schemas/ProductionPlan"
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/ProductionPlanItem"
+          required:
+            - items
+
+    CreateProductionPlan:
+      type: object
+      properties:
+        planDate:
+          type: string
+        name:
+          type: string
+        notes:
+          type: string
+          nullable: true
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              recipeId:
+                type: integer
+              targetQuantity:
+                type: number
+              notes:
+                type: string
+                nullable: true
+            required:
+              - recipeId
+              - targetQuantity
+      required:
+        - planDate
+        - name
+        - items
+
+    UpdateProductionPlan:
+      type: object
+      properties:
+        planDate:
+          type: string
+        name:
+          type: string
+        notes:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [draft, active, completed]
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+                nullable: true
+              recipeId:
+                type: integer
+              targetQuantity:
+                type: number
+              actualQuantity:
+                type: number
+                nullable: true
+              notes:
+                type: string
+                nullable: true
+              status:
+                type: string
+                enum: [pending, in_progress, completed]
+            required:
+              - recipeId
+              - targetQuantity
+              - status
+
+    StockEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+        recipeId:
+          type: integer
+          nullable: true
+        recipeName:
+          type: string
+          nullable: true
+        ingredientId:
+          type: integer
+          nullable: true
+        ingredientName:
+          type: string
+          nullable: true
+        itemType:
+          type: string
+          enum: [recipe, ingredient]
+        quantity:
+          type: number
+        unit:
+          type: string
+        checkedAt:
+          type: string
+        notes:
+          type: string
+          nullable: true
+      required:
+        - id
+        - itemType
+        - quantity
+        - unit
+        - checkedAt
+
+    CreateStockEntry:
+      type: object
+      properties:
+        recipeId:
+          type: integer
+          nullable: true
+        ingredientId:
+          type: integer
+          nullable: true
+        itemType:
+          type: string
+          enum: [recipe, ingredient]
+        quantity:
+          type: number
+        unit:
+          type: string
+        notes:
+          type: string
+          nullable: true
+      required:
+        - itemType
+        - quantity
+        - unit
+
+    SalesEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+        recipeId:
+          type: integer
+        recipeName:
+          type: string
+        saleDate:
+          type: string
+        quantitySold:
+          type: number
+        channel:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+      required:
+        - id
+        - recipeId
+        - recipeName
+        - saleDate
+        - quantitySold
+        - createdAt
+
+    CreateSalesEntry:
+      type: object
+      properties:
+        recipeId:
+          type: integer
+        saleDate:
+          type: string
+        quantitySold:
+          type: number
+        channel:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+      required:
+        - recipeId
+        - saleDate
+        - quantitySold
+
+    DispatchOrder:
+      type: object
+      properties:
+        id:
+          type: integer
+        recipeId:
+          type: integer
+        recipeName:
+          type: string
+        dispatchDate:
+          type: string
+        quantity:
+          type: number
+        customer:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [pending, dispatched, cancelled]
+        notes:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+      required:
+        - id
+        - recipeId
+        - recipeName
+        - dispatchDate
+        - quantity
+        - status
+        - createdAt
+
+    CreateDispatchOrder:
+      type: object
+      properties:
+        recipeId:
+          type: integer
+        dispatchDate:
+          type: string
+        quantity:
+          type: number
+        customer:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [pending, dispatched, cancelled]
+        notes:
+          type: string
+          nullable: true
+      required:
+        - recipeId
+        - dispatchDate
+        - quantity
+        - status
