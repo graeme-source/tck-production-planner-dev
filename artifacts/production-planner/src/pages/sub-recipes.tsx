@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useListSubRecipes, useListIngredients, useGetSubRecipe } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
-import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2, RotateCcw } from "lucide-react";
 import { useForm, useFieldArray } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -77,6 +77,20 @@ function YieldSanityCheck({
   );
 }
 
+function computeTotalKg(
+  rows: { ingredientId: number; quantity: number }[],
+  allIngredients: { id: number; name: string; unit: string }[],
+): number {
+  let total = 0;
+  for (const row of rows) {
+    const ing = allIngredients.find(i => i.id === Number(row.ingredientId));
+    if (!ing || !row.quantity) continue;
+    if (ing.unit === "kg") total += Number(row.quantity);
+    else if (ing.unit === "g") total += Number(row.quantity) / 1000;
+  }
+  return total;
+}
+
 function SubRecipeForm({
   defaultValues,
   onSubmit,
@@ -99,10 +113,37 @@ function SubRecipeForm({
   const [localIngredients, setLocalIngredients] = useState(initialIngredients);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickAddTargetIndex, setQuickAddTargetIndex] = useState<number | null>(null);
+  // Auto-yield: true = follow ingredient total, false = user has overridden
+  const [isYieldAuto, setIsYieldAuto] = useState(!isEdit);
+  const yieldInputRef = useRef<HTMLInputElement | null>(null);
 
   const watchedIngredients = watch("ingredients");
   const watchedYield = watch("yield");
   const watchedYieldUnit = watch("yieldUnit");
+
+  // When in auto mode, keep yield in sync with the sum of all ingredient weights
+  useEffect(() => {
+    if (!isYieldAuto) return;
+    if (watchedYieldUnit !== "kg" && watchedYieldUnit !== "g") return;
+    const totalKg = computeTotalKg(watchedIngredients ?? [], localIngredients);
+    if (totalKg <= 0) return;
+    const autoValue = watchedYieldUnit === "g"
+      ? parseFloat((totalKg * 1000).toFixed(1))
+      : parseFloat(totalKg.toFixed(3));
+    setValue("yield", autoValue, { shouldValidate: false });
+  }, [watchedIngredients, isYieldAuto, watchedYieldUnit, localIngredients, setValue]);
+
+  const resetToAuto = () => {
+    setIsYieldAuto(true);
+    // immediately recalculate
+    const totalKg = computeTotalKg(watchedIngredients ?? [], localIngredients);
+    if (totalKg > 0) {
+      const autoValue = watchedYieldUnit === "g"
+        ? parseFloat((totalKg * 1000).toFixed(1))
+        : parseFloat(totalKg.toFixed(3));
+      setValue("yield", autoValue, { shouldValidate: false });
+    }
+  };
 
   const openQuickAdd = (index: number) => {
     setQuickAddTargetIndex(index);
@@ -143,15 +184,40 @@ function SubRecipeForm({
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="text-sm font-medium mb-1 block">Batch Yield *</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-sm font-medium">Batch Yield *</label>
+              {isYieldAuto ? (
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+                  Auto
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={resetToAuto}
+                  className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1 transition-colors"
+                >
+                  <RotateCcw className="w-3 h-3" /> Reset to auto
+                </button>
+              )}
+            </div>
             <input
               type="number"
               step="0.001"
               {...register("yield")}
-              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              ref={(el) => {
+                register("yield").ref(el);
+                yieldInputRef.current = el;
+              }}
+              onChange={(e) => {
+                register("yield").onChange(e);
+                setIsYieldAuto(false);
+              }}
+              className={`w-full px-3 py-2 bg-background border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 ${isYieldAuto ? "border-primary/40 bg-primary/5" : "border-border"}`}
               placeholder="e.g. 32.76"
             />
-            <p className="text-xs text-muted-foreground mt-1">Total output quantity from this batch</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {isYieldAuto ? "Tracking total ingredient weight — edit to override" : "Manual override — type a lower value for processing reduction"}
+            </p>
             {errors.yield && <span className="text-destructive text-xs">{errors.yield.message}</span>}
           </div>
           <div>
