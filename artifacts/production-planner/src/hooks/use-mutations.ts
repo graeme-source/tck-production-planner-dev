@@ -28,10 +28,13 @@ import {
   useCreateDispatchOrder,
   useUpdateDispatchOrder,
   useDeleteDispatchOrder,
-  getListDispatchOrdersQueryKey
+  getListDispatchOrdersQueryKey,
+  useCreateSupplier,
+  useUpdateSupplier,
+  useDeleteSupplier,
+  getListSuppliersQueryKey,
 } from "@workspace/api-client-react";
 
-// Helper to generate wrapper hooks with toasts and cache invalidation
 export function useAppMutations() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -46,6 +49,11 @@ export function useAppMutations() {
   };
 
   return {
+    // Suppliers
+    createSupplier: useCreateSupplier({ mutation: { onSuccess: () => handleSuccess(getListSuppliersQueryKey(), "Supplier created"), onError: handleError } }),
+    updateSupplier: useUpdateSupplier({ mutation: { onSuccess: () => handleSuccess(getListSuppliersQueryKey(), "Supplier updated"), onError: handleError } }),
+    deleteSupplier: useDeleteSupplier({ mutation: { onSuccess: () => handleSuccess(getListSuppliersQueryKey(), "Supplier deleted"), onError: handleError } }),
+
     // Ingredients
     createIngredient: useCreateIngredient({ mutation: { onSuccess: () => handleSuccess(getListIngredientsQueryKey(), "Ingredient created"), onError: handleError } }),
     updateIngredient: useUpdateIngredient({ mutation: { onSuccess: () => handleSuccess(getListIngredientsQueryKey(), "Ingredient updated"), onError: handleError } }),

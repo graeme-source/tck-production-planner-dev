@@ -9,7 +9,8 @@ import {
   CalendarDays, 
   PackageSearch, 
   TrendingUp, 
-  Truck
+  Truck,
+  Building2,
 } from "lucide-react";
 
 const navItems = [
@@ -18,6 +19,7 @@ const navItems = [
   { name: "Recipes", href: "/recipes", icon: ChefHat },
   { name: "Sub-Recipes", href: "/sub-recipes", icon: ClipboardList },
   { name: "Ingredients", href: "/ingredients", icon: Carrot },
+  { name: "Suppliers", href: "/suppliers", icon: Building2 },
   { name: "Stock Inventory", href: "/stock", icon: PackageSearch },
   { name: "Sales Data", href: "/sales", icon: TrendingUp },
   { name: "Dispatches", href: "/dispatches", icon: Truck },

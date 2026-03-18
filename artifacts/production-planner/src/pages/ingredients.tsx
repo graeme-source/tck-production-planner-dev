@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { useListIngredients } from "@workspace/api-client-react";
+import { useListIngredients, useListSuppliers } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
-import { Search, Plus, Trash2, Edit2, Loader2, X } from "lucide-react";
+import { Search, Plus, Trash2, Edit2, Loader2, ExternalLink } from "lucide-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -11,7 +11,6 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 
 const schema = z.object({
@@ -19,60 +18,86 @@ const schema = z.object({
   unit: z.string().min(1, "Unit is required"),
   packWeight: z.coerce.number().min(0, "Must be positive"),
   costPerPack: z.coerce.number().min(0, "Must be positive"),
+  brand: z.string().optional(),
+  supplierPartNumber: z.string().optional(),
+  supplierId: z.coerce.number().optional(),
+  secondarySupplierId: z.coerce.number().optional(),
+  orderingUrl: z.string().optional(),
   notes: z.string().optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
 
-type IngredientItem = {
-  id: number;
-  name: string;
-  unit: string;
-  packWeight: number;
-  costPerPack: number;
-  notes?: string | null;
-  createdAt: string;
+const emptyDefaults: FormValues = {
+  name: "", unit: "kg", packWeight: 0, costPerPack: 0,
+  brand: "", supplierPartNumber: "", supplierId: 0, secondarySupplierId: 0,
+  orderingUrl: "", notes: "",
 };
 
 export default function Ingredients() {
   const { data: ingredients, isLoading } = useListIngredients();
+  const { data: suppliers } = useListSuppliers();
   const { createIngredient, updateIngredient, deleteIngredient } = useAppMutations();
   const [search, setSearch] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState<IngredientItem | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
 
-  const filtered = ingredients?.filter(i => i.name.toLowerCase().includes(search.toLowerCase()));
+  const filtered = ingredients?.filter(i =>
+    i.name.toLowerCase().includes(search.toLowerCase()) ||
+    (i.brand ?? "").toLowerCase().includes(search.toLowerCase())
+  );
+
+  const supplierMap = Object.fromEntries((suppliers ?? []).map(s => [s.id, s.name]));
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { name: "", unit: "kg", packWeight: 0, costPerPack: 0, notes: "" }
+    defaultValues: emptyDefaults,
   });
 
   const openAdd = () => {
-    setEditingItem(null);
-    reset({ name: "", unit: "kg", packWeight: 0, costPerPack: 0, notes: "" });
+    setEditingId(null);
+    reset(emptyDefaults);
     setIsDialogOpen(true);
   };
 
-  const openEdit = (item: IngredientItem) => {
-    setEditingItem(item);
+  const openEdit = (item: typeof ingredients extends (infer T)[] | undefined ? T : never) => {
+    if (!item) return;
+    setEditingId((item as any).id);
     reset({
-      name: item.name,
-      unit: item.unit,
-      packWeight: item.packWeight,
-      costPerPack: item.costPerPack,
-      notes: item.notes ?? "",
+      name: (item as any).name,
+      unit: (item as any).unit,
+      packWeight: Number((item as any).packWeight),
+      costPerPack: Number((item as any).costPerPack),
+      brand: (item as any).brand ?? "",
+      supplierPartNumber: (item as any).supplierPartNumber ?? "",
+      supplierId: (item as any).supplierId ?? 0,
+      secondarySupplierId: (item as any).secondarySupplierId ?? 0,
+      orderingUrl: (item as any).orderingUrl ?? "",
+      notes: (item as any).notes ?? "",
     });
     setIsDialogOpen(true);
   };
 
+  const buildPayload = (data: FormValues) => ({
+    name: data.name,
+    unit: data.unit,
+    packWeight: data.packWeight,
+    costPerPack: data.costPerPack,
+    brand: data.brand || null,
+    supplierPartNumber: data.supplierPartNumber || null,
+    supplierId: data.supplierId && data.supplierId > 0 ? data.supplierId : null,
+    secondarySupplierId: data.secondarySupplierId && data.secondarySupplierId > 0 ? data.secondarySupplierId : null,
+    orderingUrl: data.orderingUrl || null,
+    notes: data.notes || null,
+  });
+
   const onSubmit = (data: FormValues) => {
-    if (editingItem) {
-      updateIngredient.mutate({ id: editingItem.id, data }, {
-        onSuccess: () => { setIsDialogOpen(false); reset(); setEditingItem(null); }
+    if (editingId !== null) {
+      updateIngredient.mutate({ id: editingId, data: buildPayload(data) }, {
+        onSuccess: () => { setIsDialogOpen(false); reset(); setEditingId(null); }
       });
     } else {
-      createIngredient.mutate({ data }, {
+      createIngredient.mutate({ data: buildPayload(data) }, {
         onSuccess: () => { setIsDialogOpen(false); reset(); }
       });
     }
@@ -84,7 +109,7 @@ export default function Ingredients() {
     <div className="space-y-6">
       <PageHeader
         title="Ingredients Library"
-        description="Manage your raw materials, pack sizes, and costs."
+        description="Manage your raw materials, pack sizes, costs and supplier information."
         action={
           <button
             onClick={openAdd}
@@ -96,60 +121,82 @@ export default function Ingredients() {
       />
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="sm:max-w-[480px] bg-card border-border rounded-2xl">
+        <DialogContent className="sm:max-w-[620px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display text-xl">
-              {editingItem ? "Edit Ingredient" : "Add New Ingredient"}
+              {editingId !== null ? "Edit Ingredient" : "Add New Ingredient"}
             </DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 mt-4">
-            <div>
-              <label className="text-sm font-medium mb-1 block">Name</label>
-              <input
-                {...register("name")}
-                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                placeholder="e.g. Organic Flour"
-              />
-              {errors.name && <span className="text-destructive text-xs">{errors.name.message}</span>}
-            </div>
+          <form onSubmit={handleSubmit(onSubmit)} className="space-y-5 mt-4">
 
-            <div>
-              <label className="text-sm font-medium mb-1 block">Unit</label>
-              <select
-                {...register("unit")}
-                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-              >
-                <option value="kg">Kilogram (kg)</option>
-                <option value="g">Gram (g)</option>
-                <option value="l">Litre (L)</option>
-                <option value="ml">Millilitre (ml)</option>
-                <option value="pcs">Pieces</option>
-                <option value="box">Box</option>
-                <option value="bag">Bag</option>
-                <option value="tub">Tub</option>
-              </select>
-              {errors.unit && <span className="text-destructive text-xs">{errors.unit.message}</span>}
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
+            {/* Name + Unit */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="col-span-2">
+                <label className="text-sm font-medium mb-1 block">Name *</label>
+                <input
+                  {...register("name")}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  placeholder="e.g. Organic Plain Flour"
+                />
+                {errors.name && <span className="text-destructive text-xs">{errors.name.message}</span>}
+              </div>
               <div>
-                <label className="text-sm font-medium mb-1 block">Pack Weight / Size</label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    step="0.001"
-                    {...register("packWeight")}
-                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                    placeholder="0.00"
-                  />
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">Qty per pack (in chosen unit)</p>
+                <label className="text-sm font-medium mb-1 block">Unit *</label>
+                <select
+                  {...register("unit")}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                >
+                  <option value="kg">kg</option>
+                  <option value="g">g</option>
+                  <option value="l">L</option>
+                  <option value="ml">ml</option>
+                  <option value="pcs">pcs</option>
+                  <option value="box">box</option>
+                  <option value="bag">bag</option>
+                  <option value="tub">tub</option>
+                  <option value="each">each</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Brand + Part Number */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium mb-1 block">Brand</label>
+                <input
+                  {...register("brand")}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  placeholder="e.g. Shipton Mill"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Supplier Part Number</label>
+                <input
+                  {...register("supplierPartNumber")}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  placeholder="e.g. HF-0042"
+                />
+              </div>
+            </div>
+
+            {/* Pack Weight + Cost per Pack */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium mb-1 block">Pack Size *</label>
+                <input
+                  type="number"
+                  step="0.001"
+                  {...register("packWeight")}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  placeholder="0.00"
+                />
+                <p className="text-xs text-muted-foreground mt-1">Qty per pack (in the chosen unit)</p>
                 {errors.packWeight && <span className="text-destructive text-xs">{errors.packWeight.message}</span>}
               </div>
               <div>
-                <label className="text-sm font-medium mb-1 block">Cost per Pack (£)</label>
+                <label className="text-sm font-medium mb-1 block">Cost per Pack (£) *</label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">£</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm font-medium">£</span>
                   <input
                     type="number"
                     step="0.01"
@@ -162,12 +209,51 @@ export default function Ingredients() {
               </div>
             </div>
 
+            {/* Supplier + Secondary Supplier */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium mb-1 block">Supplier</label>
+                <select
+                  {...register("supplierId")}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                >
+                  <option value={0}>— None —</option>
+                  {(suppliers ?? []).map(s => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Secondary Supplier</label>
+                <select
+                  {...register("secondarySupplierId")}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                >
+                  <option value={0}>— None —</option>
+                  {(suppliers ?? []).map(s => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Ordering URL */}
             <div>
-              <label className="text-sm font-medium mb-1 block">Notes (optional)</label>
+              <label className="text-sm font-medium mb-1 block">Ordering URL</label>
+              <input
+                {...register("orderingUrl")}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                placeholder="https://supplier.co.uk/product/flour-25kg"
+              />
+            </div>
+
+            {/* Notes */}
+            <div>
+              <label className="text-sm font-medium mb-1 block">Notes</label>
               <textarea
                 {...register("notes")}
-                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[72px] resize-none"
-                placeholder="Supplier, quality notes..."
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[64px] resize-none"
+                placeholder="Allergens, storage, quality notes..."
               />
             </div>
 
@@ -177,12 +263,13 @@ export default function Ingredients() {
               className="w-full py-2.5 bg-primary text-primary-foreground rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-              {isPending ? "Saving..." : editingItem ? "Save Changes" : "Add Ingredient"}
+              {isPending ? "Saving..." : editingId !== null ? "Save Changes" : "Add Ingredient"}
             </button>
           </form>
         </DialogContent>
       </Dialog>
 
+      {/* Table */}
       <div className="rounded-2xl border border-border overflow-hidden bg-card">
         <div className="p-4 border-b border-border flex items-center gap-4 bg-secondary/20">
           <div className="relative flex-1 max-w-md">
@@ -190,11 +277,11 @@ export default function Ingredients() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search ingredients..."
+              placeholder="Search by name or brand..."
               className="w-full pl-9 pr-4 py-2 bg-background border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
           </div>
-          <span className="text-sm text-muted-foreground">{filtered?.length ?? 0} items</span>
+          <span className="text-sm text-muted-foreground whitespace-nowrap">{filtered?.length ?? 0} items</span>
         </div>
 
         {isLoading ? (
@@ -211,45 +298,64 @@ export default function Ingredients() {
             <table className="w-full text-left text-sm">
               <thead className="bg-secondary/30 text-muted-foreground">
                 <tr>
-                  <th className="px-6 py-3 font-medium">Name</th>
-                  <th className="px-6 py-3 font-medium">Unit</th>
-                  <th className="px-6 py-3 font-medium">Pack Weight</th>
-                  <th className="px-6 py-3 font-medium">Cost / Pack</th>
-                  <th className="px-6 py-3 font-medium">Cost / Unit</th>
-                  <th className="px-6 py-3 font-medium">Notes</th>
-                  <th className="px-6 py-3 font-medium text-right">Actions</th>
+                  <th className="px-5 py-3 font-medium">Name</th>
+                  <th className="px-5 py-3 font-medium">Brand</th>
+                  <th className="px-5 py-3 font-medium">Part No.</th>
+                  <th className="px-5 py-3 font-medium">Unit</th>
+                  <th className="px-5 py-3 font-medium">Pack Size</th>
+                  <th className="px-5 py-3 font-medium">Cost / Pack</th>
+                  <th className="px-5 py-3 font-medium">Cost / Unit</th>
+                  <th className="px-5 py-3 font-medium">Supplier</th>
+                  <th className="px-5 py-3 font-medium">2nd Supplier</th>
+                  <th className="px-5 py-3 font-medium">Order</th>
+                  <th className="px-5 py-3 font-medium text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/50">
                 {filtered?.map((item) => {
-                  const costPerUnit = item.packWeight > 0 ? item.costPerPack / item.packWeight : 0;
+                  const packWeight = Number(item.packWeight);
+                  const costPerPack = Number(item.costPerPack);
+                  const costPerUnit = packWeight > 0 ? costPerPack / packWeight : 0;
                   return (
                     <tr key={item.id} className="hover:bg-secondary/10 transition-colors">
-                      <td className="px-6 py-4 font-medium">{item.name}</td>
-                      <td className="px-6 py-4 text-muted-foreground">{item.unit}</td>
-                      <td className="px-6 py-4">{item.packWeight} {item.unit}</td>
-                      <td className="px-6 py-4">£{item.costPerPack.toFixed(2)}</td>
-                      <td className="px-6 py-4 text-muted-foreground">
-                        £{costPerUnit.toFixed(4)}/{item.unit}
+                      <td className="px-5 py-3 font-medium whitespace-nowrap">{item.name}</td>
+                      <td className="px-5 py-3 text-muted-foreground">{item.brand || <span className="text-border">—</span>}</td>
+                      <td className="px-5 py-3 text-muted-foreground font-mono text-xs">{item.supplierPartNumber || <span className="text-border">—</span>}</td>
+                      <td className="px-5 py-3 text-muted-foreground">{item.unit}</td>
+                      <td className="px-5 py-3">{packWeight} {item.unit}</td>
+                      <td className="px-5 py-3 font-medium">£{costPerPack.toFixed(2)}</td>
+                      <td className="px-5 py-3 text-muted-foreground">£{costPerUnit.toFixed(4)}/{item.unit}</td>
+                      <td className="px-5 py-3 text-muted-foreground">
+                        {item.supplierId ? supplierMap[item.supplierId] ?? <span className="text-border">—</span> : <span className="text-border">—</span>}
                       </td>
-                      <td className="px-6 py-4 text-muted-foreground truncate max-w-[180px]">
-                        {item.notes || <span className="text-border">—</span>}
+                      <td className="px-5 py-3 text-muted-foreground">
+                        {item.secondarySupplierId ? supplierMap[item.secondarySupplierId] ?? <span className="text-border">—</span> : <span className="text-border">—</span>}
                       </td>
-                      <td className="px-6 py-4 text-right">
+                      <td className="px-5 py-3">
+                        {item.orderingUrl ? (
+                          <a
+                            href={item.orderingUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-primary hover:underline text-xs"
+                          >
+                            <ExternalLink className="w-3 h-3" /> Link
+                          </a>
+                        ) : (
+                          <span className="text-border">—</span>
+                        )}
+                      </td>
+                      <td className="px-5 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
                           <button
-                            onClick={() => openEdit(item as IngredientItem)}
+                            onClick={() => openEdit(item)}
                             className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
                             title="Edit"
                           >
                             <Edit2 className="w-4 h-4" />
                           </button>
                           <button
-                            onClick={() => {
-                              if (confirm(`Delete "${item.name}"?`)) {
-                                deleteIngredient.mutate({ id: item.id });
-                              }
-                            }}
+                            onClick={() => { if (confirm(`Delete "${item.name}"?`)) deleteIngredient.mutate({ id: item.id }); }}
                             className="p-2 text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
                             title="Delete"
                           >

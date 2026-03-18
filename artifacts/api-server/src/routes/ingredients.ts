@@ -19,13 +19,18 @@ router.get("/", async (_req, res) => {
 });
 
 router.post("/", async (req, res) => {
-  const { name, unit, packWeight, costPerPack, notes } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes } = req.body;
   const [row] = await db.insert(ingredientsTable).values({
     name,
     unit,
     packWeight: String(packWeight ?? 0),
     costPerPack: String(costPerPack ?? 0),
-    notes,
+    brand: brand || null,
+    supplierPartNumber: supplierPartNumber || null,
+    supplierId: supplierId ? Number(supplierId) : null,
+    secondarySupplierId: secondarySupplierId ? Number(secondarySupplierId) : null,
+    orderingUrl: orderingUrl || null,
+    notes: notes || null,
   }).returning();
   res.status(201).json(mapRow(row));
 });
@@ -39,13 +44,18 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", async (req, res) => {
   const id = Number(req.params.id);
-  const { name, unit, packWeight, costPerPack, notes } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes } = req.body;
   const [row] = await db.update(ingredientsTable).set({
     name,
     unit,
     packWeight: String(packWeight ?? 0),
     costPerPack: String(costPerPack ?? 0),
-    notes,
+    brand: brand || null,
+    supplierPartNumber: supplierPartNumber || null,
+    supplierId: supplierId ? Number(supplierId) : null,
+    secondarySupplierId: secondarySupplierId ? Number(secondarySupplierId) : null,
+    orderingUrl: orderingUrl || null,
+    notes: notes || null,
   }).where(eq(ingredientsTable.id, id)).returning();
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   res.json(mapRow(row));

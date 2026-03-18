@@ -11,6 +11,7 @@ import ProductionPlans from "@/pages/production-plans";
 import Stock from "@/pages/stock";
 import Sales from "@/pages/sales";
 import Dispatches from "@/pages/dispatches";
+import Suppliers from "@/pages/suppliers";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient();
@@ -27,6 +28,7 @@ function Router() {
         <Route path="/stock" component={Stock} />
         <Route path="/sales" component={Sales} />
         <Route path="/dispatches" component={Dispatches} />
+        <Route path="/suppliers" component={Suppliers} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

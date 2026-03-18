@@ -11,5 +11,10 @@ export interface CreateIngredient {
   unit: string;
   packWeight: number;
   costPerPack: number;
+  brand?: string | null;
+  supplierPartNumber?: string | null;
+  supplierId?: number | null;
+  secondarySupplierId?: number | null;
+  orderingUrl?: string | null;
   notes?: string | null;
 }

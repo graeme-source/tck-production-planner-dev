@@ -1,3 +1,4 @@
+export * from "./suppliers";
 export * from "./ingredients";
 export * from "./sub_recipes";
 export * from "./recipes";

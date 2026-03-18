@@ -9,12 +9,39 @@ export interface HealthStatus {
   status: string;
 }
 
+export interface Supplier {
+  id: number;
+  name: string;
+  contactName?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  website?: string | null;
+  address?: string | null;
+  notes?: string | null;
+  createdAt: string;
+}
+
+export interface CreateSupplier {
+  name: string;
+  contactName?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  website?: string | null;
+  address?: string | null;
+  notes?: string | null;
+}
+
 export interface Ingredient {
   id: number;
   name: string;
   unit: string;
   packWeight: number;
   costPerPack: number;
+  brand?: string | null;
+  supplierPartNumber?: string | null;
+  supplierId?: number | null;
+  secondarySupplierId?: number | null;
+  orderingUrl?: string | null;
   notes?: string | null;
   createdAt: string;
 }
@@ -24,6 +51,11 @@ export interface CreateIngredient {
   unit: string;
   packWeight: number;
   costPerPack: number;
+  brand?: string | null;
+  supplierPartNumber?: string | null;
+  supplierId?: number | null;
+  secondarySupplierId?: number | null;
+  orderingUrl?: string | null;
   notes?: string | null;
 }
 

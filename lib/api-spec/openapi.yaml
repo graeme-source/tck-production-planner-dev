@@ -9,6 +9,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: suppliers
+    description: Supplier management
   - name: ingredients
     description: Ingredient management
   - name: recipes
@@ -24,6 +26,92 @@ tags:
   - name: dispatchOrders
     description: Dispatch order management
 paths:
+  /suppliers:
+    get:
+      operationId: listSuppliers
+      tags: [suppliers]
+      summary: List all suppliers
+      responses:
+        "200":
+          description: List of suppliers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Supplier"
+    post:
+      operationId: createSupplier
+      tags: [suppliers]
+      summary: Create a supplier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSupplier"
+      responses:
+        "201":
+          description: Created supplier
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Supplier"
+
+  /suppliers/{id}:
+    get:
+      operationId: getSupplier
+      tags: [suppliers]
+      summary: Get supplier by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Supplier
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Supplier"
+    put:
+      operationId: updateSupplier
+      tags: [suppliers]
+      summary: Update a supplier
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSupplier"
+      responses:
+        "200":
+          description: Updated supplier
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Supplier"
+    delete:
+      operationId: deleteSupplier
+      tags: [suppliers]
+      summary: Delete a supplier
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
   /healthz:
     get:
       operationId: healthCheck
@@ -628,6 +716,64 @@ components:
       required:
         - status
 
+    Supplier:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        contactName:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        website:
+          type: string
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+      required:
+        - id
+        - name
+        - createdAt
+
+    CreateSupplier:
+      type: object
+      properties:
+        name:
+          type: string
+        contactName:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        website:
+          type: string
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+      required:
+        - name
+
     Ingredient:
       type: object
       properties:
@@ -641,6 +787,21 @@ components:
           type: number
         costPerPack:
           type: number
+        brand:
+          type: string
+          nullable: true
+        supplierPartNumber:
+          type: string
+          nullable: true
+        supplierId:
+          type: integer
+          nullable: true
+        secondarySupplierId:
+          type: integer
+          nullable: true
+        orderingUrl:
+          type: string
+          nullable: true
         notes:
           type: string
           nullable: true
@@ -665,6 +826,21 @@ components:
           type: number
         costPerPack:
           type: number
+        brand:
+          type: string
+          nullable: true
+        supplierPartNumber:
+          type: string
+          nullable: true
+        supplierId:
+          type: integer
+          nullable: true
+        secondarySupplierId:
+          type: integer
+          nullable: true
+        orderingUrl:
+          type: string
+          nullable: true
         notes:
           type: string
           nullable: true

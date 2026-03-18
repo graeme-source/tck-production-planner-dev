@@ -8,6 +8,90 @@
 import * as zod from "zod";
 
 /**
+ * @summary List all suppliers
+ */
+export const ListSuppliersResponseItem = zod.object({
+  id: zod.number(),
+  name: zod.string(),
+  contactName: zod.string().nullish(),
+  email: zod.string().nullish(),
+  phone: zod.string().nullish(),
+  website: zod.string().nullish(),
+  address: zod.string().nullish(),
+  notes: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+export const ListSuppliersResponse = zod.array(ListSuppliersResponseItem);
+
+/**
+ * @summary Create a supplier
+ */
+export const CreateSupplierBody = zod.object({
+  name: zod.string(),
+  contactName: zod.string().nullish(),
+  email: zod.string().nullish(),
+  phone: zod.string().nullish(),
+  website: zod.string().nullish(),
+  address: zod.string().nullish(),
+  notes: zod.string().nullish(),
+});
+
+/**
+ * @summary Get supplier by ID
+ */
+export const GetSupplierParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetSupplierResponse = zod.object({
+  id: zod.number(),
+  name: zod.string(),
+  contactName: zod.string().nullish(),
+  email: zod.string().nullish(),
+  phone: zod.string().nullish(),
+  website: zod.string().nullish(),
+  address: zod.string().nullish(),
+  notes: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+
+/**
+ * @summary Update a supplier
+ */
+export const UpdateSupplierParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateSupplierBody = zod.object({
+  name: zod.string(),
+  contactName: zod.string().nullish(),
+  email: zod.string().nullish(),
+  phone: zod.string().nullish(),
+  website: zod.string().nullish(),
+  address: zod.string().nullish(),
+  notes: zod.string().nullish(),
+});
+
+export const UpdateSupplierResponse = zod.object({
+  id: zod.number(),
+  name: zod.string(),
+  contactName: zod.string().nullish(),
+  email: zod.string().nullish(),
+  phone: zod.string().nullish(),
+  website: zod.string().nullish(),
+  address: zod.string().nullish(),
+  notes: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+
+/**
+ * @summary Delete a supplier
+ */
+export const DeleteSupplierParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+/**
  * @summary Health check
  */
 export const HealthCheckResponse = zod.object({
@@ -23,6 +107,11 @@ export const ListIngredientsResponseItem = zod.object({
   unit: zod.string(),
   packWeight: zod.number(),
   costPerPack: zod.number(),
+  brand: zod.string().nullish(),
+  supplierPartNumber: zod.string().nullish(),
+  supplierId: zod.number().nullish(),
+  secondarySupplierId: zod.number().nullish(),
+  orderingUrl: zod.string().nullish(),
   notes: zod.string().nullish(),
   createdAt: zod.string(),
 });
@@ -36,6 +125,11 @@ export const CreateIngredientBody = zod.object({
   unit: zod.string(),
   packWeight: zod.number(),
   costPerPack: zod.number(),
+  brand: zod.string().nullish(),
+  supplierPartNumber: zod.string().nullish(),
+  supplierId: zod.number().nullish(),
+  secondarySupplierId: zod.number().nullish(),
+  orderingUrl: zod.string().nullish(),
   notes: zod.string().nullish(),
 });
 
@@ -52,6 +146,11 @@ export const GetIngredientResponse = zod.object({
   unit: zod.string(),
   packWeight: zod.number(),
   costPerPack: zod.number(),
+  brand: zod.string().nullish(),
+  supplierPartNumber: zod.string().nullish(),
+  supplierId: zod.number().nullish(),
+  secondarySupplierId: zod.number().nullish(),
+  orderingUrl: zod.string().nullish(),
   notes: zod.string().nullish(),
   createdAt: zod.string(),
 });
@@ -68,6 +167,11 @@ export const UpdateIngredientBody = zod.object({
   unit: zod.string(),
   packWeight: zod.number(),
   costPerPack: zod.number(),
+  brand: zod.string().nullish(),
+  supplierPartNumber: zod.string().nullish(),
+  supplierId: zod.number().nullish(),
+  secondarySupplierId: zod.number().nullish(),
+  orderingUrl: zod.string().nullish(),
   notes: zod.string().nullish(),
 });
 
@@ -77,6 +181,11 @@ export const UpdateIngredientResponse = zod.object({
   unit: zod.string(),
   packWeight: zod.number(),
   costPerPack: zod.number(),
+  brand: zod.string().nullish(),
+  supplierPartNumber: zod.string().nullish(),
+  supplierId: zod.number().nullish(),
+  secondarySupplierId: zod.number().nullish(),
+  orderingUrl: zod.string().nullish(),
   notes: zod.string().nullish(),
   createdAt: zod.string(),
 });

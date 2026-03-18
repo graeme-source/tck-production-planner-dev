@@ -7,10 +7,12 @@ import productionPlansRouter from "./production-plans";
 import stockRouter from "./stock";
 import salesRouter from "./sales";
 import dispatchesRouter from "./dispatches";
+import suppliersRouter from "./suppliers";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
+router.use("/suppliers", suppliersRouter);
 router.use("/ingredients", ingredientsRouter);
 router.use("/sub-recipes", subRecipesRouter);
 router.use("/recipes", recipesRouter);
