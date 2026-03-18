@@ -37,6 +37,10 @@ import {
   useUpdateUser,
   useDeleteUser,
   getListUsersQueryKey,
+  useCreateCategoryDefault,
+  useUpdateCategoryDefault,
+  useDeleteCategoryDefault,
+  getListCategoryDefaultsQueryKey,
 } from "@workspace/api-client-react";
 
 export function useAppMutations() {
@@ -57,6 +61,11 @@ export function useAppMutations() {
     createUser: useCreateUser({ mutation: { onSuccess: () => handleSuccess(getListUsersQueryKey(), "User created"), onError: handleError } }),
     updateUser: useUpdateUser({ mutation: { onSuccess: () => handleSuccess(getListUsersQueryKey(), "User updated"), onError: handleError } }),
     deleteUser: useDeleteUser({ mutation: { onSuccess: () => handleSuccess(getListUsersQueryKey(), "User deleted"), onError: handleError } }),
+
+    // Category Defaults
+    createCategoryDefault: useCreateCategoryDefault({ mutation: { onSuccess: () => handleSuccess(getListCategoryDefaultsQueryKey(), "Category default created"), onError: handleError } }),
+    updateCategoryDefault: useUpdateCategoryDefault({ mutation: { onSuccess: () => handleSuccess(getListCategoryDefaultsQueryKey(), "Category default updated"), onError: handleError } }),
+    deleteCategoryDefault: useDeleteCategoryDefault({ mutation: { onSuccess: () => handleSuccess(getListCategoryDefaultsQueryKey(), "Category default deleted"), onError: handleError } }),
 
     // Suppliers
     createSupplier: useCreateSupplier({ mutation: { onSuccess: () => handleSuccess(getListSuppliersQueryKey(), "Supplier created"), onError: handleError } }),

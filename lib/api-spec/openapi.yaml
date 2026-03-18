@@ -27,6 +27,8 @@ tags:
     description: Dispatch order management
   - name: users
     description: User management
+  - name: categoryDefaults
+    description: Category default cost management
 paths:
   /users:
     get:
@@ -795,6 +797,76 @@ paths:
         "204":
           description: Deleted
 
+  /category-defaults:
+    get:
+      operationId: listCategoryDefaults
+      tags: [categoryDefaults]
+      summary: List all category defaults
+      responses:
+        "200":
+          description: List of category defaults
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CategoryDefault"
+    post:
+      operationId: createCategoryDefault
+      tags: [categoryDefaults]
+      summary: Create a category default
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCategoryDefault"
+      responses:
+        "201":
+          description: Created category default
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryDefault"
+
+  /category-defaults/{id}:
+    put:
+      operationId: updateCategoryDefault
+      tags: [categoryDefaults]
+      summary: Update a category default
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCategoryDefault"
+      responses:
+        "200":
+          description: Updated category default
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryDefault"
+    delete:
+      operationId: deleteCategoryDefault
+      tags: [categoryDefaults]
+      summary: Delete a category default
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
 components:
   schemas:
     HealthStatus:
@@ -1050,6 +1122,25 @@ components:
         notes:
           type: string
           nullable: true
+        packSize:
+          type: number
+        rrp:
+          type: number
+        packagingCost:
+          type: number
+        labourCost:
+          type: number
+        rawMaterialCostPerBatch:
+          type: number
+        costPerPortion:
+          type: number
+        packIngredientCost:
+          type: number
+        totalPackCost:
+          type: number
+        grossMargin:
+          type: number
+          nullable: true
         createdAt:
           type: string
       required:
@@ -1057,6 +1148,14 @@ components:
         - name
         - servings
         - servingUnit
+        - packSize
+        - rrp
+        - packagingCost
+        - labourCost
+        - rawMaterialCostPerBatch
+        - costPerPortion
+        - packIngredientCost
+        - totalPackCost
         - createdAt
 
     RecipeIngredient:
@@ -1134,6 +1233,14 @@ components:
         notes:
           type: string
           nullable: true
+        packSize:
+          type: number
+        rrp:
+          type: number
+        packagingCost:
+          type: number
+        labourCost:
+          type: number
         ingredients:
           type: array
           items:
@@ -1164,6 +1271,40 @@ components:
         - servingUnit
         - ingredients
         - subRecipes
+
+    CategoryDefault:
+      type: object
+      properties:
+        id:
+          type: integer
+        category:
+          type: string
+        defaultPackagingCost:
+          type: number
+        defaultLabourCost:
+          type: number
+        createdAt:
+          type: string
+      required:
+        - id
+        - category
+        - defaultPackagingCost
+        - defaultLabourCost
+        - createdAt
+
+    CreateCategoryDefault:
+      type: object
+      properties:
+        category:
+          type: string
+        defaultPackagingCost:
+          type: number
+        defaultLabourCost:
+          type: number
+      required:
+        - category
+        - defaultPackagingCost
+        - defaultLabourCost
 
     ProductionPlanItem:
       type: object

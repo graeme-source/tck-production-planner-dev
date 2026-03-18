@@ -15,6 +15,10 @@ export interface CreateRecipe {
   servingUnit: string;
   category?: string | null;
   notes?: string | null;
+  packSize?: number;
+  rrp?: number;
+  packagingCost?: number;
+  labourCost?: number;
   ingredients: CreateRecipeIngredientsItem[];
   subRecipes: CreateRecipeSubRecipesItem[];
 }

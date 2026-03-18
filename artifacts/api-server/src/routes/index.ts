@@ -9,11 +9,13 @@ import salesRouter from "./sales";
 import dispatchesRouter from "./dispatches";
 import suppliersRouter from "./suppliers";
 import usersRouter from "./users";
+import categoryDefaultsRouter from "./category-defaults";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use("/users", usersRouter);
+router.use("/category-defaults", categoryDefaultsRouter);
 router.use("/suppliers", suppliersRouter);
 router.use("/ingredients", ingredientsRouter);
 router.use("/sub-recipes", subRecipesRouter);

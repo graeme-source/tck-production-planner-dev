@@ -8,6 +8,8 @@
 
 export * from "./appUser";
 export * from "./appUserRole";
+export * from "./categoryDefault";
+export * from "./createCategoryDefault";
 export * from "./createDispatchOrder";
 export * from "./createDispatchOrderStatus";
 export * from "./createIngredient";

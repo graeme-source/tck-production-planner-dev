@@ -18,6 +18,8 @@ import type {
 
 import type {
   AppUser,
+  CategoryDefault,
+  CreateCategoryDefault,
   CreateDispatchOrder,
   CreateIngredient,
   CreateProductionPlan,
@@ -3683,4 +3685,336 @@ export const useDeleteDispatchOrder = <
   TContext
 > => {
   return useMutation(getDeleteDispatchOrderMutationOptions(options));
+};
+
+/**
+ * @summary List all category defaults
+ */
+export const getListCategoryDefaultsUrl = () => {
+  return `/api/category-defaults`;
+};
+
+export const listCategoryDefaults = async (
+  options?: RequestInit,
+): Promise<CategoryDefault[]> => {
+  return customFetch<CategoryDefault[]>(getListCategoryDefaultsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListCategoryDefaultsQueryKey = () => {
+  return [`/api/category-defaults`] as const;
+};
+
+export const getListCategoryDefaultsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listCategoryDefaults>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listCategoryDefaults>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListCategoryDefaultsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listCategoryDefaults>>
+  > = ({ signal }) => listCategoryDefaults({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listCategoryDefaults>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListCategoryDefaultsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listCategoryDefaults>>
+>;
+export type ListCategoryDefaultsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List all category defaults
+ */
+
+export function useListCategoryDefaults<
+  TData = Awaited<ReturnType<typeof listCategoryDefaults>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listCategoryDefaults>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListCategoryDefaultsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create a category default
+ */
+export const getCreateCategoryDefaultUrl = () => {
+  return `/api/category-defaults`;
+};
+
+export const createCategoryDefault = async (
+  createCategoryDefault: CreateCategoryDefault,
+  options?: RequestInit,
+): Promise<CategoryDefault> => {
+  return customFetch<CategoryDefault>(getCreateCategoryDefaultUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createCategoryDefault),
+  });
+};
+
+export const getCreateCategoryDefaultMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createCategoryDefault>>,
+    TError,
+    { data: BodyType<CreateCategoryDefault> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createCategoryDefault>>,
+  TError,
+  { data: BodyType<CreateCategoryDefault> },
+  TContext
+> => {
+  const mutationKey = ["createCategoryDefault"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createCategoryDefault>>,
+    { data: BodyType<CreateCategoryDefault> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createCategoryDefault(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateCategoryDefaultMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createCategoryDefault>>
+>;
+export type CreateCategoryDefaultMutationBody = BodyType<CreateCategoryDefault>;
+export type CreateCategoryDefaultMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Create a category default
+ */
+export const useCreateCategoryDefault = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createCategoryDefault>>,
+    TError,
+    { data: BodyType<CreateCategoryDefault> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createCategoryDefault>>,
+  TError,
+  { data: BodyType<CreateCategoryDefault> },
+  TContext
+> => {
+  return useMutation(getCreateCategoryDefaultMutationOptions(options));
+};
+
+/**
+ * @summary Update a category default
+ */
+export const getUpdateCategoryDefaultUrl = (id: number) => {
+  return `/api/category-defaults/${id}`;
+};
+
+export const updateCategoryDefault = async (
+  id: number,
+  createCategoryDefault: CreateCategoryDefault,
+  options?: RequestInit,
+): Promise<CategoryDefault> => {
+  return customFetch<CategoryDefault>(getUpdateCategoryDefaultUrl(id), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createCategoryDefault),
+  });
+};
+
+export const getUpdateCategoryDefaultMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateCategoryDefault>>,
+    TError,
+    { id: number; data: BodyType<CreateCategoryDefault> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateCategoryDefault>>,
+  TError,
+  { id: number; data: BodyType<CreateCategoryDefault> },
+  TContext
+> => {
+  const mutationKey = ["updateCategoryDefault"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateCategoryDefault>>,
+    { id: number; data: BodyType<CreateCategoryDefault> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateCategoryDefault(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateCategoryDefaultMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateCategoryDefault>>
+>;
+export type UpdateCategoryDefaultMutationBody = BodyType<CreateCategoryDefault>;
+export type UpdateCategoryDefaultMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update a category default
+ */
+export const useUpdateCategoryDefault = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateCategoryDefault>>,
+    TError,
+    { id: number; data: BodyType<CreateCategoryDefault> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateCategoryDefault>>,
+  TError,
+  { id: number; data: BodyType<CreateCategoryDefault> },
+  TContext
+> => {
+  return useMutation(getUpdateCategoryDefaultMutationOptions(options));
+};
+
+/**
+ * @summary Delete a category default
+ */
+export const getDeleteCategoryDefaultUrl = (id: number) => {
+  return `/api/category-defaults/${id}`;
+};
+
+export const deleteCategoryDefault = async (
+  id: number,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getDeleteCategoryDefaultUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteCategoryDefaultMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteCategoryDefault>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteCategoryDefault>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["deleteCategoryDefault"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteCategoryDefault>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteCategoryDefault(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteCategoryDefaultMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteCategoryDefault>>
+>;
+
+export type DeleteCategoryDefaultMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Delete a category default
+ */
+export const useDeleteCategoryDefault = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteCategoryDefault>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteCategoryDefault>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getDeleteCategoryDefaultMutationOptions(options));
 };

@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { useListUsers } from "@workspace/api-client-react";
+import { useListUsers, useListCategoryDefaults } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import {
   Plus, Trash2, Edit2, Loader2, Users, ShieldCheck, Eye, Wrench,
-  CheckCircle2, XCircle, KeyRound,
+  CheckCircle2, XCircle, KeyRound, Package, ChevronDown, ChevronUp,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
@@ -394,6 +394,182 @@ export default function Settings() {
           </div>
         )}
       </div>
+
+      {/* Category Defaults Section */}
+      <CategoryDefaultsSection />
+    </div>
+  );
+}
+
+function CategoryDefaultsSection() {
+  const { data: defaults, isLoading } = useListCategoryDefaults();
+  const { createCategoryDefault, updateCategoryDefault, deleteCategoryDefault } = useAppMutations();
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [form, setForm] = useState({ category: "", defaultPackagingCost: "", defaultLabourCost: "" });
+
+  const resetForm = () => setForm({ category: "", defaultPackagingCost: "", defaultLabourCost: "" });
+
+  const handleAdd = () => {
+    createCategoryDefault.mutate({
+      data: {
+        category: form.category,
+        defaultPackagingCost: Number(form.defaultPackagingCost) || 0,
+        defaultLabourCost: Number(form.defaultLabourCost) || 0,
+      }
+    }, { onSuccess: () => { setAdding(false); resetForm(); } });
+  };
+
+  const handleEdit = (id: number) => {
+    updateCategoryDefault.mutate({
+      id,
+      data: {
+        category: form.category,
+        defaultPackagingCost: Number(form.defaultPackagingCost) || 0,
+        defaultLabourCost: Number(form.defaultLabourCost) || 0,
+      }
+    }, { onSuccess: () => { setEditingId(null); resetForm(); } });
+  };
+
+  const startEdit = (d: { id: number; category: string; defaultPackagingCost: number; defaultLabourCost: number }) => {
+    setEditingId(d.id);
+    setForm({ category: d.category, defaultPackagingCost: String(d.defaultPackagingCost), defaultLabourCost: String(d.defaultLabourCost) });
+    setAdding(false);
+  };
+
+  const inputCls = "px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30";
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold flex items-center gap-2"><Package className="w-5 h-5 text-primary" /> Category Cost Defaults</h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            When a recipe's category matches, packaging and labour costs are auto-filled in the recipe form.
+          </p>
+        </div>
+        {!adding && (
+          <button
+            onClick={() => { setAdding(true); setEditingId(null); resetForm(); }}
+            className="flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90 transition-colors shadow-sm"
+          >
+            <Plus className="w-4 h-4" /> Add Category
+          </button>
+        )}
+      </div>
+
+      {adding && (
+        <div className="bg-card border border-primary/30 rounded-2xl p-5 space-y-3">
+          <h3 className="text-sm font-semibold text-primary">New Category Default</h3>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="text-xs font-medium mb-1 block text-muted-foreground">Category Name</label>
+              <input className={inputCls} placeholder="e.g. Bread" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} />
+            </div>
+            <div>
+              <label className="text-xs font-medium mb-1 block text-muted-foreground">Default Packaging (£/pack)</label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">£</span>
+                <input type="number" step="0.01" min="0" className={`${inputCls} pl-7 w-full`} placeholder="0.00" value={form.defaultPackagingCost} onChange={e => setForm(f => ({ ...f, defaultPackagingCost: e.target.value }))} />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-medium mb-1 block text-muted-foreground">Default Labour (£/pack)</label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">£</span>
+                <input type="number" step="0.01" min="0" className={`${inputCls} pl-7 w-full`} placeholder="0.00" value={form.defaultLabourCost} onChange={e => setForm(f => ({ ...f, defaultLabourCost: e.target.value }))} />
+              </div>
+            </div>
+          </div>
+          <div className="flex gap-2 justify-end">
+            <button onClick={() => { setAdding(false); resetForm(); }} className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground rounded-lg border border-border transition-colors">Cancel</button>
+            <button
+              onClick={handleAdd}
+              disabled={!form.category || createCategoryDefault.isPending}
+              className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2"
+            >
+              {createCategoryDefault.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+              Save Default
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+      ) : defaults?.length === 0 && !adding ? (
+        <div className="rounded-2xl border border-dashed border-border p-10 text-center text-muted-foreground">
+          <Package className="w-8 h-8 mx-auto mb-2 opacity-30" />
+          <p className="font-medium text-sm">No category defaults yet</p>
+          <p className="text-xs mt-1">Add one to auto-populate packaging and labour costs in recipes.</p>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-border bg-card overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-secondary/30 text-muted-foreground text-xs">
+              <tr>
+                <th className="px-5 py-3 font-medium text-left">Category</th>
+                <th className="px-5 py-3 font-medium text-right">Default Packaging</th>
+                <th className="px-5 py-3 font-medium text-right">Default Labour</th>
+                <th className="px-5 py-3 font-medium text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/50">
+              {defaults?.map(d => (
+                <tr key={d.id} className="hover:bg-secondary/10 transition-colors">
+                  {editingId === d.id ? (
+                    <>
+                      <td className="px-4 py-2.5">
+                        <input className={inputCls} value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} />
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <div className="relative flex justify-end">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">£</span>
+                          <input type="number" step="0.01" min="0" className={`${inputCls} pl-7 w-32`} value={form.defaultPackagingCost} onChange={e => setForm(f => ({ ...f, defaultPackagingCost: e.target.value }))} />
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <div className="relative flex justify-end">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">£</span>
+                          <input type="number" step="0.01" min="0" className={`${inputCls} pl-7 w-32`} value={form.defaultLabourCost} onChange={e => setForm(f => ({ ...f, defaultLabourCost: e.target.value }))} />
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button onClick={() => { setEditingId(null); resetForm(); }} className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg border border-border transition-colors text-xs px-3 py-1.5">Cancel</button>
+                          <button
+                            onClick={() => handleEdit(d.id)}
+                            disabled={updateCategoryDefault.isPending}
+                            className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50"
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td className="px-5 py-3.5 font-medium">{d.category}</td>
+                      <td className="px-5 py-3.5 text-right">£{d.defaultPackagingCost.toFixed(2)}</td>
+                      <td className="px-5 py-3.5 text-right">£{d.defaultLabourCost.toFixed(2)}</td>
+                      <td className="px-5 py-3.5 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button onClick={() => startEdit(d)} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors" title="Edit"><Edit2 className="w-4 h-4" /></button>
+                          <button
+                            onClick={() => { if (confirm(`Delete default for "${d.category}"?`)) deleteCategoryDefault.mutate({ id: d.id }); }}
+                            className="p-2 text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
+                            title="Delete"
+                          ><Trash2 className="w-4 h-4" /></button>
+                        </div>
+                      </td>
+                    </>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

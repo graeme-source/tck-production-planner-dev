@@ -9,12 +9,14 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 A full-stack production management app for food businesses with:
 - **Ingredients** — library of raw ingredients with unit and cost
 - **Sub-recipes** — intermediate preparations (e.g., sauces, doughs) with ingredient lists
-- **Recipes (Products)** — final products using ingredients and/or sub-recipes, with categories
+- **Recipes (Products)** — final products with full cost/margin engine: pack size, RRP, packaging cost, labour cost, gross margin colour-coded by profitability (≥60% green, 50-59% amber, <50% red)
 - **Production Plans** — daily plans with a list of recipes and target quantities; track actual output and status (draft/active/completed)
 - **Stock Inventory** — stock check entries for finished recipes and raw ingredients
 - **Sales Data** — log sales per recipe by date, channel, and quantity
 - **Dispatch Orders** — upcoming dispatch orders with customer, date, quantity, and status
 - **Dashboard** — overview of today's plan, upcoming dispatches, low stock, and recent sales
+- **Settings** — user management (admin/manager/viewer roles) + category cost defaults (packaging & labour auto-fill per category)
+- **Category Defaults** — per-category default packaging/labour costs stored in `category_defaults` table; auto-fill recipe form when category matches
 
 ## Stack
 

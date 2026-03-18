@@ -14,5 +14,14 @@ export interface Recipe {
   servingUnit: string;
   category?: string | null;
   notes?: string | null;
+  packSize: number;
+  rrp: number;
+  packagingCost: number;
+  labourCost: number;
+  rawMaterialCostPerBatch: number;
+  costPerPortion: number;
+  packIngredientCost: number;
+  totalPackCost: number;
+  grossMargin?: number | null;
   createdAt: string;
 }

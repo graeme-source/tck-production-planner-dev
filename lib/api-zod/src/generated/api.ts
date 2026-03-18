@@ -382,6 +382,15 @@ export const ListRecipesResponseItem = zod.object({
   servingUnit: zod.string(),
   category: zod.string().nullish(),
   notes: zod.string().nullish(),
+  packSize: zod.number(),
+  rrp: zod.number(),
+  packagingCost: zod.number(),
+  labourCost: zod.number(),
+  rawMaterialCostPerBatch: zod.number(),
+  costPerPortion: zod.number(),
+  packIngredientCost: zod.number(),
+  totalPackCost: zod.number(),
+  grossMargin: zod.number().nullish(),
   createdAt: zod.string(),
 });
 export const ListRecipesResponse = zod.array(ListRecipesResponseItem);
@@ -396,6 +405,10 @@ export const CreateRecipeBody = zod.object({
   servingUnit: zod.string(),
   category: zod.string().nullish(),
   notes: zod.string().nullish(),
+  packSize: zod.number().optional(),
+  rrp: zod.number().optional(),
+  packagingCost: zod.number().optional(),
+  labourCost: zod.number().optional(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -426,6 +439,15 @@ export const GetRecipeResponse = zod
     servingUnit: zod.string(),
     category: zod.string().nullish(),
     notes: zod.string().nullish(),
+    packSize: zod.number(),
+    rrp: zod.number(),
+    packagingCost: zod.number(),
+    labourCost: zod.number(),
+    rawMaterialCostPerBatch: zod.number(),
+    costPerPortion: zod.number(),
+    packIngredientCost: zod.number(),
+    totalPackCost: zod.number(),
+    grossMargin: zod.number().nullish(),
     createdAt: zod.string(),
   })
   .and(
@@ -465,6 +487,10 @@ export const UpdateRecipeBody = zod.object({
   servingUnit: zod.string(),
   category: zod.string().nullish(),
   notes: zod.string().nullish(),
+  packSize: zod.number().optional(),
+  rrp: zod.number().optional(),
+  packagingCost: zod.number().optional(),
+  labourCost: zod.number().optional(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -487,6 +513,15 @@ export const UpdateRecipeResponse = zod.object({
   servingUnit: zod.string(),
   category: zod.string().nullish(),
   notes: zod.string().nullish(),
+  packSize: zod.number(),
+  rrp: zod.number(),
+  packagingCost: zod.number(),
+  labourCost: zod.number(),
+  rawMaterialCostPerBatch: zod.number(),
+  costPerPortion: zod.number(),
+  packIngredientCost: zod.number(),
+  totalPackCost: zod.number(),
+  grossMargin: zod.number().nullish(),
   createdAt: zod.string(),
 });
 
@@ -802,5 +837,56 @@ export const UpdateDispatchOrderResponse = zod.object({
  * @summary Delete a dispatch order
  */
 export const DeleteDispatchOrderParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+/**
+ * @summary List all category defaults
+ */
+export const ListCategoryDefaultsResponseItem = zod.object({
+  id: zod.number(),
+  category: zod.string(),
+  defaultPackagingCost: zod.number(),
+  defaultLabourCost: zod.number(),
+  createdAt: zod.string(),
+});
+export const ListCategoryDefaultsResponse = zod.array(
+  ListCategoryDefaultsResponseItem,
+);
+
+/**
+ * @summary Create a category default
+ */
+export const CreateCategoryDefaultBody = zod.object({
+  category: zod.string(),
+  defaultPackagingCost: zod.number(),
+  defaultLabourCost: zod.number(),
+});
+
+/**
+ * @summary Update a category default
+ */
+export const UpdateCategoryDefaultParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateCategoryDefaultBody = zod.object({
+  category: zod.string(),
+  defaultPackagingCost: zod.number(),
+  defaultLabourCost: zod.number(),
+});
+
+export const UpdateCategoryDefaultResponse = zod.object({
+  id: zod.number(),
+  category: zod.string(),
+  defaultPackagingCost: zod.number(),
+  defaultLabourCost: zod.number(),
+  createdAt: zod.string(),
+});
+
+/**
+ * @summary Delete a category default
+ */
+export const DeleteCategoryDefaultParams = zod.object({
   id: zod.coerce.number(),
 });
