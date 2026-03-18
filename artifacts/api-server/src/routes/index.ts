@@ -8,10 +8,12 @@ import stockRouter from "./stock";
 import salesRouter from "./sales";
 import dispatchesRouter from "./dispatches";
 import suppliersRouter from "./suppliers";
+import usersRouter from "./users";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
+router.use("/users", usersRouter);
 router.use("/suppliers", suppliersRouter);
 router.use("/ingredients", ingredientsRouter);
 router.use("/sub-recipes", subRecipesRouter);

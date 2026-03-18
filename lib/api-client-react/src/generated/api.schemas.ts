@@ -333,6 +333,58 @@ export interface CreateDispatchOrder {
   notes?: string | null;
 }
 
+export type AppUserRole = (typeof AppUserRole)[keyof typeof AppUserRole];
+
+export const AppUserRole = {
+  admin: "admin",
+  manager: "manager",
+  viewer: "viewer",
+} as const;
+
+export interface AppUser {
+  id: number;
+  name: string;
+  email: string;
+  role: AppUserRole;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CreateUserRole =
+  (typeof CreateUserRole)[keyof typeof CreateUserRole];
+
+export const CreateUserRole = {
+  admin: "admin",
+  manager: "manager",
+  viewer: "viewer",
+} as const;
+
+export interface CreateUser {
+  name: string;
+  email: string;
+  password: string;
+  role?: CreateUserRole;
+  isActive?: boolean;
+}
+
+export type UpdateUserRole =
+  (typeof UpdateUserRole)[keyof typeof UpdateUserRole];
+
+export const UpdateUserRole = {
+  admin: "admin",
+  manager: "manager",
+  viewer: "viewer",
+} as const;
+
+export interface UpdateUser {
+  name: string;
+  email: string;
+  password?: string | null;
+  role: UpdateUserRole;
+  isActive: boolean;
+}
+
 export type ListProductionPlansParams = {
   date?: string;
 };

@@ -33,6 +33,10 @@ import {
   useUpdateSupplier,
   useDeleteSupplier,
   getListSuppliersQueryKey,
+  useCreateUser,
+  useUpdateUser,
+  useDeleteUser,
+  getListUsersQueryKey,
 } from "@workspace/api-client-react";
 
 export function useAppMutations() {
@@ -49,6 +53,11 @@ export function useAppMutations() {
   };
 
   return {
+    // Users
+    createUser: useCreateUser({ mutation: { onSuccess: () => handleSuccess(getListUsersQueryKey(), "User created"), onError: handleError } }),
+    updateUser: useUpdateUser({ mutation: { onSuccess: () => handleSuccess(getListUsersQueryKey(), "User updated"), onError: handleError } }),
+    deleteUser: useDeleteUser({ mutation: { onSuccess: () => handleSuccess(getListUsersQueryKey(), "User deleted"), onError: handleError } }),
+
     // Suppliers
     createSupplier: useCreateSupplier({ mutation: { onSuccess: () => handleSuccess(getListSuppliersQueryKey(), "Supplier created"), onError: handleError } }),
     updateSupplier: useUpdateSupplier({ mutation: { onSuccess: () => handleSuccess(getListSuppliersQueryKey(), "Supplier updated"), onError: handleError } }),

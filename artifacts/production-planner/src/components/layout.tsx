@@ -11,6 +11,7 @@ import {
   TrendingUp, 
   Truck,
   Building2,
+  Settings,
 } from "lucide-react";
 
 const navItems = [
@@ -23,6 +24,10 @@ const navItems = [
   { name: "Stock Inventory", href: "/stock", icon: PackageSearch },
   { name: "Sales Data", href: "/sales", icon: TrendingUp },
   { name: "Dispatches", href: "/dispatches", icon: Truck },
+];
+
+const bottomNavItems = [
+  { name: "Settings", href: "/settings", icon: Settings },
 ];
 
 export function Layout({ children }: { children: ReactNode }) {
@@ -67,16 +72,42 @@ export function Layout({ children }: { children: ReactNode }) {
           })}
         </nav>
 
+        <div className="px-4 pb-2">
+          {bottomNavItems.map((item) => {
+            const isActive = location === item.href;
+            return (
+              <Link
+                key={item.name}
+                href={item.href}
+                className={`
+                  flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group relative
+                  ${isActive
+                    ? "text-primary font-semibold"
+                    : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}
+                `}
+              >
+                {isActive && (
+                  <motion.div
+                    layoutId="activeNavBottom"
+                    className="absolute inset-0 bg-primary/10 rounded-xl"
+                    transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                  />
+                )}
+                <item.icon className={`w-5 h-5 relative z-10 ${isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary"}`} />
+                <span className="relative z-10">{item.name}</span>
+              </Link>
+            );
+          })}
+        </div>
+
         <div className="p-4 border-t border-border">
           <div className="flex items-center gap-3 p-3 rounded-xl bg-secondary/30">
-            <img 
-              src={`https://images.unsplash.com/photo-1577219491135-ce391730fb2c?w=100&h=100&fit=crop`} 
-              alt="User" 
-              className="w-10 h-10 rounded-full border-2 border-background shadow-sm"
-            />
-            <div className="flex flex-col">
-              <span className="text-sm font-semibold">Chef Alex</span>
-              <span className="text-xs text-muted-foreground">Kitchen Manager</span>
+            <div className="w-10 h-10 rounded-full bg-primary/20 text-primary flex items-center justify-center font-semibold text-sm flex-shrink-0">
+              A
+            </div>
+            <div className="flex flex-col min-w-0">
+              <span className="text-sm font-semibold truncate">Admin</span>
+              <span className="text-xs text-muted-foreground capitalize">Administrator</span>
             </div>
           </div>
         </div>
@@ -86,7 +117,7 @@ export function Layout({ children }: { children: ReactNode }) {
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">
         <header className="h-16 border-b border-border bg-background/80 backdrop-blur-md flex items-center px-8 z-10">
           <h2 className="font-display font-semibold text-lg text-muted-foreground capitalize">
-            {navItems.find(n => n.href === location)?.name || "Dashboard"}
+            {[...navItems, ...bottomNavItems].find(n => n.href === location)?.name || "Dashboard"}
           </h2>
         </header>
         

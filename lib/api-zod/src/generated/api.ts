@@ -8,6 +8,80 @@
 import * as zod from "zod";
 
 /**
+ * @summary List all users
+ */
+export const ListUsersResponseItem = zod.object({
+  id: zod.number(),
+  name: zod.string(),
+  email: zod.string(),
+  role: zod.enum(["admin", "manager", "viewer"]),
+  isActive: zod.boolean(),
+  createdAt: zod.string(),
+  updatedAt: zod.string(),
+});
+export const ListUsersResponse = zod.array(ListUsersResponseItem);
+
+/**
+ * @summary Create a user
+ */
+export const CreateUserBody = zod.object({
+  name: zod.string(),
+  email: zod.string(),
+  password: zod.string(),
+  role: zod.enum(["admin", "manager", "viewer"]).optional(),
+  isActive: zod.boolean().optional(),
+});
+
+/**
+ * @summary Get user by ID
+ */
+export const GetUserParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetUserResponse = zod.object({
+  id: zod.number(),
+  name: zod.string(),
+  email: zod.string(),
+  role: zod.enum(["admin", "manager", "viewer"]),
+  isActive: zod.boolean(),
+  createdAt: zod.string(),
+  updatedAt: zod.string(),
+});
+
+/**
+ * @summary Update a user
+ */
+export const UpdateUserParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateUserBody = zod.object({
+  name: zod.string(),
+  email: zod.string(),
+  password: zod.string().nullish(),
+  role: zod.enum(["admin", "manager", "viewer"]),
+  isActive: zod.boolean(),
+});
+
+export const UpdateUserResponse = zod.object({
+  id: zod.number(),
+  name: zod.string(),
+  email: zod.string(),
+  role: zod.enum(["admin", "manager", "viewer"]),
+  isActive: zod.boolean(),
+  createdAt: zod.string(),
+  updatedAt: zod.string(),
+});
+
+/**
+ * @summary Delete a user
+ */
+export const DeleteUserParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+/**
  * @summary List all suppliers
  */
 export const ListSuppliersResponseItem = zod.object({
