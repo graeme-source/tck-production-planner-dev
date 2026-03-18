@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useListDispatchOrders, useListRecipes } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
-import { Truck, Plus, Trash2, CheckCircle2, ShoppingBag, Package, RefreshCw, AlertCircle } from "lucide-react";
+import { Truck, Plus, Trash2, CheckCircle2, ShoppingBag, Package, RefreshCw, AlertCircle, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -20,7 +20,18 @@ const schema = z.object({
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-async function fetchShopifyOrderSummary(tag: string) {
+interface ShopifyOrderSummary {
+  tag: string;
+  orderCount: number;
+  products: Array<{
+    productTitle: string;
+    variants: string[];
+    totalQuantity: number;
+    orderCount: number;
+  }>;
+}
+
+async function fetchShopifyOrderSummary(tag: string): Promise<ShopifyOrderSummary> {
   const res = await fetch(`${BASE}/api/shopify/order-summary?tag=${encodeURIComponent(tag)}`, {
     credentials: "include",
   });
@@ -28,20 +39,12 @@ async function fetchShopifyOrderSummary(tag: string) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error ?? "Failed to fetch Shopify data");
   }
-  return res.json() as Promise<{
-    tag: string;
-    orderCount: number;
-    products: Array<{
-      productTitle: string;
-      variantTitle: string | null;
-      sku: string;
-      totalQuantity: number;
-      orderCount: number;
-    }>;
-  }>;
+  return res.json();
 }
 
 type Tab = "schedule" | "shopify";
+type SortCol = "product" | "orders" | "qty";
+type SortDir = "asc" | "desc";
 
 export default function Dispatches() {
   const { data: dispatches, isLoading } = useListDispatchOrders();
@@ -51,6 +54,8 @@ export default function Dispatches() {
   const [tab, setTab] = useState<Tab>("schedule");
   const [dateTag, setDateTag] = useState(format(new Date(), "yyyy-MM-dd"));
   const [queryTag, setQueryTag] = useState<string | null>(null);
+  const [sortCol, setSortCol] = useState<SortCol>("qty");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   const { register, handleSubmit, reset } = useForm({
     resolver: zodResolver(schema),
@@ -62,6 +67,27 @@ export default function Dispatches() {
     queryFn: () => fetchShopifyOrderSummary(queryTag!),
     enabled: !!queryTag,
   });
+
+  const sortedProducts = useMemo(() => {
+    if (!shopifyData?.products) return [];
+    return [...shopifyData.products].sort((a, b) => {
+      let cmp = 0;
+      if (sortCol === "product") cmp = a.productTitle.localeCompare(b.productTitle);
+      else if (sortCol === "orders") cmp = a.orderCount - b.orderCount;
+      else if (sortCol === "qty") cmp = a.totalQuantity - b.totalQuantity;
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }, [shopifyData, sortCol, sortDir]);
+
+  function toggleSort(col: SortCol) {
+    if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortCol(col); setSortDir("desc"); }
+  }
+
+  function SortIcon({ col }: { col: SortCol }) {
+    if (sortCol !== col) return <ChevronsUpDown className="w-3.5 h-3.5 opacity-40" />;
+    return sortDir === "asc" ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />;
+  }
 
   const onSubmit = (data: z.infer<typeof schema>) => {
     createDispatch.mutate({ data: { ...data, dispatchDate: new Date(data.dispatchDate).toISOString() } }, {
@@ -199,15 +225,18 @@ export default function Dispatches() {
             <p className="text-sm text-muted-foreground mb-4">
               Enter a date to count how many of each product appear in Shopify orders tagged with that date.
             </p>
-            <div className="flex gap-3 items-end">
-              <div className="flex-1 max-w-xs">
-                <label className="text-sm font-medium mb-1 block">Delivery date tag</label>
+            <div className="flex gap-3 items-end flex-wrap">
+              <div className="flex-1 min-w-[200px] max-w-xs">
+                <label className="text-sm font-medium mb-1 block">Delivery date</label>
                 <input
                   type="date"
                   value={dateTag}
                   onChange={(e) => setDateTag(e.target.value)}
                   className="w-full px-3 py-2 bg-background border border-border rounded-lg focus-ring"
                 />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Searches orders tagged: <span className="font-mono font-medium text-foreground">{dateTag}</span>
+                </p>
               </div>
               <button
                 onClick={() => setQueryTag(dateTag)}
@@ -261,19 +290,31 @@ export default function Dispatches() {
                   <table className="w-full">
                     <thead>
                       <tr className="border-b border-border bg-secondary/40">
-                        <th className="text-left px-5 py-3.5 text-sm font-medium text-muted-foreground">Product</th>
-                        <th className="text-left px-5 py-3.5 text-sm font-medium text-muted-foreground">Variant</th>
-                        <th className="text-left px-5 py-3.5 text-sm font-medium text-muted-foreground">SKU</th>
-                        <th className="text-right px-5 py-3.5 text-sm font-medium text-muted-foreground">Orders</th>
-                        <th className="text-right px-5 py-3.5 text-sm font-medium text-muted-foreground">Total Qty</th>
+                        <th className="text-left px-5 py-3.5">
+                          <button onClick={() => toggleSort("product")} className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+                            Product <SortIcon col="product" />
+                          </button>
+                        </th>
+                        <th className="text-left px-5 py-3.5 text-sm font-medium text-muted-foreground">Variants</th>
+                        <th className="text-right px-5 py-3.5">
+                          <button onClick={() => toggleSort("orders")} className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors ml-auto">
+                            Orders <SortIcon col="orders" />
+                          </button>
+                        </th>
+                        <th className="text-right px-5 py-3.5">
+                          <button onClick={() => toggleSort("qty")} className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors ml-auto">
+                            Total Qty <SortIcon col="qty" />
+                          </button>
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
-                      {shopifyData.products.map((p, i) => (
+                      {sortedProducts.map((p, i) => (
                         <tr key={i} className="border-b border-border last:border-0 hover:bg-secondary/20 transition-colors">
                           <td className="px-5 py-3.5 font-medium">{p.productTitle}</td>
-                          <td className="px-5 py-3.5 text-muted-foreground text-sm">{p.variantTitle || "—"}</td>
-                          <td className="px-5 py-3.5 text-muted-foreground text-sm font-mono">{p.sku || "—"}</td>
+                          <td className="px-5 py-3.5 text-muted-foreground text-sm">
+                            {p.variants.length > 0 ? p.variants.join(", ") : "—"}
+                          </td>
                           <td className="px-5 py-3.5 text-right text-muted-foreground">{p.orderCount}</td>
                           <td className="px-5 py-3.5 text-right">
                             <span className="font-bold text-lg bg-secondary px-3 py-1 rounded-lg">{p.totalQuantity}</span>
@@ -283,7 +324,7 @@ export default function Dispatches() {
                     </tbody>
                     <tfoot>
                       <tr className="border-t border-border bg-secondary/40">
-                        <td colSpan={4} className="px-5 py-3.5 text-sm font-medium text-muted-foreground">Total units</td>
+                        <td colSpan={3} className="px-5 py-3.5 text-sm font-medium text-muted-foreground">Total units</td>
                         <td className="px-5 py-3.5 text-right">
                           <span className="font-bold text-lg">
                             {shopifyData.products.reduce((s, p) => s + p.totalQuantity, 0)}

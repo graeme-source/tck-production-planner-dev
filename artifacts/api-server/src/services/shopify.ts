@@ -175,8 +175,7 @@ export async function getProducts(): Promise<ShopifyProduct[]> {
 
 export interface ProductCount {
   productTitle: string;
-  variantTitle: string | null;
-  sku: string;
+  variants: string[];
   totalQuantity: number;
   orderCount: number;
 }
@@ -187,16 +186,18 @@ export async function countProductsByTag(tag: string): Promise<ProductCount[]> {
 
   for (const order of orders) {
     for (const item of order.line_items) {
-      const key = `${item.title}||${item.variant_title || ""}||${item.sku}`;
+      const key = item.title;
       const existing = counts.get(key);
       if (existing) {
         existing.totalQuantity += item.quantity;
         existing.orderCount += 1;
+        if (item.variant_title && !existing.variants.includes(item.variant_title)) {
+          existing.variants.push(item.variant_title);
+        }
       } else {
         counts.set(key, {
           productTitle: item.title,
-          variantTitle: item.variant_title,
-          sku: item.sku,
+          variants: item.variant_title ? [item.variant_title] : [],
           totalQuantity: item.quantity,
           orderCount: 1,
         });
