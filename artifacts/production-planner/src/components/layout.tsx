@@ -41,11 +41,18 @@ export function Layout({ children }: { children: ReactNode }) {
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
       {/* Sidebar */}
       <aside className="w-64 flex-shrink-0 border-r border-border bg-card/50 backdrop-blur-md flex flex-col hidden md:flex relative z-10">
-        <div className="p-6 flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-primary text-primary-foreground flex items-center justify-center font-display font-bold shadow-lg shadow-primary/20">
-            P
+        <div className="px-5 py-4 flex items-center gap-3">
+          <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-primary flex items-center justify-center shadow-lg shadow-primary/20 p-1.5">
+            <img
+              src={`${import.meta.env.BASE_URL}tck-logo-short-cream.png`}
+              alt="TCK"
+              className="w-full h-full object-contain"
+            />
           </div>
-          <span className="font-display font-bold text-xl tracking-tight text-foreground">ProPlanner</span>
+          <div className="flex flex-col min-w-0">
+            <span className="font-display font-bold text-sm leading-tight tracking-tight text-foreground truncate">The Calzone Kitchen</span>
+            <span className="text-xs text-muted-foreground">Production Planner</span>
+          </div>
         </div>
         
         <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">

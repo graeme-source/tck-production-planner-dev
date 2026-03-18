@@ -22,11 +22,13 @@ export default function Login() {
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         {/* Logo */}
-        <div className="flex items-center gap-3 justify-center mb-8">
-          <div className="w-10 h-10 rounded-2xl bg-primary text-primary-foreground flex items-center justify-center font-display font-bold text-lg shadow-lg shadow-primary/20">
-            P
-          </div>
-          <span className="font-display font-bold text-2xl tracking-tight">ProPlanner</span>
+        <div className="flex flex-col items-center gap-2 mb-8">
+          <img
+            src={`${import.meta.env.BASE_URL}tck-logo-dark.png`}
+            alt="The Calzone Kitchen"
+            className="h-20 w-auto object-contain"
+          />
+          <span className="text-xs text-muted-foreground tracking-widest uppercase font-medium">Production Planner</span>
         </div>
 
         {/* Card */}
