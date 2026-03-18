@@ -46,6 +46,11 @@ type Tab = "schedule" | "shopify";
 type SortCol = "product" | "orders" | "qty";
 type SortDir = "asc" | "desc";
 
+function SortIcon({ col, sortCol, sortDir }: { col: SortCol; sortCol: SortCol; sortDir: SortDir }) {
+  if (sortCol !== col) return <ChevronsUpDown className="w-3.5 h-3.5 opacity-40" />;
+  return sortDir === "asc" ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />;
+}
+
 export default function Dispatches() {
   const { data: dispatches, isLoading } = useListDispatchOrders();
   const { data: recipes } = useListRecipes();
@@ -82,11 +87,6 @@ export default function Dispatches() {
   function toggleSort(col: SortCol) {
     if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
     else { setSortCol(col); setSortDir("desc"); }
-  }
-
-  function SortIcon({ col }: { col: SortCol }) {
-    if (sortCol !== col) return <ChevronsUpDown className="w-3.5 h-3.5 opacity-40" />;
-    return sortDir === "asc" ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />;
   }
 
   const onSubmit = (data: z.infer<typeof schema>) => {
@@ -292,18 +292,18 @@ export default function Dispatches() {
                       <tr className="border-b border-border bg-secondary/40">
                         <th className="text-left px-5 py-3.5">
                           <button onClick={() => toggleSort("product")} className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
-                            Product <SortIcon col="product" />
+                            Product <SortIcon col="product" sortCol={sortCol} sortDir={sortDir} />
                           </button>
                         </th>
                         <th className="text-left px-5 py-3.5 text-sm font-medium text-muted-foreground">Variants</th>
                         <th className="text-right px-5 py-3.5">
                           <button onClick={() => toggleSort("orders")} className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors ml-auto">
-                            Orders <SortIcon col="orders" />
+                            Orders <SortIcon col="orders" sortCol={sortCol} sortDir={sortDir} />
                           </button>
                         </th>
                         <th className="text-right px-5 py-3.5">
                           <button onClick={() => toggleSort("qty")} className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors ml-auto">
-                            Total Qty <SortIcon col="qty" />
+                            Total Qty <SortIcon col="qty" sortCol={sortCol} sortDir={sortDir} />
                           </button>
                         </th>
                       </tr>
@@ -313,7 +313,7 @@ export default function Dispatches() {
                         <tr key={i} className="border-b border-border last:border-0 hover:bg-secondary/20 transition-colors">
                           <td className="px-5 py-3.5 font-medium">{p.productTitle}</td>
                           <td className="px-5 py-3.5 text-muted-foreground text-sm">
-                            {p.variants.length > 0 ? p.variants.join(", ") : "—"}
+                            {(p.variants ?? []).length > 0 ? (p.variants ?? []).join(", ") : "—"}
                           </td>
                           <td className="px-5 py-3.5 text-right text-muted-foreground">{p.orderCount}</td>
                           <td className="px-5 py-3.5 text-right">
