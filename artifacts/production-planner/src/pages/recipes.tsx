@@ -3,7 +3,7 @@ import { useListRecipes, useListIngredients, useListSubRecipes, useGetRecipe, us
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
-import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench } from "lucide-react";
+import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2 } from "lucide-react";
 import { useForm, useFieldArray } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -319,6 +319,209 @@ function EditRecipeDialog({
   );
 }
 
+// ── Cost Breakdown Dialog ─────────────────────────────────────────────────────
+
+type BreakdownIngredient = {
+  ingredientName: string | null;
+  unit: string | null;
+  quantity: number;
+  costPerUnit: number;
+  allocatedCostBatch: number;
+  allocatedCostPortion: number;
+};
+
+type BreakdownSubRecipe = {
+  subRecipeId: number | null;
+  subRecipeName: string | null;
+  quantity: number;
+  unit: string | null;
+  subYield: number;
+  subCostPerUnit: number;
+  lineCostPortion: number;
+  breakdown: BreakdownIngredient[];
+};
+
+type BreakdownRawIngredient = {
+  ingredientName: string | null;
+  unit: string | null;
+  quantity: number;
+  costPerUnit: number;
+  lineCostPortion: number;
+};
+
+function SubRecipeBreakdownRow({ sub, servingUnit }: { sub: BreakdownSubRecipe; servingUnit: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <tr className="bg-accent/5 border-t border-border/40">
+        <td className="pl-4 pr-2 py-2.5">
+          <button
+            onClick={() => setOpen(v => !v)}
+            className="flex items-center gap-1.5 font-medium text-accent hover:text-accent/80 transition-colors text-sm"
+          >
+            {open ? <ChevronDown className="w-3.5 h-3.5 flex-shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 flex-shrink-0" />}
+            {sub.subRecipeName ?? "—"}
+          </button>
+        </td>
+        <td className="px-2 py-2.5 text-xs text-muted-foreground text-right">
+          {sub.quantity} {sub.unit}
+        </td>
+        <td className="px-2 py-2.5 text-xs text-muted-foreground text-right">
+          £{fmt(sub.subCostPerUnit)}/{sub.unit}
+        </td>
+        <td className="px-2 py-2.5 text-right font-semibold text-sm">
+          £{fmt(sub.lineCostPortion)}
+          <span className="text-xs font-normal text-muted-foreground">/{servingUnit}</span>
+        </td>
+      </tr>
+      {open && sub.breakdown.map((b, i) => (
+        <tr key={i} className="bg-accent/5">
+          <td className="pl-10 pr-2 py-1.5 text-xs text-muted-foreground flex items-center gap-1">
+            <span className="text-accent/40 mr-1">└</span>{b.ingredientName ?? "—"}
+          </td>
+          <td className="px-2 py-1.5 text-xs text-muted-foreground text-right">
+            {fmt(b.quantity)} {b.unit}
+          </td>
+          <td className="px-2 py-1.5 text-xs text-muted-foreground text-right">
+            £{fmt(b.costPerUnit)}/{b.unit}
+          </td>
+          <td className="px-2 py-1.5 text-right text-xs text-muted-foreground">
+            £{b.allocatedCostPortion.toFixed(4)}
+            <span className="text-muted-foreground/60">/{servingUnit}</span>
+          </td>
+        </tr>
+      ))}
+    </>
+  );
+}
+
+function RecipeCostBreakdownDialog({ id, open, onOpenChange }: { id: number; open: boolean; onOpenChange: (v: boolean) => void }) {
+  const { data: detail, isLoading } = useGetRecipe(id, { query: { enabled: open } });
+
+  const d = detail as any;
+  const servings = Number(d?.servings ?? 1);
+  const servingUnit = d?.servingUnit ?? "portion";
+  const rawIngredients: BreakdownRawIngredient[] = (d?.ingredients ?? []).map((i: any) => ({
+    ingredientName: i.ingredientName,
+    unit: i.unit,
+    quantity: i.quantity,
+    costPerUnit: i.costPerUnit,
+    lineCostPortion: i.lineCostPortion,
+  }));
+  const subRecipes: BreakdownSubRecipe[] = (d?.subRecipes ?? []).map((s: any) => ({
+    subRecipeId: s.subRecipeId,
+    subRecipeName: s.subRecipeName,
+    quantity: s.quantity,
+    unit: s.unit,
+    subYield: s.subYield,
+    subCostPerUnit: s.subCostPerUnit,
+    lineCostPortion: s.lineCostPortion,
+    breakdown: s.breakdown ?? [],
+  }));
+
+  const totalRaw = rawIngredients.reduce((a, r) => a + r.lineCostPortion, 0);
+  const totalSub = subRecipes.reduce((a, s) => a + s.lineCostPortion, 0);
+  const totalPerPortion = totalRaw + totalSub;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[680px] bg-card border-border rounded-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="font-display text-xl flex items-center gap-2">
+            <BarChart2 className="w-5 h-5 text-primary" />
+            Cost Breakdown — {d?.name ?? "…"}
+          </DialogTitle>
+          {d && (
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Batch: {servings} {servingUnit} · All costs shown per {servingUnit}
+            </p>
+          )}
+        </DialogHeader>
+
+        {isLoading ? (
+          <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+        ) : (
+          <div className="space-y-4 mt-2">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-secondary/40 text-xs text-muted-foreground">
+                  <th className="px-4 py-2 text-left font-medium">Ingredient / Prep item</th>
+                  <th className="px-2 py-2 text-right font-medium">Qty used</th>
+                  <th className="px-2 py-2 text-right font-medium">Cost / unit</th>
+                  <th className="px-2 py-2 text-right font-medium">Per {servingUnit}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/30">
+                {/* Raw ingredients */}
+                {rawIngredients.map((r, i) => (
+                  <tr key={i} className="hover:bg-secondary/10">
+                    <td className="pl-4 pr-2 py-2.5 font-medium text-sm">{r.ingredientName ?? "—"}</td>
+                    <td className="px-2 py-2.5 text-xs text-muted-foreground text-right">{fmt(r.quantity)} {r.unit}</td>
+                    <td className="px-2 py-2.5 text-xs text-muted-foreground text-right">£{fmt(r.costPerUnit)}/{r.unit}</td>
+                    <td className="px-2 py-2.5 text-right font-semibold">
+                      £{fmt(r.lineCostPortion)}
+                      <span className="text-xs font-normal text-muted-foreground">/{servingUnit}</span>
+                    </td>
+                  </tr>
+                ))}
+
+                {/* Sub-recipes */}
+                {subRecipes.map((s, i) => (
+                  <SubRecipeBreakdownRow key={i} sub={s} servingUnit={servingUnit} />
+                ))}
+
+                {/* Total row */}
+                <tr className="border-t-2 border-border bg-secondary/20">
+                  <td colSpan={3} className="px-4 py-3 font-bold">Raw material cost</td>
+                  <td className="px-2 py-3 text-right font-bold text-primary">
+                    £{fmt(totalPerPortion)}/{servingUnit}
+                  </td>
+                </tr>
+
+                {/* Packaging + labour if set */}
+                {(Number(d?.packagingCost) > 0 || Number(d?.labourCost) > 0) && <>
+                  {Number(d?.packagingCost) > 0 && (
+                    <tr className="bg-secondary/10">
+                      <td colSpan={3} className="px-4 py-2 text-sm text-muted-foreground flex items-center gap-2">
+                        <Package className="w-3.5 h-3.5 inline mr-1" /> Packaging (per pack of {d?.packSize} {servingUnit})
+                      </td>
+                      <td className="px-2 py-2 text-right text-sm">£{fmt(Number(d?.packagingCost))}/pack</td>
+                    </tr>
+                  )}
+                  {Number(d?.labourCost) > 0 && (
+                    <tr className="bg-secondary/10">
+                      <td colSpan={3} className="px-4 py-2 text-sm text-muted-foreground">
+                        <Wrench className="w-3.5 h-3.5 inline mr-1" /> Labour (per pack)
+                      </td>
+                      <td className="px-2 py-2 text-right text-sm">£{fmt(Number(d?.labourCost))}/pack</td>
+                    </tr>
+                  )}
+                  <tr className="bg-secondary/20">
+                    <td colSpan={3} className="px-4 py-2.5 font-bold text-sm">Total pack cost</td>
+                    <td className="px-2 py-2.5 text-right font-bold">£{fmt(Number(d?.totalPackCost))}/pack</td>
+                  </tr>
+                  {Number(d?.rrp) > 0 && (
+                    <tr className="bg-secondary/10">
+                      <td colSpan={3} className="px-4 py-2 text-sm font-medium">
+                        Gross margin at £{fmt(Number(d?.rrp))} RRP
+                      </td>
+                      <td className="px-2 py-2 text-right">
+                        <MarginBadge margin={d?.grossMargin} />
+                      </td>
+                    </tr>
+                  )}
+                </>}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Recipe Card & List ────────────────────────────────────────────────────────
+
 type RecipeItem = {
   id: number; name: string; description?: string | null; category?: string | null;
   servings: number; servingUnit: string;
@@ -327,7 +530,7 @@ type RecipeItem = {
   totalPackCost: number; grossMargin: number | null;
 };
 
-function RecipeCard({ recipe, onEdit, onDelete }: { recipe: RecipeItem; onEdit: () => void; onDelete: () => void }) {
+function RecipeCard({ recipe, onEdit, onDelete, onBreakdown }: { recipe: RecipeItem; onEdit: () => void; onDelete: () => void; onBreakdown: () => void }) {
   const margin = recipe.grossMargin;
   const borderColor = margin == null ? "border-border" : margin >= 60 ? "border-green-300" : margin >= 50 ? "border-amber-300" : "border-red-300";
   const topBg = margin == null ? "from-primary/10 to-accent/10" : margin >= 60 ? "from-green-50 to-emerald-100" : margin >= 50 ? "from-amber-50 to-orange-100" : "from-red-50 to-pink-100";
@@ -347,6 +550,7 @@ function RecipeCard({ recipe, onEdit, onDelete }: { recipe: RecipeItem; onEdit: 
         <div className="flex items-center gap-1.5">
           <MarginBadge margin={margin} />
           <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-1">
+            <button onClick={onBreakdown} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-primary flex items-center justify-center hover:bg-primary hover:text-white transition-colors shadow-sm" title="Cost Breakdown"><BarChart2 className="w-3 h-3" /></button>
             <button onClick={onEdit} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-foreground transition-colors shadow-sm" title="Edit"><Edit2 className="w-3 h-3" /></button>
             <button onClick={onDelete} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-destructive flex items-center justify-center hover:bg-destructive hover:text-white transition-colors shadow-sm" title="Delete"><Trash2 className="w-3 h-3" /></button>
           </div>
@@ -406,6 +610,7 @@ export default function Recipes() {
   const { createRecipe, deleteRecipe } = useAppMutations();
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [breakdownId, setBreakdownId] = useState<number | null>(null);
 
   const ingredientList = ingredients ?? [];
   const subRecipeList = subRecipesData ?? [];
@@ -455,6 +660,15 @@ export default function Recipes() {
         </DialogContent>
       </Dialog>
 
+      {/* Cost breakdown dialog */}
+      {breakdownId !== null && (
+        <RecipeCostBreakdownDialog
+          id={breakdownId}
+          open={breakdownId !== null}
+          onOpenChange={(v) => { if (!v) setBreakdownId(null); }}
+        />
+      )}
+
       {/* Edit dialog */}
       {editingId !== null && (
         <EditRecipeDialog
@@ -484,6 +698,7 @@ export default function Recipes() {
             recipe={recipe as RecipeItem}
             onEdit={() => setEditingId(recipe.id)}
             onDelete={() => { if (confirm(`Delete "${recipe.name}"?`)) deleteRecipe.mutate({ id: recipe.id }); }}
+            onBreakdown={() => setBreakdownId(recipe.id)}
           />
         ))}
       </div>
