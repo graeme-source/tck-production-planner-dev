@@ -136,19 +136,38 @@ export async function getOrdersByTag(tag: string): Promise<ShopifyOrder[]> {
 
 export async function getProducts(): Promise<ShopifyProduct[]> {
   const allProducts: ShopifyProduct[] = [];
-  let page = 1;
-  const limit = 250;
+  let pageInfo: string | null = null;
 
   while (true) {
-    const data = (await shopifyFetch("/products.json", {
-      limit: String(limit),
-      page: String(page),
+    const params: Record<string, string> = {
+      limit: "250",
       fields: "id,title,status,variants,image",
-    })) as { products: ShopifyProduct[] };
+    };
+    if (pageInfo) params.page_info = pageInfo;
 
+    const token = await getAccessToken();
+    const url = new URL(`${API_BASE}/products.json`);
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+
+    const res = await fetch(url.toString(), {
+      headers: {
+        "X-Shopify-Access-Token": token,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Shopify API error ${res.status}: ${text}`);
+    }
+
+    const data = (await res.json()) as { products: ShopifyProduct[] };
     allProducts.push(...data.products);
-    if (data.products.length < limit) break;
-    page++;
+
+    const linkHeader = res.headers.get("Link") ?? "";
+    const nextMatch = linkHeader.match(/<[^>]*[?&]page_info=([^&>]+)[^>]*>;\s*rel="next"/);
+    if (!nextMatch || data.products.length < 250) break;
+    pageInfo = nextMatch[1];
   }
 
   return allProducts;
