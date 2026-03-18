@@ -3,7 +3,7 @@ import { useListSubRecipes, useListIngredients, useGetSubRecipe } from "@workspa
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
-import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2 } from "lucide-react";
+import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { useForm, useFieldArray } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -23,6 +23,60 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
+function YieldSanityCheck({
+  ingredientRows,
+  allIngredients,
+  yieldValue,
+  yieldUnit,
+}: {
+  ingredientRows: { ingredientId: number; quantity: number }[];
+  allIngredients: { id: number; name: string; unit: string }[];
+  yieldValue: number;
+  yieldUnit: string;
+}) {
+  // Sum kg-equivalent inputs (g → kg, kg stays kg; skip non-weight units)
+  let totalKg = 0;
+  let allWeight = true;
+  for (const row of ingredientRows) {
+    const ing = allIngredients.find(i => i.id === row.ingredientId);
+    if (!ing) continue;
+    if (ing.unit === "kg") totalKg += row.quantity;
+    else if (ing.unit === "g") totalKg += row.quantity / 1000;
+    else allWeight = false;
+  }
+
+  if (totalKg === 0) return null;
+  const yieldKg = yieldUnit === "kg" ? yieldValue : yieldUnit === "g" ? yieldValue / 1000 : null;
+  if (yieldKg === null) return null;
+
+  const ratio = yieldKg / totalKg;
+  const pct = (ratio * 100).toFixed(0);
+  const ok = ratio >= 0.5 && ratio <= 1.05; // 50–105% is physically plausible
+  const warning = !ok;
+
+  return (
+    <div className={`rounded-lg px-3.5 py-2.5 text-sm flex items-start gap-2.5 ${warning ? "bg-amber-50 border border-amber-200 text-amber-800" : "bg-green-50 border border-green-200 text-green-800"}`}>
+      {warning
+        ? <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+        : <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
+      }
+      <div>
+        <span className="font-medium">
+          {allWeight ? "" : "Weight-only ingredients: "}
+          Input {totalKg.toFixed(3)} kg → Yield {yieldKg.toFixed(3)} kg ({pct}% retention)
+        </span>
+        {warning && (
+          <p className="text-xs mt-0.5">
+            {ratio < 0.5
+              ? "Yield looks low vs inputs — did you mean a larger yield? (e.g. a batch of " + totalKg.toFixed(1) + " kg)"
+              : "Yield exceeds total input weight — please check ingredient quantities or yield value."}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function SubRecipeForm({
   defaultValues,
   onSubmit,
@@ -36,16 +90,19 @@ function SubRecipeForm({
   isEdit: boolean;
   ingredients: { id: number; name: string; unit: string }[];
 }) {
-  const { register, control, handleSubmit, setValue, formState: { errors } } = useForm<FormValues>({
+  const { register, control, handleSubmit, setValue, watch, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues,
   });
   const { fields, append, remove } = useFieldArray({ control, name: "ingredients" });
 
-  // Local ingredient list — grows when user quick-adds new ones
   const [localIngredients, setLocalIngredients] = useState(initialIngredients);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickAddTargetIndex, setQuickAddTargetIndex] = useState<number | null>(null);
+
+  const watchedIngredients = watch("ingredients");
+  const watchedYield = watch("yield");
+  const watchedYieldUnit = watch("yieldUnit");
 
   const openQuickAdd = (index: number) => {
     setQuickAddTargetIndex(index);
@@ -53,9 +110,7 @@ function SubRecipeForm({
   };
 
   const handleIngredientCreated = (ingredient: { id: number; name: string; unit: string }) => {
-    // Add to local list so it appears in all dropdowns immediately
     setLocalIngredients(prev => [...prev, ingredient]);
-    // Auto-select in the target row
     if (quickAddTargetIndex !== null) {
       setValue(`ingredients.${quickAddTargetIndex}.ingredientId`, ingredient.id);
     }
@@ -64,11 +119,7 @@ function SubRecipeForm({
 
   return (
     <>
-      <QuickAddIngredientDialog
-        open={quickAddOpen}
-        onOpenChange={setQuickAddOpen}
-        onCreated={handleIngredientCreated}
-      />
+      <QuickAddIngredientDialog open={quickAddOpen} onOpenChange={setQuickAddOpen} onCreated={handleIngredientCreated} />
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-5 mt-4">
         <div>
@@ -76,7 +127,7 @@ function SubRecipeForm({
           <input
             {...register("name")}
             className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-            placeholder="e.g. Tomato Base Sauce"
+            placeholder="e.g. Calzone Dough"
           />
           {errors.name && <span className="text-destructive text-xs">{errors.name.message}</span>}
         </div>
@@ -85,28 +136,30 @@ function SubRecipeForm({
           <label className="text-sm font-medium mb-1 block">Description (optional)</label>
           <textarea
             {...register("description")}
-            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[60px] resize-none"
+            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[48px] resize-none"
             placeholder="Brief description..."
           />
         </div>
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="text-sm font-medium mb-1 block">Expected Yield</label>
+            <label className="text-sm font-medium mb-1 block">Batch Yield *</label>
             <input
               type="number"
               step="0.001"
               {...register("yield")}
               className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              placeholder="e.g. 32.76"
             />
+            <p className="text-xs text-muted-foreground mt-1">Total output quantity from this batch</p>
             {errors.yield && <span className="text-destructive text-xs">{errors.yield.message}</span>}
           </div>
           <div>
-            <label className="text-sm font-medium mb-1 block">Yield Unit</label>
+            <label className="text-sm font-medium mb-1 block">Yield Unit *</label>
             <input
               {...register("yieldUnit")}
               className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-              placeholder="kg, L, batches"
+              placeholder="kg, L, portions"
             />
           </div>
         </div>
@@ -127,53 +180,79 @@ function SubRecipeForm({
           )}
 
           {fields.length === 0 && (
-            <p className="text-xs text-muted-foreground italic py-2">
-              No ingredients yet — click "Add Row" to start.
-            </p>
+            <p className="text-xs text-muted-foreground italic py-2">No ingredients yet — click "Add Row" to start.</p>
+          )}
+
+          {/* Column headers */}
+          {fields.length > 0 && (
+            <div className="grid grid-cols-[1fr_80px_44px_44px] gap-2 mb-1 px-1">
+              <span className="text-xs text-muted-foreground font-medium">Ingredient</span>
+              <span className="text-xs text-muted-foreground font-medium text-center">Quantity</span>
+              <span />
+              <span />
+            </div>
           )}
 
           <div className="space-y-2">
-            {fields.map((field, index) => (
-              <div key={field.id} className="flex gap-2 items-center">
-                <select
-                  {...register(`ingredients.${index}.ingredientId`)}
-                  className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                >
-                  <option value={0} disabled>Select ingredient...</option>
-                  {localIngredients.map(i => (
-                    <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>
-                  ))}
-                </select>
-                <input
-                  type="number"
-                  step="0.001"
-                  {...register(`ingredients.${index}.quantity`)}
-                  className="w-24 px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  placeholder="Qty"
-                />
-                <button
-                  type="button"
-                  title="Add new ingredient to database"
-                  onClick={() => openQuickAdd(index)}
-                  className="flex-shrink-0 px-2.5 py-2 rounded-lg border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-colors text-xs font-semibold leading-none"
-                >
-                  + New
-                </button>
-                <button
-                  type="button"
-                  onClick={() => remove(index)}
-                  className="p-1.5 text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
+            {fields.map((field, index) => {
+              const selectedId = Number(watchedIngredients?.[index]?.ingredientId ?? 0);
+              const selectedIng = localIngredients.find(i => i.id === selectedId);
+              const unit = selectedIng?.unit ?? "";
+              return (
+                <div key={field.id} className="grid grid-cols-[1fr_80px_44px_44px] gap-2 items-center">
+                  <select
+                    {...register(`ingredients.${index}.ingredientId`)}
+                    className="px-2 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 truncate"
+                  >
+                    <option value={0} disabled>Select ingredient...</option>
+                    {localIngredients.map(i => (
+                      <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>
+                    ))}
+                  </select>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      step="0.001"
+                      {...register(`ingredients.${index}.quantity`)}
+                      className="w-full px-2 py-2 pr-7 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      placeholder="Qty"
+                    />
+                    {unit && (
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">
+                        {unit}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    title="Add new ingredient"
+                    onClick={() => openQuickAdd(index)}
+                    className="px-1.5 py-2 rounded-lg border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-colors text-xs font-semibold"
+                  >
+                    +New
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => remove(index)}
+                    className="flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              );
+            })}
           </div>
 
+          {/* Yield sanity check */}
           {fields.length > 0 && (
-            <p className="text-xs text-muted-foreground mt-2">
-              Tip: Click <span className="font-semibold text-primary">+ New</span> next to any row to create a new ingredient without leaving this form.
-            </p>
+            <div className="mt-3">
+              <YieldSanityCheck
+                ingredientRows={watchedIngredients ?? []}
+                allIngredients={localIngredients}
+                yieldValue={watchedYield ?? 0}
+                yieldUnit={watchedYieldUnit ?? "kg"}
+              />
+            </div>
           )}
         </div>
 
@@ -181,7 +260,7 @@ function SubRecipeForm({
           <label className="text-sm font-medium mb-1 block">Notes (optional)</label>
           <textarea
             {...register("notes")}
-            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[60px] resize-none"
+            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[56px] resize-none"
           />
         </div>
 
@@ -282,7 +361,6 @@ export default function SubRecipes() {
         }
       />
 
-      {/* Add dialog */}
       <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
         <DialogContent className="sm:max-w-[600px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -298,7 +376,6 @@ export default function SubRecipes() {
         </DialogContent>
       </Dialog>
 
-      {/* Edit dialog */}
       {editingId !== null && (
         <EditSubRecipeDialog
           id={editingId}
