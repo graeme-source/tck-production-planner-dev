@@ -27,3 +27,9 @@ timeoutMs = 20000
 
 [nix]
 channel = "stable-25_05"
+
+[userenv]
+
+[userenv.shared]
+SHOPIFY_CLIENT_ID = "e355d017992f9dbfa132ee7d06e61ec6"
+SHOPIFY_STORE_DOMAIN = "the-calzone-kitchen.myshopify.com"

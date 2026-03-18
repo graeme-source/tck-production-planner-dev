@@ -11,6 +11,7 @@ import dispatchesRouter from "./dispatches";
 import suppliersRouter from "./suppliers";
 import usersRouter from "./users";
 import categoryDefaultsRouter from "./category-defaults";
+import shopifyRouter from "./shopify";
 
 const router: IRouter = Router();
 
@@ -38,5 +39,6 @@ router.use("/production-plans", productionPlansRouter);
 router.use("/stock-entries", stockRouter);
 router.use("/sales-entries", salesRouter);
 router.use("/dispatch-orders", dispatchesRouter);
+router.use("/shopify", shopifyRouter);
 
 export default router;
