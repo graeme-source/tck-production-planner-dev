@@ -49,10 +49,15 @@ export default function Ingredients() {
 
   const supplierMap = Object.fromEntries((suppliers ?? []).map(s => [s.id, s.name]));
 
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<FormValues>({
+  const { register, handleSubmit, reset, watch, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: emptyDefaults,
   });
+
+  const watchedUnit = watch("unit");
+  const watchedPackWeight = watch("packWeight");
+  const watchedCostPerPack = watch("costPerPack");
+  const liveCostPerUnit = watchedPackWeight > 0 ? watchedCostPerPack / watchedPackWeight : null;
 
   const openAdd = () => {
     setEditingId(null);
@@ -182,19 +187,21 @@ export default function Ingredients() {
             {/* Pack Weight + Cost per Pack */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-sm font-medium mb-1 block">Pack Size *</label>
+                <label className="text-sm font-medium mb-1 block">
+                  Pack size ({watchedUnit || "unit"}) *
+                </label>
                 <input
                   type="number"
                   step="0.001"
                   {...register("packWeight")}
                   className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  placeholder="0.00"
+                  placeholder="e.g. 500"
                 />
-                <p className="text-xs text-muted-foreground mt-1">Qty per pack (in the chosen unit)</p>
+                <p className="text-xs text-muted-foreground mt-1">How many {watchedUnit || "units"} in one pack</p>
                 {errors.packWeight && <span className="text-destructive text-xs">{errors.packWeight.message}</span>}
               </div>
               <div>
-                <label className="text-sm font-medium mb-1 block">Cost per Pack (£) *</label>
+                <label className="text-sm font-medium mb-1 block">Cost per pack (£) *</label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm font-medium">£</span>
                   <input
@@ -208,6 +215,14 @@ export default function Ingredients() {
                 {errors.costPerPack && <span className="text-destructive text-xs">{errors.costPerPack.message}</span>}
               </div>
             </div>
+            {liveCostPerUnit !== null && (
+              <div className="rounded-lg bg-secondary/30 border border-border px-3.5 py-2.5 text-sm flex items-center justify-between">
+                <span className="text-muted-foreground">Implied cost per {watchedUnit || "unit"}:</span>
+                <span className="font-semibold tabular-nums">
+                  £{liveCostPerUnit.toFixed(4)} / {watchedUnit || "unit"}
+                </span>
+              </div>
+            )}
 
             {/* Supplier + Secondary Supplier */}
             <div className="grid grid-cols-2 gap-3">
