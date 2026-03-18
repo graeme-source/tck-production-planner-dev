@@ -61,6 +61,7 @@ export default function Dispatches() {
   const [queryTag, setQueryTag] = useState<string | null>(null);
   const [sortCol, setSortCol] = useState<SortCol>("qty");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [variantFilter, setVariantFilter] = useState("2 Pack");
 
   const { register, handleSubmit, reset } = useForm({
     resolver: zodResolver(schema),
@@ -75,14 +76,20 @@ export default function Dispatches() {
 
   const sortedProducts = useMemo(() => {
     if (!shopifyData?.products) return [];
-    return [...shopifyData.products].sort((a, b) => {
+    const filterLower = variantFilter.trim().toLowerCase();
+    const filtered = filterLower
+      ? shopifyData.products.filter(p =>
+          (p.variants ?? []).some(v => v.toLowerCase().includes(filterLower))
+        )
+      : shopifyData.products;
+    return [...filtered].sort((a, b) => {
       let cmp = 0;
       if (sortCol === "product") cmp = a.productTitle.localeCompare(b.productTitle);
       else if (sortCol === "orders") cmp = a.orderCount - b.orderCount;
       else if (sortCol === "qty") cmp = a.totalQuantity - b.totalQuantity;
       return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [shopifyData, sortCol, sortDir]);
+  }, [shopifyData, sortCol, sortDir, variantFilter]);
 
   function toggleSort(col: SortCol) {
     if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
@@ -238,6 +245,30 @@ export default function Dispatches() {
                   Searches orders tagged: <span className="font-mono font-medium text-foreground">{dateTag}</span>
                 </p>
               </div>
+              <div className="flex-1 min-w-[180px] max-w-xs">
+                <label className="text-sm font-medium mb-1 block">Filter by variant</label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={variantFilter}
+                    onChange={(e) => setVariantFilter(e.target.value)}
+                    placeholder="e.g. 2 Pack"
+                    className="w-full px-3 py-2 bg-background border border-border rounded-lg focus-ring pr-8"
+                  />
+                  {variantFilter && (
+                    <button
+                      onClick={() => setVariantFilter("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                      title="Clear filter"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {variantFilter ? "Showing products with matching variant" : "Showing all variants"}
+                </p>
+              </div>
               <button
                 onClick={() => setQueryTag(dateTag)}
                 disabled={shopifyLoading}
@@ -269,7 +300,9 @@ export default function Dispatches() {
                     Orders tagged <span className="text-primary">{shopifyData.tag}</span>
                   </h3>
                   <p className="text-sm text-muted-foreground mt-0.5">
-                    {shopifyData.orderCount} order{shopifyData.orderCount !== 1 ? "s" : ""} found
+                    {shopifyData.orderCount} order{shopifyData.orderCount !== 1 ? "s" : ""} &middot;{" "}
+                    {sortedProducts.length} of {shopifyData.products.length} product{shopifyData.products.length !== 1 ? "s" : ""}
+                    {variantFilter ? ` matching "${variantFilter}"` : ""}
                   </p>
                 </div>
                 <button
@@ -324,10 +357,12 @@ export default function Dispatches() {
                     </tbody>
                     <tfoot>
                       <tr className="border-t border-border bg-secondary/40">
-                        <td colSpan={3} className="px-5 py-3.5 text-sm font-medium text-muted-foreground">Total units</td>
+                        <td colSpan={3} className="px-5 py-3.5 text-sm font-medium text-muted-foreground">
+                          Total units{variantFilter ? ` (filtered)` : ""}
+                        </td>
                         <td className="px-5 py-3.5 text-right">
                           <span className="font-bold text-lg">
-                            {shopifyData.products.reduce((s, p) => s + p.totalQuantity, 0)}
+                            {sortedProducts.reduce((s, p) => s + p.totalQuantity, 0)}
                           </span>
                         </td>
                       </tr>
