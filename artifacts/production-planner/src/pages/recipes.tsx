@@ -537,16 +537,18 @@ function RecipeCard({ recipe, onEdit, onDelete, onBreakdown }: { recipe: RecipeI
 
   return (
     <div className={`rounded-2xl border-2 ${borderColor} bg-card overflow-hidden flex flex-col group hover:shadow-md transition-all`}>
-      <div className={`h-20 bg-gradient-to-br ${topBg} relative flex items-center justify-between px-5`}>
-        <div className="flex flex-col justify-center min-w-0 flex-1 pr-2">
+      <div className={`bg-gradient-to-br ${topBg} flex flex-col justify-between px-5 pt-4 pb-3 gap-2`}>
+        <div className="min-w-0">
           {recipe.category && <p className="text-xs font-semibold text-primary uppercase tracking-wider">{recipe.category}</p>}
           <p className="font-semibold text-sm leading-tight truncate">{recipe.name}</p>
         </div>
-        <div className="flex items-center gap-1 flex-shrink-0">
+        <div className="flex items-center justify-between">
           <MarginBadge margin={margin} />
-          <button onClick={onBreakdown} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-primary flex items-center justify-center hover:bg-primary hover:text-white transition-colors shadow-sm" title="Cost Breakdown"><BarChart2 className="w-3 h-3" /></button>
-          <button onClick={onEdit} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-foreground transition-colors shadow-sm" title="Edit"><Edit2 className="w-3 h-3" /></button>
-          <button onClick={onDelete} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-destructive flex items-center justify-center hover:bg-destructive hover:text-white transition-colors shadow-sm" title="Delete"><Trash2 className="w-3 h-3" /></button>
+          <div className="flex items-center gap-1">
+            <button onClick={onBreakdown} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-primary flex items-center justify-center hover:bg-primary hover:text-white transition-colors shadow-sm" title="Cost Breakdown"><BarChart2 className="w-3 h-3" /></button>
+            <button onClick={onEdit} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-foreground transition-colors shadow-sm" title="Edit"><Edit2 className="w-3 h-3" /></button>
+            <button onClick={onDelete} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-destructive flex items-center justify-center hover:bg-destructive hover:text-white transition-colors shadow-sm" title="Delete"><Trash2 className="w-3 h-3" /></button>
+          </div>
         </div>
       </div>
 
