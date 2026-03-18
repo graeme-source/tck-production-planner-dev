@@ -1,6 +1,7 @@
 import { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
+import { useAuth } from "@/contexts/auth-context";
 import { 
   LayoutDashboard, 
   ChefHat, 
@@ -12,6 +13,7 @@ import {
   Truck,
   Building2,
   Settings,
+  LogOut,
 } from "lucide-react";
 
 const navItems = [
@@ -32,6 +34,8 @@ const bottomNavItems = [
 
 export function Layout({ children }: { children: ReactNode }) {
   const [location] = useLocation();
+  const { state, logout } = useAuth();
+  const user = state.status === "authenticated" ? state.user : null;
 
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
@@ -102,13 +106,20 @@ export function Layout({ children }: { children: ReactNode }) {
 
         <div className="p-4 border-t border-border">
           <div className="flex items-center gap-3 p-3 rounded-xl bg-secondary/30">
-            <div className="w-10 h-10 rounded-full bg-primary/20 text-primary flex items-center justify-center font-semibold text-sm flex-shrink-0">
-              A
+            <div className="w-9 h-9 rounded-full bg-primary/20 text-primary flex items-center justify-center font-semibold text-sm flex-shrink-0">
+              {user?.name?.[0]?.toUpperCase() ?? "?"}
             </div>
-            <div className="flex flex-col min-w-0">
-              <span className="text-sm font-semibold truncate">Admin</span>
-              <span className="text-xs text-muted-foreground capitalize">Administrator</span>
+            <div className="flex flex-col min-w-0 flex-1">
+              <span className="text-sm font-semibold truncate">{user?.name ?? "—"}</span>
+              <span className="text-xs text-muted-foreground capitalize">{user?.role ?? ""}</span>
             </div>
+            <button
+              onClick={logout}
+              title="Sign out"
+              className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-colors flex-shrink-0"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </aside>

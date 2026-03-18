@@ -2,6 +2,7 @@ import { Switch, Route, Router as WouterRouter } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { AuthProvider, useAuth } from "@/contexts/auth-context";
 import { Layout } from "@/components/layout";
 import Dashboard from "@/pages/dashboard";
 import Ingredients from "@/pages/ingredients";
@@ -14,6 +15,8 @@ import Dispatches from "@/pages/dispatches";
 import Suppliers from "@/pages/suppliers";
 import Settings from "@/pages/settings";
 import NotFound from "@/pages/not-found";
+import Login from "@/pages/login";
+import { Loader2 } from "lucide-react";
 
 const queryClient = new QueryClient();
 
@@ -37,13 +40,33 @@ function Router() {
   );
 }
 
+function AuthGate() {
+  const { state } = useAuth();
+
+  if (state.status === "loading") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary/50" />
+      </div>
+    );
+  }
+
+  if (state.status === "unauthenticated") {
+    return <Login />;
+  }
+
+  return <Router />;
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-          <Router />
-        </WouterRouter>
+        <AuthProvider>
+          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+            <AuthGate />
+          </WouterRouter>
+        </AuthProvider>
         <Toaster />
       </TooltipProvider>
     </QueryClientProvider>

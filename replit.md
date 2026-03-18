@@ -17,6 +17,7 @@ A full-stack production management app for food businesses with:
 - **Dashboard** — overview of today's plan, upcoming dispatches, low stock, and recent sales
 - **Settings** — user management (admin/manager/viewer roles) + category cost defaults (packaging & labour auto-fill per category)
 - **Category Defaults** — per-category default packaging/labour costs stored in `category_defaults` table; auto-fill recipe form when category matches
+- **Authentication** — session-based login (express-session + connect-pg-simple → `sessions` table). Login page at `/login`. All `/api/*` routes except `/api/auth/*` require a valid session. Default admin: `admin@proplanner.com` / `Admin1234!`
 
 ## Stack
 

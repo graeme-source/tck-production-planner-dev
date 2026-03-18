@@ -1,5 +1,6 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import healthRouter from "./health";
+import authRouter from "./auth";
 import ingredientsRouter from "./ingredients";
 import subRecipesRouter from "./sub-recipes";
 import recipesRouter from "./recipes";
@@ -13,7 +14,20 @@ import categoryDefaultsRouter from "./category-defaults";
 
 const router: IRouter = Router();
 
+// Public routes — no auth required
 router.use(healthRouter);
+router.use("/auth", authRouter);
+
+// Auth guard for all routes below
+router.use((req: Request, res: Response, next: NextFunction) => {
+  if (!req.session.userId) {
+    res.status(401).json({ error: "Not authenticated" });
+    return;
+  }
+  next();
+});
+
+// Protected routes
 router.use("/users", usersRouter);
 router.use("/category-defaults", categoryDefaultsRouter);
 router.use("/suppliers", suppliersRouter);
