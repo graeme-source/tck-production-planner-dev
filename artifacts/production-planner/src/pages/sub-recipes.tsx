@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useListSubRecipes, useListIngredients, useGetSubRecipe } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
+import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
 import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2 } from "lucide-react";
 import { useForm, useFieldArray } from "react-hook-form";
 import * as z from "zod";
@@ -27,7 +28,7 @@ function SubRecipeForm({
   onSubmit,
   isPending,
   isEdit,
-  ingredients,
+  ingredients: initialIngredients,
 }: {
   defaultValues: FormValues;
   onSubmit: (data: FormValues) => void;
@@ -35,116 +36,165 @@ function SubRecipeForm({
   isEdit: boolean;
   ingredients: { id: number; name: string; unit: string }[];
 }) {
-  const { register, control, handleSubmit, formState: { errors } } = useForm<FormValues>({
+  const { register, control, handleSubmit, setValue, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues,
   });
   const { fields, append, remove } = useFieldArray({ control, name: "ingredients" });
 
+  // Local ingredient list — grows when user quick-adds new ones
+  const [localIngredients, setLocalIngredients] = useState(initialIngredients);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [quickAddTargetIndex, setQuickAddTargetIndex] = useState<number | null>(null);
+
+  const openQuickAdd = (index: number) => {
+    setQuickAddTargetIndex(index);
+    setQuickAddOpen(true);
+  };
+
+  const handleIngredientCreated = (ingredient: { id: number; name: string; unit: string }) => {
+    // Add to local list so it appears in all dropdowns immediately
+    setLocalIngredients(prev => [...prev, ingredient]);
+    // Auto-select in the target row
+    if (quickAddTargetIndex !== null) {
+      setValue(`ingredients.${quickAddTargetIndex}.ingredientId`, ingredient.id);
+    }
+    setQuickAddTargetIndex(null);
+  };
+
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-5 mt-4">
-      <div>
-        <label className="text-sm font-medium mb-1 block">Name</label>
-        <input
-          {...register("name")}
-          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-          placeholder="e.g. Tomato Base Sauce"
-        />
-        {errors.name && <span className="text-destructive text-xs">{errors.name.message}</span>}
-      </div>
+    <>
+      <QuickAddIngredientDialog
+        open={quickAddOpen}
+        onOpenChange={setQuickAddOpen}
+        onCreated={handleIngredientCreated}
+      />
 
-      <div>
-        <label className="text-sm font-medium mb-1 block">Description (optional)</label>
-        <textarea
-          {...register("description")}
-          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[60px] resize-none"
-          placeholder="Brief description..."
-        />
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-5 mt-4">
         <div>
-          <label className="text-sm font-medium mb-1 block">Expected Yield</label>
+          <label className="text-sm font-medium mb-1 block">Name</label>
           <input
-            type="number"
-            step="0.001"
-            {...register("yield")}
+            {...register("name")}
             className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            placeholder="e.g. Tomato Base Sauce"
           />
-          {errors.yield && <span className="text-destructive text-xs">{errors.yield.message}</span>}
+          {errors.name && <span className="text-destructive text-xs">{errors.name.message}</span>}
         </div>
+
         <div>
-          <label className="text-sm font-medium mb-1 block">Yield Unit</label>
-          <input
-            {...register("yieldUnit")}
-            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-            placeholder="kg, L, batches"
+          <label className="text-sm font-medium mb-1 block">Description (optional)</label>
+          <textarea
+            {...register("description")}
+            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[60px] resize-none"
+            placeholder="Brief description..."
           />
         </div>
-      </div>
 
-      <div className="border-t border-border pt-4">
-        <div className="flex items-center justify-between mb-3">
-          <label className="text-sm font-bold">Ingredients</label>
-          <button
-            type="button"
-            onClick={() => append({ ingredientId: 0, quantity: 1 })}
-            className="text-xs font-medium text-primary flex items-center gap-1 hover:underline"
-          >
-            <Plus className="w-3 h-3" /> Add Row
-          </button>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="text-sm font-medium mb-1 block">Expected Yield</label>
+            <input
+              type="number"
+              step="0.001"
+              {...register("yield")}
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+            {errors.yield && <span className="text-destructive text-xs">{errors.yield.message}</span>}
+          </div>
+          <div>
+            <label className="text-sm font-medium mb-1 block">Yield Unit</label>
+            <input
+              {...register("yieldUnit")}
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              placeholder="kg, L, batches"
+            />
+          </div>
         </div>
-        {errors.ingredients?.message && (
-          <span className="text-destructive text-xs block mb-2">{errors.ingredients.message}</span>
-        )}
-        <div className="space-y-2">
-          {fields.map((field, index) => (
-            <div key={field.id} className="flex gap-2 items-center">
-              <select
-                {...register(`ingredients.${index}.ingredientId`)}
-                className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-              >
-                <option value={0} disabled>Select ingredient...</option>
-                {ingredients.map(i => (
-                  <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>
-                ))}
-              </select>
-              <input
-                type="number"
-                step="0.001"
-                {...register(`ingredients.${index}.quantity`)}
-                className="w-24 px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                placeholder="Qty"
-              />
-              <button
-                type="button"
-                onClick={() => remove(index)}
-                className="p-1.5 text-muted-foreground hover:text-destructive transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          ))}
+
+        <div className="border-t border-border pt-4">
+          <div className="flex items-center justify-between mb-3">
+            <label className="text-sm font-bold">Ingredients</label>
+            <button
+              type="button"
+              onClick={() => append({ ingredientId: 0, quantity: 1 })}
+              className="text-xs font-medium text-primary flex items-center gap-1 hover:underline"
+            >
+              <Plus className="w-3 h-3" /> Add Row
+            </button>
+          </div>
+          {errors.ingredients?.message && (
+            <span className="text-destructive text-xs block mb-2">{errors.ingredients.message}</span>
+          )}
+
+          {fields.length === 0 && (
+            <p className="text-xs text-muted-foreground italic py-2">
+              No ingredients yet — click "Add Row" to start.
+            </p>
+          )}
+
+          <div className="space-y-2">
+            {fields.map((field, index) => (
+              <div key={field.id} className="flex gap-2 items-center">
+                <select
+                  {...register(`ingredients.${index}.ingredientId`)}
+                  className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                >
+                  <option value={0} disabled>Select ingredient...</option>
+                  {localIngredients.map(i => (
+                    <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>
+                  ))}
+                </select>
+                <input
+                  type="number"
+                  step="0.001"
+                  {...register(`ingredients.${index}.quantity`)}
+                  className="w-24 px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  placeholder="Qty"
+                />
+                <button
+                  type="button"
+                  title="Add new ingredient to database"
+                  onClick={() => openQuickAdd(index)}
+                  className="flex-shrink-0 px-2.5 py-2 rounded-lg border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-colors text-xs font-semibold leading-none"
+                >
+                  + New
+                </button>
+                <button
+                  type="button"
+                  onClick={() => remove(index)}
+                  className="p-1.5 text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {fields.length > 0 && (
+            <p className="text-xs text-muted-foreground mt-2">
+              Tip: Click <span className="font-semibold text-primary">+ New</span> next to any row to create a new ingredient without leaving this form.
+            </p>
+          )}
         </div>
-      </div>
 
-      <div>
-        <label className="text-sm font-medium mb-1 block">Notes (optional)</label>
-        <textarea
-          {...register("notes")}
-          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[60px] resize-none"
-        />
-      </div>
+        <div>
+          <label className="text-sm font-medium mb-1 block">Notes (optional)</label>
+          <textarea
+            {...register("notes")}
+            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[60px] resize-none"
+          />
+        </div>
 
-      <button
-        type="submit"
-        disabled={isPending}
-        className="w-full py-2.5 bg-primary text-primary-foreground rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-      >
-        {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-        {isPending ? "Saving..." : isEdit ? "Save Changes" : "Create Sub-Recipe"}
-      </button>
-    </form>
+        <button
+          type="submit"
+          disabled={isPending}
+          className="w-full py-2.5 bg-primary text-primary-foreground rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+          {isPending ? "Saving..." : isEdit ? "Save Changes" : "Create Sub-Recipe"}
+        </button>
+      </form>
+    </>
   );
 }
 

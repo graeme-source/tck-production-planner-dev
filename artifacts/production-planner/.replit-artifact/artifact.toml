@@ -1,6 +1,6 @@
 kind = "web"
 previewPath = "/"
-title = "Food Production Planner"
+title = "TCK Production Planner"
 version = "1.0.0"
 id = "artifacts/production-planner"
 router = "path"
