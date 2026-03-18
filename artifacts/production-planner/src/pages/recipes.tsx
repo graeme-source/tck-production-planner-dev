@@ -549,7 +549,7 @@ function RecipeCard({ recipe, onEdit, onDelete, onBreakdown }: { recipe: RecipeI
         </div>
         <div className="flex items-center gap-1.5">
           <MarginBadge margin={margin} />
-          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-1">
+          <div className="flex gap-1 ml-1">
             <button onClick={onBreakdown} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-primary flex items-center justify-center hover:bg-primary hover:text-white transition-colors shadow-sm" title="Cost Breakdown"><BarChart2 className="w-3 h-3" /></button>
             <button onClick={onEdit} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-foreground transition-colors shadow-sm" title="Edit"><Edit2 className="w-3 h-3" /></button>
             <button onClick={onDelete} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-destructive flex items-center justify-center hover:bg-destructive hover:text-white transition-colors shadow-sm" title="Delete"><Trash2 className="w-3 h-3" /></button>
