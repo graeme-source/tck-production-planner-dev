@@ -208,8 +208,9 @@ router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
     return;
   }
 
-  // Validate weekday constraint and 2-day lead time if planDate is being changed
-  if (planDate !== undefined) {
+  // Validate weekday constraint and 2-day lead time only when planDate is actually changing
+  const dateIsChanging = planDate !== undefined && planDate !== existing.planDate;
+  if (dateIsChanging) {
     const updDateObj = new Date(`${planDate}T12:00:00Z`);
     const updDow = updDateObj.getUTCDay();
     if (updDow === 0 || updDow === 6) {
@@ -227,6 +228,11 @@ router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
   if (name !== undefined) setPlan.name = name;
   if (notes !== undefined) setPlan.notes = notes ?? null;
   if (status !== undefined) setPlan.status = status;
+  // Recompute Julian batch number if planDate is changing
+  if (dateIsChanging) {
+    const newDateObj = new Date(`${planDate}T12:00:00Z`);
+    setPlan.batchNumber = julianBatchNumber(newDateObj);
+  }
 
   const [updated] = await db.update(productionPlansTable)
     .set(setPlan)
