@@ -359,6 +359,11 @@ export const GetSubRecipeResponse = zod
       ),
       totalBatchCost: zod.number(),
       costPerYieldUnit: zod.number().nullish(),
+      cyclicIds: zod
+        .array(zod.number())
+        .describe(
+          "Sub-recipe IDs that would cause a cycle if added as components of this sub-recipe (includes this sub-recipe's own ID).",
+        ),
     }),
   );
 

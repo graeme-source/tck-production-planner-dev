@@ -1,129 +1,135 @@
-import { db, subRecipesTable, subRecipeIngredientsTable, ingredientsTable, subRecipeSubRecipesTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db } from "@workspace/db";
+import { sql } from "drizzle-orm";
+import type { QueryResult } from "pg";
+
+type CostRow = { sub_recipe_id: number; total_batch_cost: string; yield_amount: string };
+type AncestorRow = { id: number };
 
 /**
- * Compute total batch cost (and cost-per-yield-unit) for every sub-recipe,
- * correctly resolving nested sub-recipe dependencies via topological sort.
- *
- * Returns: { [subRecipeId]: costPerYieldUnit }
+ * Drizzle `db.execute()` with node-postgres returns a pg `QueryResult`
+ * (with `.rows` property), not a plain array.
  */
-export async function computeSubRecipeCosts(): Promise<Record<number, number>> {
-  const allSubRecipes = await db
-    .select({ id: subRecipesTable.id, yield: subRecipesTable.yield })
-    .from(subRecipesTable);
+function extractRows<T>(result: unknown): T[] {
+  if (Array.isArray(result)) return result as T[];
+  const qr = result as QueryResult<T>;
+  if (qr && Array.isArray(qr.rows)) return qr.rows;
+  return [];
+}
 
-  if (allSubRecipes.length === 0) return {};
+/**
+ * Compute cost-per-yield-unit for each sub-recipe using a PostgreSQL recursive CTE.
+ *
+ * The CTE propagates ingredient costs bottom-up through the sub-recipe dependency DAG:
+ *   - Base case: every sub-recipe contributes its own raw ingredient cost
+ *   - Recursive case: each component's cost is multiplied by (quantity / component_yield)
+ *     and attributed to the parent sub-recipe
+ * Grouping sums all contributions (direct + transitive) per sub-recipe.
+ *
+ * @param targetIds Optional filter — only return results for these IDs (all computed, then filtered)
+ * @returns { [subRecipeId]: costPerYieldUnit }
+ */
+export async function computeSubRecipeCosts(
+  targetIds?: number[]
+): Promise<Record<number, number>> {
+  const result = await db.execute(sql`
+    WITH RECURSIVE
+    ingredient_base AS (
+      SELECT
+        sri.sub_recipe_id,
+        COALESCE(
+          SUM(
+            sri.quantity::numeric
+            * i.cost_per_pack::numeric
+            / NULLIF(i.pack_weight::numeric, 0)
+          ),
+          0
+        ) AS raw_ingredient_cost
+      FROM sub_recipe_ingredients sri
+      JOIN ingredients i ON i.id = sri.ingredient_id
+      GROUP BY sri.sub_recipe_id
+    ),
+    cost_traversal AS (
+      -- Base: each sub-recipe starts with its own ingredient costs
+      SELECT
+        sr.id              AS sub_recipe_id,
+        sr.yield::numeric  AS yield_amount,
+        COALESCE(ib.raw_ingredient_cost, 0) AS total_batch_cost
+      FROM sub_recipes sr
+      LEFT JOIN ingredient_base ib ON ib.sub_recipe_id = sr.id
 
-  const allIngredientLinks = await db
-    .select({
-      subRecipeId: subRecipeIngredientsTable.subRecipeId,
-      quantity: subRecipeIngredientsTable.quantity,
-      packWeight: ingredientsTable.packWeight,
-      costPerPack: ingredientsTable.costPerPack,
-    })
-    .from(subRecipeIngredientsTable)
-    .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id));
+      UNION ALL
 
-  const allNestedLinks = await db
-    .select({
-      subRecipeId: subRecipeSubRecipesTable.subRecipeId,
-      componentSubRecipeId: subRecipeSubRecipesTable.componentSubRecipeId,
-      quantity: subRecipeSubRecipesTable.quantity,
-    })
-    .from(subRecipeSubRecipesTable);
+      -- Recursive: propagate each component's cost contribution to its parent
+      SELECT
+        srsr.sub_recipe_id,
+        parent_sr.yield::numeric,
+        ct.total_batch_cost
+          * srsr.quantity::numeric
+          / NULLIF(ct.yield_amount, 0)
+      FROM cost_traversal ct
+      JOIN sub_recipe_sub_recipes srsr
+        ON srsr.component_sub_recipe_id = ct.sub_recipe_id
+      JOIN sub_recipes parent_sr
+        ON parent_sr.id = srsr.sub_recipe_id
+    )
+    SELECT
+      sub_recipe_id,
+      SUM(total_batch_cost)  AS total_batch_cost,
+      MAX(yield_amount)      AS yield_amount
+    FROM cost_traversal
+    GROUP BY sub_recipe_id
+  `);
 
-  const yieldById: Record<number, number> = Object.fromEntries(
-    allSubRecipes.map(sr => [sr.id, Number(sr.yield)])
-  );
-
-  const rawIngredientCost: Record<number, number> = {};
-  for (const link of allIngredientLinks) {
-    if (link.subRecipeId == null) continue;
-    const pw = Number(link.packWeight ?? 0);
-    const cpp = Number(link.costPerPack ?? 0);
-    const q = Number(link.quantity);
-    if (pw <= 0) continue;
-    rawIngredientCost[link.subRecipeId] =
-      (rawIngredientCost[link.subRecipeId] ?? 0) + q * (cpp / pw);
+  const rows = extractRows<CostRow>(result);
+  const output: Record<number, number> = {};
+  for (const row of rows) {
+    const id = Number(row.sub_recipe_id);
+    if (targetIds && !targetIds.includes(id)) continue;
+    const totalCost = parseFloat(row.total_batch_cost);
+    const yieldAmt = parseFloat(row.yield_amount);
+    output[id] = yieldAmt > 0 ? totalCost / yieldAmt : 0;
   }
+  return output;
+}
 
-  const componentsByParent = new Map<number, { componentSubRecipeId: number; quantity: number }[]>();
-  for (const link of allNestedLinks) {
-    const existing = componentsByParent.get(link.subRecipeId) ?? [];
-    existing.push({ componentSubRecipeId: link.componentSubRecipeId, quantity: Number(link.quantity) });
-    componentsByParent.set(link.subRecipeId, existing);
-  }
+/**
+ * Return the set of sub-recipe IDs that would form a cycle if added
+ * as components of `targetId` — i.e., all sub-recipes that (directly or
+ * transitively) already depend on `targetId`, plus `targetId` itself.
+ *
+ * These IDs should be excluded from the available-components picker.
+ */
+export async function getCyclicIds(targetId: number): Promise<number[]> {
+  const result = await db.execute(sql`
+    WITH RECURSIVE ancestors AS (
+      SELECT sub_recipe_id AS id
+      FROM sub_recipe_sub_recipes
+      WHERE component_sub_recipe_id = ${targetId}
 
-  const visited = new Set<number>();
-  const sorted: number[] = [];
+      UNION
 
-  function dfs(id: number, path: Set<number>) {
-    if (path.has(id) || visited.has(id)) return;
-    path.add(id);
-    for (const comp of componentsByParent.get(id) ?? []) {
-      dfs(comp.componentSubRecipeId, path);
-    }
-    path.delete(id);
-    visited.add(id);
-    sorted.push(id);
-  }
+      SELECT srsr.sub_recipe_id
+      FROM sub_recipe_sub_recipes srsr
+      JOIN ancestors a ON srsr.component_sub_recipe_id = a.id
+    )
+    SELECT id FROM ancestors
+  `);
 
-  for (const sr of allSubRecipes) {
-    dfs(sr.id, new Set());
-  }
-
-  const totalBatchCost: Record<number, number> = {};
-  for (const srId of sorted) {
-    let cost = rawIngredientCost[srId] ?? 0;
-    for (const comp of componentsByParent.get(srId) ?? []) {
-      const compYield = yieldById[comp.componentSubRecipeId] ?? 1;
-      const compTotal = totalBatchCost[comp.componentSubRecipeId] ?? 0;
-      const compCostPerUnit = compYield > 0 ? compTotal / compYield : 0;
-      cost += comp.quantity * compCostPerUnit;
-    }
-    totalBatchCost[srId] = cost;
-  }
-
-  const result: Record<number, number> = {};
-  for (const sr of allSubRecipes) {
-    const y = yieldById[sr.id] ?? 1;
-    result[sr.id] = y > 0 ? (totalBatchCost[sr.id] ?? 0) / y : 0;
-  }
-
-  return result;
+  const rows = extractRows<AncestorRow>(result);
+  return [targetId, ...rows.map(r => Number(r.id))];
 }
 
 /**
  * Check whether adding `proposedComponentIds` as components of `targetId`
  * would create a cycle in the sub-recipe dependency graph.
  */
-export function wouldCreateCycle(
+export async function wouldCreateCycle(
   targetId: number,
-  proposedComponentIds: number[],
-  existingLinks: { subRecipeId: number; componentSubRecipeId: number }[]
-): boolean {
-  const deps = new Map<number, Set<number>>();
-  for (const link of existingLinks) {
-    if (link.subRecipeId === targetId) continue;
-    const s = deps.get(link.subRecipeId) ?? new Set<number>();
-    s.add(link.componentSubRecipeId);
-    deps.set(link.subRecipeId, s);
-  }
-  deps.set(targetId, new Set(proposedComponentIds));
+  proposedComponentIds: number[]
+): Promise<boolean> {
+  if (proposedComponentIds.length === 0) return false;
+  if (proposedComponentIds.includes(targetId)) return true;
 
-  function canReach(from: number, target: number, seen: Set<number>): boolean {
-    if (from === target) return true;
-    if (seen.has(from)) return false;
-    seen.add(from);
-    for (const next of deps.get(from) ?? []) {
-      if (canReach(next, target, seen)) return true;
-    }
-    return false;
-  }
-
-  for (const compId of proposedComponentIds) {
-    if (compId === targetId) return true;
-    if (canReach(compId, targetId, new Set())) return true;
-  }
-  return false;
+  const cyclicIds = await getCyclicIds(targetId);
+  return proposedComponentIds.some(id => cyclicIds.includes(id));
 }

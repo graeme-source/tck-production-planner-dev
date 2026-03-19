@@ -226,7 +226,7 @@ function SubRecipeForm({
   isEdit,
   ingredients: initialIngredients,
   subRecipes: allSubRecipes,
-  currentSubRecipeId,
+  cyclicIds,
 }: {
   defaultValues: FormValues;
   onSubmit: (data: FormValues) => void;
@@ -234,7 +234,7 @@ function SubRecipeForm({
   isEdit: boolean;
   ingredients: IngredientOption[];
   subRecipes: SubRecipeOption[];
-  currentSubRecipeId?: number;
+  cyclicIds?: number[];
 }) {
   const { register, control, handleSubmit, setValue, watch, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -254,7 +254,9 @@ function SubRecipeForm({
   const watchedYield = watch("yield");
   const watchedYieldUnit = watch("yieldUnit");
 
-  const availableSubRecipes = allSubRecipes.filter(sr => sr.id !== currentSubRecipeId);
+  const availableSubRecipes = cyclicIds
+    ? allSubRecipes.filter(sr => !cyclicIds.includes(sr.id))
+    : allSubRecipes;
 
   useEffect(() => {
     if (!isYieldAuto) return;
@@ -623,7 +625,7 @@ function EditSubRecipeDialog({
               isPending={updateSubRecipe.isPending}
               ingredients={ingredients}
               subRecipes={subRecipes}
-              currentSubRecipeId={id}
+              cyclicIds={detail?.cyclicIds}
               onSubmit={(data) => updateSubRecipe.mutate({ id, data }, { onSuccess: () => onOpenChange(false) })}
             />
           </>

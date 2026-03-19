@@ -14,4 +14,6 @@ export type SubRecipeDetail = SubRecipe & {
   subRecipeComponents: SubRecipeComponent[];
   totalBatchCost: number;
   costPerYieldUnit?: number | null;
+  /** Sub-recipe IDs that would cause a cycle if added as components of this sub-recipe (includes this sub-recipe's own ID). */
+  cyclicIds: number[];
 };

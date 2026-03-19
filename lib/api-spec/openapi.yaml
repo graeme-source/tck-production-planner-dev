@@ -1116,10 +1116,16 @@ components:
             costPerYieldUnit:
               type: number
               nullable: true
+            cyclicIds:
+              type: array
+              items:
+                type: integer
+              description: Sub-recipe IDs that would cause a cycle if added as components of this sub-recipe (includes this sub-recipe's own ID).
           required:
             - ingredients
             - subRecipeComponents
             - totalBatchCost
+            - cyclicIds
 
     CreateSubRecipe:
       type: object

@@ -3,7 +3,7 @@ import { db, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTabl
 import { eq } from "drizzle-orm";
 import { CreateSubRecipeBody, UpdateSubRecipeBody } from "@workspace/api-zod";
 import { validate } from "../middleware/validate";
-import { computeSubRecipeCosts, wouldCreateCycle } from "../lib/sub-recipe-costs";
+import { computeSubRecipeCosts, getCyclicIds, wouldCreateCycle } from "../lib/sub-recipe-costs";
 
 const router: IRouter = Router();
 
@@ -16,13 +16,11 @@ router.post("/", validate(CreateSubRecipeBody), async (req, res) => {
   const { name, description, yield: yieldAmt, yieldUnit, notes, ingredients, subRecipeComponents } = req.body;
 
   if (subRecipeComponents?.length) {
-    const allLinks = await db
-      .select({ subRecipeId: subRecipeSubRecipesTable.subRecipeId, componentSubRecipeId: subRecipeSubRecipesTable.componentSubRecipeId })
-      .from(subRecipeSubRecipesTable);
-    const tempId = -1;
     const proposedIds = subRecipeComponents.map((c: { componentSubRecipeId: number }) => c.componentSubRecipeId);
-    if (wouldCreateCycle(tempId, proposedIds, allLinks)) {
-      res.status(422).json({ error: "Adding these sub-recipe components would create a circular dependency." });
+    const tempId = -1;
+    const hasCycle = await wouldCreateCycle(tempId, proposedIds);
+    if (hasCycle) {
+      res.status(400).json({ error: "Adding these sub-recipe components would create a circular dependency." });
       return;
     }
   }
@@ -95,7 +93,10 @@ router.get("/:id", async (req, res) => {
     .leftJoin(subRecipesTable, eq(subRecipeSubRecipesTable.componentSubRecipeId, subRecipesTable.id))
     .where(eq(subRecipeSubRecipesTable.subRecipeId, id));
 
-  const costPerYieldUnitMap = await computeSubRecipeCosts();
+  const [costPerYieldUnitMap, cyclicIds] = await Promise.all([
+    computeSubRecipeCosts(),
+    getCyclicIds(id),
+  ]);
 
   const mappedNested = nestedRows.map(n => {
     const qty = Number(n.quantity);
@@ -128,6 +129,7 @@ router.get("/:id", async (req, res) => {
     subRecipeComponents: mappedNested,
     totalBatchCost,
     costPerYieldUnit,
+    cyclicIds,
   });
 });
 
@@ -136,12 +138,10 @@ router.put("/:id", validate(UpdateSubRecipeBody), async (req, res) => {
   const { name, description, yield: yieldAmt, yieldUnit, notes, ingredients, subRecipeComponents } = req.body;
 
   if (subRecipeComponents?.length) {
-    const allLinks = await db
-      .select({ subRecipeId: subRecipeSubRecipesTable.subRecipeId, componentSubRecipeId: subRecipeSubRecipesTable.componentSubRecipeId })
-      .from(subRecipeSubRecipesTable);
     const proposedIds = subRecipeComponents.map((c: { componentSubRecipeId: number }) => c.componentSubRecipeId);
-    if (wouldCreateCycle(id, proposedIds, allLinks)) {
-      res.status(422).json({ error: "Adding these sub-recipe components would create a circular dependency." });
+    const hasCycle = await wouldCreateCycle(id, proposedIds);
+    if (hasCycle) {
+      res.status(400).json({ error: "Adding these sub-recipe components would create a circular dependency." });
       return;
     }
   }
