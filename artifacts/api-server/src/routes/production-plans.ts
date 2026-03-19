@@ -436,6 +436,8 @@ router.delete("/:id/batch-completions/last", async (req, res) => {
   const planId = Number(req.params.id);
   const { planItemId, stationType } = req.body;
   const sessionUserId = (req.session as { userId?: number }).userId ?? null;
+  const sessionUserRole = (req.session as { userRole?: string }).userRole ?? null;
+  const isAdmin = sessionUserRole === "admin";
 
   // Verify planItemId belongs to this plan
   const [planItem] = await db.select({ id: productionPlanItemsTable.id, batchesComplete: productionPlanItemsTable.batchesComplete })
@@ -450,25 +452,44 @@ router.delete("/:id/batch-completions/last", async (req, res) => {
     return;
   }
 
-  // Delete the most recent completion row for this item / user / station
+  // Build ownership filter: non-admins can only undo their own completions
   const conditions = [eq(batchCompletionsTable.planItemId, Number(planItemId))];
-  if (sessionUserId) conditions.push(eq(batchCompletionsTable.userId, sessionUserId));
   if (stationType) conditions.push(eq(batchCompletionsTable.stationType, stationType));
+  if (!isAdmin && sessionUserId) conditions.push(eq(batchCompletionsTable.userId, sessionUserId));
 
-  const [lastRow] = await db.select({ id: batchCompletionsTable.id })
-    .from(batchCompletionsTable)
-    .where(and(...conditions))
-    .orderBy(desc(batchCompletionsTable.completedAt))
-    .limit(1);
+  // Atomic CTE: find the most recent matching completion, delete it, and ONLY THEN decrement the counter.
+  // If no matching row is found the DELETE returns 0 rows, so the UPDATE is skipped entirely,
+  // ensuring batches_complete is never decremented without a corresponding deletion.
+  const result = await db.execute(sql`
+    WITH target AS (
+      SELECT id FROM batch_completions
+      WHERE ${and(...conditions)}
+      ORDER BY completed_at DESC
+      LIMIT 1
+    ),
+    deleted AS (
+      DELETE FROM batch_completions
+      WHERE id IN (SELECT id FROM target)
+      RETURNING id
+    )
+    UPDATE production_plan_items
+    SET
+      batches_complete = GREATEST(batches_complete - 1, 0),
+      status = CASE
+        WHEN GREATEST(batches_complete - 1, 0) = 0 THEN 'pending'
+        WHEN status = 'complete' THEN 'in-progress'
+        ELSE status
+      END
+    WHERE id = ${Number(planItemId)}
+      AND EXISTS (SELECT 1 FROM deleted)
+    RETURNING id
+  `);
 
-  if (lastRow) {
-    await db.delete(batchCompletionsTable).where(eq(batchCompletionsTable.id, lastRow.id));
+  // If the UPDATE returned no rows, no completion was found to delete (ownership mismatch or none exists)
+  if ((result as { rows: unknown[] }).rows.length === 0) {
+    res.status(404).json({ error: "No matching completion found to undo" });
+    return;
   }
-
-  // Decrement counter — atomic, won't go below 0
-  await db.execute(
-    sql`UPDATE production_plan_items SET batches_complete = GREATEST(batches_complete - 1, 0), status = CASE WHEN GREATEST(batches_complete - 1, 0) = 0 THEN 'pending' WHEN status = 'complete' THEN 'in-progress' ELSE status END WHERE id = ${planItemId}`
-  );
 
   res.status(204).send();
 });
