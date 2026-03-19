@@ -93,10 +93,12 @@ router.get("/", async (req, res) => {
     const portionsNeeded = Math.max(0, demand - currentStock);
     const batchesForDemand = portionsNeeded > 0 ? Math.ceil(portionsNeeded / portionsPerBatch) : 0;
 
-    // Step 2: add percentage-based surplus buffer (rounds up)
-    const surplusBatches = Math.ceil(batchesForDemand * surplusPercent / 100);
+    // Step 2: surplus buffer = percentage of demand batches + default daily allocation
+    // When demand is zero (stock covers all), surplus = defaultBatchesPerDay ensures
+    // minimum daily production capacity is always allocated.
+    const surplusBatches = Math.ceil(batchesForDemand * surplusPercent / 100) + defaultBatchesPerDay;
 
-    // Step 3: suggested = demand batches + surplus buffer
+    // Step 3: suggested = demand batches + surplus allocation
     const suggestedBatches = batchesForDemand + surplusBatches;
 
     // Tin count
