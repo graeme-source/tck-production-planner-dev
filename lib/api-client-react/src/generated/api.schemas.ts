@@ -82,14 +82,30 @@ export interface SubRecipeIngredient {
   packWeight?: number | null;
 }
 
+export interface SubRecipeComponent {
+  id: number;
+  componentSubRecipeId: number;
+  componentSubRecipeName?: string | null;
+  componentYieldUnit?: string | null;
+  quantity: number;
+  costPerYieldUnit: number;
+  lineCost: number;
+}
+
 export type SubRecipeDetail = SubRecipe & {
   ingredients: SubRecipeIngredient[];
+  subRecipeComponents: SubRecipeComponent[];
   totalBatchCost: number;
   costPerYieldUnit?: number | null;
 };
 
 export type CreateSubRecipeIngredientsItem = {
   ingredientId: number;
+  quantity: number;
+};
+
+export type CreateSubRecipeSubRecipeComponentsItem = {
+  componentSubRecipeId: number;
   quantity: number;
 };
 
@@ -100,6 +116,7 @@ export interface CreateSubRecipe {
   yieldUnit: string;
   notes?: string | null;
   ingredients: CreateSubRecipeIngredientsItem[];
+  subRecipeComponents?: CreateSubRecipeSubRecipeComponentsItem[];
 }
 
 export interface Recipe {

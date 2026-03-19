@@ -6,10 +6,12 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { SubRecipe } from "./subRecipe";
+import type { SubRecipeComponent } from "./subRecipeComponent";
 import type { SubRecipeIngredient } from "./subRecipeIngredient";
 
 export type SubRecipeDetail = SubRecipe & {
   ingredients: SubRecipeIngredient[];
+  subRecipeComponents: SubRecipeComponent[];
   totalBatchCost: number;
   costPerYieldUnit?: number | null;
 };

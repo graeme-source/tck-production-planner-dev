@@ -305,6 +305,14 @@ export const CreateSubRecipeBody = zod.object({
       quantity: zod.number(),
     }),
   ),
+  subRecipeComponents: zod
+    .array(
+      zod.object({
+        componentSubRecipeId: zod.number(),
+        quantity: zod.number(),
+      }),
+    )
+    .optional(),
 });
 
 /**
@@ -338,6 +346,17 @@ export const GetSubRecipeResponse = zod
           packWeight: zod.number().nullish(),
         }),
       ),
+      subRecipeComponents: zod.array(
+        zod.object({
+          id: zod.number(),
+          componentSubRecipeId: zod.number(),
+          componentSubRecipeName: zod.string().nullish(),
+          componentYieldUnit: zod.string().nullish(),
+          quantity: zod.number(),
+          costPerYieldUnit: zod.number(),
+          lineCost: zod.number(),
+        }),
+      ),
       totalBatchCost: zod.number(),
       costPerYieldUnit: zod.number().nullish(),
     }),
@@ -362,6 +381,14 @@ export const UpdateSubRecipeBody = zod.object({
       quantity: zod.number(),
     }),
   ),
+  subRecipeComponents: zod
+    .array(
+      zod.object({
+        componentSubRecipeId: zod.number(),
+        quantity: zod.number(),
+      }),
+    )
+    .optional(),
 });
 
 export const UpdateSubRecipeResponse = zod.object({

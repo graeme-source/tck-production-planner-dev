@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { useListSubRecipes, useListIngredients, useGetSubRecipe } from "@workspace/api-client-react";
-import type { Ingredient, SubRecipeDetail } from "@workspace/api-client-react";
+import type { Ingredient, SubRecipeDetail, SubRecipe } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
-import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2, RotateCcw, FlaskConical, Info } from "lucide-react";
+import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2, RotateCcw, FlaskConical, Info, Layers } from "lucide-react";
 import { useForm, useFieldArray } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -19,12 +19,20 @@ const schema = z.object({
   ingredients: z.array(z.object({
     ingredientId: z.coerce.number().min(1, "Select an ingredient"),
     quantity: z.coerce.number().min(0.001, "Must be > 0"),
-  })).min(1, "Add at least one ingredient"),
-});
+  })).min(0),
+  subRecipeComponents: z.array(z.object({
+    componentSubRecipeId: z.coerce.number().min(1, "Select a sub-recipe"),
+    quantity: z.coerce.number().min(0.001, "Must be > 0"),
+  })).min(0),
+}).refine(
+  (data) => data.ingredients.length > 0 || data.subRecipeComponents.length > 0,
+  { message: "Add at least one ingredient or sub-recipe component", path: ["ingredients"] }
+);
 
 type FormValues = z.infer<typeof schema>;
 
 type IngredientOption = Pick<Ingredient, "id" | "name" | "unit" | "processingRatio">;
+type SubRecipeOption = Pick<SubRecipe, "id" | "name" | "yieldUnit">;
 
 function toKg(value: number, unit: string): number | null {
   if (unit === "kg") return value;
@@ -134,6 +142,7 @@ function YieldComparison({
   const totalCost = detail.totalBatchCost ?? 0;
   const costPerUnit = detail.costPerYieldUnit ?? null;
   const hasCost = totalCost > 0;
+  const hasNested = (detail.subRecipeComponents ?? []).length > 0;
 
   return (
     <div className="space-y-2 mb-4">
@@ -142,6 +151,9 @@ function YieldComparison({
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-1.5">
               <span className="text-xs text-muted-foreground font-medium">Cost summary</span>
+              {hasNested && (
+                <span className="text-xs text-muted-foreground">(includes nested sub-recipes)</span>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-6 ml-1">
               <div>
@@ -156,6 +168,20 @@ function YieldComparison({
               )}
             </div>
           </div>
+          {hasNested && (
+            <div className="mt-2 pt-2 border-t border-primary/10 space-y-1">
+              {(detail.subRecipeComponents ?? []).map(c => (
+                <div key={c.id} className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1">
+                    <Layers className="w-3 h-3" />
+                    {c.componentSubRecipeName ?? `SR-${c.componentSubRecipeId}`}
+                    <span className="text-muted-foreground/60">× {c.quantity} {c.componentYieldUnit}</span>
+                  </span>
+                  <span className="tabular-nums">£{c.lineCost.toFixed(3)}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -199,18 +225,23 @@ function SubRecipeForm({
   isPending,
   isEdit,
   ingredients: initialIngredients,
+  subRecipes: allSubRecipes,
+  currentSubRecipeId,
 }: {
   defaultValues: FormValues;
   onSubmit: (data: FormValues) => void;
   isPending: boolean;
   isEdit: boolean;
   ingredients: IngredientOption[];
+  subRecipes: SubRecipeOption[];
+  currentSubRecipeId?: number;
 }) {
   const { register, control, handleSubmit, setValue, watch, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues,
   });
-  const { fields, append, remove } = useFieldArray({ control, name: "ingredients" });
+  const { fields: ingFields, append: appendIng, remove: removeIng } = useFieldArray({ control, name: "ingredients" });
+  const { fields: srFields, append: appendSr, remove: removeSr } = useFieldArray({ control, name: "subRecipeComponents" });
 
   const [localIngredients, setLocalIngredients] = useState<IngredientOption[]>(initialIngredients);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
@@ -219,8 +250,11 @@ function SubRecipeForm({
   const yieldInputRef = useRef<HTMLInputElement | null>(null);
 
   const watchedIngredients = watch("ingredients");
+  const watchedSubRecipeComponents = watch("subRecipeComponents");
   const watchedYield = watch("yield");
   const watchedYieldUnit = watch("yieldUnit");
+
+  const availableSubRecipes = allSubRecipes.filter(sr => sr.id !== currentSubRecipeId);
 
   useEffect(() => {
     if (!isYieldAuto) return;
@@ -345,7 +379,7 @@ function SubRecipeForm({
             <label className="text-sm font-bold">Ingredients</label>
             <button
               type="button"
-              onClick={() => append({ ingredientId: 0, quantity: 1 })}
+              onClick={() => appendIng({ ingredientId: 0, quantity: 1 })}
               className="text-xs font-medium text-primary flex items-center gap-1 hover:underline"
             >
               <Plus className="w-3 h-3" /> Add Row
@@ -355,11 +389,11 @@ function SubRecipeForm({
             <span className="text-destructive text-xs block mb-2">{errors.ingredients.message}</span>
           )}
 
-          {fields.length === 0 && (
-            <p className="text-xs text-muted-foreground italic py-2">No ingredients yet — click "Add Row" to start.</p>
+          {ingFields.length === 0 && (
+            <p className="text-xs text-muted-foreground italic py-2">No raw ingredients — click "Add Row" to start.</p>
           )}
 
-          {fields.length > 0 && (
+          {ingFields.length > 0 && (
             <div className="grid grid-cols-[1fr_80px_44px_44px] gap-2 mb-1 px-1">
               <span className="text-xs text-muted-foreground font-medium">Ingredient</span>
               <span className="text-xs text-muted-foreground font-medium text-center">Quantity</span>
@@ -369,7 +403,7 @@ function SubRecipeForm({
           )}
 
           <div className="space-y-2">
-            {fields.map((field, index) => {
+            {ingFields.map((field, index) => {
               const selectedId = Number(watchedIngredients?.[index]?.ingredientId ?? 0);
               const selectedIng = localIngredients.find(i => i.id === selectedId);
               const unit = selectedIng?.unit ?? "";
@@ -410,7 +444,7 @@ function SubRecipeForm({
                     </button>
                     <button
                       type="button"
-                      onClick={() => remove(index)}
+                      onClick={() => removeIng(index)}
                       className="flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors"
                     >
                       <X className="w-4 h-4" />
@@ -427,7 +461,7 @@ function SubRecipeForm({
             })}
           </div>
 
-          {fields.length > 0 && (
+          {ingFields.length > 0 && (
             <div className="mt-3">
               <YieldSanityCheck
                 ingredientRows={watchedIngredients ?? []}
@@ -437,6 +471,79 @@ function SubRecipeForm({
               />
             </div>
           )}
+        </div>
+
+        <div className="border-t border-border pt-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Layers className="w-4 h-4 text-muted-foreground" />
+              <label className="text-sm font-bold">Sub-recipe Components</label>
+            </div>
+            <button
+              type="button"
+              onClick={() => appendSr({ componentSubRecipeId: 0, quantity: 1 })}
+              className="text-xs font-medium text-primary flex items-center gap-1 hover:underline"
+              disabled={availableSubRecipes.length === 0}
+            >
+              <Plus className="w-3 h-3" /> Add Row
+            </button>
+          </div>
+
+          {availableSubRecipes.length === 0 ? (
+            <p className="text-xs text-muted-foreground italic py-2">No other sub-recipes available yet.</p>
+          ) : srFields.length === 0 ? (
+            <p className="text-xs text-muted-foreground italic py-2">No nested sub-recipes — click "Add Row" to include a prepared component.</p>
+          ) : null}
+
+          {srFields.length > 0 && (
+            <div className="grid grid-cols-[1fr_80px_32px] gap-2 mb-1 px-1">
+              <span className="text-xs text-muted-foreground font-medium">Sub-recipe</span>
+              <span className="text-xs text-muted-foreground font-medium text-center">Quantity</span>
+              <span />
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {srFields.map((field, index) => {
+              const selectedId = Number(watchedSubRecipeComponents?.[index]?.componentSubRecipeId ?? 0);
+              const selectedSr = availableSubRecipes.find(sr => sr.id === selectedId);
+              const unit = selectedSr?.yieldUnit ?? "";
+              return (
+                <div key={field.id} className="grid grid-cols-[1fr_80px_32px] gap-2 items-center">
+                  <select
+                    {...register(`subRecipeComponents.${index}.componentSubRecipeId`)}
+                    className="px-2 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 truncate"
+                  >
+                    <option value={0} disabled>Select sub-recipe...</option>
+                    {availableSubRecipes.map(sr => (
+                      <option key={sr.id} value={sr.id}>{sr.name} ({sr.yieldUnit})</option>
+                    ))}
+                  </select>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      step="0.001"
+                      {...register(`subRecipeComponents.${index}.quantity`)}
+                      className="w-full px-2 py-2 pr-7 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      placeholder="Qty"
+                    />
+                    {unit && (
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">
+                        {unit}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeSr(index)}
+                    className="flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         <div>
@@ -465,11 +572,13 @@ function EditSubRecipeDialog({
   open,
   onOpenChange,
   ingredients,
+  subRecipes,
 }: {
   id: number;
   open: boolean;
   onOpenChange: (v: boolean) => void;
   ingredients: IngredientOption[];
+  subRecipes: SubRecipeOption[];
 }) {
   const { data: detail, isLoading } = useGetSubRecipe(id, { query: { enabled: open } });
   const { updateSubRecipe } = useAppMutations();
@@ -487,8 +596,12 @@ function EditSubRecipeDialog({
           ingredientId: i.ingredientId,
           quantity: Number(i.quantity),
         })),
+        subRecipeComponents: (detail.subRecipeComponents ?? []).map(c => ({
+          componentSubRecipeId: c.componentSubRecipeId,
+          quantity: Number(c.quantity),
+        })),
       }
-    : { name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", ingredients: [] };
+    : { name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", ingredients: [], subRecipeComponents: [] };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -509,6 +622,8 @@ function EditSubRecipeDialog({
               isEdit
               isPending={updateSubRecipe.isPending}
               ingredients={ingredients}
+              subRecipes={subRecipes}
+              currentSubRecipeId={id}
               onSubmit={(data) => updateSubRecipe.mutate({ id, data }, { onSuccess: () => onOpenChange(false) })}
             />
           </>
@@ -535,9 +650,16 @@ export default function SubRecipes() {
     processingRatio: i.processingRatio ?? null,
   }));
 
+  const subRecipeList: SubRecipeOption[] = (subRecipes ?? []).map(sr => ({
+    id: sr.id,
+    name: sr.name,
+    yieldUnit: sr.yieldUnit,
+  }));
+
   const addDefaults: FormValues = {
     name: "", description: "", yield: 1, yieldUnit: "kg", notes: "",
-    ingredients: [{ ingredientId: 0, quantity: 1 }],
+    ingredients: [],
+    subRecipeComponents: [],
   };
 
   return (
@@ -565,6 +687,7 @@ export default function SubRecipes() {
             isEdit={false}
             isPending={createSubRecipe.isPending}
             ingredients={ingredientList}
+            subRecipes={subRecipeList}
             onSubmit={(data) => createSubRecipe.mutate({ data }, { onSuccess: () => setIsAddOpen(false) })}
           />
         </DialogContent>
@@ -576,6 +699,7 @@ export default function SubRecipes() {
           open={editingId !== null}
           onOpenChange={(v) => { if (!v) setEditingId(null); }}
           ingredients={ingredientList}
+          subRecipes={subRecipeList}
         />
       )}
 

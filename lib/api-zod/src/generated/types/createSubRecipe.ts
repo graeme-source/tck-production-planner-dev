@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { CreateSubRecipeIngredientsItem } from "./createSubRecipeIngredientsItem";
+import type { CreateSubRecipeSubRecipeComponentsItem } from "./createSubRecipeSubRecipeComponentsItem";
 
 export interface CreateSubRecipe {
   name: string;
@@ -14,4 +15,5 @@ export interface CreateSubRecipe {
   yieldUnit: string;
   notes?: string | null;
   ingredients: CreateSubRecipeIngredientsItem[];
+  subRecipeComponents?: CreateSubRecipeSubRecipeComponentsItem[];
 }

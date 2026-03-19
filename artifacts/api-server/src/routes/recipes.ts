@@ -3,6 +3,7 @@ import { db, recipesTable, recipeIngredientsTable, recipeSubRecipesTable, ingred
 import { eq, inArray } from "drizzle-orm";
 import { CreateRecipeBody, UpdateRecipeBody } from "@workspace/api-zod";
 import { validate } from "../middleware/validate";
+import { computeSubRecipeCosts } from "../lib/sub-recipe-costs";
 
 const router: IRouter = Router();
 
@@ -21,7 +22,6 @@ function mapRecipe(r: typeof recipesTable.$inferSelect) {
 async function computeCosts(recipeIds: number[]) {
   if (recipeIds.length === 0) return {};
 
-  // 1. Get all recipe ingredients with pack cost data
   const recipeIngredients = await db
     .select({
       recipeId: recipeIngredientsTable.recipeId,
@@ -33,60 +33,24 @@ async function computeCosts(recipeIds: number[]) {
     .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
     .where(inArray(recipeIngredientsTable.recipeId, recipeIds));
 
-  // 2. Get all recipe sub-recipes
   const recipeSubRecipes = await db
     .select({
       recipeId: recipeSubRecipesTable.recipeId,
       subRecipeId: recipeSubRecipesTable.subRecipeId,
       quantity: recipeSubRecipesTable.quantity,
-      subRecipeYield: subRecipesTable.yield,
     })
     .from(recipeSubRecipesTable)
-    .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
     .where(inArray(recipeSubRecipesTable.recipeId, recipeIds));
 
-  // 3. Get costs for all sub-recipes used across these recipes
-  const usedSubRecipeIds = [...new Set(recipeSubRecipes.map(s => s.subRecipeId).filter((id): id is number => id !== null))];
+  const usedSubRecipeIds = [...new Set(
+    recipeSubRecipes.map(s => s.subRecipeId).filter((id): id is number => id !== null)
+  )];
+
   let subRecipeCostPerUnit: Record<number, number> = {};
   if (usedSubRecipeIds.length > 0) {
-    const subIngredients = await db
-      .select({
-        subRecipeId: subRecipeIngredientsTable.subRecipeId,
-        quantity: subRecipeIngredientsTable.quantity,
-        packWeight: ingredientsTable.packWeight,
-        costPerPack: ingredientsTable.costPerPack,
-      })
-      .from(subRecipeIngredientsTable)
-      .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
-      .where(inArray(subRecipeIngredientsTable.subRecipeId, usedSubRecipeIds));
-
-    // Group sub-recipe ingredient costs by subRecipeId
-    const subCostBySubRecipeId: Record<number, number> = {};
-    for (const si of subIngredients) {
-      if (!si.subRecipeId) continue;
-      const q = Number(si.quantity);
-      const pw = Number(si.packWeight);
-      const cpp = Number(si.costPerPack);
-      const costPerUnit = pw > 0 ? cpp / pw : 0;
-      subCostBySubRecipeId[si.subRecipeId] = (subCostBySubRecipeId[si.subRecipeId] ?? 0) + q * costPerUnit;
-    }
-
-    // Now pair with yields from recipeSubRecipes
-    const yieldBySubId: Record<number, number> = {};
-    for (const rs of recipeSubRecipes) {
-      if (rs.subRecipeId && rs.subRecipeYield) {
-        yieldBySubId[rs.subRecipeId] = Number(rs.subRecipeYield);
-      }
-    }
-
-    for (const subId of usedSubRecipeIds) {
-      const totalCost = subCostBySubRecipeId[subId] ?? 0;
-      const y = yieldBySubId[subId] ?? 1;
-      subRecipeCostPerUnit[subId] = y > 0 ? totalCost / y : 0;
-    }
+    subRecipeCostPerUnit = await computeSubRecipeCosts();
   }
 
-  // 4. Sum raw material costs per recipe
   const rawCostByRecipeId: Record<number, number> = {};
 
   for (const ri of recipeIngredients) {
@@ -179,7 +143,6 @@ router.get("/:id", async (req, res) => {
 
   const servings = Number(row.servings);
 
-  // Raw ingredients with cost breakdown
   const ingredientRows = await db
     .select({
       id: recipeIngredientsTable.id,
@@ -194,7 +157,6 @@ router.get("/:id", async (req, res) => {
     .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
     .where(eq(recipeIngredientsTable.recipeId, id));
 
-  // Sub-recipes with full ingredient breakdowns
   const subRows = await db
     .select({
       id: recipeSubRecipesTable.id,
@@ -209,30 +171,14 @@ router.get("/:id", async (req, res) => {
     .where(eq(recipeSubRecipesTable.recipeId, id));
 
   const subRecipeIds = subRows.map(s => s.subRecipeId).filter((x): x is number => x !== null);
-  let subIngredientRows: Array<{
-    subRecipeId: number;
-    ingredientName: string | null;
-    unit: string | null;
-    quantity: string | null;
-    packWeight: string | null;
-    costPerPack: string | null;
-  }> = [];
+  const subCostPerUnit: Record<number, number> = {};
   if (subRecipeIds.length > 0) {
-    subIngredientRows = await db
-      .select({
-        subRecipeId: subRecipeIngredientsTable.subRecipeId,
-        ingredientName: ingredientsTable.name,
-        unit: ingredientsTable.unit,
-        quantity: subRecipeIngredientsTable.quantity,
-        packWeight: ingredientsTable.packWeight,
-        costPerPack: ingredientsTable.costPerPack,
-      })
-      .from(subRecipeIngredientsTable)
-      .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
-      .where(inArray(subRecipeIngredientsTable.subRecipeId, subRecipeIds));
+    const allCosts = await computeSubRecipeCosts();
+    for (const srId of subRecipeIds) {
+      subCostPerUnit[srId] = allCosts[srId] ?? 0;
+    }
   }
 
-  // Compute per-ingredient cost of each ingredient line
   const enrichedIngredients = ingredientRows.map(i => {
     const qty = Number(i.quantity);
     const pw = Number(i.packWeight);
@@ -254,20 +200,12 @@ router.get("/:id", async (req, res) => {
     };
   });
 
-  // Build sub-recipe cost breakdown
   const enrichedSubRecipes = subRows.map(s => {
     const qty = Number(s.quantity);
     const subYield = Number(s.subYield);
-    const lines = subIngredientRows.filter(r => r.subRecipeId === s.subRecipeId);
-    const subBatchCost = lines.reduce((acc, r) => {
-      const q = Number(r.quantity);
-      const pw = Number(r.packWeight);
-      const cpp = Number(r.costPerPack);
-      const cpu = pw > 0 ? cpp / pw : 0;
-      return acc + q * cpu;
-    }, 0);
-    const subCostPerUnit = subYield > 0 ? subBatchCost / subYield : 0;
-    const lineCostBatch = qty * subCostPerUnit;
+    const subCostPerUnitVal = subCostPerUnit[s.subRecipeId!] ?? 0;
+    const subBatchCost = subYield > 0 ? subCostPerUnitVal * subYield : 0;
+    const lineCostBatch = qty * subCostPerUnitVal;
     const lineCostPortion = servings > 0 ? lineCostBatch / servings : 0;
 
     return {
@@ -278,27 +216,9 @@ router.get("/:id", async (req, res) => {
       unit: s.yieldUnit,
       subYield,
       subBatchCost,
-      subCostPerUnit,
+      subCostPerUnit: subCostPerUnitVal,
       lineCostBatch,
       lineCostPortion,
-      breakdown: lines.map(r => {
-        const q = Number(r.quantity);
-        const pw = Number(r.packWeight);
-        const cpp = Number(r.costPerPack);
-        const cpu = pw > 0 ? cpp / pw : 0;
-        const totalInSub = q * cpu;
-        // Portion of the sub-recipe used in this recipe
-        const fraction = subYield > 0 ? qty / subYield : 0;
-        return {
-          ingredientName: r.ingredientName,
-          unit: r.unit,
-          quantity: q,
-          costPerUnit: cpu,
-          totalInSubBatch: totalInSub,
-          allocatedCostBatch: totalInSub * fraction,
-          allocatedCostPortion: servings > 0 ? (totalInSub * fraction) / servings : 0,
-        };
-      }),
     };
   });
 

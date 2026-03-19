@@ -20,8 +20,17 @@ export const subRecipeIngredientsTable = pgTable("sub_recipe_ingredients", {
   quantity: numeric("quantity", { precision: 10, scale: 4 }).notNull(),
 });
 
+export const subRecipeSubRecipesTable = pgTable("sub_recipe_sub_recipes", {
+  id: serial("id").primaryKey(),
+  subRecipeId: integer("sub_recipe_id").notNull().references(() => subRecipesTable.id, { onDelete: "cascade" }),
+  componentSubRecipeId: integer("component_sub_recipe_id").notNull().references(() => subRecipesTable.id, { onDelete: "restrict" }),
+  quantity: numeric("quantity", { precision: 10, scale: 4 }).notNull(),
+});
+
 export const insertSubRecipeSchema = createInsertSchema(subRecipesTable).omit({ id: true, createdAt: true });
 export const insertSubRecipeIngredientSchema = createInsertSchema(subRecipeIngredientsTable).omit({ id: true });
+export const insertSubRecipeSubRecipeSchema = createInsertSchema(subRecipeSubRecipesTable).omit({ id: true });
 export type InsertSubRecipe = z.infer<typeof insertSubRecipeSchema>;
 export type SubRecipe = typeof subRecipesTable.$inferSelect;
 export type SubRecipeIngredient = typeof subRecipeIngredientsTable.$inferSelect;
+export type SubRecipeSubRecipe = typeof subRecipeSubRecipesTable.$inferSelect;

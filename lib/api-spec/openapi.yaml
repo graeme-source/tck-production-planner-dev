@@ -1072,6 +1072,32 @@ components:
         - unit
         - quantity
 
+    SubRecipeComponent:
+      type: object
+      properties:
+        id:
+          type: integer
+        componentSubRecipeId:
+          type: integer
+        componentSubRecipeName:
+          type: string
+          nullable: true
+        componentYieldUnit:
+          type: string
+          nullable: true
+        quantity:
+          type: number
+        costPerYieldUnit:
+          type: number
+        lineCost:
+          type: number
+      required:
+        - id
+        - componentSubRecipeId
+        - quantity
+        - costPerYieldUnit
+        - lineCost
+
     SubRecipeDetail:
       allOf:
         - $ref: "#/components/schemas/SubRecipe"
@@ -1081,6 +1107,10 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/SubRecipeIngredient"
+            subRecipeComponents:
+              type: array
+              items:
+                $ref: "#/components/schemas/SubRecipeComponent"
             totalBatchCost:
               type: number
             costPerYieldUnit:
@@ -1088,6 +1118,7 @@ components:
               nullable: true
           required:
             - ingredients
+            - subRecipeComponents
             - totalBatchCost
 
     CreateSubRecipe:
@@ -1116,6 +1147,18 @@ components:
                 type: number
             required:
               - ingredientId
+              - quantity
+        subRecipeComponents:
+          type: array
+          items:
+            type: object
+            properties:
+              componentSubRecipeId:
+                type: integer
+              quantity:
+                type: number
+            required:
+              - componentSubRecipeId
               - quantity
       required:
         - name
