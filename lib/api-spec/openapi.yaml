@@ -1059,6 +1059,12 @@ components:
         processingRatio:
           type: number
           nullable: true
+        costPerPack:
+          type: number
+          nullable: true
+        packWeight:
+          type: number
+          nullable: true
       required:
         - id
         - ingredientId
@@ -1075,8 +1081,14 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/SubRecipeIngredient"
+            totalBatchCost:
+              type: number
+            costPerYieldUnit:
+              type: number
+              nullable: true
           required:
             - ingredients
+            - totalBatchCost
 
     CreateSubRecipe:
       type: object

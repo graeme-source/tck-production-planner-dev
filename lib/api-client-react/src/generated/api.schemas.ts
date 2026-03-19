@@ -78,10 +78,14 @@ export interface SubRecipeIngredient {
   unit: string;
   quantity: number;
   processingRatio?: number | null;
+  costPerPack?: number | null;
+  packWeight?: number | null;
 }
 
 export type SubRecipeDetail = SubRecipe & {
   ingredients: SubRecipeIngredient[];
+  totalBatchCost: number;
+  costPerYieldUnit?: number | null;
 };
 
 export type CreateSubRecipeIngredientsItem = {

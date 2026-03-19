@@ -10,4 +10,6 @@ import type { SubRecipeIngredient } from "./subRecipeIngredient";
 
 export type SubRecipeDetail = SubRecipe & {
   ingredients: SubRecipeIngredient[];
+  totalBatchCost: number;
+  costPerYieldUnit?: number | null;
 };

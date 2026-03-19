@@ -13,4 +13,6 @@ export interface SubRecipeIngredient {
   unit: string;
   quantity: number;
   processingRatio?: number | null;
+  costPerPack?: number | null;
+  packWeight?: number | null;
 }

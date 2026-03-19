@@ -117,47 +117,78 @@ function YieldComparison({
   detail: SubRecipeDetail;
 }) {
   const storedYieldKg = toKg(Number(detail.yield), detail.yieldUnit);
-  if (storedYieldKg === null) return null;
 
   let expectedKg = 0;
+  let canCompare = storedYieldKg !== null;
   for (const i of detail.ingredients) {
     const ratio = i.processingRatio ?? 1.0;
     if (i.unit === "kg") expectedKg += i.quantity * ratio;
     else if (i.unit === "g") expectedKg += (i.quantity / 1000) * ratio;
   }
-  if (expectedKg <= 0) return null;
 
-  const diffPct = Math.abs(storedYieldKg - expectedKg) / expectedKg * 100;
-  const hasMismatch = diffPct > 2;
+  const diffPct = (canCompare && expectedKg > 0)
+    ? Math.abs(storedYieldKg! - expectedKg) / expectedKg * 100
+    : 0;
+  const hasMismatch = canCompare && expectedKg > 0 && diffPct > 2;
+
+  const totalCost = detail.totalBatchCost ?? 0;
+  const costPerUnit = detail.costPerYieldUnit ?? null;
+  const hasCost = totalCost > 0;
 
   return (
-    <div className={`rounded-lg px-3.5 py-2.5 text-sm border mb-4 ${hasMismatch ? "bg-amber-50 border-amber-200" : "bg-secondary/20 border-border"}`}>
-      <div className="flex flex-wrap items-center gap-4">
-        <div className="flex items-center gap-1.5">
-          {hasMismatch
-            ? <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-            : <Info className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-          }
-          <span className="text-xs text-muted-foreground font-medium">Yield analysis</span>
-        </div>
-        <div className="flex flex-wrap items-center gap-6 ml-1">
-          <div>
-            <span className="text-xs text-muted-foreground block">Stored yield</span>
-            <span className="font-semibold tabular-nums">{detail.yield} {detail.yieldUnit}</span>
-          </div>
-          <div>
-            <span className="text-xs text-muted-foreground block flex items-center gap-1">
-              <FlaskConical className="w-3 h-3 inline" /> Processing-adjusted expected
-            </span>
-            <span className="font-semibold tabular-nums">{expectedKg.toFixed(3)} kg</span>
-          </div>
-          {hasMismatch && (
-            <div className="text-amber-700 text-xs max-w-[200px]">
-              {diffPct.toFixed(1)}% difference — consider updating the stored yield to match the calculated expected.
+    <div className="space-y-2 mb-4">
+      {hasCost && (
+        <div className="rounded-lg px-3.5 py-2.5 text-sm border bg-primary/5 border-primary/20">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-muted-foreground font-medium">Cost summary</span>
             </div>
-          )}
+            <div className="flex flex-wrap items-center gap-6 ml-1">
+              <div>
+                <span className="text-xs text-muted-foreground block">Total batch cost</span>
+                <span className="font-semibold tabular-nums text-primary">£{totalCost.toFixed(2)}</span>
+              </div>
+              {costPerUnit !== null && (
+                <div>
+                  <span className="text-xs text-muted-foreground block">Cost per {detail.yieldUnit}</span>
+                  <span className="font-bold tabular-nums text-primary text-base">£{costPerUnit.toFixed(2)}</span>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
+
+      {canCompare && expectedKg > 0 && (
+        <div className={`rounded-lg px-3.5 py-2.5 text-sm border ${hasMismatch ? "bg-amber-50 border-amber-200" : "bg-secondary/20 border-border"}`}>
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-1.5">
+              {hasMismatch
+                ? <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                : <Info className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+              }
+              <span className="text-xs text-muted-foreground font-medium">Yield analysis</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-6 ml-1">
+              <div>
+                <span className="text-xs text-muted-foreground block">Stored yield</span>
+                <span className="font-semibold tabular-nums">{detail.yield} {detail.yieldUnit}</span>
+              </div>
+              <div>
+                <span className="text-xs text-muted-foreground block flex items-center gap-1">
+                  <FlaskConical className="w-3 h-3 inline" /> Processing-adjusted expected
+                </span>
+                <span className="font-semibold tabular-nums">{expectedKg.toFixed(3)} kg</span>
+              </div>
+              {hasMismatch && (
+                <div className="text-amber-700 text-xs max-w-[200px]">
+                  {diffPct.toFixed(1)}% difference — consider updating the stored yield to match the calculated expected.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -38,19 +38,32 @@ router.get("/:id", async (req, res) => {
       unit: ingredientsTable.unit,
       processingRatio: ingredientsTable.processingRatio,
       quantity: subRecipeIngredientsTable.quantity,
+      costPerPack: ingredientsTable.costPerPack,
+      packWeight: ingredientsTable.packWeight,
     })
     .from(subRecipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
     .where(eq(subRecipeIngredientsTable.subRecipeId, id));
+  const mappedItems = items.map(i => ({
+    ...i,
+    quantity: Number(i.quantity),
+    processingRatio: i.processingRatio !== null && i.processingRatio !== undefined ? Number(i.processingRatio) : null,
+    costPerPack: i.costPerPack !== null && i.costPerPack !== undefined ? Number(i.costPerPack) : null,
+    packWeight: i.packWeight !== null && i.packWeight !== undefined ? Number(i.packWeight) : null,
+  }));
+  const totalBatchCost = mappedItems.reduce((sum, i) => {
+    if (!i.costPerPack || !i.packWeight || i.packWeight <= 0) return sum;
+    return sum + (i.quantity * (i.costPerPack / i.packWeight));
+  }, 0);
+  const yieldNum = Number(row.yield);
+  const costPerYieldUnit = yieldNum > 0 ? totalBatchCost / yieldNum : null;
   res.json({
     ...row,
-    yield: Number(row.yield),
+    yield: yieldNum,
     createdAt: row.createdAt.toISOString(),
-    ingredients: items.map(i => ({
-      ...i,
-      quantity: Number(i.quantity),
-      processingRatio: i.processingRatio !== null && i.processingRatio !== undefined ? Number(i.processingRatio) : null,
-    })),
+    ingredients: mappedItems,
+    totalBatchCost,
+    costPerYieldUnit,
   });
 });
 

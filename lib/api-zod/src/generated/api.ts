@@ -334,8 +334,12 @@ export const GetSubRecipeResponse = zod
           unit: zod.string(),
           quantity: zod.number(),
           processingRatio: zod.number().nullish(),
+          costPerPack: zod.number().nullish(),
+          packWeight: zod.number().nullish(),
         }),
       ),
+      totalBatchCost: zod.number(),
+      costPerYieldUnit: zod.number().nullish(),
     }),
   );
 
