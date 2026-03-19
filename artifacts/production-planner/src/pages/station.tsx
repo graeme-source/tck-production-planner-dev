@@ -10,6 +10,7 @@ import {
   useListTimingStandards,
   useGetStationKpi,
   useGetStationActivity,
+  useListBatchCompletions,
   getGetProductionPlanQueryKey,
   getGetStationKpiQueryKey,
   getGetStationActivityQueryKey,
@@ -27,6 +28,22 @@ import {
 } from "lucide-react";
 import { format, parseISO, differenceInMinutes } from "date-fns";
 import { cn } from "@/lib/utils";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { GripVertical } from "lucide-react";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Station metadata
@@ -331,6 +348,7 @@ function KpiBar({ sessionBatches, sessionStartedAt, activeBreakMinutes, totalBre
 // End-of-day summary modal for Building stations
 // ──────────────────────────────────────────────────────────────────────────────
 interface EodSummaryProps {
+  planId: number;
   items: ProductionPlanItem[];
   stationType: string;
   sessionBatches: number;
@@ -339,7 +357,7 @@ interface EodSummaryProps {
   onClose: () => void;
 }
 
-function EodSummary({ items, stationType, sessionBatches, totalBreakMinutes, sessionStartedAt, onClose }: EodSummaryProps) {
+function EodSummary({ planId, items, stationType, sessionBatches, totalBreakMinutes, sessionStartedAt, onClose }: EodSummaryProps) {
   const now = new Date();
   const totalMinutes = sessionStartedAt ? differenceInMinutes(now, sessionStartedAt) : 0;
   const activeMinutes = Math.max(0, totalMinutes - totalBreakMinutes);
@@ -350,6 +368,29 @@ function EodSummary({ items, stationType, sessionBatches, totalBreakMinutes, ses
   const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
   const totalBatchesComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
   const completionRate = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
+
+  // Fetch batch completions to compute avg mins/batch per recipe from actual timestamps
+  const { data: completions } = useListBatchCompletions(planId, { stationType });
+
+  // Build per-item completion time lookup: { planItemId => avg mins/batch }
+  const avgMinsByItem: Record<number, number | null> = {};
+  if (completions && completions.length > 0) {
+    const byItem: Record<number, number[]> = {};
+    for (const c of completions) {
+      if (c.startedAt && c.completedAt) {
+        const started = new Date(c.startedAt).getTime();
+        const finished = new Date(c.completedAt).getTime();
+        const mins = (finished - started) / 60000;
+        if (mins > 0 && mins < 240) { // sanity cap: <4 hours
+          if (!byItem[c.planItemId]) byItem[c.planItemId] = [];
+          byItem[c.planItemId].push(mins);
+        }
+      }
+    }
+    for (const [itemId, times] of Object.entries(byItem)) {
+      avgMinsByItem[Number(itemId)] = times.reduce((a, b) => a + b, 0) / times.length;
+    }
+  }
 
   const stationLabel = stationType === "building_1" ? "Building Line 1"
     : stationType === "building_2" ? "Building Line 2"
@@ -421,6 +462,7 @@ function EodSummary({ items, stationType, sessionBatches, totalBreakMinutes, ses
                   <th className="px-3 py-1.5 text-center font-medium">Target</th>
                   <th className="px-3 py-1.5 text-center font-medium">Done</th>
                   <th className="px-3 py-1.5 text-center font-medium">Rate</th>
+                  <th className="px-3 py-1.5 text-center font-medium">Avg m/batch</th>
                 </tr>
               </thead>
               <tbody>
@@ -432,9 +474,10 @@ function EodSummary({ items, stationType, sessionBatches, totalBreakMinutes, ses
                     ? "text-emerald-600 dark:text-emerald-400"
                     : rate >= 50 ? "text-amber-600 dark:text-amber-400"
                     : "text-rose-600 dark:text-rose-400";
+                  const avgMins = avgMinsByItem[item.id];
                   return (
                     <tr key={item.id} className="border-b border-border/50 last:border-0">
-                      <td className="px-3 py-2 font-medium truncate max-w-[160px]">
+                      <td className="px-3 py-2 font-medium truncate max-w-[140px]">
                         {item.recipeName ?? `Recipe #${item.recipeId}`}
                       </td>
                       <td className="px-3 py-2 text-center tabular-nums text-muted-foreground">
@@ -445,6 +488,9 @@ function EodSummary({ items, stationType, sessionBatches, totalBreakMinutes, ses
                       </td>
                       <td className={cn("px-3 py-2 text-center tabular-nums font-semibold text-xs", rateColor)}>
                         {rate}%
+                      </td>
+                      <td className="px-3 py-2 text-center tabular-nums text-xs text-muted-foreground">
+                        {avgMins != null ? `${avgMins.toFixed(1)}m` : "—"}
                       </td>
                     </tr>
                   );
@@ -518,27 +564,26 @@ function MixingStation({ plan }: MixingStationProps) {
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
 
-  const canReorder = (item: ProductionPlanItem) => {
-    if (isAdmin) return true;
-    return (item.batchesComplete ?? 0) === 0 && item.status === "pending";
-  };
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
-  const moveItem = (index: number, direction: "up" | "down") => {
-    const newItems = [...items];
-    const targetIndex = direction === "up" ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= newItems.length) return;
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
 
-    const movingItem = newItems[index];
-    const swappingWith = newItems[targetIndex];
+    const oldIndex = items.findIndex(it => it.id === active.id);
+    const newIndex = items.findIndex(it => it.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const movingItem = items[oldIndex];
+    const swappingWith = items[newIndex];
 
     // Block if either item is started/in-progress (unless admin)
     if (!isAdmin) {
-      if (movingItem.status !== "pending") return;
-      if (swappingWith.status !== "pending") return;
+      if (movingItem.status !== "pending" || swappingWith.status !== "pending") return;
     }
 
-    [newItems[index], newItems[targetIndex]] = [newItems[targetIndex], newItems[index]];
-    const order = newItems.map((it, i) => ({ itemId: it.id, orderPosition: i + 1 }));
+    const reordered = arrayMove(items, oldIndex, newIndex);
+    const order = reordered.map((it, i) => ({ itemId: it.id, orderPosition: i + 1 }));
     updateOrder.mutate({ id: plan.id, data: { order } });
   };
 
@@ -597,137 +642,150 @@ function MixingStation({ plan }: MixingStationProps) {
         </div>
       </div>
 
-      {/* Recipes list */}
-      <div className="space-y-2">
-        {items.map((item, index) => {
-          const progress = (item.batchesTarget ?? 0) > 0
-            ? Math.round(((item.batchesComplete ?? 0) / (item.batchesTarget ?? 0)) * 100)
-            : 0;
-          const isComplete = item.status === "complete";
-          const isStarted = (item.batchesComplete ?? 0) > 0;
-          const isLocked = isStarted && !isAdmin;
+      {/* Recipes list — drag-to-reorder (pending items only, unless admin) */}
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={items.map(it => it.id)} strategy={verticalListSortingStrategy}>
+          <div className="space-y-2">
+            {items.map(item => (
+              <SortableMixingItem
+                key={item.id}
+                item={item}
+                isAdmin={isAdmin}
+                onAdd={() => addBatch(item)}
+                onRemove={() => removeBatch(item)}
+              />
+            ))}
+          </div>
+        </SortableContext>
+      </DndContext>
+    </div>
+  );
+}
 
-          const statusColors = {
-            pending: "border-border",
-            "in-progress": "border-blue-300 dark:border-blue-700 bg-blue-50/30 dark:bg-blue-900/10",
-            complete: "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-900/10",
-          };
+interface SortableMixingItemProps {
+  item: ProductionPlanItem;
+  isAdmin: boolean;
+  onAdd: () => void;
+  onRemove: () => void;
+}
 
-          return (
-            <div
-              key={item.id}
+function SortableMixingItem({ item, isAdmin, onAdd, onRemove }: SortableMixingItemProps) {
+  const isDraggable = isAdmin || (item.status === "pending" && (item.batchesComplete ?? 0) === 0);
+  const {
+    attributes, listeners, setNodeRef,
+    transform, transition, isDragging,
+  } = useSortable({ id: item.id, disabled: !isDraggable });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 50 : "auto",
+  };
+
+  const progress = (item.batchesTarget ?? 0) > 0
+    ? Math.round(((item.batchesComplete ?? 0) / (item.batchesTarget ?? 0)) * 100)
+    : 0;
+  const isComplete = item.status === "complete";
+
+  const statusColors = {
+    pending: "border-border",
+    "in-progress": "border-blue-300 dark:border-blue-700 bg-blue-50/30 dark:bg-blue-900/10",
+    complete: "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-900/10",
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        "bg-card border rounded-xl overflow-hidden transition-colors",
+        statusColors[item.status as keyof typeof statusColors] ?? "border-border",
+        isDragging && "shadow-xl"
+      )}
+    >
+      <div className="p-4">
+        <div className="flex items-start gap-3">
+          {/* Drag handle */}
+          <div className="flex flex-col items-center gap-0.5 flex-shrink-0 pt-1">
+            <span className="text-xs font-mono text-muted-foreground w-6 text-center leading-tight">
+              {item.orderPosition}
+            </span>
+            {isDraggable ? (
+              <div
+                {...attributes}
+                {...listeners}
+                className="p-1 text-muted-foreground hover:text-foreground cursor-grab active:cursor-grabbing touch-none"
+                title="Drag to reorder"
+              >
+                <GripVertical className="w-4 h-4" />
+              </div>
+            ) : (
+              <div className="p-1 text-muted-foreground opacity-30" title="Locked — recipe in progress">
+                <GripVertical className="w-4 h-4" />
+              </div>
+            )}
+          </div>
+
+          {/* Recipe info */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1">
+              <h3 className={cn("font-semibold", isComplete ? "line-through text-muted-foreground" : "")}>
+                {item.recipeName ?? `Recipe #${item.recipeId}`}
+              </h3>
+              {isComplete && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
+              {item.status === "in-progress" && <PlayCircle className="w-4 h-4 text-blue-500 flex-shrink-0" />}
+            </div>
+
+            {/* Progress bar */}
+            <div className="flex items-center gap-2 mb-2">
+              <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
+                <div
+                  className={cn("h-full rounded-full transition-all", isComplete ? "bg-emerald-500" : "bg-primary")}
+                  style={{ width: `${Math.min(progress, 100)}%` }}
+                />
+              </div>
+              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                {item.batchesComplete ?? 0} / {item.batchesTarget ?? 0}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              {item.tinSize && <span>{item.tinSize} tin</span>}
+              {item.maxBatchesPerTin && (item.batchesTarget ?? 0) > 0 && (
+                <span>
+                  {Math.ceil((item.batchesTarget ?? 0) / item.maxBatchesPerTin)} tin{Math.ceil((item.batchesTarget ?? 0) / item.maxBatchesPerTin) !== 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Batch counter */}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              onClick={onRemove}
+              disabled={(item.batchesComplete ?? 0) === 0}
+              className="w-9 h-9 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
+            >
+              <Minus className="w-4 h-4" />
+            </button>
+            <div className="w-12 text-center">
+              <span className="text-xl font-bold">{item.batchesComplete ?? 0}</span>
+            </div>
+            <button
+              onClick={onAdd}
+              disabled={isComplete && !isAdmin}
               className={cn(
-                "bg-card border rounded-xl overflow-hidden transition-all",
-                statusColors[item.status as keyof typeof statusColors] ?? "border-border"
+                "w-9 h-9 flex items-center justify-center rounded-full transition-colors",
+                isComplete
+                  ? "border border-emerald-300 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 opacity-60"
+                  : "bg-primary text-primary-foreground hover:bg-primary/90"
               )}
             >
-              <div className="p-4">
-                <div className="flex items-start gap-3">
-                  {/* Order + move buttons */}
-                  <div className="flex flex-col items-center gap-0.5 flex-shrink-0">
-                    <span className="text-xs font-mono text-muted-foreground w-6 text-center">
-                      {item.orderPosition}
-                    </span>
-                    {canReorder(item) && (
-                      <>
-                        <button
-                          onClick={() => moveItem(index, "up")}
-                          disabled={index === 0}
-                          className="p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-20 transition-colors"
-                        >
-                          <ChevronUp className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => moveItem(index, "down")}
-                          disabled={index === items.length - 1}
-                          className="p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-20 transition-colors"
-                        >
-                          <ChevronDown className="w-3.5 h-3.5" />
-                        </button>
-                      </>
-                    )}
-                    {isLocked && (
-                      <div className="text-muted-foreground opacity-40 mt-1" title="Locked — recipe in progress">
-                        🔒
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Recipe info */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <h3 className={cn(
-                        "font-semibold",
-                        isComplete ? "line-through text-muted-foreground" : ""
-                      )}>
-                        {item.recipeName ?? `Recipe #${item.recipeId}`}
-                      </h3>
-                      {isComplete && (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                      )}
-                      {item.status === "in-progress" && (
-                        <PlayCircle className="w-4 h-4 text-blue-500 flex-shrink-0" />
-                      )}
-                    </div>
-
-                    {/* Progress bar */}
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
-                        <div
-                          className={cn(
-                            "h-full rounded-full transition-all",
-                            isComplete ? "bg-emerald-500" : "bg-primary"
-                          )}
-                          style={{ width: `${Math.min(progress, 100)}%` }}
-                        />
-                      </div>
-                      <span className="text-xs text-muted-foreground whitespace-nowrap">
-                        {item.batchesComplete ?? 0} / {item.batchesTarget ?? 0}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                      {item.tinSize && (
-                        <span>{item.tinSize} tin</span>
-                      )}
-                      {item.maxBatchesPerTin && (item.batchesTarget ?? 0) > 0 && (
-                        <span>
-                          {Math.ceil((item.batchesTarget ?? 0) / item.maxBatchesPerTin)} tin{Math.ceil((item.batchesTarget ?? 0) / item.maxBatchesPerTin) !== 1 ? "s" : ""}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Batch counter */}
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <button
-                      onClick={() => removeBatch(item)}
-                      disabled={(item.batchesComplete ?? 0) === 0}
-                      className="w-9 h-9 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
-                    >
-                      <Minus className="w-4 h-4" />
-                    </button>
-                    <div className="w-12 text-center">
-                      <span className="text-xl font-bold">{item.batchesComplete ?? 0}</span>
-                    </div>
-                    <button
-                      onClick={() => addBatch(item)}
-                      disabled={isComplete && !isAdmin}
-                      className={cn(
-                        "w-9 h-9 flex items-center justify-center rounded-full transition-colors",
-                        isComplete
-                          ? "border border-emerald-300 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 opacity-60"
-                          : "bg-primary text-primary-foreground hover:bg-primary/90"
-                      )}
-                    >
-                      <Plus className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        })}
+              <Plus className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -835,6 +893,7 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     <div className="space-y-4">
       {showEod && (
         <EodSummary
+          planId={plan.id}
           items={items}
           stationType={stationType}
           sessionBatches={sessionBatches}
@@ -869,6 +928,30 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                 <span className="italic text-xs">{currentItem.notes}</span>
               )}
             </div>
+
+            {/* Building-specific: fill weight, base type, base weight */}
+            {(currentItem.fillWeightGrams != null || currentItem.baseType != null || currentItem.baseWeightGrams != null) && (
+              <div className="flex flex-wrap gap-3 mt-3">
+                {currentItem.baseType && (
+                  <div className="flex flex-col items-center bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-xl px-4 py-2 min-w-[90px]">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">Base</span>
+                    <span className="text-lg font-bold text-amber-800 dark:text-amber-300">{currentItem.baseType}</span>
+                  </div>
+                )}
+                {currentItem.baseWeightGrams != null && (
+                  <div className="flex flex-col items-center bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-xl px-4 py-2 min-w-[90px]">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">Base Wt</span>
+                    <span className="text-lg font-bold text-amber-800 dark:text-amber-300">{currentItem.baseWeightGrams}g</span>
+                  </div>
+                )}
+                {currentItem.fillWeightGrams != null && (
+                  <div className="flex flex-col items-center bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-xl px-4 py-2 min-w-[90px]">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-blue-700 dark:text-blue-400">Fill Wt</span>
+                    <span className="text-lg font-bold text-blue-800 dark:text-blue-300">{currentItem.fillWeightGrams}g</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Large batch counter */}

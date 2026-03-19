@@ -498,6 +498,18 @@ export const ListRecipesResponseItem = zod.object({
     .number()
     .nullish()
     .describe("Shelf life of the product in days"),
+  fillWeightGrams: zod
+    .number()
+    .nullish()
+    .describe("Fill weight per batch in grams (calzone filling)"),
+  baseType: zod
+    .string()
+    .nullish()
+    .describe("Type of base used (e.g. thin, thick, gluten-free)"),
+  baseWeightGrams: zod
+    .number()
+    .nullish()
+    .describe("Weight of base per builder in grams"),
   rawMaterialCostPerBatch: zod.number(),
   costPerPortion: zod.number(),
   packIngredientCost: zod.number(),
@@ -529,6 +541,9 @@ export const CreateRecipeBody = zod.object({
   maxBatchesPerTin: zod.number().nullish(),
   sopUrl: zod.string().nullish(),
   shelfLifeDays: zod.number().nullish(),
+  fillWeightGrams: zod.number().nullish(),
+  baseType: zod.string().nullish(),
+  baseWeightGrams: zod.number().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -582,6 +597,18 @@ export const GetRecipeResponse = zod
       .number()
       .nullish()
       .describe("Shelf life of the product in days"),
+    fillWeightGrams: zod
+      .number()
+      .nullish()
+      .describe("Fill weight per batch in grams (calzone filling)"),
+    baseType: zod
+      .string()
+      .nullish()
+      .describe("Type of base used (e.g. thin, thick, gluten-free)"),
+    baseWeightGrams: zod
+      .number()
+      .nullish()
+      .describe("Weight of base per builder in grams"),
     rawMaterialCostPerBatch: zod.number(),
     costPerPortion: zod.number(),
     packIngredientCost: zod.number(),
@@ -648,6 +675,9 @@ export const UpdateRecipeBody = zod.object({
   maxBatchesPerTin: zod.number().nullish(),
   sopUrl: zod.string().nullish(),
   shelfLifeDays: zod.number().nullish(),
+  fillWeightGrams: zod.number().nullish(),
+  baseType: zod.string().nullish(),
+  baseWeightGrams: zod.number().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -687,6 +717,18 @@ export const UpdateRecipeResponse = zod.object({
     .number()
     .nullish()
     .describe("Shelf life of the product in days"),
+  fillWeightGrams: zod
+    .number()
+    .nullish()
+    .describe("Fill weight per batch in grams (calzone filling)"),
+  baseType: zod
+    .string()
+    .nullish()
+    .describe("Type of base used (e.g. thin, thick, gluten-free)"),
+  baseWeightGrams: zod
+    .number()
+    .nullish()
+    .describe("Weight of base per builder in grams"),
   rawMaterialCostPerBatch: zod.number(),
   costPerPortion: zod.number(),
   packIngredientCost: zod.number(),
@@ -788,6 +830,9 @@ export const GetProductionPlanResponse = zod
           tinSize: zod.string().nullish(),
           maxBatchesPerTin: zod.number().nullish(),
           sopUrl: zod.string().nullish(),
+          fillWeightGrams: zod.number().nullish(),
+          baseType: zod.string().nullish(),
+          baseWeightGrams: zod.number().nullish(),
         }),
       ),
     }),
@@ -873,6 +918,9 @@ export const UpdateProductionPlanItemResponse = zod.object({
   tinSize: zod.string().nullish(),
   maxBatchesPerTin: zod.number().nullish(),
   sopUrl: zod.string().nullish(),
+  fillWeightGrams: zod.number().nullish(),
+  baseType: zod.string().nullish(),
+  baseWeightGrams: zod.number().nullish(),
 });
 
 /**

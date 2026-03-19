@@ -1,4 +1,4 @@
-import { pgTable, serial, text, numeric, integer, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, numeric, integer, timestamp, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { ingredientsTable } from "./ingredients";
@@ -21,6 +21,9 @@ export const recipesTable = pgTable("recipes", {
   tinSize: text("tin_size"),
   maxBatchesPerTin: integer("max_batches_per_tin"),
   sopUrl: text("sop_url"),
+  fillWeightGrams: numeric("fill_weight_grams", { precision: 10, scale: 2 }),
+  baseType: text("base_type"),
+  baseWeightGrams: numeric("base_weight_grams", { precision: 10, scale: 2 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

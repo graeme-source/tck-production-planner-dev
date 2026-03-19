@@ -1779,6 +1779,18 @@ components:
           type: integer
           nullable: true
           description: Shelf life of the product in days
+        fillWeightGrams:
+          type: number
+          nullable: true
+          description: Fill weight per batch in grams (calzone filling)
+        baseType:
+          type: string
+          nullable: true
+          description: Type of base used (e.g. thin, thick, gluten-free)
+        baseWeightGrams:
+          type: number
+          nullable: true
+          description: Weight of base per builder in grams
         rawMaterialCostPerBatch:
           type: number
         costPerPortion:
@@ -1938,6 +1950,15 @@ components:
         shelfLifeDays:
           type: integer
           nullable: true
+        fillWeightGrams:
+          type: number
+          nullable: true
+        baseType:
+          type: string
+          nullable: true
+        baseWeightGrams:
+          type: number
+          nullable: true
         ingredients:
           type: array
           items:
@@ -2038,6 +2059,15 @@ components:
           nullable: true
         sopUrl:
           type: string
+          nullable: true
+        fillWeightGrams:
+          type: number
+          nullable: true
+        baseType:
+          type: string
+          nullable: true
+        baseWeightGrams:
+          type: number
           nullable: true
       required:
         - id

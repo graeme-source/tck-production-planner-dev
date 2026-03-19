@@ -19,6 +19,9 @@ function mapRecipe(r: typeof recipesTable.$inferSelect) {
     maxBatchesPerTin: r.maxBatchesPerTin ?? null,
     tinSize: r.tinSize ?? null,
     sopUrl: r.sopUrl ?? null,
+    fillWeightGrams: r.fillWeightGrams ? Number(r.fillWeightGrams) : null,
+    baseType: r.baseType ?? null,
+    baseWeightGrams: r.baseWeightGrams ? Number(r.baseWeightGrams) : null,
     createdAt: r.createdAt.toISOString(),
   };
 }
@@ -111,7 +114,7 @@ router.get("/", async (_req, res) => {
 });
 
 router.post("/", validate(CreateRecipeBody), async (req, res) => {
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, ingredients, subRecipes } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, ingredients, subRecipes } = req.body;
   const [recipe] = await db.insert(recipesTable).values({
     name, description,
     servings: String(servings),
@@ -125,6 +128,9 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
     tinSize: tinSize ?? null,
     maxBatchesPerTin: maxBatchesPerTin ?? null,
     sopUrl: sopUrl ?? null,
+    fillWeightGrams: fillWeightGrams != null ? String(fillWeightGrams) : null,
+    baseType: baseType ?? null,
+    baseWeightGrams: baseWeightGrams != null ? String(baseWeightGrams) : null,
   }).returning();
 
   if (ingredients?.length) {
@@ -251,7 +257,7 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, ingredients, subRecipes } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, ingredients, subRecipes } = req.body;
   const [updated] = await db.update(recipesTable)
     .set({
       name, description,
@@ -266,6 +272,9 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
       tinSize: tinSize ?? null,
       maxBatchesPerTin: maxBatchesPerTin ?? null,
       sopUrl: sopUrl ?? null,
+      fillWeightGrams: fillWeightGrams != null ? String(fillWeightGrams) : null,
+      baseType: baseType ?? null,
+      baseWeightGrams: baseWeightGrams != null ? String(baseWeightGrams) : null,
     })
     .where(eq(recipesTable.id, id))
     .returning();

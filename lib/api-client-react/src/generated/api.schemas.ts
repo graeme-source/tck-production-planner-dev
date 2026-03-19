@@ -153,6 +153,12 @@ export interface Recipe {
   sopUrl?: string | null;
   /** Shelf life of the product in days */
   shelfLifeDays?: number | null;
+  /** Fill weight per batch in grams (calzone filling) */
+  fillWeightGrams?: number | null;
+  /** Type of base used (e.g. thin, thick, gluten-free) */
+  baseType?: string | null;
+  /** Weight of base per builder in grams */
+  baseWeightGrams?: number | null;
   rawMaterialCostPerBatch: number;
   costPerPortion: number;
   packIngredientCost: number;
@@ -221,6 +227,9 @@ export interface CreateRecipe {
   maxBatchesPerTin?: number | null;
   sopUrl?: string | null;
   shelfLifeDays?: number | null;
+  fillWeightGrams?: number | null;
+  baseType?: string | null;
+  baseWeightGrams?: number | null;
   ingredients: CreateRecipeIngredientsItem[];
   subRecipes: CreateRecipeSubRecipesItem[];
 }
@@ -263,6 +272,9 @@ export interface ProductionPlanItem {
   tinSize?: string | null;
   maxBatchesPerTin?: number | null;
   sopUrl?: string | null;
+  fillWeightGrams?: number | null;
+  baseType?: string | null;
+  baseWeightGrams?: number | null;
 }
 
 export type ProductionPlanStatus =

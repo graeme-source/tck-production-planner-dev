@@ -80,6 +80,20 @@ All routes under `/api/`:
 
 Every package extends `tsconfig.base.json` which sets `composite: true`.
 
+## Station Features (9-station workflow)
+
+The station page (`/station`) provides a full-screen view with:
+- **Mixing & Cooking** — DnD reordering of recipe queue (pending items only; admin can reorder any); batch +/− counters; break tracker; EOD summary with avg mins/batch
+- **Building Line 1 & 2** — show fill weight, base type, base weight chips from recipe; batch counters; EOD summary
+- **Prep stations** (Raw Veg, Bases & Mozzarella, Raw Meat, Dough, Ovens, Wrapping & Packing) — batch counters per item
+
+Recipe fields added for station cards: `fill_weight_grams`, `base_type`, `base_weight_grams`.
+
+## Codegen Critical Notes
+
+- **After every `cd lib/api-spec && npm run codegen`**: rewrite `lib/api-zod/src/index.ts` to ONLY `export * from "./generated/api";` (codegen always adds extra lines causing TS2308 duplicate export errors), then rebuild declarations with `cd lib/api-client-react && npx tsc -p tsconfig.json`
+- Orval config (`lib/api-spec/orval.config.ts`) has no `schemas` option to avoid generating a `types/` directory
+
 ## Key Commands
 
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API client from OpenAPI spec

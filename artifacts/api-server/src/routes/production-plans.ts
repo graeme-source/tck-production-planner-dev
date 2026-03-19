@@ -38,11 +38,14 @@ function mapPlan(p: typeof productionPlansTable.$inferSelect) {
   };
 }
 
-function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?: string | null; portionsPerBatch?: number | null }) {
+function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?: string | null; portionsPerBatch?: number | null; fillWeightGrams?: string | null; baseType?: string | null; baseWeightGrams?: string | null }) {
   return {
     ...i,
     recipeName: i.recipeName ?? "",
     portionsPerBatch: i.portionsPerBatch ?? 10,
+    fillWeightGrams: i.fillWeightGrams ? Number(i.fillWeightGrams) : null,
+    baseType: i.baseType ?? null,
+    baseWeightGrams: i.baseWeightGrams ? Number(i.baseWeightGrams) : null,
   };
 }
 
@@ -181,6 +184,9 @@ router.get("/:id", async (req, res) => {
       tinSize: productionPlanItemsTable.tinSize,
       maxBatchesPerTin: productionPlanItemsTable.maxBatchesPerTin,
       sopUrl: productionPlanItemsTable.sopUrl,
+      fillWeightGrams: recipesTable.fillWeightGrams,
+      baseType: recipesTable.baseType,
+      baseWeightGrams: recipesTable.baseWeightGrams,
     })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
@@ -611,7 +617,8 @@ router.get("/:id/kpi", async (req, res) => {
       )
     );
 
-  // Station breaks for this station (today, this plan, this user if logged in)
+  // Station breaks for this station (today, this plan, this user)
+  // Scoped to sessionUserId to match completion scoping — a user's KPI only subtracts their own breaks
   const breaksRows = await db.select({
     startedAt: stationBreaksTable.startedAt,
     endedAt: stationBreaksTable.endedAt,
@@ -621,7 +628,8 @@ router.get("/:id/kpi", async (req, res) => {
       and(
         eq(stationBreaksTable.planId, planId),
         eq(stationBreaksTable.stationType, stationType),
-        sql`started_at >= ${today.toISOString()} AND started_at < ${tomorrow.toISOString()}`
+        sql`started_at >= ${today.toISOString()} AND started_at < ${tomorrow.toISOString()}`,
+        sessionUserId != null ? eq(stationBreaksTable.userId, sessionUserId) : undefined,
       )
     );
 
@@ -656,7 +664,8 @@ router.get("/:id/kpi", async (req, res) => {
   });
 });
 
-// GET /:id/station-activity — active users per station today (based on station_breaks)
+// GET /:id/station-activity — active users per station today
+// Derived from batch_completions (primary) and station_breaks (supplementary)
 router.get("/:id/station-activity", async (req, res) => {
   const planId = Number(req.params.id);
   const today = new Date();
@@ -664,10 +673,26 @@ router.get("/:id/station-activity", async (req, res) => {
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
-  const breaks = await db.select({
-    stationType: stationBreaksTable.stationType,
-    userId: stationBreaksTable.userId,
-  })
+  // Get plan items to join completions
+  const planItems = await db.select({ id: productionPlanItemsTable.id })
+    .from(productionPlanItemsTable)
+    .where(eq(productionPlanItemsTable.planId, planId));
+  const itemIds = planItems.map(i => i.id);
+
+  // Users who completed a batch today at each station (primary source)
+  const completionUsers: { stationType: string; userId: number | null }[] = itemIds.length > 0
+    ? await db.select({ stationType: batchCompletionsTable.stationType, userId: batchCompletionsTable.userId })
+        .from(batchCompletionsTable)
+        .where(
+          and(
+            sql`plan_item_id = ANY(${itemIds})`,
+            sql`completed_at >= ${today.toISOString()} AND completed_at < ${tomorrow.toISOString()}`
+          )
+        )
+    : [];
+
+  // Also include users who started a break today (covers users who worked but haven't completed a batch yet)
+  const breakUsers = await db.select({ stationType: stationBreaksTable.stationType, userId: stationBreaksTable.userId })
     .from(stationBreaksTable)
     .where(
       and(
@@ -676,12 +701,14 @@ router.get("/:id/station-activity", async (req, res) => {
       )
     );
 
-  // Deduplicate: count distinct user IDs per station (null userId = 1 anonymous)
+  // Deduplicate: count distinct user IDs per station
   const byStation: Record<string, Set<string>> = {};
-  for (const b of breaks) {
-    if (!byStation[b.stationType]) byStation[b.stationType] = new Set();
-    byStation[b.stationType].add(b.userId != null ? String(b.userId) : "anon");
-  }
+  const addUser = (stationType: string, userId: number | null) => {
+    if (!byStation[stationType]) byStation[stationType] = new Set();
+    byStation[stationType].add(userId != null ? String(userId) : "anon");
+  };
+  for (const r of completionUsers) addUser(r.stationType, r.userId);
+  for (const r of breakUsers) addUser(r.stationType, r.userId);
 
   const result: Record<string, number> = {};
   for (const [st, users] of Object.entries(byStation)) {
