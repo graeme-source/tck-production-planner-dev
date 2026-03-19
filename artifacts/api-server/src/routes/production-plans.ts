@@ -550,11 +550,30 @@ router.post("/:id/station-breaks", async (req, res) => {
 router.patch("/:id/station-breaks/:breakId", async (req, res) => {
   const planId = Number(req.params.id);
   const breakId = Number(req.params.breakId);
+  const sessionUserId = (req.session as { userId?: number }).userId ?? null;
+  const sessionUserRole = (req.session as { userRole?: string }).userRole ?? null;
   const { endedAt } = req.body;
+
+  // Verify ownership: only the break owner or an admin can end a break
+  const [existingBreak] = await db.select({ id: stationBreaksTable.id, userId: stationBreaksTable.userId })
+    .from(stationBreaksTable)
+    .where(and(eq(stationBreaksTable.id, breakId), eq(stationBreaksTable.planId, planId)));
+
+  if (!existingBreak) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+
+  // Allow if: admin, or the break belongs to the current user, or break has no owner (legacy)
+  const isOwner = existingBreak.userId == null || existingBreak.userId === sessionUserId;
+  if (!isOwner && sessionUserRole !== "admin") {
+    res.status(403).json({ error: "You can only end your own break" });
+    return;
+  }
 
   const [updated] = await db.update(stationBreaksTable)
     .set({ endedAt: endedAt ? new Date(endedAt) : new Date() })
-    .where(and(eq(stationBreaksTable.id, breakId), eq(stationBreaksTable.planId, planId)))
+    .where(eq(stationBreaksTable.id, breakId))
     .returning();
 
   if (!updated) { res.status(404).json({ error: "Not found" }); return; }
@@ -711,13 +730,17 @@ router.get("/:id/eod-summary", async (req, res) => {
     return;
   }
 
-  // Get all plan items (for plan completion rate)
+  // Get all plan items joined with recipe name (for plan completion rate + per-recipe breakdown)
   const planItems = await db.select({
     id: productionPlanItemsTable.id,
+    recipeId: productionPlanItemsTable.recipeId,
     batchesComplete: productionPlanItemsTable.batchesComplete,
     batchesTarget: productionPlanItemsTable.batchesTarget,
-    recipeName: productionPlanItemsTable.recipeName,
-  }).from(productionPlanItemsTable).where(eq(productionPlanItemsTable.planId, planId));
+    recipeName: recipesTable.name,
+  })
+    .from(productionPlanItemsTable)
+    .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(eq(productionPlanItemsTable.planId, planId));
 
   const itemIds = planItems.map(i => i.id);
   const totalBatchesTarget = planItems.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
