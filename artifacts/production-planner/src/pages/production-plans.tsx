@@ -944,8 +944,6 @@ const STATION_BUTTONS = [
   { key: "dough_prep", label: "Dough Prep", icon: Layers, color: "text-amber-600 bg-amber-50 dark:bg-amber-900/20" },
   { key: "dough_sheeting", label: "Sheeting", icon: Layers, color: "text-amber-500 bg-amber-50 dark:bg-amber-900/20" },
   { key: "prep_veg", label: "Veg Prep", icon: Salad, color: "text-green-500 bg-green-50 dark:bg-green-900/20" },
-  { key: "prep_bases", label: "Bases & Mozz", icon: Layers, color: "text-yellow-500 bg-yellow-50 dark:bg-yellow-900/20" },
-  { key: "prep_meat", label: "Raw Meat", icon: Beef, color: "text-rose-500 bg-rose-50 dark:bg-rose-900/20" },
 ] as const;
 
 interface PlanDetailProps {

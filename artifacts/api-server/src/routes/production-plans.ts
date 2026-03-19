@@ -495,6 +495,42 @@ router.get("/:id/batch-completions", async (req, res) => {
   res.json(completions.map(c => ({ ...c, completedAt: c.completedAt.toISOString(), startedAt: c.startedAt ? c.startedAt.toISOString() : null })));
 });
 
+// GET /:id/batch-completions/summary — aggregated batchesComplete per planItemId for polling
+// Returns { planItemId: number, batchesComplete: number }[] (filtered by stationType if provided)
+router.get("/:id/batch-completions/summary", async (req, res) => {
+  const planId = Number(req.params.id);
+  const { stationType } = req.query;
+
+  const items = await db.select({ id: productionPlanItemsTable.id, batchesComplete: productionPlanItemsTable.batchesComplete })
+    .from(productionPlanItemsTable)
+    .where(eq(productionPlanItemsTable.planId, planId));
+
+  if (items.length === 0) { res.json([]); return; }
+
+  if (!stationType) {
+    // Return overall batchesComplete per plan item from the plan items table (authoritative)
+    res.json(items.map(i => ({ planItemId: i.id, batchesComplete: i.batchesComplete })));
+    return;
+  }
+
+  // When filtering by stationType, count completions from batch_completions table
+  const itemIds = items.map(i => i.id);
+  const completions = await db.select({
+    planItemId: batchCompletionsTable.planItemId,
+  }).from(batchCompletionsTable)
+    .where(and(
+      sql`plan_item_id = ANY(${itemIds})`,
+      eq(batchCompletionsTable.stationType, String(stationType))
+    ));
+
+  const countByItem: Record<number, number> = {};
+  for (const c of completions) {
+    countByItem[c.planItemId] = (countByItem[c.planItemId] ?? 0) + 1;
+  }
+
+  res.json(items.map(i => ({ planItemId: i.id, batchesComplete: countByItem[i.id] ?? 0 })));
+});
+
 // Station breaks sub-routes
 
 // GET active (open) break for current user + station — used by BreakTracker to hydrate on mount/refresh
@@ -789,27 +825,46 @@ router.get("/:id/eod-summary", async (req, res) => {
   const bph = activeHours > 0 ? totalBatches / activeHours : 0;
   const minsPerBatch = totalBatches > 0 && activeMinutes > 0 ? activeMinutes / totalBatches : null;
 
-  // Per-recipe avg mins/batch (from startedAt→completedAt timestamps on completion rows)
+  // Per-recipe avg mins/batch:
+  // Building station completions do not record startedAt, so we compute avg from consecutive
+  // inter-completion intervals (sorted completedAt) for each recipe+user.
+  // When startedAt IS present (e.g. timing-standard-based stations), prefer that.
   const perRecipeMap: Record<number, { name: string; count: number; avgMins: number | null }> = {};
   for (const it of planItems) {
     perRecipeMap[it.id] = { name: it.recipeName ?? `Recipe #${it.id}`, count: 0, avgMins: null };
   }
 
-  const byItem: Record<number, number[]> = {};
-  for (const c of myCompletions) {
+  // Group completions by planItemId (sorted ascending by completedAt)
+  const byItemSorted: Record<number, typeof myCompletions> = {};
+  for (const c of [...myCompletions].sort((a, b) => a.completedAt.getTime() - b.completedAt.getTime())) {
     if (!perRecipeMap[c.planItemId]) continue;
     perRecipeMap[c.planItemId].count++;
-    if (c.startedAt && c.completedAt) {
-      const mins = (c.completedAt.getTime() - c.startedAt.getTime()) / 60000;
-      if (mins > 0 && mins < 240) {
-        if (!byItem[c.planItemId]) byItem[c.planItemId] = [];
-        byItem[c.planItemId].push(mins);
+    if (!byItemSorted[c.planItemId]) byItemSorted[c.planItemId] = [];
+    byItemSorted[c.planItemId].push(c);
+  }
+
+  for (const [itemIdStr, comps] of Object.entries(byItemSorted)) {
+    const itemId = Number(itemIdStr);
+    const intervals: number[] = [];
+
+    for (let i = 0; i < comps.length; i++) {
+      const c = comps[i];
+      // Prefer explicit startedAt if available
+      if (c.startedAt && c.completedAt) {
+        const mins = (c.completedAt.getTime() - c.startedAt.getTime()) / 60000;
+        if (mins > 0 && mins < 240) intervals.push(mins);
+      } else if (i > 0) {
+        // Inter-completion interval (proxy for time per batch)
+        const prev = comps[i - 1];
+        const mins = (c.completedAt.getTime() - prev.completedAt.getTime()) / 60000;
+        if (mins > 0 && mins < 240) intervals.push(mins);
       }
     }
-  }
-  for (const [itemId, times] of Object.entries(byItem)) {
-    const avg = times.reduce((a, b) => a + b, 0) / times.length;
-    perRecipeMap[Number(itemId)].avgMins = avg;
+
+    if (intervals.length > 0) {
+      const avg = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+      perRecipeMap[itemId].avgMins = avg;
+    }
   }
 
   const perRecipe = Object.values(perRecipeMap).filter(r => r.count > 0);

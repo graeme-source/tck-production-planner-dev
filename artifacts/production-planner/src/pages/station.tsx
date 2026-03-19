@@ -58,11 +58,9 @@ const STATIONS = [
   { key: "dough_prep", label: "Dough Prep", short: "Dough Prep", icon: Layers, color: "text-amber-600" },
   { key: "dough_sheeting", label: "Dough Sheeting", short: "Sheeting", icon: Layers, color: "text-amber-500" },
   { key: "prep_veg", label: "Veg Prep", short: "Veg", icon: Salad, color: "text-green-500" },
-  { key: "prep_bases", label: "Bases & Mozz", short: "Bases", icon: Layers, color: "text-yellow-500" },
-  { key: "prep_meat", label: "Raw Meat Prep", short: "Meat", icon: Beef, color: "text-rose-500" },
 ] as const;
 
-type StationType = typeof STATIONS[number]["key"];
+type StationType = typeof STATIONS[number]["key"] | "prep_bases" | "prep_meat";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Station Layout (shared header)
