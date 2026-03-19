@@ -55,14 +55,32 @@ function computeProcessedKg(
   return total;
 }
 
+function computeComponentKg(
+  rows: { componentSubRecipeId: number; quantity: number }[],
+  allSubRecipes: SubRecipeOption[],
+): number {
+  let total = 0;
+  for (const row of rows) {
+    const sr = allSubRecipes.find(s => s.id === Number(row.componentSubRecipeId));
+    if (!sr || !row.quantity) continue;
+    if (sr.yieldUnit === "kg") total += Number(row.quantity);
+    else if (sr.yieldUnit === "g") total += Number(row.quantity) / 1000;
+  }
+  return total;
+}
+
 function YieldSanityCheck({
   ingredientRows,
   allIngredients,
+  componentRows,
+  allSubRecipes,
   yieldValue,
   yieldUnit,
 }: {
   ingredientRows: { ingredientId: number; quantity: number }[];
   allIngredients: IngredientOption[];
+  componentRows: { componentSubRecipeId: number; quantity: number }[];
+  allSubRecipes: SubRecipeOption[];
   yieldValue: number;
   yieldUnit: string;
 }) {
@@ -83,6 +101,10 @@ function YieldSanityCheck({
     rawKg += qKg;
     processedKg += qKg * ratio;
   }
+
+  const componentKg = computeComponentKg(componentRows, allSubRecipes);
+  rawKg += componentKg;
+  processedKg += componentKg;
 
   if (rawKg === 0) return null;
   const yieldKg = toKg(yieldValue, yieldUnit);
@@ -132,6 +154,10 @@ function YieldComparison({
     const ratio = i.processingRatio ?? 1.0;
     if (i.unit === "kg") expectedKg += i.quantity * ratio;
     else if (i.unit === "g") expectedKg += (i.quantity / 1000) * ratio;
+  }
+  for (const c of (detail.subRecipeComponents ?? [])) {
+    if (c.componentYieldUnit === "kg") expectedKg += c.quantity;
+    else if (c.componentYieldUnit === "g") expectedKg += c.quantity / 1000;
   }
 
   const diffPct = (canCompare && expectedKg > 0)
@@ -261,21 +287,23 @@ function SubRecipeForm({
   useEffect(() => {
     if (!isYieldAuto) return;
     if (watchedYieldUnit !== "kg" && watchedYieldUnit !== "g") return;
-    const processedKg = computeProcessedKg(watchedIngredients ?? [], localIngredients);
-    if (processedKg <= 0) return;
+    const totalKg = computeProcessedKg(watchedIngredients ?? [], localIngredients)
+      + computeComponentKg(watchedSubRecipeComponents ?? [], allSubRecipes);
+    if (totalKg <= 0) return;
     const autoValue = watchedYieldUnit === "g"
-      ? parseFloat((processedKg * 1000).toFixed(1))
-      : parseFloat(processedKg.toFixed(3));
+      ? parseFloat((totalKg * 1000).toFixed(1))
+      : parseFloat(totalKg.toFixed(3));
     setValue("yield", autoValue, { shouldValidate: false });
-  }, [watchedIngredients, isYieldAuto, watchedYieldUnit, localIngredients, setValue]);
+  }, [watchedIngredients, watchedSubRecipeComponents, isYieldAuto, watchedYieldUnit, localIngredients, allSubRecipes, setValue]);
 
   const resetToAuto = () => {
     setIsYieldAuto(true);
-    const processedKg = computeProcessedKg(watchedIngredients ?? [], localIngredients);
-    if (processedKg > 0) {
+    const totalKg = computeProcessedKg(watchedIngredients ?? [], localIngredients)
+      + computeComponentKg(watchedSubRecipeComponents ?? [], allSubRecipes);
+    if (totalKg > 0) {
       const autoValue = watchedYieldUnit === "g"
-        ? parseFloat((processedKg * 1000).toFixed(1))
-        : parseFloat(processedKg.toFixed(3));
+        ? parseFloat((totalKg * 1000).toFixed(1))
+        : parseFloat(totalKg.toFixed(3));
       setValue("yield", autoValue, { shouldValidate: false });
     }
   };
@@ -463,11 +491,13 @@ function SubRecipeForm({
             })}
           </div>
 
-          {ingFields.length > 0 && (
+          {(ingFields.length > 0 || srFields.length > 0) && (
             <div className="mt-3">
               <YieldSanityCheck
                 ingredientRows={watchedIngredients ?? []}
                 allIngredients={localIngredients}
+                componentRows={watchedSubRecipeComponents ?? []}
+                allSubRecipes={allSubRecipes}
                 yieldValue={watchedYield ?? 0}
                 yieldUnit={watchedYieldUnit ?? "kg"}
               />
