@@ -622,10 +622,10 @@ function DptSettingsSection() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-base font-semibold flex items-center gap-2">
-            <BarChart2 className="w-4 h-4 text-primary" /> DPT Surplus Targets
+            <BarChart2 className="w-4 h-4 text-primary" /> DPT Settings
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Set the default daily batch target per recipe for production plan auto-calculation.
+            Total daily capacity (batches/day) is the shared batch budget for the day. After covering demand, remaining capacity is split by each recipe's surplus % weight.
           </p>
         </div>
         {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
@@ -641,8 +641,8 @@ function DptSettingsSection() {
             <thead className="bg-secondary/30 text-muted-foreground text-xs">
               <tr>
                 <th className="px-5 py-3 font-medium text-left">Recipe</th>
-                <th className="px-5 py-3 font-medium text-right">Min Batches / Day</th>
-                <th className="px-5 py-3 font-medium text-right">Surplus %</th>
+                <th className="px-5 py-3 font-medium text-right">Daily Capacity (batches)</th>
+                <th className="px-5 py-3 font-medium text-right">Surplus Weight %</th>
                 <th className="px-5 py-3 font-medium text-right w-28">Actions</th>
               </tr>
             </thead>

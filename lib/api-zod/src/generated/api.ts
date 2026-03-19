@@ -1059,8 +1059,21 @@ export const GetDptCalculatorResponseItem = zod.object({
   currentStock: zod.number(),
   demand: zod.number(),
   batchesForDemand: zod.number(),
-  surplusPercent: zod.number().describe("Percentage surplus buffer applied"),
-  defaultBatchesPerDay: zod.number(),
+  surplusPercent: zod
+    .number()
+    .describe("This recipe's share weight of remaining capacity (%)"),
+  defaultBatchesPerDay: zod
+    .number()
+    .describe("This recipe's stored DPT default (informational)"),
+  totalDailyCapacity: zod
+    .number()
+    .describe("Total shared batch capacity for the day"),
+  remainingCapacity: zod
+    .number()
+    .describe("Remaining capacity after must-make batches"),
+  surplusShare: zod
+    .number()
+    .describe("Batches allocated to this recipe from remaining capacity"),
   suggestedBatches: zod.number(),
   tinCount: zod.number().nullish(),
   isActive: zod.boolean(),

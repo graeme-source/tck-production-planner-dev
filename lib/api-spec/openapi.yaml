@@ -2357,9 +2357,19 @@ components:
           type: number
         surplusPercent:
           type: number
-          description: Percentage surplus buffer applied
+          description: This recipe's share weight of remaining capacity (%)
         defaultBatchesPerDay:
           type: number
+          description: This recipe's stored DPT default (informational)
+        totalDailyCapacity:
+          type: number
+          description: Total shared batch capacity for the day
+        remainingCapacity:
+          type: number
+          description: Remaining capacity after must-make batches
+        surplusShare:
+          type: number
+          description: Batches allocated to this recipe from remaining capacity
         suggestedBatches:
           type: number
         tinCount:
@@ -2375,6 +2385,9 @@ components:
         - batchesForDemand
         - surplusPercent
         - defaultBatchesPerDay
+        - totalDailyCapacity
+        - remainingCapacity
+        - surplusShare
         - suggestedBatches
         - isActive
 

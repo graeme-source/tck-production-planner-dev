@@ -73,7 +73,7 @@ router.get("/", async (req, res) => {
     )
     .orderBy(dispatchOrdersTable.dispatchDate);
 
-  // For each recipe, take the next 3 dispatch entries (rows) and sum their quantities
+  // For each recipe, take the next 3 dispatch entries and sum their quantities
   const demandMap: Record<number, number> = {};
   for (const rId of recipeIds) {
     const rows = futureDispatchRows.filter(r => r.recipeId === rId).slice(0, 3);
@@ -81,31 +81,42 @@ router.get("/", async (req, res) => {
     demandMap[rId] = demand;
   }
 
-  const suggestions = dptSettings.map(d => {
+  // ─── DPT Capacity-sharing formula ─────────────────────────────────────────
+  // 1. Total daily batch capacity = defaultBatchesPerDay (shared across all recipes)
+  // 2. Per recipe: must-make = ceil(max(0, demand - stock) / portionsPerBatch)
+  // 3. Remaining capacity = totalCapacity - sum(must-make batches)
+  // 4. Remaining capacity is split by each recipe's surplusPercent weight
+  // 5. suggestedBatches = must-make + floor of that recipe's surplus share
+  // ──────────────────────────────────────────────────────────────────────────
+
+  // We treat defaultBatchesPerDay as the TOTAL capacity for the day (shared)
+  // All active DPT recipes share the same daily capacity value.
+  const totalDailyCapacity = dptSettings.length > 0
+    ? Number(dptSettings[0].defaultBatchesPerDay)  // single shared capacity
+    : 0;
+
+  // Step 1: compute must-make batches per recipe
+  interface RecipeCalc {
+    recipeId: number;
+    recipeName: string | null;
+    portionsPerBatch: number;
+    tinSize: string | null;
+    maxBatchesPerTin: number | null;
+    sopUrl: string | null;
+    currentStock: number;
+    demand: number;
+    defaultBatchesPerDay: number;
+    surplusPercent: number;
+    batchesForDemand: number;
+    isActive: boolean;
+  }
+
+  const calcs: RecipeCalc[] = dptSettings.map(d => {
     const currentStock = stockMap[d.recipeId] ?? 0;
     const demand = demandMap[d.recipeId] ?? 0;
-    const defaultBatchesPerDay = Number(d.defaultBatchesPerDay);
-    const surplusPercent = Number(d.surplusPercent ?? 20);
     const portionsPerBatch = Number(d.portionsPerBatch) || 10;
-    const maxBatchesPerTin = d.maxBatchesPerTin;
-
-    // Step 1: batches needed to cover demand beyond current stock
     const portionsNeeded = Math.max(0, demand - currentStock);
     const batchesForDemand = portionsNeeded > 0 ? Math.ceil(portionsNeeded / portionsPerBatch) : 0;
-
-    // Step 2: surplus buffer = percentage of demand batches + default daily allocation
-    // When demand is zero (stock covers all), surplus = defaultBatchesPerDay ensures
-    // minimum daily production capacity is always allocated.
-    const surplusBatches = Math.ceil(batchesForDemand * surplusPercent / 100) + defaultBatchesPerDay;
-
-    // Step 3: suggested = demand batches + surplus allocation
-    const suggestedBatches = batchesForDemand + surplusBatches;
-
-    // Tin count
-    const tinCount = maxBatchesPerTin && suggestedBatches > 0
-      ? Math.ceil(suggestedBatches / maxBatchesPerTin)
-      : null;
-
     return {
       recipeId: d.recipeId,
       recipeName: d.recipeName,
@@ -115,12 +126,53 @@ router.get("/", async (req, res) => {
       sopUrl: d.sopUrl,
       currentStock,
       demand,
+      defaultBatchesPerDay: Number(d.defaultBatchesPerDay),
+      surplusPercent: Number(d.surplusPercent ?? 20),
       batchesForDemand,
-      surplusPercent,
-      defaultBatchesPerDay,
+      isActive: d.isActive,
+    };
+  });
+
+  // Step 2: total must-make batches across all recipes
+  const totalMustMake = calcs.reduce((sum, c) => sum + c.batchesForDemand, 0);
+
+  // Step 3: remaining capacity to split as surplus
+  const remainingCapacity = Math.max(0, totalDailyCapacity - totalMustMake);
+
+  // Step 4: total surplusPercent weight across all recipes (for proportional split)
+  const totalSurplusWeight = calcs.reduce((sum, c) => sum + c.surplusPercent, 0);
+
+  // Step 5: build final suggestions
+  const suggestions = calcs.map(c => {
+    // Each recipe gets a share of remaining capacity proportional to its surplusPercent
+    const surplusShare = totalSurplusWeight > 0
+      ? Math.floor(remainingCapacity * (c.surplusPercent / totalSurplusWeight))
+      : 0;
+
+    const suggestedBatches = c.batchesForDemand + surplusShare;
+
+    const tinCount = c.maxBatchesPerTin && suggestedBatches > 0
+      ? Math.ceil(suggestedBatches / c.maxBatchesPerTin)
+      : null;
+
+    return {
+      recipeId: c.recipeId,
+      recipeName: c.recipeName,
+      portionsPerBatch: c.portionsPerBatch,
+      tinSize: c.tinSize,
+      maxBatchesPerTin: c.maxBatchesPerTin,
+      sopUrl: c.sopUrl,
+      currentStock: c.currentStock,
+      demand: c.demand,
+      batchesForDemand: c.batchesForDemand,
+      surplusPercent: c.surplusPercent,
+      defaultBatchesPerDay: c.defaultBatchesPerDay,
+      totalDailyCapacity,
+      remainingCapacity,
+      surplusShare,
       suggestedBatches,
       tinCount,
-      isActive: d.isActive,
+      isActive: c.isActive,
     };
   });
 

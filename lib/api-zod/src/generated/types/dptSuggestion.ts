@@ -16,9 +16,16 @@ export interface DptSuggestion {
   currentStock: number;
   demand: number;
   batchesForDemand: number;
-  /** Percentage surplus buffer applied */
+  /** This recipe's share weight of remaining capacity (%) */
   surplusPercent: number;
+  /** This recipe's stored DPT default (informational) */
   defaultBatchesPerDay: number;
+  /** Total shared batch capacity for the day */
+  totalDailyCapacity: number;
+  /** Remaining capacity after must-make batches */
+  remainingCapacity: number;
+  /** Batches allocated to this recipe from remaining capacity */
+  surplusShare: number;
   suggestedBatches: number;
   tinCount?: number | null;
   isActive: boolean;
