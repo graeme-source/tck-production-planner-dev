@@ -8,5 +8,7 @@
 
 export interface UpdateDptSetting {
   defaultBatchesPerDay?: number;
+  /** Percentage surplus buffer (default 20) */
+  surplusPercent?: number;
   isActive?: boolean;
 }

@@ -2150,6 +2150,9 @@ components:
           type: string
         defaultBatchesPerDay:
           type: number
+        surplusPercent:
+          type: number
+          description: Percentage surplus buffer added on top of demand batches
         isActive:
           type: boolean
         updatedAt:
@@ -2159,6 +2162,7 @@ components:
         - recipeId
         - recipeName
         - defaultBatchesPerDay
+        - surplusPercent
         - isActive
         - updatedAt
 
@@ -2242,6 +2246,9 @@ components:
           type: integer
         defaultBatchesPerDay:
           type: number
+        surplusPercent:
+          type: number
+          description: Percentage surplus buffer (default 20)
         isActive:
           type: boolean
       required:
@@ -2253,6 +2260,9 @@ components:
       properties:
         defaultBatchesPerDay:
           type: number
+        surplusPercent:
+          type: number
+          description: Percentage surplus buffer (default 20)
         isActive:
           type: boolean
 
@@ -2345,6 +2355,9 @@ components:
           type: number
         batchesForDemand:
           type: number
+        surplusPercent:
+          type: number
+          description: Percentage surplus buffer applied
         defaultBatchesPerDay:
           type: number
         suggestedBatches:
@@ -2360,6 +2373,7 @@ components:
         - currentStock
         - demand
         - batchesForDemand
+        - surplusPercent
         - defaultBatchesPerDay
         - suggestedBatches
         - isActive

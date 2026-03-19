@@ -1059,6 +1059,7 @@ export const GetDptCalculatorResponseItem = zod.object({
   currentStock: zod.number(),
   demand: zod.number(),
   batchesForDemand: zod.number(),
+  surplusPercent: zod.number().describe("Percentage surplus buffer applied"),
   defaultBatchesPerDay: zod.number(),
   suggestedBatches: zod.number(),
   tinCount: zod.number().nullish(),
@@ -1074,6 +1075,9 @@ export const ListDptSettingsResponseItem = zod.object({
   recipeId: zod.number(),
   recipeName: zod.string(),
   defaultBatchesPerDay: zod.number(),
+  surplusPercent: zod
+    .number()
+    .describe("Percentage surplus buffer added on top of demand batches"),
   isActive: zod.boolean(),
   updatedAt: zod.string(),
 });
@@ -1085,6 +1089,10 @@ export const ListDptSettingsResponse = zod.array(ListDptSettingsResponseItem);
 export const CreateDptSettingBody = zod.object({
   recipeId: zod.number(),
   defaultBatchesPerDay: zod.number(),
+  surplusPercent: zod
+    .number()
+    .optional()
+    .describe("Percentage surplus buffer (default 20)"),
   isActive: zod.boolean().optional(),
 });
 
@@ -1097,6 +1105,10 @@ export const UpdateDptSettingParams = zod.object({
 
 export const UpdateDptSettingBody = zod.object({
   defaultBatchesPerDay: zod.number().optional(),
+  surplusPercent: zod
+    .number()
+    .optional()
+    .describe("Percentage surplus buffer (default 20)"),
   isActive: zod.boolean().optional(),
 });
 
@@ -1105,6 +1117,9 @@ export const UpdateDptSettingResponse = zod.object({
   recipeId: zod.number(),
   recipeName: zod.string(),
   defaultBatchesPerDay: zod.number(),
+  surplusPercent: zod
+    .number()
+    .describe("Percentage surplus buffer added on top of demand batches"),
   isActive: zod.boolean(),
   updatedAt: zod.string(),
 });
@@ -1125,6 +1140,10 @@ export const UpsertDptSettingByRecipeParams = zod.object({
 
 export const UpsertDptSettingByRecipeBody = zod.object({
   defaultBatchesPerDay: zod.number().optional(),
+  surplusPercent: zod
+    .number()
+    .optional()
+    .describe("Percentage surplus buffer (default 20)"),
   isActive: zod.boolean().optional(),
 });
 
@@ -1133,6 +1152,9 @@ export const UpsertDptSettingByRecipeResponse = zod.object({
   recipeId: zod.number(),
   recipeName: zod.string(),
   defaultBatchesPerDay: zod.number(),
+  surplusPercent: zod
+    .number()
+    .describe("Percentage surplus buffer added on top of demand batches"),
   isActive: zod.boolean(),
   updatedAt: zod.string(),
 });

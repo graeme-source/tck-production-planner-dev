@@ -11,6 +11,8 @@ export interface DptSetting {
   recipeId: number;
   recipeName: string;
   defaultBatchesPerDay: number;
+  /** Percentage surplus buffer added on top of demand batches */
+  surplusPercent: number;
   isActive: boolean;
   updatedAt: string;
 }

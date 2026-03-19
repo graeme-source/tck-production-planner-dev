@@ -356,6 +356,8 @@ export interface DptSetting {
   recipeId: number;
   recipeName: string;
   defaultBatchesPerDay: number;
+  /** Percentage surplus buffer added on top of demand batches */
+  surplusPercent: number;
   isActive: boolean;
   updatedAt: string;
 }
@@ -392,11 +394,15 @@ export interface StationBreak {
 export interface CreateDptSetting {
   recipeId: number;
   defaultBatchesPerDay: number;
+  /** Percentage surplus buffer (default 20) */
+  surplusPercent?: number;
   isActive?: boolean;
 }
 
 export interface UpdateDptSetting {
   defaultBatchesPerDay?: number;
+  /** Percentage surplus buffer (default 20) */
+  surplusPercent?: number;
   isActive?: boolean;
 }
 
@@ -436,6 +442,8 @@ export interface DptSuggestion {
   currentStock: number;
   demand: number;
   batchesForDemand: number;
+  /** Percentage surplus buffer applied */
+  surplusPercent: number;
   defaultBatchesPerDay: number;
   suggestedBatches: number;
   tinCount?: number | null;

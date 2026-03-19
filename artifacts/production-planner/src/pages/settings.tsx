@@ -600,10 +600,14 @@ function DptSettingsSection() {
 
   const settingsByRecipeId = new Map((dptSettings ?? []).map(d => [d.recipeId, d]));
 
-  const handleSave = async (recipeId: number, val: string) => {
+  const handleSave = async (recipeId: number, batchesVal: string, surplusVal: string) => {
     setSaving(recipeId);
     try {
-      await upsertDptSettingByRecipe(recipeId, { defaultBatchesPerDay: Number(val) || 0, isActive: true });
+      await upsertDptSettingByRecipe(recipeId, {
+        defaultBatchesPerDay: Number(batchesVal) || 0,
+        surplusPercent: Number(surplusVal) || 0,
+        isActive: true,
+      });
       await queryClient.invalidateQueries({ queryKey: getListDptSettingsQueryKey() });
       setEditingRecipeId(null);
       setSavedMsg("Saved"); setTimeout(() => setSavedMsg(null), 2000);
@@ -637,7 +641,8 @@ function DptSettingsSection() {
             <thead className="bg-secondary/30 text-muted-foreground text-xs">
               <tr>
                 <th className="px-5 py-3 font-medium text-left">Recipe</th>
-                <th className="px-5 py-3 font-medium text-right">Default Batches / Day</th>
+                <th className="px-5 py-3 font-medium text-right">Min Batches / Day</th>
+                <th className="px-5 py-3 font-medium text-right">Surplus %</th>
                 <th className="px-5 py-3 font-medium text-right w-28">Actions</th>
               </tr>
             </thead>
@@ -645,6 +650,7 @@ function DptSettingsSection() {
               {allRecipes.map(recipe => {
                 const setting = settingsByRecipeId.get(recipe.id);
                 const currentBatches = setting?.defaultBatchesPerDay ?? 0;
+                const currentSurplus = setting?.surplusPercent ?? 20;
                 const isEditing = editingRecipeId === recipe.id;
                 return (
                   <tr key={recipe.id} className="hover:bg-secondary/10 transition-colors">
@@ -656,8 +662,8 @@ function DptSettingsSection() {
                           step="1"
                           min="0"
                           defaultValue={currentBatches}
-                          id={`dpt-edit-${recipe.id}`}
-                          className="w-24 px-2 py-1 border border-border rounded-lg text-sm text-right"
+                          id={`dpt-batches-${recipe.id}`}
+                          className="w-20 px-2 py-1 border border-border rounded-lg text-sm text-right"
                         />
                       ) : (
                         <span className={cn("font-mono", currentBatches === 0 ? "text-muted-foreground" : "")}>
@@ -667,11 +673,27 @@ function DptSettingsSection() {
                     </td>
                     <td className="px-5 py-3.5 text-right">
                       {isEditing ? (
+                        <input
+                          type="number"
+                          step="1"
+                          min="0"
+                          max="200"
+                          defaultValue={currentSurplus}
+                          id={`dpt-surplus-${recipe.id}`}
+                          className="w-20 px-2 py-1 border border-border rounded-lg text-sm text-right"
+                        />
+                      ) : (
+                        <span className="font-mono">{currentSurplus}%</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3.5 text-right">
+                      {isEditing ? (
                         <div className="flex items-center justify-end gap-1">
                           <button
                             onClick={() => {
-                              const input = document.getElementById(`dpt-edit-${recipe.id}`) as HTMLInputElement;
-                              handleSave(recipe.id, input?.value ?? String(currentBatches));
+                              const bInput = document.getElementById(`dpt-batches-${recipe.id}`) as HTMLInputElement;
+                              const sInput = document.getElementById(`dpt-surplus-${recipe.id}`) as HTMLInputElement;
+                              handleSave(recipe.id, bInput?.value ?? String(currentBatches), sInput?.value ?? String(currentSurplus));
                             }}
                             disabled={saving !== null}
                             className="px-2 py-1 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1"

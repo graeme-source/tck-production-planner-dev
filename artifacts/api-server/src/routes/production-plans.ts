@@ -187,6 +187,16 @@ router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
     return;
   }
 
+  // Validate weekday constraint if planDate is being changed
+  if (planDate !== undefined) {
+    const updDateObj = new Date(`${planDate}T12:00:00Z`);
+    const updDow = updDateObj.getUTCDay();
+    if (updDow === 0 || updDow === 6) {
+      res.status(400).json({ error: "Production plans can only be scheduled on weekdays (Monday–Friday)." });
+      return;
+    }
+  }
+
   const setPlan: Partial<typeof productionPlansTable.$inferInsert> = {};
   if (planDate !== undefined) setPlan.planDate = planDate;
   if (name !== undefined) setPlan.name = name;

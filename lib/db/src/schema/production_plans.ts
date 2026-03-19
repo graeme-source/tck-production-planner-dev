@@ -52,6 +52,7 @@ export const dptSettingsTable = pgTable("dpt_settings", {
   id: serial("id").primaryKey(),
   recipeId: integer("recipe_id").notNull().unique().references(() => recipesTable.id, { onDelete: "cascade" }),
   defaultBatchesPerDay: numeric("default_batches_per_day", { precision: 10, scale: 2 }).notNull().default("0"),
+  surplusPercent: numeric("surplus_percent", { precision: 5, scale: 2 }).notNull().default("20"),
   isActive: boolean("is_active").notNull().default(true),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

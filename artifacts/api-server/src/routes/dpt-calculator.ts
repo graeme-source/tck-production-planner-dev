@@ -14,6 +14,7 @@ router.get("/", async (req, res) => {
       recipeId: dptSettingsTable.recipeId,
       recipeName: recipesTable.name,
       defaultBatchesPerDay: dptSettingsTable.defaultBatchesPerDay,
+      surplusPercent: dptSettingsTable.surplusPercent,
       isActive: dptSettingsTable.isActive,
       portionsPerBatch: recipesTable.portionsPerBatch,
       tinSize: recipesTable.tinSize,
@@ -88,15 +89,20 @@ router.get("/", async (req, res) => {
     const currentStock = stockMap[d.recipeId] ?? 0;
     const demand = demandMap[d.recipeId] ?? 0;
     const defaultBatchesPerDay = Number(d.defaultBatchesPerDay);
+    const surplusPercent = Number(d.surplusPercent ?? 20);
     const portionsPerBatch = Number(d.portionsPerBatch) || 10;
     const maxBatchesPerTin = d.maxBatchesPerTin;
 
-    // Portions needed beyond current stock
+    // Step 1: batches needed to cover demand beyond current stock
     const portionsNeeded = Math.max(0, demand - currentStock);
-    // Convert to batches (always round up)
     const batchesForDemand = portionsNeeded > 0 ? Math.ceil(portionsNeeded / portionsPerBatch) : 0;
-    // Add daily surplus target
-    const suggestedBatches = batchesForDemand + defaultBatchesPerDay;
+
+    // Step 2: add percentage-based surplus buffer (rounds up)
+    const surplusBatches = Math.ceil(batchesForDemand * surplusPercent / 100);
+
+    // Step 3: suggested = demand batches + surplus; minimum = defaultBatchesPerDay
+    const suggestedBatches = Math.max(defaultBatchesPerDay, batchesForDemand + surplusBatches);
+
     // Tin count
     const tinCount = maxBatchesPerTin && suggestedBatches > 0
       ? Math.ceil(suggestedBatches / maxBatchesPerTin)
@@ -112,6 +118,7 @@ router.get("/", async (req, res) => {
       currentStock,
       demand,
       batchesForDemand,
+      surplusPercent,
       defaultBatchesPerDay,
       suggestedBatches,
       tinCount,

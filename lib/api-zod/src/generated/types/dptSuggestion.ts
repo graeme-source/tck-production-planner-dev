@@ -16,6 +16,8 @@ export interface DptSuggestion {
   currentStock: number;
   demand: number;
   batchesForDemand: number;
+  /** Percentage surplus buffer applied */
+  surplusPercent: number;
   defaultBatchesPerDay: number;
   suggestedBatches: number;
   tinCount?: number | null;

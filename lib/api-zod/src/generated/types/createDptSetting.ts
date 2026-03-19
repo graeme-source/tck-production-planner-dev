@@ -9,5 +9,7 @@
 export interface CreateDptSetting {
   recipeId: number;
   defaultBatchesPerDay: number;
+  /** Percentage surplus buffer (default 20) */
+  surplusPercent?: number;
   isActive?: boolean;
 }
