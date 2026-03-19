@@ -731,6 +731,10 @@ export const CreateProductionPlanBody = zod.object({
   planDate: zod.string(),
   name: zod.string(),
   notes: zod.string().nullish(),
+  status: zod
+    .enum(["draft", "active", "prep", "building", "complete"])
+    .optional()
+    .describe("Initial status (defaults to draft)"),
   batchNumber: zod.number().nullish(),
   items: zod
     .array(

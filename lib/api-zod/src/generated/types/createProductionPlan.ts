@@ -6,11 +6,14 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { CreateProductionPlanItemsItem } from "./createProductionPlanItemsItem";
+import type { CreateProductionPlanStatus } from "./createProductionPlanStatus";
 
 export interface CreateProductionPlan {
   planDate: string;
   name: string;
   notes?: string | null;
+  /** Initial status (defaults to draft) */
+  status?: CreateProductionPlanStatus;
   batchNumber?: number | null;
   items?: CreateProductionPlanItemsItem[];
 }

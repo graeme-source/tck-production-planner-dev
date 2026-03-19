@@ -292,6 +292,20 @@ export type ProductionPlanDetail = ProductionPlan & {
   items: ProductionPlanItem[];
 };
 
+/**
+ * Initial status (defaults to draft)
+ */
+export type CreateProductionPlanStatus =
+  (typeof CreateProductionPlanStatus)[keyof typeof CreateProductionPlanStatus];
+
+export const CreateProductionPlanStatus = {
+  draft: "draft",
+  active: "active",
+  prep: "prep",
+  building: "building",
+  complete: "complete",
+} as const;
+
 export type CreateProductionPlanItemsItem = {
   recipeId: number;
   batchesTarget?: number;
@@ -306,6 +320,8 @@ export interface CreateProductionPlan {
   planDate: string;
   name: string;
   notes?: string | null;
+  /** Initial status (defaults to draft) */
+  status?: CreateProductionPlanStatus;
   batchNumber?: number | null;
   items?: CreateProductionPlanItemsItem[];
 }

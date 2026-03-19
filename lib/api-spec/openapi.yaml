@@ -2060,6 +2060,10 @@ components:
         notes:
           type: string
           nullable: true
+        status:
+          type: string
+          enum: [draft, active, prep, building, complete]
+          description: Initial status (defaults to draft)
         batchNumber:
           type: integer
           nullable: true
