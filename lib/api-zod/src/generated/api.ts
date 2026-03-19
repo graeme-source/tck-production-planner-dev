@@ -627,7 +627,7 @@ export const ListProductionPlansResponseItem = zod.object({
   planDate: zod.string(),
   name: zod.string(),
   notes: zod.string().nullish(),
-  status: zod.enum(["draft", "active", "completed"]),
+  status: zod.enum(["draft", "active", "prep", "building", "complete"]),
   batchNumber: zod.number().nullish(),
   createdAt: zod.string(),
 });
@@ -670,10 +670,8 @@ export const PlanItemResponseSchema = zod.object({
   recipeId: zod.number(),
   recipeName: zod.string(),
   portionsPerBatch: zod.number(),
-  targetQuantity: zod.number(),
-  actualQuantity: zod.number().nullish(),
   notes: zod.string().nullish(),
-  status: zod.string(),
+  status: zod.enum(["pending", "in-progress", "complete"]),
   orderPosition: zod.number(),
   batchesTarget: zod.number(),
   batchesComplete: zod.number(),
@@ -689,7 +687,7 @@ export const GetProductionPlanResponse = zod
     planDate: zod.string(),
     name: zod.string(),
     notes: zod.string().nullish(),
-    status: zod.enum(["draft", "active", "completed"]),
+    status: zod.enum(["draft", "active", "prep", "building", "complete"]),
     batchNumber: zod.number().nullish(),
     createdAt: zod.string(),
   })
@@ -710,7 +708,7 @@ export const UpdateProductionPlanBody = zod.object({
   planDate: zod.string().optional(),
   name: zod.string().optional(),
   notes: zod.string().nullish(),
-  status: zod.enum(["draft", "active", "completed"]).optional(),
+  status: zod.enum(["draft", "active", "prep", "building", "complete"]).optional(),
   items: zod.array(PlanItemSchema.extend({ batchesComplete: zod.number().int().optional() })).optional(),
 });
 
@@ -719,7 +717,7 @@ export const UpdateProductionPlanResponse = zod.object({
   planDate: zod.string(),
   name: zod.string(),
   notes: zod.string().nullish(),
-  status: zod.enum(["draft", "active", "completed"]),
+  status: zod.enum(["draft", "active", "prep", "building", "complete"]),
   batchNumber: zod.number().nullish(),
   createdAt: zod.string(),
 });

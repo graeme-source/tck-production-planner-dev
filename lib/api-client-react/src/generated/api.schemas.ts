@@ -222,8 +222,8 @@ export type ProductionPlanItemStatus =
 
 export const ProductionPlanItemStatus = {
   pending: "pending",
-  in_progress: "in_progress",
-  completed: "completed",
+  in_progress: "in-progress",
+  completed: "complete",
 } as const;
 
 export interface ProductionPlanItem {
@@ -292,7 +292,9 @@ export type UpdateProductionPlanStatus =
 export const UpdateProductionPlanStatus = {
   draft: "draft",
   active: "active",
-  completed: "completed",
+  prep: "prep",
+  building: "building",
+  complete: "complete",
 } as const;
 
 export type UpdateProductionPlanItemsItem = {

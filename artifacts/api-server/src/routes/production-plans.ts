@@ -253,7 +253,7 @@ router.post("/:id/batch-completions", async (req, res) => {
 
   // Increment batchesComplete on the item
   await db.execute(
-    sql`UPDATE production_plan_items SET batches_complete = batches_complete + 1, status = CASE WHEN batches_complete + 1 >= batches_target THEN 'completed' ELSE 'in_progress' END WHERE id = ${planItemId}`
+    sql`UPDATE production_plan_items SET batches_complete = batches_complete + 1, status = CASE WHEN batches_complete + 1 >= batches_target THEN 'complete' ELSE 'in-progress' END WHERE id = ${planItemId}`
   );
 
   res.status(201).json(row);

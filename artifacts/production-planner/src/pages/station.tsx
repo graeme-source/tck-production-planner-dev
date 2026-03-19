@@ -275,7 +275,7 @@ function MixingStation({ plan }: MixingStationProps) {
 
   const addBatch = (item: ProductionPlanItem) => {
     const newComplete = (item.batchesComplete ?? 0) + 1;
-    const newStatus = newComplete >= (item.batchesTarget ?? 0) ? "completed" : "in_progress";
+    const newStatus = newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
 
     updateItem.mutate({
       planId: plan.id,
@@ -295,7 +295,7 @@ function MixingStation({ plan }: MixingStationProps) {
 
   const removeBatch = (item: ProductionPlanItem) => {
     const newComplete = Math.max(0, (item.batchesComplete ?? 0) - 1);
-    const newStatus = newComplete === 0 ? "pending" : newComplete >= (item.batchesTarget ?? 0) ? "completed" : "in_progress";
+    const newStatus = newComplete === 0 ? "pending" : newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
     updateItem.mutate({
       planId: plan.id,
       itemId: item.id,
@@ -341,14 +341,14 @@ function MixingStation({ plan }: MixingStationProps) {
           const progress = (item.batchesTarget ?? 0) > 0
             ? Math.round(((item.batchesComplete ?? 0) / (item.batchesTarget ?? 0)) * 100)
             : 0;
-          const isComplete = item.status === "completed";
+          const isComplete = item.status === "complete";
           const isStarted = (item.batchesComplete ?? 0) > 0;
           const isLocked = isStarted && !isAdmin;
 
           const statusColors = {
             pending: "border-border",
-            in_progress: "border-blue-300 dark:border-blue-700 bg-blue-50/30 dark:bg-blue-900/10",
-            completed: "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-900/10",
+            "in-progress": "border-blue-300 dark:border-blue-700 bg-blue-50/30 dark:bg-blue-900/10",
+            complete: "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-900/10",
           };
 
           return (
@@ -403,7 +403,7 @@ function MixingStation({ plan }: MixingStationProps) {
                       {isComplete && (
                         <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
                       )}
-                      {item.status === "in_progress" && (
+                      {item.status === "in-progress" && (
                         <PlayCircle className="w-4 h-4 text-blue-500 flex-shrink-0" />
                       )}
                     </div>
@@ -483,7 +483,7 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
 
   // For building stations, show all items in order with current status
-  const currentItem = items.find(it => it.status === "in_progress") ?? items.find(it => it.status === "pending");
+  const currentItem = items.find(it => it.status === "in-progress") ?? items.find(it => it.status === "pending");
 
   return (
     <div className="space-y-4">
@@ -572,20 +572,20 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
             {items.map(item => {
               const statusColors = {
                 pending: "text-muted-foreground",
-                in_progress: "text-blue-600 dark:text-blue-400 font-medium",
-                completed: "text-emerald-600 dark:text-emerald-400",
+                "in-progress": "text-blue-600 dark:text-blue-400 font-medium",
+                complete: "text-emerald-600 dark:text-emerald-400",
               };
               return (
                 <tr key={item.id} className="border-b border-border/50 last:border-0">
                   <td className="py-2.5 px-4 text-muted-foreground">{item.orderPosition}</td>
-                  <td className={cn("py-2.5 px-4 font-medium", item.status === "completed" ? "line-through text-muted-foreground" : "")}>
+                  <td className={cn("py-2.5 px-4 font-medium", item.status === "complete" ? "line-through text-muted-foreground" : "")}>
                     {item.recipeName ?? `Recipe #${item.recipeId}`}
                   </td>
                   <td className="py-2.5 px-4 text-center">{item.batchesTarget ?? 0}</td>
                   <td className="py-2.5 px-4 text-center">{item.batchesComplete ?? 0}</td>
                   <td className="py-2.5 px-4 text-center">
                     <span className={cn("text-xs capitalize", statusColors[item.status as keyof typeof statusColors] ?? "text-muted-foreground")}>
-                      {item.status === "in_progress" ? "In Progress" : item.status}
+                      {item.status === "in-progress" ? "In Progress" : item.status}
                     </span>
                   </td>
                 </tr>
