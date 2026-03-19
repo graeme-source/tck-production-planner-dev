@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/contexts/auth-context";
+import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { Layout } from "@/components/layout";
 import Dashboard from "@/pages/dashboard";
 import Ingredients from "@/pages/ingredients";
@@ -21,12 +22,11 @@ import { Loader2 } from "lucide-react";
 
 const queryClient = new QueryClient();
 
-const ROLE_RANK: Record<string, number> = { viewer: 0, manager: 1, admin: 2 };
-
-function ProtectedRoute({ component: Component, minRole }: { component: React.ComponentType; minRole: string }) {
+function ProtectedRoute({ component: Component, pageKey }: { component: React.ComponentType; pageKey: string }) {
   const { state } = useAuth();
+  const { canAccess } = usePagePermissions();
   const role = state.status === "authenticated" ? state.user.role : "viewer";
-  if ((ROLE_RANK[role] ?? 0) < (ROLE_RANK[minRole] ?? 0)) return <Redirect to="/" />;
+  if (!canAccess(role, pageKey)) return <Redirect to="/" />;
   return <Component />;
 }
 
@@ -40,7 +40,7 @@ function Router() {
         <Route path="/recipes" component={Recipes} />
         <Route path="/plans" component={ProductionPlans} />
         <Route path="/stock" component={Stock} />
-        <Route path="/sales">{() => <ProtectedRoute component={Sales} minRole="manager" />}</Route>
+        <Route path="/sales">{() => <ProtectedRoute component={Sales} pageKey="/sales" />}</Route>
         <Route path="/dispatches" component={Dispatches} />
         <Route path="/suppliers" component={Suppliers} />
         <Route path="/settings" component={Settings} />

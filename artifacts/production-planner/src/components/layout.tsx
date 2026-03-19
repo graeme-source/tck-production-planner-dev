@@ -2,6 +2,7 @@ import React, { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { useAuth } from "@/contexts/auth-context";
+import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { 
   LayoutDashboard, 
   ChefHat, 
@@ -16,9 +17,7 @@ import {
   LogOut,
 } from "lucide-react";
 
-type NavItem = { name: string; href: string; icon: React.ElementType; minRole?: "manager" | "admin" };
-
-const navItems: NavItem[] = [
+const navItems = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Production Plans", href: "/plans", icon: CalendarDays },
   { name: "Recipes", href: "/recipes", icon: ChefHat },
@@ -26,15 +25,9 @@ const navItems: NavItem[] = [
   { name: "Ingredients", href: "/ingredients", icon: Carrot },
   { name: "Suppliers", href: "/suppliers", icon: Building2 },
   { name: "Stock Inventory", href: "/stock", icon: PackageSearch },
-  { name: "Sales Data", href: "/sales", icon: TrendingUp, minRole: "manager" },
+  { name: "Sales Data", href: "/sales", icon: TrendingUp },
   { name: "Dispatches", href: "/dispatches", icon: Truck },
 ];
-
-const ROLE_RANK: Record<string, number> = { viewer: 0, manager: 1, admin: 2 };
-function canAccess(userRole: string, minRole?: string) {
-  if (!minRole) return true;
-  return (ROLE_RANK[userRole] ?? 0) >= (ROLE_RANK[minRole] ?? 0);
-}
 
 const bottomNavItems = [
   { name: "Settings", href: "/settings", icon: Settings },
@@ -44,6 +37,11 @@ export function Layout({ children }: { children: ReactNode }) {
   const [location] = useLocation();
   const { state, logout } = useAuth();
   const user = state.status === "authenticated" ? state.user : null;
+  const { canAccess } = usePagePermissions();
+
+  const visibleNavItems = navItems.filter(item =>
+    canAccess(user?.role ?? "viewer", item.href)
+  );
 
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
@@ -64,7 +62,7 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
         
         <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
-          {navItems.filter(item => canAccess(user?.role ?? "viewer", item.minRole)).map((item) => {
+          {visibleNavItems.map((item) => {
             const isActive = location === item.href;
             return (
               <Link 

@@ -1,10 +1,13 @@
 import { useState } from "react";
 import { useListUsers, useListCategoryDefaults } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
+import { usePagePermissions, useSavePagePermissions } from "@/hooks/use-page-permissions";
+import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import {
   Plus, Trash2, Edit2, Loader2, Users, ShieldCheck, Eye, Wrench,
   CheckCircle2, XCircle, KeyRound, Package, ChevronDown, ChevronUp,
+  Lock,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
@@ -205,6 +208,8 @@ function UserForm({
 export default function Settings() {
   const { data: users, isLoading } = useListUsers();
   const { createUser, updateUser, deleteUser } = useAppMutations();
+  const { state } = useAuth();
+  const user = state.status === "authenticated" ? state.user : null;
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<AppUser | null>(null);
 
@@ -397,6 +402,9 @@ export default function Settings() {
 
       {/* Category Defaults Section */}
       <CategoryDefaultsSection />
+
+      {/* Access Control — admin only */}
+      {user?.role === "admin" && <AccessControlSection />}
     </div>
   );
 }
@@ -566,6 +574,124 @@ function CategoryDefaultsSection() {
                   )}
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const ROLE_OPTIONS: { value: "viewer" | "manager" | "admin"; label: string; color: string }[] = [
+  { value: "viewer", label: "Viewer", color: "text-blue-600" },
+  { value: "manager", label: "Manager", color: "text-amber-600" },
+  { value: "admin", label: "Admin", color: "text-red-600" },
+];
+
+function AccessControlSection() {
+  const { permissions, isLoading } = usePagePermissions();
+  const savePermissions = useSavePagePermissions();
+  const [draft, setDraft] = useState<Record<string, "viewer" | "manager" | "admin">>({});
+  const [saved, setSaved] = useState(false);
+
+  const effective = (pageKey: string): "viewer" | "manager" | "admin" => {
+    if (pageKey in draft) return draft[pageKey];
+    return permissions.find(p => p.pageKey === pageKey)?.minRole ?? "viewer";
+  };
+
+  const handleChange = (pageKey: string, value: "viewer" | "manager" | "admin") => {
+    setSaved(false);
+    setDraft(d => ({ ...d, [pageKey]: value }));
+  };
+
+  const handleSave = () => {
+    const updates = permissions.map(p => ({
+      pageKey: p.pageKey,
+      minRole: effective(p.pageKey),
+    }));
+    savePermissions.mutate(updates, {
+      onSuccess: () => {
+        setDraft({});
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2500);
+      },
+    });
+  };
+
+  const isDirty = Object.keys(draft).length > 0;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between">
+        <div>
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <Lock className="w-4 h-4 text-primary" /> Page Access Control
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Set the minimum role required to view each page. Admins always have full access.
+          </p>
+        </div>
+        <button
+          onClick={handleSave}
+          disabled={!isDirty || savePermissions.isPending}
+          className="px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-40 flex items-center gap-2 flex-shrink-0"
+        >
+          {savePermissions.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+          {saved ? <CheckCircle2 className="w-3.5 h-3.5" /> : null}
+          {savePermissions.isPending ? "Saving…" : saved ? "Saved" : "Save Changes"}
+        </button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-10">
+          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-border bg-card overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-secondary/30 text-muted-foreground text-xs">
+              <tr>
+                <th className="px-5 py-3 font-medium text-left">Page</th>
+                <th className="px-5 py-3 font-medium text-left">Minimum Role Required</th>
+                <th className="px-5 py-3 font-medium text-left">Who can see it</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/50">
+              {permissions.map(p => {
+                const current = effective(p.pageKey);
+                const changed = p.pageKey in draft;
+                const whoCanSee =
+                  current === "viewer" ? "Viewer, Manager, Admin" :
+                  current === "manager" ? "Manager, Admin" :
+                  "Admin only";
+                return (
+                  <tr key={p.pageKey} className={`transition-colors ${changed ? "bg-primary/5" : "hover:bg-secondary/10"}`}>
+                    <td className="px-5 py-3.5">
+                      <span className="font-medium">{p.label}</span>
+                      <span className="text-xs text-muted-foreground ml-2">{p.pageKey}</span>
+                    </td>
+                    <td className="px-5 py-3.5">
+                      <div className="flex gap-2">
+                        {ROLE_OPTIONS.map(r => (
+                          <button
+                            key={r.value}
+                            type="button"
+                            onClick={() => handleChange(p.pageKey, r.value)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${
+                              current === r.value
+                                ? "border-primary bg-primary/10 text-primary"
+                                : "border-border text-muted-foreground hover:border-border/60 hover:bg-secondary/30"
+                            }`}
+                          >
+                            {r.label}
+                          </button>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-5 py-3.5 text-muted-foreground text-xs">{whoCanSee}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

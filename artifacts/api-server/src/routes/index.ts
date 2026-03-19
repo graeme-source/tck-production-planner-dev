@@ -12,6 +12,7 @@ import suppliersRouter from "./suppliers";
 import usersRouter from "./users";
 import categoryDefaultsRouter from "./category-defaults";
 import shopifyRouter from "./shopify";
+import pagePermissionsRouter from "./page-permissions";
 
 const router: IRouter = Router();
 
@@ -40,5 +41,6 @@ router.use("/stock-entries", stockRouter);
 router.use("/sales-entries", salesRouter);
 router.use("/dispatch-orders", dispatchesRouter);
 router.use("/shopify", shopifyRouter);
+router.use("/page-permissions", pagePermissionsRouter);
 
 export default router;

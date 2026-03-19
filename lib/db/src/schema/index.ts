@@ -1,4 +1,5 @@
 export * from "./users";
+export * from "./page_permissions";
 export * from "./category_defaults";
 export * from "./suppliers";
 export * from "./ingredients";
