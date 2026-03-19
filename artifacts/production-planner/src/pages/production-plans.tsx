@@ -1087,19 +1087,38 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
           {STATION_BUTTONS.map(s => {
             const Icon = s.icon;
+            const isBuildingStation = s.key === "building_1" || s.key === "building_2";
+            const stationComplete = totalBatchesTarget > 0 && totalBatchesComplete >= totalBatchesTarget;
+            const stationInProgress = !stationComplete && totalBatchesComplete > 0;
             return (
               <button
                 key={s.key}
                 onClick={() => navigate(`/plans/${planId}/station/${s.key}`)}
-                className="flex flex-col items-center gap-1.5 p-3 border border-border rounded-xl hover:border-primary/40 hover:bg-secondary/40 transition-all group"
+                className="flex flex-col items-center gap-1.5 p-3 border border-border rounded-xl hover:border-primary/40 hover:bg-secondary/40 transition-all group relative"
               >
+                {isBuildingStation && stationComplete && (
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-500" title="Complete" />
+                )}
+                {isBuildingStation && stationInProgress && (
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-blue-500 animate-pulse" title="In progress" />
+                )}
                 <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center", s.color)}>
                   <Icon className="w-4 h-4" />
                 </div>
                 <span className="text-xs text-center leading-tight text-muted-foreground group-hover:text-foreground transition-colors">
                   {s.label}
                 </span>
-                <ArrowRight className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                {isBuildingStation && totalBatchesTarget > 0 && (
+                  <div className="w-full h-1 bg-secondary rounded-full overflow-hidden">
+                    <div
+                      className={cn("h-full rounded-full transition-all", stationComplete ? "bg-emerald-500" : "bg-primary")}
+                      style={{ width: `${Math.min(progress, 100)}%` }}
+                    />
+                  </div>
+                )}
+                {!isBuildingStation && (
+                  <ArrowRight className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                )}
               </button>
             );
           })}

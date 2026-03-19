@@ -394,12 +394,13 @@ router.post("/:id/station-breaks", async (req, res) => {
 });
 
 router.patch("/:id/station-breaks/:breakId", async (req, res) => {
+  const planId = Number(req.params.id);
   const breakId = Number(req.params.breakId);
   const { endedAt } = req.body;
 
   const [updated] = await db.update(stationBreaksTable)
     .set({ endedAt: endedAt ? new Date(endedAt) : new Date() })
-    .where(eq(stationBreaksTable.id, breakId))
+    .where(and(eq(stationBreaksTable.id, breakId), eq(stationBreaksTable.planId, planId)))
     .returning();
 
   if (!updated) { res.status(404).json({ error: "Not found" }); return; }

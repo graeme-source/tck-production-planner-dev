@@ -163,7 +163,7 @@ function BreakTracker({ planId, stationType, onBreakChange }: BreakTrackerProps)
   const startBreak = (type: "morning" | "lunch") => {
     createBreak.mutate(
       {
-        planId,
+        id: planId,
         data: { stationType, breakType: type, startedAt: new Date().toISOString() },
       },
       {
@@ -178,7 +178,7 @@ function BreakTracker({ planId, stationType, onBreakChange }: BreakTrackerProps)
     if (!activeBreak) return;
     endBreak.mutate(
       {
-        planId,
+        id: planId,
         breakId: activeBreak.id,
         data: { endedAt: new Date().toISOString() },
       },
@@ -322,76 +322,129 @@ function EodSummary({ items, stationType, sessionBatches, totalBreakMinutes, ses
   const activeMinutes = Math.max(0, totalMinutes - totalBreakMinutes);
   const activeHours = activeMinutes / 60;
   const bph = activeHours > 0 ? sessionBatches / activeHours : 0;
+  const minsPerBatch = sessionBatches > 0 && activeMinutes > 0 ? activeMinutes / sessionBatches : null;
 
   const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
   const totalBatchesComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
+  const completionRate = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
+
+  const stationLabel = stationType === "building_1" ? "Building Line 1"
+    : stationType === "building_2" ? "Building Line 2"
+    : stationType.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-card border border-border rounded-2xl max-w-lg w-full shadow-xl">
-        <div className="p-6 border-b border-border">
+      <div className="bg-card border border-border rounded-2xl max-w-lg w-full shadow-xl max-h-[90vh] flex flex-col">
+        <div className="p-6 border-b border-border flex-shrink-0">
           <div className="flex items-center gap-3">
             <Trophy className="w-6 h-6 text-amber-500" />
-            <h2 className="font-semibold text-lg">End of Day Summary</h2>
-            <span className="text-xs text-muted-foreground ml-auto">{stationType === "building_1" ? "Building Line 1" : "Building Line 2"}</span>
+            <div>
+              <h2 className="font-semibold text-lg">End of Day Summary</h2>
+              <p className="text-xs text-muted-foreground">{stationLabel}</p>
+            </div>
           </div>
         </div>
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-4 overflow-y-auto flex-1">
+          {/* KPI grid */}
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-secondary/30 rounded-xl p-3 text-center">
-              <p className="text-xs text-muted-foreground mb-1">Batches This Session</p>
-              <p className="text-3xl font-bold">{sessionBatches}</p>
+              <p className="text-xs text-muted-foreground mb-1">Session Batches</p>
+              <p className="text-3xl font-bold tabular-nums">{sessionBatches}</p>
             </div>
             <div className="bg-secondary/30 rounded-xl p-3 text-center">
               <p className="text-xs text-muted-foreground mb-1">Batches / Hour</p>
-              <p className="text-3xl font-bold">{bph.toFixed(1)}</p>
+              <p className="text-3xl font-bold tabular-nums">{bph.toFixed(1)}</p>
             </div>
             <div className="bg-secondary/30 rounded-xl p-3 text-center">
               <p className="text-xs text-muted-foreground mb-1">Active Time</p>
-              <p className="text-2xl font-bold">{activeMinutes}m</p>
+              <p className="text-2xl font-bold tabular-nums">
+                {activeMinutes >= 60
+                  ? `${Math.floor(activeMinutes / 60)}h ${activeMinutes % 60}m`
+                  : `${activeMinutes}m`}
+              </p>
             </div>
             <div className="bg-secondary/30 rounded-xl p-3 text-center">
               <p className="text-xs text-muted-foreground mb-1">Break Time</p>
-              <p className="text-2xl font-bold">{totalBreakMinutes}m</p>
+              <p className="text-2xl font-bold tabular-nums">{totalBreakMinutes}m</p>
+            </div>
+            {minsPerBatch != null && (
+              <div className="bg-secondary/30 rounded-xl p-3 text-center col-span-1">
+                <p className="text-xs text-muted-foreground mb-1">Avg Mins/Batch</p>
+                <p className="text-2xl font-bold tabular-nums">{minsPerBatch.toFixed(1)}</p>
+              </div>
+            )}
+            <div className="bg-secondary/30 rounded-xl p-3 text-center col-span-1">
+              <p className="text-xs text-muted-foreground mb-1">Plan Completion</p>
+              <p className={cn(
+                "text-2xl font-bold tabular-nums",
+                completionRate >= 100 ? "text-emerald-600 dark:text-emerald-400"
+                  : completionRate >= 50 ? "text-amber-600 dark:text-amber-400"
+                  : "text-muted-foreground"
+              )}>
+                {completionRate}%
+              </p>
             </div>
           </div>
 
-          {/* Per-recipe summary */}
+          {/* Per-recipe breakdown */}
           <div className="bg-secondary/20 rounded-xl overflow-hidden">
             <div className="px-3 py-2 border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-              Recipes
+              Per-Recipe Breakdown
             </div>
             <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-muted-foreground border-b border-border/50">
+                  <th className="px-3 py-1.5 text-left font-medium">Recipe</th>
+                  <th className="px-3 py-1.5 text-center font-medium">Target</th>
+                  <th className="px-3 py-1.5 text-center font-medium">Done</th>
+                  <th className="px-3 py-1.5 text-center font-medium">Rate</th>
+                </tr>
+              </thead>
               <tbody>
-                {items.map(item => (
-                  <tr key={item.id} className="border-b border-border/50 last:border-0">
-                    <td className="px-3 py-2 font-medium">{item.recipeName ?? `Recipe #${item.recipeId}`}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      <span className={cn(
-                        "font-bold",
-                        (item.batchesComplete ?? 0) >= (item.batchesTarget ?? 0)
-                          ? "text-emerald-600 dark:text-emerald-400"
-                          : "text-muted-foreground"
-                      )}>
+                {items.map(item => {
+                  const rate = (item.batchesTarget ?? 0) > 0
+                    ? Math.round(((item.batchesComplete ?? 0) / (item.batchesTarget ?? 0)) * 100)
+                    : 0;
+                  const rateColor = rate >= 100
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : rate >= 50 ? "text-amber-600 dark:text-amber-400"
+                    : "text-rose-600 dark:text-rose-400";
+                  return (
+                    <tr key={item.id} className="border-b border-border/50 last:border-0">
+                      <td className="px-3 py-2 font-medium truncate max-w-[160px]">
+                        {item.recipeName ?? `Recipe #${item.recipeId}`}
+                      </td>
+                      <td className="px-3 py-2 text-center tabular-nums text-muted-foreground">
+                        {item.batchesTarget ?? 0}
+                      </td>
+                      <td className="px-3 py-2 text-center tabular-nums font-bold">
                         {item.batchesComplete ?? 0}
-                      </span>
-                      <span className="text-muted-foreground"> / {item.batchesTarget ?? 0}</span>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className={cn("px-3 py-2 text-center tabular-nums font-semibold text-xs", rateColor)}>
+                        {rate}%
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
               <tfoot>
-                <tr className="bg-secondary/30">
-                  <td className="px-3 py-2 font-semibold">Total</td>
-                  <td className="px-3 py-2 text-right font-bold tabular-nums">
-                    {totalBatchesComplete} / {totalBatchesTarget}
+                <tr className="bg-secondary/30 font-semibold">
+                  <td className="px-3 py-2">Total</td>
+                  <td className="px-3 py-2 text-center tabular-nums">{totalBatchesTarget}</td>
+                  <td className="px-3 py-2 text-center tabular-nums">{totalBatchesComplete}</td>
+                  <td className={cn(
+                    "px-3 py-2 text-center tabular-nums text-xs",
+                    completionRate >= 100 ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-muted-foreground"
+                  )}>
+                    {completionRate}%
                   </td>
                 </tr>
               </tfoot>
             </table>
           </div>
         </div>
-        <div className="p-6 border-t border-border">
+        <div className="p-6 border-t border-border flex-shrink-0">
           <button
             onClick={onClose}
             className="w-full py-2.5 bg-primary text-primary-foreground rounded-xl font-medium hover:bg-primary/90 transition-colors"
@@ -454,13 +507,13 @@ function MixingStation({ plan }: MixingStationProps) {
 
     [newItems[index], newItems[targetIndex]] = [newItems[targetIndex], newItems[index]];
     const order = newItems.map((it, i) => ({ itemId: it.id, orderPosition: i + 1 }));
-    updateOrder.mutate({ planId: plan.id, order });
+    updateOrder.mutate({ id: plan.id, order });
   };
 
   // addBatch: only via createBatchCompletion (server increments batchesComplete + status)
   const addBatch = (item: ProductionPlanItem) => {
     createBatch.mutate({
-      planId: plan.id,
+      id: plan.id,
       data: {
         planItemId: item.id,
         stationType: "mixing",
@@ -474,7 +527,7 @@ function MixingStation({ plan }: MixingStationProps) {
     const newComplete = Math.max(0, (item.batchesComplete ?? 0) - 1);
     const newStatus = newComplete === 0 ? "pending" : newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
     updateItem.mutate({
-      planId: plan.id,
+      id: plan.id,
       itemId: item.id,
       data: { batchesComplete: newComplete, status: newStatus },
     });
@@ -706,7 +759,7 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     if (!currentItem || pendingTap) return;
     setPendingTap(true);
     createBatch.mutate({
-      planId: plan.id,
+      id: plan.id,
       data: {
         planItemId: currentItem.id,
         stationType,
@@ -721,7 +774,7 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     const newComplete = (currentItem.batchesComplete ?? 0) - 1;
     const newStatus = newComplete === 0 ? "pending" : "in-progress";
     updateItem.mutate({
-      planId: plan.id,
+      id: plan.id,
       itemId: currentItem.id,
       data: { batchesComplete: newComplete, status: newStatus },
     });
@@ -765,9 +818,20 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
             <h2 className="font-display text-3xl font-bold leading-tight">
               {currentItem.recipeName ?? `Recipe #${currentItem.recipeId}`}
             </h2>
-            {currentItem.tinSize && (
-              <p className="text-sm text-muted-foreground mt-1">{currentItem.tinSize} tin</p>
-            )}
+            <div className="flex flex-wrap items-center gap-3 mt-2 text-sm text-muted-foreground">
+              {currentItem.tinSize && (
+                <span className="bg-secondary/50 rounded px-2 py-0.5">{currentItem.tinSize} tin</span>
+              )}
+              {currentItem.portionsPerBatch > 0 && (
+                <span className="bg-secondary/50 rounded px-2 py-0.5">{currentItem.portionsPerBatch} portions/batch</span>
+              )}
+              {currentItem.maxBatchesPerTin && (
+                <span className="bg-secondary/50 rounded px-2 py-0.5">Max {currentItem.maxBatchesPerTin} batches/tin</span>
+              )}
+              {currentItem.notes && (
+                <span className="italic text-xs">{currentItem.notes}</span>
+              )}
+            </div>
           </div>
 
           {/* Large batch counter */}
@@ -1152,14 +1216,14 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
 
   // addBatch: only via createBatchCompletion (server increments)
   const addBatch = (item: ProductionPlanItem) => {
-    createBatch.mutate({ planId: plan.id, data: { planItemId: item.id, stationType: "dough_prep", completedAt: new Date().toISOString() } });
+    createBatch.mutate({ id: plan.id, data: { planItemId: item.id, stationType: "dough_prep", completedAt: new Date().toISOString() } });
   };
 
   // removeBatch: PATCH item directly (no batch_completion for undos)
   const removeBatch = (item: ProductionPlanItem) => {
     const newComplete = Math.max(0, (item.batchesComplete ?? 0) - 1);
     const newStatus = newComplete === 0 ? "pending" : newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
-    updateItem.mutate({ planId: plan.id, itemId: item.id, data: { batchesComplete: newComplete, status: newStatus } });
+    updateItem.mutate({ id: plan.id, itemId: item.id, data: { batchesComplete: newComplete, status: newStatus } });
   };
 
   const totalComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
@@ -1397,14 +1461,14 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
 
   // addBatch: only via createBatchCompletion (server increments)
   const addBatch = (item: ProductionPlanItem) => {
-    createBatch.mutate({ planId: plan.id, data: { planItemId: item.id, stationType: "ovens", completedAt: new Date().toISOString() } });
+    createBatch.mutate({ id: plan.id, data: { planItemId: item.id, stationType: "ovens", completedAt: new Date().toISOString() } });
   };
 
   // removeBatch: PATCH item directly
   const removeBatch = (item: ProductionPlanItem) => {
     const newComplete = Math.max(0, (item.batchesComplete ?? 0) - 1);
     const newStatus = newComplete === 0 ? "pending" : newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
-    updateItem.mutate({ planId: plan.id, itemId: item.id, data: { batchesComplete: newComplete, status: newStatus } });
+    updateItem.mutate({ id: plan.id, itemId: item.id, data: { batchesComplete: newComplete, status: newStatus } });
   };
 
   const totalComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
@@ -1563,14 +1627,14 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
 
   // addBatch: only via createBatchCompletion
   const addBatch = (item: ProductionPlanItem) => {
-    createBatch.mutate({ planId: plan.id, data: { planItemId: item.id, stationType: "wrapping", completedAt: new Date().toISOString() } });
+    createBatch.mutate({ id: plan.id, data: { planItemId: item.id, stationType: "wrapping", completedAt: new Date().toISOString() } });
   };
 
   // removeBatch: PATCH item directly
   const removeBatch = (item: ProductionPlanItem) => {
     const newComplete = Math.max(0, (item.batchesComplete ?? 0) - 1);
     const newStatus = newComplete === 0 ? "pending" : newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
-    updateItem.mutate({ planId: plan.id, itemId: item.id, data: { batchesComplete: newComplete, status: newStatus } });
+    updateItem.mutate({ id: plan.id, itemId: item.id, data: { batchesComplete: newComplete, status: newStatus } });
   };
 
   return (
