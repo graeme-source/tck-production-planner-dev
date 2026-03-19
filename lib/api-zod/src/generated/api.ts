@@ -428,6 +428,9 @@ export const ListRecipesResponseItem = zod.object({
   rrp: zod.number(),
   packagingCost: zod.number(),
   labourCost: zod.number(),
+  portionsPerBatch: zod
+    .number()
+    .describe("Number of portions produced per batch (e.g. 10 for calzones)"),
   rawMaterialCostPerBatch: zod.number(),
   costPerPortion: zod.number(),
   packIngredientCost: zod.number(),
@@ -451,6 +454,10 @@ export const CreateRecipeBody = zod.object({
   rrp: zod.number().optional(),
   packagingCost: zod.number().optional(),
   labourCost: zod.number().optional(),
+  portionsPerBatch: zod
+    .number()
+    .optional()
+    .describe("Number of portions produced per batch (e.g. 10 for calzones)"),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -485,6 +492,9 @@ export const GetRecipeResponse = zod
     rrp: zod.number(),
     packagingCost: zod.number(),
     labourCost: zod.number(),
+    portionsPerBatch: zod
+      .number()
+      .describe("Number of portions produced per batch (e.g. 10 for calzones)"),
     rawMaterialCostPerBatch: zod.number(),
     costPerPortion: zod.number(),
     packIngredientCost: zod.number(),
@@ -533,6 +543,10 @@ export const UpdateRecipeBody = zod.object({
   rrp: zod.number().optional(),
   packagingCost: zod.number().optional(),
   labourCost: zod.number().optional(),
+  portionsPerBatch: zod
+    .number()
+    .optional()
+    .describe("Number of portions produced per batch (e.g. 10 for calzones)"),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -559,6 +573,9 @@ export const UpdateRecipeResponse = zod.object({
   rrp: zod.number(),
   packagingCost: zod.number(),
   labourCost: zod.number(),
+  portionsPerBatch: zod
+    .number()
+    .describe("Number of portions produced per batch (e.g. 10 for calzones)"),
   rawMaterialCostPerBatch: zod.number(),
   costPerPortion: zod.number(),
   packIngredientCost: zod.number(),

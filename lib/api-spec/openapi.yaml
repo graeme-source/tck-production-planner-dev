@@ -1200,6 +1200,9 @@ components:
           type: number
         labourCost:
           type: number
+        portionsPerBatch:
+          type: integer
+          description: Number of portions produced per batch (e.g. 10 for calzones)
         rawMaterialCostPerBatch:
           type: number
         costPerPortion:
@@ -1222,6 +1225,7 @@ components:
         - rrp
         - packagingCost
         - labourCost
+        - portionsPerBatch
         - rawMaterialCostPerBatch
         - costPerPortion
         - packIngredientCost
@@ -1311,6 +1315,9 @@ components:
           type: number
         labourCost:
           type: number
+        portionsPerBatch:
+          type: integer
+          description: Number of portions produced per batch (e.g. 10 for calzones)
         ingredients:
           type: array
           items:

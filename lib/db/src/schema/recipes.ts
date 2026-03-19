@@ -16,6 +16,7 @@ export const recipesTable = pgTable("recipes", {
   rrp: numeric("rrp", { precision: 10, scale: 4 }).notNull().default("0"),
   packagingCost: numeric("packaging_cost", { precision: 10, scale: 4 }).notNull().default("0"),
   labourCost: numeric("labour_cost", { precision: 10, scale: 4 }).notNull().default("0"),
+  portionsPerBatch: integer("portions_per_batch").notNull().default(10),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

@@ -20,6 +20,7 @@ const schema = z.object({
   rrp: z.coerce.number().min(0),
   packagingCost: z.coerce.number().min(0),
   labourCost: z.coerce.number().min(0),
+  portionsPerBatch: z.coerce.number().int().min(1, "Must be ≥ 1"),
   ingredients: z.array(z.object({
     ingredientId: z.coerce.number().min(1, "Select ingredient"),
     quantity: z.coerce.number().min(0.001, "Must be > 0"),
@@ -155,12 +156,17 @@ function RecipeForm({
             )}
           </div>
           <div>
-            <label className="text-sm font-medium mb-1 block">Output / Batch size *</label>
+            <label className="text-sm font-medium mb-1 block">Output / Recipe Size *</label>
             <div className="flex gap-2">
               <input type="number" step="0.001" {...register("servings")} className="w-24 px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
               <input {...register("servingUnit")} className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="loaf, pack, slice…" />
             </div>
             {errors.servings && <span className="text-destructive text-xs">{errors.servings.message}</span>}
+          </div>
+          <div>
+            <label className="text-sm font-medium mb-1 block">Portions per batch *</label>
+            <input type="number" step="1" min="1" {...register("portionsPerBatch")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+            {errors.portionsPerBatch && <span className="text-destructive text-xs">{errors.portionsPerBatch.message}</span>}
           </div>
           <div className="col-span-2">
             <label className="text-sm font-medium mb-1 block">Description (optional)</label>
@@ -291,10 +297,11 @@ function EditRecipeDialog({
         rrp: Number((detail as any).rrp) || 0,
         packagingCost: Number((detail as any).packagingCost) || 0,
         labourCost: Number((detail as any).labourCost) || 0,
+        portionsPerBatch: Number((detail as any).portionsPerBatch) || 10,
         ingredients: (detail.ingredients ?? []).map((i: any) => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity) })),
         subRecipes: (detail.subRecipes ?? []).map((s: any) => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity) })),
       }
-    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, ingredients: [], subRecipes: [] };
+    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, ingredients: [], subRecipes: [] };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -559,8 +566,11 @@ function RecipeCard({ recipe, onEdit, onDelete, onBreakdown }: { recipe: RecipeI
 
         {/* Cost breakdown */}
         <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-          <div className="text-muted-foreground">Batch size</div>
+          <div className="text-muted-foreground">Recipe size</div>
           <div className="text-right font-medium">{recipe.servings} {recipe.servingUnit}</div>
+
+          <div className="text-muted-foreground">Batch size</div>
+          <div className="text-right font-medium">{recipe.portionsPerBatch} portions</div>
 
           <div className="text-muted-foreground">Pack of</div>
           <div className="text-right font-medium">{recipe.packSize} {recipe.servingUnit}</div>
@@ -617,7 +627,7 @@ export default function Recipes() {
 
   const addDefaults: FormValues = {
     name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "",
-    packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, ingredients: [], subRecipes: [],
+    packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, ingredients: [], subRecipes: [],
   };
 
   return (

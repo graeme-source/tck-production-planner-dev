@@ -133,6 +133,8 @@ export interface Recipe {
   rrp: number;
   packagingCost: number;
   labourCost: number;
+  /** Number of portions produced per batch (e.g. 10 for calzones) */
+  portionsPerBatch: number;
   rawMaterialCostPerBatch: number;
   costPerPortion: number;
   packIngredientCost: number;
@@ -183,6 +185,8 @@ export interface CreateRecipe {
   rrp?: number;
   packagingCost?: number;
   labourCost?: number;
+  /** Number of portions produced per batch (e.g. 10 for calzones) */
+  portionsPerBatch?: number;
   ingredients: CreateRecipeIngredientsItem[];
   subRecipes: CreateRecipeSubRecipesItem[];
 }

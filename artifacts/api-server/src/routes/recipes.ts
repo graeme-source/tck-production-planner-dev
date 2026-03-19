@@ -15,6 +15,7 @@ function mapRecipe(r: typeof recipesTable.$inferSelect) {
     rrp: Number(r.rrp),
     packagingCost: Number(r.packagingCost),
     labourCost: Number(r.labourCost),
+    portionsPerBatch: Number(r.portionsPerBatch),
     createdAt: r.createdAt.toISOString(),
   };
 }
@@ -105,7 +106,7 @@ router.get("/", async (_req, res) => {
 });
 
 router.post("/", validate(CreateRecipeBody), async (req, res) => {
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, ingredients, subRecipes } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, ingredients, subRecipes } = req.body;
   const [recipe] = await db.insert(recipesTable).values({
     name, description,
     servings: String(servings),
@@ -114,6 +115,7 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
     rrp: String(rrp ?? 0),
     packagingCost: String(packagingCost ?? 0),
     labourCost: String(labourCost ?? 0),
+    portionsPerBatch: portionsPerBatch ?? 10,
   }).returning();
 
   if (ingredients?.length) {
@@ -235,7 +237,7 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, ingredients, subRecipes } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, ingredients, subRecipes } = req.body;
   const [updated] = await db.update(recipesTable)
     .set({
       name, description,
@@ -245,6 +247,7 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
       rrp: String(rrp ?? 0),
       packagingCost: String(packagingCost ?? 0),
       labourCost: String(labourCost ?? 0),
+      portionsPerBatch: portionsPerBatch ?? 10,
     })
     .where(eq(recipesTable.id, id))
     .returning();

@@ -18,6 +18,8 @@ export interface Recipe {
   rrp: number;
   packagingCost: number;
   labourCost: number;
+  /** Number of portions produced per batch (e.g. 10 for calzones) */
+  portionsPerBatch: number;
   rawMaterialCostPerBatch: number;
   costPerPortion: number;
   packIngredientCost: number;
