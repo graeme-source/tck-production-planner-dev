@@ -1,9 +1,16 @@
 import { useListProductionPlans, useListStockEntries, useListDispatchOrders, useListSalesEntries } from "@workspace/api-client-react";
 import { PageHeader } from "@/components/page-header";
 import { format, isToday, isFuture } from "date-fns";
-import { ArrowRight, AlertTriangle, ChefHat, Truck, TrendingUp, Package } from "lucide-react";
+import { ArrowRight, AlertTriangle, ChefHat, Truck, TrendingUp, Package, RefreshCw } from "lucide-react";
 import { Link } from "wouter";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import { useQuery } from "@tanstack/react-query";
+
+async function fetchWeeklyOrders() {
+  const res = await fetch("/api/shopify/weekly-orders", { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to fetch weekly orders");
+  return res.json() as Promise<{ date: string; day: string; orderCount: number }[]>;
+}
 
 export default function Dashboard() {
   const { data: plans } = useListProductionPlans();
@@ -11,59 +18,70 @@ export default function Dashboard() {
   const { data: dispatches } = useListDispatchOrders();
   const { data: sales } = useListSalesEntries();
 
+  const { data: weeklyOrders, isLoading: weeklyLoading, error: weeklyError, refetch } = useQuery({
+    queryKey: ["shopify-weekly-orders"],
+    queryFn: fetchWeeklyOrders,
+    staleTime: 5 * 60 * 1000,
+  });
+
   const todayPlans = plans?.filter(p => isToday(new Date(p.planDate))) || [];
-  const lowStock = stock?.filter(s => s.quantity < 10) || []; // Arbitrary threshold for demo
+  const lowStock = stock?.filter(s => s.quantity < 10) || [];
   const upcomingDispatches = dispatches?.filter(d => isFuture(new Date(d.dispatchDate)) && d.status === 'pending') || [];
 
-  // Mock aggregate for chart
-  const chartData = [
-    { name: 'Mon', sales: 400 },
-    { name: 'Tue', sales: 300 },
-    { name: 'Wed', sales: 550 },
-    { name: 'Thu', sales: 450 },
-    { name: 'Fri', sales: 700 },
-    { name: 'Sat', sales: 850 },
-    { name: 'Sun', sales: 600 },
-  ];
+  const todayTag = format(new Date(), "yyyy-MM-dd");
+  const todayIndex = weeklyOrders?.findIndex(d => d.date === todayTag) ?? -1;
+
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      const item = weeklyOrders?.find(d => d.day === label);
+      return (
+        <div className="bg-card border border-border rounded-xl px-4 py-3 shadow-lg text-sm">
+          <p className="font-semibold mb-1">{item?.date ?? label}</p>
+          <p className="text-primary font-bold">{payload[0].value} orders</p>
+        </div>
+      );
+    }
+    return null;
+  };
 
   return (
     <div className="space-y-6">
-      <PageHeader 
-        title="Kitchen Dashboard" 
+      <PageHeader
+        title="Kitchen Dashboard"
         description={format(new Date(), "EEEE, MMMM do, yyyy")}
       />
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard 
-          title="Today's Plans" 
-          value={todayPlans.length.toString()} 
-          icon={ChefHat} 
-          color="text-primary" 
-          bg="bg-primary/10" 
+        <StatCard
+          title="Today's Plans"
+          value={todayPlans.length.toString()}
+          icon={ChefHat}
+          color="text-primary"
+          bg="bg-primary/10"
           href="/plans"
         />
-        <StatCard 
-          title="Low Stock Items" 
-          value={lowStock.length.toString()} 
-          icon={AlertTriangle} 
-          color="text-accent" 
-          bg="bg-accent/10" 
+        <StatCard
+          title="Low Stock Items"
+          value={lowStock.length.toString()}
+          icon={AlertTriangle}
+          color="text-accent"
+          bg="bg-accent/10"
           href="/stock"
         />
-        <StatCard 
-          title="Pending Dispatches" 
-          value={upcomingDispatches.length.toString()} 
-          icon={Truck} 
-          color="text-blue-500" 
-          bg="bg-blue-500/10" 
+        <StatCard
+          title="Pending Dispatches"
+          value={upcomingDispatches.length.toString()}
+          icon={Truck}
+          color="text-blue-500"
+          bg="bg-blue-500/10"
           href="/dispatches"
         />
-        <StatCard 
-          title="Recent Sales" 
-          value={sales?.length.toString() || "0"} 
-          icon={TrendingUp} 
-          color="text-emerald-500" 
-          bg="bg-emerald-500/10" 
+        <StatCard
+          title="Recent Sales"
+          value={sales?.length.toString() || "0"}
+          icon={TrendingUp}
+          color="text-emerald-500"
+          bg="bg-emerald-500/10"
           href="/sales"
         />
       </div>
@@ -71,22 +89,81 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
         <div className="lg:col-span-2 glass-panel p-6 rounded-2xl">
           <div className="flex items-center justify-between mb-6">
-            <h3 className="font-display font-bold text-lg">Weekly Sales Overview</h3>
-            <span className="text-xs text-muted-foreground bg-secondary px-2 py-1 rounded-md">Last 7 Days</span>
+            <div>
+              <h3 className="font-display font-bold text-lg">Dispatch Orders — Next 7 Days</h3>
+              <p className="text-sm text-muted-foreground mt-0.5">Shopify orders tagged by delivery date</p>
+            </div>
+            <button
+              onClick={() => refetch()}
+              disabled={weeklyLoading}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${weeklyLoading ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
           </div>
+
           <div className="h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} />
-                <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(value) => `$${value}`} />
-                <Tooltip 
-                  contentStyle={{ backgroundColor: 'hsl(var(--card))', borderRadius: '8px', border: '1px solid hsl(var(--border))', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                />
-                <Line type="monotone" dataKey="sales" stroke="hsl(var(--primary))" strokeWidth={3} dot={{ fill: 'hsl(var(--primary))', strokeWidth: 2, r: 4 }} activeDot={{ r: 6 }} />
-              </LineChart>
-            </ResponsiveContainer>
+            {weeklyLoading ? (
+              <div className="flex items-center justify-center h-full text-muted-foreground">
+                <RefreshCw className="w-6 h-6 animate-spin mr-2" />
+                <span className="text-sm">Fetching Shopify orders…</span>
+              </div>
+            ) : weeklyError ? (
+              <div className="flex items-center justify-center h-full text-destructive text-sm">
+                Could not load order data. Check Shopify connection.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={weeklyOrders} barSize={36}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                  <XAxis
+                    dataKey="day"
+                    stroke="hsl(var(--muted-foreground))"
+                    fontSize={12}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis
+                    stroke="hsl(var(--muted-foreground))"
+                    fontSize={12}
+                    tickLine={false}
+                    axisLine={false}
+                    allowDecimals={false}
+                    width={32}
+                  />
+                  <Tooltip content={<CustomTooltip />} cursor={{ fill: "hsl(var(--secondary))" }} />
+                  <Bar dataKey="orderCount" radius={[6, 6, 0, 0]}>
+                    {weeklyOrders?.map((entry, i) => (
+                      <Cell
+                        key={entry.date}
+                        fill={i === todayIndex ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.4)"}
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
+
+          {weeklyOrders && (
+            <div className="flex gap-4 mt-4 pt-4 border-t border-border text-sm text-muted-foreground">
+              <span>
+                <span className="font-semibold text-foreground">
+                  {weeklyOrders.reduce((s, d) => s + d.orderCount, 0)}
+                </span>{" "}
+                total orders this week
+              </span>
+              {todayIndex >= 0 && (
+                <span>
+                  <span className="font-semibold text-primary">
+                    {weeklyOrders[todayIndex].orderCount}
+                  </span>{" "}
+                  today
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="glass-panel rounded-2xl flex flex-col">
