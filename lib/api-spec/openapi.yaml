@@ -1388,27 +1388,48 @@ components:
       properties:
         id:
           type: integer
+        planId:
+          type: integer
         recipeId:
           type: integer
         recipeName:
           type: string
-        targetQuantity:
+        portionsPerBatch:
           type: number
-        actualQuantity:
-          type: number
-          nullable: true
         notes:
           type: string
           nullable: true
         status:
           type: string
-          enum: [pending, in_progress, completed]
+          enum: [pending, in-progress, complete]
+        orderPosition:
+          type: integer
+        batchesTarget:
+          type: integer
+        batchesComplete:
+          type: integer
+        wonlyCount:
+          type: integer
+        tinSize:
+          type: string
+          nullable: true
+        maxBatchesPerTin:
+          type: integer
+          nullable: true
+        sopUrl:
+          type: string
+          nullable: true
       required:
         - id
+        - planId
         - recipeId
         - recipeName
-        - targetQuantity
+        - portionsPerBatch
         - status
+        - orderPosition
+        - batchesTarget
+        - batchesComplete
+        - wonlyCount
 
     ProductionPlan:
       type: object
@@ -1424,7 +1445,10 @@ components:
           nullable: true
         status:
           type: string
-          enum: [draft, active, completed]
+          enum: [draft, active, prep, building, complete]
+        batchNumber:
+          type: integer
+          nullable: true
         createdAt:
           type: string
       required:
@@ -1456,6 +1480,9 @@ components:
         notes:
           type: string
           nullable: true
+        batchNumber:
+          type: integer
+          nullable: true
         items:
           type: array
           items:
@@ -1463,18 +1490,27 @@ components:
             properties:
               recipeId:
                 type: integer
-              targetQuantity:
-                type: number
+              batchesTarget:
+                type: integer
+              orderPosition:
+                type: integer
+              tinSize:
+                type: string
+                nullable: true
+              maxBatchesPerTin:
+                type: integer
+                nullable: true
+              sopUrl:
+                type: string
+                nullable: true
               notes:
                 type: string
                 nullable: true
             required:
               - recipeId
-              - targetQuantity
       required:
         - planDate
         - name
-        - items
 
     UpdateProductionPlan:
       type: object
@@ -1488,32 +1524,109 @@ components:
           nullable: true
         status:
           type: string
-          enum: [draft, active, completed]
+          enum: [draft, active, prep, building, complete]
+        batchNumber:
+          type: integer
+          nullable: true
         items:
           type: array
           items:
             type: object
             properties:
-              id:
-                type: integer
-                nullable: true
               recipeId:
                 type: integer
-              targetQuantity:
-                type: number
-              actualQuantity:
-                type: number
+              batchesTarget:
+                type: integer
+              batchesComplete:
+                type: integer
+              orderPosition:
+                type: integer
+              tinSize:
+                type: string
+                nullable: true
+              maxBatchesPerTin:
+                type: integer
+                nullable: true
+              sopUrl:
+                type: string
                 nullable: true
               notes:
                 type: string
                 nullable: true
               status:
                 type: string
-                enum: [pending, in_progress, completed]
+                enum: [pending, in-progress, complete]
             required:
               - recipeId
-              - targetQuantity
-              - status
+
+    DptSetting:
+      type: object
+      properties:
+        id:
+          type: integer
+        recipeId:
+          type: integer
+        recipeName:
+          type: string
+        defaultBatchesPerDay:
+          type: number
+        isActive:
+          type: boolean
+        updatedAt:
+          type: string
+      required:
+        - id
+        - recipeId
+        - recipeName
+        - defaultBatchesPerDay
+        - isActive
+        - updatedAt
+
+    TimingStandard:
+      type: object
+      properties:
+        id:
+          type: integer
+        stationType:
+          type: string
+        stationLabel:
+          type: string
+        minBatchesPerHour:
+          type: number
+        targetBatchesPerHour:
+          type: number
+        updatedAt:
+          type: string
+      required:
+        - id
+        - stationType
+        - stationLabel
+        - minBatchesPerHour
+        - targetBatchesPerHour
+        - updatedAt
+
+    BatchCompletion:
+      type: object
+      properties:
+        id:
+          type: integer
+        planItemId:
+          type: integer
+        stationType:
+          type: string
+        userId:
+          type: integer
+          nullable: true
+        startedAt:
+          type: string
+          nullable: true
+        completedAt:
+          type: string
+      required:
+        - id
+        - planItemId
+        - stationType
+        - completedAt
 
     StockEntry:
       type: object

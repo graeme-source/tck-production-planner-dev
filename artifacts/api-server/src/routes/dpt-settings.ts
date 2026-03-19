@@ -44,12 +44,12 @@ router.put("/:id", async (req, res) => {
   const id = Number(req.params.id);
   const { defaultBatchesPerDay, isActive } = req.body;
 
-  const updateData: Record<string, unknown> = { updatedAt: new Date() };
-  if (defaultBatchesPerDay !== undefined) updateData.defaultBatchesPerDay = String(defaultBatchesPerDay);
-  if (isActive !== undefined) updateData.isActive = Boolean(isActive);
+  const setData: Partial<typeof dptSettingsTable.$inferInsert> = { updatedAt: new Date() };
+  if (defaultBatchesPerDay !== undefined) setData.defaultBatchesPerDay = String(defaultBatchesPerDay);
+  if (isActive !== undefined) setData.isActive = Boolean(isActive);
 
   const [row] = await db.update(dptSettingsTable)
-    .set(updateData as Parameters<typeof db.update>[0])
+    .set(setData)
     .where(eq(dptSettingsTable.id, id))
     .returning();
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
@@ -71,11 +71,11 @@ router.put("/by-recipe/:recipeId", async (req, res) => {
   const existing = await db.select().from(dptSettingsTable).where(eq(dptSettingsTable.recipeId, recipeId));
   let row;
   if (existing.length > 0) {
-    const updateData: Record<string, unknown> = { updatedAt: new Date() };
-    if (defaultBatchesPerDay !== undefined) updateData.defaultBatchesPerDay = String(defaultBatchesPerDay);
-    if (isActive !== undefined) updateData.isActive = Boolean(isActive);
+    const setData: Partial<typeof dptSettingsTable.$inferInsert> = { updatedAt: new Date() };
+    if (defaultBatchesPerDay !== undefined) setData.defaultBatchesPerDay = String(defaultBatchesPerDay);
+    if (isActive !== undefined) setData.isActive = Boolean(isActive);
     [row] = await db.update(dptSettingsTable)
-      .set(updateData as Parameters<typeof db.update>[0])
+      .set(setData)
       .where(eq(dptSettingsTable.recipeId, recipeId))
       .returning();
   } else {

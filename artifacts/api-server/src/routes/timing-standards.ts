@@ -42,13 +42,13 @@ router.put("/:id", async (req, res) => {
   const id = Number(req.params.id);
   const { minBatchesPerHour, targetBatchesPerHour, stationLabel } = req.body;
 
-  const updateData: Record<string, unknown> = { updatedAt: new Date() };
-  if (stationLabel !== undefined) updateData.stationLabel = stationLabel;
-  if (minBatchesPerHour !== undefined) updateData.minBatchesPerHour = String(minBatchesPerHour);
-  if (targetBatchesPerHour !== undefined) updateData.targetBatchesPerHour = String(targetBatchesPerHour);
+  const setData: Partial<typeof timingStandardsTable.$inferInsert> = { updatedAt: new Date() };
+  if (stationLabel !== undefined) setData.stationLabel = stationLabel;
+  if (minBatchesPerHour !== undefined) setData.minBatchesPerHour = String(minBatchesPerHour);
+  if (targetBatchesPerHour !== undefined) setData.targetBatchesPerHour = String(targetBatchesPerHour);
 
   const [row] = await db.update(timingStandardsTable)
-    .set(updateData as Parameters<typeof db.update>[0])
+    .set(setData)
     .where(eq(timingStandardsTable.id, id))
     .returning();
 

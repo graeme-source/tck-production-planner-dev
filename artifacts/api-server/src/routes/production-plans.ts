@@ -149,14 +149,14 @@ router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
   const id = Number(req.params.id);
   const { planDate, name, notes, status, items } = req.body;
 
-  const updateData: Record<string, unknown> = {};
-  if (planDate !== undefined) updateData.planDate = planDate;
-  if (name !== undefined) updateData.name = name;
-  if (notes !== undefined) updateData.notes = notes ?? null;
-  if (status !== undefined) updateData.status = status;
+  const setPlan: Partial<typeof productionPlansTable.$inferInsert> = {};
+  if (planDate !== undefined) setPlan.planDate = planDate;
+  if (name !== undefined) setPlan.name = name;
+  if (notes !== undefined) setPlan.notes = notes ?? null;
+  if (status !== undefined) setPlan.status = status;
 
   const [updated] = await db.update(productionPlansTable)
-    .set(updateData as Parameters<typeof db.update>[0])
+    .set(setPlan)
     .where(eq(productionPlansTable.id, id))
     .returning();
   if (!updated) { res.status(404).json({ error: "Not found" }); return; }
@@ -212,19 +212,26 @@ router.patch("/:id/order", async (req, res) => {
   res.json({ ok: true });
 });
 
+const ITEM_STATUSES = ["pending", "in-progress", "complete"] as const;
+const PatchItemBody = z.object({
+  batchesComplete: z.number().int().min(0).optional(),
+  status: z.enum(ITEM_STATUSES).optional(),
+  wonlyCount: z.number().int().min(0).optional(),
+});
+
 // PATCH a single plan item's batchesComplete
-router.patch("/:id/items/:itemId", async (req, res) => {
+router.patch("/:id/items/:itemId", validate(PatchItemBody), async (req, res) => {
   const planId = Number(req.params.id);
   const itemId = Number(req.params.itemId);
   const { batchesComplete, status, wonlyCount } = req.body;
 
-  const updateData: Record<string, unknown> = {};
-  if (batchesComplete !== undefined) updateData.batchesComplete = batchesComplete;
-  if (status !== undefined) updateData.status = status;
-  if (wonlyCount !== undefined) updateData.wonlyCount = wonlyCount;
+  const setItem: Partial<typeof productionPlanItemsTable.$inferInsert> = {};
+  if (batchesComplete !== undefined) setItem.batchesComplete = batchesComplete;
+  if (status !== undefined) setItem.status = status;
+  if (wonlyCount !== undefined) setItem.wonlyCount = wonlyCount;
 
   const [updated] = await db.update(productionPlanItemsTable)
-    .set(updateData as Parameters<typeof db.update>[0])
+    .set(setItem)
     .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)))
     .returning();
 
@@ -242,6 +249,15 @@ router.delete("/:id", async (req, res) => {
 router.post("/:id/batch-completions", async (req, res) => {
   const planId = Number(req.params.id);
   const { planItemId, stationType, userId, startedAt, completedAt } = req.body;
+
+  // Verify that the planItemId belongs to this plan (prevent cross-plan contamination)
+  const [planItem] = await db.select({ id: productionPlanItemsTable.id })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, Number(planItemId)), eq(productionPlanItemsTable.planId, planId)));
+  if (!planItem) {
+    res.status(400).json({ error: "planItemId does not belong to this plan" });
+    return;
+  }
 
   const [row] = await db.insert(batchCompletionsTable).values({
     planItemId,
