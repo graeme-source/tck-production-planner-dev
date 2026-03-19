@@ -358,6 +358,9 @@ interface EodSummaryProps {
 }
 
 function EodSummary({ planId, items, stationType, sessionBatches, totalBreakMinutes, sessionStartedAt, onClose }: EodSummaryProps) {
+  const { state: authState } = useAuth();
+  const sessionUserId = authState.status === "authenticated" ? authState.user.id : null;
+
   const now = new Date();
   const totalMinutes = sessionStartedAt ? differenceInMinutes(now, sessionStartedAt) : 0;
   const activeMinutes = Math.max(0, totalMinutes - totalBreakMinutes);
@@ -369,14 +372,16 @@ function EodSummary({ planId, items, stationType, sessionBatches, totalBreakMinu
   const totalBatchesComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
   const completionRate = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
 
-  // Fetch batch completions to compute avg mins/batch per recipe from actual timestamps
+  // Fetch batch completions (all for this station) to compute per-recipe avg mins/batch
+  // Filter to current user's completions so the breakdown reflects this builder's output only
   const { data: completions } = useListBatchCompletions(planId, { stationType });
+  const myCompletions = (completions ?? []).filter(c => !sessionUserId || c.userId === sessionUserId);
 
-  // Build per-item completion time lookup: { planItemId => avg mins/batch }
+  // Build per-item completion time lookup: { planItemId => avg mins/batch } — user-scoped
   const avgMinsByItem: Record<number, number | null> = {};
-  if (completions && completions.length > 0) {
+  if (myCompletions.length > 0) {
     const byItem: Record<number, number[]> = {};
-    for (const c of completions) {
+    for (const c of myCompletions) {
       if (c.startedAt && c.completedAt) {
         const started = new Date(c.startedAt).getTime();
         const finished = new Date(c.completedAt).getTime();
@@ -599,15 +604,18 @@ function MixingStation({ plan }: MixingStationProps) {
     });
   };
 
-  // removeBatch: decrease via PATCH item only (no batch_completion row for undos)
-  const removeBatch = (item: ProductionPlanItem) => {
-    const newComplete = Math.max(0, (item.batchesComplete ?? 0) - 1);
-    const newStatus = newComplete === 0 ? "pending" : newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
-    updateItem.mutate({
-      id: plan.id,
-      itemId: item.id,
-      data: { batchesComplete: newComplete, status: newStatus },
-    });
+  // removeBatch: delete most recent batch_completion row + atomic decrement (keeps KPI metrics consistent)
+  const removeBatch = async (item: ProductionPlanItem) => {
+    if ((item.batchesComplete ?? 0) === 0) return;
+    try {
+      await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planItemId: item.id, stationType: "mixing" }),
+      });
+      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+    } catch { /* no-op */ }
   };
 
   const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
@@ -863,17 +871,22 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     });
   };
 
-  // Undo last batch — PATCH item directly (no batch_completion for undos)
-  const handleUndo = () => {
+  // Undo last batch — deletes the most recent batch_completion row for this user/station
+  // and decrements batches_complete atomically, keeping KPI metrics consistent.
+  const handleUndo = async () => {
     if (!currentItem || (currentItem.batchesComplete ?? 0) === 0) return;
-    const newComplete = (currentItem.batchesComplete ?? 0) - 1;
-    const newStatus = newComplete === 0 ? "pending" : "in-progress";
-    updateItem.mutate({
-      id: plan.id,
-      itemId: currentItem.id,
-      data: { batchesComplete: newComplete, status: newStatus },
-    });
-    setSessionBatches(prev => Math.max(0, prev - 1));
+    try {
+      await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planItemId: currentItem.id, stationType }),
+      });
+      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+      setSessionBatches(prev => Math.max(0, prev - 1));
+    } catch {
+      // no-op on failure
+    }
   };
 
   const handleBreakChange = useCallback((breakMins: number | null) => {
@@ -1340,11 +1353,18 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     createBatch.mutate({ id: plan.id, data: { planItemId: item.id, stationType: "dough_prep", completedAt: new Date().toISOString() } });
   };
 
-  // removeBatch: PATCH item directly (no batch_completion for undos)
-  const removeBatch = (item: ProductionPlanItem) => {
-    const newComplete = Math.max(0, (item.batchesComplete ?? 0) - 1);
-    const newStatus = newComplete === 0 ? "pending" : newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
-    updateItem.mutate({ id: plan.id, itemId: item.id, data: { batchesComplete: newComplete, status: newStatus } });
+  // removeBatch: delete most recent batch_completion row + atomic decrement
+  const removeBatch = async (item: ProductionPlanItem) => {
+    if ((item.batchesComplete ?? 0) === 0) return;
+    try {
+      await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planItemId: item.id, stationType: "dough_prep" }),
+      });
+      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+    } catch { /* no-op */ }
   };
 
   const totalComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
@@ -1585,11 +1605,18 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
     createBatch.mutate({ id: plan.id, data: { planItemId: item.id, stationType: "ovens", completedAt: new Date().toISOString() } });
   };
 
-  // removeBatch: PATCH item directly
-  const removeBatch = (item: ProductionPlanItem) => {
-    const newComplete = Math.max(0, (item.batchesComplete ?? 0) - 1);
-    const newStatus = newComplete === 0 ? "pending" : newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
-    updateItem.mutate({ id: plan.id, itemId: item.id, data: { batchesComplete: newComplete, status: newStatus } });
+  // removeBatch: delete most recent batch_completion row + atomic decrement
+  const removeBatch = async (item: ProductionPlanItem) => {
+    if ((item.batchesComplete ?? 0) === 0) return;
+    try {
+      await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planItemId: item.id, stationType: "ovens" }),
+      });
+      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+    } catch { /* no-op */ }
   };
 
   const totalComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
@@ -1751,11 +1778,18 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
     createBatch.mutate({ id: plan.id, data: { planItemId: item.id, stationType: "wrapping", completedAt: new Date().toISOString() } });
   };
 
-  // removeBatch: PATCH item directly
-  const removeBatch = (item: ProductionPlanItem) => {
-    const newComplete = Math.max(0, (item.batchesComplete ?? 0) - 1);
-    const newStatus = newComplete === 0 ? "pending" : newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
-    updateItem.mutate({ id: plan.id, itemId: item.id, data: { batchesComplete: newComplete, status: newStatus } });
+  // removeBatch: delete most recent batch_completion row + atomic decrement
+  const removeBatch = async (item: ProductionPlanItem) => {
+    if ((item.batchesComplete ?? 0) === 0) return;
+    try {
+      await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planItemId: item.id, stationType: "wrapping" }),
+      });
+      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+    } catch { /* no-op */ }
   };
 
   return (

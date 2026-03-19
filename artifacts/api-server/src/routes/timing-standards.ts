@@ -1,8 +1,16 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { db, timingStandardsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
 import { validate } from "../middleware/validate";
+
+function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  if ((req.session as { userRole?: string }).userRole !== "admin") {
+    res.status(403).json({ error: "Admin access required" });
+    return;
+  }
+  next();
+}
 
 const router: IRouter = Router();
 
@@ -46,7 +54,7 @@ router.get("/", async (_req, res) => {
   res.json(rows.map(mapRow));
 });
 
-router.post("/", validate(CreateTimingStandardBody), async (req, res) => {
+router.post("/", requireAdmin, validate(CreateTimingStandardBody), async (req, res) => {
   const { stationType, stationLabel, minBatchesPerHour, targetBatchesPerHour } = req.body;
   const [row] = await db.insert(timingStandardsTable).values({
     stationType,
@@ -57,7 +65,7 @@ router.post("/", validate(CreateTimingStandardBody), async (req, res) => {
   res.status(201).json(mapRow(row));
 });
 
-router.put("/:id", async (req, res) => {
+router.put("/:id", requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   const { minBatchesPerHour, targetBatchesPerHour, stationLabel } = req.body;
 
@@ -75,7 +83,7 @@ router.put("/:id", async (req, res) => {
   res.json(mapRow(row));
 });
 
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   await db.delete(timingStandardsTable).where(eq(timingStandardsTable.id, id));
   res.status(204).send();

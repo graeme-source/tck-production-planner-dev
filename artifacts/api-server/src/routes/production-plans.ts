@@ -364,11 +364,23 @@ router.post("/:id/batch-completions", async (req, res) => {
   const sessionUserId = (req.session as { userId?: number }).userId ?? null;
 
   // Verify that the planItemId belongs to this plan (prevent cross-plan contamination)
-  const [planItem] = await db.select({ id: productionPlanItemsTable.id })
+  const [planItem] = await db.select({
+    id: productionPlanItemsTable.id,
+    batchesComplete: productionPlanItemsTable.batchesComplete,
+    batchesTarget: productionPlanItemsTable.batchesTarget,
+  })
     .from(productionPlanItemsTable)
     .where(and(eq(productionPlanItemsTable.id, Number(planItemId)), eq(productionPlanItemsTable.planId, planId)));
   if (!planItem) {
     res.status(400).json({ error: "planItemId does not belong to this plan" });
+    return;
+  }
+
+  // Cap: prevent over-incrementing beyond the target (concurrent safety)
+  const target = planItem.batchesTarget ?? 0;
+  const current = planItem.batchesComplete ?? 0;
+  if (target > 0 && current >= target) {
+    res.status(409).json({ error: "Batch target already met" });
     return;
   }
 
@@ -380,12 +392,55 @@ router.post("/:id/batch-completions", async (req, res) => {
     completedAt: completedAt ? new Date(completedAt) : new Date(),
   }).returning();
 
-  // Increment batchesComplete on the item
+  // Atomic increment — only if still below target (handles concurrency)
   await db.execute(
-    sql`UPDATE production_plan_items SET batches_complete = batches_complete + 1, status = CASE WHEN batches_complete + 1 >= batches_target THEN 'complete' ELSE 'in-progress' END WHERE id = ${planItemId}`
+    sql`UPDATE production_plan_items SET batches_complete = batches_complete + 1, status = CASE WHEN batches_complete + 1 >= batches_target THEN 'complete' ELSE 'in-progress' END WHERE id = ${planItemId} AND batches_complete < batches_target`
   );
 
   res.status(201).json(row);
+});
+
+// DELETE last batch completion — removes the most recent completion row for this item/user
+// and decrements batches_complete atomically, keeping KPI metrics consistent.
+router.delete("/:id/batch-completions/last", async (req, res) => {
+  const planId = Number(req.params.id);
+  const { planItemId, stationType } = req.body;
+  const sessionUserId = (req.session as { userId?: number }).userId ?? null;
+
+  // Verify planItemId belongs to this plan
+  const [planItem] = await db.select({ id: productionPlanItemsTable.id, batchesComplete: productionPlanItemsTable.batchesComplete })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, Number(planItemId)), eq(productionPlanItemsTable.planId, planId)));
+  if (!planItem) {
+    res.status(400).json({ error: "planItemId does not belong to this plan" });
+    return;
+  }
+  if ((planItem.batchesComplete ?? 0) === 0) {
+    res.status(409).json({ error: "No completions to undo" });
+    return;
+  }
+
+  // Delete the most recent completion row for this item / user / station
+  const conditions = [eq(batchCompletionsTable.planItemId, Number(planItemId))];
+  if (sessionUserId) conditions.push(eq(batchCompletionsTable.userId, sessionUserId));
+  if (stationType) conditions.push(eq(batchCompletionsTable.stationType, stationType));
+
+  const [lastRow] = await db.select({ id: batchCompletionsTable.id })
+    .from(batchCompletionsTable)
+    .where(and(...conditions))
+    .orderBy(desc(batchCompletionsTable.completedAt))
+    .limit(1);
+
+  if (lastRow) {
+    await db.delete(batchCompletionsTable).where(eq(batchCompletionsTable.id, lastRow.id));
+  }
+
+  // Decrement counter — atomic, won't go below 0
+  await db.execute(
+    sql`UPDATE production_plan_items SET batches_complete = GREATEST(batches_complete - 1, 0), status = CASE WHEN GREATEST(batches_complete - 1, 0) = 0 THEN 'pending' WHEN status = 'complete' THEN 'in-progress' ELSE status END WHERE id = ${planItemId}`
+  );
+
+  res.status(204).send();
 });
 
 router.get("/:id/batch-completions", async (req, res) => {

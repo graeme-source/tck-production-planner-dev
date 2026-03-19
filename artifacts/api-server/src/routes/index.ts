@@ -50,7 +50,7 @@ router.use("/sub-recipes", subRecipesRouter);
 router.use("/recipes", recipesRouter);
 router.use("/production-plans", productionPlansRouter);
 router.use("/dpt-settings", requireAdmin, dptSettingsRouter);
-router.use("/timing-standards", requireAdmin, timingStandardsRouter);
+router.use("/timing-standards", timingStandardsRouter);
 router.use("/dpt-calculator", dptCalculatorRouter);
 router.use("/stock-entries", stockRouter);
 router.use("/sales-entries", salesRouter);
