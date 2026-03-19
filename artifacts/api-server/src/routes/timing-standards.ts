@@ -22,8 +22,27 @@ const CreateTimingStandardBody = z.object({
   targetBatchesPerHour: z.number().min(0),
 });
 
+const REQUIRED_STATIONS = [
+  { stationType: "mixing", stationLabel: "Mixing & Cooking" },
+  { stationType: "dough_prep", stationLabel: "Dough Prep" },
+  { stationType: "dough_sheeting", stationLabel: "Dough Sheeting" },
+  { stationType: "building_1", stationLabel: "Building Line 1" },
+  { stationType: "building_2", stationLabel: "Building Line 2" },
+  { stationType: "ovens", stationLabel: "Ovens" },
+  { stationType: "wrapping", stationLabel: "Wrapping" },
+  { stationType: "packing", stationLabel: "Packing" },
+] as const;
+
 router.get("/", async (_req, res) => {
-  const rows = await db.select().from(timingStandardsTable).orderBy(timingStandardsTable.stationLabel);
+  let rows = await db.select().from(timingStandardsTable).orderBy(timingStandardsTable.stationLabel);
+  const existingTypes = new Set(rows.map(r => r.stationType));
+  const missing = REQUIRED_STATIONS.filter(s => !existingTypes.has(s.stationType));
+  if (missing.length > 0) {
+    await db.insert(timingStandardsTable).values(
+      missing.map(s => ({ stationType: s.stationType, stationLabel: s.stationLabel, minBatchesPerHour: "0", targetBatchesPerHour: "0" }))
+    );
+    rows = await db.select().from(timingStandardsTable).orderBy(timingStandardsTable.stationLabel);
+  }
   res.json(rows.map(mapRow));
 });
 

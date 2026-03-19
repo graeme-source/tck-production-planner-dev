@@ -590,42 +590,26 @@ function CategoryDefaultsSection() {
 
 function DptSettingsSection() {
   const { data: dptSettings, isLoading: dptLoading } = useListDptSettings();
-  const { data: recipes } = useListRecipes();
+  const { data: recipes, isLoading: recipesLoading } = useListRecipes();
   const queryClient = useQueryClient();
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [dptForm, setDptForm] = useState<{ recipeId: string; defaultBatchesPerDay: string }>({ recipeId: "", defaultBatchesPerDay: "" });
   const [saving, setSaving] = useState<number | null>(null);
-  const [addMode, setAddMode] = useState(false);
+  const [editingRecipeId, setEditingRecipeId] = useState<number | null>(null);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
 
-  const existingRecipeIds = new Set((dptSettings ?? []).map(d => d.recipeId));
-  const availableRecipes = (recipes ?? []).filter(r => !existingRecipeIds.has(r.id));
+  const settingsByRecipeId = new Map((dptSettings ?? []).map(d => [d.recipeId, d]));
 
-  const handleSaveAdd = async () => {
-    if (!dptForm.recipeId) return;
-    setSaving(-1);
-    try {
-      await upsertDptSettingByRecipe(Number(dptForm.recipeId), {
-        recipeId: Number(dptForm.recipeId),
-        defaultBatchesPerDay: Number(dptForm.defaultBatchesPerDay) || 0,
-        isActive: true,
-      });
-      await queryClient.invalidateQueries({ queryKey: getListDptSettingsQueryKey() });
-      setAddMode(false);
-      setDptForm({ recipeId: "", defaultBatchesPerDay: "" });
-      setSavedMsg("Added"); setTimeout(() => setSavedMsg(null), 2000);
-    } finally { setSaving(null); }
-  };
-
-  const handleSaveEdit = async (recipeId: number, val: string) => {
+  const handleSave = async (recipeId: number, val: string) => {
     setSaving(recipeId);
     try {
-      await upsertDptSettingByRecipe(recipeId, { defaultBatchesPerDay: Number(val) || 0 });
+      await upsertDptSettingByRecipe(recipeId, { defaultBatchesPerDay: Number(val) || 0, isActive: true });
       await queryClient.invalidateQueries({ queryKey: getListDptSettingsQueryKey() });
-      setEditingId(null);
+      setEditingRecipeId(null);
       setSavedMsg("Saved"); setTimeout(() => setSavedMsg(null), 2000);
     } finally { setSaving(null); }
   };
+
+  const isLoading = dptLoading || recipesLoading;
+  const allRecipes = [...(recipes ?? [])].sort((a, b) => a.name.localeCompare(b.name));
 
   return (
     <div className="space-y-4">
@@ -635,47 +619,16 @@ function DptSettingsSection() {
             <BarChart2 className="w-4 h-4 text-primary" /> DPT Surplus Targets
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Set the default daily batch targets per recipe used by production plan auto-calculation.
+            Set the default daily batch target per recipe for production plan auto-calculation.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
-          <button onClick={() => setAddMode(v => !v)} className="px-3 py-1.5 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90 transition-colors flex items-center gap-1.5">
-            <Plus className="w-4 h-4" /> Add Recipe
-          </button>
-        </div>
+        {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
       </div>
 
-      {addMode && (
-        <div className="flex items-center gap-3 p-4 bg-secondary/20 rounded-xl border border-border">
-          <select
-            value={dptForm.recipeId}
-            onChange={e => setDptForm(f => ({ ...f, recipeId: e.target.value }))}
-            className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-          >
-            <option value="">— Select recipe —</option>
-            {availableRecipes.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-          </select>
-          <input
-            type="number"
-            step="1"
-            min="0"
-            placeholder="Batches/day"
-            value={dptForm.defaultBatchesPerDay}
-            onChange={e => setDptForm(f => ({ ...f, defaultBatchesPerDay: e.target.value }))}
-            className="w-36 px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-          />
-          <button onClick={handleSaveAdd} disabled={!dptForm.recipeId || saving !== null} className="px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5">
-            {saving === -1 ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Save
-          </button>
-          <button onClick={() => setAddMode(false)} className="px-3 py-2 text-muted-foreground hover:text-foreground text-sm">Cancel</button>
-        </div>
-      )}
-
-      {dptLoading ? (
+      {isLoading ? (
         <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
-      ) : !dptSettings?.length ? (
-        <div className="text-center py-8 text-muted-foreground text-sm">No DPT settings yet. Add a recipe above to get started.</div>
+      ) : !allRecipes.length ? (
+        <div className="text-center py-8 text-muted-foreground text-sm">No recipes in the library yet. Add recipes first to configure DPT targets.</div>
       ) : (
         <div className="rounded-2xl border border-border bg-card overflow-hidden">
           <table className="w-full text-sm">
@@ -687,44 +640,57 @@ function DptSettingsSection() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
-              {(dptSettings ?? []).map(d => (
-                <tr key={d.id} className="hover:bg-secondary/10 transition-colors">
-                  <td className="px-5 py-3.5 font-medium">{d.recipeName}</td>
-                  <td className="px-5 py-3.5 text-right">
-                    {editingId === d.id ? (
-                      <input
-                        type="number"
-                        step="1"
-                        min="0"
-                        defaultValue={d.defaultBatchesPerDay}
-                        id={`dpt-edit-${d.id}`}
-                        className="w-24 px-2 py-1 border border-border rounded-lg text-sm text-right"
-                      />
-                    ) : (
-                      <span className="font-mono">{d.defaultBatchesPerDay}</span>
-                    )}
-                  </td>
-                  <td className="px-5 py-3.5 text-right">
-                    {editingId === d.id ? (
-                      <div className="flex items-center justify-end gap-1">
+              {allRecipes.map(recipe => {
+                const setting = settingsByRecipeId.get(recipe.id);
+                const currentBatches = setting?.defaultBatchesPerDay ?? 0;
+                const isEditing = editingRecipeId === recipe.id;
+                return (
+                  <tr key={recipe.id} className="hover:bg-secondary/10 transition-colors">
+                    <td className="px-5 py-3.5 font-medium">{recipe.name}</td>
+                    <td className="px-5 py-3.5 text-right">
+                      {isEditing ? (
+                        <input
+                          type="number"
+                          step="1"
+                          min="0"
+                          defaultValue={currentBatches}
+                          id={`dpt-edit-${recipe.id}`}
+                          className="w-24 px-2 py-1 border border-border rounded-lg text-sm text-right"
+                        />
+                      ) : (
+                        <span className={cn("font-mono", currentBatches === 0 ? "text-muted-foreground" : "")}>
+                          {currentBatches}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3.5 text-right">
+                      {isEditing ? (
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => {
+                              const input = document.getElementById(`dpt-edit-${recipe.id}`) as HTMLInputElement;
+                              handleSave(recipe.id, input?.value ?? String(currentBatches));
+                            }}
+                            disabled={saving !== null}
+                            className="px-2 py-1 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1"
+                          >
+                            {saving === recipe.id ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Save
+                          </button>
+                          <button onClick={() => setEditingRecipeId(null)} className="px-2 py-1 text-muted-foreground text-xs">Cancel</button>
+                        </div>
+                      ) : (
                         <button
-                          onClick={() => {
-                            const input = document.getElementById(`dpt-edit-${d.id}`) as HTMLInputElement;
-                            handleSaveEdit(d.recipeId, input?.value ?? String(d.defaultBatchesPerDay));
-                          }}
-                          disabled={saving !== null}
-                          className="px-2 py-1 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1"
+                          onClick={() => setEditingRecipeId(recipe.id)}
+                          className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
+                          title="Edit"
                         >
-                          {saving === d.recipeId ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Save
+                          <Edit2 className="w-4 h-4" />
                         </button>
-                        <button onClick={() => setEditingId(null)} className="px-2 py-1 text-muted-foreground text-xs">Cancel</button>
-                      </div>
-                    ) : (
-                      <button onClick={() => setEditingId(d.id)} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors" title="Edit"><Edit2 className="w-4 h-4" /></button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
