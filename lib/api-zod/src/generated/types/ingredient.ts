@@ -19,5 +19,9 @@ export interface Ingredient {
   orderingUrl?: string | null;
   notes?: string | null;
   processingRatio?: number | null;
+  /** Ingredient category (e.g. vegetable, raw_meat, base, sauce, cheese) */
+  category?: string | null;
+  /** Capacity of a raw meat tray in kg (used for tray count calculation) */
+  rawMeatTrayCapacityKg?: number | null;
   createdAt: string;
 }

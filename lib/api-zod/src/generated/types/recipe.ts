@@ -20,6 +20,12 @@ export interface Recipe {
   labourCost: number;
   /** Number of portions produced per batch (e.g. 10 for calzones) */
   portionsPerBatch: number;
+  /** Default tin size for this recipe */
+  tinSize?: string | null;
+  /** Maximum batches per tin */
+  maxBatchesPerTin?: number | null;
+  /** URL to the standard operating procedure document */
+  sopUrl?: string | null;
   rawMaterialCostPerBatch: number;
   costPerPortion: number;
   packIngredientCost: number;

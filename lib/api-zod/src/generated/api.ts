@@ -187,9 +187,19 @@ export const ListIngredientsResponseItem = zod.object({
   secondarySupplierId: zod.number().nullish(),
   orderingUrl: zod.string().nullish(),
   notes: zod.string().nullish(),
-  category: zod.string().nullish(),
   processingRatio: zod.number().nullish(),
-  rawMeatTrayCapacityKg: zod.number().nullish(),
+  category: zod
+    .string()
+    .nullish()
+    .describe(
+      "Ingredient category (e.g. vegetable, raw_meat, base, sauce, cheese)",
+    ),
+  rawMeatTrayCapacityKg: zod
+    .number()
+    .nullish()
+    .describe(
+      "Capacity of a raw meat tray in kg (used for tray count calculation)",
+    ),
   createdAt: zod.string(),
 });
 export const ListIngredientsResponse = zod.array(ListIngredientsResponseItem);
@@ -208,8 +218,8 @@ export const CreateIngredientBody = zod.object({
   secondarySupplierId: zod.number().nullish(),
   orderingUrl: zod.string().nullish(),
   notes: zod.string().nullish(),
-  category: zod.string().nullish(),
   processingRatio: zod.number().nullish(),
+  category: zod.string().nullish(),
   rawMeatTrayCapacityKg: zod.number().nullish(),
 });
 
@@ -232,9 +242,19 @@ export const GetIngredientResponse = zod.object({
   secondarySupplierId: zod.number().nullish(),
   orderingUrl: zod.string().nullish(),
   notes: zod.string().nullish(),
-  category: zod.string().nullish(),
   processingRatio: zod.number().nullish(),
-  rawMeatTrayCapacityKg: zod.number().nullish(),
+  category: zod
+    .string()
+    .nullish()
+    .describe(
+      "Ingredient category (e.g. vegetable, raw_meat, base, sauce, cheese)",
+    ),
+  rawMeatTrayCapacityKg: zod
+    .number()
+    .nullish()
+    .describe(
+      "Capacity of a raw meat tray in kg (used for tray count calculation)",
+    ),
   createdAt: zod.string(),
 });
 
@@ -256,8 +276,8 @@ export const UpdateIngredientBody = zod.object({
   secondarySupplierId: zod.number().nullish(),
   orderingUrl: zod.string().nullish(),
   notes: zod.string().nullish(),
-  category: zod.string().nullish(),
   processingRatio: zod.number().nullish(),
+  category: zod.string().nullish(),
   rawMeatTrayCapacityKg: zod.number().nullish(),
 });
 
@@ -273,9 +293,19 @@ export const UpdateIngredientResponse = zod.object({
   secondarySupplierId: zod.number().nullish(),
   orderingUrl: zod.string().nullish(),
   notes: zod.string().nullish(),
-  category: zod.string().nullish(),
   processingRatio: zod.number().nullish(),
-  rawMeatTrayCapacityKg: zod.number().nullish(),
+  category: zod
+    .string()
+    .nullish()
+    .describe(
+      "Ingredient category (e.g. vegetable, raw_meat, base, sauce, cheese)",
+    ),
+  rawMeatTrayCapacityKg: zod
+    .number()
+    .nullish()
+    .describe(
+      "Capacity of a raw meat tray in kg (used for tray count calculation)",
+    ),
   createdAt: zod.string(),
 });
 
@@ -309,7 +339,6 @@ export const CreateSubRecipeBody = zod.object({
   yield: zod.number(),
   yieldUnit: zod.string(),
   notes: zod.string().nullish(),
-  shelfLifeDays: zod.number().int().nonnegative().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -391,7 +420,6 @@ export const UpdateSubRecipeBody = zod.object({
   yield: zod.number(),
   yieldUnit: zod.string(),
   notes: zod.string().nullish(),
-  shelfLifeDays: zod.number().int().nonnegative().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -443,6 +471,12 @@ export const ListRecipesResponseItem = zod.object({
   portionsPerBatch: zod
     .number()
     .describe("Number of portions produced per batch (e.g. 10 for calzones)"),
+  tinSize: zod.string().nullish().describe("Default tin size for this recipe"),
+  maxBatchesPerTin: zod.number().nullish().describe("Maximum batches per tin"),
+  sopUrl: zod
+    .string()
+    .nullish()
+    .describe("URL to the standard operating procedure document"),
   rawMaterialCostPerBatch: zod.number(),
   costPerPortion: zod.number(),
   packIngredientCost: zod.number(),
@@ -470,9 +504,8 @@ export const CreateRecipeBody = zod.object({
     .number()
     .optional()
     .describe("Number of portions produced per batch (e.g. 10 for calzones)"),
-  shelfLifeDays: zod.number().int().nonnegative().nullish(),
   tinSize: zod.string().nullish(),
-  maxBatchesPerTin: zod.number().int().nullish(),
+  maxBatchesPerTin: zod.number().nullish(),
   sopUrl: zod.string().nullish(),
   ingredients: zod.array(
     zod.object({
@@ -511,15 +544,23 @@ export const GetRecipeResponse = zod
     portionsPerBatch: zod
       .number()
       .describe("Number of portions produced per batch (e.g. 10 for calzones)"),
+    tinSize: zod
+      .string()
+      .nullish()
+      .describe("Default tin size for this recipe"),
+    maxBatchesPerTin: zod
+      .number()
+      .nullish()
+      .describe("Maximum batches per tin"),
+    sopUrl: zod
+      .string()
+      .nullish()
+      .describe("URL to the standard operating procedure document"),
     rawMaterialCostPerBatch: zod.number(),
     costPerPortion: zod.number(),
     packIngredientCost: zod.number(),
     totalPackCost: zod.number(),
     grossMargin: zod.number().nullish(),
-    tinSize: zod.string().nullish(),
-    maxBatchesPerTin: zod.number().nullish(),
-    sopUrl: zod.string().nullish(),
-    shelfLifeDays: zod.number().nullish(),
     createdAt: zod.string(),
   })
   .and(
@@ -567,9 +608,8 @@ export const UpdateRecipeBody = zod.object({
     .number()
     .optional()
     .describe("Number of portions produced per batch (e.g. 10 for calzones)"),
-  shelfLifeDays: zod.number().int().nonnegative().nullish(),
   tinSize: zod.string().nullish(),
-  maxBatchesPerTin: zod.number().int().nullish(),
+  maxBatchesPerTin: zod.number().nullish(),
   sopUrl: zod.string().nullish(),
   ingredients: zod.array(
     zod.object({
@@ -600,6 +640,12 @@ export const UpdateRecipeResponse = zod.object({
   portionsPerBatch: zod
     .number()
     .describe("Number of portions produced per batch (e.g. 10 for calzones)"),
+  tinSize: zod.string().nullish().describe("Default tin size for this recipe"),
+  maxBatchesPerTin: zod.number().nullish().describe("Maximum batches per tin"),
+  sopUrl: zod
+    .string()
+    .nullish()
+    .describe("URL to the standard operating procedure document"),
   rawMaterialCostPerBatch: zod.number(),
   costPerPortion: zod.number(),
   packIngredientCost: zod.number(),
@@ -635,17 +681,6 @@ export const ListProductionPlansResponse = zod.array(
   ListProductionPlansResponseItem,
 );
 
-const PlanItemSchema = zod.object({
-  recipeId: zod.number(),
-  batchesTarget: zod.number().int().default(0),
-  orderPosition: zod.number().int().default(0),
-  tinSize: zod.string().nullish(),
-  maxBatchesPerTin: zod.number().int().nullish(),
-  sopUrl: zod.string().nullish(),
-  notes: zod.string().nullish(),
-  status: zod.string().optional(),
-});
-
 /**
  * @summary Create a production plan
  */
@@ -653,8 +688,20 @@ export const CreateProductionPlanBody = zod.object({
   planDate: zod.string(),
   name: zod.string(),
   notes: zod.string().nullish(),
-  status: zod.string().optional(),
-  items: zod.array(PlanItemSchema).optional(),
+  batchNumber: zod.number().nullish(),
+  items: zod
+    .array(
+      zod.object({
+        recipeId: zod.number(),
+        batchesTarget: zod.number().optional(),
+        orderPosition: zod.number().optional(),
+        tinSize: zod.string().nullish(),
+        maxBatchesPerTin: zod.number().nullish(),
+        sopUrl: zod.string().nullish(),
+        notes: zod.string().nullish(),
+      }),
+    )
+    .optional(),
 });
 
 /**
@@ -662,23 +709,6 @@ export const CreateProductionPlanBody = zod.object({
  */
 export const GetProductionPlanParams = zod.object({
   id: zod.coerce.number(),
-});
-
-export const PlanItemResponseSchema = zod.object({
-  id: zod.number(),
-  planId: zod.number(),
-  recipeId: zod.number(),
-  recipeName: zod.string(),
-  portionsPerBatch: zod.number(),
-  notes: zod.string().nullish(),
-  status: zod.enum(["pending", "in-progress", "complete"]),
-  orderPosition: zod.number(),
-  batchesTarget: zod.number(),
-  batchesComplete: zod.number(),
-  wonlyCount: zod.number(),
-  tinSize: zod.string().nullish(),
-  maxBatchesPerTin: zod.number().nullish(),
-  sopUrl: zod.string().nullish(),
 });
 
 export const GetProductionPlanResponse = zod
@@ -693,7 +723,24 @@ export const GetProductionPlanResponse = zod
   })
   .and(
     zod.object({
-      items: zod.array(PlanItemResponseSchema),
+      items: zod.array(
+        zod.object({
+          id: zod.number(),
+          planId: zod.number(),
+          recipeId: zod.number(),
+          recipeName: zod.string(),
+          portionsPerBatch: zod.number(),
+          notes: zod.string().nullish(),
+          status: zod.enum(["pending", "in-progress", "complete"]),
+          orderPosition: zod.number(),
+          batchesTarget: zod.number(),
+          batchesComplete: zod.number(),
+          wonlyCount: zod.number(),
+          tinSize: zod.string().nullish(),
+          maxBatchesPerTin: zod.number().nullish(),
+          sopUrl: zod.string().nullish(),
+        }),
+      ),
     }),
   );
 
@@ -708,8 +755,25 @@ export const UpdateProductionPlanBody = zod.object({
   planDate: zod.string().optional(),
   name: zod.string().optional(),
   notes: zod.string().nullish(),
-  status: zod.enum(["draft", "active", "prep", "building", "complete"]).optional(),
-  items: zod.array(PlanItemSchema.extend({ batchesComplete: zod.number().int().optional() })).optional(),
+  status: zod
+    .enum(["draft", "active", "prep", "building", "complete"])
+    .optional(),
+  batchNumber: zod.number().nullish(),
+  items: zod
+    .array(
+      zod.object({
+        recipeId: zod.number(),
+        batchesTarget: zod.number().optional(),
+        batchesComplete: zod.number().optional(),
+        orderPosition: zod.number().optional(),
+        tinSize: zod.string().nullish(),
+        maxBatchesPerTin: zod.number().nullish(),
+        sopUrl: zod.string().nullish(),
+        notes: zod.string().nullish(),
+        status: zod.enum(["pending", "in-progress", "complete"]).optional(),
+      }),
+    )
+    .optional(),
 });
 
 export const UpdateProductionPlanResponse = zod.object({
@@ -730,9 +794,237 @@ export const DeleteProductionPlanParams = zod.object({
 });
 
 /**
- * @summary DPT Settings
+ * @summary Update a single production plan item
  */
-export const DptSettingItem = zod.object({
+export const UpdateProductionPlanItemParams = zod.object({
+  id: zod.coerce.number(),
+  itemId: zod.coerce.number(),
+});
+
+export const UpdateProductionPlanItemBody = zod.object({
+  batchesComplete: zod.number().optional(),
+  status: zod.enum(["pending", "in-progress", "complete"]).optional(),
+  wonlyCount: zod.number().optional(),
+});
+
+export const UpdateProductionPlanItemResponse = zod.object({
+  id: zod.number(),
+  planId: zod.number(),
+  recipeId: zod.number(),
+  recipeName: zod.string(),
+  portionsPerBatch: zod.number(),
+  notes: zod.string().nullish(),
+  status: zod.enum(["pending", "in-progress", "complete"]),
+  orderPosition: zod.number(),
+  batchesTarget: zod.number(),
+  batchesComplete: zod.number(),
+  wonlyCount: zod.number(),
+  tinSize: zod.string().nullish(),
+  maxBatchesPerTin: zod.number().nullish(),
+  sopUrl: zod.string().nullish(),
+});
+
+/**
+ * @summary Reorder production plan items
+ */
+export const UpdateProductionPlanOrderParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateProductionPlanOrderBody = zod.object({
+  order: zod.array(
+    zod.object({
+      itemId: zod.number(),
+      orderPosition: zod.number(),
+    }),
+  ),
+});
+
+export const UpdateProductionPlanOrderResponse = zod.object({
+  ok: zod.boolean().optional(),
+});
+
+/**
+ * @summary List batch completions for a plan
+ */
+export const ListBatchCompletionsParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const ListBatchCompletionsQueryParams = zod.object({
+  stationType: zod.coerce.string().optional(),
+});
+
+export const ListBatchCompletionsResponseItem = zod.object({
+  id: zod.number(),
+  planItemId: zod.number(),
+  stationType: zod.string(),
+  userId: zod.number().nullish(),
+  startedAt: zod.string().nullish(),
+  completedAt: zod.string(),
+});
+export const ListBatchCompletionsResponse = zod.array(
+  ListBatchCompletionsResponseItem,
+);
+
+/**
+ * @summary Record a batch completion
+ */
+export const CreateBatchCompletionParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const CreateBatchCompletionBody = zod.object({
+  planItemId: zod.number(),
+  stationType: zod.string(),
+  userId: zod.number().nullish(),
+  startedAt: zod.string().nullish(),
+  completedAt: zod.string().nullish(),
+});
+
+/**
+ * @summary List station breaks for a plan
+ */
+export const ListStationBreaksParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const ListStationBreaksQueryParams = zod.object({
+  stationType: zod.coerce.string().optional(),
+});
+
+export const ListStationBreaksResponseItem = zod.object({
+  id: zod.number(),
+  planId: zod.number(),
+  stationType: zod.string(),
+  breakType: zod
+    .string()
+    .nullish()
+    .describe("Type of break (e.g. morning, lunch)"),
+  userId: zod.number().nullish(),
+  startedAt: zod.string().nullish(),
+  endedAt: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+export const ListStationBreaksResponse = zod.array(
+  ListStationBreaksResponseItem,
+);
+
+/**
+ * @summary Record a station break
+ */
+export const CreateStationBreakParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const CreateStationBreakBody = zod.object({
+  stationType: zod.string(),
+  breakType: zod.string().nullish(),
+  userId: zod.number().nullish(),
+  startedAt: zod.string().nullish(),
+  endedAt: zod.string().nullish(),
+});
+
+/**
+ * @summary End a station break (set endedAt)
+ */
+export const EndStationBreakParams = zod.object({
+  id: zod.coerce.number(),
+  breakId: zod.coerce.number(),
+});
+
+export const EndStationBreakBody = zod.object({
+  endedAt: zod.string(),
+});
+
+export const EndStationBreakResponse = zod.object({
+  id: zod.number(),
+  planId: zod.number(),
+  stationType: zod.string(),
+  breakType: zod
+    .string()
+    .nullish()
+    .describe("Type of break (e.g. morning, lunch)"),
+  userId: zod.number().nullish(),
+  startedAt: zod.string().nullish(),
+  endedAt: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+
+/**
+ * @summary Delete a station break
+ */
+export const DeleteStationBreakParams = zod.object({
+  id: zod.coerce.number(),
+  breakId: zod.coerce.number(),
+});
+
+/**
+ * @summary Get prep requirements for a plan filtered by ingredient category
+ */
+export const GetPrepRequirementsParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetPrepRequirementsQueryParams = zod.object({
+  station: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter by station (prep_veg, prep_bases, prep_meat, all)"),
+  category: zod.coerce.string().optional(),
+});
+
+export const GetPrepRequirementsResponse = zod.object({
+  items: zod
+    .array(
+      zod.object({
+        ingredientId: zod.number(),
+        ingredientName: zod.string(),
+        unit: zod.string(),
+        category: zod.string().nullish(),
+        processingRatio: zod.number().nullish(),
+        rawMeatTrayCapacityKg: zod.number().nullish(),
+        totalCookedQty: zod.number(),
+        totalRawQty: zod.number(),
+        trayCount: zod.number().nullish(),
+        recipes: zod.array(zod.string()),
+      }),
+    )
+    .optional(),
+  nextPlanDate: zod.string().nullish(),
+});
+
+/**
+ * @summary Get DPT suggestions based on stock and dispatch demand
+ */
+export const GetDptCalculatorQueryParams = zod.object({
+  date: zod.coerce
+    .string()
+    .optional()
+    .describe("Plan date (YYYY-MM-DD) to calculate demand from"),
+});
+
+export const GetDptCalculatorResponseItem = zod.object({
+  recipeId: zod.number(),
+  recipeName: zod.string().nullish(),
+  portionsPerBatch: zod.number(),
+  tinSize: zod.string().nullish(),
+  maxBatchesPerTin: zod.number().nullish(),
+  sopUrl: zod.string().nullish(),
+  currentStock: zod.number(),
+  demand: zod.number(),
+  batchesForDemand: zod.number(),
+  defaultBatchesPerDay: zod.number(),
+  suggestedBatches: zod.number(),
+  tinCount: zod.number().nullish(),
+  isActive: zod.boolean(),
+});
+export const GetDptCalculatorResponse = zod.array(GetDptCalculatorResponseItem);
+
+/**
+ * @summary List all DPT settings
+ */
+export const ListDptSettingsResponseItem = zod.object({
   id: zod.number(),
   recipeId: zod.number(),
   recipeName: zod.string(),
@@ -740,12 +1032,22 @@ export const DptSettingItem = zod.object({
   isActive: zod.boolean(),
   updatedAt: zod.string(),
 });
-export const ListDptSettingsResponse = zod.array(DptSettingItem);
+export const ListDptSettingsResponse = zod.array(ListDptSettingsResponseItem);
 
+/**
+ * @summary Create a DPT setting
+ */
 export const CreateDptSettingBody = zod.object({
   recipeId: zod.number(),
   defaultBatchesPerDay: zod.number(),
   isActive: zod.boolean().optional(),
+});
+
+/**
+ * @summary Update a DPT setting
+ */
+export const UpdateDptSettingParams = zod.object({
+  id: zod.coerce.number(),
 });
 
 export const UpdateDptSettingBody = zod.object({
@@ -753,10 +1055,47 @@ export const UpdateDptSettingBody = zod.object({
   isActive: zod.boolean().optional(),
 });
 
+export const UpdateDptSettingResponse = zod.object({
+  id: zod.number(),
+  recipeId: zod.number(),
+  recipeName: zod.string(),
+  defaultBatchesPerDay: zod.number(),
+  isActive: zod.boolean(),
+  updatedAt: zod.string(),
+});
+
 /**
- * @summary Timing Standards
+ * @summary Delete a DPT setting
  */
-export const TimingStandardItem = zod.object({
+export const DeleteDptSettingParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+/**
+ * @summary Upsert a DPT setting by recipe ID
+ */
+export const UpsertDptSettingByRecipeParams = zod.object({
+  recipeId: zod.coerce.number(),
+});
+
+export const UpsertDptSettingByRecipeBody = zod.object({
+  defaultBatchesPerDay: zod.number().optional(),
+  isActive: zod.boolean().optional(),
+});
+
+export const UpsertDptSettingByRecipeResponse = zod.object({
+  id: zod.number(),
+  recipeId: zod.number(),
+  recipeName: zod.string(),
+  defaultBatchesPerDay: zod.number(),
+  isActive: zod.boolean(),
+  updatedAt: zod.string(),
+});
+
+/**
+ * @summary List all timing standards
+ */
+export const ListTimingStandardsResponseItem = zod.object({
   id: zod.number(),
   stationType: zod.string(),
   stationLabel: zod.string(),
@@ -764,11 +1103,47 @@ export const TimingStandardItem = zod.object({
   targetBatchesPerHour: zod.number(),
   updatedAt: zod.string(),
 });
-export const ListTimingStandardsResponse = zod.array(TimingStandardItem);
+export const ListTimingStandardsResponse = zod.array(
+  ListTimingStandardsResponseItem,
+);
+
+/**
+ * @summary Create a timing standard
+ */
+export const CreateTimingStandardBody = zod.object({
+  stationType: zod.string(),
+  stationLabel: zod.string(),
+  minBatchesPerHour: zod.number(),
+  targetBatchesPerHour: zod.number(),
+});
+
+/**
+ * @summary Update a timing standard
+ */
+export const UpdateTimingStandardParams = zod.object({
+  id: zod.coerce.number(),
+});
 
 export const UpdateTimingStandardBody = zod.object({
+  stationLabel: zod.string().optional(),
   minBatchesPerHour: zod.number().optional(),
   targetBatchesPerHour: zod.number().optional(),
+});
+
+export const UpdateTimingStandardResponse = zod.object({
+  id: zod.number(),
+  stationType: zod.string(),
+  stationLabel: zod.string(),
+  minBatchesPerHour: zod.number(),
+  targetBatchesPerHour: zod.number(),
+  updatedAt: zod.string(),
+});
+
+/**
+ * @summary Delete a timing standard
+ */
+export const DeleteTimingStandardParams = zod.object({
+  id: zod.coerce.number(),
 });
 
 /**

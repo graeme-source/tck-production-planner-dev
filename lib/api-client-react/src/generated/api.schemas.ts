@@ -43,8 +43,10 @@ export interface Ingredient {
   secondarySupplierId?: number | null;
   orderingUrl?: string | null;
   notes?: string | null;
-  category?: string | null;
   processingRatio?: number | null;
+  /** Ingredient category (e.g. vegetable, raw_meat, base, sauce, cheese) */
+  category?: string | null;
+  /** Capacity of a raw meat tray in kg (used for tray count calculation) */
   rawMeatTrayCapacityKg?: number | null;
   createdAt: string;
 }
@@ -60,8 +62,8 @@ export interface CreateIngredient {
   secondarySupplierId?: number | null;
   orderingUrl?: string | null;
   notes?: string | null;
-  category?: string | null;
   processingRatio?: number | null;
+  category?: string | null;
   rawMeatTrayCapacityKg?: number | null;
 }
 
@@ -139,15 +141,17 @@ export interface Recipe {
   labourCost: number;
   /** Number of portions produced per batch (e.g. 10 for calzones) */
   portionsPerBatch: number;
+  /** Default tin size for this recipe */
+  tinSize?: string | null;
+  /** Maximum batches per tin */
+  maxBatchesPerTin?: number | null;
+  /** URL to the standard operating procedure document */
+  sopUrl?: string | null;
   rawMaterialCostPerBatch: number;
   costPerPortion: number;
   packIngredientCost: number;
   totalPackCost: number;
   grossMargin?: number | null;
-  tinSize?: string | null;
-  maxBatchesPerTin?: number | null;
-  sopUrl?: string | null;
-  shelfLifeDays?: number | null;
   createdAt: string;
 }
 
@@ -195,7 +199,6 @@ export interface CreateRecipe {
   labourCost?: number;
   /** Number of portions produced per batch (e.g. 10 for calzones) */
   portionsPerBatch?: number;
-  shelfLifeDays?: number | null;
   tinSize?: string | null;
   maxBatchesPerTin?: number | null;
   sopUrl?: string | null;
@@ -222,8 +225,8 @@ export type ProductionPlanItemStatus =
 
 export const ProductionPlanItemStatus = {
   pending: "pending",
-  in_progress: "in-progress",
-  completed: "complete",
+  "in-progress": "in-progress",
+  complete: "complete",
 } as const;
 
 export interface ProductionPlanItem {
@@ -233,7 +236,7 @@ export interface ProductionPlanItem {
   recipeName: string;
   portionsPerBatch: number;
   notes?: string | null;
-  status: string;
+  status: ProductionPlanItemStatus;
   orderPosition: number;
   batchesTarget: number;
   batchesComplete: number;
@@ -282,7 +285,7 @@ export interface CreateProductionPlan {
   planDate: string;
   name: string;
   notes?: string | null;
-  status?: string;
+  batchNumber?: number | null;
   items?: CreateProductionPlanItemsItem[];
 }
 
@@ -297,6 +300,15 @@ export const UpdateProductionPlanStatus = {
   complete: "complete",
 } as const;
 
+export type UpdateProductionPlanItemsItemStatus =
+  (typeof UpdateProductionPlanItemsItemStatus)[keyof typeof UpdateProductionPlanItemsItemStatus];
+
+export const UpdateProductionPlanItemsItemStatus = {
+  pending: "pending",
+  "in-progress": "in-progress",
+  complete: "complete",
+} as const;
+
 export type UpdateProductionPlanItemsItem = {
   recipeId: number;
   batchesTarget?: number;
@@ -306,7 +318,7 @@ export type UpdateProductionPlanItemsItem = {
   maxBatchesPerTin?: number | null;
   sopUrl?: string | null;
   notes?: string | null;
-  status?: string;
+  status?: UpdateProductionPlanItemsItemStatus;
 };
 
 export interface UpdateProductionPlan {
@@ -314,6 +326,7 @@ export interface UpdateProductionPlan {
   name?: string;
   notes?: string | null;
   status?: UpdateProductionPlanStatus;
+  batchNumber?: number | null;
   items?: UpdateProductionPlanItemsItem[];
 }
 
@@ -326,17 +339,6 @@ export interface DptSetting {
   updatedAt: string;
 }
 
-export interface CreateDptSetting {
-  recipeId: number;
-  defaultBatchesPerDay: number;
-  isActive?: boolean;
-}
-
-export interface UpdateDptSetting {
-  defaultBatchesPerDay?: number;
-  isActive?: boolean;
-}
-
 export interface TimingStandard {
   id: number;
   stationType: string;
@@ -344,11 +346,6 @@ export interface TimingStandard {
   minBatchesPerHour: number;
   targetBatchesPerHour: number;
   updatedAt: string;
-}
-
-export interface UpdateTimingStandard {
-  minBatchesPerHour?: number;
-  targetBatchesPerHour?: number;
 }
 
 export interface BatchCompletion {
@@ -364,10 +361,65 @@ export interface StationBreak {
   id: number;
   planId: number;
   stationType: string;
+  /** Type of break (e.g. morning, lunch) */
+  breakType?: string | null;
   userId?: number | null;
-  breakType: string;
-  startedAt: string;
+  startedAt?: string | null;
   endedAt?: string | null;
+  createdAt: string;
+}
+
+export interface CreateDptSetting {
+  recipeId: number;
+  defaultBatchesPerDay: number;
+  isActive?: boolean;
+}
+
+export interface UpdateDptSetting {
+  defaultBatchesPerDay?: number;
+  isActive?: boolean;
+}
+
+export interface CreateTimingStandard {
+  stationType: string;
+  stationLabel: string;
+  minBatchesPerHour: number;
+  targetBatchesPerHour: number;
+}
+
+export interface UpdateTimingStandard {
+  stationLabel?: string;
+  minBatchesPerHour?: number;
+  targetBatchesPerHour?: number;
+}
+
+export interface PrepRequirementItem {
+  ingredientId: number;
+  ingredientName: string;
+  unit: string;
+  category?: string | null;
+  processingRatio?: number | null;
+  rawMeatTrayCapacityKg?: number | null;
+  totalCookedQty: number;
+  totalRawQty: number;
+  trayCount?: number | null;
+  recipes: string[];
+}
+
+export interface DptSuggestion {
+  recipeId: number;
+  recipeName?: string | null;
+  portionsPerBatch: number;
+  tinSize?: string | null;
+  maxBatchesPerTin?: number | null;
+  sopUrl?: string | null;
+  currentStock: number;
+  demand: number;
+  batchesForDemand: number;
+  defaultBatchesPerDay: number;
+  suggestedBatches: number;
+  tinCount?: number | null;
+  isActive: boolean;
 }
 
 export type StockEntryItemType =
@@ -522,6 +574,82 @@ export type ListProductionPlansParams = {
   date?: string;
 };
 
+export type UpdateProductionPlanItemBodyStatus =
+  (typeof UpdateProductionPlanItemBodyStatus)[keyof typeof UpdateProductionPlanItemBodyStatus];
+
+export const UpdateProductionPlanItemBodyStatus = {
+  pending: "pending",
+  "in-progress": "in-progress",
+  complete: "complete",
+} as const;
+
+export type UpdateProductionPlanItemBody = {
+  batchesComplete?: number;
+  status?: UpdateProductionPlanItemBodyStatus;
+  wonlyCount?: number;
+};
+
+export type UpdateProductionPlanOrderBodyOrderItem = {
+  itemId: number;
+  orderPosition: number;
+};
+
+export type UpdateProductionPlanOrderBody = {
+  order: UpdateProductionPlanOrderBodyOrderItem[];
+};
+
+export type UpdateProductionPlanOrder200 = {
+  ok?: boolean;
+};
+
+export type ListBatchCompletionsParams = {
+  stationType?: string;
+};
+
+export type CreateBatchCompletionBody = {
+  planItemId: number;
+  stationType: string;
+  userId?: number | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+};
+
+export type ListStationBreaksParams = {
+  stationType?: string;
+};
+
+export type CreateStationBreakBody = {
+  stationType: string;
+  breakType?: string | null;
+  userId?: number | null;
+  startedAt?: string | null;
+  endedAt?: string | null;
+};
+
+export type EndStationBreakBody = {
+  endedAt: string;
+};
+
+export type GetPrepRequirementsParams = {
+  /**
+   * Filter by station (prep_veg, prep_bases, prep_meat, all)
+   */
+  station?: string;
+  category?: string;
+};
+
+export type GetPrepRequirements200 = {
+  items?: PrepRequirementItem[];
+  nextPlanDate?: string | null;
+};
+
+export type GetDptCalculatorParams = {
+  /**
+   * Plan date (YYYY-MM-DD) to calculate demand from
+   */
+  date?: string;
+};
+
 export type ListSalesEntriesParams = {
   startDate?: string;
   endDate?: string;
@@ -530,46 +658,4 @@ export type ListSalesEntriesParams = {
 export type ListDispatchOrdersParams = {
   startDate?: string;
   endDate?: string;
-};
-
-export interface DptSuggestion {
-  recipeId: number;
-  recipeName: string | null;
-  portionsPerBatch: number;
-  tinSize: string | null;
-  maxBatchesPerTin: number | null;
-  sopUrl: string | null;
-  currentStock: number;
-  demand: number;
-  batchesForDemand: number;
-  defaultBatchesPerDay: number;
-  suggestedBatches: number;
-  tinCount: number | null;
-  isActive: boolean;
-}
-
-export type GetDptCalculatorParams = {
-  date?: string;
-};
-
-export interface PrepRequirementItem {
-  ingredientId: number;
-  ingredientName: string;
-  unit: string;
-  category: string | null;
-  processingRatio: number | null;
-  rawMeatTrayCapacityKg: number | null;
-  totalCookedQty: number;
-  totalRawQty: number;
-  trayCount: number | null;
-  recipes: string[];
-}
-
-export interface PrepRequirementsResponse {
-  items: PrepRequirementItem[];
-  nextPlanDate: string | null;
-}
-
-export type GetPrepRequirementsParams = {
-  station?: "prep_veg" | "prep_bases" | "prep_meat" | "all";
 };

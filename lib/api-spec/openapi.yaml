@@ -29,6 +29,10 @@ tags:
     description: User management
   - name: categoryDefaults
     description: Category default cost management
+  - name: dptSettings
+    description: DPT (Daily Production Target) settings
+  - name: timingStandards
+    description: Timing standards by station
 paths:
   /users:
     get:
@@ -569,6 +573,492 @@ paths:
         "204":
           description: Deleted
 
+  /production-plans/{id}/items/{itemId}:
+    patch:
+      operationId: updateProductionPlanItem
+      tags: [productionPlans]
+      summary: Update a single production plan item
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                batchesComplete:
+                  type: integer
+                status:
+                  type: string
+                  enum: [pending, in-progress, complete]
+                wonlyCount:
+                  type: integer
+      responses:
+        "200":
+          description: Updated item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionPlanItem"
+
+  /production-plans/{id}/order:
+    patch:
+      operationId: updateProductionPlanOrder
+      tags: [productionPlans]
+      summary: Reorder production plan items
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                order:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      itemId:
+                        type: integer
+                      orderPosition:
+                        type: integer
+                    required:
+                      - itemId
+                      - orderPosition
+              required:
+                - order
+      responses:
+        "200":
+          description: Order updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+
+  /production-plans/{id}/batch-completions:
+    get:
+      operationId: listBatchCompletions
+      tags: [productionPlans]
+      summary: List batch completions for a plan
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: stationType
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of batch completions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BatchCompletion"
+    post:
+      operationId: createBatchCompletion
+      tags: [productionPlans]
+      summary: Record a batch completion
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                planItemId:
+                  type: integer
+                stationType:
+                  type: string
+                userId:
+                  type: integer
+                  nullable: true
+                startedAt:
+                  type: string
+                  nullable: true
+                completedAt:
+                  type: string
+                  nullable: true
+              required:
+                - planItemId
+                - stationType
+      responses:
+        "201":
+          description: Created batch completion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchCompletion"
+
+  /production-plans/{id}/station-breaks:
+    get:
+      operationId: listStationBreaks
+      tags: [productionPlans]
+      summary: List station breaks for a plan
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: stationType
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of station breaks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StationBreak"
+    post:
+      operationId: createStationBreak
+      tags: [productionPlans]
+      summary: Record a station break
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                stationType:
+                  type: string
+                breakType:
+                  type: string
+                  nullable: true
+                userId:
+                  type: integer
+                  nullable: true
+                startedAt:
+                  type: string
+                  nullable: true
+                endedAt:
+                  type: string
+                  nullable: true
+              required:
+                - stationType
+      responses:
+        "201":
+          description: Created station break
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StationBreak"
+
+  /production-plans/{id}/station-breaks/{breakId}:
+    patch:
+      operationId: endStationBreak
+      tags: [productionPlans]
+      summary: End a station break (set endedAt)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: breakId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                endedAt:
+                  type: string
+              required:
+                - endedAt
+      responses:
+        "200":
+          description: Updated station break
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StationBreak"
+    delete:
+      operationId: deleteStationBreak
+      tags: [productionPlans]
+      summary: Delete a station break
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: breakId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /production-plans/{id}/prep-requirements:
+    get:
+      operationId: getPrepRequirements
+      tags: [productionPlans]
+      summary: Get prep requirements for a plan filtered by ingredient category
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: station
+          in: query
+          schema:
+            type: string
+          description: Filter by station (prep_veg, prep_bases, prep_meat, all)
+        - name: category
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Prep requirements
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PrepRequirementItem"
+                  nextPlanDate:
+                    type: string
+                    nullable: true
+
+  /dpt-calculator:
+    get:
+      operationId: getDptCalculator
+      tags: [dptSettings]
+      summary: Get DPT suggestions based on stock and dispatch demand
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+          description: Plan date (YYYY-MM-DD) to calculate demand from
+      responses:
+        "200":
+          description: DPT suggestions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DptSuggestion"
+
+  /dpt-settings:
+    get:
+      operationId: listDptSettings
+      tags: [dptSettings]
+      summary: List all DPT settings
+      responses:
+        "200":
+          description: List of DPT settings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DptSetting"
+    post:
+      operationId: createDptSetting
+      tags: [dptSettings]
+      summary: Create a DPT setting
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDptSetting"
+      responses:
+        "201":
+          description: Created DPT setting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DptSetting"
+
+  /dpt-settings/{id}:
+    put:
+      operationId: updateDptSetting
+      tags: [dptSettings]
+      summary: Update a DPT setting
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDptSetting"
+      responses:
+        "200":
+          description: Updated DPT setting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DptSetting"
+    delete:
+      operationId: deleteDptSetting
+      tags: [dptSettings]
+      summary: Delete a DPT setting
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /dpt-settings/by-recipe/{recipeId}:
+    put:
+      operationId: upsertDptSettingByRecipe
+      tags: [dptSettings]
+      summary: Upsert a DPT setting by recipe ID
+      parameters:
+        - name: recipeId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDptSetting"
+      responses:
+        "200":
+          description: Upserted DPT setting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DptSetting"
+
+  /timing-standards:
+    get:
+      operationId: listTimingStandards
+      tags: [timingStandards]
+      summary: List all timing standards
+      responses:
+        "200":
+          description: List of timing standards
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TimingStandard"
+    post:
+      operationId: createTimingStandard
+      tags: [timingStandards]
+      summary: Create a timing standard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTimingStandard"
+      responses:
+        "201":
+          description: Created timing standard
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TimingStandard"
+
+  /timing-standards/{id}:
+    put:
+      operationId: updateTimingStandard
+      tags: [timingStandards]
+      summary: Update a timing standard
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTimingStandard"
+      responses:
+        "200":
+          description: Updated timing standard
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TimingStandard"
+    delete:
+      operationId: deleteTimingStandard
+      tags: [timingStandards]
+      summary: Delete a timing standard
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
   /stock-entries:
     get:
       operationId: listStockEntries
@@ -969,6 +1459,14 @@ components:
         processingRatio:
           type: number
           nullable: true
+        category:
+          type: string
+          nullable: true
+          description: Ingredient category (e.g. vegetable, raw_meat, base, sauce, cheese)
+        rawMeatTrayCapacityKg:
+          type: number
+          nullable: true
+          description: Capacity of a raw meat tray in kg (used for tray count calculation)
         createdAt:
           type: string
       required:
@@ -1009,6 +1507,12 @@ components:
           type: string
           nullable: true
         processingRatio:
+          type: number
+          nullable: true
+        category:
+          type: string
+          nullable: true
+        rawMeatTrayCapacityKg:
           type: number
           nullable: true
       required:
@@ -1203,6 +1707,18 @@ components:
         portionsPerBatch:
           type: integer
           description: Number of portions produced per batch (e.g. 10 for calzones)
+        tinSize:
+          type: string
+          nullable: true
+          description: Default tin size for this recipe
+        maxBatchesPerTin:
+          type: integer
+          nullable: true
+          description: Maximum batches per tin
+        sopUrl:
+          type: string
+          nullable: true
+          description: URL to the standard operating procedure document
         rawMaterialCostPerBatch:
           type: number
         costPerPortion:
@@ -1318,6 +1834,15 @@ components:
         portionsPerBatch:
           type: integer
           description: Number of portions produced per batch (e.g. 10 for calzones)
+        tinSize:
+          type: string
+          nullable: true
+        maxBatchesPerTin:
+          type: integer
+          nullable: true
+        sopUrl:
+          type: string
+          nullable: true
         ingredients:
           type: array
           items:
@@ -1627,6 +2152,165 @@ components:
         - planItemId
         - stationType
         - completedAt
+
+    StationBreak:
+      type: object
+      properties:
+        id:
+          type: integer
+        planId:
+          type: integer
+        stationType:
+          type: string
+        breakType:
+          type: string
+          nullable: true
+          description: Type of break (e.g. morning, lunch)
+        userId:
+          type: integer
+          nullable: true
+        startedAt:
+          type: string
+          nullable: true
+        endedAt:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+      required:
+        - id
+        - planId
+        - stationType
+        - createdAt
+
+    CreateDptSetting:
+      type: object
+      properties:
+        recipeId:
+          type: integer
+        defaultBatchesPerDay:
+          type: number
+        isActive:
+          type: boolean
+      required:
+        - recipeId
+        - defaultBatchesPerDay
+
+    UpdateDptSetting:
+      type: object
+      properties:
+        defaultBatchesPerDay:
+          type: number
+        isActive:
+          type: boolean
+
+    CreateTimingStandard:
+      type: object
+      properties:
+        stationType:
+          type: string
+        stationLabel:
+          type: string
+        minBatchesPerHour:
+          type: number
+        targetBatchesPerHour:
+          type: number
+      required:
+        - stationType
+        - stationLabel
+        - minBatchesPerHour
+        - targetBatchesPerHour
+
+    UpdateTimingStandard:
+      type: object
+      properties:
+        stationLabel:
+          type: string
+        minBatchesPerHour:
+          type: number
+        targetBatchesPerHour:
+          type: number
+
+    PrepRequirementItem:
+      type: object
+      properties:
+        ingredientId:
+          type: integer
+        ingredientName:
+          type: string
+        unit:
+          type: string
+        category:
+          type: string
+          nullable: true
+        processingRatio:
+          type: number
+          nullable: true
+        rawMeatTrayCapacityKg:
+          type: number
+          nullable: true
+        totalCookedQty:
+          type: number
+        totalRawQty:
+          type: number
+        trayCount:
+          type: integer
+          nullable: true
+        recipes:
+          type: array
+          items:
+            type: string
+      required:
+        - ingredientId
+        - ingredientName
+        - unit
+        - totalCookedQty
+        - totalRawQty
+        - recipes
+
+    DptSuggestion:
+      type: object
+      properties:
+        recipeId:
+          type: integer
+        recipeName:
+          type: string
+          nullable: true
+        portionsPerBatch:
+          type: number
+        tinSize:
+          type: string
+          nullable: true
+        maxBatchesPerTin:
+          type: integer
+          nullable: true
+        sopUrl:
+          type: string
+          nullable: true
+        currentStock:
+          type: number
+        demand:
+          type: number
+        batchesForDemand:
+          type: number
+        defaultBatchesPerDay:
+          type: number
+        suggestedBatches:
+          type: number
+        tinCount:
+          type: integer
+          nullable: true
+        isActive:
+          type: boolean
+      required:
+        - recipeId
+        - portionsPerBatch
+        - currentStock
+        - demand
+        - batchesForDemand
+        - defaultBatchesPerDay
+        - suggestedBatches
+        - isActive
 
     StockEntry:
       type: object

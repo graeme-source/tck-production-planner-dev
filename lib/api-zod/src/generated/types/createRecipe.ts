@@ -21,6 +21,9 @@ export interface CreateRecipe {
   labourCost?: number;
   /** Number of portions produced per batch (e.g. 10 for calzones) */
   portionsPerBatch?: number;
+  tinSize?: string | null;
+  maxBatchesPerTin?: number | null;
+  sopUrl?: string | null;
   ingredients: CreateRecipeIngredientsItem[];
   subRecipes: CreateRecipeSubRecipesItem[];
 }

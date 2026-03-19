@@ -13,5 +13,6 @@ export interface UpdateProductionPlan {
   name?: string;
   notes?: string | null;
   status?: UpdateProductionPlanStatus;
+  batchNumber?: number | null;
   items?: UpdateProductionPlanItemsItem[];
 }

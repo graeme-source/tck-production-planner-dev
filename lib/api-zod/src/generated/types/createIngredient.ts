@@ -18,4 +18,6 @@ export interface CreateIngredient {
   orderingUrl?: string | null;
   notes?: string | null;
   processingRatio?: number | null;
+  category?: string | null;
+  rawMeatTrayCapacityKg?: number | null;
 }

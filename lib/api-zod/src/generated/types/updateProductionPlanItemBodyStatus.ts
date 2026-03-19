@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type ProductionPlanItemStatus =
-  (typeof ProductionPlanItemStatus)[keyof typeof ProductionPlanItemStatus];
+export type UpdateProductionPlanItemBodyStatus =
+  (typeof UpdateProductionPlanItemBodyStatus)[keyof typeof UpdateProductionPlanItemBodyStatus];
 
-export const ProductionPlanItemStatus = {
+export const UpdateProductionPlanItemBodyStatus = {
   pending: "pending",
   "in-progress": "in-progress",
   complete: "complete",
