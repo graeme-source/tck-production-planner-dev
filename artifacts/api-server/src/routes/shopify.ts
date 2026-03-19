@@ -62,19 +62,24 @@ router.get("/order-summary", async (req, res) => {
 router.get("/weekly-orders", async (req, res) => {
   try {
     const today = new Date();
-    const days = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(today);
-      d.setDate(today.getDate() + i);
-      return d;
-    });
 
+    // Each bar represents the dispatch day.
+    // Delivery is next-day, so we tag orders by (dispatch day + 1).
     const results = await Promise.all(
-      days.map(async (d) => {
-        const tag = toDateTag(d);
+      Array.from({ length: 7 }, async (_, i) => {
+        const dispatchDay = new Date(today);
+        dispatchDay.setDate(today.getDate() + i);
+
+        const deliveryDay = new Date(today);
+        deliveryDay.setDate(today.getDate() + i + 1);
+
+        const tag = toDateTag(deliveryDay);
         const orders = await getOrdersByTag(tag);
+
         return {
-          date: tag,
-          day: DAY_NAMES[d.getDay()],
+          date: toDateTag(dispatchDay),
+          deliveryDate: tag,
+          day: DAY_NAMES[dispatchDay.getDay()],
           orderCount: orders.length,
         };
       })

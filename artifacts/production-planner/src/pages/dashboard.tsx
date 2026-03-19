@@ -9,7 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 async function fetchWeeklyOrders() {
   const res = await fetch("/api/shopify/weekly-orders", { credentials: "include" });
   if (!res.ok) throw new Error("Failed to fetch weekly orders");
-  return res.json() as Promise<{ date: string; day: string; orderCount: number }[]>;
+  return res.json() as Promise<{ date: string; deliveryDate: string; day: string; orderCount: number }[]>;
 }
 
 export default function Dashboard() {
@@ -35,9 +35,10 @@ export default function Dashboard() {
     if (active && payload && payload.length) {
       const item = weeklyOrders?.find(d => d.day === label);
       return (
-        <div className="bg-card border border-border rounded-xl px-4 py-3 shadow-lg text-sm">
-          <p className="font-semibold mb-1">{item?.date ?? label}</p>
-          <p className="text-primary font-bold">{payload[0].value} orders</p>
+        <div className="bg-card border border-border rounded-xl px-4 py-3 shadow-lg text-sm space-y-1">
+          <p className="font-semibold">Dispatch: {item?.date ?? label}</p>
+          <p className="text-muted-foreground text-xs">Delivery: {item?.deliveryDate}</p>
+          <p className="text-primary font-bold pt-1">{payload[0].value} orders</p>
         </div>
       );
     }
