@@ -9,7 +9,13 @@ const router: IRouter = Router();
 
 router.get("/", async (_req, res) => {
   const rows = await db.select().from(subRecipesTable).orderBy(subRecipesTable.name);
-  res.json(rows.map(r => ({ ...r, yield: Number(r.yield), createdAt: r.createdAt.toISOString() })));
+  const [costMap] = await Promise.all([computeSubRecipeCosts()]);
+  res.json(rows.map(r => ({
+    ...r,
+    yield: Number(r.yield),
+    createdAt: r.createdAt.toISOString(),
+    costPerYieldUnit: costMap[r.id] ?? null,
+  })));
 });
 
 router.post("/", validate(CreateSubRecipeBody), async (req, res) => {

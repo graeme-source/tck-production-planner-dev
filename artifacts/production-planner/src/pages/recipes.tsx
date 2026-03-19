@@ -66,6 +66,22 @@ function MarginBar({ margin }: { margin: number | null | undefined }) {
   );
 }
 
+type IngredientOption = {
+  id: number;
+  name: string;
+  unit: string;
+  processingRatio: number;
+  packWeight: number;
+  costPerPack: number;
+};
+
+type SubRecipeOption = {
+  id: number;
+  name: string;
+  yieldUnit: string;
+  costPerYieldUnit: number;
+};
+
 function RecipeForm({
   defaultValues,
   onSubmit,
@@ -79,8 +95,8 @@ function RecipeForm({
   onSubmit: (data: FormValues) => void;
   isPending: boolean;
   isEdit: boolean;
-  ingredients: { id: number; name: string; unit: string }[];
-  subRecipes: { id: number; name: string; yieldUnit: string }[];
+  ingredients: IngredientOption[];
+  subRecipes: SubRecipeOption[];
   categoryDefaults: { category: string; defaultPackagingCost: number; defaultLabourCost: number }[];
 }) {
   const { register, control, handleSubmit, setValue, watch, formState: { errors } } = useForm<FormValues>({
@@ -95,10 +111,12 @@ function RecipeForm({
   const [quickAddTargetIndex, setQuickAddTargetIndex] = useState<number | null>(null);
 
   const watchedCategory = watch("category");
-  const watchedPackSize = watch("packSize");
   const watchedRrp = watch("rrp");
   const watchedPackaging = watch("packagingCost");
   const watchedLabour = watch("labourCost");
+  const watchedServings = watch("servings");
+  const watchedIngredients = watch("ingredients");
+  const watchedSubRecipes = watch("subRecipes");
 
   const handleCategoryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const cat = e.target.value;
@@ -116,15 +134,37 @@ function RecipeForm({
   };
 
   const handleIngredientCreated = (ingredient: { id: number; name: string; unit: string }) => {
-    setLocalIngredients(prev => [...prev, ingredient]);
+    const full: IngredientOption = { ...ingredient, processingRatio: 1, packWeight: 0, costPerPack: 0 };
+    setLocalIngredients(prev => [...prev, full]);
     if (quickAddTargetIndex !== null) {
       setValue(`ingredients.${quickAddTargetIndex}.ingredientId`, ingredient.id);
     }
     setQuickAddTargetIndex(null);
   };
 
+  const servings = Number(watchedServings) || 1;
   const overhead = (Number(watchedPackaging) || 0) + (Number(watchedLabour) || 0);
   const rrp = Number(watchedRrp) || 0;
+
+  function ingLineCost(index: number): number | null {
+    const row = watchedIngredients?.[index];
+    if (!row) return null;
+    const qty = Number(row.quantity);
+    const ing = localIngredients.find(i => i.id === Number(row.ingredientId));
+    if (!ing || !qty || ing.packWeight === 0) return null;
+    const pr = ing.processingRatio || 1;
+    const rawQty = qty / pr;
+    return (rawQty * ing.costPerPack / ing.packWeight) / servings;
+  }
+
+  function subLineCost(index: number): number | null {
+    const row = watchedSubRecipes?.[index];
+    if (!row) return null;
+    const qty = Number(row.quantity);
+    const sr = subRecipes.find(s => s.id === Number(row.subRecipeId));
+    if (!sr || !qty) return null;
+    return (qty * sr.costPerYieldUnit) / servings;
+  }
 
   return (
     <>
@@ -215,45 +255,75 @@ function RecipeForm({
           )}
         </div>
 
-        {/* Ingredients & Sub-recipes */}
-        <div className="border-t border-border pt-4 grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <label className="text-sm font-bold text-primary">Ingredients <span className="text-xs font-normal text-muted-foreground">(cooked/processed qty)</span></label>
-              <button type="button" onClick={() => appendIng({ ingredientId: 0, quantity: 1 })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add Row</button>
+        {/* Unified Ingredients & Prep Items */}
+        <div className="border-t border-border pt-4 space-y-0">
+          {/* Column headers */}
+          <div className="grid grid-cols-[1fr_6rem_4.5rem_1.25rem] gap-2 px-1 mb-1.5">
+            <span className="text-xs text-muted-foreground font-medium">Name</span>
+            <span className="text-xs text-muted-foreground font-medium">Qty</span>
+            <span className="text-xs text-muted-foreground font-medium text-right">£/portion</span>
+            <span />
+          </div>
+
+          {/* Ingredients section */}
+          <div className="mb-1">
+            <div className="flex items-center justify-between py-1.5">
+              <span className="text-xs font-semibold text-primary uppercase tracking-wide">
+                Ingredients <span className="font-normal normal-case text-muted-foreground tracking-normal">(cooked qty)</span>
+              </span>
+              <button type="button" onClick={() => appendIng({ ingredientId: 0, quantity: 0 })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add</button>
             </div>
-            {ingFields.length === 0 && <p className="text-xs text-muted-foreground italic">No ingredients added</p>}
-            <div className="space-y-2">
-              {ingFields.map((field, index) => (
-                <div key={field.id} className="flex gap-1.5 items-center">
-                  <select {...register(`ingredients.${index}.ingredientId`)} className="flex-1 px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30 min-w-0">
-                    <option value={0} disabled>Select…</option>
-                    {localIngredients.map(i => <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>)}
-                  </select>
-                  <input type="number" step="0.001" {...register(`ingredients.${index}.quantity`)} className="w-16 px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30 flex-shrink-0" placeholder="Qty" />
-                  <button type="button" title="Create a new ingredient" onClick={() => openQuickAdd(index)} className="flex-shrink-0 px-2 py-1.5 rounded-lg border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-colors text-xs font-bold leading-none">+ New</button>
-                  <button type="button" onClick={() => removeIng(index)} className="text-muted-foreground hover:text-destructive flex-shrink-0"><X className="w-4 h-4" /></button>
-                </div>
-              ))}
+            {ingFields.length === 0 && <p className="text-xs text-muted-foreground italic pl-1 pb-1">No ingredients added</p>}
+            <div className="space-y-1.5">
+              {ingFields.map((field, index) => {
+                const cost = ingLineCost(index);
+                return (
+                  <div key={field.id} className="grid grid-cols-[1fr_6rem_4.5rem_1.25rem] gap-2 items-center">
+                    <div className="flex gap-1 min-w-0">
+                      <select {...register(`ingredients.${index}.ingredientId`)} className="flex-1 min-w-0 px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30">
+                        <option value={0} disabled>Select…</option>
+                        {localIngredients.map(i => <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>)}
+                      </select>
+                      <button type="button" title="Create a new ingredient" onClick={() => openQuickAdd(index)} className="flex-shrink-0 px-1.5 py-1.5 rounded-lg border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-colors text-xs font-bold leading-none">+</button>
+                    </div>
+                    <input type="number" step="0.0001" {...register(`ingredients.${index}.quantity`)} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0.000" />
+                    <span className="text-xs tabular-nums text-right text-muted-foreground">
+                      {cost !== null ? `£${cost.toFixed(4)}` : "—"}
+                    </span>
+                    <button type="button" onClick={() => removeIng(index)} className="text-muted-foreground hover:text-destructive flex justify-center"><X className="w-3.5 h-3.5" /></button>
+                  </div>
+                );
+              })}
             </div>
           </div>
+
+          {/* Divider */}
+          <div className="border-t border-dashed border-border/60 my-2" />
+
+          {/* Sub-recipes section */}
           <div>
-            <div className="flex items-center justify-between mb-3">
-              <label className="text-sm font-bold text-accent">Prep Items (Sub-recipes)</label>
-              <button type="button" onClick={() => appendSub({ subRecipeId: 0, quantity: 1 })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add Row</button>
+            <div className="flex items-center justify-between py-1.5">
+              <span className="text-xs font-semibold text-accent uppercase tracking-wide">Prep Items</span>
+              <button type="button" onClick={() => appendSub({ subRecipeId: 0, quantity: 0 })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add</button>
             </div>
-            {subFields.length === 0 && <p className="text-xs text-muted-foreground italic">No prep items added</p>}
-            <div className="space-y-2">
-              {subFields.map((field, index) => (
-                <div key={field.id} className="flex gap-1.5 items-center">
-                  <select {...register(`subRecipes.${index}.subRecipeId`)} className="flex-1 px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30 min-w-0">
-                    <option value={0} disabled>Select…</option>
-                    {subRecipes.map(s => <option key={s.id} value={s.id}>{s.name} ({s.yieldUnit})</option>)}
-                  </select>
-                  <input type="number" step="0.001" {...register(`subRecipes.${index}.quantity`)} className="w-16 px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30 flex-shrink-0" placeholder="Qty" />
-                  <button type="button" onClick={() => removeSub(index)} className="text-muted-foreground hover:text-destructive flex-shrink-0"><X className="w-4 h-4" /></button>
-                </div>
-              ))}
+            {subFields.length === 0 && <p className="text-xs text-muted-foreground italic pl-1 pb-1">No prep items added</p>}
+            <div className="space-y-1.5">
+              {subFields.map((field, index) => {
+                const cost = subLineCost(index);
+                return (
+                  <div key={field.id} className="grid grid-cols-[1fr_6rem_4.5rem_1.25rem] gap-2 items-center">
+                    <select {...register(`subRecipes.${index}.subRecipeId`)} className="min-w-0 px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30">
+                      <option value={0} disabled>Select…</option>
+                      {subRecipes.map(s => <option key={s.id} value={s.id}>{s.name} ({s.yieldUnit})</option>)}
+                    </select>
+                    <input type="number" step="0.0001" {...register(`subRecipes.${index}.quantity`)} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0.000" />
+                    <span className="text-xs tabular-nums text-right text-muted-foreground">
+                      {cost !== null ? `£${cost.toFixed(4)}` : "—"}
+                    </span>
+                    <button type="button" onClick={() => removeSub(index)} className="text-muted-foreground hover:text-destructive flex justify-center"><X className="w-3.5 h-3.5" /></button>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -276,8 +346,8 @@ function EditRecipeDialog({
   id, open, onOpenChange, ingredients, subRecipes, categoryDefaults,
 }: {
   id: number; open: boolean; onOpenChange: (v: boolean) => void;
-  ingredients: { id: number; name: string; unit: string }[];
-  subRecipes: { id: number; name: string; yieldUnit: string }[];
+  ingredients: IngredientOption[];
+  subRecipes: SubRecipeOption[];
   categoryDefaults: { category: string; defaultPackagingCost: number; defaultLabourCost: number }[];
 }) {
   const { data: detail, isLoading } = useGetRecipe(id, { query: { enabled: open } });
@@ -626,8 +696,20 @@ export default function Recipes() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [breakdownId, setBreakdownId] = useState<number | null>(null);
 
-  const ingredientList = ingredients ?? [];
-  const subRecipeList = subRecipesData ?? [];
+  const ingredientList: IngredientOption[] = (ingredients ?? []).map(i => ({
+    id: i.id,
+    name: i.name,
+    unit: i.unit,
+    processingRatio: Number((i as any).processingRatio) || 1,
+    packWeight: Number((i as any).packWeight) || 0,
+    costPerPack: Number((i as any).costPerPack) || 0,
+  }));
+  const subRecipeList: SubRecipeOption[] = (subRecipesData ?? []).map(s => ({
+    id: s.id,
+    name: s.name,
+    yieldUnit: s.yieldUnit,
+    costPerYieldUnit: Number((s as any).costPerYieldUnit) || 0,
+  }));
   const catDefaults = (categoryDefaultsData ?? []).map(d => ({
     category: d.category,
     defaultPackagingCost: d.defaultPackagingCost,
