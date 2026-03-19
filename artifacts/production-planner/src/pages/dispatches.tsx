@@ -9,6 +9,7 @@ import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { format, isPast, isToday } from "date-fns";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
 const schema = z.object({
   recipeId: z.coerce.number().min(1),
@@ -42,6 +43,19 @@ async function fetchShopifyOrderSummary(tag: string): Promise<ShopifyOrderSummar
   return res.json();
 }
 
+interface WeeklyOrderDay {
+  date: string;
+  deliveryDate: string;
+  day: string;
+  orderCount: number;
+}
+
+async function fetchWeeklyOrders(): Promise<WeeklyOrderDay[]> {
+  const res = await fetch(`${BASE}/api/shopify/weekly-orders`, { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to fetch weekly orders");
+  return res.json();
+}
+
 type Tab = "schedule" | "shopify";
 type SortCol = "product" | "orders" | "qty";
 type SortDir = "asc" | "desc";
@@ -62,6 +76,21 @@ export default function Dispatches() {
   const [sortCol, setSortCol] = useState<SortCol>("qty");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [variantFilter, setVariantFilter] = useState("2 Pack");
+
+  const { data: weeklyOrders, isLoading: weeklyLoading, refetch: refetchWeekly } = useQuery({
+    queryKey: ["shopify-weekly-orders"],
+    queryFn: fetchWeeklyOrders,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const todayTag = format(new Date(), "yyyy-MM-dd");
+  const todayIndex = weeklyOrders?.findIndex(d => d.date === todayTag) ?? -1;
+
+  function handleBarClick(entry: WeeklyOrderDay) {
+    setDateTag(entry.deliveryDate);
+    setQueryTag(entry.deliveryDate);
+    setTab("shopify");
+  }
 
   const { register, handleSubmit, reset } = useForm({
     resolver: zodResolver(schema),
@@ -150,6 +179,86 @@ export default function Dispatches() {
           ) : null
         }
       />
+
+      {/* Weekly dispatch chart */}
+      <div className="glass-panel p-6 rounded-2xl border border-border">
+        <div className="flex items-center justify-between mb-1">
+          <div>
+            <h3 className="font-display font-bold text-lg">Dispatch Schedule — Next 7 Days</h3>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Shopify orders by dispatch date · click a bar to view order details
+            </p>
+          </div>
+          <button
+            onClick={() => refetchWeekly()}
+            disabled={weeklyLoading}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${weeklyLoading ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+        </div>
+
+        <div className="h-[200px] w-full mt-4">
+          {weeklyLoading ? (
+            <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+              <RefreshCw className="w-4 h-4 animate-spin mr-2" /> Fetching orders…
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={weeklyOrders} barSize={32} onClick={(e) => {
+                if (e?.activePayload?.[0]?.payload) handleBarClick(e.activePayload[0].payload);
+              }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                <XAxis dataKey="day" stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} />
+                <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} allowDecimals={false} width={28} />
+                <Tooltip
+                  cursor={{ fill: "hsl(var(--secondary))", cursor: "pointer" }}
+                  content={({ active, payload, label }) => {
+                    if (active && payload?.length) {
+                      const item = payload[0].payload as WeeklyOrderDay;
+                      return (
+                        <div className="bg-card border border-border rounded-xl px-4 py-3 shadow-lg text-sm space-y-1">
+                          <p className="font-semibold">Dispatch: {item.date}</p>
+                          <p className="text-muted-foreground text-xs">Delivery: {item.deliveryDate}</p>
+                          <p className="text-primary font-bold pt-1">{item.orderCount} orders</p>
+                          <p className="text-xs text-muted-foreground">Click to view breakdown</p>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
+                />
+                <Bar dataKey="orderCount" radius={[6, 6, 0, 0]} style={{ cursor: "pointer" }}>
+                  {weeklyOrders?.map((entry, i) => (
+                    <Cell
+                      key={entry.date}
+                      fill={i === todayIndex ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.4)"}
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        {weeklyOrders && (
+          <div className="flex gap-4 mt-3 pt-3 border-t border-border text-sm text-muted-foreground">
+            <span>
+              <span className="font-semibold text-foreground">
+                {weeklyOrders.reduce((s, d) => s + d.orderCount, 0)}
+              </span>{" "}total orders this week
+            </span>
+            {todayIndex >= 0 && (
+              <span>
+                <span className="font-semibold text-primary">
+                  {weeklyOrders[todayIndex].orderCount}
+                </span>{" "}today
+              </span>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Tabs */}
       <div className="flex gap-1 p-1 bg-secondary rounded-xl w-fit">
