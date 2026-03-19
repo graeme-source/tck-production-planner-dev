@@ -2025,12 +2025,18 @@ components:
           nullable: true
         createdAt:
           type: string
+        totalBatchesTarget:
+          type: integer
+        itemCount:
+          type: integer
       required:
         - id
         - planDate
         - name
         - status
         - createdAt
+        - totalBatchesTarget
+        - itemCount
 
     ProductionPlanDetail:
       allOf:

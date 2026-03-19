@@ -284,6 +284,8 @@ export interface ProductionPlan {
   status: ProductionPlanStatus;
   batchNumber?: number | null;
   createdAt: string;
+  totalBatchesTarget: number;
+  itemCount: number;
 }
 
 export type ProductionPlanDetail = ProductionPlan & {

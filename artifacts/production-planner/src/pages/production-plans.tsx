@@ -3,8 +3,9 @@ import {
   useListProductionPlans,
   useGetProductionPlan,
   useGetDptCalculator,
+  useListRecipes,
 } from "@workspace/api-client-react";
-import type { DptSuggestion, ProductionPlanDetail } from "@workspace/api-client-react";
+import type { DptSuggestion, ProductionPlanDetail, Recipe } from "@workspace/api-client-react";
 type PlanStatus = "draft" | "active" | "prep" | "building" | "complete";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
@@ -13,7 +14,7 @@ import {
   BarChart2, CheckCircle2,
   Loader2, RefreshCw, Info, Package, ClipboardList, ExternalLink,
   Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef,
-  ArrowRight,
+  ArrowRight, GripVertical,
 } from "lucide-react";
 import { format, addDays, parseISO, isWeekend } from "date-fns";
 import {
@@ -21,6 +22,21 @@ import {
 } from "@/components/ui/dialog";
 import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 type PlanView = "list" | "detail";
 
@@ -54,15 +70,10 @@ function julianBatchNumber(dateStr: string): string {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Create Plan Dialog
+// Sortable row for DPT items
 // ──────────────────────────────────────────────────────────────────────────────
-interface CreatePlanDialogProps {
-  open: boolean;
-  onClose: () => void;
-  onCreated?: (planId: number) => void;
-}
-
 interface PlanItem {
+  id: string;
   recipeId: number;
   recipeName: string;
   included: boolean;
@@ -70,10 +81,145 @@ interface PlanItem {
   batchesTarget: number;
   tinCount: number | null;
   maxBatchesPerTin: number | null;
+  tinSize: string | null;
   currentStock: number;
   demand: number;
   portionsPerBatch: number;
   sopUrl: string | null;
+  isFromDpt: boolean;
+}
+
+interface SortableRowProps {
+  item: PlanItem;
+  saving: boolean;
+  onToggle: (id: string) => void;
+  onBatchChange: (id: string, val: number) => void;
+  onRemove: (id: string) => void;
+  showStockDemand: boolean;
+}
+
+function SortableRow({ item, saving, onToggle, onBatchChange, onRemove, showStockDemand }: SortableRowProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <tr
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        "border-b border-border/50 last:border-0 transition-colors",
+        item.included ? "bg-card" : "bg-secondary/20 opacity-60",
+        isDragging ? "shadow-lg" : ""
+      )}
+    >
+      <td className="py-2.5 px-2">
+        <button
+          {...attributes}
+          {...listeners}
+          className="cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground p-1"
+          title="Drag to reorder"
+        >
+          <GripVertical className="w-4 h-4" />
+        </button>
+      </td>
+      <td className="py-2.5 px-2">
+        <input
+          type="checkbox"
+          checked={item.included}
+          onChange={() => onToggle(item.id)}
+          className="rounded border-border"
+        />
+      </td>
+      <td className="py-2.5 px-3">
+        <div className="flex items-center gap-2">
+          <span className="font-medium">{item.recipeName}</span>
+          {item.sopUrl && (
+            <a
+              href={item.sopUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-muted-foreground hover:text-primary transition-colors"
+              title="Open SOP"
+            >
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          )}
+          {!item.isFromDpt && (
+            <span className="text-xs bg-secondary text-muted-foreground px-1.5 py-0.5 rounded">manual</span>
+          )}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          {item.portionsPerBatch} portions/batch
+          {item.maxBatchesPerTin ? ` · ${item.maxBatchesPerTin} batches/tin` : ""}
+          {item.tinSize ? ` · ${item.tinSize}` : ""}
+        </div>
+      </td>
+      {showStockDemand && (
+        <>
+          <td className="py-2.5 px-3 text-right">
+            <span className={cn(
+              "text-xs px-2 py-0.5 rounded-full",
+              item.currentStock < item.demand
+                ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+            )}>
+              {item.currentStock}
+            </span>
+          </td>
+          <td className="py-2.5 px-3 text-right text-muted-foreground">
+            {item.demand > 0 ? (
+              <span className="text-amber-600 dark:text-amber-400">{item.demand}</span>
+            ) : (
+              <span className="opacity-40">—</span>
+            )}
+          </td>
+          <td className="py-2.5 px-3 text-right text-muted-foreground">
+            {item.isFromDpt ? item.suggestedBatches : <span className="opacity-40">—</span>}
+          </td>
+        </>
+      )}
+      <td className="py-2.5 px-3 text-right">
+        <input
+          type="number"
+          min={0}
+          value={item.batchesTarget}
+          onChange={e => onBatchChange(item.id, Number(e.target.value))}
+          disabled={!item.included || saving}
+          className="w-20 px-2 py-1 bg-background border border-border rounded-lg text-sm text-right focus-ring disabled:opacity-40"
+        />
+      </td>
+      <td className="py-2.5 px-3 text-right font-medium">
+        {item.tinCount !== null ? (
+          <span className="text-emerald-600 dark:text-emerald-400">{item.tinCount}</span>
+        ) : (
+          <span className="text-muted-foreground opacity-40">—</span>
+        )}
+      </td>
+      <td className="py-2.5 px-2 text-right">
+        <button
+          onClick={() => onRemove(item.id)}
+          className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded"
+          title="Remove from plan"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Create Plan Dialog
+// ──────────────────────────────────────────────────────────────────────────────
+interface CreatePlanDialogProps {
+  open: boolean;
+  onClose: () => void;
+  onCreated?: (planId: number) => void;
 }
 
 function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
@@ -83,14 +229,18 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<PlanItem[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [addRecipeId, setAddRecipeId] = useState<string>("");
+  const [showStockDemand, setShowStockDemand] = useState(true);
 
   const { data: suggestions, isLoading: loadingDpt, refetch: refetchDpt } = useGetDptCalculator(
     { date: planDate },
     { query: { enabled: open } }
   );
+  const { data: allRecipes } = useListRecipes({ query: { enabled: open } });
   const { createPlan } = useAppMutations();
 
-  // Auto-populate name when date changes
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
   useEffect(() => {
     if (planDate) {
       const d = parseISO(planDate);
@@ -98,22 +248,24 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
     }
   }, [planDate]);
 
-  // Sync DPT suggestions into editable items
   useEffect(() => {
     if (!suggestions) return;
     setItems(
       suggestions.map((s: DptSuggestion) => ({
+        id: `dpt-${s.recipeId}`,
         recipeId: s.recipeId,
         recipeName: s.recipeName ?? `Recipe #${s.recipeId}`,
         included: s.suggestedBatches > 0,
         suggestedBatches: s.suggestedBatches,
         batchesTarget: s.suggestedBatches,
-        tinCount: s.tinCount,
-        maxBatchesPerTin: s.maxBatchesPerTin,
+        tinCount: s.tinCount ?? null,
+        maxBatchesPerTin: s.maxBatchesPerTin ?? null,
+        tinSize: s.tinSize ?? null,
         currentStock: s.currentStock,
         demand: s.demand,
         portionsPerBatch: s.portionsPerBatch,
-        sopUrl: s.sopUrl,
+        sopUrl: s.sopUrl ?? null,
+        isFromDpt: true,
       }))
     );
   }, [suggestions]);
@@ -123,10 +275,10 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
     return Math.ceil(batchesTarget / maxBatchesPerTin);
   };
 
-  const updateItem = (recipeId: number, updates: Partial<PlanItem>) => {
+  const updateItem = (id: string, updates: Partial<PlanItem>) => {
     setItems(prev =>
       prev.map(it => {
-        if (it.recipeId !== recipeId) return it;
+        if (it.id !== id) return it;
         const merged = { ...it, ...updates };
         if ("batchesTarget" in updates) {
           merged.tinCount = recalcTins(merged.batchesTarget, merged.maxBatchesPerTin);
@@ -136,6 +288,46 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
     );
   };
 
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setItems(prev => {
+        const oldIdx = prev.findIndex(it => it.id === active.id);
+        const newIdx = prev.findIndex(it => it.id === over.id);
+        return arrayMove(prev, oldIdx, newIdx);
+      });
+    }
+  };
+
+  const addRecipeToList = () => {
+    const recipeId = Number(addRecipeId);
+    if (!recipeId) return;
+    if (items.some(it => it.recipeId === recipeId)) {
+      setAddRecipeId("");
+      return;
+    }
+    const recipe = allRecipes?.find((r: Recipe) => r.id === recipeId);
+    if (!recipe) return;
+    const newItem: PlanItem = {
+      id: `manual-${recipeId}`,
+      recipeId,
+      recipeName: recipe.name,
+      included: true,
+      suggestedBatches: 0,
+      batchesTarget: 0,
+      tinCount: null,
+      maxBatchesPerTin: recipe.maxBatchesPerTin ?? null,
+      tinSize: recipe.tinSize ?? null,
+      currentStock: 0,
+      demand: 0,
+      portionsPerBatch: recipe.portionsPerBatch ?? 10,
+      sopUrl: recipe.sopUrl ?? null,
+      isFromDpt: false,
+    };
+    setItems(prev => [...prev, newItem]);
+    setAddRecipeId("");
+  };
+
   const handleSubmit = async () => {
     const includedItems = items.filter(it => it.included);
     if (includedItems.length === 0) return;
@@ -143,16 +335,16 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
     setIsSubmitting(true);
     try {
       const data = {
-        planDate: new Date(planDate + "T00:00:00").toISOString(),
+        planDate,
         name: planName || `Plan ${planDate}`,
         notes: notes || undefined,
         items: includedItems.map((it, i) => ({
           recipeId: it.recipeId,
           orderPosition: i + 1,
           batchesTarget: it.batchesTarget,
-          batchesComplete: 0,
-          wonlyCount: 0,
-          status: "pending",
+          tinSize: it.tinSize ?? undefined,
+          maxBatchesPerTin: it.maxBatchesPerTin ?? undefined,
+          sopUrl: it.sopUrl ?? undefined,
         })),
       };
 
@@ -172,10 +364,11 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   };
 
   const includedCount = items.filter(it => it.included).length;
+  const availableToAdd = (allRecipes ?? []).filter((r: Recipe) => !items.some(it => it.recipeId === r.id));
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-4xl bg-card border-border rounded-2xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-5xl bg-card border-border rounded-2xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader className="pb-4 border-b border-border flex-shrink-0">
           <DialogTitle className="font-display text-xl flex items-center gap-2">
             <CalendarDays className="w-5 h-5 text-primary" />
@@ -183,9 +376,9 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
           </DialogTitle>
         </DialogHeader>
 
-        <div className="overflow-y-auto flex-1 p-1">
+        <div className="overflow-y-auto flex-1 px-1 pt-1">
           {/* Plan metadata */}
-          <div className="grid grid-cols-2 gap-4 mb-6">
+          <div className="grid grid-cols-2 gap-4 mb-5">
             <div>
               <label className="text-sm font-medium mb-1 block text-muted-foreground">Production Date</label>
               <input
@@ -216,22 +409,30 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
             </div>
           </div>
 
-          {/* DPT Calculator */}
-          <div className="flex items-center justify-between mb-3">
+          {/* Recipe table header */}
+          <div className="flex items-center justify-between mb-2">
             <h3 className="font-semibold text-sm flex items-center gap-2">
               <BarChart2 className="w-4 h-4 text-primary" />
-              DPT Auto-Calculator
+              Production Items
               <span className="text-muted-foreground font-normal text-xs">
-                ({includedCount} of {items.length} recipes included)
+                ({includedCount} of {items.length} included · drag to reorder)
               </span>
             </h3>
-            <button
-              onClick={() => refetchDpt()}
-              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
-            >
-              <RefreshCw className="w-3 h-3" />
-              Refresh
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowStockDemand(p => !p)}
+                className="text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg px-2 py-1 transition-colors"
+              >
+                {showStockDemand ? "Hide stock/demand" : "Show stock/demand"}
+              </button>
+              <button
+                onClick={() => refetchDpt()}
+                className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
+              >
+                <RefreshCw className="w-3 h-3" />
+                Refresh DPT
+              </button>
+            </div>
           </div>
 
           {loadingDpt ? (
@@ -239,129 +440,105 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
               <Loader2 className="w-5 h-5 animate-spin mr-2" />
               Calculating targets...
             </div>
-          ) : items.length === 0 ? (
-            <div className="text-center py-10 text-muted-foreground bg-secondary/20 rounded-xl">
-              <Info className="w-8 h-8 mx-auto mb-2 opacity-40" />
-              <p className="text-sm">No active DPT settings found.</p>
-              <p className="text-xs mt-1">Configure DPT settings in Admin Settings first.</p>
-            </div>
           ) : (
-            <div className="border border-border rounded-xl overflow-hidden">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-secondary/30 border-b border-border">
-                    <th className="w-8 py-2.5 px-3 text-left">
-                      <input
-                        type="checkbox"
-                        checked={items.every(it => it.included)}
-                        onChange={e => setItems(prev => prev.map(it => ({ ...it, included: e.target.checked })))}
-                        className="rounded border-border"
-                      />
-                    </th>
-                    <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">Recipe</th>
-                    <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Stock</th>
-                    <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Demand</th>
-                    <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Suggested</th>
-                    <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Target Batches</th>
-                    <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Tins</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map(it => (
-                    <tr
-                      key={it.recipeId}
-                      className={cn(
-                        "border-b border-border/50 last:border-0 transition-colors",
-                        it.included ? "bg-card" : "bg-secondary/20 opacity-60"
-                      )}
-                    >
-                      <td className="py-2.5 px-3">
-                        <input
-                          type="checkbox"
-                          checked={it.included}
-                          onChange={e => updateItem(it.recipeId, { included: e.target.checked })}
-                          className="rounded border-border"
-                        />
-                      </td>
-                      <td className="py-2.5 px-3">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{it.recipeName}</span>
-                          {it.sopUrl && (
-                            <a
-                              href={it.sopUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-muted-foreground hover:text-primary transition-colors"
-                              title="Open SOP"
-                            >
-                              <ExternalLink className="w-3 h-3" />
-                            </a>
-                          )}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {it.portionsPerBatch} portions/batch
-                          {it.maxBatchesPerTin ? ` · ${it.maxBatchesPerTin} batches/tin` : ""}
-                        </div>
-                      </td>
-                      <td className="py-2.5 px-3 text-right">
-                        <span className={cn(
-                          "text-xs px-2 py-0.5 rounded-full",
-                          it.currentStock < it.demand
-                            ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                            : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-                        )}>
-                          {it.currentStock}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 text-right text-muted-foreground">
-                        {it.demand > 0 ? (
-                          <span className="text-amber-600 dark:text-amber-400">{it.demand}</span>
-                        ) : (
-                          <span className="opacity-40">—</span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3 text-right text-muted-foreground">
-                        {it.suggestedBatches}
-                      </td>
-                      <td className="py-2.5 px-3 text-right">
-                        <input
-                          type="number"
-                          min={0}
-                          value={it.batchesTarget}
-                          onChange={e => updateItem(it.recipeId, { batchesTarget: Number(e.target.value) })}
-                          disabled={!it.included}
-                          className="w-20 px-2 py-1 bg-background border border-border rounded-lg text-sm text-right focus-ring disabled:opacity-40"
-                        />
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-medium text-muted-foreground">
-                        {it.tinCount !== null ? (
-                          <span className="text-foreground">{it.tinCount}</span>
-                        ) : (
-                          <span className="opacity-40">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+            <>
+              {items.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground bg-secondary/20 rounded-xl mb-3">
+                  <Info className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                  <p className="text-sm">No active DPT settings found.</p>
+                  <p className="text-xs mt-1">Add recipes below or configure DPT settings in Admin Settings.</p>
+                </div>
+              ) : (
+                <div className="border border-border rounded-xl overflow-hidden mb-3">
+                  <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                    <SortableContext items={items.map(it => it.id)} strategy={verticalListSortingStrategy}>
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-secondary/30 border-b border-border">
+                            <th className="w-8 py-2.5 px-2" />
+                            <th className="w-8 py-2.5 px-2">
+                              <input
+                                type="checkbox"
+                                checked={items.every(it => it.included)}
+                                onChange={e => setItems(prev => prev.map(it => ({ ...it, included: e.target.checked })))}
+                                className="rounded border-border"
+                              />
+                            </th>
+                            <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">Recipe</th>
+                            {showStockDemand && (
+                              <>
+                                <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Stock</th>
+                                <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Demand</th>
+                                <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Suggested</th>
+                              </>
+                            )}
+                            <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Batches</th>
+                            <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Tins</th>
+                            <th className="w-8 py-2.5 px-2" />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {items.map((it) => (
+                            <SortableRow
+                              key={it.id}
+                              item={it}
+                              saving={isSubmitting}
+                              showStockDemand={showStockDemand}
+                              onToggle={(id) => updateItem(id, { included: !it.included })}
+                              onBatchChange={(id, val) => updateItem(id, { batchesTarget: val })}
+                              onRemove={(id) => setItems(prev => prev.filter(i => i.id !== id))}
+                            />
+                          ))}
+                        </tbody>
+                      </table>
+                    </SortableContext>
+                  </DndContext>
+                </div>
+              )}
 
-          {/* Legend */}
-          <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-emerald-500" />
-              Stock ≥ demand
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-red-500" />
-              Stock &lt; demand (top-up needed)
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-amber-500" />
-              Demand from next 3 dispatches
-            </div>
-          </div>
+              {/* Add non-DPT recipe */}
+              {availableToAdd.length > 0 && (
+                <div className="flex items-center gap-2 mb-3">
+                  <select
+                    value={addRecipeId}
+                    onChange={e => setAddRecipeId(e.target.value)}
+                    className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
+                  >
+                    <option value="">Add a recipe to this plan...</option>
+                    {availableToAdd.map((r: Recipe) => (
+                      <option key={r.id} value={r.id}>{r.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={addRecipeToList}
+                    disabled={!addRecipeId}
+                    className="px-3 py-2 bg-secondary text-secondary-foreground rounded-lg text-sm font-medium hover:bg-secondary/80 disabled:opacity-40 flex items-center gap-1.5 transition-colors"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add
+                  </button>
+                </div>
+              )}
+
+              {/* Legend */}
+              {showStockDemand && items.length > 0 && (
+                <div className="flex items-center gap-4 mt-1 mb-3 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                    Stock ≥ demand
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-red-500" />
+                    Stock &lt; demand
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-amber-500" />
+                    Demand (next 3 dispatches)
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
 
         <div className="border-t border-border pt-4 flex items-center justify-between flex-shrink-0">
@@ -564,7 +741,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
             <Package className="w-4 h-4 text-primary" />
             Production Items
           </h2>
-          <span className="text-xs text-muted-foreground">{plan.items?.length ?? 0} recipes</span>
+          <span className="text-xs text-muted-foreground">{plan.items?.length ?? 0} recipes · {totalBatchesTarget} total batches</span>
         </div>
         <table className="w-full text-sm">
           <thead>
@@ -572,8 +749,10 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
               <th className="py-2.5 px-4 text-left font-medium text-muted-foreground">#</th>
               <th className="py-2.5 px-4 text-left font-medium text-muted-foreground">Recipe</th>
               <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Target</th>
-              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Complete</th>
+              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Done</th>
               <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Wonlys</th>
+              <th className="py-2.5 px-4 text-right font-medium text-muted-foreground">Tin Size</th>
+              <th className="py-2.5 px-4 text-right font-medium text-muted-foreground">Tins</th>
               <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Status</th>
               <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Progress</th>
             </tr>
@@ -585,16 +764,27 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                 : 0;
               const itemStatusConfig = {
                 pending: { color: "bg-secondary text-secondary-foreground", label: "Pending" },
-                in_progress: { color: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400", label: "In Progress" },
-                completed: { color: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400", label: "Done" },
-                skipped: { color: "bg-secondary text-muted-foreground", label: "Skipped" },
+                "in-progress": { color: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400", label: "In Progress" },
+                complete: { color: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400", label: "Done" },
               }[item.status ?? "pending"] ?? { color: "bg-secondary text-secondary-foreground", label: item.status };
+
+              const tinCount = item.maxBatchesPerTin && (item.batchesTarget ?? 0) > 0
+                ? Math.ceil((item.batchesTarget ?? 0) / item.maxBatchesPerTin)
+                : null;
 
               return (
                 <tr key={item.id} className="border-b border-border/50 last:border-0">
-                  <td className="py-3 px-4 text-muted-foreground">{item.orderPosition}</td>
+                  <td className="py-3 px-4 text-muted-foreground text-sm">{item.orderPosition}</td>
                   <td className="py-3 px-4">
-                    <span className="font-medium">{item.recipeName ?? `Recipe #${item.recipeId}`}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{item.recipeName ?? `Recipe #${item.recipeId}`}</span>
+                      {item.sopUrl && (
+                        <a href={item.sopUrl} target="_blank" rel="noopener noreferrer"
+                          className="text-muted-foreground hover:text-primary transition-colors" title="Open SOP">
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      )}
+                    </div>
                   </td>
                   <td className="py-3 px-4 text-center font-medium">{item.batchesTarget ?? 0}</td>
                   <td className="py-3 px-4 text-center">{item.batchesComplete ?? 0}</td>
@@ -603,6 +793,16 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                       <span className="text-amber-600 dark:text-amber-400 font-medium">{item.wonlyCount}</span>
                     ) : (
                       <span className="text-muted-foreground opacity-40">0</span>
+                    )}
+                  </td>
+                  <td className="py-3 px-4 text-right text-muted-foreground text-xs">
+                    {item.tinSize ?? <span className="opacity-40">—</span>}
+                  </td>
+                  <td className="py-3 px-4 text-right">
+                    {tinCount !== null ? (
+                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">{tinCount}</span>
+                    ) : (
+                      <span className="text-muted-foreground opacity-40">—</span>
                     )}
                   </td>
                   <td className="py-3 px-4 text-center">
@@ -773,6 +973,12 @@ function PlansList({ onViewPlan, onCreatePlan }: PlansListProps) {
                       <span className="font-mono text-xs">
                         #{plan.batchNumber ?? julianBatchNumber(plan.planDate)}
                       </span>
+                      {plan.itemCount > 0 && (
+                        <span className="text-xs">
+                          {plan.itemCount} recipe{plan.itemCount !== 1 ? "s" : ""}
+                          {plan.totalBatchesTarget > 0 && ` · ${plan.totalBatchesTarget} batches`}
+                        </span>
+                      )}
                       {plan.notes && (
                         <span className="text-xs truncate max-w-48">{plan.notes}</span>
                       )}

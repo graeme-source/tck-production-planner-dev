@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable } from "@workspace/db";
-import { eq, and, desc, sql, gt, asc } from "drizzle-orm";
+import { eq, and, desc, sql, gt, asc, inArray } from "drizzle-orm";
 import { validate } from "../middleware/validate";
 import * as z from "zod";
 
@@ -71,12 +71,35 @@ const UpdatePlanBody = z.object({
 
 router.get("/", async (req, res) => {
   const { date } = req.query;
-  let query = db.select().from(productionPlansTable).$dynamic();
+  let plansQuery = db.select().from(productionPlansTable).$dynamic();
   if (date) {
-    query = query.where(eq(productionPlansTable.planDate, String(date)));
+    plansQuery = plansQuery.where(eq(productionPlansTable.planDate, String(date)));
   }
-  const rows = await query.orderBy(productionPlansTable.planDate);
-  res.json(rows.map(mapPlan));
+  const plans = await plansQuery.orderBy(productionPlansTable.planDate);
+
+  if (plans.length === 0) {
+    res.json([]);
+    return;
+  }
+
+  const planIds = plans.map(p => p.id);
+  const totals = await db
+    .select({
+      planId: productionPlanItemsTable.planId,
+      totalBatchesTarget: sql<number>`SUM(${productionPlanItemsTable.batchesTarget})`.as("total_batches_target"),
+      itemCount: sql<number>`COUNT(*)`.as("item_count"),
+    })
+    .from(productionPlanItemsTable)
+    .where(inArray(productionPlanItemsTable.planId, planIds))
+    .groupBy(productionPlanItemsTable.planId);
+
+  const totalsMap = new Map(totals.map(t => [t.planId, { totalBatchesTarget: Number(t.totalBatchesTarget) || 0, itemCount: Number(t.itemCount) || 0 }]));
+
+  res.json(plans.map(p => ({
+    ...mapPlan(p),
+    totalBatchesTarget: totalsMap.get(p.id)?.totalBatchesTarget ?? 0,
+    itemCount: totalsMap.get(p.id)?.itemCount ?? 0,
+  })));
 });
 
 router.post("/", validate(CreatePlanBody), async (req, res) => {

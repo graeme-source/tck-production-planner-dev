@@ -717,6 +717,8 @@ export const ListProductionPlansResponseItem = zod.object({
   status: zod.enum(["draft", "active", "prep", "building", "complete"]),
   batchNumber: zod.number().nullish(),
   createdAt: zod.string(),
+  totalBatchesTarget: zod.number(),
+  itemCount: zod.number(),
 });
 export const ListProductionPlansResponse = zod.array(
   ListProductionPlansResponseItem,
@@ -761,6 +763,8 @@ export const GetProductionPlanResponse = zod
     status: zod.enum(["draft", "active", "prep", "building", "complete"]),
     batchNumber: zod.number().nullish(),
     createdAt: zod.string(),
+    totalBatchesTarget: zod.number(),
+    itemCount: zod.number(),
   })
   .and(
     zod.object({
@@ -825,6 +829,8 @@ export const UpdateProductionPlanResponse = zod.object({
   status: zod.enum(["draft", "active", "prep", "building", "complete"]),
   batchNumber: zod.number().nullish(),
   createdAt: zod.string(),
+  totalBatchesTarget: zod.number(),
+  itemCount: zod.number(),
 });
 
 /**
