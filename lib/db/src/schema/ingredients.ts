@@ -15,6 +15,7 @@ export const ingredientsTable = pgTable("ingredients", {
   secondarySupplierId: integer("secondary_supplier_id").references(() => suppliersTable.id, { onDelete: "set null" }),
   orderingUrl: text("ordering_url"),
   notes: text("notes"),
+  processingRatio: numeric("processing_ratio", { precision: 5, scale: 4 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

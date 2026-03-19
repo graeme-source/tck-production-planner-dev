@@ -24,6 +24,10 @@ const schema = z.object({
   secondarySupplierId: z.coerce.number().optional(),
   orderingUrl: z.string().optional(),
   notes: z.string().optional(),
+  processingRatioPct: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().min(0).max(100).nullable().optional()
+  ),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -31,8 +35,13 @@ type FormValues = z.infer<typeof schema>;
 const emptyDefaults: FormValues = {
   name: "", unit: "kg", packWeight: 0, costPerPack: 0,
   brand: "", supplierPartNumber: "", supplierId: 0, secondarySupplierId: 0,
-  orderingUrl: "", notes: "",
+  orderingUrl: "", notes: "", processingRatioPct: null,
 };
+
+function formatRatioPct(ratio: number | null | undefined): string {
+  if (ratio === null || ratio === undefined) return "—";
+  return (ratio * 100).toFixed(2) + "%";
+}
 
 export default function Ingredients() {
   const { data: ingredients, isLoading } = useListIngredients();
@@ -67,18 +76,22 @@ export default function Ingredients() {
 
   const openEdit = (item: typeof ingredients extends (infer T)[] | undefined ? T : never) => {
     if (!item) return;
-    setEditingId((item as any).id);
+    const it = item as any;
+    setEditingId(it.id);
     reset({
-      name: (item as any).name,
-      unit: (item as any).unit,
-      packWeight: Number((item as any).packWeight),
-      costPerPack: Number((item as any).costPerPack),
-      brand: (item as any).brand ?? "",
-      supplierPartNumber: (item as any).supplierPartNumber ?? "",
-      supplierId: (item as any).supplierId ?? 0,
-      secondarySupplierId: (item as any).secondarySupplierId ?? 0,
-      orderingUrl: (item as any).orderingUrl ?? "",
-      notes: (item as any).notes ?? "",
+      name: it.name,
+      unit: it.unit,
+      packWeight: Number(it.packWeight),
+      costPerPack: Number(it.costPerPack),
+      brand: it.brand ?? "",
+      supplierPartNumber: it.supplierPartNumber ?? "",
+      supplierId: it.supplierId ?? 0,
+      secondarySupplierId: it.secondarySupplierId ?? 0,
+      orderingUrl: it.orderingUrl ?? "",
+      notes: it.notes ?? "",
+      processingRatioPct: it.processingRatio !== null && it.processingRatio !== undefined
+        ? parseFloat((Number(it.processingRatio) * 100).toFixed(4))
+        : null,
     });
     setIsDialogOpen(true);
   };
@@ -94,6 +107,9 @@ export default function Ingredients() {
     secondarySupplierId: data.secondarySupplierId && data.secondarySupplierId > 0 ? data.secondarySupplierId : null,
     orderingUrl: data.orderingUrl || null,
     notes: data.notes || null,
+    processingRatio: data.processingRatioPct !== null && data.processingRatioPct !== undefined
+      ? data.processingRatioPct / 100
+      : null,
   });
 
   const onSubmit = (data: FormValues) => {
@@ -224,6 +240,30 @@ export default function Ingredients() {
               </div>
             )}
 
+            {/* Processing Ratio */}
+            <div>
+              <label className="text-sm font-medium mb-1 block">
+                Processing Ratio
+                <span className="ml-2 text-xs font-normal text-muted-foreground">(unchopped → chopped / raw → cooked)</span>
+              </label>
+              <div className="relative max-w-[160px]">
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="100"
+                  {...register("processingRatioPct")}
+                  className="w-full px-3 pr-8 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  placeholder="e.g. 84.70"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">%</span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Leave blank for 100% (no processing loss). Used to adjust sub-recipe yield calculations.
+              </p>
+              {errors.processingRatioPct && <span className="text-destructive text-xs">{String(errors.processingRatioPct.message)}</span>}
+            </div>
+
             {/* Supplier + Secondary Supplier */}
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -320,6 +360,7 @@ export default function Ingredients() {
                   <th className="px-5 py-3 font-medium">Pack Size</th>
                   <th className="px-5 py-3 font-medium">Cost / Pack</th>
                   <th className="px-5 py-3 font-medium">Cost / Unit</th>
+                  <th className="px-5 py-3 font-medium">Proc. Ratio</th>
                   <th className="px-5 py-3 font-medium">Supplier</th>
                   <th className="px-5 py-3 font-medium">2nd Supplier</th>
                   <th className="px-5 py-3 font-medium">Order</th>
@@ -331,6 +372,7 @@ export default function Ingredients() {
                   const packWeight = Number(item.packWeight);
                   const costPerPack = Number(item.costPerPack);
                   const costPerUnit = packWeight > 0 ? costPerPack / packWeight : 0;
+                  const procRatio = (item as any).processingRatio;
                   return (
                     <tr key={item.id} className="hover:bg-secondary/10 transition-colors">
                       <td className="px-5 py-3 font-medium whitespace-nowrap">{item.name}</td>
@@ -340,6 +382,15 @@ export default function Ingredients() {
                       <td className="px-5 py-3">{packWeight} {item.unit}</td>
                       <td className="px-5 py-3 font-medium">£{costPerPack.toFixed(2)}</td>
                       <td className="px-5 py-3 text-muted-foreground">£{costPerUnit.toFixed(4)}/{item.unit}</td>
+                      <td className="px-5 py-3">
+                        {procRatio !== null && procRatio !== undefined ? (
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${Number(procRatio) < 1 ? "bg-amber-50 text-amber-700" : "bg-secondary/60 text-muted-foreground"}`}>
+                            {(Number(procRatio) * 100).toFixed(2)}%
+                          </span>
+                        ) : (
+                          <span className="text-border">—</span>
+                        )}
+                      </td>
                       <td className="px-5 py-3 text-muted-foreground">
                         {item.supplierId ? supplierMap[item.supplierId] ?? <span className="text-border">—</span> : <span className="text-border">—</span>}
                       </td>

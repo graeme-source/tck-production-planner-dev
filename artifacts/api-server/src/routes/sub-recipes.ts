@@ -34,6 +34,7 @@ router.get("/:id", async (req, res) => {
       ingredientId: subRecipeIngredientsTable.ingredientId,
       ingredientName: ingredientsTable.name,
       unit: ingredientsTable.unit,
+      processingRatio: ingredientsTable.processingRatio,
       quantity: subRecipeIngredientsTable.quantity,
     })
     .from(subRecipeIngredientsTable)
@@ -43,7 +44,11 @@ router.get("/:id", async (req, res) => {
     ...row,
     yield: Number(row.yield),
     createdAt: row.createdAt.toISOString(),
-    ingredients: items.map(i => ({ ...i, quantity: Number(i.quantity) })),
+    ingredients: items.map(i => ({
+      ...i,
+      quantity: Number(i.quantity),
+      processingRatio: i.processingRatio !== null && i.processingRatio !== undefined ? Number(i.processingRatio) : null,
+    })),
   });
 });
 

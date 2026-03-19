@@ -3,7 +3,7 @@ import { useListSubRecipes, useListIngredients, useGetSubRecipe } from "@workspa
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
-import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2, RotateCcw } from "lucide-react";
+import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2, RotateCcw, FlaskConical } from "lucide-react";
 import { useForm, useFieldArray } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -23,6 +23,13 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
+type IngredientOption = {
+  id: number;
+  name: string;
+  unit: string;
+  processingRatio?: number | null;
+};
+
 function YieldSanityCheck({
   ingredientRows,
   allIngredients,
@@ -30,28 +37,37 @@ function YieldSanityCheck({
   yieldUnit,
 }: {
   ingredientRows: { ingredientId: number; quantity: number }[];
-  allIngredients: { id: number; name: string; unit: string }[];
+  allIngredients: IngredientOption[];
   yieldValue: number;
   yieldUnit: string;
 }) {
-  // Sum kg-equivalent inputs (g → kg, kg stays kg; skip non-weight units)
-  let totalKg = 0;
+  let rawKg = 0;
+  let processedKg = 0;
   let allWeight = true;
+  let anyRatio = false;
+
   for (const row of ingredientRows) {
     const ing = allIngredients.find(i => i.id === row.ingredientId);
     if (!ing) continue;
-    if (ing.unit === "kg") totalKg += row.quantity;
-    else if (ing.unit === "g") totalKg += row.quantity / 1000;
-    else allWeight = false;
+    let qKg: number | null = null;
+    if (ing.unit === "kg") qKg = row.quantity;
+    else if (ing.unit === "g") qKg = row.quantity / 1000;
+    else { allWeight = false; continue; }
+
+    const ratio = ing.processingRatio ?? 1.0;
+    if (ratio < 1.0) anyRatio = true;
+    rawKg += qKg;
+    processedKg += qKg * ratio;
   }
 
-  if (totalKg === 0) return null;
+  if (rawKg === 0) return null;
   const yieldKg = yieldUnit === "kg" ? yieldValue : yieldUnit === "g" ? yieldValue / 1000 : null;
   if (yieldKg === null) return null;
 
-  const ratio = yieldKg / totalKg;
+  const compareKg = anyRatio ? processedKg : rawKg;
+  const ratio = yieldKg / compareKg;
   const pct = (ratio * 100).toFixed(0);
-  const ok = ratio >= 0.5 && ratio <= 1.05; // 50–105% is physically plausible
+  const ok = ratio >= 0.5 && ratio <= 1.05;
   const warning = !ok;
 
   return (
@@ -62,14 +78,16 @@ function YieldSanityCheck({
       }
       <div>
         <span className="font-medium">
-          {allWeight ? "" : "Weight-only ingredients: "}
-          Input {totalKg.toFixed(3)} kg → Yield {yieldKg.toFixed(3)} kg ({pct}% retention)
+          {anyRatio
+            ? `Raw input ${rawKg.toFixed(3)} kg → Processing-adjusted ${processedKg.toFixed(3)} kg → Yield ${yieldKg.toFixed(3)} kg (${pct}% of processed)`
+            : `${allWeight ? "" : "Weight-only ingredients: "}Input ${rawKg.toFixed(3)} kg → Yield ${yieldKg.toFixed(3)} kg (${pct}% retention)`
+          }
         </span>
         {warning && (
           <p className="text-xs mt-0.5">
             {ratio < 0.5
-              ? "Yield looks low vs inputs — did you mean a larger yield? (e.g. a batch of " + totalKg.toFixed(1) + " kg)"
-              : "Yield exceeds total input weight — please check ingredient quantities or yield value."}
+              ? "Yield looks low vs inputs — did you mean a larger yield? (e.g. a batch of " + compareKg.toFixed(1) + " kg)"
+              : "Yield exceeds expected processed weight — please check ingredient quantities or yield value."}
           </p>
         )}
       </div>
@@ -77,16 +95,17 @@ function YieldSanityCheck({
   );
 }
 
-function computeTotalKg(
+function computeProcessedKg(
   rows: { ingredientId: number; quantity: number }[],
-  allIngredients: { id: number; name: string; unit: string }[],
+  allIngredients: IngredientOption[],
 ): number {
   let total = 0;
   for (const row of rows) {
     const ing = allIngredients.find(i => i.id === Number(row.ingredientId));
     if (!ing || !row.quantity) continue;
-    if (ing.unit === "kg") total += Number(row.quantity);
-    else if (ing.unit === "g") total += Number(row.quantity) / 1000;
+    const ratio = ing.processingRatio ?? 1.0;
+    if (ing.unit === "kg") total += Number(row.quantity) * ratio;
+    else if (ing.unit === "g") total += (Number(row.quantity) / 1000) * ratio;
   }
   return total;
 }
@@ -102,7 +121,7 @@ function SubRecipeForm({
   onSubmit: (data: FormValues) => void;
   isPending: boolean;
   isEdit: boolean;
-  ingredients: { id: number; name: string; unit: string }[];
+  ingredients: IngredientOption[];
 }) {
   const { register, control, handleSubmit, setValue, watch, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -113,7 +132,6 @@ function SubRecipeForm({
   const [localIngredients, setLocalIngredients] = useState(initialIngredients);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickAddTargetIndex, setQuickAddTargetIndex] = useState<number | null>(null);
-  // Auto-yield: true = follow ingredient total, false = user has overridden
   const [isYieldAuto, setIsYieldAuto] = useState(!isEdit);
   const yieldInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -121,26 +139,24 @@ function SubRecipeForm({
   const watchedYield = watch("yield");
   const watchedYieldUnit = watch("yieldUnit");
 
-  // When in auto mode, keep yield in sync with the sum of all ingredient weights
   useEffect(() => {
     if (!isYieldAuto) return;
     if (watchedYieldUnit !== "kg" && watchedYieldUnit !== "g") return;
-    const totalKg = computeTotalKg(watchedIngredients ?? [], localIngredients);
-    if (totalKg <= 0) return;
+    const processedKg = computeProcessedKg(watchedIngredients ?? [], localIngredients);
+    if (processedKg <= 0) return;
     const autoValue = watchedYieldUnit === "g"
-      ? parseFloat((totalKg * 1000).toFixed(1))
-      : parseFloat(totalKg.toFixed(3));
+      ? parseFloat((processedKg * 1000).toFixed(1))
+      : parseFloat(processedKg.toFixed(3));
     setValue("yield", autoValue, { shouldValidate: false });
   }, [watchedIngredients, isYieldAuto, watchedYieldUnit, localIngredients, setValue]);
 
   const resetToAuto = () => {
     setIsYieldAuto(true);
-    // immediately recalculate
-    const totalKg = computeTotalKg(watchedIngredients ?? [], localIngredients);
-    if (totalKg > 0) {
+    const processedKg = computeProcessedKg(watchedIngredients ?? [], localIngredients);
+    if (processedKg > 0) {
       const autoValue = watchedYieldUnit === "g"
-        ? parseFloat((totalKg * 1000).toFixed(1))
-        : parseFloat(totalKg.toFixed(3));
+        ? parseFloat((processedKg * 1000).toFixed(1))
+        : parseFloat(processedKg.toFixed(3));
       setValue("yield", autoValue, { shouldValidate: false });
     }
   };
@@ -151,12 +167,17 @@ function SubRecipeForm({
   };
 
   const handleIngredientCreated = (ingredient: { id: number; name: string; unit: string }) => {
-    setLocalIngredients(prev => [...prev, ingredient]);
+    setLocalIngredients(prev => [...prev, { ...ingredient, processingRatio: null }]);
     if (quickAddTargetIndex !== null) {
       setValue(`ingredients.${quickAddTargetIndex}.ingredientId`, ingredient.id);
     }
     setQuickAddTargetIndex(null);
   };
+
+  const hasAnyRatio = (watchedIngredients ?? []).some(row => {
+    const ing = localIngredients.find(i => i.id === Number(row.ingredientId));
+    return ing?.processingRatio != null && ing.processingRatio < 1;
+  });
 
   return (
     <>
@@ -187,8 +208,9 @@ function SubRecipeForm({
             <div className="flex items-center justify-between mb-1">
               <label className="text-sm font-medium">Batch Yield *</label>
               {isYieldAuto ? (
-                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary">
-                  Auto
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary flex items-center gap-1">
+                  {hasAnyRatio && <FlaskConical className="w-3 h-3" />}
+                  {hasAnyRatio ? "Auto (ratio-adjusted)" : "Auto"}
                 </span>
               ) : (
                 <button
@@ -216,7 +238,11 @@ function SubRecipeForm({
               placeholder="e.g. 32.76"
             />
             <p className="text-xs text-muted-foreground mt-1">
-              {isYieldAuto ? "Tracking total ingredient weight — edit to override" : "Manual override — type a lower value for processing reduction"}
+              {isYieldAuto
+                ? hasAnyRatio
+                  ? "Auto-calculated from ingredient quantities × processing ratios"
+                  : "Tracking total ingredient weight — edit to override"
+                : "Manual override — type a lower value for processing reduction"}
             </p>
             {errors.yield && <span className="text-destructive text-xs">{errors.yield.message}</span>}
           </div>
@@ -249,7 +275,6 @@ function SubRecipeForm({
             <p className="text-xs text-muted-foreground italic py-2">No ingredients yet — click "Add Row" to start.</p>
           )}
 
-          {/* Column headers */}
           {fields.length > 0 && (
             <div className="grid grid-cols-[1fr_80px_44px_44px] gap-2 mb-1 px-1">
               <span className="text-xs text-muted-foreground font-medium">Ingredient</span>
@@ -264,52 +289,60 @@ function SubRecipeForm({
               const selectedId = Number(watchedIngredients?.[index]?.ingredientId ?? 0);
               const selectedIng = localIngredients.find(i => i.id === selectedId);
               const unit = selectedIng?.unit ?? "";
+              const ratio = selectedIng?.processingRatio;
               return (
-                <div key={field.id} className="grid grid-cols-[1fr_80px_44px_44px] gap-2 items-center">
-                  <select
-                    {...register(`ingredients.${index}.ingredientId`)}
-                    className="px-2 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 truncate"
-                  >
-                    <option value={0} disabled>Select ingredient...</option>
-                    {localIngredients.map(i => (
-                      <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>
-                    ))}
-                  </select>
-                  <div className="relative">
-                    <input
-                      type="number"
-                      step="0.001"
-                      {...register(`ingredients.${index}.quantity`)}
-                      className="w-full px-2 py-2 pr-7 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                      placeholder="Qty"
-                    />
-                    {unit && (
-                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">
-                        {unit}
-                      </span>
-                    )}
+                <div key={field.id}>
+                  <div className="grid grid-cols-[1fr_80px_44px_44px] gap-2 items-center">
+                    <select
+                      {...register(`ingredients.${index}.ingredientId`)}
+                      className="px-2 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 truncate"
+                    >
+                      <option value={0} disabled>Select ingredient...</option>
+                      {localIngredients.map(i => (
+                        <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>
+                      ))}
+                    </select>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        step="0.001"
+                        {...register(`ingredients.${index}.quantity`)}
+                        className="w-full px-2 py-2 pr-7 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                        placeholder="Qty"
+                      />
+                      {unit && (
+                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">
+                          {unit}
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      title="Add new ingredient"
+                      onClick={() => openQuickAdd(index)}
+                      className="px-1.5 py-2 rounded-lg border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-colors text-xs font-semibold"
+                    >
+                      +New
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => remove(index)}
+                      className="flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    title="Add new ingredient"
-                    onClick={() => openQuickAdd(index)}
-                    className="px-1.5 py-2 rounded-lg border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-colors text-xs font-semibold"
-                  >
-                    +New
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => remove(index)}
-                    className="flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
+                  {ratio != null && ratio < 1 && (
+                    <div className="ml-1 mt-0.5 text-xs text-amber-600 flex items-center gap-1">
+                      <FlaskConical className="w-3 h-3" />
+                      Processing ratio: {(ratio * 100).toFixed(2)}% — yield adjusted from raw input
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
 
-          {/* Yield sanity check */}
           {fields.length > 0 && (
             <div className="mt-3">
               <YieldSanityCheck
@@ -352,7 +385,7 @@ function EditSubRecipeDialog({
   id: number;
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  ingredients: { id: number; name: string; unit: string }[];
+  ingredients: IngredientOption[];
 }) {
   const { data: detail, isLoading } = useGetSubRecipe(id, { query: { enabled: open } });
   const { updateSubRecipe } = useAppMutations();
@@ -405,7 +438,13 @@ export default function SubRecipes() {
   const [editingId, setEditingId] = useState<number | null>(null);
 
   const filtered = subRecipes?.filter(r => r.name.toLowerCase().includes(search.toLowerCase()));
-  const ingredientList = ingredients ?? [];
+
+  const ingredientList: IngredientOption[] = (ingredients ?? []).map((i: any) => ({
+    id: i.id,
+    name: i.name,
+    unit: i.unit,
+    processingRatio: i.processingRatio ?? null,
+  }));
 
   const addDefaults: FormValues = {
     name: "", description: "", yield: 1, yieldUnit: "kg", notes: "",
@@ -464,7 +503,7 @@ export default function SubRecipes() {
       </div>
 
       {isLoading && (
-        <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+        <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin" /></div>
       )}
 
       {!isLoading && filtered?.length === 0 && (
