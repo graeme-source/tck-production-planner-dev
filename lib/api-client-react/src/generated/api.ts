@@ -41,6 +41,8 @@ import type {
   GetDptCalculatorParams,
   GetPrepRequirements200,
   GetPrepRequirementsParams,
+  GetStationActivity200,
+  GetStationKpiParams,
   HealthStatus,
   Ingredient,
   ListBatchCompletionsParams,
@@ -55,6 +57,7 @@ import type {
   RecipeDetail,
   SalesEntry,
   StationBreak,
+  StationKpi,
   StockEntry,
   SubRecipe,
   SubRecipeDetail,
@@ -3435,6 +3438,205 @@ export const useDeleteStationBreak = <
 > => {
   return useMutation(getDeleteStationBreakMutationOptions(options));
 };
+
+/**
+ * @summary Get server-side KPI for a station (batches/hr from DB)
+ */
+export const getGetStationKpiUrl = (
+  id: number,
+  params: GetStationKpiParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/production-plans/${id}/kpi?${stringifiedParams}`
+    : `/api/production-plans/${id}/kpi`;
+};
+
+export const getStationKpi = async (
+  id: number,
+  params: GetStationKpiParams,
+  options?: RequestInit,
+): Promise<StationKpi> => {
+  return customFetch<StationKpi>(getGetStationKpiUrl(id, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetStationKpiQueryKey = (
+  id: number,
+  params?: GetStationKpiParams,
+) => {
+  return [
+    `/api/production-plans/${id}/kpi`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetStationKpiQueryOptions = <
+  TData = Awaited<ReturnType<typeof getStationKpi>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  params: GetStationKpiParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getStationKpi>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetStationKpiQueryKey(id, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getStationKpi>>> = ({
+    signal,
+  }) => getStationKpi(id, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getStationKpi>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetStationKpiQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getStationKpi>>
+>;
+export type GetStationKpiQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get server-side KPI for a station (batches/hr from DB)
+ */
+
+export function useGetStationKpi<
+  TData = Awaited<ReturnType<typeof getStationKpi>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  params: GetStationKpiParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getStationKpi>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetStationKpiQueryOptions(id, params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get active user counts per station today
+ */
+export const getGetStationActivityUrl = (id: number) => {
+  return `/api/production-plans/${id}/station-activity`;
+};
+
+export const getStationActivity = async (
+  id: number,
+  options?: RequestInit,
+): Promise<GetStationActivity200> => {
+  return customFetch<GetStationActivity200>(getGetStationActivityUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetStationActivityQueryKey = (id: number) => {
+  return [`/api/production-plans/${id}/station-activity`] as const;
+};
+
+export const getGetStationActivityQueryOptions = <
+  TData = Awaited<ReturnType<typeof getStationActivity>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getStationActivity>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetStationActivityQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getStationActivity>>
+  > = ({ signal }) => getStationActivity(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getStationActivity>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetStationActivityQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getStationActivity>>
+>;
+export type GetStationActivityQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get active user counts per station today
+ */
+
+export function useGetStationActivity<
+  TData = Awaited<ReturnType<typeof getStationActivity>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getStationActivity>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetStationActivityQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Get prep requirements for a plan filtered by ingredient category

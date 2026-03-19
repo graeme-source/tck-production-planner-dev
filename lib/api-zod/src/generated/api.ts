@@ -1009,6 +1009,35 @@ export const DeleteStationBreakParams = zod.object({
 });
 
 /**
+ * @summary Get server-side KPI for a station (batches/hr from DB)
+ */
+export const GetStationKpiParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetStationKpiQueryParams = zod.object({
+  stationType: zod.coerce.string(),
+});
+
+export const GetStationKpiResponse = zod.object({
+  batchesCompleted: zod.number(),
+  activeMinutes: zod.number(),
+  breakMinutes: zod.number(),
+  batchesPerHour: zod.number(),
+});
+
+/**
+ * @summary Get active user counts per station today
+ */
+export const GetStationActivityParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetStationActivityResponse = zod
+  .record(zod.string(), zod.number())
+  .describe("Map of stationType to distinct user count today");
+
+/**
  * @summary Get prep requirements for a plan filtered by ingredient category
  */
 export const GetPrepRequirementsParams = zod.object({

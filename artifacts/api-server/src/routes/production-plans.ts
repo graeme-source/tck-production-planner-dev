@@ -276,10 +276,36 @@ router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
 router.patch("/:id/order", async (req, res) => {
   const id = Number(req.params.id);
   const { order } = req.body as { order: { itemId: number; orderPosition: number }[] };
+  const sessionUserRole = (req.session as { userRole?: string }).userRole ?? "viewer";
   if (!Array.isArray(order)) { res.status(400).json({ error: "order must be an array" }); return; }
 
   const [plan] = await db.select().from(productionPlansTable).where(eq(productionPlansTable.id, id));
   if (!plan) { res.status(404).json({ error: "Not found" }); return; }
+
+  // Lock enforcement: fetch current items and verify no started item changes position (unless admin)
+  if (sessionUserRole !== "admin") {
+    const existingItems = await db.select({ id: productionPlanItemsTable.id, orderPosition: productionPlanItemsTable.orderPosition, status: productionPlanItemsTable.status })
+      .from(productionPlanItemsTable)
+      .where(eq(productionPlanItemsTable.planId, id));
+
+    const currentPositionMap = new Map(existingItems.map(it => [it.id, it.orderPosition]));
+    for (const { itemId, orderPosition } of order) {
+      const existing = existingItems.find(it => it.id === itemId);
+      if (existing && existing.status !== "pending" && existing.orderPosition !== orderPosition) {
+        res.status(409).json({ error: `Item ${itemId} has started and cannot be moved` });
+        return;
+      }
+      // Also check if a locked item is being displaced (its current position given to a different item)
+      for (const locked of existingItems.filter(it => it.status !== "pending")) {
+        const newPos = order.find(o => o.itemId === locked.id)?.orderPosition;
+        if (newPos !== undefined && newPos !== locked.orderPosition) {
+          res.status(409).json({ error: `Started recipe "${locked.id}" cannot be repositioned` });
+          return;
+        }
+      }
+    }
+    void currentPositionMap;
+  }
 
   await db.transaction(async (tx) => {
     for (const { itemId, orderPosition } of order) {
@@ -328,7 +354,8 @@ router.delete("/:id", async (req, res) => {
 // Batch completions sub-routes
 router.post("/:id/batch-completions", async (req, res) => {
   const planId = Number(req.params.id);
-  const { planItemId, stationType, userId, startedAt, completedAt } = req.body;
+  const { planItemId, stationType, startedAt, completedAt } = req.body;
+  const sessionUserId = (req.session as { userId?: number }).userId ?? null;
 
   // Verify that the planItemId belongs to this plan (prevent cross-plan contamination)
   const [planItem] = await db.select({ id: productionPlanItemsTable.id })
@@ -342,7 +369,7 @@ router.post("/:id/batch-completions", async (req, res) => {
   const [row] = await db.insert(batchCompletionsTable).values({
     planItemId,
     stationType,
-    userId: userId ?? null,
+    userId: sessionUserId,
     startedAt: startedAt ? new Date(startedAt) : null,
     completedAt: completedAt ? new Date(completedAt) : new Date(),
   }).returning();
@@ -380,12 +407,13 @@ router.get("/:id/batch-completions", async (req, res) => {
 // Station breaks sub-routes
 router.post("/:id/station-breaks", async (req, res) => {
   const planId = Number(req.params.id);
-  const { stationType, userId, breakType, startedAt } = req.body;
+  const { stationType, breakType, startedAt } = req.body;
+  const sessionUserId = (req.session as { userId?: number }).userId ?? null;
 
   const [row] = await db.insert(stationBreaksTable).values({
     planId,
     stationType,
-    userId: userId ?? null,
+    userId: sessionUserId,
     breakType: breakType ?? "morning",
     startedAt: startedAt ? new Date(startedAt) : new Date(),
   }).returning();
@@ -542,6 +570,125 @@ router.get("/:id/prep-requirements", async (req, res) => {
   }
 
   res.json({ items, nextPlanDate });
+});
+
+// GET /:id/kpi?stationType=...&date=YYYY-MM-DD
+// Returns server-side KPI computed from batch_completions minus station_breaks for today
+router.get("/:id/kpi", async (req, res) => {
+  const planId = Number(req.params.id);
+  const stationType = String(req.query.stationType ?? "");
+  const sessionUserId = (req.session as { userId?: number }).userId ?? null;
+
+  if (!stationType) {
+    res.status(400).json({ error: "stationType is required" });
+    return;
+  }
+
+  // Get plan items for this plan
+  const planItems = await db.select({ id: productionPlanItemsTable.id })
+    .from(productionPlanItemsTable)
+    .where(eq(productionPlanItemsTable.planId, planId));
+  const itemIds = planItems.map(i => i.id);
+  if (itemIds.length === 0) {
+    res.json({ batchesCompleted: 0, activeMinutes: 0, breakMinutes: 0, batchesPerHour: 0 });
+    return;
+  }
+
+  // Batch completions for this station (today, this user if logged in)
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  const completions = await db.select({ completedAt: batchCompletionsTable.completedAt, startedAt: batchCompletionsTable.startedAt })
+    .from(batchCompletionsTable)
+    .where(
+      and(
+        sql`plan_item_id = ANY(${itemIds})`,
+        eq(batchCompletionsTable.stationType, stationType),
+        sql`completed_at >= ${today.toISOString()} AND completed_at < ${tomorrow.toISOString()}`,
+        sessionUserId != null ? eq(batchCompletionsTable.userId, sessionUserId) : undefined,
+      )
+    );
+
+  // Station breaks for this station (today, this plan, this user if logged in)
+  const breaksRows = await db.select({
+    startedAt: stationBreaksTable.startedAt,
+    endedAt: stationBreaksTable.endedAt,
+  })
+    .from(stationBreaksTable)
+    .where(
+      and(
+        eq(stationBreaksTable.planId, planId),
+        eq(stationBreaksTable.stationType, stationType),
+        sql`started_at >= ${today.toISOString()} AND started_at < ${tomorrow.toISOString()}`
+      )
+    );
+
+  const batchesCompleted = completions.length;
+
+  // Calculate break minutes (sum of all completed breaks; active break counted up to now)
+  let breakMinutes = 0;
+  for (const b of breaksRows) {
+    const end = b.endedAt ?? new Date();
+    const mins = Math.max(0, (end.getTime() - b.startedAt.getTime()) / 60000);
+    breakMinutes += mins;
+  }
+
+  // Calculate active minutes from first completion to now (or 0 if no completions)
+  let activeMinutes = 0;
+  if (completions.length > 0) {
+    const earliest = completions.reduce((min, c) => {
+      const ts = c.startedAt ?? c.completedAt;
+      return ts < min ? ts : min;
+    }, completions[0].startedAt ?? completions[0].completedAt);
+    const totalElapsedMinutes = (new Date().getTime() - earliest.getTime()) / 60000;
+    activeMinutes = Math.max(0, totalElapsedMinutes - breakMinutes);
+  }
+
+  const batchesPerHour = activeMinutes > 0 ? (batchesCompleted / (activeMinutes / 60)) : 0;
+
+  res.json({
+    batchesCompleted,
+    activeMinutes: Math.round(activeMinutes),
+    breakMinutes: Math.round(breakMinutes),
+    batchesPerHour: Math.round(batchesPerHour * 10) / 10,
+  });
+});
+
+// GET /:id/station-activity — active users per station today (based on station_breaks)
+router.get("/:id/station-activity", async (req, res) => {
+  const planId = Number(req.params.id);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  const breaks = await db.select({
+    stationType: stationBreaksTable.stationType,
+    userId: stationBreaksTable.userId,
+  })
+    .from(stationBreaksTable)
+    .where(
+      and(
+        eq(stationBreaksTable.planId, planId),
+        sql`started_at >= ${today.toISOString()} AND started_at < ${tomorrow.toISOString()}`
+      )
+    );
+
+  // Deduplicate: count distinct user IDs per station (null userId = 1 anonymous)
+  const byStation: Record<string, Set<string>> = {};
+  for (const b of breaks) {
+    if (!byStation[b.stationType]) byStation[b.stationType] = new Set();
+    byStation[b.stationType].add(b.userId != null ? String(b.userId) : "anon");
+  }
+
+  const result: Record<string, number> = {};
+  for (const [st, users] of Object.entries(byStation)) {
+    result[st] = users.size;
+  }
+
+  res.json(result);
 });
 
 export default router;

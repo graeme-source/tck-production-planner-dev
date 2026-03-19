@@ -8,9 +8,13 @@ import {
   useEndStationBreak,
   useGetPrepRequirements,
   useListTimingStandards,
+  useGetStationKpi,
+  useGetStationActivity,
   getGetProductionPlanQueryKey,
+  getGetStationKpiQueryKey,
+  getGetStationActivityQueryKey,
 } from "@workspace/api-client-react";
-import type { ProductionPlanDetail, ProductionPlanItem, PrepRequirementItem } from "@workspace/api-client-react";
+import type { ProductionPlanDetail, ProductionPlanItem, PrepRequirementItem, StationKpi } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { useState, useEffect, useCallback } from "react";
@@ -235,15 +239,18 @@ function BreakTracker({ planId, stationType, onBreakChange }: BreakTrackerProps)
 // KPI Bar — computes batches/hour from completions, excludes break time
 // ──────────────────────────────────────────────────────────────────────────────
 interface KpiBarProps {
+  /** Local session fallback (used before server data loads) */
   sessionBatches: number;
   sessionStartedAt: Date | null;
   activeBreakMinutes: number;
   totalBreakMinutes: number;
   targetBph: number | null;
   minBph: number | null;
+  /** Server-side KPI (overrides local when available) */
+  serverKpi?: StationKpi | null;
 }
 
-function KpiBar({ sessionBatches, sessionStartedAt, activeBreakMinutes, totalBreakMinutes, targetBph, minBph }: KpiBarProps) {
+function KpiBar({ sessionBatches, sessionStartedAt, activeBreakMinutes, totalBreakMinutes, targetBph, minBph, serverKpi }: KpiBarProps) {
   const [now, setNow] = useState(new Date());
 
   useEffect(() => {
@@ -251,17 +258,22 @@ function KpiBar({ sessionBatches, sessionStartedAt, activeBreakMinutes, totalBre
     return () => clearInterval(interval);
   }, []);
 
-  const activeMinutes = sessionStartedAt
+  const localActiveMinutes = sessionStartedAt
     ? Math.max(0, differenceInMinutes(now, sessionStartedAt) - totalBreakMinutes - activeBreakMinutes)
     : 0;
-  const activeHours = activeMinutes / 60;
-  const bph = activeHours > 0 ? sessionBatches / activeHours : 0;
+  const localBph = localActiveMinutes > 0 ? sessionBatches / (localActiveMinutes / 60) : 0;
 
-  const color = targetBph && minBph
-    ? bph >= targetBph ? "bg-emerald-500 text-emerald-700 dark:text-emerald-300"
-      : bph >= minBph ? "bg-amber-500 text-amber-700 dark:text-amber-300"
-      : "bg-red-500 text-red-700 dark:text-red-300"
-    : "bg-primary text-foreground";
+  // Prefer server-side KPI when available (authoritative DB-based calculation)
+  const activeMinutes = serverKpi?.activeMinutes ?? localActiveMinutes;
+  const bph = serverKpi?.batchesPerHour ?? localBph;
+  const batchCount = serverKpi?.batchesCompleted ?? sessionBatches;
+  const breakMins = serverKpi?.breakMinutes ?? totalBreakMinutes;
+
+  const bphColor = targetBph && minBph
+    ? bph >= targetBph ? "text-emerald-700 dark:text-emerald-300"
+      : bph >= minBph ? "text-amber-700 dark:text-amber-300"
+      : "text-red-700 dark:text-red-300"
+    : "text-foreground";
 
   const bgColor = targetBph && minBph
     ? bph >= targetBph ? "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800"
@@ -274,16 +286,24 @@ function KpiBar({ sessionBatches, sessionStartedAt, activeBreakMinutes, totalBre
       <TrendingUp className="w-5 h-5 text-muted-foreground flex-shrink-0" />
       <div className="flex items-center gap-6 flex-1 flex-wrap">
         <div className="text-center">
-          <p className="text-xs text-muted-foreground">Batches this session</p>
-          <p className="text-xl font-bold tabular-nums">{sessionBatches}</p>
+          <p className="text-xs text-muted-foreground">Today's batches</p>
+          <p className="text-xl font-bold tabular-nums">{batchCount}</p>
         </div>
         <div className="text-center">
           <p className="text-xs text-muted-foreground">Active time</p>
-          <p className="text-xl font-bold tabular-nums">{activeMinutes}m</p>
+          <p className="text-xl font-bold tabular-nums">
+            {activeMinutes >= 60
+              ? `${Math.floor(activeMinutes / 60)}h ${activeMinutes % 60}m`
+              : `${activeMinutes}m`}
+          </p>
+        </div>
+        <div className="text-center">
+          <p className="text-xs text-muted-foreground">Break time</p>
+          <p className="text-xl font-bold tabular-nums">{breakMins}m</p>
         </div>
         <div className="text-center">
           <p className="text-xs text-muted-foreground">Batches / hour</p>
-          <p className={cn("text-2xl font-bold tabular-nums", color.split(" ").slice(1).join(" "))}>
+          <p className={cn("text-2xl font-bold tabular-nums", bphColor)}>
             {bph.toFixed(1)}
           </p>
         </div>
@@ -300,6 +320,9 @@ function KpiBar({ sessionBatches, sessionStartedAt, activeBreakMinutes, totalBre
           </div>
         )}
       </div>
+      {serverKpi && (
+        <span className="text-xs text-muted-foreground opacity-50 flex-shrink-0">live</span>
+      )}
     </div>
   );
 }
@@ -505,9 +528,18 @@ function MixingStation({ plan }: MixingStationProps) {
     const targetIndex = direction === "up" ? index - 1 : index + 1;
     if (targetIndex < 0 || targetIndex >= newItems.length) return;
 
+    const movingItem = newItems[index];
+    const swappingWith = newItems[targetIndex];
+
+    // Block if either item is started/in-progress (unless admin)
+    if (!isAdmin) {
+      if (movingItem.status !== "pending") return;
+      if (swappingWith.status !== "pending") return;
+    }
+
     [newItems[index], newItems[targetIndex]] = [newItems[targetIndex], newItems[index]];
     const order = newItems.map((it, i) => ({ itemId: it.id, orderPosition: i + 1 }));
-    updateOrder.mutate({ id: plan.id, order });
+    updateOrder.mutate({ id: plan.id, data: { order } });
   };
 
   // addBatch: only via createBatchCompletion (server increments batchesComplete + status)
@@ -730,6 +762,11 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   const targetBph = standard?.targetBatchesPerHour != null ? Number(standard.targetBatchesPerHour) : null;
   const minBph = standard?.minBatchesPerHour != null ? Number(standard.minBatchesPerHour) : null;
 
+  // Server-side KPI (polled every 30s — refreshes from DB-persisted completions and breaks)
+  const { data: serverKpi } = useGetStationKpi(plan.id, { stationType }, {
+    query: { queryKey: getGetStationKpiQueryKey(plan.id, { stationType }), refetchInterval: 30000 },
+  });
+
   const createBatch = useCreateBatchCompletion({
     mutation: {
       onSuccess: () => {
@@ -928,7 +965,7 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
         </div>
       )}
 
-      {/* KPI bar */}
+      {/* KPI bar — uses server-side KPI from DB when available, falls back to local session state */}
       <KpiBar
         sessionBatches={sessionBatches}
         sessionStartedAt={sessionStartedAt}
@@ -936,6 +973,7 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
         totalBreakMinutes={totalBreakMinutes}
         targetBph={targetBph}
         minBph={minBph}
+        serverKpi={serverKpi}
       />
 
       {/* Break tracker */}
@@ -1862,6 +1900,7 @@ export default function StationPage() {
 
   const { data: plan, isLoading } = useGetProductionPlan(planId, {
     query: {
+      queryKey: getGetProductionPlanQueryKey(planId),
       refetchInterval: 5000,
     },
   }) as {

@@ -837,6 +837,52 @@ paths:
         "204":
           description: Deleted
 
+  /production-plans/{id}/kpi:
+    get:
+      operationId: getStationKpi
+      tags: [productionPlans]
+      summary: Get server-side KPI for a station (batches/hr from DB)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: stationType
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Station KPI
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StationKpi"
+
+  /production-plans/{id}/station-activity:
+    get:
+      operationId: getStationActivity
+      tags: [productionPlans]
+      summary: Get active user counts per station today
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Active users per station
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: integer
+                description: Map of stationType to distinct user count today
+
   /production-plans/{id}/prep-requirements:
     get:
       operationId: getPrepRequirements
@@ -2606,6 +2652,23 @@ components:
         - name
         - email
         - password
+
+    StationKpi:
+      type: object
+      properties:
+        batchesCompleted:
+          type: integer
+        activeMinutes:
+          type: integer
+        breakMinutes:
+          type: integer
+        batchesPerHour:
+          type: number
+      required:
+        - batchesCompleted
+        - activeMinutes
+        - breakMinutes
+        - batchesPerHour
 
     UpdateUser:
       type: object

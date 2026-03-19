@@ -604,6 +604,13 @@ export interface CreateUser {
   isActive?: boolean;
 }
 
+export interface StationKpi {
+  batchesCompleted: number;
+  activeMinutes: number;
+  breakMinutes: number;
+  batchesPerHour: number;
+}
+
 export type UpdateUserRole =
   (typeof UpdateUserRole)[keyof typeof UpdateUserRole];
 
@@ -680,6 +687,15 @@ export type CreateStationBreakBody = {
 export type EndStationBreakBody = {
   endedAt: string;
 };
+
+export type GetStationKpiParams = {
+  stationType: string;
+};
+
+/**
+ * Map of stationType to distinct user count today
+ */
+export type GetStationActivity200 = { [key: string]: number };
 
 export type GetPrepRequirementsParams = {
   /**

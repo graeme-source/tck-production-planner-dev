@@ -4,6 +4,10 @@ import {
   useGetProductionPlan,
   useGetDptCalculator,
   useListRecipes,
+  useGetStationActivity,
+  getGetStationActivityQueryKey,
+  getGetDptCalculatorQueryKey,
+  getListRecipesQueryKey,
 } from "@workspace/api-client-react";
 import type { DptSuggestion, ProductionPlanDetail, Recipe } from "@workspace/api-client-react";
 type PlanStatus = "draft" | "active" | "prep" | "building" | "complete";
@@ -260,9 +264,9 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
 
   const { data: suggestions, isLoading: loadingDpt, refetch: refetchDpt } = useGetDptCalculator(
     { date: planDate },
-    { query: { enabled: open } }
+    { query: { queryKey: getGetDptCalculatorQueryKey({ date: planDate }), enabled: open } }
   );
-  const { data: allRecipes } = useListRecipes({ query: { enabled: open } });
+  const { data: allRecipes } = useListRecipes({ query: { queryKey: getListRecipesQueryKey(), enabled: open } });
   const { createPlan } = useAppMutations();
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
@@ -662,7 +666,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
     }))
   );
 
-  const { data: allRecipes } = useListRecipes({ query: { enabled: open } });
+  const { data: allRecipes } = useListRecipes({ query: { queryKey: getListRecipesQueryKey(), enabled: open } });
   const { updatePlan } = useAppMutations();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
@@ -959,6 +963,9 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isEditingDraft, setIsEditingDraft] = useState(false);
   const [, navigate] = useLocation();
+  const { data: stationActivity } = useGetStationActivity(planId, {
+    query: { queryKey: getGetStationActivityQueryKey(planId), refetchInterval: 30000 },
+  });
 
   if (isLoading) {
     return (
@@ -1090,17 +1097,27 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
             const isBuildingStation = s.key === "building_1" || s.key === "building_2";
             const stationComplete = totalBatchesTarget > 0 && totalBatchesComplete >= totalBatchesTarget;
             const stationInProgress = !stationComplete && totalBatchesComplete > 0;
+            const activeUsers = (stationActivity as Record<string, number> | undefined)?.[s.key] ?? 0;
             return (
               <button
                 key={s.key}
                 onClick={() => navigate(`/plans/${planId}/station/${s.key}`)}
                 className="flex flex-col items-center gap-1.5 p-3 border border-border rounded-xl hover:border-primary/40 hover:bg-secondary/40 transition-all group relative"
               >
-                {isBuildingStation && stationComplete && (
+                {/* Active user badge */}
+                {activeUsers > 0 && (
+                  <span
+                    className="absolute top-1.5 right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-blue-500 text-white text-[10px] font-bold flex items-center justify-center"
+                    title={`${activeUsers} active user${activeUsers !== 1 ? "s" : ""} today`}
+                  >
+                    {activeUsers}
+                  </span>
+                )}
+                {isBuildingStation && stationComplete && activeUsers === 0 && (
                   <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-500" title="Complete" />
                 )}
-                {isBuildingStation && stationInProgress && (
-                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-blue-500 animate-pulse" title="In progress" />
+                {isBuildingStation && stationInProgress && activeUsers === 0 && (
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400" title="In progress" />
                 )}
                 <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center", s.color)}>
                   <Icon className="w-4 h-4" />
@@ -1116,7 +1133,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                     />
                   </div>
                 )}
-                {!isBuildingStation && (
+                {!isBuildingStation && activeUsers === 0 && (
                   <ArrowRight className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                 )}
               </button>
