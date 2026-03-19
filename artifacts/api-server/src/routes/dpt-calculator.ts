@@ -56,7 +56,7 @@ router.get("/", async (req, res) => {
     }
   }
 
-  // Get dispatch orders after planDate, not cancelled
+  // Get dispatch orders after planDate, not cancelled, ordered by date
   const futureDispatchRows = await db
     .select({
       recipeId: dispatchOrdersTable.recipeId,
@@ -73,14 +73,10 @@ router.get("/", async (req, res) => {
     )
     .orderBy(dispatchOrdersTable.dispatchDate);
 
-  // Establish a global demand horizon: next 3 unique dispatch dates across all recipes
-  const allFutureDates = [...new Set(futureDispatchRows.map(r => r.dispatchDate))].sort();
-  const horizonDates = new Set(allFutureDates.slice(0, 3));
-
-  // For each recipe, sum dispatch quantities that fall within the 3-date global horizon
+  // For each recipe, take the next 3 dispatch entries (rows) and sum their quantities
   const demandMap: Record<number, number> = {};
   for (const rId of recipeIds) {
-    const rows = futureDispatchRows.filter(r => r.recipeId === rId && horizonDates.has(r.dispatchDate));
+    const rows = futureDispatchRows.filter(r => r.recipeId === rId).slice(0, 3);
     const demand = rows.reduce((sum, r) => sum + Number(r.quantity), 0);
     demandMap[rId] = demand;
   }
@@ -100,8 +96,8 @@ router.get("/", async (req, res) => {
     // Step 2: add percentage-based surplus buffer (rounds up)
     const surplusBatches = Math.ceil(batchesForDemand * surplusPercent / 100);
 
-    // Step 3: suggested = demand batches + surplus; minimum = defaultBatchesPerDay
-    const suggestedBatches = Math.max(defaultBatchesPerDay, batchesForDemand + surplusBatches);
+    // Step 3: suggested = demand batches + surplus buffer
+    const suggestedBatches = batchesForDemand + surplusBatches;
 
     // Tin count
     const tinCount = maxBatchesPerTin && suggestedBatches > 0

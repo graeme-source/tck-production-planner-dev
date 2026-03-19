@@ -55,6 +55,22 @@ function getNextWorkingDay(from: Date): Date {
   return d;
 }
 
+/** Returns the earliest date that is at least N working days from today */
+function addWorkingDays(from: Date, n: number): Date {
+  let d = new Date(from);
+  let added = 0;
+  while (added < n) {
+    d = addDays(d, 1);
+    if (!isWeekend(d)) added++;
+  }
+  return d;
+}
+
+/** Minimum allowed plan date: 2 working days from today */
+function getMinPlanDate(): Date {
+  return addWorkingDays(new Date(), 2);
+}
+
 function toNextWeekdayIfWeekend(dateStr: string): string {
   const d = parseISO(dateStr);
   if (!isWeekend(d)) return dateStr;
@@ -232,8 +248,8 @@ interface CreatePlanDialogProps {
 }
 
 function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
-  const nextWorkDay = getNextWorkingDay(new Date());
-  const [planDate, setPlanDate] = useState(toLocalDateStr(nextWorkDay));
+  const minPlanDate = getMinPlanDate();
+  const [planDate, setPlanDate] = useState(toLocalDateStr(minPlanDate));
   const [planName, setPlanName] = useState("");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<PlanItem[]>([]);
@@ -253,12 +269,16 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
 
   const handleDateChange = (raw: string) => {
     if (!raw) return;
-    const fixed = toNextWeekdayIfWeekend(raw);
-    if (fixed !== raw) {
-      setDateWarning("Weekends are not production days — date moved to the next Monday.");
-    } else {
-      setDateWarning(null);
+    let fixed = toNextWeekdayIfWeekend(raw);
+    const warnings: string[] = [];
+    if (fixed !== raw) warnings.push("Weekends are not production days — date moved to the next Monday.");
+    // Enforce 2 working-day minimum lead time
+    const min = getMinPlanDate();
+    if (parseISO(fixed) < min) {
+      fixed = toLocalDateStr(min);
+      warnings.push("Plans must be created at least 2 working days in advance.");
     }
+    setDateWarning(warnings.length ? warnings.join(" ") : null);
     setPlanDate(fixed);
   };
 
@@ -406,6 +426,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
               <input
                 type="date"
                 value={planDate}
+                min={toLocalDateStr(minPlanDate)}
                 onChange={e => handleDateChange(e.target.value)}
                 className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
               />
@@ -645,14 +666,18 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const { updatePlan } = useAppMutations();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
+  const editMinPlanDate = getMinPlanDate();
+
   const handleDateChange = (raw: string) => {
     if (!raw) return;
-    const fixed = toNextWeekdayIfWeekend(raw);
-    if (fixed !== raw) {
-      setDateWarning("Weekends are not production days — date moved to the next Monday.");
-    } else {
-      setDateWarning(null);
+    let fixed = toNextWeekdayIfWeekend(raw);
+    const warnings: string[] = [];
+    if (fixed !== raw) warnings.push("Weekends are not production days — date moved to the next Monday.");
+    if (parseISO(fixed) < editMinPlanDate) {
+      fixed = toLocalDateStr(editMinPlanDate);
+      warnings.push("Plans must be created at least 2 working days in advance.");
     }
+    setDateWarning(warnings.length ? warnings.join(" ") : null);
     setPlanDate(fixed);
   };
 
@@ -759,6 +784,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
               <input
                 type="date"
                 value={planDate}
+                min={toLocalDateStr(editMinPlanDate)}
                 onChange={e => handleDateChange(e.target.value)}
                 className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
               />
@@ -958,6 +984,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const StatusIcon = statusConfig.icon;
   const totalBatchesTarget = plan.items?.reduce((s, it) => s + (it.batchesTarget ?? 0), 0) ?? 0;
   const totalBatchesComplete = plan.items?.reduce((s, it) => s + (it.batchesComplete ?? 0), 0) ?? 0;
+  const totalPacks = plan.items?.reduce((s, it) => s + (it.batchesTarget ?? 0) * (it.portionsPerBatch ?? 10), 0) ?? 0;
   const progress = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
 
   const handleStatusChange = (newStatus: string) => {
@@ -1086,7 +1113,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
             <Package className="w-4 h-4 text-primary" />
             Production Items
           </h2>
-          <span className="text-xs text-muted-foreground">{plan.items?.length ?? 0} recipes · {totalBatchesTarget} total batches</span>
+          <span className="text-xs text-muted-foreground">{plan.items?.length ?? 0} recipes · {totalBatchesTarget} batches · {totalPacks.toLocaleString()} packs</span>
         </div>
         <table className="w-full text-sm">
           <thead>
@@ -1094,6 +1121,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
               <th className="py-2.5 px-4 text-left font-medium text-muted-foreground">#</th>
               <th className="py-2.5 px-4 text-left font-medium text-muted-foreground">Recipe</th>
               <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Target</th>
+              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Packs</th>
               <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Done</th>
               <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Wonlys</th>
               <th className="py-2.5 px-4 text-right font-medium text-muted-foreground">Tin Size</th>
@@ -1132,6 +1160,9 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                     </div>
                   </td>
                   <td className="py-3 px-4 text-center font-medium">{item.batchesTarget ?? 0}</td>
+                  <td className="py-3 px-4 text-center font-mono text-muted-foreground">
+                    {((item.batchesTarget ?? 0) * (item.portionsPerBatch ?? 10)).toLocaleString()}
+                  </td>
                   <td className="py-3 px-4 text-center">{item.batchesComplete ?? 0}</td>
                   <td className="py-3 px-4 text-center">
                     {(item.wonlyCount ?? 0) > 0 ? (
@@ -1170,6 +1201,17 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
               );
             })}
           </tbody>
+          {totalBatchesTarget > 0 && (
+            <tfoot>
+              <tr className="bg-secondary/10 border-t border-border font-medium text-sm">
+                <td colSpan={2} className="py-2.5 px-4 text-right text-muted-foreground">Totals</td>
+                <td className="py-2.5 px-4 text-center">{totalBatchesTarget}</td>
+                <td className="py-2.5 px-4 text-center font-mono">{totalPacks.toLocaleString()}</td>
+                <td className="py-2.5 px-4 text-center">{totalBatchesComplete}</td>
+                <td colSpan={5} />
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
 

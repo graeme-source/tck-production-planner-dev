@@ -15,6 +15,22 @@ function julianBatchNumber(date: Date): number {
   return year * 1000 + dayOfYear;
 }
 
+/** Returns true if `planDateStr` is at least 2 working days from today (UTC). */
+function isAtLeast2WorkingDaysAhead(planDateStr: string): boolean {
+  const todayUTC = new Date();
+  todayUTC.setUTCHours(0, 0, 0, 0);
+  const planUTC = new Date(`${planDateStr}T00:00:00Z`);
+  let workingDays = 0;
+  const cursor = new Date(todayUTC);
+  cursor.setUTCDate(cursor.getUTCDate() + 1); // start from tomorrow
+  while (cursor <= planUTC) {
+    const dow = cursor.getUTCDay();
+    if (dow !== 0 && dow !== 6) workingDays++;
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return workingDays >= 2;
+}
+
 function mapPlan(p: typeof productionPlansTable.$inferSelect) {
   return {
     ...p,
@@ -111,6 +127,11 @@ router.post("/", validate(CreatePlanBody), async (req, res) => {
     res.status(400).json({ error: "Production plans can only be scheduled on weekdays (Monday–Friday)." });
     return;
   }
+  // Enforce 2 working-day minimum lead time
+  if (!isAtLeast2WorkingDaysAhead(planDate)) {
+    res.status(400).json({ error: "Production plans must be scheduled at least 2 working days in advance." });
+    return;
+  }
   const batchNumber = julianBatchNumber(dateObj);
 
   const [plan] = await db.insert(productionPlansTable).values({
@@ -187,12 +208,16 @@ router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
     return;
   }
 
-  // Validate weekday constraint if planDate is being changed
+  // Validate weekday constraint and 2-day lead time if planDate is being changed
   if (planDate !== undefined) {
     const updDateObj = new Date(`${planDate}T12:00:00Z`);
     const updDow = updDateObj.getUTCDay();
     if (updDow === 0 || updDow === 6) {
       res.status(400).json({ error: "Production plans can only be scheduled on weekdays (Monday–Friday)." });
+      return;
+    }
+    if (!isAtLeast2WorkingDaysAhead(planDate)) {
+      res.status(400).json({ error: "Production plans must be scheduled at least 2 working days in advance." });
       return;
     }
   }
