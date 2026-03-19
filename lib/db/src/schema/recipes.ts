@@ -18,6 +18,9 @@ export const recipesTable = pgTable("recipes", {
   labourCost: numeric("labour_cost", { precision: 10, scale: 4 }).notNull().default("0"),
   portionsPerBatch: integer("portions_per_batch").notNull().default(10),
   shelfLifeDays: integer("shelf_life_days"),
+  tinSize: text("tin_size"),
+  maxBatchesPerTin: integer("max_batches_per_tin"),
+  sopUrl: text("sop_url"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

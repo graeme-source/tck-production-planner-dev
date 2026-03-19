@@ -18,9 +18,11 @@ import type {
 
 import type {
   AppUser,
+  BatchCompletion,
   CategoryDefault,
   CreateCategoryDefault,
   CreateDispatchOrder,
+  CreateDptSetting,
   CreateIngredient,
   CreateProductionPlan,
   CreateRecipe,
@@ -30,6 +32,12 @@ import type {
   CreateSupplier,
   CreateUser,
   DispatchOrder,
+  DptSetting,
+  DptSuggestion,
+  GetDptCalculatorParams,
+  PrepRequirementItem,
+  PrepRequirementsResponse,
+  GetPrepRequirementsParams,
   HealthStatus,
   Ingredient,
   ListDispatchOrdersParams,
@@ -37,14 +45,19 @@ import type {
   ListSalesEntriesParams,
   ProductionPlan,
   ProductionPlanDetail,
+  ProductionPlanItem,
   Recipe,
   RecipeDetail,
   SalesEntry,
+  StationBreak,
   StockEntry,
   SubRecipe,
   SubRecipeDetail,
   Supplier,
+  TimingStandard,
+  UpdateDptSetting,
   UpdateProductionPlan,
+  UpdateTimingStandard,
   UpdateUser,
 } from "./api.schemas";
 
@@ -4017,4 +4030,496 @@ export const useDeleteCategoryDefault = <
   TContext
 > => {
   return useMutation(getDeleteCategoryDefaultMutationOptions(options));
+};
+
+// ============================================================
+// DPT Settings
+// ============================================================
+
+export const getListDptSettingsUrl = () => `/api/dpt-settings`;
+
+export const listDptSettings = async (options?: RequestInit): Promise<DptSetting[]> => {
+  return customFetch<DptSetting[]>(getListDptSettingsUrl(), { ...options, method: "GET" });
+};
+
+export const getListDptSettingsQueryKey = () => [`/api/dpt-settings`] as const;
+
+export const getListDptSettingsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listDptSettings>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<Awaited<ReturnType<typeof listDptSettings>>, TError, TData>;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListDptSettingsQueryKey();
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listDptSettings>>> = ({ signal }) =>
+    listDptSettings({ signal, ...requestOptions });
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listDptSettings>>, TError, TData
+  > & { queryKey: QueryKey };
+};
+
+export function useListDptSettings<
+  TData = Awaited<ReturnType<typeof listDptSettings>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<Awaited<ReturnType<typeof listDptSettings>>, TError, TData>;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListDptSettingsQueryOptions(options);
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
+  query.queryKey = queryOptions.queryKey;
+  return query;
+}
+
+export const upsertDptSettingByRecipe = async (
+  recipeId: number,
+  updateDptSetting: UpdateDptSetting & { recipeId?: number },
+  options?: RequestInit,
+): Promise<DptSetting> => {
+  return customFetch<DptSetting>(`/api/dpt-settings/by-recipe/${recipeId}`, {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateDptSetting),
+  });
+};
+
+export const getUpsertDptSettingByRecipeMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof upsertDptSettingByRecipe>>,
+    TError,
+    { recipeId: number; data: UpdateDptSetting & { recipeId?: number } },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof upsertDptSettingByRecipe>>,
+  TError,
+  { recipeId: number; data: UpdateDptSetting & { recipeId?: number } },
+  TContext
+> => {
+  const { mutation: mutationOptions, request: requestOptions } = options ?? {};
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof upsertDptSettingByRecipe>>,
+    { recipeId: number; data: UpdateDptSetting & { recipeId?: number } }
+  > = (props) => {
+    const { recipeId, data } = props;
+    return upsertDptSettingByRecipe(recipeId, data, requestOptions);
+  };
+  return { mutationFn, ...mutationOptions };
+};
+
+export const useUpsertDptSettingByRecipe = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof upsertDptSettingByRecipe>>,
+    TError,
+    { recipeId: number; data: UpdateDptSetting & { recipeId?: number } },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof upsertDptSettingByRecipe>>,
+  TError,
+  { recipeId: number; data: UpdateDptSetting & { recipeId?: number } },
+  TContext
+> => {
+  return useMutation(getUpsertDptSettingByRecipeMutationOptions(options));
+};
+
+// ============================================================
+// Timing Standards
+// ============================================================
+
+export const getListTimingStandardsUrl = () => `/api/timing-standards`;
+
+export const listTimingStandards = async (options?: RequestInit): Promise<TimingStandard[]> => {
+  return customFetch<TimingStandard[]>(getListTimingStandardsUrl(), { ...options, method: "GET" });
+};
+
+export const getListTimingStandardsQueryKey = () => [`/api/timing-standards`] as const;
+
+export const getListTimingStandardsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listTimingStandards>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<Awaited<ReturnType<typeof listTimingStandards>>, TError, TData>;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListTimingStandardsQueryKey();
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listTimingStandards>>> = ({ signal }) =>
+    listTimingStandards({ signal, ...requestOptions });
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listTimingStandards>>, TError, TData
+  > & { queryKey: QueryKey };
+};
+
+export function useListTimingStandards<
+  TData = Awaited<ReturnType<typeof listTimingStandards>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<Awaited<ReturnType<typeof listTimingStandards>>, TError, TData>;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListTimingStandardsQueryOptions(options);
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
+  query.queryKey = queryOptions.queryKey;
+  return query;
+}
+
+export const updateTimingStandard = async (
+  id: number,
+  updateTimingStandard: UpdateTimingStandard,
+  options?: RequestInit,
+): Promise<TimingStandard> => {
+  return customFetch<TimingStandard>(`/api/timing-standards/${id}`, {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateTimingStandard),
+  });
+};
+
+export const getUpdateTimingStandardMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateTimingStandard>>,
+    TError,
+    { id: number; data: UpdateTimingStandard },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateTimingStandard>>,
+  TError,
+  { id: number; data: UpdateTimingStandard },
+  TContext
+> => {
+  const { mutation: mutationOptions, request: requestOptions } = options ?? {};
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateTimingStandard>>,
+    { id: number; data: UpdateTimingStandard }
+  > = (props) => {
+    const { id, data } = props;
+    return updateTimingStandard(id, data, requestOptions);
+  };
+  return { mutationFn, ...mutationOptions };
+};
+
+export const useUpdateTimingStandard = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateTimingStandard>>,
+    TError,
+    { id: number; data: UpdateTimingStandard },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateTimingStandard>>,
+  TError,
+  { id: number; data: UpdateTimingStandard },
+  TContext
+> => {
+  return useMutation(getUpdateTimingStandardMutationOptions(options));
+};
+
+// ============================================================
+// Production Plan - Item Update (PATCH)
+// ============================================================
+
+export const updateProductionPlanItem = async (
+  planId: number,
+  itemId: number,
+  data: { batchesComplete?: number; status?: string; wonlyCount?: number },
+  options?: RequestInit,
+): Promise<ProductionPlanItem> => {
+  return customFetch<ProductionPlanItem>(`/api/production-plans/${planId}/items/${itemId}`, {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(data),
+  });
+};
+
+export const useUpdateProductionPlanItem = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateProductionPlanItem>>,
+    TError,
+    { planId: number; itemId: number; data: { batchesComplete?: number; status?: string; wonlyCount?: number } },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateProductionPlanItem>>,
+  TError,
+  { planId: number; itemId: number; data: { batchesComplete?: number; status?: string; wonlyCount?: number } },
+  TContext
+> => {
+  return useMutation({
+    mutationFn: (props) => {
+      const { planId, itemId, data } = props;
+      return updateProductionPlanItem(planId, itemId, data, options?.request);
+    },
+    ...options?.mutation,
+  });
+};
+
+// ============================================================
+// Production Plan - Order Update (PATCH)
+// ============================================================
+
+export const updateProductionPlanOrder = async (
+  planId: number,
+  order: { itemId: number; orderPosition: number }[],
+  options?: RequestInit,
+): Promise<{ ok: boolean }> => {
+  return customFetch<{ ok: boolean }>(`/api/production-plans/${planId}/order`, {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify({ order }),
+  });
+};
+
+export const useUpdateProductionPlanOrder = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateProductionPlanOrder>>,
+    TError,
+    { planId: number; order: { itemId: number; orderPosition: number }[] },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateProductionPlanOrder>>,
+  TError,
+  { planId: number; order: { itemId: number; orderPosition: number }[] },
+  TContext
+> => {
+  return useMutation({
+    mutationFn: (props) => {
+      const { planId, order } = props;
+      return updateProductionPlanOrder(planId, order, options?.request);
+    },
+    ...options?.mutation,
+  });
+};
+
+// ============================================================
+// Batch Completions
+// ============================================================
+
+export const createBatchCompletion = async (
+  planId: number,
+  data: { planItemId: number; stationType: string; userId?: number | null; startedAt?: string | null; completedAt?: string },
+  options?: RequestInit,
+): Promise<BatchCompletion> => {
+  return customFetch<BatchCompletion>(`/api/production-plans/${planId}/batch-completions`, {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(data),
+  });
+};
+
+export const useCreateBatchCompletion = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createBatchCompletion>>,
+    TError,
+    { planId: number; data: { planItemId: number; stationType: string; userId?: number | null; startedAt?: string | null; completedAt?: string } },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createBatchCompletion>>,
+  TError,
+  { planId: number; data: { planItemId: number; stationType: string; userId?: number | null; startedAt?: string | null; completedAt?: string } },
+  TContext
+> => {
+  return useMutation({
+    mutationFn: (props) => {
+      const { planId, data } = props;
+      return createBatchCompletion(planId, data, options?.request);
+    },
+    ...options?.mutation,
+  });
+};
+
+// ============================================================
+// Station Breaks
+// ============================================================
+
+export const createStationBreak = async (
+  planId: number,
+  data: { stationType: string; userId?: number | null; breakType?: string; startedAt?: string },
+  options?: RequestInit,
+): Promise<StationBreak> => {
+  return customFetch<StationBreak>(`/api/production-plans/${planId}/station-breaks`, {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(data),
+  });
+};
+
+export const useCreateStationBreak = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createStationBreak>>,
+    TError,
+    { planId: number; data: { stationType: string; userId?: number | null; breakType?: string; startedAt?: string } },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createStationBreak>>,
+  TError,
+  { planId: number; data: { stationType: string; userId?: number | null; breakType?: string; startedAt?: string } },
+  TContext
+> => {
+  return useMutation({
+    mutationFn: (props) => {
+      const { planId, data } = props;
+      return createStationBreak(planId, data, options?.request);
+    },
+    ...options?.mutation,
+  });
+};
+
+export const endStationBreak = async (
+  planId: number,
+  breakId: number,
+  data: { endedAt?: string },
+  options?: RequestInit,
+): Promise<StationBreak> => {
+  return customFetch<StationBreak>(`/api/production-plans/${planId}/station-breaks/${breakId}`, {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(data),
+  });
+};
+
+export const useEndStationBreak = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof endStationBreak>>,
+    TError,
+    { planId: number; breakId: number; data: { endedAt?: string } },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof endStationBreak>>,
+  TError,
+  { planId: number; breakId: number; data: { endedAt?: string } },
+  TContext
+> => {
+  return useMutation({
+    mutationFn: (props) => {
+      const { planId, breakId, data } = props;
+      return endStationBreak(planId, breakId, data, options?.request);
+    },
+    ...options?.mutation,
+  });
+};
+
+export const getPrepRequirements = async (
+  planId: number,
+  params?: GetPrepRequirementsParams,
+  options?: RequestInit,
+): Promise<PrepRequirementsResponse> => {
+  const query = params?.station ? `?station=${params.station}` : "";
+  return customFetch<PrepRequirementsResponse>(`/api/production-plans/${planId}/prep-requirements${query}`, {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const useGetPrepRequirements = <
+  TData = Awaited<ReturnType<typeof getPrepRequirements>>,
+  TError = ErrorType<unknown>,
+>(
+  planId: number,
+  params?: GetPrepRequirementsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPrepRequirements>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
+  const queryKey = [`/api/production-plans/${planId}/prep-requirements`, params];
+  const query = useQuery({
+    queryKey,
+    queryFn: () => getPrepRequirements(planId, params, options?.request),
+    enabled: planId > 0,
+    staleTime: 5 * 60 * 1000,
+    ...options?.query,
+  }) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
+  query.queryKey = queryKey;
+  return query;
+};
+
+export const getDptCalculator = async (
+  params?: GetDptCalculatorParams,
+  options?: RequestInit,
+): Promise<DptSuggestion[]> => {
+  const query = params?.date ? `?date=${params.date}` : "";
+  return customFetch<DptSuggestion[]>(`/api/dpt-calculator${query}`, {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const useGetDptCalculator = <
+  TData = Awaited<ReturnType<typeof getDptCalculator>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetDptCalculatorParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDptCalculator>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
+  const queryKey = ["/api/dpt-calculator", params];
+  const query = useQuery({
+    queryKey,
+    queryFn: () => getDptCalculator(params, options?.request),
+    staleTime: 5 * 60 * 1000,
+    ...options?.query,
+  }) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
+  query.queryKey = queryKey;
+  return query;
 };

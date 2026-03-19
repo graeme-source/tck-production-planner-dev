@@ -43,7 +43,9 @@ export interface Ingredient {
   secondarySupplierId?: number | null;
   orderingUrl?: string | null;
   notes?: string | null;
+  category?: string | null;
   processingRatio?: number | null;
+  rawMeatTrayCapacityKg?: number | null;
   createdAt: string;
 }
 
@@ -58,7 +60,9 @@ export interface CreateIngredient {
   secondarySupplierId?: number | null;
   orderingUrl?: string | null;
   notes?: string | null;
+  category?: string | null;
   processingRatio?: number | null;
+  rawMeatTrayCapacityKg?: number | null;
 }
 
 export interface SubRecipe {
@@ -140,6 +144,10 @@ export interface Recipe {
   packIngredientCost: number;
   totalPackCost: number;
   grossMargin?: number | null;
+  tinSize?: string | null;
+  maxBatchesPerTin?: number | null;
+  sopUrl?: string | null;
+  shelfLifeDays?: number | null;
   createdAt: string;
 }
 
@@ -187,6 +195,10 @@ export interface CreateRecipe {
   labourCost?: number;
   /** Number of portions produced per batch (e.g. 10 for calzones) */
   portionsPerBatch?: number;
+  shelfLifeDays?: number | null;
+  tinSize?: string | null;
+  maxBatchesPerTin?: number | null;
+  sopUrl?: string | null;
   ingredients: CreateRecipeIngredientsItem[];
   subRecipes: CreateRecipeSubRecipesItem[];
 }
@@ -216,12 +228,21 @@ export const ProductionPlanItemStatus = {
 
 export interface ProductionPlanItem {
   id: number;
+  planId: number;
   recipeId: number;
   recipeName: string;
+  portionsPerBatch: number;
   targetQuantity: number;
   actualQuantity?: number | null;
   notes?: string | null;
-  status: ProductionPlanItemStatus;
+  status: string;
+  orderPosition: number;
+  batchesTarget: number;
+  batchesComplete: number;
+  wonlyCount: number;
+  tinSize?: string | null;
+  maxBatchesPerTin?: number | null;
+  sopUrl?: string | null;
 }
 
 export type ProductionPlanStatus =
@@ -239,6 +260,7 @@ export interface ProductionPlan {
   name: string;
   notes?: string | null;
   status: ProductionPlanStatus;
+  batchNumber?: number | null;
   createdAt: string;
 }
 
@@ -248,7 +270,11 @@ export type ProductionPlanDetail = ProductionPlan & {
 
 export type CreateProductionPlanItemsItem = {
   recipeId: number;
-  targetQuantity: number;
+  batchesTarget?: number;
+  orderPosition?: number;
+  tinSize?: string | null;
+  maxBatchesPerTin?: number | null;
+  sopUrl?: string | null;
   notes?: string | null;
 };
 
@@ -256,7 +282,8 @@ export interface CreateProductionPlan {
   planDate: string;
   name: string;
   notes?: string | null;
-  items: CreateProductionPlanItemsItem[];
+  status?: string;
+  items?: CreateProductionPlanItemsItem[];
 }
 
 export type UpdateProductionPlanStatus =
@@ -268,22 +295,16 @@ export const UpdateProductionPlanStatus = {
   completed: "completed",
 } as const;
 
-export type UpdateProductionPlanItemsItemStatus =
-  (typeof UpdateProductionPlanItemsItemStatus)[keyof typeof UpdateProductionPlanItemsItemStatus];
-
-export const UpdateProductionPlanItemsItemStatus = {
-  pending: "pending",
-  in_progress: "in_progress",
-  completed: "completed",
-} as const;
-
 export type UpdateProductionPlanItemsItem = {
-  id?: number | null;
   recipeId: number;
-  targetQuantity: number;
-  actualQuantity?: number | null;
+  batchesTarget?: number;
+  batchesComplete?: number;
+  orderPosition?: number;
+  tinSize?: string | null;
+  maxBatchesPerTin?: number | null;
+  sopUrl?: string | null;
   notes?: string | null;
-  status: UpdateProductionPlanItemsItemStatus;
+  status?: string;
 };
 
 export interface UpdateProductionPlan {
@@ -292,6 +313,59 @@ export interface UpdateProductionPlan {
   notes?: string | null;
   status?: UpdateProductionPlanStatus;
   items?: UpdateProductionPlanItemsItem[];
+}
+
+export interface DptSetting {
+  id: number;
+  recipeId: number;
+  recipeName: string;
+  defaultBatchesPerDay: number;
+  isActive: boolean;
+  updatedAt: string;
+}
+
+export interface CreateDptSetting {
+  recipeId: number;
+  defaultBatchesPerDay: number;
+  isActive?: boolean;
+}
+
+export interface UpdateDptSetting {
+  defaultBatchesPerDay?: number;
+  isActive?: boolean;
+}
+
+export interface TimingStandard {
+  id: number;
+  stationType: string;
+  stationLabel: string;
+  minBatchesPerHour: number;
+  targetBatchesPerHour: number;
+  updatedAt: string;
+}
+
+export interface UpdateTimingStandard {
+  minBatchesPerHour?: number;
+  targetBatchesPerHour?: number;
+}
+
+export interface BatchCompletion {
+  id: number;
+  planItemId: number;
+  stationType: string;
+  userId?: number | null;
+  startedAt?: string | null;
+  completedAt: string;
+}
+
+export interface StationBreak {
+  id: number;
+  planId: number;
+  stationType: string;
+  userId?: number | null;
+  breakType: string;
+  startedAt: string;
+  endedAt?: string | null;
 }
 
 export type StockEntryItemType =
@@ -454,4 +528,46 @@ export type ListSalesEntriesParams = {
 export type ListDispatchOrdersParams = {
   startDate?: string;
   endDate?: string;
+};
+
+export interface DptSuggestion {
+  recipeId: number;
+  recipeName: string | null;
+  portionsPerBatch: number;
+  tinSize: string | null;
+  maxBatchesPerTin: number | null;
+  sopUrl: string | null;
+  currentStock: number;
+  demand: number;
+  batchesForDemand: number;
+  defaultBatchesPerDay: number;
+  suggestedBatches: number;
+  tinCount: number | null;
+  isActive: boolean;
+}
+
+export type GetDptCalculatorParams = {
+  date?: string;
+};
+
+export interface PrepRequirementItem {
+  ingredientId: number;
+  ingredientName: string;
+  unit: string;
+  category: string | null;
+  processingRatio: number | null;
+  rawMeatTrayCapacityKg: number | null;
+  totalCookedQty: number;
+  totalRawQty: number;
+  trayCount: number | null;
+  recipes: string[];
+}
+
+export interface PrepRequirementsResponse {
+  items: PrepRequirementItem[];
+  nextPlanDate: string | null;
+}
+
+export type GetPrepRequirementsParams = {
+  station?: "prep_veg" | "prep_bases" | "prep_meat" | "all";
 };

@@ -367,6 +367,19 @@ function ImportDialog({ open, onClose, onDone }: { open: boolean; onClose: () =>
   );
 }
 
+const INGREDIENT_CATEGORIES = [
+  { value: "", label: "— No category —" },
+  { value: "raw_meat", label: "Raw Meat" },
+  { value: "vegetable", label: "Vegetable" },
+  { value: "base", label: "Base (Sauce/Mozzarella)" },
+  { value: "sauce", label: "Sauce" },
+  { value: "cheese", label: "Cheese" },
+  { value: "seasoning", label: "Seasoning/Spice" },
+  { value: "dough", label: "Dough" },
+  { value: "packaging", label: "Packaging" },
+  { value: "other", label: "Other" },
+] as const;
+
 const schema = z.object({
   name: z.string().min(1, "Name is required"),
   unit: z.string().min(1, "Unit is required"),
@@ -378,9 +391,14 @@ const schema = z.object({
   secondarySupplierId: z.coerce.number().optional(),
   orderingUrl: z.string().optional(),
   notes: z.string().optional(),
+  category: z.string().optional(),
   processingRatioPct: z.preprocess(
     (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
     z.number().min(0).max(100).nullable().optional()
+  ),
+  rawMeatTrayCapacityKg: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().positive().nullable().optional()
   ),
 });
 
@@ -389,7 +407,7 @@ type FormValues = z.infer<typeof schema>;
 const emptyDefaults: FormValues = {
   name: "", unit: "kg", packWeight: 0, costPerPack: 0,
   brand: "", supplierPartNumber: "", supplierId: 0, secondarySupplierId: 0,
-  orderingUrl: "", notes: "", processingRatioPct: null,
+  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null,
 };
 
 export default function Ingredients() {
@@ -441,6 +459,8 @@ export default function Ingredients() {
       processingRatioPct: item.processingRatio != null
         ? parseFloat((item.processingRatio * 100).toFixed(4))
         : null,
+      rawMeatTrayCapacityKg: (item as any).rawMeatTrayCapacityKg != null ? Number((item as any).rawMeatTrayCapacityKg) : null,
+      category: (item as any).category ?? "",
     });
     setIsDialogOpen(true);
   };
@@ -456,7 +476,9 @@ export default function Ingredients() {
     secondarySupplierId: data.secondarySupplierId && data.secondarySupplierId > 0 ? data.secondarySupplierId : null,
     orderingUrl: data.orderingUrl || null,
     notes: data.notes || null,
+    category: data.category || null,
     processingRatio: data.processingRatioPct != null ? data.processingRatioPct / 100 : null,
+    rawMeatTrayCapacityKg: data.rawMeatTrayCapacityKg ?? null,
   });
 
   const onSubmit = (data: FormValues) => {
@@ -617,6 +639,43 @@ export default function Ingredients() {
                 Leave blank for 100% (no processing loss). Used to adjust sub-recipe yield calculations.
               </p>
               {errors.processingRatioPct && <span className="text-destructive text-xs">{String(errors.processingRatioPct.message)}</span>}
+            </div>
+
+            <div>
+              <label className="text-sm font-medium mb-1 block">
+                Raw Meat Tray Capacity
+                <span className="ml-2 text-xs font-normal text-muted-foreground">(kg per tray)</span>
+              </label>
+              <div className="relative max-w-[160px]">
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  {...register("rawMeatTrayCapacityKg")}
+                  className="w-full px-3 pr-10 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  placeholder="e.g. 10"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">kg</span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Used in the raw meat prep station to calculate tray counts.
+              </p>
+              {errors.rawMeatTrayCapacityKg && <span className="text-destructive text-xs">{String(errors.rawMeatTrayCapacityKg.message)}</span>}
+            </div>
+
+            <div>
+              <label className="text-sm font-medium mb-1 block">Ingredient Category</label>
+              <select
+                {...register("category")}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                {INGREDIENT_CATEGORIES.map(c => (
+                  <option key={c.value} value={c.value}>{c.label}</option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground mt-1">
+                Used to filter ingredients by prep station (Raw Meat, Vegetables, Bases).
+              </p>
             </div>
 
             {/* Supplier + Secondary Supplier */}

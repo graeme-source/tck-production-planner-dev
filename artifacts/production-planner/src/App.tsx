@@ -11,6 +11,7 @@ import Ingredients from "@/pages/ingredients";
 import SubRecipes from "@/pages/sub-recipes";
 import Recipes from "@/pages/recipes";
 import ProductionPlans from "@/pages/production-plans";
+import StationPage from "@/pages/station";
 import Stock from "@/pages/stock";
 import Sales from "@/pages/sales";
 import Dispatches from "@/pages/dispatches";
@@ -32,21 +33,31 @@ function ProtectedRoute({ component: Component, pageKey }: { component: React.Co
 
 function Router() {
   return (
-    <Layout>
-      <Switch>
-        <Route path="/" component={Dashboard} />
-        <Route path="/ingredients" component={Ingredients} />
-        <Route path="/sub-recipes" component={SubRecipes} />
-        <Route path="/recipes" component={Recipes} />
-        <Route path="/plans" component={ProductionPlans} />
-        <Route path="/stock" component={Stock} />
-        <Route path="/sales">{() => <ProtectedRoute component={Sales} pageKey="/sales" />}</Route>
-        <Route path="/dispatches" component={Dispatches} />
-        <Route path="/suppliers" component={Suppliers} />
-        <Route path="/settings" component={Settings} />
-        <Route component={NotFound} />
-      </Switch>
-    </Layout>
+    <Switch>
+      {/* Station pages — full-screen, no sidebar layout */}
+      <Route path="/plans/:planId/station/:stationType" component={StationPage} />
+
+      {/* All other pages with sidebar layout */}
+      <Route>
+        {() => (
+          <Layout>
+            <Switch>
+              <Route path="/" component={Dashboard} />
+              <Route path="/ingredients" component={Ingredients} />
+              <Route path="/sub-recipes" component={SubRecipes} />
+              <Route path="/recipes" component={Recipes} />
+              <Route path="/plans" component={ProductionPlans} />
+              <Route path="/stock" component={Stock} />
+              <Route path="/sales">{() => <ProtectedRoute component={Sales} pageKey="/sales" />}</Route>
+              <Route path="/dispatches" component={Dispatches} />
+              <Route path="/suppliers" component={Suppliers} />
+              <Route path="/settings" component={Settings} />
+              <Route component={NotFound} />
+            </Switch>
+          </Layout>
+        )}
+      </Route>
+    </Switch>
   );
 }
 
