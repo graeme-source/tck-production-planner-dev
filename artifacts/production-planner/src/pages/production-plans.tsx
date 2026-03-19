@@ -604,6 +604,304 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Edit Draft Dialog — allows reopening a draft plan in editable form
+// ──────────────────────────────────────────────────────────────────────────────
+interface EditDraftDialogProps {
+  plan: ProductionPlanDetail;
+  open: boolean;
+  onClose: () => void;
+  onSaved: () => void;
+}
+
+function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps) {
+  const [planDate, setPlanDate] = useState(plan.planDate);
+  const [planName, setPlanName] = useState(plan.name);
+  const [notes, setNotes] = useState(plan.notes ?? "");
+  const [dateWarning, setDateWarning] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [addRecipeId, setAddRecipeId] = useState<string>("");
+
+  const [items, setItems] = useState<PlanItem[]>(() =>
+    (plan.items ?? []).map(it => ({
+      id: `existing-${it.id}`,
+      recipeId: it.recipeId,
+      recipeName: it.recipeName ?? `Recipe #${it.recipeId}`,
+      included: true,
+      suggestedBatches: 0,
+      batchesTarget: it.batchesTarget ?? 0,
+      tinCount: it.maxBatchesPerTin && (it.batchesTarget ?? 0) > 0
+        ? Math.ceil((it.batchesTarget ?? 0) / it.maxBatchesPerTin) : null,
+      maxBatchesPerTin: it.maxBatchesPerTin ?? null,
+      tinSize: it.tinSize ?? null,
+      currentStock: 0,
+      demand: 0,
+      portionsPerBatch: it.portionsPerBatch ?? 10,
+      sopUrl: it.sopUrl ?? null,
+      isFromDpt: false,
+    }))
+  );
+
+  const { data: allRecipes } = useListRecipes({ query: { enabled: open } });
+  const { updatePlan } = useAppMutations();
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  const handleDateChange = (raw: string) => {
+    if (!raw) return;
+    const fixed = toNextWeekdayIfWeekend(raw);
+    if (fixed !== raw) {
+      setDateWarning("Weekends are not production days — date moved to the next Monday.");
+    } else {
+      setDateWarning(null);
+    }
+    setPlanDate(fixed);
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setItems(prev => {
+        const oldIdx = prev.findIndex(it => it.id === active.id);
+        const newIdx = prev.findIndex(it => it.id === over.id);
+        return arrayMove(prev, oldIdx, newIdx);
+      });
+    }
+  };
+
+  const recalcTins = (batchesTarget: number, maxBatchesPerTin: number | null): number | null => {
+    if (!maxBatchesPerTin || batchesTarget <= 0) return null;
+    return Math.ceil(batchesTarget / maxBatchesPerTin);
+  };
+
+  const updateItem = (id: string, updates: Partial<PlanItem>) => {
+    setItems(prev =>
+      prev.map(it => {
+        if (it.id !== id) return it;
+        const merged = { ...it, ...updates };
+        if ("batchesTarget" in updates) {
+          merged.tinCount = recalcTins(merged.batchesTarget, merged.maxBatchesPerTin);
+        }
+        return merged;
+      })
+    );
+  };
+
+  const addRecipeToList = () => {
+    const recipeId = Number(addRecipeId);
+    if (!recipeId) return;
+    if (items.some(it => it.recipeId === recipeId)) { setAddRecipeId(""); return; }
+    const recipe = (allRecipes as Recipe[] | undefined)?.find(r => r.id === recipeId);
+    if (!recipe) return;
+    setItems(prev => [...prev, {
+      id: `add-${recipeId}`,
+      recipeId,
+      recipeName: recipe.name,
+      included: true,
+      suggestedBatches: 0,
+      batchesTarget: 0,
+      tinCount: null,
+      maxBatchesPerTin: recipe.maxBatchesPerTin ?? null,
+      tinSize: recipe.tinSize ?? null,
+      currentStock: 0,
+      demand: 0,
+      portionsPerBatch: recipe.portionsPerBatch ?? 10,
+      sopUrl: recipe.sopUrl ?? null,
+      isFromDpt: false,
+    }]);
+    setAddRecipeId("");
+  };
+
+  const handleSave = async (targetStatus: "draft" | "active") => {
+    const includedItems = items.filter(it => it.included);
+    if (includedItems.length === 0) return;
+    setIsSubmitting(true);
+    updatePlan.mutate(
+      {
+        id: plan.id,
+        data: {
+          planDate,
+          name: planName,
+          notes: notes || undefined,
+          status: targetStatus,
+          items: includedItems.map((it, i) => ({
+            recipeId: it.recipeId,
+            orderPosition: i + 1,
+            batchesTarget: it.batchesTarget,
+            tinSize: it.tinSize ?? undefined,
+            maxBatchesPerTin: it.maxBatchesPerTin ?? undefined,
+            sopUrl: it.sopUrl ?? undefined,
+          })),
+        },
+      },
+      {
+        onSuccess: () => { onSaved(); onClose(); },
+        onSettled: () => setIsSubmitting(false),
+      }
+    );
+  };
+
+  const includedCount = items.filter(it => it.included).length;
+  const availableToAdd = ((allRecipes as Recipe[] | undefined) ?? []).filter(r => !items.some(it => it.recipeId === r.id));
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-5xl bg-card border-border rounded-2xl max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogHeader className="pb-4 border-b border-border flex-shrink-0">
+          <DialogTitle className="font-display text-xl flex items-center gap-2">
+            <ClipboardList className="w-5 h-5 text-primary" />
+            Edit Draft Plan
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="overflow-y-auto flex-1 px-1 pt-1">
+          <div className="grid grid-cols-2 gap-4 mb-5">
+            <div>
+              <label className="text-sm font-medium mb-1 block text-muted-foreground">Production Date</label>
+              <input
+                type="date"
+                value={planDate}
+                onChange={e => handleDateChange(e.target.value)}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
+              />
+              {dateWarning && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+                  <Info className="w-3 h-3 flex-shrink-0" />
+                  {dateWarning}
+                </p>
+              )}
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block text-muted-foreground">Plan Name</label>
+              <input
+                value={planName}
+                onChange={e => setPlanName(e.target.value)}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
+              />
+            </div>
+            <div className="col-span-2">
+              <label className="text-sm font-medium mb-1 block text-muted-foreground">Notes</label>
+              <textarea
+                value={notes}
+                onChange={e => setNotes(e.target.value)}
+                rows={2}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring resize-none"
+                placeholder="Optional notes..."
+              />
+            </div>
+          </div>
+
+          <h3 className="font-semibold text-sm mb-2 flex items-center gap-2">
+            <BarChart2 className="w-4 h-4 text-primary" />
+            Production Items
+            <span className="text-muted-foreground font-normal text-xs">
+              ({includedCount} of {items.length} included · drag to reorder)
+            </span>
+          </h3>
+
+          {items.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground bg-secondary/20 rounded-xl mb-3">
+              <Info className="w-8 h-8 mx-auto mb-2 opacity-40" />
+              <p className="text-sm">No items — add recipes below.</p>
+            </div>
+          ) : (
+            <div className="border border-border rounded-xl overflow-hidden mb-3">
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                <SortableContext items={items.map(it => it.id)} strategy={verticalListSortingStrategy}>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-secondary/30 border-b border-border">
+                        <th className="w-8 py-2.5 px-2" />
+                        <th className="w-8 py-2.5 px-2">
+                          <input
+                            type="checkbox"
+                            checked={items.every(it => it.included)}
+                            onChange={e => setItems(prev => prev.map(it => ({ ...it, included: e.target.checked })))}
+                            className="rounded border-border"
+                          />
+                        </th>
+                        <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">Recipe</th>
+                        <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">Batches</th>
+                        <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">Tins</th>
+                        <th className="w-8 py-2.5 px-2" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {items.map(it => (
+                        <SortableRow
+                          key={it.id}
+                          item={it}
+                          saving={isSubmitting}
+                          showStockDemand={false}
+                          onToggle={(id) => updateItem(id, { included: !it.included })}
+                          onBatchChange={(id, val) => updateItem(id, { batchesTarget: val })}
+                          onRemove={(id) => setItems(prev => prev.filter(i => i.id !== id))}
+                        />
+                      ))}
+                    </tbody>
+                  </table>
+                </SortableContext>
+              </DndContext>
+            </div>
+          )}
+
+          {availableToAdd.length > 0 && (
+            <div className="flex items-center gap-2 mb-3">
+              <select
+                value={addRecipeId}
+                onChange={e => setAddRecipeId(e.target.value)}
+                className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
+              >
+                <option value="">Add a recipe to this plan...</option>
+                {availableToAdd.map(r => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+              <button
+                onClick={addRecipeToList}
+                disabled={!addRecipeId}
+                className="px-3 py-2 bg-secondary text-secondary-foreground rounded-lg text-sm font-medium hover:bg-secondary/80 disabled:opacity-40 flex items-center gap-1.5 transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                Add
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-border pt-4 flex items-center justify-between flex-shrink-0">
+          <div className="text-sm text-muted-foreground">
+            Julian batch: <span className="font-mono font-semibold text-foreground">{julianBatchNumber(planDate)}</span>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-xl transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => handleSave("draft")}
+              disabled={includedCount === 0 || isSubmitting}
+              className="px-4 py-2 text-sm border border-border bg-secondary text-secondary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center gap-2 hover:bg-secondary/80 transition-colors"
+            >
+              {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardList className="w-4 h-4" />}
+              Save Draft
+            </button>
+            <button
+              onClick={() => handleSave("active")}
+              disabled={includedCount === 0 || isSubmitting}
+              className="px-5 py-2 text-sm bg-primary text-primary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center gap-2 shadow-md shadow-primary/20 hover:opacity-90 transition-opacity"
+            >
+              {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+              Activate Plan ({includedCount})
+            </button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Plan Detail View
 // ──────────────────────────────────────────────────────────────────────────────
 const STATION_BUTTONS = [
@@ -626,12 +924,14 @@ interface PlanDetailProps {
 }
 
 function PlanDetail({ planId, onBack }: PlanDetailProps) {
-  const { data: plan, isLoading } = useGetProductionPlan(planId) as {
+  const { data: plan, isLoading, refetch } = useGetProductionPlan(planId) as {
     data: ProductionPlanDetail | undefined;
     isLoading: boolean;
+    refetch: () => void;
   };
   const { updatePlan, deletePlan } = useAppMutations();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [isEditingDraft, setIsEditingDraft] = useState(false);
   const [, navigate] = useLocation();
 
   if (isLoading) {
@@ -695,12 +995,21 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
           </span>
 
           {plan.status === "draft" && (
-            <button
-              onClick={() => handleStatusChange("active")}
-              className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
-            >
-              Activate Plan
-            </button>
+            <>
+              <button
+                onClick={() => setIsEditingDraft(true)}
+                className="px-3 py-1.5 text-xs border border-border bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-colors font-medium flex items-center gap-1"
+              >
+                <ClipboardList className="w-3.5 h-3.5" />
+                Edit Draft
+              </button>
+              <button
+                onClick={() => handleStatusChange("active")}
+                className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+              >
+                Activate Plan
+              </button>
+            </>
           )}
           {plan.status === "active" && (
             <button
@@ -898,6 +1207,18 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
             </div>
           </div>
         </div>
+      )}
+
+      {isEditingDraft && plan.status === "draft" && (
+        <EditDraftDialog
+          plan={plan}
+          open={isEditingDraft}
+          onClose={() => setIsEditingDraft(false)}
+          onSaved={() => {
+            setIsEditingDraft(false);
+            refetch();
+          }}
+        />
       )}
     </div>
   );

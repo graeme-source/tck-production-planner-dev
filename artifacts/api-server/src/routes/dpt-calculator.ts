@@ -72,12 +72,15 @@ router.get("/", async (req, res) => {
     )
     .orderBy(dispatchOrdersTable.dispatchDate);
 
-  // For each recipe, sum the next 3 dispatch entries (ordered by dispatch date asc)
+  // Establish a global demand horizon: next 3 unique dispatch dates across all recipes
+  const allFutureDates = [...new Set(futureDispatchRows.map(r => r.dispatchDate))].sort();
+  const horizonDates = new Set(allFutureDates.slice(0, 3));
+
+  // For each recipe, sum dispatch quantities that fall within the 3-date global horizon
   const demandMap: Record<number, number> = {};
   for (const rId of recipeIds) {
-    const rows = futureDispatchRows.filter(r => r.recipeId === rId);
-    const next3 = rows.slice(0, 3);
-    const demand = next3.reduce((sum, r) => sum + Number(r.quantity), 0);
+    const rows = futureDispatchRows.filter(r => r.recipeId === rId && horizonDates.has(r.dispatchDate));
+    const demand = rows.reduce((sum, r) => sum + Number(r.quantity), 0);
     demandMap[rId] = demand;
   }
 
