@@ -376,28 +376,58 @@ router.post("/:id/batch-completions", async (req, res) => {
     return;
   }
 
-  // Cap: prevent over-incrementing beyond the target (concurrent safety)
+  // Cap check before transaction (fast fail)
   const target = planItem.batchesTarget ?? 0;
-  const current = planItem.batchesComplete ?? 0;
-  if (target > 0 && current >= target) {
+  if (target > 0 && (planItem.batchesComplete ?? 0) >= target) {
     res.status(409).json({ error: "Batch target already met" });
     return;
   }
 
-  const [row] = await db.insert(batchCompletionsTable).values({
-    planItemId,
-    stationType,
-    userId: sessionUserId,
-    startedAt: startedAt ? new Date(startedAt) : null,
-    completedAt: completedAt ? new Date(completedAt) : new Date(),
-  }).returning();
+  // Atomic: lock the item row, increment only if still below target, then insert completion
+  // Using a single CTE transaction so increment and insert are either both committed or both rolled back
+  const completedAtDate = completedAt ? new Date(completedAt) : new Date();
+  const startedAtDate = startedAt ? new Date(startedAt) : null;
 
-  // Atomic increment — only if still below target (handles concurrency)
-  await db.execute(
-    sql`UPDATE production_plan_items SET batches_complete = batches_complete + 1, status = CASE WHEN batches_complete + 1 >= batches_target THEN 'complete' ELSE 'in-progress' END WHERE id = ${planItemId} AND batches_complete < batches_target`
-  );
+  const result = await db.execute(sql`
+    WITH incremented AS (
+      UPDATE production_plan_items
+      SET
+        batches_complete = batches_complete + 1,
+        status = CASE
+          WHEN batches_complete + 1 >= batches_target THEN 'complete'
+          ELSE 'in-progress'
+        END
+      WHERE id = ${Number(planItemId)}
+        AND (batches_target = 0 OR batches_complete < batches_target)
+      RETURNING id
+    )
+    INSERT INTO batch_completions (plan_item_id, station_type, user_id, started_at, completed_at)
+    SELECT
+      ${Number(planItemId)},
+      ${stationType ?? null},
+      ${sessionUserId},
+      ${startedAtDate}::timestamptz,
+      ${completedAtDate}::timestamptz
+    FROM incremented
+    RETURNING *
+  `);
 
-  res.status(201).json(row);
+  const rows = result.rows as Array<Record<string, unknown>>;
+  if (rows.length === 0) {
+    // Increment was blocked — target already met by concurrent request
+    res.status(409).json({ error: "Batch target already met" });
+    return;
+  }
+
+  const row = rows[0];
+  res.status(201).json({
+    ...row,
+    completedAt: row.completed_at instanceof Date ? (row.completed_at as Date).toISOString() : row.completed_at,
+    startedAt: row.started_at instanceof Date ? (row.started_at as Date).toISOString() : (row.started_at ?? null),
+    planItemId: row.plan_item_id,
+    stationType: row.station_type,
+    userId: row.user_id,
+  });
 });
 
 // DELETE last batch completion — removes the most recent completion row for this item/user
@@ -466,10 +496,45 @@ router.get("/:id/batch-completions", async (req, res) => {
 });
 
 // Station breaks sub-routes
+
+// GET active (open) break for current user + station — used by BreakTracker to hydrate on mount/refresh
+router.get("/:id/station-breaks/active", async (req, res) => {
+  const planId = Number(req.params.id);
+  const { stationType } = req.query;
+  const sessionUserId = (req.session as { userId?: number }).userId ?? null;
+
+  const conditions = [eq(stationBreaksTable.planId, planId), sql`ended_at IS NULL`];
+  if (stationType) conditions.push(sql`station_type = ${String(stationType)}`);
+  if (sessionUserId) conditions.push(eq(stationBreaksTable.userId, sessionUserId));
+
+  const [row] = await db.select().from(stationBreaksTable)
+    .where(and(...conditions))
+    .orderBy(desc(stationBreaksTable.startedAt))
+    .limit(1);
+
+  if (!row) { res.json(null); return; }
+  res.json({ ...row, startedAt: row.startedAt.toISOString(), endedAt: null });
+});
+
 router.post("/:id/station-breaks", async (req, res) => {
   const planId = Number(req.params.id);
   const { stationType, breakType, startedAt } = req.body;
   const sessionUserId = (req.session as { userId?: number }).userId ?? null;
+
+  // Enforce single-open-break per user+station: if one already exists, return it instead of creating a duplicate
+  const conditions = [eq(stationBreaksTable.planId, planId), sql`ended_at IS NULL`];
+  if (stationType) conditions.push(sql`station_type = ${String(stationType)}`);
+  if (sessionUserId) conditions.push(eq(stationBreaksTable.userId, sessionUserId));
+  const [existing] = await db.select().from(stationBreaksTable)
+    .where(and(...conditions))
+    .orderBy(desc(stationBreaksTable.startedAt))
+    .limit(1);
+
+  if (existing) {
+    // Return existing open break — idempotent, client can resume
+    res.status(200).json({ ...existing, startedAt: existing.startedAt.toISOString(), endedAt: null });
+    return;
+  }
 
   const [row] = await db.insert(stationBreaksTable).values({
     planId,
@@ -631,6 +696,102 @@ router.get("/:id/prep-requirements", async (req, res) => {
   }
 
   res.json({ items, nextPlanDate });
+});
+
+// GET /:id/eod-summary?stationType=...
+// Returns server-derived EOD stats for the current user at a given station:
+// totalBatches, activeMinutes, breakMinutes, bph, minsPerBatch, planCompletionRate, perRecipe avg
+router.get("/:id/eod-summary", async (req, res) => {
+  const planId = Number(req.params.id);
+  const stationType = String(req.query.stationType ?? "");
+  const sessionUserId = (req.session as { userId?: number }).userId ?? null;
+
+  if (!stationType) {
+    res.status(400).json({ error: "stationType is required" });
+    return;
+  }
+
+  // Get all plan items (for plan completion rate)
+  const planItems = await db.select({
+    id: productionPlanItemsTable.id,
+    batchesComplete: productionPlanItemsTable.batchesComplete,
+    batchesTarget: productionPlanItemsTable.batchesTarget,
+    recipeName: productionPlanItemsTable.recipeName,
+  }).from(productionPlanItemsTable).where(eq(productionPlanItemsTable.planId, planId));
+
+  const itemIds = planItems.map(i => i.id);
+  const totalBatchesTarget = planItems.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
+  const totalBatchesComplete = planItems.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
+  const planCompletionRate = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
+
+  if (itemIds.length === 0) {
+    res.json({ totalBatches: 0, activeMinutes: 0, breakMinutes: 0, bph: 0, minsPerBatch: null, planCompletionRate: 0, perRecipe: [] });
+    return;
+  }
+
+  // Fetch this user's completions for this station
+  const allCompletions = await db.select().from(batchCompletionsTable)
+    .where(sql`plan_item_id = ANY(${itemIds})`);
+
+  const myCompletions = sessionUserId
+    ? allCompletions.filter(c => c.stationType === stationType && c.userId === sessionUserId)
+    : allCompletions.filter(c => c.stationType === stationType);
+
+  const totalBatches = myCompletions.length;
+
+  // Compute total break minutes for this user+station
+  const breaks = await db.select().from(stationBreaksTable)
+    .where(and(
+      eq(stationBreaksTable.planId, planId),
+      sql`station_type = ${stationType}`,
+      ...(sessionUserId ? [eq(stationBreaksTable.userId, sessionUserId)] : [])
+    ));
+
+  const breakMinutes = breaks.reduce((sum, b) => {
+    if (!b.endedAt) return sum;
+    return sum + Math.round((b.endedAt.getTime() - b.startedAt.getTime()) / 60000);
+  }, 0);
+
+  // Compute active minutes from first completion to last
+  const sortedCompletions = [...myCompletions].sort((a, b) => a.completedAt.getTime() - b.completedAt.getTime());
+  let activeMinutes = 0;
+  if (sortedCompletions.length > 0) {
+    const firstAt = sortedCompletions[0].completedAt;
+    const lastAt = sortedCompletions[sortedCompletions.length - 1].completedAt;
+    const spanMinutes = Math.round((lastAt.getTime() - firstAt.getTime()) / 60000);
+    activeMinutes = Math.max(0, spanMinutes - breakMinutes);
+  }
+
+  const activeHours = activeMinutes / 60;
+  const bph = activeHours > 0 ? totalBatches / activeHours : 0;
+  const minsPerBatch = totalBatches > 0 && activeMinutes > 0 ? activeMinutes / totalBatches : null;
+
+  // Per-recipe avg mins/batch (from startedAt→completedAt timestamps on completion rows)
+  const perRecipeMap: Record<number, { name: string; count: number; avgMins: number | null }> = {};
+  for (const it of planItems) {
+    perRecipeMap[it.id] = { name: it.recipeName ?? `Recipe #${it.id}`, count: 0, avgMins: null };
+  }
+
+  const byItem: Record<number, number[]> = {};
+  for (const c of myCompletions) {
+    if (!perRecipeMap[c.planItemId]) continue;
+    perRecipeMap[c.planItemId].count++;
+    if (c.startedAt && c.completedAt) {
+      const mins = (c.completedAt.getTime() - c.startedAt.getTime()) / 60000;
+      if (mins > 0 && mins < 240) {
+        if (!byItem[c.planItemId]) byItem[c.planItemId] = [];
+        byItem[c.planItemId].push(mins);
+      }
+    }
+  }
+  for (const [itemId, times] of Object.entries(byItem)) {
+    const avg = times.reduce((a, b) => a + b, 0) / times.length;
+    perRecipeMap[Number(itemId)].avgMins = avg;
+  }
+
+  const perRecipe = Object.values(perRecipeMap).filter(r => r.count > 0);
+
+  res.json({ totalBatches, activeMinutes, breakMinutes, bph, minsPerBatch, planCompletionRate, perRecipe });
 });
 
 // GET /:id/kpi?stationType=...&date=YYYY-MM-DD

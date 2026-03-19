@@ -163,8 +163,27 @@ interface ActiveBreak {
 function BreakTracker({ planId, stationType, onBreakChange }: BreakTrackerProps) {
   const [activeBreak, setActiveBreak] = useState<ActiveBreak | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [hydrated, setHydrated] = useState(false);
   const createBreak = useCreateStationBreak();
   const endBreak = useEndStationBreak();
+
+  // Hydrate active break from server on mount — recovers state after refresh/navigation
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/production-plans/${planId}/station-breaks/active?stationType=${encodeURIComponent(stationType)}`, {
+      credentials: "include",
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then((data: { id: number; breakType: string; startedAt: string } | null) => {
+        if (cancelled) return;
+        if (data && data.id) {
+          setActiveBreak({ id: data.id, type: (data.breakType as "morning" | "lunch") ?? "morning", startedAt: data.startedAt });
+        }
+        setHydrated(true);
+      })
+      .catch(() => setHydrated(true));
+    return () => { cancelled = true; };
+  }, [planId, stationType]);
 
   useEffect(() => {
     if (!activeBreak) {
@@ -208,6 +227,15 @@ function BreakTracker({ planId, stationType, onBreakChange }: BreakTrackerProps)
       }
     );
   };
+
+  if (!hydrated) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        Loading break status…
+      </div>
+    );
+  }
 
   if (activeBreak) {
     return (
@@ -357,45 +385,51 @@ interface EodSummaryProps {
   onClose: () => void;
 }
 
+interface EodServerData {
+  totalBatches: number;
+  activeMinutes: number;
+  breakMinutes: number;
+  bph: number;
+  minsPerBatch: number | null;
+  planCompletionRate: number;
+  perRecipe: Array<{ name: string; count: number; avgMins: number | null }>;
+}
+
 function EodSummary({ planId, items, stationType, sessionBatches, totalBreakMinutes, sessionStartedAt, onClose }: EodSummaryProps) {
-  const { state: authState } = useAuth();
-  const sessionUserId = authState.status === "authenticated" ? authState.user.id : null;
+  // Server-derived aggregates — authoritative, persisted, per-builder
+  const [serverData, setServerData] = useState<EodServerData | null>(null);
+  const [serverLoading, setServerLoading] = useState(true);
 
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/production-plans/${planId}/eod-summary?stationType=${encodeURIComponent(stationType)}`, {
+      credentials: "include",
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then((data: EodServerData | null) => {
+        if (!cancelled) { setServerData(data); setServerLoading(false); }
+      })
+      .catch(() => { if (!cancelled) setServerLoading(false); });
+    return () => { cancelled = true; };
+  }, [planId, stationType]);
+
+  // Fallback to local session state if server hasn't responded yet or returned no data
   const now = new Date();
-  const totalMinutes = sessionStartedAt ? differenceInMinutes(now, sessionStartedAt) : 0;
-  const activeMinutes = Math.max(0, totalMinutes - totalBreakMinutes);
-  const activeHours = activeMinutes / 60;
-  const bph = activeHours > 0 ? sessionBatches / activeHours : 0;
-  const minsPerBatch = sessionBatches > 0 && activeMinutes > 0 ? activeMinutes / sessionBatches : null;
-
+  const localTotalMinutes = sessionStartedAt ? differenceInMinutes(now, sessionStartedAt) : 0;
+  const localActiveMinutes = Math.max(0, localTotalMinutes - totalBreakMinutes);
+  const localActiveHours = localActiveMinutes / 60;
+  const localBph = localActiveHours > 0 ? sessionBatches / localActiveHours : 0;
+  const localMinsPerBatch = sessionBatches > 0 && localActiveMinutes > 0 ? localActiveMinutes / sessionBatches : null;
   const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
   const totalBatchesComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
-  const completionRate = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
+  const localCompletionRate = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
 
-  // Fetch batch completions (all for this station) to compute per-recipe avg mins/batch
-  // Filter to current user's completions so the breakdown reflects this builder's output only
-  const { data: completions } = useListBatchCompletions(planId, { stationType });
-  const myCompletions = (completions ?? []).filter(c => !sessionUserId || c.userId === sessionUserId);
-
-  // Build per-item completion time lookup: { planItemId => avg mins/batch } — user-scoped
-  const avgMinsByItem: Record<number, number | null> = {};
-  if (myCompletions.length > 0) {
-    const byItem: Record<number, number[]> = {};
-    for (const c of myCompletions) {
-      if (c.startedAt && c.completedAt) {
-        const started = new Date(c.startedAt).getTime();
-        const finished = new Date(c.completedAt).getTime();
-        const mins = (finished - started) / 60000;
-        if (mins > 0 && mins < 240) { // sanity cap: <4 hours
-          if (!byItem[c.planItemId]) byItem[c.planItemId] = [];
-          byItem[c.planItemId].push(mins);
-        }
-      }
-    }
-    for (const [itemId, times] of Object.entries(byItem)) {
-      avgMinsByItem[Number(itemId)] = times.reduce((a, b) => a + b, 0) / times.length;
-    }
-  }
+  const displayBatches = serverData?.totalBatches ?? sessionBatches;
+  const displayActiveMinutes = serverData?.activeMinutes ?? localActiveMinutes;
+  const displayBreakMinutes = serverData?.breakMinutes ?? totalBreakMinutes;
+  const displayBph = serverData?.bph ?? localBph;
+  const displayMinsPerBatch = serverData?.minsPerBatch ?? localMinsPerBatch;
+  const displayCompletionRate = serverData?.planCompletionRate ?? localCompletionRate;
 
   const stationLabel = stationType === "building_1" ? "Building Line 1"
     : stationType === "building_2" ? "Building Line 2"
@@ -414,107 +448,98 @@ function EodSummary({ planId, items, stationType, sessionBatches, totalBreakMinu
           </div>
         </div>
         <div className="p-6 space-y-4 overflow-y-auto flex-1">
-          {/* KPI grid */}
+          {serverLoading && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Loading server stats…
+            </div>
+          )}
+          {/* KPI grid — server-derived, per-builder */}
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-secondary/30 rounded-xl p-3 text-center">
-              <p className="text-xs text-muted-foreground mb-1">Session Batches</p>
-              <p className="text-3xl font-bold tabular-nums">{sessionBatches}</p>
+              <p className="text-xs text-muted-foreground mb-1">Your Batches</p>
+              <p className="text-3xl font-bold tabular-nums">{displayBatches}</p>
             </div>
             <div className="bg-secondary/30 rounded-xl p-3 text-center">
               <p className="text-xs text-muted-foreground mb-1">Batches / Hour</p>
-              <p className="text-3xl font-bold tabular-nums">{bph.toFixed(1)}</p>
+              <p className="text-3xl font-bold tabular-nums">{displayBph.toFixed(1)}</p>
             </div>
             <div className="bg-secondary/30 rounded-xl p-3 text-center">
               <p className="text-xs text-muted-foreground mb-1">Active Time</p>
               <p className="text-2xl font-bold tabular-nums">
-                {activeMinutes >= 60
-                  ? `${Math.floor(activeMinutes / 60)}h ${activeMinutes % 60}m`
-                  : `${activeMinutes}m`}
+                {displayActiveMinutes >= 60
+                  ? `${Math.floor(displayActiveMinutes / 60)}h ${displayActiveMinutes % 60}m`
+                  : `${displayActiveMinutes}m`}
               </p>
             </div>
             <div className="bg-secondary/30 rounded-xl p-3 text-center">
               <p className="text-xs text-muted-foreground mb-1">Break Time</p>
-              <p className="text-2xl font-bold tabular-nums">{totalBreakMinutes}m</p>
+              <p className="text-2xl font-bold tabular-nums">{displayBreakMinutes}m</p>
             </div>
-            {minsPerBatch != null && (
+            {displayMinsPerBatch != null && (
               <div className="bg-secondary/30 rounded-xl p-3 text-center col-span-1">
                 <p className="text-xs text-muted-foreground mb-1">Avg Mins/Batch</p>
-                <p className="text-2xl font-bold tabular-nums">{minsPerBatch.toFixed(1)}</p>
+                <p className="text-2xl font-bold tabular-nums">{displayMinsPerBatch.toFixed(1)}</p>
               </div>
             )}
             <div className="bg-secondary/30 rounded-xl p-3 text-center col-span-1">
               <p className="text-xs text-muted-foreground mb-1">Plan Completion</p>
               <p className={cn(
                 "text-2xl font-bold tabular-nums",
-                completionRate >= 100 ? "text-emerald-600 dark:text-emerald-400"
-                  : completionRate >= 50 ? "text-amber-600 dark:text-amber-400"
+                displayCompletionRate >= 100 ? "text-emerald-600 dark:text-emerald-400"
+                  : displayCompletionRate >= 50 ? "text-amber-600 dark:text-amber-400"
                   : "text-muted-foreground"
               )}>
-                {completionRate}%
+                {displayCompletionRate}%
               </p>
             </div>
           </div>
 
-          {/* Per-recipe breakdown */}
+          {/* Per-recipe breakdown — server data (user-scoped) when available, else plan-level fallback */}
           <div className="bg-secondary/20 rounded-xl overflow-hidden">
             <div className="px-3 py-2 border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-              Per-Recipe Breakdown
+              Per-Recipe Breakdown {serverData ? "(your output)" : "(plan totals)"}
             </div>
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-xs text-muted-foreground border-b border-border/50">
                   <th className="px-3 py-1.5 text-left font-medium">Recipe</th>
-                  <th className="px-3 py-1.5 text-center font-medium">Target</th>
-                  <th className="px-3 py-1.5 text-center font-medium">Done</th>
-                  <th className="px-3 py-1.5 text-center font-medium">Rate</th>
+                  <th className="px-3 py-1.5 text-center font-medium">{serverData ? "Batches" : "Done"}</th>
                   <th className="px-3 py-1.5 text-center font-medium">Avg m/batch</th>
                 </tr>
               </thead>
               <tbody>
-                {items.map(item => {
-                  const rate = (item.batchesTarget ?? 0) > 0
-                    ? Math.round(((item.batchesComplete ?? 0) / (item.batchesTarget ?? 0)) * 100)
-                    : 0;
-                  const rateColor = rate >= 100
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : rate >= 50 ? "text-amber-600 dark:text-amber-400"
-                    : "text-rose-600 dark:text-rose-400";
-                  const avgMins = avgMinsByItem[item.id];
+                {serverData ? serverData.perRecipe.map(r => (
+                  <tr key={r.name} className="border-b border-border/50 last:border-0">
+                    <td className="px-3 py-2 font-medium truncate max-w-[160px]">{r.name}</td>
+                    <td className="px-3 py-2 text-center tabular-nums">{r.count}</td>
+                    <td className="px-3 py-2 text-center tabular-nums text-muted-foreground">
+                      {r.avgMins != null ? `${r.avgMins.toFixed(1)}m` : "—"}
+                    </td>
+                  </tr>
+                )) : items.map(item => {
                   return (
                     <tr key={item.id} className="border-b border-border/50 last:border-0">
                       <td className="px-3 py-2 font-medium truncate max-w-[140px]">
                         {item.recipeName ?? `Recipe #${item.recipeId}`}
                       </td>
-                      <td className="px-3 py-2 text-center tabular-nums text-muted-foreground">
-                        {item.batchesTarget ?? 0}
-                      </td>
                       <td className="px-3 py-2 text-center tabular-nums font-bold">
                         {item.batchesComplete ?? 0}
                       </td>
-                      <td className={cn("px-3 py-2 text-center tabular-nums font-semibold text-xs", rateColor)}>
-                        {rate}%
-                      </td>
-                      <td className="px-3 py-2 text-center tabular-nums text-xs text-muted-foreground">
-                        {avgMins != null ? `${avgMins.toFixed(1)}m` : "—"}
-                      </td>
+                      <td className="px-3 py-2 text-center tabular-nums text-muted-foreground">—</td>
                     </tr>
                   );
                 })}
               </tbody>
-              <tfoot>
-                <tr className="bg-secondary/30 font-semibold">
-                  <td className="px-3 py-2">Total</td>
-                  <td className="px-3 py-2 text-center tabular-nums">{totalBatchesTarget}</td>
-                  <td className="px-3 py-2 text-center tabular-nums">{totalBatchesComplete}</td>
-                  <td className={cn(
-                    "px-3 py-2 text-center tabular-nums text-xs",
-                    completionRate >= 100 ? "text-emerald-600 dark:text-emerald-400"
-                      : "text-muted-foreground"
-                  )}>
-                    {completionRate}%
-                  </td>
-                </tr>
-              </tfoot>
+              {!serverData && (
+                <tfoot>
+                  <tr className="bg-secondary/30 font-semibold">
+                    <td className="px-3 py-2">Total</td>
+                    <td className="px-3 py-2 text-center tabular-nums">{totalBatchesComplete}</td>
+                    <td></td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </div>
