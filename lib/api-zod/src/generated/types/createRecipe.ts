@@ -24,6 +24,7 @@ export interface CreateRecipe {
   tinSize?: string | null;
   maxBatchesPerTin?: number | null;
   sopUrl?: string | null;
+  shelfLifeDays?: number | null;
   ingredients: CreateRecipeIngredientsItem[];
   subRecipes: CreateRecipeSubRecipesItem[];
 }

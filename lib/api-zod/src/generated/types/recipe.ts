@@ -26,6 +26,8 @@ export interface Recipe {
   maxBatchesPerTin?: number | null;
   /** URL to the standard operating procedure document */
   sopUrl?: string | null;
+  /** Shelf life of the product in days */
+  shelfLifeDays?: number | null;
   rawMaterialCostPerBatch: number;
   costPerPortion: number;
   packIngredientCost: number;

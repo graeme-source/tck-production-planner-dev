@@ -1538,6 +1538,13 @@ components:
         notes:
           type: string
           nullable: true
+        shelfLifeDays:
+          type: integer
+          nullable: true
+        costPerYieldUnit:
+          type: number
+          nullable: true
+          description: Computed cost per yield unit
         createdAt:
           type: string
       required:
@@ -1646,6 +1653,9 @@ components:
         notes:
           type: string
           nullable: true
+        shelfLifeDays:
+          type: integer
+          nullable: true
         ingredients:
           type: array
           items:
@@ -1719,6 +1729,10 @@ components:
           type: string
           nullable: true
           description: URL to the standard operating procedure document
+        shelfLifeDays:
+          type: integer
+          nullable: true
+          description: Shelf life of the product in days
         rawMaterialCostPerBatch:
           type: number
         costPerPortion:
@@ -1761,6 +1775,24 @@ components:
           type: string
         quantity:
           type: number
+        packWeight:
+          type: number
+          nullable: true
+        costPerPack:
+          type: number
+          nullable: true
+        processingRatio:
+          type: number
+          nullable: true
+        rawQuantity:
+          type: number
+          nullable: true
+        costPerUnit:
+          type: number
+          nullable: true
+        lineCostPortion:
+          type: number
+          nullable: true
       required:
         - id
         - ingredientId
@@ -1781,6 +1813,20 @@ components:
           type: number
         unit:
           type: string
+        subYield:
+          type: number
+          nullable: true
+        subCostPerUnit:
+          type: number
+          nullable: true
+        lineCostPortion:
+          type: number
+          nullable: true
+        breakdown:
+          type: array
+          nullable: true
+          items:
+            type: object
       required:
         - id
         - subRecipeId
@@ -1842,6 +1888,9 @@ components:
           nullable: true
         sopUrl:
           type: string
+          nullable: true
+        shelfLifeDays:
+          type: integer
           nullable: true
         ingredients:
           type: array
@@ -2175,13 +2224,10 @@ components:
         endedAt:
           type: string
           nullable: true
-        createdAt:
-          type: string
       required:
         - id
         - planId
         - stationType
-        - createdAt
 
     CreateDptSetting:
       type: object

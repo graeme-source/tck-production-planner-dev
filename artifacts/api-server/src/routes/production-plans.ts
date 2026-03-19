@@ -23,10 +23,8 @@ function mapPlan(p: typeof productionPlansTable.$inferSelect) {
 }
 
 function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?: string | null; portionsPerBatch?: number | null }) {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { targetQuantity, actualQuantity, ...rest } = i;
   return {
-    ...rest,
+    ...i,
     recipeName: i.recipeName ?? "",
     portionsPerBatch: i.portionsPerBatch ?? 10,
   };
@@ -99,7 +97,6 @@ router.post("/", validate(CreatePlanBody), async (req, res) => {
       items.map((i: { recipeId: number; batchesTarget?: number; orderPosition?: number; tinSize?: string | null; maxBatchesPerTin?: number | null; sopUrl?: string | null; notes?: string | null }) => ({
         planId: plan.id,
         recipeId: i.recipeId,
-        targetQuantity: "0",
         batchesTarget: i.batchesTarget ?? 0,
         orderPosition: i.orderPosition ?? 0,
         tinSize: i.tinSize ?? null,
@@ -125,8 +122,6 @@ router.get("/:id", async (req, res) => {
       recipeId: productionPlanItemsTable.recipeId,
       recipeName: recipesTable.name,
       portionsPerBatch: recipesTable.portionsPerBatch,
-      targetQuantity: productionPlanItemsTable.targetQuantity,
-      actualQuantity: productionPlanItemsTable.actualQuantity,
       notes: productionPlanItemsTable.notes,
       status: productionPlanItemsTable.status,
       orderPosition: productionPlanItemsTable.orderPosition,
@@ -178,7 +173,6 @@ router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
         }) => ({
           planId: id,
           recipeId: i.recipeId,
-          targetQuantity: "0",
           batchesTarget: i.batchesTarget ?? 0,
           batchesComplete: i.batchesComplete ?? 0,
           orderPosition: i.orderPosition ?? 0,

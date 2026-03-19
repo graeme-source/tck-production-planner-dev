@@ -624,7 +624,7 @@ function EditSubRecipeDialog({
         yield: Number(detail.yield),
         yieldUnit: detail.yieldUnit,
         notes: detail.notes ?? "",
-        shelfLifeDays: (detail as any).shelfLifeDays != null ? Number((detail as any).shelfLifeDays) : undefined,
+        shelfLifeDays: detail.shelfLifeDays != null ? Number(detail.shelfLifeDays) : undefined,
         ingredients: (detail.ingredients ?? []).map(i => ({
           ingredientId: i.ingredientId,
           quantity: Number(i.quantity),

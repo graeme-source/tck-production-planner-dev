@@ -461,8 +461,8 @@ export default function Ingredients() {
       processingRatioPct: item.processingRatio != null
         ? parseFloat((item.processingRatio * 100).toFixed(4))
         : null,
-      rawMeatTrayCapacityKg: (item as any).rawMeatTrayCapacityKg != null ? Number((item as any).rawMeatTrayCapacityKg) : null,
-      category: (item as any).category ?? "",
+      rawMeatTrayCapacityKg: item.rawMeatTrayCapacityKg != null ? Number(item.rawMeatTrayCapacityKg) : null,
+      category: item.category ?? "",
     });
     setIsDialogOpen(true);
   };

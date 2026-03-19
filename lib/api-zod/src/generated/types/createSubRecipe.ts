@@ -14,6 +14,7 @@ export interface CreateSubRecipe {
   yield: number;
   yieldUnit: string;
   notes?: string | null;
+  shelfLifeDays?: number | null;
   ingredients: CreateSubRecipeIngredientsItem[];
   subRecipeComponents?: CreateSubRecipeSubRecipeComponentsItem[];
 }

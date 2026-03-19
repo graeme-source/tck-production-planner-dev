@@ -57,6 +57,7 @@ export * from "./recipe";
 export * from "./recipeDetail";
 export * from "./recipeIngredient";
 export * from "./recipeSubRecipe";
+export * from "./recipeSubRecipeBreakdownItem";
 export * from "./salesEntry";
 export * from "./stationBreak";
 export * from "./stockEntry";

@@ -18,8 +18,6 @@ export const productionPlanItemsTable = pgTable("production_plan_items", {
   id: serial("id").primaryKey(),
   planId: integer("plan_id").notNull().references(() => productionPlansTable.id, { onDelete: "cascade" }),
   recipeId: integer("recipe_id").notNull().references(() => recipesTable.id, { onDelete: "restrict" }),
-  targetQuantity: numeric("target_quantity", { precision: 10, scale: 4 }).notNull().default("0"),
-  actualQuantity: numeric("actual_quantity", { precision: 10, scale: 4 }),
   notes: text("notes"),
   status: text("status").notNull().default("pending"),
   orderPosition: integer("order_position").notNull().default(0),

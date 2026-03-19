@@ -385,15 +385,15 @@ function EditRecipeDialog({
         servings: Number(detail.servings),
         servingUnit: detail.servingUnit,
         notes: detail.notes ?? "",
-        packSize: Number((detail as any).packSize) || 1,
-        rrp: Number((detail as any).rrp) || 0,
-        packagingCost: Number((detail as any).packagingCost) || 0,
-        labourCost: Number((detail as any).labourCost) || 0,
-        portionsPerBatch: Number((detail as any).portionsPerBatch) || 10,
-        shelfLifeDays: (detail as any).shelfLifeDays != null ? Number((detail as any).shelfLifeDays) : undefined,
-        tinSize: (detail as any).tinSize ?? "",
-        maxBatchesPerTin: (detail as any).maxBatchesPerTin != null ? Number((detail as any).maxBatchesPerTin) : null,
-        sopUrl: (detail as any).sopUrl ?? "",
+        packSize: Number(detail.packSize) || 1,
+        rrp: Number(detail.rrp) || 0,
+        packagingCost: Number(detail.packagingCost) || 0,
+        labourCost: Number(detail.labourCost) || 0,
+        portionsPerBatch: Number(detail.portionsPerBatch) || 10,
+        shelfLifeDays: detail.shelfLifeDays != null ? Number(detail.shelfLifeDays) : undefined,
+        tinSize: detail.tinSize ?? "",
+        maxBatchesPerTin: detail.maxBatchesPerTin != null ? Number(detail.maxBatchesPerTin) : null,
+        sopUrl: detail.sopUrl ?? "",
         ingredients: (detail.ingredients ?? []).map((i: any) => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity) })),
         subRecipes: (detail.subRecipes ?? []).map((s: any) => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity) })),
       }
@@ -503,26 +503,25 @@ function SubRecipeBreakdownRow({ sub, servingUnit }: { sub: BreakdownSubRecipe; 
 function RecipeCostBreakdownDialog({ id, open, onOpenChange }: { id: number; open: boolean; onOpenChange: (v: boolean) => void }) {
   const { data: detail, isLoading } = useGetRecipe(id, { query: { enabled: open } });
 
-  const d = detail as any;
-  const servings = Number(d?.servings ?? 1);
-  const servingUnit = d?.servingUnit ?? "portion";
-  const rawIngredients: BreakdownRawIngredient[] = (d?.ingredients ?? []).map((i: any) => ({
+  const servings = Number(detail?.servings ?? 1);
+  const servingUnit = detail?.servingUnit ?? "portion";
+  const rawIngredients: BreakdownRawIngredient[] = (detail?.ingredients ?? []).map(i => ({
     ingredientName: i.ingredientName,
     unit: i.unit,
     quantity: i.quantity,
     rawQuantity: i.rawQuantity ?? i.quantity,
     processingRatio: i.processingRatio ?? 1,
-    costPerUnit: i.costPerUnit,
-    lineCostPortion: i.lineCostPortion,
+    costPerUnit: i.costPerUnit ?? 0,
+    lineCostPortion: i.lineCostPortion ?? 0,
   }));
-  const subRecipes: BreakdownSubRecipe[] = (d?.subRecipes ?? []).map((s: any) => ({
+  const subRecipes: BreakdownSubRecipe[] = (detail?.subRecipes ?? []).map(s => ({
     subRecipeId: s.subRecipeId,
     subRecipeName: s.subRecipeName,
     quantity: s.quantity,
     unit: s.unit,
-    subYield: s.subYield,
-    subCostPerUnit: s.subCostPerUnit,
-    lineCostPortion: s.lineCostPortion,
+    subYield: s.subYield ?? 0,
+    subCostPerUnit: s.subCostPerUnit ?? 0,
+    lineCostPortion: s.lineCostPortion ?? 0,
     breakdown: s.breakdown ?? [],
   }));
 
@@ -536,9 +535,9 @@ function RecipeCostBreakdownDialog({ id, open, onOpenChange }: { id: number; ope
         <DialogHeader>
           <DialogTitle className="font-display text-xl flex items-center gap-2">
             <BarChart2 className="w-5 h-5 text-primary" />
-            Cost Breakdown — {d?.name ?? "…"}
+            Cost Breakdown — {detail?.name ?? "…"}
           </DialogTitle>
-          {d && (
+          {detail && (
             <p className="text-sm text-muted-foreground mt-0.5">
               Batch: {servings} {servingUnit} · All costs shown per {servingUnit}
             </p>
@@ -591,34 +590,34 @@ function RecipeCostBreakdownDialog({ id, open, onOpenChange }: { id: number; ope
                 </tr>
 
                 {/* Packaging + labour if set */}
-                {(Number(d?.packagingCost) > 0 || Number(d?.labourCost) > 0) && <>
-                  {Number(d?.packagingCost) > 0 && (
+                {(Number(detail?.packagingCost) > 0 || Number(detail?.labourCost) > 0) && <>
+                  {Number(detail?.packagingCost) > 0 && (
                     <tr className="bg-secondary/10">
                       <td colSpan={3} className="px-4 py-2 text-sm text-muted-foreground flex items-center gap-2">
-                        <Package className="w-3.5 h-3.5 inline mr-1" /> Packaging (per pack of {d?.packSize} {servingUnit})
+                        <Package className="w-3.5 h-3.5 inline mr-1" /> Packaging (per pack of {detail?.packSize} {servingUnit})
                       </td>
-                      <td className="px-2 py-2 text-right text-sm">£{fmt(Number(d?.packagingCost))}/pack</td>
+                      <td className="px-2 py-2 text-right text-sm">£{fmt(Number(detail?.packagingCost))}/pack</td>
                     </tr>
                   )}
-                  {Number(d?.labourCost) > 0 && (
+                  {Number(detail?.labourCost) > 0 && (
                     <tr className="bg-secondary/10">
                       <td colSpan={3} className="px-4 py-2 text-sm text-muted-foreground">
                         <Wrench className="w-3.5 h-3.5 inline mr-1" /> Labour (per pack)
                       </td>
-                      <td className="px-2 py-2 text-right text-sm">£{fmt(Number(d?.labourCost))}/pack</td>
+                      <td className="px-2 py-2 text-right text-sm">£{fmt(Number(detail?.labourCost))}/pack</td>
                     </tr>
                   )}
                   <tr className="bg-secondary/20">
                     <td colSpan={3} className="px-4 py-2.5 font-bold text-sm">Total pack cost</td>
-                    <td className="px-2 py-2.5 text-right font-bold">£{fmt(Number(d?.totalPackCost))}/pack</td>
+                    <td className="px-2 py-2.5 text-right font-bold">£{fmt(Number(detail?.totalPackCost))}/pack</td>
                   </tr>
-                  {Number(d?.rrp) > 0 && (
+                  {Number(detail?.rrp) > 0 && (
                     <tr className="bg-secondary/10">
                       <td colSpan={3} className="px-4 py-2 text-sm font-medium">
-                        Gross margin at £{fmt(Number(d?.rrp))} RRP
+                        Gross margin at £{fmt(Number(detail?.rrp))} RRP
                       </td>
                       <td className="px-2 py-2 text-right">
-                        <MarginBadge margin={d?.grossMargin} />
+                        <MarginBadge margin={detail?.grossMargin} />
                       </td>
                     </tr>
                   )}
@@ -726,15 +725,15 @@ export default function Recipes() {
     id: i.id,
     name: i.name,
     unit: i.unit,
-    processingRatio: Number((i as any).processingRatio) || 1,
-    packWeight: Number((i as any).packWeight) || 0,
-    costPerPack: Number((i as any).costPerPack) || 0,
+    processingRatio: Number(i.processingRatio) || 1,
+    packWeight: Number(i.packWeight) || 0,
+    costPerPack: Number(i.costPerPack) || 0,
   }));
   const subRecipeList: SubRecipeOption[] = (subRecipesData ?? []).map(s => ({
     id: s.id,
     name: s.name,
     yieldUnit: s.yieldUnit,
-    costPerYieldUnit: Number((s as any).costPerYieldUnit) || 0,
+    costPerYieldUnit: Number(s.costPerYieldUnit) || 0,
   }));
   const catDefaults = (categoryDefaultsData ?? []).map(d => ({
     category: d.category,

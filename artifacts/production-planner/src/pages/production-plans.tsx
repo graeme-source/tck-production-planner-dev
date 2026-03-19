@@ -5,6 +5,7 @@ import {
   useGetDptCalculator,
 } from "@workspace/api-client-react";
 import type { DptSuggestion, ProductionPlanDetail } from "@workspace/api-client-react";
+type PlanStatus = "draft" | "active" | "prep" | "building" | "complete";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import {
@@ -447,7 +448,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const progress = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
 
   const handleStatusChange = (newStatus: string) => {
-    updatePlan.mutate({ id: planId, data: { status: newStatus as any } });
+    updatePlan.mutate({ id: planId, data: { status: newStatus as PlanStatus } });
   };
 
   return (

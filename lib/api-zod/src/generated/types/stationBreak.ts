@@ -15,5 +15,4 @@ export interface StationBreak {
   userId?: number | null;
   startedAt?: string | null;
   endedAt?: string | null;
-  createdAt: string;
 }

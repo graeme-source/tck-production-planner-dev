@@ -12,4 +12,10 @@ export interface RecipeIngredient {
   ingredientName: string;
   unit: string;
   quantity: number;
+  packWeight?: number | null;
+  costPerPack?: number | null;
+  processingRatio?: number | null;
+  rawQuantity?: number | null;
+  costPerUnit?: number | null;
+  lineCostPortion?: number | null;
 }

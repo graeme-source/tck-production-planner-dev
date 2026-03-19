@@ -781,16 +781,672 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Generic placeholder for not-yet-built stations
+// Dough Prep Station
 // ──────────────────────────────────────────────────────────────────────────────
-function PlaceholderStation({ label }: { label: string }) {
+function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
+  const queryClient = useQueryClient();
+  const updateItem = useUpdateProductionPlanItem({
+    mutation: {
+      onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
+    },
+  });
+  const createBatch = useCreateBatchCompletion({
+    mutation: {
+      onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
+    },
+  });
+
+  const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
+  const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
+
+  // Per recipe: show dough batch info (batches = how many mixing batches of dough are required)
+  // One dough batch per plan batch (they're 1:1 at TCK since each mix = one dough batch)
+  const addBatch = (item: ProductionPlanItem) => {
+    const newComplete = (item.batchesComplete ?? 0) + 1;
+    const newStatus = newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
+    updateItem.mutate({ planId: plan.id, itemId: item.id, data: { batchesComplete: newComplete, status: newStatus } });
+    createBatch.mutate({ planId: plan.id, data: { planItemId: item.id, stationType: "dough_prep", completedAt: new Date().toISOString() } });
+  };
+
+  const removeBatch = (item: ProductionPlanItem) => {
+    const newComplete = Math.max(0, (item.batchesComplete ?? 0) - 1);
+    const newStatus = newComplete === 0 ? "pending" : newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
+    updateItem.mutate({ planId: plan.id, itemId: item.id, data: { batchesComplete: newComplete, status: newStatus } });
+  };
+
+  const totalComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
+  const overallPct = totalBatchesTarget > 0 ? Math.round((totalComplete / totalBatchesTarget) * 100) : 0;
+
   return (
-    <div className="flex items-center justify-center h-64 text-muted-foreground">
-      <div className="text-center">
-        <BarChart2 className="w-10 h-10 mx-auto mb-3 opacity-40" />
-        <p className="font-medium">{label} Station</p>
-        <p className="text-sm mt-1">Coming soon</p>
+    <div className="space-y-4">
+      {/* Summary card */}
+      <div className="bg-card border border-border rounded-xl p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <Layers className="w-6 h-6 text-amber-600" />
+            <div>
+              <h2 className="font-semibold text-base">Dough Prep</h2>
+              <p className="text-xs text-muted-foreground">
+                {totalComplete} of {totalBatchesTarget} dough batches mixed
+              </p>
+            </div>
+          </div>
+          <span className="text-2xl font-bold font-display">{overallPct}%</span>
+        </div>
+        <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden">
+          <div
+            className={cn("h-full rounded-full transition-all", overallPct >= 100 ? "bg-emerald-500" : "bg-amber-500")}
+            style={{ width: `${Math.min(overallPct, 100)}%` }}
+          />
+        </div>
+        <div className="mt-3 pt-3 border-t border-border/50">
+          <BreakTracker planId={plan.id} stationType="dough_prep" />
+        </div>
       </div>
+
+      {/* Per-recipe dough batches */}
+      <div className="space-y-2">
+        {items.map(item => {
+          const isComplete = item.status === "complete";
+          const prog = (item.batchesTarget ?? 0) > 0
+            ? Math.round(((item.batchesComplete ?? 0) / (item.batchesTarget ?? 0)) * 100)
+            : 0;
+          return (
+            <div
+              key={item.id}
+              className={cn(
+                "bg-card border rounded-xl p-4 transition-all",
+                isComplete
+                  ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-900/10"
+                  : (item.batchesComplete ?? 0) > 0
+                    ? "border-amber-300 dark:border-amber-700 bg-amber-50/30 dark:bg-amber-900/10"
+                    : "border-border"
+              )}
+            >
+              <div className="flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <h3 className={cn("font-semibold", isComplete ? "line-through text-muted-foreground" : "")}>
+                      {item.recipeName ?? `Recipe #${item.recipeId}`}
+                    </h3>
+                    {isComplete && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
+                      <div
+                        className={cn("h-full rounded-full transition-all", isComplete ? "bg-emerald-500" : "bg-amber-500")}
+                        style={{ width: `${Math.min(prog, 100)}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">
+                      {item.batchesComplete ?? 0} / {item.batchesTarget ?? 0} batches
+                    </span>
+                  </div>
+                  {item.tinSize && (
+                    <p className="text-xs text-muted-foreground mt-1">{item.tinSize} tin</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    onClick={() => removeBatch(item)}
+                    disabled={(item.batchesComplete ?? 0) === 0}
+                    className="w-9 h-9 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
+                  >
+                    <Minus className="w-4 h-4" />
+                  </button>
+                  <div className="w-10 text-center">
+                    <span className="text-xl font-bold">{item.batchesComplete ?? 0}</span>
+                  </div>
+                  <button
+                    onClick={() => addBatch(item)}
+                    disabled={isComplete}
+                    className={cn(
+                      "w-9 h-9 flex items-center justify-center rounded-full transition-colors",
+                      isComplete
+                        ? "border border-emerald-300 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 opacity-60"
+                        : "bg-amber-500 text-white hover:bg-amber-600"
+                    )}
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Dough Sheeting Station
+// ──────────────────────────────────────────────────────────────────────────────
+function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
+  const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
+  const currentItem = items.find(it => it.status === "in-progress") ?? items.find(it => it.status === "pending");
+
+  return (
+    <div className="space-y-4">
+      {/* Active recipe spotlight */}
+      {currentItem ? (
+        <div className="bg-card border-2 border-amber-400 dark:border-amber-600 rounded-xl p-5">
+          <p className="text-xs font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400 mb-1">
+            Now Sheeting
+          </p>
+          <h2 className="font-display text-2xl font-bold mb-3">
+            {currentItem.recipeName ?? `Recipe #${currentItem.recipeId}`}
+          </h2>
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="bg-secondary/50 rounded-lg px-4 py-2.5 text-center min-w-[80px]">
+              <p className="text-xs text-muted-foreground">Batches</p>
+              <p className="text-2xl font-bold">{currentItem.batchesTarget ?? 0}</p>
+            </div>
+            {currentItem.tinSize && (
+              <div className="bg-secondary/50 rounded-lg px-4 py-2.5 text-center min-w-[80px]">
+                <p className="text-xs text-muted-foreground">Tin Size</p>
+                <p className="text-2xl font-bold">{currentItem.tinSize}</p>
+              </div>
+            )}
+            {currentItem.maxBatchesPerTin && (currentItem.batchesTarget ?? 0) > 0 && (
+              <div className="bg-amber-50 dark:bg-amber-900/20 rounded-lg px-4 py-2.5 text-center min-w-[80px]">
+                <p className="text-xs text-muted-foreground">Tins to Cut</p>
+                <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">
+                  {Math.ceil((currentItem.batchesTarget ?? 0) / currentItem.maxBatchesPerTin)}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="bg-card border border-border rounded-xl p-8 text-center">
+          <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
+          <h2 className="font-semibold text-lg mb-1">All sheeting complete!</h2>
+          <p className="text-muted-foreground text-sm">Dough sheeting is done for today.</p>
+        </div>
+      )}
+
+      <BreakTracker planId={plan.id} stationType="dough_sheeting" />
+
+      {/* Full queue */}
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-border">
+          <h3 className="font-semibold text-sm">Sheeting Queue</h3>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-secondary/20 border-b border-border text-xs text-muted-foreground">
+              <th className="py-2.5 px-4 text-left font-medium">#</th>
+              <th className="py-2.5 px-4 text-left font-medium">Recipe</th>
+              <th className="py-2.5 px-4 text-center font-medium">Batches</th>
+              <th className="py-2.5 px-4 text-center font-medium">Tin</th>
+              <th className="py-2.5 px-4 text-center font-medium">Tins to Cut</th>
+              <th className="py-2.5 px-4 text-center font-medium">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map(item => {
+              const tins = item.maxBatchesPerTin && (item.batchesTarget ?? 0) > 0
+                ? Math.ceil((item.batchesTarget ?? 0) / item.maxBatchesPerTin)
+                : null;
+              const isCurrent = item.id === currentItem?.id;
+              return (
+                <tr
+                  key={item.id}
+                  className={cn("border-b border-border/50 last:border-0", isCurrent ? "bg-amber-50/60 dark:bg-amber-900/10" : "")}
+                >
+                  <td className="py-2.5 px-4 text-muted-foreground">{item.orderPosition}</td>
+                  <td className={cn("py-2.5 px-4 font-medium", item.status === "complete" ? "line-through text-muted-foreground" : "")}>
+                    {item.recipeName ?? `Recipe #${item.recipeId}`}
+                    {isCurrent && <span className="ml-2 text-xs text-amber-600 font-normal">← current</span>}
+                  </td>
+                  <td className="py-2.5 px-4 text-center">{item.batchesTarget ?? 0}</td>
+                  <td className="py-2.5 px-4 text-center text-muted-foreground">{item.tinSize ?? "—"}</td>
+                  <td className="py-2.5 px-4 text-center font-semibold">
+                    {tins != null ? tins : <span className="text-muted-foreground">—</span>}
+                  </td>
+                  <td className="py-2.5 px-4 text-center">
+                    <span className={cn(
+                      "text-xs capitalize",
+                      item.status === "complete" ? "text-emerald-600 dark:text-emerald-400" :
+                      item.status === "in-progress" ? "text-amber-600 dark:text-amber-400 font-medium" :
+                      "text-muted-foreground"
+                    )}>
+                      {item.status === "in-progress" ? "In Progress" : item.status}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Ovens Station
+// ──────────────────────────────────────────────────────────────────────────────
+function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
+  const queryClient = useQueryClient();
+  const { state } = useAuth();
+  const isAdmin = state.status === "authenticated" && state.user.role === "admin";
+
+  const updateItem = useUpdateProductionPlanItem({
+    mutation: {
+      onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
+    },
+  });
+  const createBatch = useCreateBatchCompletion({
+    mutation: {
+      onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
+    },
+  });
+
+  const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
+  const currentItem = items.find(it => it.status === "in-progress") ?? items.find(it => it.status === "pending");
+
+  const addBatch = (item: ProductionPlanItem) => {
+    const newComplete = (item.batchesComplete ?? 0) + 1;
+    const newStatus = newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
+    updateItem.mutate({ planId: plan.id, itemId: item.id, data: { batchesComplete: newComplete, status: newStatus } });
+    createBatch.mutate({ planId: plan.id, data: { planItemId: item.id, stationType: "ovens", completedAt: new Date().toISOString() } });
+  };
+
+  const removeBatch = (item: ProductionPlanItem) => {
+    const newComplete = Math.max(0, (item.batchesComplete ?? 0) - 1);
+    const newStatus = newComplete === 0 ? "pending" : newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
+    updateItem.mutate({ planId: plan.id, itemId: item.id, data: { batchesComplete: newComplete, status: newStatus } });
+  };
+
+  const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
+  const totalBatchesComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
+  const overallPct = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
+
+  return (
+    <div className="space-y-4">
+      {/* Current recipe spotlight */}
+      {currentItem ? (
+        <div className="bg-card border-2 border-red-400 dark:border-red-700 rounded-xl p-5">
+          <p className="text-xs font-semibold uppercase tracking-wider text-red-500 mb-1">
+            Now in Ovens
+          </p>
+          <h2 className="font-display text-2xl font-bold mb-3">
+            {currentItem.recipeName ?? `Recipe #${currentItem.recipeId}`}
+          </h2>
+          <div className="flex flex-wrap items-center gap-4 mb-4">
+            <div className="bg-secondary/50 rounded-lg px-4 py-2.5 text-center min-w-[80px]">
+              <p className="text-xs text-muted-foreground">Target</p>
+              <p className="text-2xl font-bold">{currentItem.batchesTarget ?? 0}</p>
+            </div>
+            <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-lg px-4 py-2.5 text-center min-w-[80px]">
+              <p className="text-xs text-muted-foreground">Done</p>
+              <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+                {currentItem.batchesComplete ?? 0}
+              </p>
+            </div>
+            {currentItem.tinSize && (
+              <div className="bg-secondary/50 rounded-lg px-4 py-2.5 text-center min-w-[80px]">
+                <p className="text-xs text-muted-foreground">Tin Size</p>
+                <p className="text-2xl font-bold">{currentItem.tinSize}</p>
+              </div>
+            )}
+            {currentItem.maxBatchesPerTin && (currentItem.batchesTarget ?? 0) > 0 && (
+              <div className="bg-red-50 dark:bg-red-900/20 rounded-lg px-4 py-2.5 text-center min-w-[80px]">
+                <p className="text-xs text-muted-foreground">Oven Loads</p>
+                <p className="text-2xl font-bold text-red-600 dark:text-red-400">
+                  {Math.ceil((currentItem.batchesTarget ?? 0) / currentItem.maxBatchesPerTin)}
+                </p>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center justify-center gap-4">
+            <button
+              onClick={() => removeBatch(currentItem)}
+              disabled={(currentItem.batchesComplete ?? 0) === 0}
+              className="w-12 h-12 flex items-center justify-center rounded-full border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
+            >
+              <Minus className="w-5 h-5" />
+            </button>
+            <div className="text-5xl font-bold font-display tabular-nums w-20 text-center">
+              {currentItem.batchesComplete ?? 0}
+            </div>
+            <button
+              onClick={() => addBatch(currentItem)}
+              disabled={currentItem.status === "complete" && !isAdmin}
+              className="w-12 h-12 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
+            >
+              <Plus className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-card border border-border rounded-xl p-8 text-center">
+          <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
+          <h2 className="font-semibold text-lg mb-1">All ovens done!</h2>
+          <p className="text-muted-foreground text-sm">All recipes through the ovens for today.</p>
+        </div>
+      )}
+
+      {/* Overall progress */}
+      <div className="bg-card border border-border rounded-xl p-4">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-sm font-medium">Daily Progress</p>
+          <span className="text-lg font-bold">{overallPct}%</span>
+        </div>
+        <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
+          <div
+            className={cn("h-full rounded-full transition-all", overallPct >= 100 ? "bg-emerald-500" : "bg-red-500")}
+            style={{ width: `${Math.min(overallPct, 100)}%` }}
+          />
+        </div>
+        <div className="mt-3 pt-3 border-t border-border/50">
+          <BreakTracker planId={plan.id} stationType="ovens" />
+        </div>
+      </div>
+
+      {/* Queue */}
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-border">
+          <h3 className="font-semibold text-sm">Oven Queue</h3>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-secondary/20 border-b border-border text-xs text-muted-foreground">
+              <th className="py-2 px-4 text-left font-medium">#</th>
+              <th className="py-2 px-4 text-left font-medium">Recipe</th>
+              <th className="py-2 px-4 text-center font-medium">Target</th>
+              <th className="py-2 px-4 text-center font-medium">Done</th>
+              <th className="py-2 px-4 text-center font-medium">Oven Loads</th>
+              <th className="py-2 px-4 text-center font-medium">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map(item => {
+              const loads = item.maxBatchesPerTin && (item.batchesTarget ?? 0) > 0
+                ? Math.ceil((item.batchesTarget ?? 0) / item.maxBatchesPerTin)
+                : null;
+              return (
+                <tr key={item.id} className="border-b border-border/50 last:border-0">
+                  <td className="py-2.5 px-4 text-muted-foreground">{item.orderPosition}</td>
+                  <td className={cn("py-2.5 px-4 font-medium", item.status === "complete" ? "line-through text-muted-foreground" : "")}>
+                    {item.recipeName ?? `Recipe #${item.recipeId}`}
+                  </td>
+                  <td className="py-2.5 px-4 text-center">{item.batchesTarget ?? 0}</td>
+                  <td className="py-2.5 px-4 text-center">{item.batchesComplete ?? 0}</td>
+                  <td className="py-2.5 px-4 text-center font-medium">
+                    {loads != null ? loads : <span className="text-muted-foreground">—</span>}
+                  </td>
+                  <td className="py-2.5 px-4 text-center">
+                    <span className={cn(
+                      "text-xs capitalize",
+                      item.status === "complete" ? "text-emerald-600 dark:text-emerald-400" :
+                      item.status === "in-progress" ? "text-red-500 font-medium" :
+                      "text-muted-foreground"
+                    )}>
+                      {item.status === "in-progress" ? "In Oven" : item.status}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Wrapping Station
+// ──────────────────────────────────────────────────────────────────────────────
+function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
+  const queryClient = useQueryClient();
+  const { state } = useAuth();
+  const isAdmin = state.status === "authenticated" && state.user.role === "admin";
+
+  const updateItem = useUpdateProductionPlanItem({
+    mutation: {
+      onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
+    },
+  });
+  const createBatch = useCreateBatchCompletion({
+    mutation: {
+      onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
+    },
+  });
+
+  const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
+  const totalComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
+  const totalTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
+  const overallPct = totalTarget > 0 ? Math.round((totalComplete / totalTarget) * 100) : 0;
+
+  const addBatch = (item: ProductionPlanItem) => {
+    const newComplete = (item.batchesComplete ?? 0) + 1;
+    const newStatus = newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
+    updateItem.mutate({ planId: plan.id, itemId: item.id, data: { batchesComplete: newComplete, status: newStatus } });
+    createBatch.mutate({ planId: plan.id, data: { planItemId: item.id, stationType: "wrapping", completedAt: new Date().toISOString() } });
+  };
+
+  const removeBatch = (item: ProductionPlanItem) => {
+    const newComplete = Math.max(0, (item.batchesComplete ?? 0) - 1);
+    const newStatus = newComplete === 0 ? "pending" : newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
+    updateItem.mutate({ planId: plan.id, itemId: item.id, data: { batchesComplete: newComplete, status: newStatus } });
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Summary */}
+      <div className="bg-card border border-border rounded-xl p-4">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-3">
+            <Gift className="w-6 h-6 text-purple-500" />
+            <div>
+              <h2 className="font-semibold text-base">Wrapping Station</h2>
+              <p className="text-xs text-muted-foreground">
+                {totalComplete} of {totalTarget} batches wrapped
+              </p>
+            </div>
+          </div>
+          <span className="text-2xl font-bold font-display">{overallPct}%</span>
+        </div>
+        <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden">
+          <div
+            className={cn("h-full rounded-full transition-all", overallPct >= 100 ? "bg-emerald-500" : "bg-purple-500")}
+            style={{ width: `${Math.min(overallPct, 100)}%` }}
+          />
+        </div>
+        <div className="mt-3 pt-3 border-t border-border/50">
+          <BreakTracker planId={plan.id} stationType="wrapping" />
+        </div>
+      </div>
+
+      {/* Per-recipe wrapping list */}
+      <div className="space-y-2">
+        {items.map(item => {
+          const isComplete = item.status === "complete";
+          const prog = (item.batchesTarget ?? 0) > 0
+            ? Math.round(((item.batchesComplete ?? 0) / (item.batchesTarget ?? 0)) * 100)
+            : 0;
+          return (
+            <div
+              key={item.id}
+              className={cn(
+                "bg-card border rounded-xl p-4 transition-all",
+                isComplete
+                  ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-900/10"
+                  : (item.batchesComplete ?? 0) > 0
+                    ? "border-purple-300 dark:border-purple-700 bg-purple-50/30 dark:bg-purple-900/10"
+                    : "border-border"
+              )}
+            >
+              <div className="flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <h3 className={cn("font-semibold", isComplete ? "line-through text-muted-foreground" : "")}>
+                      {item.recipeName ?? `Recipe #${item.recipeId}`}
+                    </h3>
+                    {isComplete && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
+                      <div
+                        className={cn("h-full rounded-full transition-all", isComplete ? "bg-emerald-500" : "bg-purple-500")}
+                        style={{ width: `${Math.min(prog, 100)}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">
+                      {item.batchesComplete ?? 0} / {item.batchesTarget ?? 0}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    onClick={() => removeBatch(item)}
+                    disabled={(item.batchesComplete ?? 0) === 0}
+                    className="w-9 h-9 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
+                  >
+                    <Minus className="w-4 h-4" />
+                  </button>
+                  <div className="w-10 text-center">
+                    <span className="text-xl font-bold">{item.batchesComplete ?? 0}</span>
+                  </div>
+                  <button
+                    onClick={() => addBatch(item)}
+                    disabled={isComplete && !isAdmin}
+                    className={cn(
+                      "w-9 h-9 flex items-center justify-center rounded-full transition-colors",
+                      isComplete
+                        ? "border border-emerald-300 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 opacity-60"
+                        : "bg-purple-500 text-white hover:bg-purple-600"
+                    )}
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Packing Station
+// ──────────────────────────────────────────────────────────────────────────────
+function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
+  const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
+
+  // Calculate per-recipe pack totals using portionsPerBatch / packSize from plan item
+  const totalCompleteItems = items.filter(it => it.status === "complete").length;
+  const grandTotalBatches = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
+  const allDone = items.length > 0 && items.every(it => it.status === "complete");
+
+  return (
+    <div className="space-y-4">
+      {/* Summary */}
+      <div className="bg-card border border-border rounded-xl p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Box className="w-6 h-6 text-indigo-500" />
+            <div>
+              <h2 className="font-semibold text-base">Packing Station</h2>
+              <p className="text-xs text-muted-foreground">
+                Final pack counts for today's production
+              </p>
+            </div>
+          </div>
+          {allDone && (
+            <div className="flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-lg px-3 py-1.5">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Production Complete!</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Per-recipe packing summary */}
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <h3 className="font-semibold text-sm">Pack Summary</h3>
+          <span className="text-xs text-muted-foreground">
+            {totalCompleteItems} of {items.length} recipes complete
+          </span>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-secondary/20 border-b border-border text-xs text-muted-foreground">
+              <th className="py-2.5 px-4 text-left font-medium">Recipe</th>
+              <th className="py-2.5 px-4 text-center font-medium">Batches Done</th>
+              <th className="py-2.5 px-4 text-center font-medium">Target Batches</th>
+              <th className="py-2.5 px-4 text-center font-medium">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map(item => {
+              const isComplete = item.status === "complete";
+              const batchDone = item.batchesComplete ?? 0;
+              const batchTarget = item.batchesTarget ?? 0;
+              const pct = batchTarget > 0 ? Math.round((batchDone / batchTarget) * 100) : 0;
+
+              return (
+                <tr key={item.id} className={cn("border-b border-border/50 last:border-0", isComplete ? "bg-emerald-50/30 dark:bg-emerald-900/10" : "")}>
+                  <td className={cn("py-3 px-4 font-medium", isComplete ? "line-through text-muted-foreground" : "")}>
+                    {item.recipeName ?? `Recipe #${item.recipeId}`}
+                  </td>
+                  <td className="py-3 px-4 text-center tabular-nums">
+                    <span className={cn("text-base font-bold", isComplete ? "text-emerald-600 dark:text-emerald-400" : batchDone > 0 ? "text-indigo-600 dark:text-indigo-400" : "text-muted-foreground")}>
+                      {batchDone}
+                    </span>
+                  </td>
+                  <td className="py-3 px-4 text-center text-muted-foreground">{batchTarget}</td>
+                  <td className="py-3 px-4 text-center">
+                    <div className="flex items-center justify-center gap-1.5">
+                      {isComplete ? (
+                        <>
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                          <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">Done</span>
+                        </>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <div className="w-16 h-1.5 bg-secondary rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-indigo-500 rounded-full transition-all"
+                              style={{ width: `${Math.min(pct, 100)}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-muted-foreground">{pct}%</span>
+                        </div>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <div className="px-4 py-3 border-t border-border bg-secondary/20 flex items-center justify-between">
+          <span className="text-sm font-semibold">Grand Total Batches</span>
+          <span className="text-lg font-bold tabular-nums">{grandTotalBatches}</span>
+        </div>
+      </div>
+
+      <BreakTracker planId={plan.id} stationType="packing" />
+
+      {allDone && (
+        <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-xl p-4 text-center">
+          <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
+          <p className="font-semibold text-emerald-800 dark:text-emerald-200">
+            🎉 Production complete for {format(parseISO(plan.planDate), "EEEE d MMMM")}
+          </p>
+          <p className="text-sm text-emerald-600 dark:text-emerald-400 mt-1">
+            All {items.length} recipes packed — great work!
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -832,15 +1488,15 @@ export default function StationPage() {
       case "building_2":
         return <BuildingStation plan={plan} lineNumber={2} />;
       case "ovens":
-        return <PlaceholderStation label="Ovens" />;
+        return <OvensStation plan={plan} />;
       case "wrapping":
-        return <PlaceholderStation label="Wrapping" />;
+        return <WrappingStation plan={plan} />;
       case "packing":
-        return <PlaceholderStation label="Packing" />;
+        return <PackingStation plan={plan} />;
       case "dough_prep":
-        return <PlaceholderStation label="Dough Prep" />;
+        return <DoughPrepStation plan={plan} />;
       case "dough_sheeting":
-        return <PlaceholderStation label="Dough Sheeting" />;
+        return <DoughSheetingStation plan={plan} />;
       case "prep_veg":
         return <PrepVegStation plan={plan} />;
       case "prep_bases":

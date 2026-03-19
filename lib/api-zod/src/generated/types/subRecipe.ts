@@ -13,5 +13,8 @@ export interface SubRecipe {
   yield: number;
   yieldUnit: string;
   notes?: string | null;
+  shelfLifeDays?: number | null;
+  /** Computed cost per yield unit */
+  costPerYieldUnit?: number | null;
   createdAt: string;
 }

@@ -326,6 +326,11 @@ export const ListSubRecipesResponseItem = zod.object({
   yield: zod.number(),
   yieldUnit: zod.string(),
   notes: zod.string().nullish(),
+  shelfLifeDays: zod.number().nullish(),
+  costPerYieldUnit: zod
+    .number()
+    .nullish()
+    .describe("Computed cost per yield unit"),
   createdAt: zod.string(),
 });
 export const ListSubRecipesResponse = zod.array(ListSubRecipesResponseItem);
@@ -339,6 +344,7 @@ export const CreateSubRecipeBody = zod.object({
   yield: zod.number(),
   yieldUnit: zod.string(),
   notes: zod.string().nullish(),
+  shelfLifeDays: zod.number().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -370,6 +376,11 @@ export const GetSubRecipeResponse = zod
     yield: zod.number(),
     yieldUnit: zod.string(),
     notes: zod.string().nullish(),
+    shelfLifeDays: zod.number().nullish(),
+    costPerYieldUnit: zod
+      .number()
+      .nullish()
+      .describe("Computed cost per yield unit"),
     createdAt: zod.string(),
   })
   .and(
@@ -420,6 +431,7 @@ export const UpdateSubRecipeBody = zod.object({
   yield: zod.number(),
   yieldUnit: zod.string(),
   notes: zod.string().nullish(),
+  shelfLifeDays: zod.number().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -443,6 +455,11 @@ export const UpdateSubRecipeResponse = zod.object({
   yield: zod.number(),
   yieldUnit: zod.string(),
   notes: zod.string().nullish(),
+  shelfLifeDays: zod.number().nullish(),
+  costPerYieldUnit: zod
+    .number()
+    .nullish()
+    .describe("Computed cost per yield unit"),
   createdAt: zod.string(),
 });
 
@@ -477,6 +494,10 @@ export const ListRecipesResponseItem = zod.object({
     .string()
     .nullish()
     .describe("URL to the standard operating procedure document"),
+  shelfLifeDays: zod
+    .number()
+    .nullish()
+    .describe("Shelf life of the product in days"),
   rawMaterialCostPerBatch: zod.number(),
   costPerPortion: zod.number(),
   packIngredientCost: zod.number(),
@@ -507,6 +528,7 @@ export const CreateRecipeBody = zod.object({
   tinSize: zod.string().nullish(),
   maxBatchesPerTin: zod.number().nullish(),
   sopUrl: zod.string().nullish(),
+  shelfLifeDays: zod.number().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -556,6 +578,10 @@ export const GetRecipeResponse = zod
       .string()
       .nullish()
       .describe("URL to the standard operating procedure document"),
+    shelfLifeDays: zod
+      .number()
+      .nullish()
+      .describe("Shelf life of the product in days"),
     rawMaterialCostPerBatch: zod.number(),
     costPerPortion: zod.number(),
     packIngredientCost: zod.number(),
@@ -572,6 +598,12 @@ export const GetRecipeResponse = zod
           ingredientName: zod.string(),
           unit: zod.string(),
           quantity: zod.number(),
+          packWeight: zod.number().nullish(),
+          costPerPack: zod.number().nullish(),
+          processingRatio: zod.number().nullish(),
+          rawQuantity: zod.number().nullish(),
+          costPerUnit: zod.number().nullish(),
+          lineCostPortion: zod.number().nullish(),
         }),
       ),
       subRecipes: zod.array(
@@ -581,6 +613,10 @@ export const GetRecipeResponse = zod
           subRecipeName: zod.string(),
           quantity: zod.number(),
           unit: zod.string(),
+          subYield: zod.number().nullish(),
+          subCostPerUnit: zod.number().nullish(),
+          lineCostPortion: zod.number().nullish(),
+          breakdown: zod.array(zod.object({}).passthrough()).nullish(),
         }),
       ),
     }),
@@ -611,6 +647,7 @@ export const UpdateRecipeBody = zod.object({
   tinSize: zod.string().nullish(),
   maxBatchesPerTin: zod.number().nullish(),
   sopUrl: zod.string().nullish(),
+  shelfLifeDays: zod.number().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -646,6 +683,10 @@ export const UpdateRecipeResponse = zod.object({
     .string()
     .nullish()
     .describe("URL to the standard operating procedure document"),
+  shelfLifeDays: zod
+    .number()
+    .nullish()
+    .describe("Shelf life of the product in days"),
   rawMaterialCostPerBatch: zod.number(),
   costPerPortion: zod.number(),
   packIngredientCost: zod.number(),
@@ -904,7 +945,6 @@ export const ListStationBreaksResponseItem = zod.object({
   userId: zod.number().nullish(),
   startedAt: zod.string().nullish(),
   endedAt: zod.string().nullish(),
-  createdAt: zod.string(),
 });
 export const ListStationBreaksResponse = zod.array(
   ListStationBreaksResponseItem,
@@ -948,7 +988,6 @@ export const EndStationBreakResponse = zod.object({
   userId: zod.number().nullish(),
   startedAt: zod.string().nullish(),
   endedAt: zod.string().nullish(),
-  createdAt: zod.string(),
 });
 
 /**

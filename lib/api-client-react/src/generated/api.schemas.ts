@@ -74,6 +74,9 @@ export interface SubRecipe {
   yield: number;
   yieldUnit: string;
   notes?: string | null;
+  shelfLifeDays?: number | null;
+  /** Computed cost per yield unit */
+  costPerYieldUnit?: number | null;
   createdAt: string;
 }
 
@@ -123,6 +126,7 @@ export interface CreateSubRecipe {
   yield: number;
   yieldUnit: string;
   notes?: string | null;
+  shelfLifeDays?: number | null;
   ingredients: CreateSubRecipeIngredientsItem[];
   subRecipeComponents?: CreateSubRecipeSubRecipeComponentsItem[];
 }
@@ -147,6 +151,8 @@ export interface Recipe {
   maxBatchesPerTin?: number | null;
   /** URL to the standard operating procedure document */
   sopUrl?: string | null;
+  /** Shelf life of the product in days */
+  shelfLifeDays?: number | null;
   rawMaterialCostPerBatch: number;
   costPerPortion: number;
   packIngredientCost: number;
@@ -161,7 +167,15 @@ export interface RecipeIngredient {
   ingredientName: string;
   unit: string;
   quantity: number;
+  packWeight?: number | null;
+  costPerPack?: number | null;
+  processingRatio?: number | null;
+  rawQuantity?: number | null;
+  costPerUnit?: number | null;
+  lineCostPortion?: number | null;
 }
+
+export type RecipeSubRecipeBreakdownItem = { [key: string]: unknown };
 
 export interface RecipeSubRecipe {
   id: number;
@@ -169,6 +183,10 @@ export interface RecipeSubRecipe {
   subRecipeName: string;
   quantity: number;
   unit: string;
+  subYield?: number | null;
+  subCostPerUnit?: number | null;
+  lineCostPortion?: number | null;
+  breakdown?: RecipeSubRecipeBreakdownItem[] | null;
 }
 
 export type RecipeDetail = Recipe & {
@@ -202,6 +220,7 @@ export interface CreateRecipe {
   tinSize?: string | null;
   maxBatchesPerTin?: number | null;
   sopUrl?: string | null;
+  shelfLifeDays?: number | null;
   ingredients: CreateRecipeIngredientsItem[];
   subRecipes: CreateRecipeSubRecipesItem[];
 }
@@ -366,7 +385,6 @@ export interface StationBreak {
   userId?: number | null;
   startedAt?: string | null;
   endedAt?: string | null;
-  createdAt: string;
 }
 
 export interface CreateDptSetting {

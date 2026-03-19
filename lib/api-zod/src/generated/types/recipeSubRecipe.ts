@@ -5,6 +5,7 @@
  * Food Production Planner API
  * OpenAPI spec version: 0.1.0
  */
+import type { RecipeSubRecipeBreakdownItem } from "./recipeSubRecipeBreakdownItem";
 
 export interface RecipeSubRecipe {
   id: number;
@@ -12,4 +13,8 @@ export interface RecipeSubRecipe {
   subRecipeName: string;
   quantity: number;
   unit: string;
+  subYield?: number | null;
+  subCostPerUnit?: number | null;
+  lineCostPortion?: number | null;
+  breakdown?: RecipeSubRecipeBreakdownItem[] | null;
 }
