@@ -35,9 +35,11 @@ type FormValues = z.infer<typeof schema>;
 type IngredientOption = Pick<Ingredient, "id" | "name" | "unit" | "processingRatio">;
 type SubRecipeOption = Pick<SubRecipe, "id" | "name" | "yieldUnit">;
 
-function toKg(value: number, unit: string): number | null {
-  if (unit === "kg") return value;
-  if (unit === "g") return value / 1000;
+function toKg(value: number | string | null | undefined, unit: string): number | null {
+  const n = Number(value);
+  if (!isFinite(n)) return null;
+  if (unit === "kg") return n;
+  if (unit === "g") return n / 1000;
   return null;
 }
 
