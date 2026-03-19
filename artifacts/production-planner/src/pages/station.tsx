@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { format, parseISO, differenceInMinutes } from "date-fns";
 import { cn } from "@/lib/utils";
+import { toast } from "@/hooks/use-toast";
 import {
   DndContext,
   closestCenter,
@@ -612,7 +613,13 @@ function MixingStation({ plan }: MixingStationProps) {
 
     const reordered = arrayMove(items, oldIndex, newIndex);
     const order = reordered.map((it, i) => ({ itemId: it.id, orderPosition: i + 1 }));
-    updateOrder.mutate({ id: plan.id, data: { order } });
+    updateOrder.mutate(
+      { id: plan.id, data: { order } },
+      {
+        onSuccess: () => toast({ title: "Order saved", description: "Recipe order has been updated for all stations." }),
+        onError: () => toast({ title: "Reorder failed", description: "Could not save the new order. Please try again.", variant: "destructive" }),
+      }
+    );
   };
 
   // addBatch: only via createBatchCompletion (server increments batchesComplete + status)
@@ -631,14 +638,17 @@ function MixingStation({ plan }: MixingStationProps) {
   const removeBatch = async (item: ProductionPlanItem) => {
     if ((item.batchesComplete ?? 0) === 0) return;
     try {
-      await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
+      const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
         method: "DELETE",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ planItemId: item.id, stationType: "mixing" }),
       });
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
-    } catch { /* no-op */ }
+    } catch (err) {
+      toast({ title: "Undo failed", description: err instanceof Error ? err.message : "Could not undo batch. Please try again.", variant: "destructive" });
+    }
   };
 
   const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
@@ -899,16 +909,17 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   const handleUndo = async () => {
     if (!currentItem || (currentItem.batchesComplete ?? 0) === 0) return;
     try {
-      await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
+      const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
         method: "DELETE",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ planItemId: currentItem.id, stationType }),
       });
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
       setSessionBatches(prev => Math.max(0, prev - 1));
-    } catch {
-      // no-op on failure
+    } catch (err) {
+      toast({ title: "Undo failed", description: err instanceof Error ? err.message : "Could not undo batch. Please try again.", variant: "destructive" });
     }
   };
 
@@ -1380,14 +1391,17 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const removeBatch = async (item: ProductionPlanItem) => {
     if ((item.batchesComplete ?? 0) === 0) return;
     try {
-      await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
+      const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
         method: "DELETE",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ planItemId: item.id, stationType: "dough_prep" }),
       });
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
-    } catch { /* no-op */ }
+    } catch (err) {
+      toast({ title: "Undo failed", description: err instanceof Error ? err.message : "Could not undo batch. Please try again.", variant: "destructive" });
+    }
   };
 
   const totalComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
@@ -1632,14 +1646,17 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
   const removeBatch = async (item: ProductionPlanItem) => {
     if ((item.batchesComplete ?? 0) === 0) return;
     try {
-      await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
+      const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
         method: "DELETE",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ planItemId: item.id, stationType: "ovens" }),
       });
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
-    } catch { /* no-op */ }
+    } catch (err) {
+      toast({ title: "Undo failed", description: err instanceof Error ? err.message : "Could not undo batch. Please try again.", variant: "destructive" });
+    }
   };
 
   const totalComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
@@ -1805,14 +1822,17 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const removeBatch = async (item: ProductionPlanItem) => {
     if ((item.batchesComplete ?? 0) === 0) return;
     try {
-      await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
+      const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
         method: "DELETE",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ planItemId: item.id, stationType: "wrapping" }),
       });
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
-    } catch { /* no-op */ }
+    } catch (err) {
+      toast({ title: "Undo failed", description: err instanceof Error ? err.message : "Could not undo batch. Please try again.", variant: "destructive" });
+    }
   };
 
   return (
