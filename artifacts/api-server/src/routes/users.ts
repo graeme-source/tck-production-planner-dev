@@ -2,13 +2,14 @@ import { Router, type IRouter } from "express";
 import { db, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
+import { CreateUserBody, UpdateUserBody } from "@workspace/api-zod";
+import { validate } from "../middleware/validate";
 
 const router: IRouter = Router();
 
 const SALT_ROUNDS = 10;
 
 function mapRow(r: typeof usersTable.$inferSelect) {
-  // Never send the hash to the client
   const { passwordHash: _ph, ...safe } = r;
   return {
     ...safe,
@@ -17,14 +18,12 @@ function mapRow(r: typeof usersTable.$inferSelect) {
   };
 }
 
-// List all users
 router.get("/", async (_req, res) => {
   const rows = await db.select().from(usersTable).orderBy(usersTable.name);
   res.json(rows.map(mapRow));
 });
 
-// Create user
-router.post("/", async (req, res) => {
+router.post("/", validate(CreateUserBody), async (req, res) => {
   const { name, email, password, role, isActive } = req.body;
   if (!password || password.length < 6) {
     res.status(400).json({ error: "Password must be at least 6 characters" });
@@ -49,7 +48,6 @@ router.post("/", async (req, res) => {
   }
 });
 
-// Get single user
 router.get("/:id", async (req, res) => {
   const id = Number(req.params.id);
   const [row] = await db.select().from(usersTable).where(eq(usersTable.id, id));
@@ -57,8 +55,7 @@ router.get("/:id", async (req, res) => {
   res.json(mapRow(row));
 });
 
-// Update user (name, email, role, isActive; password optional)
-router.put("/:id", async (req, res) => {
+router.put("/:id", validate(UpdateUserBody), async (req, res) => {
   const id = Number(req.params.id);
   const { name, email, role, isActive, password } = req.body;
   const updates: Partial<typeof usersTable.$inferInsert> & { updatedAt: Date } = {
@@ -88,7 +85,6 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// Delete user
 router.delete("/:id", async (req, res) => {
   const id = Number(req.params.id);
   await db.delete(usersTable).where(eq(usersTable.id, id));

@@ -1,6 +1,8 @@
 import { Router, type IRouter } from "express";
 import { db, recipesTable, recipeIngredientsTable, recipeSubRecipesTable, ingredientsTable, subRecipesTable, subRecipeIngredientsTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
+import { CreateRecipeBody, UpdateRecipeBody } from "@workspace/api-zod";
+import { validate } from "../middleware/validate";
 
 const router: IRouter = Router();
 
@@ -138,7 +140,7 @@ router.get("/", async (_req, res) => {
   res.json(mapped.map(r => enrichWithCosts(r, rawCosts[r.id] ?? 0)));
 });
 
-router.post("/", async (req, res) => {
+router.post("/", validate(CreateRecipeBody), async (req, res) => {
   const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, ingredients, subRecipes } = req.body;
   const [recipe] = await db.insert(recipesTable).values({
     name, description,
@@ -311,7 +313,7 @@ router.get("/:id", async (req, res) => {
   });
 });
 
-router.put("/:id", async (req, res) => {
+router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
   const id = Number(req.params.id);
   const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, ingredients, subRecipes } = req.body;
   const [updated] = await db.update(recipesTable)

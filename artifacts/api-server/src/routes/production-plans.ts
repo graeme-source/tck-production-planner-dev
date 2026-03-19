@@ -1,6 +1,8 @@
 import { Router, type IRouter } from "express";
 import { db, productionPlansTable, productionPlanItemsTable, recipesTable } from "@workspace/db";
 import { eq, and, gte, lte } from "drizzle-orm";
+import { CreateProductionPlanBody, UpdateProductionPlanBody } from "@workspace/api-zod";
+import { validate } from "../middleware/validate";
 
 const router: IRouter = Router();
 
@@ -27,7 +29,7 @@ router.get("/", async (req, res) => {
   res.json(rows.map(mapPlan));
 });
 
-router.post("/", async (req, res) => {
+router.post("/", validate(CreateProductionPlanBody), async (req, res) => {
   const { planDate, name, notes, items } = req.body;
   const [plan] = await db.insert(productionPlansTable).values({ planDate, name, notes, status: "draft" }).returning();
   if (items?.length) {
@@ -64,7 +66,7 @@ router.get("/:id", async (req, res) => {
   res.json({ ...mapPlan(plan), items: items.map(mapItem) });
 });
 
-router.put("/:id", async (req, res) => {
+router.put("/:id", validate(UpdateProductionPlanBody), async (req, res) => {
   const id = Number(req.params.id);
   const { planDate, name, notes, status, items } = req.body;
   const [updated] = await db.update(productionPlansTable).set({ planDate, name, notes, status }).where(eq(productionPlansTable.id, id)).returning();

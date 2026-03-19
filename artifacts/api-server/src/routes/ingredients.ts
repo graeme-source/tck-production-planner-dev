@@ -1,6 +1,8 @@
 import { Router, type IRouter } from "express";
 import { db, ingredientsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
+import { CreateIngredientBody, UpdateIngredientBody } from "@workspace/api-zod";
+import { validate } from "../middleware/validate";
 
 const router: IRouter = Router();
 
@@ -26,7 +28,7 @@ function validateProcessingRatio(value: unknown): string | null {
   return null;
 }
 
-router.post("/", async (req, res) => {
+router.post("/", validate(CreateIngredientBody), async (req, res) => {
   const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
@@ -53,7 +55,7 @@ router.get("/:id", async (req, res) => {
   res.json(mapRow(row));
 });
 
-router.put("/:id", async (req, res) => {
+router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
   const id = Number(req.params.id);
   const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);

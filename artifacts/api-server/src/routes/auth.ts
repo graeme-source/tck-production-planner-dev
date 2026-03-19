@@ -2,16 +2,28 @@ import { Router, type IRouter } from "express";
 import { db, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
+import rateLimit from "express-rate-limit";
+import { z } from "zod";
+import { validate } from "../middleware/validate";
 
 const router: IRouter = Router();
 
-router.post("/login", async (req, res) => {
-  const { email, password } = req.body ?? {};
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many login attempts, please try again in 15 minutes." },
+  skipSuccessfulRequests: true,
+});
 
-  if (!email || !password) {
-    res.status(400).json({ error: "Email and password are required" });
-    return;
-  }
+const LoginBody = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+});
+
+router.post("/login", loginLimiter, validate(LoginBody), async (req, res) => {
+  const { email, password } = req.body as z.infer<typeof LoginBody>;
 
   const [user] = await db
     .select()

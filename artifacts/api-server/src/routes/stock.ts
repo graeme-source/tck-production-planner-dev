@@ -1,6 +1,8 @@
 import { Router, type IRouter } from "express";
 import { db, stockEntriesTable, recipesTable, ingredientsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
+import { CreateStockEntryBody, UpdateStockEntryBody } from "@workspace/api-zod";
+import { validate } from "../middleware/validate";
 
 const router: IRouter = Router();
 
@@ -25,7 +27,7 @@ router.get("/", async (_req, res) => {
   res.json(rows.map(r => ({ ...r, quantity: Number(r.quantity), checkedAt: r.checkedAt.toISOString() })));
 });
 
-router.post("/", async (req, res) => {
+router.post("/", validate(CreateStockEntryBody), async (req, res) => {
   const { recipeId, ingredientId, itemType, quantity, unit, notes } = req.body;
   const [row] = await db.insert(stockEntriesTable).values({
     recipeId: recipeId ?? null,
@@ -38,7 +40,7 @@ router.post("/", async (req, res) => {
   res.status(201).json({ ...row, quantity: Number(row.quantity), checkedAt: row.checkedAt.toISOString() });
 });
 
-router.put("/:id", async (req, res) => {
+router.put("/:id", validate(UpdateStockEntryBody), async (req, res) => {
   const id = Number(req.params.id);
   const { recipeId, ingredientId, itemType, quantity, unit, notes } = req.body;
   const [row] = await db.update(stockEntriesTable).set({

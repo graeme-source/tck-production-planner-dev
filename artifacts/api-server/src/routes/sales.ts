@@ -1,6 +1,8 @@
 import { Router, type IRouter } from "express";
 import { db, salesEntriesTable, recipesTable } from "@workspace/db";
 import { eq, gte, lte, and } from "drizzle-orm";
+import { CreateSalesEntryBody, UpdateSalesEntryBody } from "@workspace/api-zod";
+import { validate } from "../middleware/validate";
 
 const router: IRouter = Router();
 
@@ -28,13 +30,13 @@ router.get("/", async (req, res) => {
   res.json(rows.map(r => ({ ...r, quantitySold: Number(r.quantitySold), createdAt: r.createdAt.toISOString(), recipeName: r.recipeName ?? "" })));
 });
 
-router.post("/", async (req, res) => {
+router.post("/", validate(CreateSalesEntryBody), async (req, res) => {
   const { recipeId, saleDate, quantitySold, channel, notes } = req.body;
   const [row] = await db.insert(salesEntriesTable).values({ recipeId, saleDate, quantitySold: String(quantitySold), channel, notes }).returning();
   res.status(201).json({ ...row, quantitySold: Number(row.quantitySold), createdAt: row.createdAt.toISOString() });
 });
 
-router.put("/:id", async (req, res) => {
+router.put("/:id", validate(UpdateSalesEntryBody), async (req, res) => {
   const id = Number(req.params.id);
   const { recipeId, saleDate, quantitySold, channel, notes } = req.body;
   const [row] = await db.update(salesEntriesTable).set({ recipeId, saleDate, quantitySold: String(quantitySold), channel, notes }).where(eq(salesEntriesTable.id, id)).returning();

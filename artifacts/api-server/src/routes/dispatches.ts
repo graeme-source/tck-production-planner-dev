@@ -1,6 +1,8 @@
 import { Router, type IRouter } from "express";
 import { db, dispatchOrdersTable, recipesTable } from "@workspace/db";
 import { eq, gte, lte, and } from "drizzle-orm";
+import { CreateDispatchOrderBody, UpdateDispatchOrderBody } from "@workspace/api-zod";
+import { validate } from "../middleware/validate";
 
 const router: IRouter = Router();
 
@@ -29,13 +31,13 @@ router.get("/", async (req, res) => {
   res.json(rows.map(r => ({ ...r, quantity: Number(r.quantity), createdAt: r.createdAt.toISOString(), recipeName: r.recipeName ?? "" })));
 });
 
-router.post("/", async (req, res) => {
+router.post("/", validate(CreateDispatchOrderBody), async (req, res) => {
   const { recipeId, dispatchDate, quantity, customer, status, notes } = req.body;
   const [row] = await db.insert(dispatchOrdersTable).values({ recipeId, dispatchDate, quantity: String(quantity), customer, status: status ?? "pending", notes }).returning();
   res.status(201).json({ ...row, quantity: Number(row.quantity), createdAt: row.createdAt.toISOString() });
 });
 
-router.put("/:id", async (req, res) => {
+router.put("/:id", validate(UpdateDispatchOrderBody), async (req, res) => {
   const id = Number(req.params.id);
   const { recipeId, dispatchDate, quantity, customer, status, notes } = req.body;
   const [row] = await db.update(dispatchOrdersTable).set({ recipeId, dispatchDate, quantity: String(quantity), customer, status, notes }).where(eq(dispatchOrdersTable.id, id)).returning();

@@ -1,6 +1,8 @@
 import { Router, type IRouter } from "express";
 import { db, subRecipesTable, subRecipeIngredientsTable, ingredientsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
+import { CreateSubRecipeBody, UpdateSubRecipeBody } from "@workspace/api-zod";
+import { validate } from "../middleware/validate";
 
 const router: IRouter = Router();
 
@@ -9,7 +11,7 @@ router.get("/", async (_req, res) => {
   res.json(rows.map(r => ({ ...r, yield: Number(r.yield), createdAt: r.createdAt.toISOString() })));
 });
 
-router.post("/", async (req, res) => {
+router.post("/", validate(CreateSubRecipeBody), async (req, res) => {
   const { name, description, yield: yieldAmt, yieldUnit, notes, ingredients } = req.body;
   const [subRecipe] = await db.insert(subRecipesTable).values({ name, description, yield: String(yieldAmt), yieldUnit, notes }).returning();
   if (ingredients?.length) {
@@ -52,7 +54,7 @@ router.get("/:id", async (req, res) => {
   });
 });
 
-router.put("/:id", async (req, res) => {
+router.put("/:id", validate(UpdateSubRecipeBody), async (req, res) => {
   const id = Number(req.params.id);
   const { name, description, yield: yieldAmt, yieldUnit, notes, ingredients } = req.body;
   const [updated] = await db.update(subRecipesTable).set({ name, description, yield: String(yieldAmt), yieldUnit, notes }).where(eq(subRecipesTable.id, id)).returning();

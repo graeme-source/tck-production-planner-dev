@@ -1,6 +1,8 @@
 import { Router, type IRouter } from "express";
 import { db, categoryDefaultsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
+import { CreateCategoryDefaultBody, UpdateCategoryDefaultBody } from "@workspace/api-zod";
+import { validate } from "../middleware/validate";
 
 const router: IRouter = Router();
 
@@ -16,7 +18,7 @@ router.get("/", async (_req, res) => {
   res.json(rows.map(mapRow));
 });
 
-router.post("/", async (req, res) => {
+router.post("/", validate(CreateCategoryDefaultBody), async (req, res) => {
   const { category, defaultPackagingCost, defaultLabourCost } = req.body;
   const [row] = await db.insert(categoryDefaultsTable)
     .values({ category, defaultPackagingCost: String(defaultPackagingCost ?? 0), defaultLabourCost: String(defaultLabourCost ?? 0) })
@@ -24,7 +26,7 @@ router.post("/", async (req, res) => {
   res.status(201).json(mapRow(row));
 });
 
-router.put("/:id", async (req, res) => {
+router.put("/:id", validate(UpdateCategoryDefaultBody), async (req, res) => {
   const id = Number(req.params.id);
   const { category, defaultPackagingCost, defaultLabourCost } = req.body;
   const [row] = await db.update(categoryDefaultsTable)
