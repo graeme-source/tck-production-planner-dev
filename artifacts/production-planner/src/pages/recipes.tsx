@@ -294,7 +294,7 @@ function RecipeForm({
                     </div>
                     <input type="number" step="0.0001" {...register(`ingredients.${index}.quantity`)} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0.000" />
                     <span className="text-xs tabular-nums text-right text-muted-foreground">
-                      {cost !== null ? `£${cost.toFixed(4)}` : "—"}
+                      {cost !== null ? `£${(Math.ceil(cost * 100) / 100).toFixed(2)}` : "—"}
                     </span>
                     <button type="button" onClick={() => removeIng(index)} className="text-muted-foreground hover:text-destructive flex justify-center"><X className="w-3.5 h-3.5" /></button>
                   </div>
@@ -324,7 +324,7 @@ function RecipeForm({
                     </select>
                     <input type="number" step="0.0001" {...register(`subRecipes.${index}.quantity`)} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0.000" />
                     <span className="text-xs tabular-nums text-right text-muted-foreground">
-                      {cost !== null ? `£${cost.toFixed(4)}` : "—"}
+                      {cost !== null ? `£${(Math.ceil(cost * 100) / 100).toFixed(2)}` : "—"}
                     </span>
                     <button type="button" onClick={() => removeSub(index)} className="text-muted-foreground hover:text-destructive flex justify-center"><X className="w-3.5 h-3.5" /></button>
                   </div>
