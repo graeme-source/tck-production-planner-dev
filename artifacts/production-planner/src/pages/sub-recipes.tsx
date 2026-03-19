@@ -113,16 +113,18 @@ function YieldSanityCheck({
 
 function YieldComparison({
   detail,
-  allIngredients,
 }: {
   detail: SubRecipeDetail;
-  allIngredients: IngredientOption[];
 }) {
   const storedYieldKg = toKg(Number(detail.yield), detail.yieldUnit);
   if (storedYieldKg === null) return null;
 
-  const rows = detail.ingredients.map(i => ({ ingredientId: i.ingredientId, quantity: i.quantity }));
-  const expectedKg = computeProcessedKg(rows, allIngredients);
+  let expectedKg = 0;
+  for (const i of detail.ingredients) {
+    const ratio = i.processingRatio ?? 1.0;
+    if (i.unit === "kg") expectedKg += i.quantity * ratio;
+    else if (i.unit === "g") expectedKg += (i.quantity / 1000) * ratio;
+  }
   if (expectedKg <= 0) return null;
 
   const diffPct = Math.abs(storedYieldKg - expectedKg) / expectedKg * 100;
@@ -468,7 +470,7 @@ function EditSubRecipeDialog({
         ) : (
           <>
             {detail && (
-              <YieldComparison detail={detail as SubRecipeDetail} allIngredients={ingredients} />
+              <YieldComparison detail={detail as SubRecipeDetail} />
             )}
             <SubRecipeForm
               key={id}

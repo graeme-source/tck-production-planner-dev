@@ -19,8 +19,17 @@ router.get("/", async (_req, res) => {
   res.json(rows.map(mapRow));
 });
 
+function validateProcessingRatio(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const n = Number(value);
+  if (isNaN(n) || n < 0 || n > 1) return "processingRatio must be a number between 0 and 1";
+  return null;
+}
+
 router.post("/", async (req, res) => {
   const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio } = req.body;
+  const ratioError = validateProcessingRatio(processingRatio);
+  if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const [row] = await db.insert(ingredientsTable).values({
     name,
     unit,
@@ -47,6 +56,8 @@ router.get("/:id", async (req, res) => {
 router.put("/:id", async (req, res) => {
   const id = Number(req.params.id);
   const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio } = req.body;
+  const ratioError = validateProcessingRatio(processingRatio);
+  if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const [row] = await db.update(ingredientsTable).set({
     name,
     unit,
