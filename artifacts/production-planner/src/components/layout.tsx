@@ -1,4 +1,4 @@
-import { ReactNode } from "react";
+import React, { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { useAuth } from "@/contexts/auth-context";
@@ -16,7 +16,9 @@ import {
   LogOut,
 } from "lucide-react";
 
-const navItems = [
+type NavItem = { name: string; href: string; icon: React.ElementType; minRole?: "manager" | "admin" };
+
+const navItems: NavItem[] = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Production Plans", href: "/plans", icon: CalendarDays },
   { name: "Recipes", href: "/recipes", icon: ChefHat },
@@ -24,9 +26,15 @@ const navItems = [
   { name: "Ingredients", href: "/ingredients", icon: Carrot },
   { name: "Suppliers", href: "/suppliers", icon: Building2 },
   { name: "Stock Inventory", href: "/stock", icon: PackageSearch },
-  { name: "Sales Data", href: "/sales", icon: TrendingUp },
+  { name: "Sales Data", href: "/sales", icon: TrendingUp, minRole: "manager" },
   { name: "Dispatches", href: "/dispatches", icon: Truck },
 ];
+
+const ROLE_RANK: Record<string, number> = { viewer: 0, manager: 1, admin: 2 };
+function canAccess(userRole: string, minRole?: string) {
+  if (!minRole) return true;
+  return (ROLE_RANK[userRole] ?? 0) >= (ROLE_RANK[minRole] ?? 0);
+}
 
 const bottomNavItems = [
   { name: "Settings", href: "/settings", icon: Settings },
@@ -56,7 +64,7 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
         
         <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
-          {navItems.map((item) => {
+          {navItems.filter(item => canAccess(user?.role ?? "viewer", item.minRole)).map((item) => {
             const isActive = location === item.href;
             return (
               <Link 

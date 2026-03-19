@@ -1,4 +1,5 @@
-import { Switch, Route, Router as WouterRouter } from "wouter";
+import React from "react";
+import { Switch, Route, Router as WouterRouter, Redirect } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -20,6 +21,15 @@ import { Loader2 } from "lucide-react";
 
 const queryClient = new QueryClient();
 
+const ROLE_RANK: Record<string, number> = { viewer: 0, manager: 1, admin: 2 };
+
+function ProtectedRoute({ component: Component, minRole }: { component: React.ComponentType; minRole: string }) {
+  const { state } = useAuth();
+  const role = state.status === "authenticated" ? state.user.role : "viewer";
+  if ((ROLE_RANK[role] ?? 0) < (ROLE_RANK[minRole] ?? 0)) return <Redirect to="/" />;
+  return <Component />;
+}
+
 function Router() {
   return (
     <Layout>
@@ -30,7 +40,7 @@ function Router() {
         <Route path="/recipes" component={Recipes} />
         <Route path="/plans" component={ProductionPlans} />
         <Route path="/stock" component={Stock} />
-        <Route path="/sales" component={Sales} />
+        <Route path="/sales">{() => <ProtectedRoute component={Sales} minRole="manager" />}</Route>
         <Route path="/dispatches" component={Dispatches} />
         <Route path="/suppliers" component={Suppliers} />
         <Route path="/settings" component={Settings} />
