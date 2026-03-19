@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useListIngredients, useListSuppliers } from "@workspace/api-client-react";
 import type { Ingredient } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
-import { Search, Plus, Trash2, Edit2, Loader2, ExternalLink } from "lucide-react";
+import { Search, Plus, Trash2, Edit2, Loader2, ExternalLink, Upload, FileText, CheckCircle2, XCircle, AlertTriangle, RefreshCw } from "lucide-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -13,6 +13,359 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import Papa from "papaparse";
+import { useQueryClient } from "@tanstack/react-query";
+
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+const CSV_COLUMNS = ["name","unit","pack_weight","cost_per_pack","brand","supplier_name","secondary_supplier_name","supplier_part_number","ordering_url","notes","processing_ratio_percent"];
+const CSV_EXAMPLE = ["Caputo Flour","kg","15","16.00","Caputo","Brakes Food Service","","BRK-FLOUR-15","https://brakes.co.uk/flour","00 pizza flour",""];
+
+function downloadTemplate() {
+  const header = CSV_COLUMNS.join(",");
+  const example = CSV_EXAMPLE.join(",");
+  const hint = ["# Remove this line before importing. Units: kg g l ml pcs box bag tub each. processing_ratio_percent is 0-100 (leave blank for no loss).","","","","","","","","","",""].join(",");
+  const csv = [header, hint, example].join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "ingredients_template.csv"; a.click();
+  URL.revokeObjectURL(url);
+}
+
+interface ImportResult {
+  created: { name: string }[];
+  updated: { name: string; changes: string[] }[];
+  issues: { row: number; field: string; message: string }[];
+  suppliersCreated: string[];
+  dryRun: boolean;
+}
+
+async function callImport(rows: Record<string, string>[], dryRun: boolean): Promise<ImportResult> {
+  const res = await fetch(`${BASE}/api/ingredients/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ rows, dryRun }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error ?? "Import failed");
+  }
+  return res.json();
+}
+
+type ImportStep = "upload" | "preview" | "done";
+
+function ImportDialog({ open, onClose, onDone }: { open: boolean; onClose: () => void; onDone: () => void }) {
+  const [step, setStep] = useState<ImportStep>("upload");
+  const [parsedRows, setParsedRows] = useState<Record<string, string>[]>([]);
+  const [fileName, setFileName] = useState("");
+  const [preview, setPreview] = useState<ImportResult | null>(null);
+  const [result, setResult] = useState<ImportResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  function reset() {
+    setStep("upload");
+    setParsedRows([]);
+    setFileName("");
+    setPreview(null);
+    setResult(null);
+    setError(null);
+  }
+
+  function handleClose() { reset(); onClose(); }
+
+  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name);
+    setError(null);
+    Papa.parse<Record<string, string>>(file, {
+      header: true,
+      skipEmptyLines: true,
+      transformHeader: h => h.trim().toLowerCase().replace(/\s+/g, "_"),
+      complete: (res) => {
+        const rows = (res.data as Record<string, string>[]).filter(r => {
+          const firstVal = Object.values(r)[0];
+          return !String(firstVal ?? "").startsWith("#");
+        });
+        if (rows.length === 0) { setError("No data rows found in the file."); return; }
+        setParsedRows(rows);
+      },
+      error: (err: { message: string }) => setError(err.message),
+    });
+    e.target.value = "";
+  }
+
+  async function runPreview() {
+    setLoading(true); setError(null);
+    try {
+      const res = await callImport(parsedRows, true);
+      setPreview(res);
+      setStep("preview");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Unknown error");
+    } finally { setLoading(false); }
+  }
+
+  async function runImport() {
+    setLoading(true); setError(null);
+    try {
+      const res = await callImport(parsedRows, false);
+      setResult(res);
+      setStep("done");
+      onDone();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Unknown error");
+    } finally { setLoading(false); }
+  }
+
+  const blockingIssues = preview?.issues.filter(i => i.message.includes("skipped")) ?? [];
+  const warningIssues = preview?.issues.filter(i => !i.message.includes("skipped")) ?? [];
+
+  return (
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="sm:max-w-[680px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="font-display text-xl">Import Ingredients from CSV</DialogTitle>
+        </DialogHeader>
+
+        {/* Step indicator */}
+        <div className="flex items-center gap-2 mt-2 mb-4">
+          {(["upload","preview","done"] as ImportStep[]).map((s, i) => (
+            <div key={s} className="flex items-center gap-2">
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${step === s ? "bg-primary text-primary-foreground" : (["upload","preview","done"].indexOf(step) > i ? "bg-emerald-500 text-white" : "bg-secondary text-muted-foreground")}`}>
+                {["upload","preview","done"].indexOf(step) > i ? "✓" : i + 1}
+              </div>
+              <span className={`text-xs font-medium ${step === s ? "text-foreground" : "text-muted-foreground"}`}>
+                {s === "upload" ? "Upload" : s === "preview" ? "Preview" : "Done"}
+              </span>
+              {i < 2 && <div className="w-8 h-px bg-border" />}
+            </div>
+          ))}
+        </div>
+
+        {error && (
+          <div className="flex items-start gap-2 p-3 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive text-sm mb-3">
+            <XCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {/* Step 1: Upload */}
+        {step === "upload" && (
+          <div className="space-y-4">
+            <div className="p-4 bg-secondary/30 rounded-xl border border-border text-sm space-y-1">
+              <p className="font-medium">How it works:</p>
+              <ul className="text-muted-foreground space-y-1 list-disc list-inside">
+                <li>Download the template, fill in your ingredients, save as CSV</li>
+                <li>Existing ingredients (matched by name) will be <span className="text-amber-600 font-medium">updated</span></li>
+                <li>New ingredients will be <span className="text-emerald-600 font-medium">created</span></li>
+                <li>Supplier names are matched automatically — new ones are created</li>
+              </ul>
+            </div>
+
+            <button
+              onClick={downloadTemplate}
+              className="flex items-center gap-2 px-4 py-2.5 border border-border rounded-xl text-sm font-medium hover:bg-secondary/50 transition-colors"
+            >
+              <FileText className="w-4 h-4" /> Download CSV Template
+            </button>
+
+            <div>
+              <label className="text-sm font-medium mb-2 block">Upload your CSV file</label>
+              <div
+                onClick={() => fileRef.current?.click()}
+                className="border-2 border-dashed border-border rounded-xl p-8 text-center cursor-pointer hover:border-primary/50 hover:bg-secondary/20 transition-colors"
+              >
+                <Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
+                {fileName ? (
+                  <p className="font-medium text-foreground">{fileName}</p>
+                ) : (
+                  <p className="text-muted-foreground text-sm">Click to select a CSV file</p>
+                )}
+                {parsedRows.length > 0 && (
+                  <p className="text-xs text-emerald-600 mt-1 font-medium">{parsedRows.length} rows ready</p>
+                )}
+              </div>
+              <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleFile} />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button onClick={handleClose} className="px-4 py-2 text-sm rounded-xl border border-border hover:bg-secondary/50 transition-colors">
+                Cancel
+              </button>
+              <button
+                onClick={runPreview}
+                disabled={parsedRows.length === 0 || loading}
+                className="px-5 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium disabled:opacity-50 flex items-center gap-2 hover:bg-primary/90 transition-colors"
+              >
+                {loading && <RefreshCw className="w-4 h-4 animate-spin" />}
+                Preview Import
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 2: Preview */}
+        {step === "preview" && preview && (
+          <div className="space-y-4">
+            {/* Summary badges */}
+            <div className="flex flex-wrap gap-2">
+              <span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-sm font-medium border border-emerald-200">
+                {preview.created.length} new
+              </span>
+              <span className="px-3 py-1 rounded-full bg-amber-50 text-amber-700 text-sm font-medium border border-amber-200">
+                {preview.updated.length} updates
+              </span>
+              {preview.suppliersCreated.length > 0 && (
+                <span className="px-3 py-1 rounded-full bg-blue-50 text-blue-700 text-sm font-medium border border-blue-200">
+                  {preview.suppliersCreated.length} new supplier{preview.suppliersCreated.length !== 1 ? "s" : ""}
+                </span>
+              )}
+              {blockingIssues.length > 0 && (
+                <span className="px-3 py-1 rounded-full bg-destructive/10 text-destructive text-sm font-medium border border-destructive/20">
+                  {blockingIssues.length} skipped
+                </span>
+              )}
+              {warningIssues.length > 0 && (
+                <span className="px-3 py-1 rounded-full bg-orange-50 text-orange-700 text-sm font-medium border border-orange-200">
+                  {warningIssues.length} warning{warningIssues.length !== 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+
+            {/* New suppliers */}
+            {preview.suppliersCreated.length > 0 && (
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-sm">
+                <p className="font-medium text-blue-800 mb-1">New suppliers will be created:</p>
+                <p className="text-blue-700">{preview.suppliersCreated.join(", ")}</p>
+              </div>
+            )}
+
+            {/* Issues */}
+            {preview.issues.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-sm font-medium">Issues requiring review:</p>
+                <div className="rounded-xl border border-border overflow-hidden divide-y divide-border">
+                  {preview.issues.map((issue, i) => (
+                    <div key={i} className={`flex items-start gap-3 px-4 py-2.5 text-sm ${issue.message.includes("skipped") ? "bg-destructive/5" : "bg-amber-50/50"}`}>
+                      {issue.message.includes("skipped")
+                        ? <XCircle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
+                        : <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />}
+                      <span className="text-muted-foreground">Row {issue.row} · <span className="font-mono text-xs">{issue.field}</span>: {issue.message}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* New ingredients list */}
+            {preview.created.length > 0 && (
+              <details className="rounded-xl border border-border overflow-hidden">
+                <summary className="px-4 py-3 text-sm font-medium bg-secondary/20 cursor-pointer hover:bg-secondary/40 transition-colors">
+                  New ingredients ({preview.created.length})
+                </summary>
+                <div className="px-4 py-3 grid grid-cols-2 gap-x-4 gap-y-1 max-h-48 overflow-y-auto">
+                  {preview.created.map((c, i) => (
+                    <div key={i} className="flex items-center gap-1.5 text-sm">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                      <span className="truncate">{c.name}</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+
+            {/* Updated ingredients list */}
+            {preview.updated.length > 0 && (
+              <details className="rounded-xl border border-border overflow-hidden">
+                <summary className="px-4 py-3 text-sm font-medium bg-secondary/20 cursor-pointer hover:bg-secondary/40 transition-colors">
+                  Updated ingredients ({preview.updated.length})
+                </summary>
+                <div className="divide-y divide-border max-h-48 overflow-y-auto">
+                  {preview.updated.map((u, i) => (
+                    <div key={i} className="px-4 py-2.5 text-sm">
+                      <span className="font-medium">{u.name}</span>
+                      {u.changes.length > 0 && (
+                        <span className="text-muted-foreground ml-2 text-xs">{u.changes.join(", ")}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+
+            <div className="flex justify-between gap-2 pt-2">
+              <button onClick={() => setStep("upload")} className="px-4 py-2 text-sm rounded-xl border border-border hover:bg-secondary/50 transition-colors">
+                ← Back
+              </button>
+              <div className="flex gap-2">
+                <button onClick={handleClose} className="px-4 py-2 text-sm rounded-xl border border-border hover:bg-secondary/50 transition-colors">
+                  Cancel
+                </button>
+                <button
+                  onClick={runImport}
+                  disabled={loading || (preview.created.length === 0 && preview.updated.length === 0)}
+                  className="px-5 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium disabled:opacity-50 flex items-center gap-2 hover:bg-primary/90 transition-colors"
+                >
+                  {loading && <RefreshCw className="w-4 h-4 animate-spin" />}
+                  Confirm Import ({preview.created.length + preview.updated.length} ingredients)
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Step 3: Done */}
+        {step === "done" && result && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
+              <CheckCircle2 className="w-6 h-6 text-emerald-600 flex-shrink-0" />
+              <div>
+                <p className="font-semibold text-emerald-800">Import complete</p>
+                <p className="text-sm text-emerald-700">
+                  {result.created.length} created · {result.updated.length} updated
+                  {result.suppliersCreated.length > 0 ? ` · ${result.suppliersCreated.length} supplier${result.suppliersCreated.length !== 1 ? "s" : ""} created` : ""}
+                </p>
+              </div>
+            </div>
+
+            {result.issues.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-sm font-medium flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-500" /> Issues to review:
+                </p>
+                <div className="rounded-xl border border-border overflow-hidden divide-y divide-border">
+                  {result.issues.map((issue, i) => (
+                    <div key={i} className={`flex items-start gap-3 px-4 py-2.5 text-sm ${issue.message.includes("skipped") ? "bg-destructive/5" : "bg-amber-50/50"}`}>
+                      {issue.message.includes("skipped")
+                        ? <XCircle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
+                        : <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />}
+                      <span className="text-muted-foreground">Row {issue.row} · <span className="font-mono text-xs">{issue.field}</span>: {issue.message}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end">
+              <button
+                onClick={handleClose}
+                className="px-5 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 const schema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -43,8 +396,10 @@ export default function Ingredients() {
   const { data: ingredients, isLoading } = useListIngredients();
   const { data: suppliers } = useListSuppliers();
   const { createIngredient, updateIngredient, deleteIngredient } = useAppMutations();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
 
   const filtered = ingredients?.filter(i =>
@@ -124,12 +479,20 @@ export default function Ingredients() {
         title="Ingredients Library"
         description="Manage your raw materials, pack sizes, costs and supplier information."
         action={
-          <button
-            onClick={openAdd}
-            className="px-5 py-2.5 bg-primary text-primary-foreground rounded-xl font-medium shadow-md shadow-primary/20 flex items-center gap-2 hover:bg-primary/90 transition-colors"
-          >
-            <Plus className="w-5 h-5" /> Add Ingredient
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsImportOpen(true)}
+              className="px-4 py-2.5 border border-border rounded-xl font-medium flex items-center gap-2 hover:bg-secondary/50 transition-colors text-sm"
+            >
+              <Upload className="w-4 h-4" /> Import CSV
+            </button>
+            <button
+              onClick={openAdd}
+              className="px-5 py-2.5 bg-primary text-primary-foreground rounded-xl font-medium shadow-md shadow-primary/20 flex items-center gap-2 hover:bg-primary/90 transition-colors"
+            >
+              <Plus className="w-5 h-5" /> Add Ingredient
+            </button>
+          </div>
         }
       />
 
@@ -315,6 +678,15 @@ export default function Ingredients() {
           </form>
         </DialogContent>
       </Dialog>
+
+      <ImportDialog
+        open={isImportOpen}
+        onClose={() => setIsImportOpen(false)}
+        onDone={() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/ingredients"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/suppliers"] });
+        }}
+      />
 
       {/* Table */}
       <div className="rounded-2xl border border-border overflow-hidden bg-card">
