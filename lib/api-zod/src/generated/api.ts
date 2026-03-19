@@ -299,6 +299,7 @@ export const CreateSubRecipeBody = zod.object({
   yield: zod.number(),
   yieldUnit: zod.string(),
   notes: zod.string().nullish(),
+  shelfLifeDays: zod.number().int().nonnegative().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -380,6 +381,7 @@ export const UpdateSubRecipeBody = zod.object({
   yield: zod.number(),
   yieldUnit: zod.string(),
   notes: zod.string().nullish(),
+  shelfLifeDays: zod.number().int().nonnegative().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -458,6 +460,7 @@ export const CreateRecipeBody = zod.object({
     .number()
     .optional()
     .describe("Number of portions produced per batch (e.g. 10 for calzones)"),
+  shelfLifeDays: zod.number().int().nonnegative().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -547,6 +550,7 @@ export const UpdateRecipeBody = zod.object({
     .number()
     .optional()
     .describe("Number of portions produced per batch (e.g. 10 for calzones)"),
+  shelfLifeDays: zod.number().int().nonnegative().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),

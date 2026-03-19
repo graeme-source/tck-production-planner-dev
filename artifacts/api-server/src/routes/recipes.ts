@@ -108,7 +108,7 @@ router.get("/", async (_req, res) => {
 });
 
 router.post("/", validate(CreateRecipeBody), async (req, res) => {
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, ingredients, subRecipes } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, ingredients, subRecipes } = req.body;
   const [recipe] = await db.insert(recipesTable).values({
     name, description,
     servings: String(servings),
@@ -118,6 +118,7 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
     packagingCost: String(packagingCost ?? 0),
     labourCost: String(labourCost ?? 0),
     portionsPerBatch: portionsPerBatch ?? 10,
+    shelfLifeDays: shelfLifeDays ?? null,
   }).returning();
 
   if (ingredients?.length) {
@@ -244,7 +245,7 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, ingredients, subRecipes } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, ingredients, subRecipes } = req.body;
   const [updated] = await db.update(recipesTable)
     .set({
       name, description,
@@ -255,6 +256,7 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
       packagingCost: String(packagingCost ?? 0),
       labourCost: String(labourCost ?? 0),
       portionsPerBatch: portionsPerBatch ?? 10,
+      shelfLifeDays: shelfLifeDays ?? null,
     })
     .where(eq(recipesTable.id, id))
     .returning();

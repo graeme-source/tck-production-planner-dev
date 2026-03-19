@@ -21,6 +21,7 @@ const schema = z.object({
   packagingCost: z.coerce.number().min(0),
   labourCost: z.coerce.number().min(0),
   portionsPerBatch: z.coerce.number().int().min(1, "Must be ≥ 1"),
+  shelfLifeDays: z.coerce.number().int().nonnegative().optional(),
   ingredients: z.array(z.object({
     ingredientId: z.coerce.number().min(1, "Select ingredient"),
     quantity: z.coerce.number().min(0.001, "Must be > 0"),
@@ -208,6 +209,11 @@ function RecipeForm({
             <input type="number" step="1" min="1" {...register("portionsPerBatch")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
             {errors.portionsPerBatch && <span className="text-destructive text-xs">{errors.portionsPerBatch.message}</span>}
           </div>
+          <div>
+            <label className="text-sm font-medium mb-1 block">Shelf Life (days)</label>
+            <input type="number" step="1" min="0" {...register("shelfLifeDays")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="e.g. 3" />
+            {errors.shelfLifeDays && <span className="text-destructive text-xs">{errors.shelfLifeDays.message}</span>}
+          </div>
           <div className="col-span-2">
             <label className="text-sm font-medium mb-1 block">Description (optional)</label>
             <textarea {...register("description")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[48px] resize-none" placeholder="Brief description…" />
@@ -368,10 +374,11 @@ function EditRecipeDialog({
         packagingCost: Number((detail as any).packagingCost) || 0,
         labourCost: Number((detail as any).labourCost) || 0,
         portionsPerBatch: Number((detail as any).portionsPerBatch) || 10,
+        shelfLifeDays: (detail as any).shelfLifeDays != null ? Number((detail as any).shelfLifeDays) : undefined,
         ingredients: (detail.ingredients ?? []).map((i: any) => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity) })),
         subRecipes: (detail.subRecipes ?? []).map((s: any) => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity) })),
       }
-    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, ingredients: [], subRecipes: [] };
+    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined, ingredients: [], subRecipes: [] };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -718,7 +725,7 @@ export default function Recipes() {
 
   const addDefaults: FormValues = {
     name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "",
-    packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, ingredients: [], subRecipes: [],
+    packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined, ingredients: [], subRecipes: [],
   };
 
   return (

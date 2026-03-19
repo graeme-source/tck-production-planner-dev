@@ -47,8 +47,18 @@ export function useAppMutations() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  const handleSuccess = (queryKey: any[], message: string) => {
-    queryClient.invalidateQueries({ queryKey });
+  const handleSuccess = (queryKey: any[], message: string, invalidatePrefix = false) => {
+    if (invalidatePrefix && typeof queryKey[0] === "string") {
+      const prefix = queryKey[0] as string;
+      queryClient.invalidateQueries({
+        predicate: (query) => {
+          const k = query.queryKey[0];
+          return typeof k === "string" && k.startsWith(prefix);
+        },
+      });
+    } else {
+      queryClient.invalidateQueries({ queryKey });
+    }
     toast({ title: "Success", description: message });
   };
 
@@ -79,12 +89,12 @@ export function useAppMutations() {
 
     // SubRecipes
     createSubRecipe: useCreateSubRecipe({ mutation: { onSuccess: () => handleSuccess(getListSubRecipesQueryKey(), "Sub-recipe created"), onError: handleError } }),
-    updateSubRecipe: useUpdateSubRecipe({ mutation: { onSuccess: () => handleSuccess(getListSubRecipesQueryKey(), "Sub-recipe updated"), onError: handleError } }),
+    updateSubRecipe: useUpdateSubRecipe({ mutation: { onSuccess: () => handleSuccess(getListSubRecipesQueryKey(), "Sub-recipe updated", true), onError: handleError } }),
     deleteSubRecipe: useDeleteSubRecipe({ mutation: { onSuccess: () => handleSuccess(getListSubRecipesQueryKey(), "Sub-recipe deleted"), onError: handleError } }),
 
     // Recipes
     createRecipe: useCreateRecipe({ mutation: { onSuccess: () => handleSuccess(getListRecipesQueryKey(), "Recipe created"), onError: handleError } }),
-    updateRecipe: useUpdateRecipe({ mutation: { onSuccess: () => handleSuccess(getListRecipesQueryKey(), "Recipe updated"), onError: handleError } }),
+    updateRecipe: useUpdateRecipe({ mutation: { onSuccess: () => handleSuccess(getListRecipesQueryKey(), "Recipe updated", true), onError: handleError } }),
     deleteRecipe: useDeleteRecipe({ mutation: { onSuccess: () => handleSuccess(getListRecipesQueryKey(), "Recipe deleted"), onError: handleError } }),
 
     // Production Plans

@@ -10,6 +10,7 @@ export const subRecipesTable = pgTable("sub_recipes", {
   yield: numeric("yield", { precision: 10, scale: 4 }).notNull(),
   yieldUnit: text("yield_unit").notNull(),
   notes: text("notes"),
+  shelfLifeDays: integer("shelf_life_days"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

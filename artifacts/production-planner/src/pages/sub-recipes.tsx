@@ -16,6 +16,7 @@ const schema = z.object({
   yield: z.coerce.number().min(0.01, "Must be > 0"),
   yieldUnit: z.string().min(1, "Unit required"),
   notes: z.string().optional(),
+  shelfLifeDays: z.coerce.number().int().nonnegative().optional(),
   ingredients: z.array(z.object({
     ingredientId: z.coerce.number().min(1, "Select an ingredient"),
     quantity: z.coerce.number().min(0.001, "Must be > 0"),
@@ -388,6 +389,17 @@ function SubRecipeForm({
               placeholder="kg, L, portions"
             />
           </div>
+          <div>
+            <label className="text-sm font-medium mb-1 block">Shelf Life (days)</label>
+            <input
+              type="number"
+              step="1"
+              min="0"
+              {...register("shelfLifeDays")}
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              placeholder="e.g. 3"
+            />
+          </div>
         </div>
 
         <div className="border-t border-border pt-4">
@@ -610,6 +622,7 @@ function EditSubRecipeDialog({
         yield: Number(detail.yield),
         yieldUnit: detail.yieldUnit,
         notes: detail.notes ?? "",
+        shelfLifeDays: (detail as any).shelfLifeDays != null ? Number((detail as any).shelfLifeDays) : undefined,
         ingredients: (detail.ingredients ?? []).map(i => ({
           ingredientId: i.ingredientId,
           quantity: Number(i.quantity),
@@ -619,7 +632,7 @@ function EditSubRecipeDialog({
           quantity: Number(c.quantity),
         })),
       }
-    : { name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", ingredients: [], subRecipeComponents: [] };
+    : { name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined, ingredients: [], subRecipeComponents: [] };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -675,7 +688,7 @@ export default function SubRecipes() {
   }));
 
   const addDefaults: FormValues = {
-    name: "", description: "", yield: 1, yieldUnit: "kg", notes: "",
+    name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined,
     ingredients: [],
     subRecipeComponents: [],
   };
