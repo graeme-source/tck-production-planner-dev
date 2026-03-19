@@ -36,7 +36,7 @@ const CreatePlanBody = z.object({
   planDate: z.string(),
   name: z.string(),
   notes: z.string().nullish(),
-  status: z.string().optional(),
+  status: z.enum(["draft", "active", "prep", "building", "complete"]).optional(),
   batchNumber: z.number().int().optional(),
   items: z.array(z.object({
     recipeId: z.number(),
@@ -67,7 +67,7 @@ const UpdatePlanBody = z.object({
     maxBatchesPerTin: z.number().int().nullish(),
     sopUrl: z.string().nullish(),
     notes: z.string().nullish(),
-    status: z.string().optional(),
+    status: z.enum(["pending", "in-progress", "complete"]).optional(),
   })).optional(),
 });
 

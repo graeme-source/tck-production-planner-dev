@@ -9,10 +9,17 @@ import type { ProductionPlanItemStatus } from "./productionPlanItemStatus";
 
 export interface ProductionPlanItem {
   id: number;
+  planId: number;
   recipeId: number;
   recipeName: string;
-  targetQuantity: number;
-  actualQuantity?: number | null;
+  portionsPerBatch: number;
   notes?: string | null;
   status: ProductionPlanItemStatus;
+  orderPosition: number;
+  batchesTarget: number;
+  batchesComplete: number;
+  wonlyCount: number;
+  tinSize?: string | null;
+  maxBatchesPerTin?: number | null;
+  sopUrl?: string | null;
 }

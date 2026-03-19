@@ -11,6 +11,6 @@ export type ProductionPlanItemStatus =
 
 export const ProductionPlanItemStatus = {
   pending: "pending",
-  in_progress: "in_progress",
-  completed: "completed",
+  in_progress: "in-progress",
+  completed: "complete",
 } as const;

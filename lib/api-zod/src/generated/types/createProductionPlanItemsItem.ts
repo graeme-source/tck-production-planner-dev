@@ -8,6 +8,10 @@
 
 export type CreateProductionPlanItemsItem = {
   recipeId: number;
-  targetQuantity: number;
+  batchesTarget?: number;
+  orderPosition?: number;
+  tinSize?: string | null;
+  maxBatchesPerTin?: number | null;
+  sopUrl?: string | null;
   notes?: string | null;
 };

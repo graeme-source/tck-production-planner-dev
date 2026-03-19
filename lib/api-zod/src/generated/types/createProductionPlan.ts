@@ -11,5 +11,6 @@ export interface CreateProductionPlan {
   planDate: string;
   name: string;
   notes?: string | null;
-  items: CreateProductionPlanItemsItem[];
+  batchNumber?: number | null;
+  items?: CreateProductionPlanItemsItem[];
 }

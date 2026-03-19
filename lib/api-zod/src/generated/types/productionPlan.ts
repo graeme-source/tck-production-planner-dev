@@ -13,5 +13,6 @@ export interface ProductionPlan {
   name: string;
   notes?: string | null;
   status: ProductionPlanStatus;
+  batchNumber?: number | null;
   createdAt: string;
 }

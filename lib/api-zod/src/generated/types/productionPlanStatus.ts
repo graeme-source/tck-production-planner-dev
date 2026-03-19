@@ -12,5 +12,7 @@ export type ProductionPlanStatus =
 export const ProductionPlanStatus = {
   draft: "draft",
   active: "active",
-  completed: "completed",
+  prep: "prep",
+  building: "building",
+  complete: "complete",
 } as const;

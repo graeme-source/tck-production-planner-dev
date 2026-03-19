@@ -8,10 +8,13 @@
 import type { UpdateProductionPlanItemsItemStatus } from "./updateProductionPlanItemsItemStatus";
 
 export type UpdateProductionPlanItemsItem = {
-  id?: number | null;
   recipeId: number;
-  targetQuantity: number;
-  actualQuantity?: number | null;
+  batchesTarget?: number;
+  batchesComplete?: number;
+  orderPosition?: number;
+  tinSize?: string | null;
+  maxBatchesPerTin?: number | null;
+  sopUrl?: string | null;
   notes?: string | null;
-  status: UpdateProductionPlanItemsItemStatus;
+  status?: UpdateProductionPlanItemsItemStatus;
 };
