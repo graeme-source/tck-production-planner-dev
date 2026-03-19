@@ -405,11 +405,9 @@ export default function Settings() {
       {/* Category Defaults Section */}
       <CategoryDefaultsSection />
 
-      {/* DPT Settings Section */}
-      <DptSettingsSection />
-
-      {/* Timing Standards Section */}
-      <TimingStandardsSection />
+      {/* DPT Settings & Timing Standards — admin only */}
+      {user?.role === "admin" && <DptSettingsSection />}
+      {user?.role === "admin" && <TimingStandardsSection />}
 
       {/* Access Control — admin only */}
       {user?.role === "admin" && <AccessControlSection />}

@@ -232,8 +232,6 @@ export interface ProductionPlanItem {
   recipeId: number;
   recipeName: string;
   portionsPerBatch: number;
-  targetQuantity: number;
-  actualQuantity?: number | null;
   notes?: string | null;
   status: string;
   orderPosition: number;
@@ -251,7 +249,9 @@ export type ProductionPlanStatus =
 export const ProductionPlanStatus = {
   draft: "draft",
   active: "active",
-  completed: "completed",
+  prep: "prep",
+  building: "building",
+  complete: "complete",
 } as const;
 
 export interface ProductionPlan {

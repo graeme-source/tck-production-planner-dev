@@ -32,6 +32,15 @@ router.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
+// Admin-only middleware
+function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  if (req.session.userRole !== "admin") {
+    res.status(403).json({ error: "Admin access required" });
+    return;
+  }
+  next();
+}
+
 // Protected routes
 router.use("/users", usersRouter);
 router.use("/category-defaults", categoryDefaultsRouter);
@@ -40,8 +49,8 @@ router.use("/ingredients", ingredientsRouter);
 router.use("/sub-recipes", subRecipesRouter);
 router.use("/recipes", recipesRouter);
 router.use("/production-plans", productionPlansRouter);
-router.use("/dpt-settings", dptSettingsRouter);
-router.use("/timing-standards", timingStandardsRouter);
+router.use("/dpt-settings", requireAdmin, dptSettingsRouter);
+router.use("/timing-standards", requireAdmin, timingStandardsRouter);
 router.use("/dpt-calculator", dptCalculatorRouter);
 router.use("/stock-entries", stockRouter);
 router.use("/sales-entries", salesRouter);

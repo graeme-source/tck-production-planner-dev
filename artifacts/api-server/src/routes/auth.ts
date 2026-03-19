@@ -42,6 +42,7 @@ router.post("/login", loginLimiter, validate(LoginBody), async (req, res) => {
   }
 
   req.session.userId = user.id;
+  req.session.userRole = user.role as "admin" | "manager" | "viewer";
   req.session.save((err) => {
     if (err) {
       res.status(500).json({ error: "Failed to create session" });

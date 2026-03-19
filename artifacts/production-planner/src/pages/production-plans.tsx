@@ -26,7 +26,10 @@ type PlanView = "list" | "detail";
 const STATUS_CONFIG = {
   draft: { label: "Draft", color: "bg-secondary text-secondary-foreground", icon: ClipboardList },
   active: { label: "Active", color: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400", icon: BarChart2 },
-  completed: { label: "Completed", color: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400", icon: CheckCircle2 },
+  prep: { label: "Prep", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400", icon: ClipboardList },
+  building: { label: "Building", color: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400", icon: BarChart2 },
+  complete: { label: "Complete", color: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400", icon: CheckCircle2 },
+  completed: { label: "Complete", color: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400", icon: CheckCircle2 },
 } as const;
 
 function getNextWorkingDay(from: Date): Date {
@@ -487,13 +490,13 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
           )}
           {plan.status === "active" && (
             <button
-              onClick={() => handleStatusChange("completed")}
+              onClick={() => handleStatusChange("complete")}
               className="px-3 py-1.5 text-xs bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-medium"
             >
               Mark Complete
             </button>
           )}
-          {plan.status !== "completed" && (
+          {plan.status !== "complete" && (
             <button
               onClick={() => setConfirmDelete(true)}
               className="px-3 py-1.5 text-xs text-red-600 hover:text-red-700 border border-red-200 dark:border-red-900/40 rounded-lg transition-colors"
@@ -699,7 +702,7 @@ function PlansList({ onViewPlan, onCreatePlan }: PlansListProps) {
     <div className="space-y-4">
       {/* Filters */}
       <div className="flex items-center gap-2 flex-wrap">
-        {(["all", "draft", "active", "completed"] as const).map(s => (
+        {(["all", "draft", "active", "prep", "building", "complete"] as const).map(s => (
           <button
             key={s}
             onClick={() => setStatusFilter(s)}

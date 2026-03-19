@@ -435,7 +435,9 @@ export default function Ingredients() {
   const watchedUnit = watch("unit");
   const watchedPackWeight = watch("packWeight");
   const watchedCostPerPack = watch("costPerPack");
+  const watchedProcessingRatioPct = watch("processingRatioPct");
   const liveCostPerUnit = watchedPackWeight > 0 ? watchedCostPerPack / watchedPackWeight : null;
+  const showRawMeatTray = watchedProcessingRatioPct != null && Number(watchedProcessingRatioPct) < 100;
 
   const openAdd = () => {
     setEditingId(null);
@@ -641,27 +643,29 @@ export default function Ingredients() {
               {errors.processingRatioPct && <span className="text-destructive text-xs">{String(errors.processingRatioPct.message)}</span>}
             </div>
 
-            <div>
-              <label className="text-sm font-medium mb-1 block">
-                Raw Meat Tray Capacity
-                <span className="ml-2 text-xs font-normal text-muted-foreground">(kg per tray)</span>
-              </label>
-              <div className="relative max-w-[160px]">
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  {...register("rawMeatTrayCapacityKg")}
-                  className="w-full px-3 pr-10 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  placeholder="e.g. 10"
-                />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">kg</span>
+            {showRawMeatTray && (
+              <div>
+                <label className="text-sm font-medium mb-1 block">
+                  Raw Meat Tray Capacity
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">(kg per tray)</span>
+                </label>
+                <div className="relative max-w-[160px]">
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    {...register("rawMeatTrayCapacityKg")}
+                    className="w-full px-3 pr-10 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    placeholder="e.g. 10"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">kg</span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Used in the raw meat prep station to calculate tray counts.
+                </p>
+                {errors.rawMeatTrayCapacityKg && <span className="text-destructive text-xs">{String(errors.rawMeatTrayCapacityKg.message)}</span>}
               </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Used in the raw meat prep station to calculate tray counts.
-              </p>
-              {errors.rawMeatTrayCapacityKg && <span className="text-destructive text-xs">{String(errors.rawMeatTrayCapacityKg.message)}</span>}
-            </div>
+            )}
 
             <div>
               <label className="text-sm font-medium mb-1 block">Ingredient Category</label>

@@ -23,10 +23,10 @@ function mapPlan(p: typeof productionPlansTable.$inferSelect) {
 }
 
 function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?: string | null; portionsPerBatch?: number | null }) {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { targetQuantity, actualQuantity, ...rest } = i;
   return {
-    ...i,
-    targetQuantity: Number(i.targetQuantity),
-    actualQuantity: i.actualQuantity != null ? Number(i.actualQuantity) : null,
+    ...rest,
     recipeName: i.recipeName ?? "",
     portionsPerBatch: i.portionsPerBatch ?? 10,
   };
@@ -49,11 +49,14 @@ const CreatePlanBody = z.object({
   })).optional(),
 });
 
+const PLAN_STATUSES = ["draft", "active", "prep", "building", "complete"] as const;
+type PlanStatus = typeof PLAN_STATUSES[number];
+
 const UpdatePlanBody = z.object({
   planDate: z.string().optional(),
   name: z.string().optional(),
   notes: z.string().nullish(),
-  status: z.string().optional(),
+  status: z.enum(PLAN_STATUSES).optional(),
   batchNumber: z.number().int().nullish(),
   items: z.array(z.object({
     recipeId: z.number(),
@@ -250,7 +253,7 @@ router.post("/:id/batch-completions", async (req, res) => {
 
   // Increment batchesComplete on the item
   await db.execute(
-    sql`UPDATE production_plan_items SET batches_complete = batches_complete + 1, status = CASE WHEN batches_complete + 1 >= batches_target THEN 'complete' ELSE 'in-progress' END WHERE id = ${planItemId}`
+    sql`UPDATE production_plan_items SET batches_complete = batches_complete + 1, status = CASE WHEN batches_complete + 1 >= batches_target THEN 'completed' ELSE 'in_progress' END WHERE id = ${planItemId}`
   );
 
   res.status(201).json(row);
