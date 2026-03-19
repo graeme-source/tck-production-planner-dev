@@ -272,7 +272,7 @@ router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
   res.json(mapPlan(updated));
 });
 
-// PATCH order for a specific plan — updates orderPosition of all items atomically
+// PATCH order for a specific plan — updates orderPosition of all items atomically in a transaction
 router.patch("/:id/order", async (req, res) => {
   const id = Number(req.params.id);
   const { order } = req.body as { order: { itemId: number; orderPosition: number }[] };
@@ -281,11 +281,13 @@ router.patch("/:id/order", async (req, res) => {
   const [plan] = await db.select().from(productionPlansTable).where(eq(productionPlansTable.id, id));
   if (!plan) { res.status(404).json({ error: "Not found" }); return; }
 
-  for (const { itemId, orderPosition } of order) {
-    await db.update(productionPlanItemsTable)
-      .set({ orderPosition })
-      .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, id)));
-  }
+  await db.transaction(async (tx) => {
+    for (const { itemId, orderPosition } of order) {
+      await tx.update(productionPlanItemsTable)
+        .set({ orderPosition })
+        .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, id)));
+    }
+  });
 
   res.json({ ok: true });
 });

@@ -7,6 +7,7 @@ import {
   useCreateStationBreak,
   useEndStationBreak,
   useGetPrepRequirements,
+  useListTimingStandards,
   getGetProductionPlanQueryKey,
 } from "@workspace/api-client-react";
 import type { ProductionPlanDetail, ProductionPlanItem, PrepRequirementItem } from "@workspace/api-client-react";
@@ -15,10 +16,10 @@ import { useAuth } from "@/contexts/auth-context";
 import { useState, useEffect, useCallback } from "react";
 import {
   ChevronLeft, ChevronUp, ChevronDown, Plus, Minus,
-  Coffee, Utensils, Clock, AlertTriangle, CheckCircle2,
-  PlayCircle, PauseCircle, BarChart2, Loader2, Package,
+  Coffee, Utensils, Clock, CheckCircle2,
+  PlayCircle, BarChart2, Loader2,
   Construction, Waves, Flame, Gift, Box, Salad, Layers,
-  Beef,
+  Beef, TrendingUp, Trophy,
 } from "lucide-react";
 import { format, parseISO, differenceInMinutes } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -59,54 +60,56 @@ function StationLayout({ planId, stationType, plan, children }: StationLayoutPro
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Station header */}
+      {/* Minimal station header */}
       <div className="border-b border-border bg-card sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-4 py-3">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 min-w-0">
-              <button
-                onClick={() => navigate(`/plans`)}
-                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
-              >
-                <ChevronLeft className="w-4 h-4" />
-                Plans
-              </button>
-              <div className="text-muted-foreground text-sm">/</div>
               <div className="flex items-center gap-2 min-w-0">
                 <StationIcon className={cn("w-5 h-5 flex-shrink-0", station?.color)} />
                 <div className="min-w-0">
                   <h1 className="font-semibold truncate">{station?.label}</h1>
                   {plan && (
                     <p className="text-xs text-muted-foreground truncate">
-                      {plan.name} · Batch #{plan.batchNumber ?? ""} · {format(parseISO(plan.planDate), "d MMM")}
+                      Batch #{plan.batchNumber ?? ""} · {format(parseISO(plan.planDate), "EEEE d MMM yyyy")}
                     </p>
                   )}
                 </div>
               </div>
             </div>
 
-            {/* Station nav */}
-            <div className="hidden md:flex items-center gap-1 overflow-x-auto">
-              {STATIONS.map(s => {
-                const Icon = s.icon;
-                const isActive = s.key === stationType;
-                return (
-                  <button
-                    key={s.key}
-                    onClick={() => navigate(`/plans/${planId}/station/${s.key}`)}
-                    className={cn(
-                      "flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap",
-                      isActive
-                        ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
-                    )}
-                    title={s.label}
-                  >
-                    <Icon className="w-3.5 h-3.5" />
-                    {s.short}
-                  </button>
-                );
-              })}
+            <div className="flex items-center gap-2">
+              {/* Station switcher — compact */}
+              <div className="hidden md:flex items-center gap-1 overflow-x-auto">
+                {STATIONS.map(s => {
+                  const Icon = s.icon;
+                  const isActive = s.key === stationType;
+                  return (
+                    <button
+                      key={s.key}
+                      onClick={() => navigate(`/plans/${planId}/station/${s.key}`)}
+                      className={cn(
+                        "flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap",
+                        isActive
+                          ? "bg-primary text-primary-foreground"
+                          : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
+                      )}
+                      title={s.label}
+                    >
+                      <Icon className="w-3.5 h-3.5" />
+                      {s.short}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                onClick={() => navigate(`/plans`)}
+                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors border border-border rounded-lg px-3 py-1.5"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                Exit Station
+              </button>
             </div>
           </div>
         </div>
@@ -126,6 +129,8 @@ function StationLayout({ planId, stationType, plan, children }: StationLayoutPro
 interface BreakTrackerProps {
   planId: number;
   stationType: StationType;
+  /** Called with active break duration in minutes whenever break state changes */
+  onBreakChange?: (activeBreakMinutes: number | null) => void;
 }
 
 interface ActiveBreak {
@@ -134,18 +139,24 @@ interface ActiveBreak {
   startedAt: string;
 }
 
-function BreakTracker({ planId, stationType }: BreakTrackerProps) {
+function BreakTracker({ planId, stationType, onBreakChange }: BreakTrackerProps) {
   const [activeBreak, setActiveBreak] = useState<ActiveBreak | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const createBreak = useCreateStationBreak();
   const endBreak = useEndStationBreak();
 
   useEffect(() => {
-    if (!activeBreak) return;
-    const interval = setInterval(() => {
-      setElapsed(differenceInMinutes(new Date(), parseISO(activeBreak.startedAt)));
-    }, 30000);
-    setElapsed(differenceInMinutes(new Date(), parseISO(activeBreak.startedAt)));
+    if (!activeBreak) {
+      onBreakChange?.(null);
+      return;
+    }
+    const update = () => {
+      const mins = differenceInMinutes(new Date(), parseISO(activeBreak.startedAt));
+      setElapsed(mins);
+      onBreakChange?.(mins);
+    };
+    update();
+    const interval = setInterval(update, 30000);
     return () => clearInterval(interval);
   }, [activeBreak]);
 
@@ -157,7 +168,7 @@ function BreakTracker({ planId, stationType }: BreakTrackerProps) {
       },
       {
         onSuccess: (b: { id: number; startedAt?: string | null }) => {
-          setActiveBreak({ id: b.id, type: type as "morning" | "lunch", startedAt: b.startedAt! });
+          setActiveBreak({ id: b.id, type, startedAt: b.startedAt! });
         },
       }
     );
@@ -172,7 +183,7 @@ function BreakTracker({ planId, stationType }: BreakTrackerProps) {
         data: { endedAt: new Date().toISOString() },
       },
       {
-        onSuccess: () => setActiveBreak(null),
+        onSuccess: () => { setActiveBreak(null); onBreakChange?.(null); },
       }
     );
   };
@@ -180,7 +191,7 @@ function BreakTracker({ planId, stationType }: BreakTrackerProps) {
   if (activeBreak) {
     return (
       <div className="flex items-center gap-3 bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-900/30 rounded-xl px-4 py-3">
-        <PauseCircle className="w-5 h-5 text-amber-600 animate-pulse" />
+        <Clock className="w-5 h-5 text-amber-600 animate-pulse" />
         <div>
           <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
             {activeBreak.type === "morning" ? "Morning" : "Lunch"} break · {elapsed} min
@@ -216,6 +227,179 @@ function BreakTracker({ planId, stationType }: BreakTrackerProps) {
         <Utensils className="w-3.5 h-3.5" />
         Lunch
       </button>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// KPI Bar — computes batches/hour from completions, excludes break time
+// ──────────────────────────────────────────────────────────────────────────────
+interface KpiBarProps {
+  sessionBatches: number;
+  sessionStartedAt: Date | null;
+  activeBreakMinutes: number;
+  totalBreakMinutes: number;
+  targetBph: number | null;
+  minBph: number | null;
+}
+
+function KpiBar({ sessionBatches, sessionStartedAt, activeBreakMinutes, totalBreakMinutes, targetBph, minBph }: KpiBarProps) {
+  const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const activeMinutes = sessionStartedAt
+    ? Math.max(0, differenceInMinutes(now, sessionStartedAt) - totalBreakMinutes - activeBreakMinutes)
+    : 0;
+  const activeHours = activeMinutes / 60;
+  const bph = activeHours > 0 ? sessionBatches / activeHours : 0;
+
+  const color = targetBph && minBph
+    ? bph >= targetBph ? "bg-emerald-500 text-emerald-700 dark:text-emerald-300"
+      : bph >= minBph ? "bg-amber-500 text-amber-700 dark:text-amber-300"
+      : "bg-red-500 text-red-700 dark:text-red-300"
+    : "bg-primary text-foreground";
+
+  const bgColor = targetBph && minBph
+    ? bph >= targetBph ? "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800"
+      : bph >= minBph ? "bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800"
+      : "bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800"
+    : "bg-card border-border";
+
+  return (
+    <div className={cn("border rounded-xl px-4 py-3 flex items-center gap-6", bgColor)}>
+      <TrendingUp className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+      <div className="flex items-center gap-6 flex-1 flex-wrap">
+        <div className="text-center">
+          <p className="text-xs text-muted-foreground">Batches this session</p>
+          <p className="text-xl font-bold tabular-nums">{sessionBatches}</p>
+        </div>
+        <div className="text-center">
+          <p className="text-xs text-muted-foreground">Active time</p>
+          <p className="text-xl font-bold tabular-nums">{activeMinutes}m</p>
+        </div>
+        <div className="text-center">
+          <p className="text-xs text-muted-foreground">Batches / hour</p>
+          <p className={cn("text-2xl font-bold tabular-nums", color.split(" ").slice(1).join(" "))}>
+            {bph.toFixed(1)}
+          </p>
+        </div>
+        {targetBph && (
+          <div className="text-center">
+            <p className="text-xs text-muted-foreground">Target</p>
+            <p className="text-lg font-semibold tabular-nums text-muted-foreground">{targetBph}</p>
+          </div>
+        )}
+        {minBph && (
+          <div className="text-center">
+            <p className="text-xs text-muted-foreground">Minimum</p>
+            <p className="text-lg font-semibold tabular-nums text-muted-foreground">{minBph}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// End-of-day summary modal for Building stations
+// ──────────────────────────────────────────────────────────────────────────────
+interface EodSummaryProps {
+  items: ProductionPlanItem[];
+  stationType: string;
+  sessionBatches: number;
+  totalBreakMinutes: number;
+  sessionStartedAt: Date | null;
+  onClose: () => void;
+}
+
+function EodSummary({ items, stationType, sessionBatches, totalBreakMinutes, sessionStartedAt, onClose }: EodSummaryProps) {
+  const now = new Date();
+  const totalMinutes = sessionStartedAt ? differenceInMinutes(now, sessionStartedAt) : 0;
+  const activeMinutes = Math.max(0, totalMinutes - totalBreakMinutes);
+  const activeHours = activeMinutes / 60;
+  const bph = activeHours > 0 ? sessionBatches / activeHours : 0;
+
+  const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
+  const totalBatchesComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-card border border-border rounded-2xl max-w-lg w-full shadow-xl">
+        <div className="p-6 border-b border-border">
+          <div className="flex items-center gap-3">
+            <Trophy className="w-6 h-6 text-amber-500" />
+            <h2 className="font-semibold text-lg">End of Day Summary</h2>
+            <span className="text-xs text-muted-foreground ml-auto">{stationType === "building_1" ? "Building Line 1" : "Building Line 2"}</span>
+          </div>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-secondary/30 rounded-xl p-3 text-center">
+              <p className="text-xs text-muted-foreground mb-1">Batches This Session</p>
+              <p className="text-3xl font-bold">{sessionBatches}</p>
+            </div>
+            <div className="bg-secondary/30 rounded-xl p-3 text-center">
+              <p className="text-xs text-muted-foreground mb-1">Batches / Hour</p>
+              <p className="text-3xl font-bold">{bph.toFixed(1)}</p>
+            </div>
+            <div className="bg-secondary/30 rounded-xl p-3 text-center">
+              <p className="text-xs text-muted-foreground mb-1">Active Time</p>
+              <p className="text-2xl font-bold">{activeMinutes}m</p>
+            </div>
+            <div className="bg-secondary/30 rounded-xl p-3 text-center">
+              <p className="text-xs text-muted-foreground mb-1">Break Time</p>
+              <p className="text-2xl font-bold">{totalBreakMinutes}m</p>
+            </div>
+          </div>
+
+          {/* Per-recipe summary */}
+          <div className="bg-secondary/20 rounded-xl overflow-hidden">
+            <div className="px-3 py-2 border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Recipes
+            </div>
+            <table className="w-full text-sm">
+              <tbody>
+                {items.map(item => (
+                  <tr key={item.id} className="border-b border-border/50 last:border-0">
+                    <td className="px-3 py-2 font-medium">{item.recipeName ?? `Recipe #${item.recipeId}`}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      <span className={cn(
+                        "font-bold",
+                        (item.batchesComplete ?? 0) >= (item.batchesTarget ?? 0)
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-muted-foreground"
+                      )}>
+                        {item.batchesComplete ?? 0}
+                      </span>
+                      <span className="text-muted-foreground"> / {item.batchesTarget ?? 0}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-secondary/30">
+                  <td className="px-3 py-2 font-semibold">Total</td>
+                  <td className="px-3 py-2 text-right font-bold tabular-nums">
+                    {totalBatchesComplete} / {totalBatchesTarget}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+        <div className="p-6 border-t border-border">
+          <button
+            onClick={onClose}
+            className="w-full py-2.5 bg-primary text-primary-foreground rounded-xl font-medium hover:bg-primary/90 transition-colors"
+          >
+            Close
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -273,16 +457,8 @@ function MixingStation({ plan }: MixingStationProps) {
     updateOrder.mutate({ planId: plan.id, order });
   };
 
+  // addBatch: only via createBatchCompletion (server increments batchesComplete + status)
   const addBatch = (item: ProductionPlanItem) => {
-    const newComplete = (item.batchesComplete ?? 0) + 1;
-    const newStatus = newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
-
-    updateItem.mutate({
-      planId: plan.id,
-      itemId: item.id,
-      data: { batchesComplete: newComplete, status: newStatus },
-    });
-
     createBatch.mutate({
       planId: plan.id,
       data: {
@@ -293,6 +469,7 @@ function MixingStation({ plan }: MixingStationProps) {
     });
   };
 
+  // removeBatch: decrease via PATCH item only (no batch_completion row for undos)
   const removeBatch = (item: ProductionPlanItem) => {
     const newComplete = Math.max(0, (item.batchesComplete ?? 0) - 1);
     const newStatus = newComplete === 0 ? "pending" : newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
@@ -473,6 +650,7 @@ function MixingStation({ plan }: MixingStationProps) {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Building Station (shared for building_1 and building_2)
+// Full-screen recipe display, large BATCH COMPLETE button, KPI bar, auto-advance
 // ──────────────────────────────────────────────────────────────────────────────
 interface BuildingStationProps {
   plan: ProductionPlanDetail;
@@ -480,83 +658,240 @@ interface BuildingStationProps {
 }
 
 function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
-  const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
+  const stationType = lineNumber === 1 ? "building_1" : "building_2";
+  const queryClient = useQueryClient();
+  const { state } = useAuth();
+  const isAdmin = state.status === "authenticated" && state.user.role === "admin";
 
-  // For building stations, show all items in order with current status
+  // Session tracking
+  const [sessionStartedAt] = useState<Date>(() => new Date());
+  const [sessionBatches, setSessionBatches] = useState(0);
+  const [totalBreakMinutes, setTotalBreakMinutes] = useState(0);
+  const [activeBreakMinutes, setActiveBreakMinutes] = useState(0);
+  const [showEod, setShowEod] = useState(false);
+  const [pendingTap, setPendingTap] = useState(false);
+
+  // Load timing standards for KPI color coding
+  const { data: timingStandards } = useListTimingStandards();
+  const standard = (timingStandards ?? []).find((s: { stationType?: string }) => s.stationType === stationType);
+  const targetBph = standard?.targetBatchesPerHour != null ? Number(standard.targetBatchesPerHour) : null;
+  const minBph = standard?.minBatchesPerHour != null ? Number(standard.minBatchesPerHour) : null;
+
+  const createBatch = useCreateBatchCompletion({
+    mutation: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+        setSessionBatches(prev => prev + 1);
+        setPendingTap(false);
+      },
+      onError: () => setPendingTap(false),
+    },
+  });
+
+  const updateItem = useUpdateProductionPlanItem({
+    mutation: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+      },
+    },
+  });
+
+  const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
   const currentItem = items.find(it => it.status === "in-progress") ?? items.find(it => it.status === "pending");
+  const remaining = currentItem ? Math.max(0, (currentItem.batchesTarget ?? 0) - (currentItem.batchesComplete ?? 0)) : 0;
+  const allDone = items.length > 0 && !currentItem;
+
+  // Large "BATCH COMPLETE" tap — single write via createBatchCompletion only
+  const handleBatchComplete = () => {
+    if (!currentItem || pendingTap) return;
+    setPendingTap(true);
+    createBatch.mutate({
+      planId: plan.id,
+      data: {
+        planItemId: currentItem.id,
+        stationType,
+        completedAt: new Date().toISOString(),
+      },
+    });
+  };
+
+  // Undo last batch — PATCH item directly (no batch_completion for undos)
+  const handleUndo = () => {
+    if (!currentItem || (currentItem.batchesComplete ?? 0) === 0) return;
+    const newComplete = (currentItem.batchesComplete ?? 0) - 1;
+    const newStatus = newComplete === 0 ? "pending" : "in-progress";
+    updateItem.mutate({
+      planId: plan.id,
+      itemId: currentItem.id,
+      data: { batchesComplete: newComplete, status: newStatus },
+    });
+    setSessionBatches(prev => Math.max(0, prev - 1));
+  };
+
+  const handleBreakChange = useCallback((breakMins: number | null) => {
+    if (breakMins === null) {
+      setTotalBreakMinutes(prev => prev + activeBreakMinutes);
+      setActiveBreakMinutes(0);
+    } else {
+      setActiveBreakMinutes(breakMins);
+    }
+  }, [activeBreakMinutes]);
+
+  const pct = currentItem && (currentItem.batchesTarget ?? 0) > 0
+    ? Math.round(((currentItem.batchesComplete ?? 0) / (currentItem.batchesTarget ?? 0)) * 100)
+    : 0;
 
   return (
     <div className="space-y-4">
-      {/* Current recipe callout */}
+      {showEod && (
+        <EodSummary
+          items={items}
+          stationType={stationType}
+          sessionBatches={sessionBatches}
+          totalBreakMinutes={totalBreakMinutes + activeBreakMinutes}
+          sessionStartedAt={sessionStartedAt}
+          onClose={() => setShowEod(false)}
+        />
+      )}
+
+      {/* Current recipe — full-screen focus card */}
       {currentItem ? (
-        <div className="bg-card border-2 border-primary rounded-xl p-5">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        <div className="bg-card border-2 border-primary rounded-2xl p-6">
+          {/* Recipe name + progress */}
+          <div className="mb-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
               Currently Building — Line {lineNumber}
-            </span>
-          </div>
-          <h2 className="font-display text-2xl font-bold mb-3">
-            {currentItem.recipeName ?? `Recipe #${currentItem.recipeId}`}
-          </h2>
-          <div className="flex items-center gap-4">
-            <div className="bg-secondary/50 rounded-lg px-4 py-2 text-center">
-              <p className="text-xs text-muted-foreground">Target Batches</p>
-              <p className="text-2xl font-bold">{currentItem.batchesTarget ?? 0}</p>
-            </div>
-            <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-lg px-4 py-2 text-center">
-              <p className="text-xs text-muted-foreground">Complete</p>
-              <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{currentItem.batchesComplete ?? 0}</p>
-            </div>
-            {currentItem.maxBatchesPerTin && (currentItem.batchesTarget ?? 0) > 0 && (
-              <div className="bg-secondary/50 rounded-lg px-4 py-2 text-center">
-                <p className="text-xs text-muted-foreground">Tins</p>
-                <p className="text-2xl font-bold">
-                  {Math.ceil((currentItem.batchesTarget ?? 0) / currentItem.maxBatchesPerTin)}
-                </p>
-              </div>
+            </p>
+            <h2 className="font-display text-3xl font-bold leading-tight">
+              {currentItem.recipeName ?? `Recipe #${currentItem.recipeId}`}
+            </h2>
+            {currentItem.tinSize && (
+              <p className="text-sm text-muted-foreground mt-1">{currentItem.tinSize} tin</p>
             )}
           </div>
 
-          {/* Progress */}
-          <div className="mt-4">
-            <div className="flex justify-between text-xs text-muted-foreground mb-1">
-              <span>Progress</span>
-              <span>
-                {(currentItem.batchesTarget ?? 0) > 0
-                  ? Math.round(((currentItem.batchesComplete ?? 0) / (currentItem.batchesTarget ?? 0)) * 100)
-                  : 0}%
-              </span>
+          {/* Large batch counter */}
+          <div className="flex items-center justify-center gap-8 my-6">
+            <div className="text-center">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Complete</p>
+              <p className="text-6xl font-bold font-display tabular-nums text-primary">
+                {currentItem.batchesComplete ?? 0}
+              </p>
             </div>
-            <div className="w-full h-3 bg-secondary rounded-full overflow-hidden">
+            <div className="text-4xl font-light text-muted-foreground">/</div>
+            <div className="text-center">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Target</p>
+              <p className="text-6xl font-bold font-display tabular-nums">
+                {currentItem.batchesTarget ?? 0}
+              </p>
+            </div>
+            {currentItem.maxBatchesPerTin && (currentItem.batchesTarget ?? 0) > 0 && (
+              <>
+                <div className="text-4xl font-light text-muted-foreground hidden sm:block">·</div>
+                <div className="text-center hidden sm:block">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Tins</p>
+                  <p className="text-4xl font-bold font-display tabular-nums text-amber-600 dark:text-amber-400">
+                    {Math.ceil((currentItem.batchesTarget ?? 0) / currentItem.maxBatchesPerTin)}
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Remaining + progress */}
+          <div className="mb-6">
+            <div className="flex justify-between text-xs text-muted-foreground mb-1.5">
+              <span>{remaining} batch{remaining !== 1 ? "es" : ""} remaining</span>
+              <span>{pct}%</span>
+            </div>
+            <div className="w-full h-4 bg-secondary rounded-full overflow-hidden">
               <div
-                className="h-full bg-primary rounded-full transition-all"
-                style={{
-                  width: `${Math.min(
-                    (currentItem.batchesTarget ?? 0) > 0
-                      ? ((currentItem.batchesComplete ?? 0) / (currentItem.batchesTarget ?? 0)) * 100
-                      : 0,
-                    100
-                  )}%`
-                }}
+                className={cn(
+                  "h-full rounded-full transition-all",
+                  pct >= 100 ? "bg-emerald-500" : "bg-primary"
+                )}
+                style={{ width: `${Math.min(pct, 100)}%` }}
               />
             </div>
           </div>
+
+          {/* Large BATCH COMPLETE button */}
+          <button
+            onClick={handleBatchComplete}
+            disabled={pendingTap || activeBreakMinutes > 0}
+            className={cn(
+              "w-full py-6 rounded-2xl text-2xl font-bold transition-all select-none active:scale-95",
+              remaining === 0
+                ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 border-2 border-emerald-400 opacity-60 cursor-not-allowed"
+                : pendingTap
+                  ? "bg-primary/60 text-primary-foreground cursor-wait"
+                  : activeBreakMinutes > 0
+                    ? "bg-amber-100 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 border-2 border-amber-300 cursor-not-allowed opacity-70"
+                    : "bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg hover:shadow-xl"
+            )}
+          >
+            {activeBreakMinutes > 0
+              ? "On Break — End Break First"
+              : remaining === 0
+                ? "✓ All Batches Complete"
+                : pendingTap
+                  ? "Recording..."
+                  : "BATCH COMPLETE ✓"}
+          </button>
+
+          {/* Undo */}
+          {(currentItem.batchesComplete ?? 0) > 0 && (
+            <button
+              onClick={handleUndo}
+              className="mt-2 w-full py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-xl transition-colors"
+            >
+              Undo last batch
+            </button>
+          )}
         </div>
       ) : (
-        <div className="bg-card border border-border rounded-xl p-8 text-center">
-          <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
-          <h2 className="font-semibold text-lg mb-1">All recipes complete!</h2>
-          <p className="text-muted-foreground text-sm">Building Line {lineNumber} is done for today.</p>
+        <div className="bg-card border border-border rounded-2xl p-10 text-center">
+          <CheckCircle2 className="w-16 h-16 text-emerald-500 mx-auto mb-4" />
+          <h2 className="font-display text-2xl font-bold mb-2">All Done! 🎉</h2>
+          <p className="text-muted-foreground">Building Line {lineNumber} — all recipes complete for today.</p>
+          <button
+            onClick={() => setShowEod(true)}
+            className="mt-4 px-5 py-2.5 bg-secondary text-foreground rounded-xl hover:bg-secondary/80 transition-colors font-medium"
+          >
+            <Trophy className="w-4 h-4 inline mr-2" />
+            View Summary
+          </button>
         </div>
       )}
 
-      {/* Break tracker */}
-      <BreakTracker planId={plan.id} stationType={lineNumber === 1 ? "building_1" : "building_2"} />
+      {/* KPI bar */}
+      <KpiBar
+        sessionBatches={sessionBatches}
+        sessionStartedAt={sessionStartedAt}
+        activeBreakMinutes={activeBreakMinutes}
+        totalBreakMinutes={totalBreakMinutes}
+        targetBph={targetBph}
+        minBph={minBph}
+      />
 
-      {/* Queue */}
+      {/* Break tracker */}
+      <BreakTracker planId={plan.id} stationType={stationType} onBreakChange={handleBreakChange} />
+
+      {/* End of day button + queue */}
+      <div className="flex justify-end">
+        <button
+          onClick={() => setShowEod(true)}
+          className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-1.5 transition-colors"
+        >
+          <Trophy className="w-4 h-4" />
+          End of Day Summary
+        </button>
+      </div>
+
+      {/* Production Queue */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
-          <h3 className="font-semibold text-sm">Production Queue</h3>
+          <h3 className="font-semibold text-sm">Production Queue — Line {lineNumber}</h3>
         </div>
         <table className="w-full text-sm">
           <thead>
@@ -565,24 +900,40 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
               <th className="py-2 px-4 text-left font-medium text-muted-foreground">Recipe</th>
               <th className="py-2 px-4 text-center font-medium text-muted-foreground">Target</th>
               <th className="py-2 px-4 text-center font-medium text-muted-foreground">Done</th>
+              <th className="py-2 px-4 text-center font-medium text-muted-foreground">Remaining</th>
               <th className="py-2 px-4 text-center font-medium text-muted-foreground">Status</th>
             </tr>
           </thead>
           <tbody>
             {items.map(item => {
+              const rem = Math.max(0, (item.batchesTarget ?? 0) - (item.batchesComplete ?? 0));
+              const isCurrent = item.id === currentItem?.id;
               const statusColors = {
                 pending: "text-muted-foreground",
                 "in-progress": "text-blue-600 dark:text-blue-400 font-medium",
                 complete: "text-emerald-600 dark:text-emerald-400",
               };
               return (
-                <tr key={item.id} className="border-b border-border/50 last:border-0">
+                <tr
+                  key={item.id}
+                  className={cn(
+                    "border-b border-border/50 last:border-0",
+                    isCurrent ? "bg-primary/5" : ""
+                  )}
+                >
                   <td className="py-2.5 px-4 text-muted-foreground">{item.orderPosition}</td>
                   <td className={cn("py-2.5 px-4 font-medium", item.status === "complete" ? "line-through text-muted-foreground" : "")}>
                     {item.recipeName ?? `Recipe #${item.recipeId}`}
+                    {isCurrent && <span className="ml-2 text-xs text-primary font-normal">← now</span>}
                   </td>
                   <td className="py-2.5 px-4 text-center">{item.batchesTarget ?? 0}</td>
-                  <td className="py-2.5 px-4 text-center">{item.batchesComplete ?? 0}</td>
+                  <td className="py-2.5 px-4 text-center font-medium">{item.batchesComplete ?? 0}</td>
+                  <td className="py-2.5 px-4 text-center">
+                    {item.status === "complete"
+                      ? <CheckCircle2 className="w-4 h-4 text-emerald-500 mx-auto" />
+                      : <span className="font-bold text-primary">{rem}</span>
+                    }
+                  </td>
                   <td className="py-2.5 px-4 text-center">
                     <span className={cn("text-xs capitalize", statusColors[item.status as keyof typeof statusColors] ?? "text-muted-foreground")}>
                       {item.status === "in-progress" ? "In Progress" : item.status}
@@ -799,15 +1150,12 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
   const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
 
-  // Per recipe: show dough batch info (batches = how many mixing batches of dough are required)
-  // One dough batch per plan batch (they're 1:1 at TCK since each mix = one dough batch)
+  // addBatch: only via createBatchCompletion (server increments)
   const addBatch = (item: ProductionPlanItem) => {
-    const newComplete = (item.batchesComplete ?? 0) + 1;
-    const newStatus = newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
-    updateItem.mutate({ planId: plan.id, itemId: item.id, data: { batchesComplete: newComplete, status: newStatus } });
     createBatch.mutate({ planId: plan.id, data: { planItemId: item.id, stationType: "dough_prep", completedAt: new Date().toISOString() } });
   };
 
+  // removeBatch: PATCH item directly (no batch_completion for undos)
   const removeBatch = (item: ProductionPlanItem) => {
     const newComplete = Math.max(0, (item.batchesComplete ?? 0) - 1);
     const newStatus = newComplete === 0 ? "pending" : newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
@@ -1047,55 +1395,46 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
   const currentItem = items.find(it => it.status === "in-progress") ?? items.find(it => it.status === "pending");
 
+  // addBatch: only via createBatchCompletion (server increments)
   const addBatch = (item: ProductionPlanItem) => {
-    const newComplete = (item.batchesComplete ?? 0) + 1;
-    const newStatus = newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
-    updateItem.mutate({ planId: plan.id, itemId: item.id, data: { batchesComplete: newComplete, status: newStatus } });
     createBatch.mutate({ planId: plan.id, data: { planItemId: item.id, stationType: "ovens", completedAt: new Date().toISOString() } });
   };
 
+  // removeBatch: PATCH item directly
   const removeBatch = (item: ProductionPlanItem) => {
     const newComplete = Math.max(0, (item.batchesComplete ?? 0) - 1);
     const newStatus = newComplete === 0 ? "pending" : newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
     updateItem.mutate({ planId: plan.id, itemId: item.id, data: { batchesComplete: newComplete, status: newStatus } });
   };
 
-  const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
-  const totalBatchesComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
-  const overallPct = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
+  const totalComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
+  const totalTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
+  const overallPct = totalTarget > 0 ? Math.round((totalComplete / totalTarget) * 100) : 0;
 
   return (
     <div className="space-y-4">
-      {/* Current recipe spotlight */}
+      {/* Current recipe */}
       {currentItem ? (
-        <div className="bg-card border-2 border-red-400 dark:border-red-700 rounded-xl p-5">
-          <p className="text-xs font-semibold uppercase tracking-wider text-red-500 mb-1">
-            Now in Ovens
+        <div className="bg-card border-2 border-red-400 dark:border-red-600 rounded-xl p-5">
+          <p className="text-xs font-semibold uppercase tracking-wider text-red-600 dark:text-red-400 mb-1">
+            In Ovens Now
           </p>
           <h2 className="font-display text-2xl font-bold mb-3">
             {currentItem.recipeName ?? `Recipe #${currentItem.recipeId}`}
           </h2>
-          <div className="flex flex-wrap items-center gap-4 mb-4">
-            <div className="bg-secondary/50 rounded-lg px-4 py-2.5 text-center min-w-[80px]">
+          <div className="flex items-center gap-4 mb-4">
+            <div className="bg-secondary/50 rounded-lg px-4 py-2 text-center">
+              <p className="text-xs text-muted-foreground">Loads Done</p>
+              <p className="text-3xl font-bold">{currentItem.batchesComplete ?? 0}</p>
+            </div>
+            <div className="bg-secondary/50 rounded-lg px-4 py-2 text-center">
               <p className="text-xs text-muted-foreground">Target</p>
-              <p className="text-2xl font-bold">{currentItem.batchesTarget ?? 0}</p>
+              <p className="text-3xl font-bold">{currentItem.batchesTarget ?? 0}</p>
             </div>
-            <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-lg px-4 py-2.5 text-center min-w-[80px]">
-              <p className="text-xs text-muted-foreground">Done</p>
-              <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
-                {currentItem.batchesComplete ?? 0}
-              </p>
-            </div>
-            {currentItem.tinSize && (
-              <div className="bg-secondary/50 rounded-lg px-4 py-2.5 text-center min-w-[80px]">
-                <p className="text-xs text-muted-foreground">Tin Size</p>
-                <p className="text-2xl font-bold">{currentItem.tinSize}</p>
-              </div>
-            )}
             {currentItem.maxBatchesPerTin && (currentItem.batchesTarget ?? 0) > 0 && (
-              <div className="bg-red-50 dark:bg-red-900/20 rounded-lg px-4 py-2.5 text-center min-w-[80px]">
+              <div className="bg-red-50 dark:bg-red-900/20 rounded-lg px-4 py-2 text-center">
                 <p className="text-xs text-muted-foreground">Oven Loads</p>
-                <p className="text-2xl font-bold text-red-600 dark:text-red-400">
+                <p className="text-3xl font-bold text-red-600 dark:text-red-400">
                   {Math.ceil((currentItem.batchesTarget ?? 0) / currentItem.maxBatchesPerTin)}
                 </p>
               </div>
@@ -1222,13 +1561,12 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const totalTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
   const overallPct = totalTarget > 0 ? Math.round((totalComplete / totalTarget) * 100) : 0;
 
+  // addBatch: only via createBatchCompletion
   const addBatch = (item: ProductionPlanItem) => {
-    const newComplete = (item.batchesComplete ?? 0) + 1;
-    const newStatus = newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
-    updateItem.mutate({ planId: plan.id, itemId: item.id, data: { batchesComplete: newComplete, status: newStatus } });
     createBatch.mutate({ planId: plan.id, data: { planItemId: item.id, stationType: "wrapping", completedAt: new Date().toISOString() } });
   };
 
+  // removeBatch: PATCH item directly
   const removeBatch = (item: ProductionPlanItem) => {
     const newComplete = Math.max(0, (item.batchesComplete ?? 0) - 1);
     const newStatus = newComplete === 0 ? "pending" : newComplete >= (item.batchesTarget ?? 0) ? "complete" : "in-progress";
@@ -1340,7 +1678,6 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
 function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
 
-  // Calculate per-recipe pack totals using portionsPerBatch / packSize from plan item
   const totalCompleteItems = items.filter(it => it.status === "complete").length;
   const grandTotalBatches = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
   const allDone = items.length > 0 && items.every(it => it.status === "complete");
@@ -1440,7 +1777,7 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
         <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-xl p-4 text-center">
           <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
           <p className="font-semibold text-emerald-800 dark:text-emerald-200">
-            🎉 Production complete for {format(parseISO(plan.planDate), "EEEE d MMMM")}
+            Production complete for {format(parseISO(plan.planDate), "EEEE d MMMM")}
           </p>
           <p className="text-sm text-emerald-600 dark:text-emerald-400 mt-1">
             All {items.length} recipes packed — great work!
@@ -1452,14 +1789,18 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Main Station Page
+// Main Station Page — 5-second polling via refetchInterval
 // ──────────────────────────────────────────────────────────────────────────────
 export default function StationPage() {
   const params = useParams<{ planId: string; stationType: string }>();
   const planId = Number(params.planId);
   const stationType = params.stationType as StationType;
 
-  const { data: plan, isLoading } = useGetProductionPlan(planId) as {
+  const { data: plan, isLoading } = useGetProductionPlan(planId, {
+    query: {
+      refetchInterval: 5000,
+    },
+  }) as {
     data: ProductionPlanDetail | undefined;
     isLoading: boolean;
   };
