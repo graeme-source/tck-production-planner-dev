@@ -18,5 +18,6 @@ export interface Ingredient {
   secondarySupplierId?: number | null;
   orderingUrl?: string | null;
   notes?: string | null;
+  processingRatio?: number | null;
   createdAt: string;
 }

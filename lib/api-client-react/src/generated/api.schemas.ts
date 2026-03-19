@@ -43,6 +43,7 @@ export interface Ingredient {
   secondarySupplierId?: number | null;
   orderingUrl?: string | null;
   notes?: string | null;
+  processingRatio?: number | null;
   createdAt: string;
 }
 
@@ -57,6 +58,7 @@ export interface CreateIngredient {
   secondarySupplierId?: number | null;
   orderingUrl?: string | null;
   notes?: string | null;
+  processingRatio?: number | null;
 }
 
 export interface SubRecipe {
@@ -75,6 +77,7 @@ export interface SubRecipeIngredient {
   ingredientName: string;
   unit: string;
   quantity: number;
+  processingRatio?: number | null;
 }
 
 export type SubRecipeDetail = SubRecipe & {

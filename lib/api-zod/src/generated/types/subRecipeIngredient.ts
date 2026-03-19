@@ -12,4 +12,5 @@ export interface SubRecipeIngredient {
   ingredientName: string;
   unit: string;
   quantity: number;
+  processingRatio?: number | null;
 }

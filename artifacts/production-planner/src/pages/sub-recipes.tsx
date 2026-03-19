@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { useListSubRecipes, useListIngredients, useGetSubRecipe } from "@workspace/api-client-react";
+import type { Ingredient, SubRecipeDetail } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
-import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2, RotateCcw, FlaskConical } from "lucide-react";
+import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2, RotateCcw, FlaskConical, Info } from "lucide-react";
 import { useForm, useFieldArray } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -23,12 +24,28 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
-type IngredientOption = {
-  id: number;
-  name: string;
-  unit: string;
-  processingRatio?: number | null;
-};
+type IngredientOption = Pick<Ingredient, "id" | "name" | "unit" | "processingRatio">;
+
+function toKg(value: number, unit: string): number | null {
+  if (unit === "kg") return value;
+  if (unit === "g") return value / 1000;
+  return null;
+}
+
+function computeProcessedKg(
+  rows: { ingredientId: number; quantity: number }[],
+  allIngredients: IngredientOption[],
+): number {
+  let total = 0;
+  for (const row of rows) {
+    const ing = allIngredients.find(i => i.id === Number(row.ingredientId));
+    if (!ing || !row.quantity) continue;
+    const ratio = ing.processingRatio ?? 1.0;
+    if (ing.unit === "kg") total += Number(row.quantity) * ratio;
+    else if (ing.unit === "g") total += (Number(row.quantity) / 1000) * ratio;
+  }
+  return total;
+}
 
 function YieldSanityCheck({
   ingredientRows,
@@ -53,7 +70,6 @@ function YieldSanityCheck({
     if (ing.unit === "kg") qKg = row.quantity;
     else if (ing.unit === "g") qKg = row.quantity / 1000;
     else { allWeight = false; continue; }
-
     const ratio = ing.processingRatio ?? 1.0;
     if (ratio < 1.0) anyRatio = true;
     rawKg += qKg;
@@ -61,7 +77,7 @@ function YieldSanityCheck({
   }
 
   if (rawKg === 0) return null;
-  const yieldKg = yieldUnit === "kg" ? yieldValue : yieldUnit === "g" ? yieldValue / 1000 : null;
+  const yieldKg = toKg(yieldValue, yieldUnit);
   if (yieldKg === null) return null;
 
   const compareKg = anyRatio ? processedKg : rawKg;
@@ -95,19 +111,53 @@ function YieldSanityCheck({
   );
 }
 
-function computeProcessedKg(
-  rows: { ingredientId: number; quantity: number }[],
-  allIngredients: IngredientOption[],
-): number {
-  let total = 0;
-  for (const row of rows) {
-    const ing = allIngredients.find(i => i.id === Number(row.ingredientId));
-    if (!ing || !row.quantity) continue;
-    const ratio = ing.processingRatio ?? 1.0;
-    if (ing.unit === "kg") total += Number(row.quantity) * ratio;
-    else if (ing.unit === "g") total += (Number(row.quantity) / 1000) * ratio;
-  }
-  return total;
+function YieldComparison({
+  detail,
+  allIngredients,
+}: {
+  detail: SubRecipeDetail;
+  allIngredients: IngredientOption[];
+}) {
+  const storedYieldKg = toKg(Number(detail.yield), detail.yieldUnit);
+  if (storedYieldKg === null) return null;
+
+  const rows = detail.ingredients.map(i => ({ ingredientId: i.ingredientId, quantity: i.quantity }));
+  const expectedKg = computeProcessedKg(rows, allIngredients);
+  if (expectedKg <= 0) return null;
+
+  const diffPct = Math.abs(storedYieldKg - expectedKg) / expectedKg * 100;
+  const hasMismatch = diffPct > 2;
+
+  return (
+    <div className={`rounded-lg px-3.5 py-2.5 text-sm border mb-4 ${hasMismatch ? "bg-amber-50 border-amber-200" : "bg-secondary/20 border-border"}`}>
+      <div className="flex flex-wrap items-center gap-4">
+        <div className="flex items-center gap-1.5">
+          {hasMismatch
+            ? <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+            : <Info className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+          }
+          <span className="text-xs text-muted-foreground font-medium">Yield analysis</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-6 ml-1">
+          <div>
+            <span className="text-xs text-muted-foreground block">Stored yield</span>
+            <span className="font-semibold tabular-nums">{detail.yield} {detail.yieldUnit}</span>
+          </div>
+          <div>
+            <span className="text-xs text-muted-foreground block flex items-center gap-1">
+              <FlaskConical className="w-3 h-3 inline" /> Processing-adjusted expected
+            </span>
+            <span className="font-semibold tabular-nums">{expectedKg.toFixed(3)} kg</span>
+          </div>
+          {hasMismatch && (
+            <div className="text-amber-700 text-xs max-w-[200px]">
+              {diffPct.toFixed(1)}% difference — consider updating the stored yield to match the calculated expected.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function SubRecipeForm({
@@ -129,7 +179,7 @@ function SubRecipeForm({
   });
   const { fields, append, remove } = useFieldArray({ control, name: "ingredients" });
 
-  const [localIngredients, setLocalIngredients] = useState(initialIngredients);
+  const [localIngredients, setLocalIngredients] = useState<IngredientOption[]>(initialIngredients);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickAddTargetIndex, setQuickAddTargetIndex] = useState<number | null>(null);
   const [isYieldAuto, setIsYieldAuto] = useState(!isEdit);
@@ -167,7 +217,8 @@ function SubRecipeForm({
   };
 
   const handleIngredientCreated = (ingredient: { id: number; name: string; unit: string }) => {
-    setLocalIngredients(prev => [...prev, { ...ingredient, processingRatio: null }]);
+    const newOpt: IngredientOption = { id: ingredient.id, name: ingredient.name, unit: ingredient.unit, processingRatio: null };
+    setLocalIngredients(prev => [...prev, newOpt]);
     if (quickAddTargetIndex !== null) {
       setValue(`ingredients.${quickAddTargetIndex}.ingredientId`, ingredient.id);
     }
@@ -399,7 +450,7 @@ function EditSubRecipeDialog({
         yield: Number(detail.yield),
         yieldUnit: detail.yieldUnit,
         notes: detail.notes ?? "",
-        ingredients: (detail.ingredients ?? []).map((i: { ingredientId: number; quantity: number }) => ({
+        ingredients: (detail.ingredients ?? []).map(i => ({
           ingredientId: i.ingredientId,
           quantity: Number(i.quantity),
         })),
@@ -415,14 +466,19 @@ function EditSubRecipeDialog({
         {isLoading ? (
           <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
         ) : (
-          <SubRecipeForm
-            key={id}
-            defaultValues={defaultValues}
-            isEdit
-            isPending={updateSubRecipe.isPending}
-            ingredients={ingredients}
-            onSubmit={(data) => updateSubRecipe.mutate({ id, data }, { onSuccess: () => onOpenChange(false) })}
-          />
+          <>
+            {detail && (
+              <YieldComparison detail={detail as SubRecipeDetail} allIngredients={ingredients} />
+            )}
+            <SubRecipeForm
+              key={id}
+              defaultValues={defaultValues}
+              isEdit
+              isPending={updateSubRecipe.isPending}
+              ingredients={ingredients}
+              onSubmit={(data) => updateSubRecipe.mutate({ id, data }, { onSuccess: () => onOpenChange(false) })}
+            />
+          </>
         )}
       </DialogContent>
     </Dialog>
@@ -439,7 +495,7 @@ export default function SubRecipes() {
 
   const filtered = subRecipes?.filter(r => r.name.toLowerCase().includes(search.toLowerCase()));
 
-  const ingredientList: IngredientOption[] = (ingredients ?? []).map((i: any) => ({
+  const ingredientList: IngredientOption[] = (ingredients ?? []).map(i => ({
     id: i.id,
     name: i.name,
     unit: i.unit,

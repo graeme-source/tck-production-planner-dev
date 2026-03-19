@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useListIngredients, useListSuppliers } from "@workspace/api-client-react";
+import type { Ingredient } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { Search, Plus, Trash2, Edit2, Loader2, ExternalLink } from "lucide-react";
@@ -38,11 +39,6 @@ const emptyDefaults: FormValues = {
   orderingUrl: "", notes: "", processingRatioPct: null,
 };
 
-function formatRatioPct(ratio: number | null | undefined): string {
-  if (ratio === null || ratio === undefined) return "—";
-  return (ratio * 100).toFixed(2) + "%";
-}
-
 export default function Ingredients() {
   const { data: ingredients, isLoading } = useListIngredients();
   const { data: suppliers } = useListSuppliers();
@@ -74,23 +70,21 @@ export default function Ingredients() {
     setIsDialogOpen(true);
   };
 
-  const openEdit = (item: typeof ingredients extends (infer T)[] | undefined ? T : never) => {
-    if (!item) return;
-    const it = item as any;
-    setEditingId(it.id);
+  const openEdit = (item: Ingredient) => {
+    setEditingId(item.id);
     reset({
-      name: it.name,
-      unit: it.unit,
-      packWeight: Number(it.packWeight),
-      costPerPack: Number(it.costPerPack),
-      brand: it.brand ?? "",
-      supplierPartNumber: it.supplierPartNumber ?? "",
-      supplierId: it.supplierId ?? 0,
-      secondarySupplierId: it.secondarySupplierId ?? 0,
-      orderingUrl: it.orderingUrl ?? "",
-      notes: it.notes ?? "",
-      processingRatioPct: it.processingRatio !== null && it.processingRatio !== undefined
-        ? parseFloat((Number(it.processingRatio) * 100).toFixed(4))
+      name: item.name,
+      unit: item.unit,
+      packWeight: Number(item.packWeight),
+      costPerPack: Number(item.costPerPack),
+      brand: item.brand ?? "",
+      supplierPartNumber: item.supplierPartNumber ?? "",
+      supplierId: item.supplierId ?? 0,
+      secondarySupplierId: item.secondarySupplierId ?? 0,
+      orderingUrl: item.orderingUrl ?? "",
+      notes: item.notes ?? "",
+      processingRatioPct: item.processingRatio != null
+        ? parseFloat((item.processingRatio * 100).toFixed(4))
         : null,
     });
     setIsDialogOpen(true);
@@ -107,9 +101,7 @@ export default function Ingredients() {
     secondarySupplierId: data.secondarySupplierId && data.secondarySupplierId > 0 ? data.secondarySupplierId : null,
     orderingUrl: data.orderingUrl || null,
     notes: data.notes || null,
-    processingRatio: data.processingRatioPct !== null && data.processingRatioPct !== undefined
-      ? data.processingRatioPct / 100
-      : null,
+    processingRatio: data.processingRatioPct != null ? data.processingRatioPct / 100 : null,
   });
 
   const onSubmit = (data: FormValues) => {
@@ -372,7 +364,6 @@ export default function Ingredients() {
                   const packWeight = Number(item.packWeight);
                   const costPerPack = Number(item.costPerPack);
                   const costPerUnit = packWeight > 0 ? costPerPack / packWeight : 0;
-                  const procRatio = (item as any).processingRatio;
                   return (
                     <tr key={item.id} className="hover:bg-secondary/10 transition-colors">
                       <td className="px-5 py-3 font-medium whitespace-nowrap">{item.name}</td>
@@ -383,9 +374,9 @@ export default function Ingredients() {
                       <td className="px-5 py-3 font-medium">£{costPerPack.toFixed(2)}</td>
                       <td className="px-5 py-3 text-muted-foreground">£{costPerUnit.toFixed(4)}/{item.unit}</td>
                       <td className="px-5 py-3">
-                        {procRatio !== null && procRatio !== undefined ? (
-                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${Number(procRatio) < 1 ? "bg-amber-50 text-amber-700" : "bg-secondary/60 text-muted-foreground"}`}>
-                            {(Number(procRatio) * 100).toFixed(2)}%
+                        {item.processingRatio != null ? (
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${item.processingRatio < 1 ? "bg-amber-50 text-amber-700" : "bg-secondary/60 text-muted-foreground"}`}>
+                            {(item.processingRatio * 100).toFixed(2)}%
                           </span>
                         ) : (
                           <span className="text-border">—</span>

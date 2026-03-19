@@ -966,6 +966,9 @@ components:
         notes:
           type: string
           nullable: true
+        processingRatio:
+          type: number
+          nullable: true
         createdAt:
           type: string
       required:
@@ -1004,6 +1007,9 @@ components:
           nullable: true
         notes:
           type: string
+          nullable: true
+        processingRatio:
+          type: number
           nullable: true
       required:
         - name
@@ -1050,6 +1056,9 @@ components:
           type: string
         quantity:
           type: number
+        processingRatio:
+          type: number
+          nullable: true
       required:
         - id
         - ingredientId

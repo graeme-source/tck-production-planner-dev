@@ -187,6 +187,7 @@ export const ListIngredientsResponseItem = zod.object({
   secondarySupplierId: zod.number().nullish(),
   orderingUrl: zod.string().nullish(),
   notes: zod.string().nullish(),
+  processingRatio: zod.number().nullish(),
   createdAt: zod.string(),
 });
 export const ListIngredientsResponse = zod.array(ListIngredientsResponseItem);
@@ -205,6 +206,7 @@ export const CreateIngredientBody = zod.object({
   secondarySupplierId: zod.number().nullish(),
   orderingUrl: zod.string().nullish(),
   notes: zod.string().nullish(),
+  processingRatio: zod.number().nullish(),
 });
 
 /**
@@ -226,6 +228,7 @@ export const GetIngredientResponse = zod.object({
   secondarySupplierId: zod.number().nullish(),
   orderingUrl: zod.string().nullish(),
   notes: zod.string().nullish(),
+  processingRatio: zod.number().nullish(),
   createdAt: zod.string(),
 });
 
@@ -247,6 +250,7 @@ export const UpdateIngredientBody = zod.object({
   secondarySupplierId: zod.number().nullish(),
   orderingUrl: zod.string().nullish(),
   notes: zod.string().nullish(),
+  processingRatio: zod.number().nullish(),
 });
 
 export const UpdateIngredientResponse = zod.object({
@@ -261,6 +265,7 @@ export const UpdateIngredientResponse = zod.object({
   secondarySupplierId: zod.number().nullish(),
   orderingUrl: zod.string().nullish(),
   notes: zod.string().nullish(),
+  processingRatio: zod.number().nullish(),
   createdAt: zod.string(),
 });
 
@@ -328,6 +333,7 @@ export const GetSubRecipeResponse = zod
           ingredientName: zod.string(),
           unit: zod.string(),
           quantity: zod.number(),
+          processingRatio: zod.number().nullish(),
         }),
       ),
     }),
