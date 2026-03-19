@@ -21,15 +21,30 @@ const schema = z.object({
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
+interface VariantCount {
+  title: string;
+  quantity: number;
+  orderCount: number;
+}
+
+interface ShopifyProduct {
+  productTitle: string;
+  variants: VariantCount[];
+  totalQuantity: number;
+  orderCount: number;
+}
+
 interface ShopifyOrderSummary {
   tag: string;
   orderCount: number;
-  products: Array<{
-    productTitle: string;
-    variants: string[];
-    totalQuantity: number;
-    orderCount: number;
-  }>;
+  products: ShopifyProduct[];
+}
+
+interface FilteredProduct {
+  productTitle: string;
+  variants: VariantCount[];
+  totalQuantity: number;
+  orderCount: number;
 }
 
 async function fetchShopifyOrderSummary(tag: string): Promise<ShopifyOrderSummary> {
@@ -105,24 +120,40 @@ export default function Dispatches() {
     enabled: !!queryTag,
   });
 
-  const sortedProducts = useMemo(() => {
+  const sortedProducts = useMemo((): FilteredProduct[] => {
     if (!shopifyData?.products) return [];
     const includeLower = variantFilter.trim().toLowerCase();
     const exclVariantLower = excludeVariant.trim().toLowerCase();
     const exclTitleLower = excludeTitle.trim().toLowerCase();
 
-    const filtered = shopifyData.products.filter(p => {
-      const variants = p.variants ?? [];
-      // Title exclusion
-      if (exclTitleLower && p.productTitle.toLowerCase().includes(exclTitleLower)) return false;
-      // Variant exclusion — remove if any variant matches the exclusion
-      if (exclVariantLower && variants.some(v => v.toLowerCase().includes(exclVariantLower))) return false;
-      // Variant inclusion — keep only if at least one variant matches (skip if filter is empty)
-      if (includeLower && !variants.some(v => v.toLowerCase().includes(includeLower))) return false;
-      return true;
-    });
+    const filtered: FilteredProduct[] = [];
 
-    return [...filtered].sort((a, b) => {
+    for (const p of shopifyData.products) {
+      // 1. Title exclusion — drop whole product
+      if (exclTitleLower && p.productTitle.toLowerCase().includes(exclTitleLower)) continue;
+
+      // 2. Normalise variants — guard against stale cache returning old string[] format
+      const validVariants = p.variants.filter(v => v && typeof v.title === "string");
+
+      // 3. Strip excluded variants, keep the rest
+      const remainingVariants = exclVariantLower
+        ? validVariants.filter(v => !v.title.toLowerCase().includes(exclVariantLower))
+        : validVariants;
+
+      // 4. Drop product entirely if no variants survive the exclusion
+      if (remainingVariants.length === 0 && validVariants.length > 0) continue;
+
+      // 5. Apply include filter — keep only products where a remaining variant matches
+      if (includeLower && !remainingVariants.some(v => v.title.toLowerCase().includes(includeLower))) continue;
+
+      // 6. Recompute totals from the surviving variants
+      const totalQuantity = remainingVariants.reduce((s, v) => s + v.quantity, 0);
+      const orderCount = remainingVariants.reduce((s, v) => s + v.orderCount, 0);
+
+      filtered.push({ productTitle: p.productTitle, variants: remainingVariants, totalQuantity, orderCount });
+    }
+
+    return filtered.sort((a, b) => {
       let cmp = 0;
       if (sortCol === "product") cmp = a.productTitle.localeCompare(b.productTitle);
       else if (sortCol === "orders") cmp = a.orderCount - b.orderCount;
@@ -474,7 +505,10 @@ export default function Dispatches() {
                         <tr key={i} className="border-b border-border last:border-0 hover:bg-secondary/20 transition-colors">
                           <td className="px-5 py-3.5 font-medium">{p.productTitle}</td>
                           <td className="px-5 py-3.5 text-muted-foreground text-sm">
-                            {(p.variants ?? []).length > 0 ? (p.variants ?? []).join(", ") : "—"}
+                            {p.variants.length === 0 ? "—" : p.variants.length === 1
+                              ? p.variants[0].title
+                              : p.variants.map(v => `${v.title} (${v.quantity})`).join(", ")
+                            }
                           </td>
                           <td className="px-5 py-3.5 text-right text-muted-foreground">{p.orderCount}</td>
                           <td className="px-5 py-3.5 text-right">
