@@ -76,6 +76,8 @@ export default function Dispatches() {
   const [sortCol, setSortCol] = useState<SortCol>("qty");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [variantFilter, setVariantFilter] = useState("2 Pack");
+  const [excludeVariant, setExcludeVariant] = useState("8 Pack Bag");
+  const [excludeTitle, setExcludeTitle] = useState("F2F");
 
   const { data: weeklyOrders, isLoading: weeklyLoading, refetch: refetchWeekly } = useQuery({
     queryKey: ["shopify-weekly-orders"],
@@ -105,12 +107,21 @@ export default function Dispatches() {
 
   const sortedProducts = useMemo(() => {
     if (!shopifyData?.products) return [];
-    const filterLower = variantFilter.trim().toLowerCase();
-    const filtered = filterLower
-      ? shopifyData.products.filter(p =>
-          (p.variants ?? []).some(v => v.toLowerCase().includes(filterLower))
-        )
-      : shopifyData.products;
+    const includeLower = variantFilter.trim().toLowerCase();
+    const exclVariantLower = excludeVariant.trim().toLowerCase();
+    const exclTitleLower = excludeTitle.trim().toLowerCase();
+
+    const filtered = shopifyData.products.filter(p => {
+      const variants = p.variants ?? [];
+      // Title exclusion
+      if (exclTitleLower && p.productTitle.toLowerCase().includes(exclTitleLower)) return false;
+      // Variant exclusion — remove if any variant matches the exclusion
+      if (exclVariantLower && variants.some(v => v.toLowerCase().includes(exclVariantLower))) return false;
+      // Variant inclusion — keep only if at least one variant matches (skip if filter is empty)
+      if (includeLower && !variants.some(v => v.toLowerCase().includes(includeLower))) return false;
+      return true;
+    });
+
     return [...filtered].sort((a, b) => {
       let cmp = 0;
       if (sortCol === "product") cmp = a.productTitle.localeCompare(b.productTitle);
@@ -118,7 +129,7 @@ export default function Dispatches() {
       else if (sortCol === "qty") cmp = a.totalQuantity - b.totalQuantity;
       return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [shopifyData, sortCol, sortDir, variantFilter]);
+  }, [shopifyData, sortCol, sortDir, variantFilter, excludeVariant, excludeTitle]);
 
   function toggleSort(col: SortCol) {
     if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
@@ -272,7 +283,7 @@ export default function Dispatches() {
           onClick={() => setTab("shopify")}
           className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${tab === "shopify" ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
         >
-          <ShoppingBag className="w-4 h-4" /> Shopify Orders
+          <ShoppingBag className="w-4 h-4" /> Product Sales Per Delivery Date
         </button>
       </div>
 
@@ -341,51 +352,57 @@ export default function Dispatches() {
             <p className="text-sm text-muted-foreground mb-4">
               Enter a date to count how many of each product appear in Shopify orders tagged with that date.
             </p>
-            <div className="flex gap-3 items-end flex-wrap">
-              <div className="flex-1 min-w-[200px] max-w-xs">
-                <label className="text-sm font-medium mb-1 block">Delivery date</label>
-                <input
-                  type="date"
-                  value={dateTag}
-                  onChange={(e) => setDateTag(e.target.value)}
-                  className="w-full px-3 py-2 bg-background border border-border rounded-lg focus-ring"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Searches orders tagged: <span className="font-mono font-medium text-foreground">{dateTag}</span>
-                </p>
-              </div>
-              <div className="flex-1 min-w-[180px] max-w-xs">
-                <label className="text-sm font-medium mb-1 block">Filter by variant</label>
-                <div className="relative">
+            <div className="space-y-3">
+              {/* Row 1: date + fetch */}
+              <div className="flex gap-3 items-end flex-wrap">
+                <div className="flex-1 min-w-[200px] max-w-xs">
+                  <label className="text-sm font-medium mb-1 block">Delivery date</label>
                   <input
-                    type="text"
-                    value={variantFilter}
-                    onChange={(e) => setVariantFilter(e.target.value)}
-                    placeholder="e.g. 2 Pack"
-                    className="w-full px-3 py-2 bg-background border border-border rounded-lg focus-ring pr-8"
+                    type="date"
+                    value={dateTag}
+                    onChange={(e) => setDateTag(e.target.value)}
+                    className="w-full px-3 py-2 bg-background border border-border rounded-lg focus-ring"
                   />
-                  {variantFilter && (
-                    <button
-                      onClick={() => setVariantFilter("")}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                      title="Clear filter"
-                    >
-                      ×
-                    </button>
-                  )}
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Searches orders tagged: <span className="font-mono font-medium text-foreground">{dateTag}</span>
+                  </p>
                 </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {variantFilter ? "Showing products with matching variant" : "Showing all variants"}
-                </p>
+                <button
+                  onClick={() => setQueryTag(dateTag)}
+                  disabled={shopifyLoading}
+                  className="px-5 py-2 bg-primary text-primary-foreground rounded-xl font-medium flex items-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-60"
+                >
+                  {shopifyLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShoppingBag className="w-4 h-4" />}
+                  Fetch Orders
+                </button>
               </div>
-              <button
-                onClick={() => setQueryTag(dateTag)}
-                disabled={shopifyLoading}
-                className="px-5 py-2 bg-primary text-primary-foreground rounded-xl font-medium flex items-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-60"
-              >
-                {shopifyLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShoppingBag className="w-4 h-4" />}
-                Fetch Orders
-              </button>
+
+              {/* Row 2: filters */}
+              <div className="flex gap-3 items-end flex-wrap pt-1 border-t border-border/50">
+                <FilterInput
+                  label="Include variant"
+                  value={variantFilter}
+                  onChange={setVariantFilter}
+                  placeholder="e.g. 2 Pack"
+                  hint={variantFilter ? `Showing only "${variantFilter}" variants` : "Showing all variants"}
+                />
+                <FilterInput
+                  label="Exclude variant"
+                  value={excludeVariant}
+                  onChange={setExcludeVariant}
+                  placeholder="e.g. 8 Pack Bag"
+                  hint={excludeVariant ? `Hiding "${excludeVariant}" variants` : "No variant exclusion"}
+                  isExclusion
+                />
+                <FilterInput
+                  label="Exclude product title"
+                  value={excludeTitle}
+                  onChange={setExcludeTitle}
+                  placeholder="e.g. F2F"
+                  hint={excludeTitle ? `Hiding titles containing "${excludeTitle}"` : "No title exclusion"}
+                  isExclusion
+                />
+              </div>
             </div>
           </div>
 
@@ -411,7 +428,9 @@ export default function Dispatches() {
                   <p className="text-sm text-muted-foreground mt-0.5">
                     {shopifyData.orderCount} order{shopifyData.orderCount !== 1 ? "s" : ""} &middot;{" "}
                     {sortedProducts.length} of {shopifyData.products.length} product{shopifyData.products.length !== 1 ? "s" : ""}
-                    {variantFilter ? ` matching "${variantFilter}"` : ""}
+                    {variantFilter ? ` · include "${variantFilter}"` : ""}
+                    {excludeVariant ? ` · exclude variant "${excludeVariant}"` : ""}
+                    {excludeTitle ? ` · exclude title "${excludeTitle}"` : ""}
                   </p>
                 </div>
                 <button
@@ -483,6 +502,45 @@ export default function Dispatches() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function FilterInput({
+  label, value, onChange, placeholder, hint, isExclusion = false,
+}: {
+  label: string; value: string; onChange: (v: string) => void;
+  placeholder?: string; hint?: string; isExclusion?: boolean;
+}) {
+  return (
+    <div className="flex-1 min-w-[180px] max-w-xs">
+      <label className="text-sm font-medium mb-1 flex items-center gap-1.5 block">
+        {isExclusion && (
+          <span className="text-xs px-1.5 py-0.5 rounded bg-destructive/10 text-destructive font-medium">exclude</span>
+        )}
+        {label}
+      </label>
+      <div className="relative">
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className={`w-full px-3 py-2 bg-background border rounded-lg focus-ring pr-8 ${
+            isExclusion ? "border-destructive/40 focus:border-destructive/60" : "border-border"
+          }`}
+        />
+        {value && (
+          <button
+            onClick={() => onChange("")}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+            title="Clear"
+          >
+            ×
+          </button>
+        )}
+      </div>
+      {hint && <p className="text-xs text-muted-foreground mt-1">{hint}</p>}
     </div>
   );
 }
