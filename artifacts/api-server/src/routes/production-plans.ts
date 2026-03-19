@@ -104,7 +104,13 @@ router.get("/", async (req, res) => {
 
 router.post("/", validate(CreatePlanBody), async (req, res) => {
   const { planDate, name, notes, status, items } = req.body;
-  const dateObj = new Date(planDate);
+  // Enforce Mon–Fri only — parse at noon UTC to avoid timezone edge cases
+  const dateObj = new Date(`${planDate}T12:00:00Z`);
+  const dayOfWeek = dateObj.getUTCDay(); // 0=Sun, 6=Sat
+  if (dayOfWeek === 0 || dayOfWeek === 6) {
+    res.status(400).json({ error: "Production plans can only be scheduled on weekdays (Monday–Friday)." });
+    return;
+  }
   const batchNumber = julianBatchNumber(dateObj);
 
   const [plan] = await db.insert(productionPlansTable).values({
@@ -163,9 +169,23 @@ router.get("/:id", async (req, res) => {
   res.json({ ...mapPlan(plan), items: items.map(mapItem) });
 });
 
+// Statuses that lock structural plan edits (date, name, items)
+const LOCKED_STATUSES: PlanStatus[] = ["active", "prep", "building", "complete"];
+
 router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
   const id = Number(req.params.id);
   const { planDate, name, notes, status, items } = req.body;
+
+  const [existing] = await db.select().from(productionPlansTable).where(eq(productionPlansTable.id, id));
+  if (!existing) { res.status(404).json({ error: "Not found" }); return; }
+
+  const isLocked = LOCKED_STATUSES.includes(existing.status as PlanStatus);
+  if (isLocked && (planDate !== undefined || name !== undefined || items !== undefined)) {
+    res.status(409).json({
+      error: `Plan is locked (status: '${existing.status}'). Only status transitions are permitted once a plan is activated.`,
+    });
+    return;
+  }
 
   const setPlan: Partial<typeof productionPlansTable.$inferInsert> = {};
   if (planDate !== undefined) setPlan.planDate = planDate;

@@ -55,6 +55,15 @@ function getNextWorkingDay(from: Date): Date {
   return d;
 }
 
+function toNextWeekdayIfWeekend(dateStr: string): string {
+  const d = parseISO(dateStr);
+  if (!isWeekend(d)) return dateStr;
+  // Advance to Monday
+  let next = d;
+  while (isWeekend(next)) next = addDays(next, 1);
+  return toLocalDateStr(next);
+}
+
 function toLocalDateStr(d: Date): string {
   return format(d, "yyyy-MM-dd");
 }
@@ -231,6 +240,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [addRecipeId, setAddRecipeId] = useState<string>("");
   const [showStockDemand, setShowStockDemand] = useState(true);
+  const [dateWarning, setDateWarning] = useState<string | null>(null);
 
   const { data: suggestions, isLoading: loadingDpt, refetch: refetchDpt } = useGetDptCalculator(
     { date: planDate },
@@ -240,6 +250,17 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   const { createPlan } = useAppMutations();
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  const handleDateChange = (raw: string) => {
+    if (!raw) return;
+    const fixed = toNextWeekdayIfWeekend(raw);
+    if (fixed !== raw) {
+      setDateWarning("Weekends are not production days — date moved to the next Monday.");
+    } else {
+      setDateWarning(null);
+    }
+    setPlanDate(fixed);
+  };
 
   useEffect(() => {
     if (planDate) {
@@ -328,7 +349,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
     setAddRecipeId("");
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (targetStatus: "draft" | "active") => {
     const includedItems = items.filter(it => it.included);
     if (includedItems.length === 0) return;
 
@@ -338,6 +359,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
         planDate,
         name: planName || `Plan ${planDate}`,
         notes: notes || undefined,
+        status: targetStatus,
         items: includedItems.map((it, i) => ({
           recipeId: it.recipeId,
           orderPosition: i + 1,
@@ -384,9 +406,15 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
               <input
                 type="date"
                 value={planDate}
-                onChange={e => setPlanDate(e.target.value)}
+                onChange={e => handleDateChange(e.target.value)}
                 className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
               />
+              {dateWarning && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+                  <Info className="w-3 h-3 flex-shrink-0" />
+                  {dateWarning}
+                </p>
+              )}
             </div>
             <div>
               <label className="text-sm font-medium mb-1 block text-muted-foreground">Plan Name</label>
@@ -545,7 +573,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
           <div className="text-sm text-muted-foreground">
             Julian batch: <span className="font-mono font-semibold text-foreground">{julianBatchNumber(planDate)}</span>
           </div>
-          <div className="flex gap-3">
+          <div className="flex gap-2">
             <button
               onClick={onClose}
               className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-xl transition-colors"
@@ -553,12 +581,20 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
               Cancel
             </button>
             <button
-              onClick={handleSubmit}
+              onClick={() => handleSubmit("draft")}
               disabled={includedCount === 0 || isSubmitting}
-              className="px-5 py-2 text-sm bg-primary text-primary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center gap-2 transition-opacity"
+              className="px-4 py-2 text-sm border border-border bg-secondary text-secondary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center gap-2 transition-colors hover:bg-secondary/80"
             >
-              {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-              Create Plan ({includedCount} recipe{includedCount !== 1 ? "s" : ""})
+              {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardList className="w-4 h-4" />}
+              Save as Draft
+            </button>
+            <button
+              onClick={() => handleSubmit("active")}
+              disabled={includedCount === 0 || isSubmitting}
+              className="px-5 py-2 text-sm bg-primary text-primary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center gap-2 transition-opacity shadow-md shadow-primary/20 hover:opacity-90"
+            >
+              {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+              Activate Plan ({includedCount})
             </button>
           </div>
         </div>

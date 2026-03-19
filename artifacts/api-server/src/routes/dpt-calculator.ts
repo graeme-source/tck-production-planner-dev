@@ -72,14 +72,12 @@ router.get("/", async (req, res) => {
     )
     .orderBy(dispatchOrdersTable.dispatchDate);
 
-  // For each recipe, find the next 3 unique dispatch dates and sum demand
+  // For each recipe, sum the next 3 dispatch entries (ordered by dispatch date asc)
   const demandMap: Record<number, number> = {};
   for (const rId of recipeIds) {
     const rows = futureDispatchRows.filter(r => r.recipeId === rId);
-    const uniqueDates = [...new Set(rows.map(r => r.dispatchDate))].slice(0, 3);
-    const demand = rows
-      .filter(r => uniqueDates.includes(r.dispatchDate))
-      .reduce((sum, r) => sum + Number(r.quantity), 0);
+    const next3 = rows.slice(0, 3);
+    const demand = next3.reduce((sum, r) => sum + Number(r.quantity), 0);
     demandMap[rId] = demand;
   }
 
