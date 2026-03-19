@@ -29,6 +29,7 @@ async function computeCosts(recipeIds: number[]) {
       quantity: recipeIngredientsTable.quantity,
       packWeight: ingredientsTable.packWeight,
       costPerPack: ingredientsTable.costPerPack,
+      processingRatio: ingredientsTable.processingRatio,
     })
     .from(recipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -58,8 +59,9 @@ async function computeCosts(recipeIds: number[]) {
     const q = Number(ri.quantity);
     const pw = Number(ri.packWeight);
     const cpp = Number(ri.costPerPack);
+    const pr = Number(ri.processingRatio) || 1;
     const costPerUnit = pw > 0 ? cpp / pw : 0;
-    rawCostByRecipeId[ri.recipeId] = (rawCostByRecipeId[ri.recipeId] ?? 0) + q * costPerUnit;
+    rawCostByRecipeId[ri.recipeId] = (rawCostByRecipeId[ri.recipeId] ?? 0) + (q / pr) * costPerUnit;
   }
 
   for (const rs of recipeSubRecipes) {
@@ -154,6 +156,7 @@ router.get("/:id", async (req, res) => {
       quantity: recipeIngredientsTable.quantity,
       packWeight: ingredientsTable.packWeight,
       costPerPack: ingredientsTable.costPerPack,
+      processingRatio: ingredientsTable.processingRatio,
     })
     .from(recipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -182,18 +185,22 @@ router.get("/:id", async (req, res) => {
   }
 
   const enrichedIngredients = ingredientRows.map(i => {
-    const qty = Number(i.quantity);
+    const cookedQty = Number(i.quantity);
     const pw = Number(i.packWeight);
     const cpp = Number(i.costPerPack);
+    const pr = Number(i.processingRatio) || 1;
+    const rawQty = cookedQty / pr;
     const costPerUnit = pw > 0 ? cpp / pw : 0;
-    const lineCostBatch = qty * costPerUnit;
+    const lineCostBatch = rawQty * costPerUnit;
     const lineCostPortion = servings > 0 ? lineCostBatch / servings : 0;
     return {
       id: i.id,
       ingredientId: i.ingredientId,
       ingredientName: i.ingredientName,
       unit: i.unit,
-      quantity: qty,
+      quantity: cookedQty,
+      rawQuantity: rawQty,
+      processingRatio: pr,
       packWeight: pw,
       costPerPack: cpp,
       costPerUnit,

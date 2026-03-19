@@ -39,6 +39,7 @@ export async function computeSubRecipeCosts(
         COALESCE(
           SUM(
             sri.quantity::numeric
+            / NULLIF(i.processing_ratio::numeric, 0)
             * i.cost_per_pack::numeric
             / NULLIF(i.pack_weight::numeric, 0)
           ),

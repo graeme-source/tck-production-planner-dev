@@ -219,10 +219,10 @@ function RecipeForm({
         <div className="border-t border-border pt-4 grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
             <div className="flex items-center justify-between mb-3">
-              <label className="text-sm font-bold text-primary">Raw Ingredients</label>
+              <label className="text-sm font-bold text-primary">Ingredients <span className="text-xs font-normal text-muted-foreground">(cooked/processed qty)</span></label>
               <button type="button" onClick={() => appendIng({ ingredientId: 0, quantity: 1 })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add Row</button>
             </div>
-            {ingFields.length === 0 && <p className="text-xs text-muted-foreground italic">No raw ingredients added</p>}
+            {ingFields.length === 0 && <p className="text-xs text-muted-foreground italic">No ingredients added</p>}
             <div className="space-y-2">
               {ingFields.map((field, index) => (
                 <div key={field.id} className="flex gap-1.5 items-center">
@@ -352,6 +352,8 @@ type BreakdownRawIngredient = {
   ingredientName: string | null;
   unit: string | null;
   quantity: number;
+  rawQuantity: number;
+  processingRatio: number;
   costPerUnit: number;
   lineCostPortion: number;
 };
@@ -412,6 +414,8 @@ function RecipeCostBreakdownDialog({ id, open, onOpenChange }: { id: number; ope
     ingredientName: i.ingredientName,
     unit: i.unit,
     quantity: i.quantity,
+    rawQuantity: i.rawQuantity ?? i.quantity,
+    processingRatio: i.processingRatio ?? 1,
     costPerUnit: i.costPerUnit,
     lineCostPortion: i.lineCostPortion,
   }));
@@ -453,17 +457,22 @@ function RecipeCostBreakdownDialog({ id, open, onOpenChange }: { id: number; ope
               <thead>
                 <tr className="bg-secondary/40 text-xs text-muted-foreground">
                   <th className="px-4 py-2 text-left font-medium">Ingredient / Prep item</th>
-                  <th className="px-2 py-2 text-right font-medium">Qty used</th>
+                  <th className="px-2 py-2 text-right font-medium">Cooked qty</th>
                   <th className="px-2 py-2 text-right font-medium">Cost / unit</th>
                   <th className="px-2 py-2 text-right font-medium">Per {servingUnit}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/30">
-                {/* Raw ingredients */}
+                {/* Ingredients */}
                 {rawIngredients.map((r, i) => (
                   <tr key={i} className="hover:bg-secondary/10">
                     <td className="pl-4 pr-2 py-2.5 font-medium text-sm">{r.ingredientName ?? "—"}</td>
-                    <td className="px-2 py-2.5 text-xs text-muted-foreground text-right">{fmt(r.quantity)} {r.unit}</td>
+                    <td className="px-2 py-2.5 text-right">
+                      <span className="text-xs text-muted-foreground">{fmt(r.quantity)} {r.unit}</span>
+                      {r.processingRatio < 1 && (
+                        <span className="block text-xs text-muted-foreground/60">{r.rawQuantity.toFixed(4)} raw</span>
+                      )}
+                    </td>
                     <td className="px-2 py-2.5 text-xs text-muted-foreground text-right">£{fmt(r.costPerUnit)}/{r.unit}</td>
                     <td className="px-2 py-2.5 text-right font-semibold">
                       £{fmt(r.lineCostPortion)}

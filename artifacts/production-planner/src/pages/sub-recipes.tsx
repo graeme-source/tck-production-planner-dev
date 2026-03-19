@@ -48,9 +48,8 @@ function computeProcessedKg(
   for (const row of rows) {
     const ing = allIngredients.find(i => i.id === Number(row.ingredientId));
     if (!ing || !row.quantity) continue;
-    const ratio = ing.processingRatio ?? 1.0;
-    if (ing.unit === "kg") total += Number(row.quantity) * ratio;
-    else if (ing.unit === "g") total += (Number(row.quantity) / 1000) * ratio;
+    if (ing.unit === "kg") total += Number(row.quantity);
+    else if (ing.unit === "g") total += Number(row.quantity) / 1000;
   }
   return total;
 }
@@ -84,34 +83,25 @@ function YieldSanityCheck({
   yieldValue: number;
   yieldUnit: string;
 }) {
-  let rawKg = 0;
-  let processedKg = 0;
+  let cookedKg = 0;
   let allWeight = true;
-  let anyRatio = false;
 
   for (const row of ingredientRows) {
     const ing = allIngredients.find(i => i.id === row.ingredientId);
     if (!ing) continue;
-    let qKg: number | null = null;
-    if (ing.unit === "kg") qKg = row.quantity;
-    else if (ing.unit === "g") qKg = row.quantity / 1000;
+    if (ing.unit === "kg") cookedKg += row.quantity;
+    else if (ing.unit === "g") cookedKg += row.quantity / 1000;
     else { allWeight = false; continue; }
-    const ratio = ing.processingRatio ?? 1.0;
-    if (ratio < 1.0) anyRatio = true;
-    rawKg += qKg;
-    processedKg += qKg * ratio;
   }
 
   const componentKg = computeComponentKg(componentRows, allSubRecipes);
-  rawKg += componentKg;
-  processedKg += componentKg;
+  cookedKg += componentKg;
 
-  if (rawKg === 0) return null;
+  if (cookedKg === 0) return null;
   const yieldKg = toKg(yieldValue, yieldUnit);
   if (yieldKg === null) return null;
 
-  const compareKg = anyRatio ? processedKg : rawKg;
-  const ratio = yieldKg / compareKg;
+  const ratio = yieldKg / cookedKg;
   const pct = (ratio * 100).toFixed(0);
   const ok = ratio >= 0.5 && ratio <= 1.05;
   const warning = !ok;
@@ -124,16 +114,13 @@ function YieldSanityCheck({
       }
       <div>
         <span className="font-medium">
-          {anyRatio
-            ? `Raw input ${rawKg.toFixed(3)} kg → Processing-adjusted ${processedKg.toFixed(3)} kg → Yield ${yieldKg.toFixed(3)} kg (${pct}% of processed)`
-            : `${allWeight ? "" : "Weight-only ingredients: "}Input ${rawKg.toFixed(3)} kg → Yield ${yieldKg.toFixed(3)} kg (${pct}% retention)`
-          }
+          {`${allWeight ? "" : "Weight-only ingredients: "}Cooked input ${cookedKg.toFixed(3)} kg → Yield ${yieldKg.toFixed(3)} kg (${pct}% retention)`}
         </span>
         {warning && (
           <p className="text-xs mt-0.5">
             {ratio < 0.5
-              ? "Yield looks low vs inputs — did you mean a larger yield? (e.g. a batch of " + compareKg.toFixed(1) + " kg)"
-              : "Yield exceeds expected processed weight — please check ingredient quantities or yield value."}
+              ? "Yield looks low vs inputs — did you mean a larger yield? (e.g. a batch of " + cookedKg.toFixed(1) + " kg)"
+              : "Yield exceeds cooked input weight — please check ingredient quantities or yield value."}
           </p>
         )}
       </div>
@@ -151,9 +138,8 @@ function YieldComparison({
   let expectedKg = 0;
   let canCompare = storedYieldKg !== null;
   for (const i of detail.ingredients) {
-    const ratio = i.processingRatio ?? 1.0;
-    if (i.unit === "kg") expectedKg += i.quantity * ratio;
-    else if (i.unit === "g") expectedKg += (i.quantity / 1000) * ratio;
+    if (i.unit === "kg") expectedKg += i.quantity;
+    else if (i.unit === "g") expectedKg += i.quantity / 1000;
   }
   for (const c of (detail.subRecipeComponents ?? [])) {
     if (c.componentYieldUnit === "kg") expectedKg += c.quantity;
@@ -228,7 +214,7 @@ function YieldComparison({
               </div>
               <div>
                 <span className="text-xs text-muted-foreground block flex items-center gap-1">
-                  <FlaskConical className="w-3 h-3 inline" /> Processing-adjusted expected
+                  <FlaskConical className="w-3 h-3 inline" /> Expected from cooked inputs
                 </span>
                 <span className="font-semibold tabular-nums">{expectedKg.toFixed(3)} kg</span>
               </div>
