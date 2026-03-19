@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { cn } from "@/lib/utils";
 import { useListUsers, useListCategoryDefaults, useListDptSettings, useListTimingStandards, useListRecipes } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { usePagePermissions, useSavePagePermissions } from "@/hooks/use-page-permissions";
@@ -90,12 +91,12 @@ function UserForm({
 }: {
   mode: "create" | "edit";
   defaultValues: CreateValues | EditValues;
-  onSubmit: (data: any) => void;
+  onSubmit: (data: CreateValues | EditValues) => void;
   isPending: boolean;
   onCancel: () => void;
 }) {
   const schema = mode === "create" ? createSchema : editSchema;
-  const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<any>({
+  const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<CreateValues | EditValues>({
     resolver: zodResolver(schema),
     defaultValues,
   });
@@ -306,13 +307,14 @@ export default function Settings() {
                 isPending={updateUser.isPending}
                 onCancel={() => setEditingUser(null)}
                 onSubmit={(data) => {
-                  const payload: any = {
-                    name: data.name,
-                    email: data.email,
-                    role: data.role,
-                    isActive: data.isActive,
+                  const editData = data as EditValues;
+                  const payload: { name: string; email: string; role: string; isActive: boolean; password?: string } = {
+                    name: editData.name,
+                    email: editData.email,
+                    role: editData.role,
+                    isActive: editData.isActive,
                   };
-                  if (data.password) payload.password = data.password;
+                  if (editData.password) payload.password = editData.password;
                   updateUser.mutate({ id: editingUser.id, data: payload }, { onSuccess: () => setEditingUser(null) });
                 }}
               />

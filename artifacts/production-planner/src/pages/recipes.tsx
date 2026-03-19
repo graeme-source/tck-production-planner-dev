@@ -394,8 +394,8 @@ function EditRecipeDialog({
         tinSize: detail.tinSize ?? "",
         maxBatchesPerTin: detail.maxBatchesPerTin != null ? Number(detail.maxBatchesPerTin) : null,
         sopUrl: detail.sopUrl ?? "",
-        ingredients: (detail.ingredients ?? []).map((i: any) => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity) })),
-        subRecipes: (detail.subRecipes ?? []).map((s: any) => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity) })),
+        ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity) })),
+        subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity) })),
       }
     : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", ingredients: [], subRecipes: [] };
 
