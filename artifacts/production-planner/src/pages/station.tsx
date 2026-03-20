@@ -2872,6 +2872,17 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
     return 0;
   };
 
+  const markWrappingComplete = async (itemId: number, complete: boolean) => {
+    try {
+      await fetch(`/api/production-plans/${plan.id}/items/${itemId}/wrapping-complete`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ complete }),
+      });
+    } catch {}
+  };
+
   const addToStorage = async (item: ProductionPlanItem, qty: number, storageKey: string) => {
     if (qty < 1) return;
     const loc = STORAGE_LOCATIONS.find(l => l.key === storageKey);
@@ -2885,6 +2896,12 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
         body: JSON.stringify({ qty }),
       });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const net = netPacks(item);
+      const currentStored = STORAGE_LOCATIONS.reduce((s, l) => s + getStorageQty(item, l.key), 0);
+      const newRemaining = net - currentStored - qty;
+      if (newRemaining <= 0 && !item.wrappingComplete) {
+        await markWrappingComplete(item.id, true);
+      }
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
       setCustomAmounts(prev => ({ ...prev, [item.id]: "" }));
       setShowCustom(prev => ({ ...prev, [item.id]: false }));
