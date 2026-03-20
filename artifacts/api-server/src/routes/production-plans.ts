@@ -2050,7 +2050,9 @@ router.get("/:id/packing", async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Main Prep — per-ingredient view grouped across recipes with tin breakdowns
+// Main Prep — DIRECT recipe ingredients only (not sub-recipe components)
+// Sub-recipe ingredients (dough, sauce, seasoning components) are prepped separately.
+// Excludes raw_meat category and base/sauce items that belong to Bases & Mozzarella.
 // ──────────────────────────────────────────────────────────────────────────────
 router.get("/:id/main-prep", async (req, res) => {
   const planId = Number(req.params.id);
@@ -2074,7 +2076,7 @@ router.get("/:id/main-prep", async (req, res) => {
     return;
   }
 
-  const EXCLUDED_CATEGORIES = ["raw_meat"];
+  const EXCLUDED_CATEGORIES = ["raw_meat", "base", "sauce", "dough"];
 
   const ingredientMap = new Map<number, {
     ingredientId: number;
@@ -2099,26 +2101,42 @@ router.get("/:id/main-prep", async (req, res) => {
     const batchesTarget = Number(planItem.batchesTarget) || 0;
     if (!planItem.recipeId || batchesTarget === 0) continue;
 
-    const resolved = await resolveRecipeIngredients(planItem.recipeId);
-    const agg = aggregateIngredients(resolved);
+    const directIngredients = await db
+      .select({
+        ingredientId: recipeIngredientsTable.ingredientId,
+        quantity: recipeIngredientsTable.quantity,
+        ingredientName: ingredientsTable.name,
+        unit: ingredientsTable.unit,
+        category: ingredientsTable.category,
+        processingRatio: ingredientsTable.processingRatio,
+        stockCheckEnabled: ingredientsTable.stockCheckEnabled,
+      })
+      .from(recipeIngredientsTable)
+      .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
+      .where(eq(recipeIngredientsTable.recipeId, planItem.recipeId));
 
     const tinCount = planItem.maxBatchesPerTin && batchesTarget > 0
       ? Math.ceil(batchesTarget / planItem.maxBatchesPerTin)
       : 1;
 
-    for (const [, ing] of agg) {
-      if (EXCLUDED_CATEGORIES.includes(ing.category ?? "")) continue;
+    for (const row of directIngredients) {
+      const cat = row.category ?? "";
+      if (EXCLUDED_CATEGORIES.includes(cat)) continue;
 
-      const cookedQty = ing.quantityPerBatch * batchesTarget;
-      const rawQty = ing.processingRatio ? cookedQty / ing.processingRatio : cookedQty;
-      const roundedQty = roundByUnit(rawQty, ing.unit);
-      const qtyPerTin = tinCount > 0 ? roundByUnit(roundedQty / tinCount, ing.unit) : roundedQty;
+      const qtyPerBatch = Number(row.quantity) || 0;
+      const cookedQty = qtyPerBatch * batchesTarget;
+      const ratio = row.processingRatio ? Number(row.processingRatio) : null;
+      const rawQty = ratio ? cookedQty / ratio : cookedQty;
+      const unit = row.unit ?? "g";
+      const roundedQty = roundByUnit(rawQty, unit);
+      if (roundedQty <= 0) continue;
+      const qtyPerTin = tinCount > 0 ? roundByUnit(roundedQty / tinCount, unit) : roundedQty;
 
-      const existing = ingredientMap.get(ing.ingredientId);
+      const existing = ingredientMap.get(row.ingredientId);
       if (existing) {
         existing.totalQty += roundedQty;
         existing.recipes.push({
-          recipeId: planItem.recipeId,
+          recipeId: planItem.recipeId!,
           recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
           batchesTarget,
           qtyForRecipe: roundedQty,
@@ -2128,15 +2146,15 @@ router.get("/:id/main-prep", async (req, res) => {
           qtyPerTin,
         });
       } else {
-        ingredientMap.set(ing.ingredientId, {
-          ingredientId: ing.ingredientId,
-          ingredientName: ing.ingredientName,
-          unit: ing.unit,
-          category: ing.category,
-          stockCheckEnabled: ing.stockCheckEnabled ?? false,
+        ingredientMap.set(row.ingredientId, {
+          ingredientId: row.ingredientId,
+          ingredientName: row.ingredientName ?? `Ingredient #${row.ingredientId}`,
+          unit,
+          category: row.category ?? null,
+          stockCheckEnabled: row.stockCheckEnabled ?? false,
           totalQty: roundedQty,
           recipes: [{
-            recipeId: planItem.recipeId,
+            recipeId: planItem.recipeId!,
             recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
             batchesTarget,
             qtyForRecipe: roundedQty,
@@ -2151,7 +2169,6 @@ router.get("/:id/main-prep", async (req, res) => {
   }
 
   const ingredients = [...ingredientMap.values()]
-    .filter(i => i.totalQty > 0)
     .sort((a, b) => a.ingredientName.localeCompare(b.ingredientName));
 
   const completions = await db

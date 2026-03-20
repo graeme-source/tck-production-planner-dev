@@ -1895,8 +1895,6 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     return <div className="flex items-center justify-center py-20 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin mr-2" />Loading…</div>;
   }
 
-  const stockCheckIngredients = ingredients.filter(i => i.stockCheckEnabled);
-
   return (
     <div className="space-y-4">
       <PrepDateBanner
@@ -1925,36 +1923,6 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
         </div>
       </div>
 
-      {stockCheckIngredients.length > 0 && (
-        <div className="bg-card border border-border rounded-xl overflow-hidden">
-          <div className="px-4 py-2.5 bg-blue-50 dark:bg-blue-950/30 border-b border-border flex items-center gap-2">
-            <Package className="w-4 h-4 text-blue-600" />
-            <p className="font-semibold text-sm text-blue-800 dark:text-blue-200">Stock Check After Prep</p>
-          </div>
-          <div className="divide-y divide-border">
-            {stockCheckIngredients.map(ing => (
-              <div key={ing.ingredientId} className="flex items-center gap-3 px-4 py-2.5">
-                <span className="text-sm font-medium flex-1 min-w-0 truncate">{ing.ingredientName}</span>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    step="0.01"
-                    placeholder="Qty"
-                    className="w-20 text-sm border border-border rounded-lg px-2 py-1.5 text-right bg-background"
-                    value={stockValues[ing.ingredientId] ?? ""}
-                    onChange={e => setStockValues(v => ({ ...v, [ing.ingredientId]: e.target.value }))}
-                    onBlur={() => saveStockCheck(ing.ingredientId)}
-                    onKeyDown={e => { if (e.key === "Enter") saveStockCheck(ing.ingredientId); }}
-                  />
-                  <span className="text-xs text-muted-foreground w-8">{ing.unit}</span>
-                  {savingStock[ing.ingredientId] && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {ingredients.length === 0 ? (
         <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
           <p className="font-medium">No ingredients to prep</p>
@@ -1968,30 +1936,46 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                 isCompleted(ing.ingredientId, r.recipeId, tn)
               )
             );
+            const needsStockCheck = ing.stockCheckEnabled && allTinsDone;
+            const stockSaved = stockValues[ing.ingredientId] !== undefined && stockValues[ing.ingredientId] !== "";
+            const isFullyDone = allTinsDone && (!ing.stockCheckEnabled || stockSaved);
             const isExpanded = expandedIngredients.has(ing.ingredientId) || isMultiRecipe;
 
             return (
               <div key={ing.ingredientId} className={cn(
                 "bg-card border rounded-xl overflow-hidden transition-colors",
-                allTinsDone ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/20" : "border-border"
+                isFullyDone
+                  ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/20"
+                  : needsStockCheck
+                    ? "border-blue-300 dark:border-blue-700 bg-blue-50/50 dark:bg-blue-950/20"
+                    : "border-border"
               )}>
                 <button
                   onClick={() => toggleExpand(ing.ingredientId)}
                   className="w-full flex items-center justify-between px-4 py-3 text-left"
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    {allTinsDone ? (
+                    {isFullyDone ? (
                       <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
+                    ) : needsStockCheck ? (
+                      <Package className="w-5 h-5 text-blue-500 flex-shrink-0 animate-pulse" />
                     ) : (
                       <div className="w-5 h-5 rounded-full border-2 border-muted-foreground/30 flex-shrink-0" />
                     )}
                     <div className="min-w-0">
-                      <p className={cn("font-semibold text-sm", allTinsDone && "text-emerald-700 dark:text-emerald-300")}>
+                      <p className={cn(
+                        "font-semibold text-sm",
+                        isFullyDone && "text-emerald-700 dark:text-emerald-300",
+                        needsStockCheck && !isFullyDone && "text-blue-700 dark:text-blue-300"
+                      )}>
                         {ing.ingredientName}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         Total: {fmtQty(ing.totalQty, ing.unit)}
                         {isMultiRecipe && ` · ${ing.recipes.length} recipes`}
+                        {ing.stockCheckEnabled && (
+                          <span className="ml-1.5 text-blue-600 dark:text-blue-400">· stock check required</span>
+                        )}
                       </p>
                     </div>
                   </div>
@@ -2055,6 +2039,56 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                         </div>
                       );
                     })}
+
+                    {needsStockCheck && (
+                      <div className="px-4 py-3 bg-blue-50/70 dark:bg-blue-950/30">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Package className="w-4 h-4 text-blue-600" />
+                          <p className="text-sm font-semibold text-blue-800 dark:text-blue-200">
+                            Check remaining stock
+                          </p>
+                        </div>
+                        <p className="text-xs text-blue-600 dark:text-blue-400 mb-2">
+                          How much {ing.ingredientName.toLowerCase()} is left after prep?
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            step="0.01"
+                            placeholder={`Remaining ${ing.unit}`}
+                            className="w-32 text-sm border border-blue-200 dark:border-blue-700 rounded-lg px-3 py-2 text-right bg-background focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                            value={stockValues[ing.ingredientId] ?? ""}
+                            onChange={e => setStockValues(v => ({ ...v, [ing.ingredientId]: e.target.value }))}
+                            onKeyDown={e => { if (e.key === "Enter") saveStockCheck(ing.ingredientId); }}
+                          />
+                          <span className="text-xs text-muted-foreground">{ing.unit}</span>
+                          <button
+                            onClick={() => saveStockCheck(ing.ingredientId)}
+                            disabled={!stockValues[ing.ingredientId] || savingStock[ing.ingredientId]}
+                            className={cn(
+                              "px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                              stockValues[ing.ingredientId]
+                                ? "bg-blue-600 text-white hover:bg-blue-700"
+                                : "bg-blue-200 text-blue-400 cursor-not-allowed"
+                            )}
+                          >
+                            {savingStock[ing.ingredientId] ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : stockSaved ? (
+                              <Check className="w-4 h-4" />
+                            ) : (
+                              "Save"
+                            )}
+                          </button>
+                        </div>
+                        {stockSaved && (
+                          <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1.5 flex items-center gap-1">
+                            <Check className="w-3 h-3" />
+                            Stock check recorded: {stockValues[ing.ingredientId]} {ing.unit} remaining
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
