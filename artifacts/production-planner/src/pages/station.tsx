@@ -693,8 +693,12 @@ function MixingStation({ plan }: MixingStationProps) {
   }, 0);
   const totalTinsComplete = items.reduce((s, it) => {
     const bpt = it.maxBatchesPerTin ?? 1;
-    return s + Math.ceil(getStationCount(it, "mixing") / bpt);
+    const mixed = getStationCount(it, "mixing");
+    const tinsNeeded = Math.ceil((it.batchesTarget ?? 0) / bpt);
+    return s + Math.min(Math.floor(mixed / bpt), tinsNeeded);
   }, 0);
+  const totalBatchesDone = items.reduce((s, it) => s + getStationCount(it, "mixing"), 0);
+  const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
   const overallProgress = totalTinsTarget > 0 ? Math.round((totalTinsComplete / totalTinsTarget) * 100) : 0;
 
   return (
@@ -705,7 +709,7 @@ function MixingStation({ plan }: MixingStationProps) {
           <div>
             <h2 className="font-semibold">Today's Production</h2>
             <p className="text-sm text-muted-foreground">
-              {totalTinsComplete} of {totalTinsTarget} tins mixed
+              {totalTinsComplete} of {totalTinsTarget} tins complete · {totalBatchesDone} / {totalBatchesTarget} batches
             </p>
           </div>
           <span className="text-2xl font-bold font-display">{overallProgress}%</span>
@@ -770,7 +774,9 @@ function SortableMixingItem({ item, isAdmin, onAdd, onRemove }: SortableMixingIt
   const target = item.batchesTarget ?? 0;
   const bpt = item.maxBatchesPerTin ?? 1;
   const tinsTarget = Math.ceil(target / bpt);
-  const tinsComplete = Math.ceil(mixingCount / bpt);
+  const tinsComplete = Math.min(Math.floor(mixingCount / bpt), tinsTarget);
+  const batchesInCurrentTin = mixingCount % bpt;
+  const allTinsDone = tinsComplete >= tinsTarget;
   const progress = tinsTarget > 0 ? Math.round((tinsComplete / tinsTarget) * 100) : 0;
   const isComplete = mixingCount >= target && target > 0;
 
@@ -823,7 +829,7 @@ function SortableMixingItem({ item, isAdmin, onAdd, onRemove }: SortableMixingIt
               {item.status === "in-progress" && <PlayCircle className="w-4 h-4 text-blue-500 flex-shrink-0" />}
             </div>
 
-            {/* Progress bar */}
+            {/* Tin progress */}
             <div className="flex items-center gap-2 mb-2">
               <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
                 <div
@@ -836,14 +842,19 @@ function SortableMixingItem({ item, isAdmin, onAdd, onRemove }: SortableMixingIt
               </span>
             </div>
 
-            <div className="flex items-center gap-3 text-xs text-muted-foreground">
-              {item.tinSize && <span>{item.tinSize} tin</span>}
-              {bpt > 1 && <span>{bpt} batches per tin</span>}
+            <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
+              {item.tinSize && <span>{item.tinSize}</span>}
+              <span>{bpt} batch{bpt !== 1 ? "es" : ""}/tin</span>
               <span>{mixingCount} / {target} batches</span>
+              {!allTinsDone && mixingCount > 0 && (
+                <span className="text-blue-600 dark:text-blue-400 font-medium">
+                  Tin {tinsComplete + 1}: {batchesInCurrentTin} / {Math.min(bpt, target - tinsComplete * bpt)} batches
+                </span>
+              )}
             </div>
           </div>
 
-          {/* Batch counter — each tap = 1 batch, displayed as tins */}
+          {/* Batch counter — each tap = 1 batch */}
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={onRemove}
@@ -853,8 +864,8 @@ function SortableMixingItem({ item, isAdmin, onAdd, onRemove }: SortableMixingIt
               <Minus className="w-4 h-4" />
             </button>
             <div className="w-14 text-center">
-              <span className="text-xl font-bold">{tinsComplete}</span>
-              <span className="text-xs text-muted-foreground block leading-tight">tin{tinsComplete !== 1 ? "s" : ""}</span>
+              <span className="text-xl font-bold">{mixingCount}</span>
+              <span className="text-xs text-muted-foreground block leading-tight">batch{mixingCount !== 1 ? "es" : ""}</span>
             </div>
             <button
               onClick={onAdd}

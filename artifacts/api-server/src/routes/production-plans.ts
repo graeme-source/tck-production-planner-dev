@@ -159,14 +159,18 @@ router.post("/", validate(CreatePlanBody), async (req, res) => {
   }).returning();
 
   if (items?.length) {
+    const recipeIds = items.map((i: { recipeId: number }) => i.recipeId);
+    const recipes = await db.select({ id: recipesTable.id, maxBatchesPerTin: recipesTable.maxBatchesPerTin, tinSize: recipesTable.tinSize }).from(recipesTable).where(inArray(recipesTable.id, recipeIds));
+    const recipeMap = Object.fromEntries(recipes.map(r => [r.id, r]));
+
     await db.insert(productionPlanItemsTable).values(
       items.map((i: { recipeId: number; batchesTarget?: number; orderPosition?: number; tinSize?: string | null; maxBatchesPerTin?: number | null; sopUrl?: string | null; notes?: string | null }) => ({
         planId: plan.id,
         recipeId: i.recipeId,
         batchesTarget: i.batchesTarget ?? 0,
         orderPosition: i.orderPosition ?? 0,
-        tinSize: i.tinSize ?? null,
-        maxBatchesPerTin: i.maxBatchesPerTin ?? null,
+        tinSize: i.tinSize ?? recipeMap[i.recipeId]?.tinSize ?? null,
+        maxBatchesPerTin: i.maxBatchesPerTin ?? recipeMap[i.recipeId]?.maxBatchesPerTin ?? null,
         sopUrl: i.sopUrl ?? null,
         notes: i.notes ?? null,
         status: "pending",
@@ -327,6 +331,10 @@ router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
   if (items !== undefined) {
     await db.delete(productionPlanItemsTable).where(eq(productionPlanItemsTable.planId, id));
     if (items.length) {
+      const recipeIds = items.map((i: { recipeId: number }) => i.recipeId);
+      const recipes = await db.select({ id: recipesTable.id, maxBatchesPerTin: recipesTable.maxBatchesPerTin, tinSize: recipesTable.tinSize }).from(recipesTable).where(inArray(recipesTable.id, recipeIds));
+      const recipeMap = Object.fromEntries(recipes.map(r => [r.id, r]));
+
       await db.insert(productionPlanItemsTable).values(
         items.map((i: {
           recipeId: number;
@@ -344,8 +352,8 @@ router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
           batchesTarget: i.batchesTarget ?? 0,
           batchesComplete: i.batchesComplete ?? 0,
           orderPosition: i.orderPosition ?? 0,
-          tinSize: i.tinSize ?? null,
-          maxBatchesPerTin: i.maxBatchesPerTin ?? null,
+          tinSize: i.tinSize ?? recipeMap[i.recipeId]?.tinSize ?? null,
+          maxBatchesPerTin: i.maxBatchesPerTin ?? recipeMap[i.recipeId]?.maxBatchesPerTin ?? null,
           sopUrl: i.sopUrl ?? null,
           notes: i.notes ?? null,
           status: i.status ?? "pending",
