@@ -1262,6 +1262,7 @@ function PlansList({ onViewPlan, onCreatePlan }: PlansListProps) {
   const { deletePlan } = useAppMutations();
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [sortNewest, setSortNewest] = useState(true);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
 
   const filtered = useMemo(() => {
     let list = plans ?? [];
@@ -1370,7 +1371,7 @@ function PlansList({ onViewPlan, onCreatePlan }: PlansListProps) {
                   <button
                     onClick={e => {
                       e.stopPropagation();
-                      deletePlan.mutate({ id: plan.id });
+                      setDeleteTarget({ id: plan.id, name: plan.name });
                     }}
                     className="opacity-0 group-hover:opacity-100 p-2 text-muted-foreground hover:text-destructive transition-all rounded-lg hover:bg-destructive/10"
                     title="Delete plan"
@@ -1381,6 +1382,34 @@ function PlansList({ onViewPlan, onCreatePlan }: PlansListProps) {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setDeleteTarget(null)}>
+          <div className="bg-card border border-border rounded-xl p-6 shadow-xl max-w-sm mx-4" onClick={e => e.stopPropagation()}>
+            <h3 className="font-semibold text-lg mb-2">Delete Plan?</h3>
+            <p className="text-sm text-muted-foreground mb-6">
+              This will permanently delete "{deleteTarget.name}" and all its items. This cannot be undone.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setDeleteTarget(null)}
+                className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-secondary/60 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  deletePlan.mutate({ id: deleteTarget.id });
+                  setDeleteTarget(null);
+                }}
+                className="px-4 py-2 text-sm rounded-lg bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors font-medium"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
