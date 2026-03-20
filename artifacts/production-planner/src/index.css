@@ -67,7 +67,7 @@
   --popover-foreground: 20 14% 16%;
   --popover-border: 30 20% 92%;
   
-  --primary: 142 30% 35%; /* Sage Green */
+  --primary: 68 24% 49%; /* Olive Sage #919b5f */
   --primary-foreground: 0 0% 100%;
   
   --secondary: 30 40% 94%; /* Warm Sand/Peach */
@@ -84,20 +84,20 @@
   
   --border: 30 20% 88%;
   --input: 30 20% 88%;
-  --ring: 142 30% 35%;
+  --ring: 68 24% 49%;
   
   --sidebar: 45 29% 95%;
   --sidebar-foreground: 20 14% 16%;
   --sidebar-border: 30 20% 88%;
-  --sidebar-primary: 142 30% 35%;
+  --sidebar-primary: 68 24% 49%;
   --sidebar-primary-foreground: 0 0% 100%;
   --sidebar-accent: 30 40% 90%;
   --sidebar-accent-foreground: 20 14% 16%;
-  --sidebar-ring: 142 30% 35%;
+  --sidebar-ring: 68 24% 49%;
 
   --radius: 0.75rem;
 
-  --chart-1: 142 30% 35%;
+  --chart-1: 68 24% 49%;
   --chart-2: 25 40% 45%;
   --chart-3: 35 60% 60%;
   --chart-4: 180 20% 45%;
