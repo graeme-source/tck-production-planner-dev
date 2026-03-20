@@ -2484,8 +2484,8 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
   const fullScreenItems: PrepFullScreenItem[] = recipes.flatMap(recipe => {
     const rawMeat = recipe.ingredients.filter(i => i.isRawMeat);
     const marinades = recipe.marinades ?? [];
-    const totalRawMeatKg = rawMeat.reduce((sum, i) => sum + i.rawQty, 0) / 1000;
-    const totalMarinadeKg = marinades.reduce((sum, m) => sum + m.totalGrams, 0) / 1000;
+    const totalRawMeatKg = rawMeat.reduce((sum, i) => sum + i.rawQty, 0);
+    const totalMarinadeG = marinades.reduce((sum, m) => sum + m.totalGrams, 0);
     const trayCapacityKg = rawMeat.find(i => i.rawMeatTrayCapacityKg)?.rawMeatTrayCapacityKg ?? null;
     const trays = recipe.trayCount;
     const perTrayMeatKg = trays && trays > 0 ? (totalRawMeatKg / trays).toFixed(2) : null;
@@ -2502,7 +2502,7 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
       quantity: trays != null ? `${trays} tray${trays !== 1 ? "s" : ""}` : `${totalRawMeatKg.toFixed(2)} kg`,
       subDetail: [
         `${totalRawMeatKg.toFixed(2)} kg raw meat`,
-        totalMarinadeKg > 0 ? `${(totalMarinadeKg * 1000).toFixed(0)}g marinades` : null,
+        totalMarinadeG > 0 ? `${totalMarinadeG.toFixed(0)}g marinades` : null,
         trayCapacityKg ? `${trayCapacityKg} kg/tray capacity` : null,
         perTrayMeatKg ? `${perTrayMeatKg} kg meat/tray` : null,
         ...marinadeDetails,
@@ -2568,7 +2568,7 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
           {recipes.map(recipe => {
             const rawMeat = recipe.ingredients.filter(i => i.isRawMeat);
             const marinades = recipe.marinades ?? [];
-            const totalRawMeatKg = rawMeat.reduce((sum, i) => sum + i.rawQty, 0) / 1000;
+            const totalRawMeatKg = rawMeat.reduce((sum, i) => sum + i.rawQty, 0);
             const totalMarinadeG = marinades.reduce((sum, m) => sum + m.totalGrams, 0);
             const trays = recipe.trayCount;
             const trayCapKg = rawMeat.find(i => i.rawMeatTrayCapacityKg)?.rawMeatTrayCapacityKg ?? null;
@@ -2611,7 +2611,7 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                             <span className="tabular-nums font-semibold">{fmtQty(ing.rawQty, ing.unit)}</span>
                             {trays && trays > 0 && (
                               <span className="text-xs text-muted-foreground ml-2">
-                                ({((ing.rawQty / 1000) / trays).toFixed(2)} kg/tray)
+                                ({(ing.rawQty / trays).toFixed(2)} kg/tray)
                               </span>
                             )}
                           </div>
