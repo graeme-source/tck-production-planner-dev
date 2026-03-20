@@ -146,3 +146,10 @@ export function aggregateIngredients(
   }
   return map;
 }
+
+export function roundByUnit(value: number, unit: string): number {
+  if (unit === "g" || unit === "ml") {
+    return Math.round(value);
+  }
+  return Math.round(value * 100) / 100;
+}

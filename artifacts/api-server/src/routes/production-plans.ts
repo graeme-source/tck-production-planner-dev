@@ -3,7 +3,7 @@ import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batch
 import { eq, and, desc, sql, gt, asc, inArray } from "drizzle-orm";
 import { validate } from "../middleware/validate";
 import * as z from "zod";
-import { resolveRecipeIngredients, aggregateIngredients, type ResolvedIngredient } from "../lib/ingredient-resolver";
+import { resolveRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
 
 const router: IRouter = Router();
 
@@ -993,6 +993,8 @@ router.get("/:id/prep-requirements", async (req, res) => {
       const totalRawKg = item.totalRawQty / 1000;
       item.trayCount = Math.ceil(totalRawKg / item.rawMeatTrayCapacityKg);
     }
+    item.totalCookedQty = roundByUnit(item.totalCookedQty, item.unit);
+    item.totalRawQty = roundByUnit(item.totalRawQty, item.unit);
   }
 
   let items = Object.values(aggregated);
@@ -1101,8 +1103,8 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
         category,
         processingRatio: ing.processingRatio,
         rawMeatTrayCapacityKg: ing.rawMeatTrayCapacityKg,
-        cookedQty,
-        rawQty,
+        cookedQty: roundByUnit(cookedQty, ing.unit),
+        rawQty: roundByUnit(rawQty, ing.unit),
         isRawMeat: category === "raw_meat",
         isSeasoning: isSeasoning && category !== "raw_meat",
       });
@@ -1202,12 +1204,21 @@ router.get("/:id/ingredient-requirements", async (req, res) => {
 
       ingredientMap[iid].totalCookedQty += cookedQty;
       ingredientMap[iid].totalRawQty += rawQty;
-      ingredientMap[iid].recipes.push({
-        recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
-        batchesTarget,
-        cookedQty,
-        rawQty,
-      });
+
+      const recipeName = planItem.recipeName ?? `Recipe #${planItem.recipeId}`;
+      const existingRecipe = ingredientMap[iid].recipes.find(r => r.recipeName === recipeName);
+      if (existingRecipe) {
+        existingRecipe.batchesTarget += batchesTarget;
+        existingRecipe.cookedQty += cookedQty;
+        existingRecipe.rawQty += rawQty;
+      } else {
+        ingredientMap[iid].recipes.push({
+          recipeName,
+          batchesTarget,
+          cookedQty,
+          rawQty,
+        });
+      }
     }
   }
 
@@ -1216,11 +1227,11 @@ router.get("/:id/ingredient-requirements", async (req, res) => {
       const totalRawKg = item.totalRawQty / 1000;
       item.trayCount = Math.ceil(totalRawKg / item.rawMeatTrayCapacityKg);
     }
-    item.totalCookedQty = Math.round(item.totalCookedQty * 100) / 100;
-    item.totalRawQty = Math.round(item.totalRawQty * 100) / 100;
+    item.totalCookedQty = roundByUnit(item.totalCookedQty, item.unit);
+    item.totalRawQty = roundByUnit(item.totalRawQty, item.unit);
     for (const r of item.recipes) {
-      r.cookedQty = Math.round(r.cookedQty * 100) / 100;
-      r.rawQty = Math.round(r.rawQty * 100) / 100;
+      r.cookedQty = roundByUnit(r.cookedQty, item.unit);
+      r.rawQty = roundByUnit(r.rawQty, item.unit);
     }
   }
 
