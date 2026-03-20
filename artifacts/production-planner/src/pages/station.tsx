@@ -1318,7 +1318,7 @@ function PrepDateBanner({ planDate, planName, isLoading }: { planDate: string | 
     <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-xl px-4 py-3 flex items-center gap-3">
       <CalendarCheck className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0" />
       <div>
-        <p className="text-xs font-semibold uppercase tracking-wider text-green-700 dark:text-green-400">Prepping for</p>
+        <p className="text-xs font-semibold uppercase tracking-wider text-green-700 dark:text-green-400">Prep for</p>
         <p className="font-bold text-green-900 dark:text-green-100 text-lg leading-tight">{formatted}</p>
         {planName && <p className="text-xs text-green-700 dark:text-green-400">{planName}</p>}
       </div>
