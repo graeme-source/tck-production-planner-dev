@@ -28,6 +28,7 @@ import {
   Beef, TrendingUp, Trophy, ExternalLink, ChevronRight,
   List, LayoutGrid, CalendarCheck,
   Snowflake, Truck, AlertCircle, Info, Droplets, Timer,
+  ClipboardList, Check, Package,
 } from "lucide-react";
 import { format, parseISO, differenceInMinutes } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -64,7 +65,7 @@ const STATIONS = [
   { key: "packing", label: "Packing", short: "Packing", icon: Box, color: "text-indigo-500" },
 ] as const;
 
-type StationType = typeof STATIONS[number]["key"] | "prep_veg" | "prep_bases" | "prep_meat";
+type StationType = typeof STATIONS[number]["key"] | "main_prep" | "prep_veg" | "prep_bases" | "prep_meat";
 
 function getStationCount(item: ProductionPlanItem, stationType: string): number {
   const sc = (item as any).stationCompletions;
@@ -105,6 +106,7 @@ function StationLayout({ planId, stationType, plan, children }: StationLayoutPro
   const station = STATIONS.find(s => s.key === stationType);
   // Resolve station label for sub-stations
   const resolveStationMeta = (key: StationType): { label: string; icon: React.ComponentType<{ className?: string }>; color: string } => {
+    if (key === "main_prep") return { label: "Main Prep", icon: ClipboardList, color: "text-emerald-600" };
     if (key === "prep_veg") return { label: "Veg Prep", icon: Salad, color: "text-green-500" };
     if (key === "prep_bases") return { label: "Bases & Mozzarella", icon: Layers, color: "text-yellow-500" };
     if (key === "prep_meat") return { label: "Raw Meat Prep", icon: Beef, color: "text-rose-500" };
@@ -138,7 +140,7 @@ function StationLayout({ planId, stationType, plan, children }: StationLayoutPro
               <div className="hidden md:flex items-center gap-1 overflow-x-auto">
                 {STATIONS.map(s => {
                   const Icon = s.icon;
-                  const prepSubStations = ["prep_veg", "prep_bases", "prep_meat"] as const;
+                  const prepSubStations = ["main_prep", "prep_veg", "prep_bases", "prep_meat"] as const;
                   const isActive = s.key === stationType || (s.key === "prep" && prepSubStations.includes(stationType as typeof prepSubStations[number]));
                   return (
                     <button
@@ -1743,7 +1745,331 @@ function PrepModeToggle({
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Veg Prep Station
+// Main Prep Station — all ingredients with per-recipe tin breakdowns + stock checks
+// ──────────────────────────────────────────────────────────────────────────────
+interface MainPrepIngredient {
+  ingredientId: number;
+  ingredientName: string;
+  unit: string;
+  category: string | null;
+  stockCheckEnabled: boolean;
+  totalQty: number;
+  recipes: Array<{
+    recipeId: number;
+    recipeName: string;
+    batchesTarget: number;
+    qtyForRecipe: number;
+    tinSize: string | null;
+    maxBatchesPerTin: number | null;
+    tinCount: number;
+    qtyPerTin: number;
+  }>;
+}
+
+interface PrepTinCompletion {
+  id: number;
+  ingredientId: number;
+  recipeId: number;
+  tinNumber: number;
+  userId: number | null;
+  userName: string | null;
+  completedAt: string;
+}
+
+interface StockCheckEntry {
+  id: number;
+  ingredientId: number;
+  ingredientName: string;
+  unit: string;
+  quantity: string | null;
+  checkedAt: string;
+  userId: number | null;
+}
+
+function useMainPrepData(planId: number) {
+  const [data, setData] = useState<{ ingredients: MainPrepIngredient[]; completions: PrepTinCompletion[] } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch(`/api/production-plans/${planId}/main-prep`, { credentials: "include" })
+      .then(r => r.json())
+      .then(d => { if (!cancelled) { setData(d); setLoading(false); } })
+      .catch(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [planId, revision]);
+
+  const refetch = useCallback(() => setRevision(r => r + 1), []);
+  return { data, loading, refetch };
+}
+
+function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
+  const { data: nextPlanData, isLoading: isNextPlanLoading } = useNextActivePlan(plan.planDate);
+  const nextPlan = nextPlanData as NextActivePlan | null;
+  const targetPlanId = nextPlan?.planId ?? plan.id;
+  const { data, loading, refetch } = useMainPrepData(targetPlanId);
+  const { user } = useAuth();
+  const [stockValues, setStockValues] = useState<Record<number, string>>({});
+  const [stockLoaded, setStockLoaded] = useState(false);
+  const [savingStock, setSavingStock] = useState<Record<number, boolean>>({});
+  const [expandedIngredients, setExpandedIngredients] = useState<Set<number>>(new Set());
+
+  const checkDate = nextPlan?.planDate ?? plan.planDate;
+  useEffect(() => {
+    if (!checkDate || stockLoaded) return;
+    fetch(`/api/production-plans/stock-checks?date=${checkDate}`, { credentials: "include" })
+      .then(r => r.json())
+      .then(d => {
+        if (d?.checks) {
+          const vals: Record<number, string> = {};
+          for (const c of d.checks) {
+            if (c.quantity) vals[c.ingredientId] = String(parseFloat(c.quantity));
+          }
+          setStockValues(vals);
+        }
+        setStockLoaded(true);
+      })
+      .catch(() => setStockLoaded(true));
+  }, [checkDate, stockLoaded]);
+
+  const ingredients = data?.ingredients ?? [];
+  const completions = data?.completions ?? [];
+
+  const isCompleted = (ingredientId: number, recipeId: number, tinNumber: number) =>
+    completions.some(c => c.ingredientId === ingredientId && c.recipeId === recipeId && c.tinNumber === tinNumber);
+
+  const getCompletion = (ingredientId: number, recipeId: number, tinNumber: number) =>
+    completions.find(c => c.ingredientId === ingredientId && c.recipeId === recipeId && c.tinNumber === tinNumber);
+
+  const toggleTin = async (ingredientId: number, recipeId: number, tinNumber: number) => {
+    const existing = getCompletion(ingredientId, recipeId, tinNumber);
+    if (existing) {
+      await fetch(`/api/production-plans/${targetPlanId}/prep-completions/${existing.id}`, {
+        method: "DELETE", credentials: "include",
+      });
+    } else {
+      await fetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ingredientId, recipeId, tinNumber }),
+      });
+    }
+    refetch();
+  };
+
+  const saveStockCheck = async (ingredientId: number) => {
+    const val = stockValues[ingredientId];
+    if (val === undefined || val === "") return;
+    setSavingStock(s => ({ ...s, [ingredientId]: true }));
+    const checkDate = nextPlan?.planDate ?? plan.planDate;
+    try {
+      const resp = await fetch("/api/production-plans/stock-checks", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ingredientId, checkDate, quantity: Number(val) }),
+      });
+      if (!resp.ok) throw new Error("Save failed");
+      toast({ title: "Stock check saved" });
+    } catch {
+      toast({ title: "Failed to save stock check", variant: "destructive" });
+    } finally {
+      setSavingStock(s => ({ ...s, [ingredientId]: false }));
+    }
+  };
+
+  const toggleExpand = (id: number) => {
+    setExpandedIngredients(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const totalTins = ingredients.reduce((s, ing) => s + ing.recipes.reduce((rs, r) => rs + r.tinCount, 0), 0);
+  const completedTins = completions.length;
+  const overallPct = totalTins > 0 ? Math.round((completedTins / totalTins) * 100) : 0;
+
+  if (loading || isNextPlanLoading) {
+    return <div className="flex items-center justify-center py-20 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin mr-2" />Loading…</div>;
+  }
+
+  const stockCheckIngredients = ingredients.filter(i => i.stockCheckEnabled);
+
+  return (
+    <div className="space-y-4">
+      <PrepDateBanner
+        currentPlanDate={plan.planDate}
+        targetPlanDate={nextPlan?.planDate ?? null}
+        targetPlanName={nextPlan?.planName ?? null}
+        isLoading={false}
+      />
+
+      <div className="bg-card border border-border rounded-xl p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <ClipboardList className="w-6 h-6 text-emerald-600" />
+            <div>
+              <h2 className="font-semibold text-base">Main Prep</h2>
+              <p className="text-xs text-muted-foreground">{completedTins} of {totalTins} tins completed</p>
+            </div>
+          </div>
+          <span className="text-2xl font-bold font-display">{overallPct}%</span>
+        </div>
+        <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden">
+          <div
+            className={cn("h-full rounded-full transition-all", overallPct >= 100 ? "bg-emerald-500" : "bg-emerald-400")}
+            style={{ width: `${Math.min(overallPct, 100)}%` }}
+          />
+        </div>
+      </div>
+
+      {stockCheckIngredients.length > 0 && (
+        <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="px-4 py-2.5 bg-blue-50 dark:bg-blue-950/30 border-b border-border flex items-center gap-2">
+            <Package className="w-4 h-4 text-blue-600" />
+            <p className="font-semibold text-sm text-blue-800 dark:text-blue-200">Stock Check After Prep</p>
+          </div>
+          <div className="divide-y divide-border">
+            {stockCheckIngredients.map(ing => (
+              <div key={ing.ingredientId} className="flex items-center gap-3 px-4 py-2.5">
+                <span className="text-sm font-medium flex-1 min-w-0 truncate">{ing.ingredientName}</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="Qty"
+                    className="w-20 text-sm border border-border rounded-lg px-2 py-1.5 text-right bg-background"
+                    value={stockValues[ing.ingredientId] ?? ""}
+                    onChange={e => setStockValues(v => ({ ...v, [ing.ingredientId]: e.target.value }))}
+                    onBlur={() => saveStockCheck(ing.ingredientId)}
+                    onKeyDown={e => { if (e.key === "Enter") saveStockCheck(ing.ingredientId); }}
+                  />
+                  <span className="text-xs text-muted-foreground w-8">{ing.unit}</span>
+                  {savingStock[ing.ingredientId] && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {ingredients.length === 0 ? (
+        <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
+          <p className="font-medium">No ingredients to prep</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {ingredients.map(ing => {
+            const isMultiRecipe = ing.recipes.length > 1;
+            const allTinsDone = ing.recipes.every(r =>
+              Array.from({ length: r.tinCount }, (_, i) => i + 1).every(tn =>
+                isCompleted(ing.ingredientId, r.recipeId, tn)
+              )
+            );
+            const isExpanded = expandedIngredients.has(ing.ingredientId) || isMultiRecipe;
+
+            return (
+              <div key={ing.ingredientId} className={cn(
+                "bg-card border rounded-xl overflow-hidden transition-colors",
+                allTinsDone ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/20" : "border-border"
+              )}>
+                <button
+                  onClick={() => toggleExpand(ing.ingredientId)}
+                  className="w-full flex items-center justify-between px-4 py-3 text-left"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    {allTinsDone ? (
+                      <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
+                    ) : (
+                      <div className="w-5 h-5 rounded-full border-2 border-muted-foreground/30 flex-shrink-0" />
+                    )}
+                    <div className="min-w-0">
+                      <p className={cn("font-semibold text-sm", allTinsDone && "text-emerald-700 dark:text-emerald-300")}>
+                        {ing.ingredientName}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Total: {fmtQty(ing.totalQty, ing.unit)}
+                        {isMultiRecipe && ` · ${ing.recipes.length} recipes`}
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronDown className={cn(
+                    "w-4 h-4 text-muted-foreground transition-transform flex-shrink-0",
+                    isExpanded && "rotate-180"
+                  )} />
+                </button>
+
+                {isExpanded && (
+                  <div className="border-t border-border/50 divide-y divide-border/50">
+                    {ing.recipes.map(recipe => {
+                      const tins = Array.from({ length: recipe.tinCount }, (_, i) => i + 1);
+                      return (
+                        <div key={recipe.recipeId} className="px-4 py-2.5">
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                              {recipe.recipeName}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {recipe.batchesTarget} batches · {fmtQty(recipe.qtyForRecipe, ing.unit)} total
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {tins.map(tn => {
+                              const done = isCompleted(ing.ingredientId, recipe.recipeId, tn);
+                              const completion = getCompletion(ing.ingredientId, recipe.recipeId, tn);
+                              return (
+                                <button
+                                  key={tn}
+                                  onClick={() => toggleTin(ing.ingredientId, recipe.recipeId, tn)}
+                                  className={cn(
+                                    "relative flex flex-col items-center border rounded-xl px-3 py-2 min-w-[80px] transition-all",
+                                    done
+                                      ? "bg-emerald-50 dark:bg-emerald-900/30 border-emerald-300 dark:border-emerald-700"
+                                      : "bg-background border-border hover:border-emerald-400"
+                                  )}
+                                >
+                                  <div className="flex items-center gap-1.5 mb-1">
+                                    {done ? (
+                                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                    ) : (
+                                      <div className="w-3.5 h-3.5 rounded border border-muted-foreground/40" />
+                                    )}
+                                    <span className="text-xs font-semibold">
+                                      Tin {tn}{recipe.tinSize ? ` (${recipe.tinSize})` : ""}
+                                    </span>
+                                  </div>
+                                  <span className={cn("text-sm font-bold", done ? "text-emerald-700 dark:text-emerald-300" : "")}>
+                                    {fmtQty(recipe.qtyPerTin, ing.unit)}
+                                  </span>
+                                  {done && completion && (
+                                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-0.5 leading-tight">
+                                      {completion.userName ?? "User"} · {format(new Date(completion.completedAt), "HH:mm")}
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <BreakTracker planId={targetPlanId} stationType="main_prep" />
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Veg Prep Station (legacy)
 // Per-recipe grouping of vegetable ingredients with prep quantities
 // ──────────────────────────────────────────────────────────────────────────────
 function PrepVegStation({ plan }: { plan: ProductionPlanDetail }) {
@@ -3546,13 +3872,13 @@ function PrepHub({ planId, planDate }: { planId: number; planDate?: string }) {
 
   const subStations = [
     {
-      key: "prep_veg",
-      label: "Raw Veg",
-      icon: Salad,
-      color: "text-green-500",
-      borderColor: "border-green-200 dark:border-green-800",
-      bgColor: "bg-green-50 dark:bg-green-950/20",
-      description: "Vegetable prep quantities for the next production run",
+      key: "main_prep",
+      label: "Main Prep",
+      icon: ClipboardList,
+      color: "text-emerald-600",
+      borderColor: "border-emerald-200 dark:border-emerald-800",
+      bgColor: "bg-emerald-50 dark:bg-emerald-950/20",
+      description: "All ingredients grouped by recipe with per-tin checkboxes and stock checks",
     },
     {
       key: "prep_bases",
@@ -3684,6 +4010,8 @@ export default function StationPage() {
         return <DoughSheetingStation plan={plan} />;
       case "prep":
         return <PrepHub planId={planId} planDate={plan.planDate} />;
+      case "main_prep":
+        return <MainPrepStation plan={plan} />;
       case "prep_veg":
         return <PrepVegStation plan={plan} />;
       case "prep_bases":

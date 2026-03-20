@@ -16,6 +16,7 @@ export interface ResolvedIngredient {
   category: string | null;
   processingRatio: number | null;
   rawMeatTrayCapacityKg: number | null;
+  stockCheckEnabled: boolean;
   quantityPerBatch: number;
 }
 
@@ -46,6 +47,7 @@ async function resolveSubRecipeIngredients(
       category: ingredientsTable.category,
       processingRatio: ingredientsTable.processingRatio,
       rawMeatTrayCapacityKg: ingredientsTable.rawMeatTrayCapacityKg,
+      stockCheckEnabled: ingredientsTable.stockCheckEnabled,
     })
     .from(subRecipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -58,6 +60,7 @@ async function resolveSubRecipeIngredients(
     category: row.category ?? null,
     processingRatio: row.processingRatio ? Number(row.processingRatio) : null,
     rawMeatTrayCapacityKg: row.rawMeatTrayCapacityKg ? Number(row.rawMeatTrayCapacityKg) : null,
+    stockCheckEnabled: row.stockCheckEnabled ?? false,
     quantityPerBatch: Number(row.quantity) * effectiveScale,
   }));
 
@@ -96,6 +99,7 @@ export async function resolveRecipeIngredients(
       category: ingredientsTable.category,
       processingRatio: ingredientsTable.processingRatio,
       rawMeatTrayCapacityKg: ingredientsTable.rawMeatTrayCapacityKg,
+      stockCheckEnabled: ingredientsTable.stockCheckEnabled,
     })
     .from(recipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -108,6 +112,7 @@ export async function resolveRecipeIngredients(
     category: row.category ?? null,
     processingRatio: row.processingRatio ? Number(row.processingRatio) : null,
     rawMeatTrayCapacityKg: row.rawMeatTrayCapacityKg ? Number(row.rawMeatTrayCapacityKg) : null,
+    stockCheckEnabled: row.stockCheckEnabled ?? false,
     quantityPerBatch: Number(row.quantity),
   }));
 

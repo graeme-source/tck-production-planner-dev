@@ -1,4 +1,4 @@
-import { pgTable, serial, text, numeric, integer, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, numeric, integer, timestamp, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { suppliersTable } from "./suppliers";
@@ -18,6 +18,7 @@ export const ingredientsTable = pgTable("ingredients", {
   category: text("category"),
   processingRatio: numeric("processing_ratio", { precision: 5, scale: 4 }),
   rawMeatTrayCapacityKg: numeric("raw_meat_tray_capacity_kg", { precision: 10, scale: 4 }),
+  stockCheckEnabled: boolean("stock_check_enabled").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

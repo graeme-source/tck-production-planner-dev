@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable } from "@workspace/db";
+import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, dailyStockChecksTable, usersTable } from "@workspace/db";
 import { eq, and, desc, sql, gt, asc, inArray } from "drizzle-orm";
 import { validate } from "../middleware/validate";
 import * as z from "zod";
@@ -215,6 +215,56 @@ router.get("/next-active", async (req, res) => {
   }
 
   res.json({ planId: plans[0].id, planDate: plans[0].planDate, planName: plans[0].name, status: plans[0].status });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Daily Stock Checks (before /:id to avoid route shadowing)
+// ──────────────────────────────────────────────────────────────────────────────
+router.get("/stock-checks", async (req, res) => {
+  const checkDate = String(req.query.date ?? new Date().toISOString().slice(0, 10));
+
+  const checks = await db
+    .select({
+      id: dailyStockChecksTable.id,
+      ingredientId: dailyStockChecksTable.ingredientId,
+      ingredientName: ingredientsTable.name,
+      unit: ingredientsTable.unit,
+      quantity: dailyStockChecksTable.quantity,
+      checkedAt: dailyStockChecksTable.checkedAt,
+      userId: dailyStockChecksTable.userId,
+    })
+    .from(dailyStockChecksTable)
+    .leftJoin(ingredientsTable, eq(dailyStockChecksTable.ingredientId, ingredientsTable.id))
+    .where(eq(dailyStockChecksTable.checkDate, checkDate));
+
+  const stockIngredients = await db
+    .select({ id: ingredientsTable.id, name: ingredientsTable.name, unit: ingredientsTable.unit })
+    .from(ingredientsTable)
+    .where(eq(ingredientsTable.stockCheckEnabled, true))
+    .orderBy(ingredientsTable.name);
+
+  res.json({ date: checkDate, checks, stockIngredients });
+});
+
+router.post("/stock-checks", async (req, res) => {
+  const { ingredientId, checkDate, quantity } = req.body;
+  const userId = (req.session as any)?.userId ?? null;
+
+  try {
+    const [row] = await db
+      .insert(dailyStockChecksTable)
+      .values({ ingredientId, checkDate, quantity: String(quantity), userId })
+      .onConflictDoUpdate({
+        target: [dailyStockChecksTable.ingredientId, dailyStockChecksTable.checkDate],
+        set: { quantity: String(quantity), userId, checkedAt: sql`now()` },
+      })
+      .returning();
+
+    res.json(row);
+  } catch (err: any) {
+    console.error("Stock check save error:", err.message);
+    res.status(500).json({ error: "Failed to save stock check" });
+  }
 });
 
 router.get("/:id", async (req, res) => {
@@ -1997,6 +2047,160 @@ router.get("/:id/packing", async (req, res) => {
     totalGrossPacks: wrappedItems.reduce((sum, p) => sum + p.grossPacks, 0),
     totalWonly: wrappedItems.reduce((sum, p) => sum + p.wonlyCount, 0),
   });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Main Prep — per-ingredient view grouped across recipes with tin breakdowns
+// ──────────────────────────────────────────────────────────────────────────────
+router.get("/:id/main-prep", async (req, res) => {
+  const planId = Number(req.params.id);
+
+  const planItems = await db
+    .select({
+      id: productionPlanItemsTable.id,
+      recipeId: productionPlanItemsTable.recipeId,
+      batchesTarget: productionPlanItemsTable.batchesTarget,
+      recipeName: recipesTable.name,
+      portionsPerBatch: recipesTable.portionsPerBatch,
+      tinSize: productionPlanItemsTable.tinSize,
+      maxBatchesPerTin: productionPlanItemsTable.maxBatchesPerTin,
+    })
+    .from(productionPlanItemsTable)
+    .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(eq(productionPlanItemsTable.planId, planId));
+
+  if (planItems.length === 0) {
+    res.json({ ingredients: [], completions: [] });
+    return;
+  }
+
+  const EXCLUDED_CATEGORIES = ["raw_meat"];
+
+  const ingredientMap = new Map<number, {
+    ingredientId: number;
+    ingredientName: string;
+    unit: string;
+    category: string | null;
+    stockCheckEnabled: boolean;
+    totalQty: number;
+    recipes: Array<{
+      recipeId: number;
+      recipeName: string;
+      batchesTarget: number;
+      qtyForRecipe: number;
+      tinSize: string | null;
+      maxBatchesPerTin: number | null;
+      tinCount: number;
+      qtyPerTin: number;
+    }>;
+  }>();
+
+  for (const planItem of planItems) {
+    const batchesTarget = Number(planItem.batchesTarget) || 0;
+    if (!planItem.recipeId || batchesTarget === 0) continue;
+
+    const resolved = await resolveRecipeIngredients(planItem.recipeId);
+    const agg = aggregateIngredients(resolved);
+
+    const tinCount = planItem.maxBatchesPerTin && batchesTarget > 0
+      ? Math.ceil(batchesTarget / planItem.maxBatchesPerTin)
+      : 1;
+
+    for (const [, ing] of agg) {
+      if (EXCLUDED_CATEGORIES.includes(ing.category ?? "")) continue;
+
+      const cookedQty = ing.quantityPerBatch * batchesTarget;
+      const rawQty = ing.processingRatio ? cookedQty / ing.processingRatio : cookedQty;
+      const roundedQty = roundByUnit(rawQty, ing.unit);
+      const qtyPerTin = tinCount > 0 ? roundByUnit(roundedQty / tinCount, ing.unit) : roundedQty;
+
+      const existing = ingredientMap.get(ing.ingredientId);
+      if (existing) {
+        existing.totalQty += roundedQty;
+        existing.recipes.push({
+          recipeId: planItem.recipeId,
+          recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
+          batchesTarget,
+          qtyForRecipe: roundedQty,
+          tinSize: planItem.tinSize ?? null,
+          maxBatchesPerTin: planItem.maxBatchesPerTin ?? null,
+          tinCount,
+          qtyPerTin,
+        });
+      } else {
+        ingredientMap.set(ing.ingredientId, {
+          ingredientId: ing.ingredientId,
+          ingredientName: ing.ingredientName,
+          unit: ing.unit,
+          category: ing.category,
+          stockCheckEnabled: ing.stockCheckEnabled ?? false,
+          totalQty: roundedQty,
+          recipes: [{
+            recipeId: planItem.recipeId,
+            recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
+            batchesTarget,
+            qtyForRecipe: roundedQty,
+            tinSize: planItem.tinSize ?? null,
+            maxBatchesPerTin: planItem.maxBatchesPerTin ?? null,
+            tinCount,
+            qtyPerTin,
+          }],
+        });
+      }
+    }
+  }
+
+  const ingredients = [...ingredientMap.values()]
+    .filter(i => i.totalQty > 0)
+    .sort((a, b) => a.ingredientName.localeCompare(b.ingredientName));
+
+  const completions = await db
+    .select({
+      id: prepCompletionsTable.id,
+      ingredientId: prepCompletionsTable.ingredientId,
+      recipeId: prepCompletionsTable.recipeId,
+      tinNumber: prepCompletionsTable.tinNumber,
+      userId: prepCompletionsTable.userId,
+      userName: usersTable.name,
+      completedAt: prepCompletionsTable.completedAt,
+    })
+    .from(prepCompletionsTable)
+    .leftJoin(usersTable, eq(prepCompletionsTable.userId, usersTable.id))
+    .where(eq(prepCompletionsTable.planId, planId));
+
+  res.json({ ingredients, completions });
+});
+
+// POST /:id/prep-completions — mark a prep tin as complete
+router.post("/:id/prep-completions", async (req, res) => {
+  const planId = Number(req.params.id);
+  const { ingredientId, recipeId, tinNumber } = req.body;
+  const userId = (req.session as any)?.userId ?? null;
+
+  const [row] = await db.insert(prepCompletionsTable).values({
+    planId,
+    ingredientId,
+    recipeId,
+    tinNumber,
+    userId,
+  }).returning();
+
+  const userName = userId
+    ? (await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId)))?.[0]?.name ?? null
+    : null;
+
+  res.status(201).json({ ...row, userName });
+});
+
+// DELETE /:id/prep-completions/:completionId — undo a prep tin completion
+router.delete("/:id/prep-completions/:completionId", async (req, res) => {
+  const planId = Number(req.params.id);
+  const completionId = Number(req.params.completionId);
+  const deleted = await db.delete(prepCompletionsTable)
+    .where(and(eq(prepCompletionsTable.id, completionId), eq(prepCompletionsTable.planId, planId)))
+    .returning();
+  if (deleted.length === 0) { res.status(404).json({ error: "Not found" }); return; }
+  res.json({ ok: true });
 });
 
 export default router;

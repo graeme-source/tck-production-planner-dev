@@ -69,6 +69,9 @@ artifacts-monorepo/
 - `station_breaks` — break start/end times per station
 - `dpt_settings` — per-recipe DPT configuration (packsSold, isActive); used with app_settings `total_daily_batches` to compute sales-based default batch allocations
 - `timing_standards` — per-station KPI targets (minBatchesPerHour, targetBatchesPerHour)
+- `prep_completions` — per-tin prep completion tracking (plan_id, ingredient_id, recipe_id, tin_number, user_id, completed_at); unique on (plan_id, ingredient_id, recipe_id, tin_number)
+- `daily_stock_checks` — per-ingredient daily stock checks (ingredient_id, check_date, quantity, user_id, checked_at); unique on (ingredient_id, check_date); upsert on conflict
+- `ingredients.stock_check_enabled` — boolean flag to indicate which ingredients appear in the stock check section
 
 ## API Routes
 
@@ -83,6 +86,9 @@ All routes under `/api/`:
 - `/production-plans/:id/dough-prep` — GET: dough breakdown, mix schedule, ball weights
 - `/production-plans/:id/packing` — GET: adjusted pack counts + dispatch cross-reference
 - `/production-plans/:id/ingredient-requirements?station=` — GET: full ingredient breakdown for a plan with recursive sub-recipe explosion. Returns per-ingredient totals (cooked/raw qty with processing ratio) and per-recipe breakdown. Station filter: prep_veg, prep_bases, prep_meat, all (default).
+- `/production-plans/:id/main-prep` — GET: all ingredients (excluding raw_meat) grouped by ingredient with per-recipe tin breakdowns + completions
+- `/production-plans/:id/prep-completions` — POST: mark a tin as complete; DELETE `/:completionId`: unmark (scoped by planId)
+- `/production-plans/stock-checks` — GET `?date=`: daily stock checks; POST: upsert stock check quantity
 - `/production-plans/:id/items/:itemId/wonly` — POST: increment wonky; DELETE: decrement wonky
 - `/production-plans/next-active` — GET: next weekday with active plan (used by prep/dough-prep stations)
 - `/app-settings/:key` — GET/PUT admin-only global settings (mixer_capacity_kg)
@@ -96,8 +102,8 @@ Every package extends `tsconfig.base.json` which sets `composite: true`.
 The station page (`/station`) provides a full-screen view with:
 - **Mixing & Cooking** — DnD reordering of recipe queue (pending items only; admin can reorder any); batch +/− counters; break tracker; EOD summary with avg mins/batch
 - **Building Line 1 & 2** — show fill weight, base type, base weight chips from recipe; batch counters; EOD summary; SOP button on recipe header (opens sopUrl in new tab)
-- **Prep Hub** (stationType="prep") — 3-tile sub-station picker: Raw Veg, Bases & Mozzarella, Raw Meat. Shows "Prep for [Day], [Date]" banner using next active plan lookup.
-  - **Raw Veg** (prep_veg) — fetches prep requirements for the next active plan; full-screen one-item-at-a-time mode with Done→Next + overview list toggle
+- **Prep Hub** (stationType="prep") — 3-tile sub-station picker: Main Prep, Bases & Mozzarella, Raw Meat. Shows "Prep on [Day] / for production on [Day]" banner using next active plan lookup.
+  - **Main Prep** (main_prep) — fetches `/api/production-plans/:id/main-prep`; groups all non-meat ingredients by ingredient name across recipes; per-recipe tin breakdowns with individual tin checkboxes (POST/DELETE `/prep-completions`); overall progress bar (completed tins / total tins); "Stock Check After Prep" section for `stockCheckEnabled` ingredients with quantity inputs (POST `/stock-checks` with upsert); loads existing stock check values on mount via GET `/stock-checks?date=`
   - **Bases & Mozzarella** (prep_bases) — per-recipe tin counts (green badge), full-screen + overview modes
   - **Raw Meat** (prep_meat) — per-ingredient tray counts with per-tray kg breakdown, full-screen (rose badge) + overview modes
 - **Dough Prep** (dough_prep) — fetches `/api/production-plans/:id/dough-prep`; shows total dough kg, mixer capacity (from `app_settings`), number of mixes, per-ingredient breakdown (Flour/Water/Oil/Salt/Yeast) per mix, dough ball weights per recipe, batch counters

@@ -1,8 +1,9 @@
-import { pgTable, serial, text, numeric, integer, timestamp, date, boolean } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, numeric, integer, timestamp, date, boolean, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { recipesTable } from "./recipes";
 import { usersTable } from "./users";
+import { ingredientsTable } from "./ingredients";
 
 export const productionPlansTable = pgTable("production_plans", {
   id: serial("id").primaryKey(),
@@ -87,6 +88,32 @@ export const insertStationBreakSchema = createInsertSchema(stationBreaksTable).o
 export const insertDptSettingSchema = createInsertSchema(dptSettingsTable).omit({ id: true, updatedAt: true });
 export const insertTimingStandardSchema = createInsertSchema(timingStandardsTable).omit({ id: true, updatedAt: true });
 
+export const prepCompletionsTable = pgTable("prep_completions", {
+  id: serial("id").primaryKey(),
+  planId: integer("plan_id").notNull().references(() => productionPlansTable.id, { onDelete: "cascade" }),
+  ingredientId: integer("ingredient_id").notNull().references(() => ingredientsTable.id, { onDelete: "cascade" }),
+  recipeId: integer("recipe_id").notNull().references(() => recipesTable.id, { onDelete: "cascade" }),
+  tinNumber: integer("tin_number").notNull(),
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  completedAt: timestamp("completed_at").notNull().defaultNow(),
+}, (table) => [
+  unique("uq_prep_completion").on(table.planId, table.ingredientId, table.recipeId, table.tinNumber),
+]);
+
+export const dailyStockChecksTable = pgTable("daily_stock_checks", {
+  id: serial("id").primaryKey(),
+  ingredientId: integer("ingredient_id").notNull().references(() => ingredientsTable.id, { onDelete: "cascade" }),
+  checkDate: date("check_date").notNull(),
+  quantity: numeric("quantity", { precision: 10, scale: 4 }),
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  checkedAt: timestamp("checked_at").notNull().defaultNow(),
+}, (table) => [
+  unique("uq_stock_check_ingredient_date").on(table.ingredientId, table.checkDate),
+]);
+
+export const insertPrepCompletionSchema = createInsertSchema(prepCompletionsTable).omit({ id: true });
+export const insertDailyStockCheckSchema = createInsertSchema(dailyStockChecksTable).omit({ id: true, checkedAt: true });
+
 export type InsertProductionPlan = z.infer<typeof insertProductionPlanSchema>;
 export type ProductionPlan = typeof productionPlansTable.$inferSelect;
 export type ProductionPlanItem = typeof productionPlanItemsTable.$inferSelect;
@@ -94,3 +121,5 @@ export type BatchCompletion = typeof batchCompletionsTable.$inferSelect;
 export type StationBreak = typeof stationBreaksTable.$inferSelect;
 export type DptSetting = typeof dptSettingsTable.$inferSelect;
 export type TimingStandard = typeof timingStandardsTable.$inferSelect;
+export type PrepCompletion = typeof prepCompletionsTable.$inferSelect;
+export type DailyStockCheck = typeof dailyStockChecksTable.$inferSelect;
