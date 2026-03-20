@@ -2576,9 +2576,9 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
       });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
-      toast({ title: "Wonly recorded", description: `Quality reject logged for ${item.recipeName ?? "recipe"}.` });
+      toast({ title: "Wonky recorded", description: `Quality reject logged for ${item.recipeName ?? "recipe"}.` });
     } catch (err) {
-      toast({ title: "Wonly failed", description: err instanceof Error ? err.message : "Could not record wonly.", variant: "destructive" });
+      toast({ title: "Wonky failed", description: err instanceof Error ? err.message : "Could not record wonky.", variant: "destructive" });
     } finally {
       setWonlyLoading(null);
     }
@@ -2595,7 +2595,7 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
     } catch (err) {
-      toast({ title: "Undo failed", description: err instanceof Error ? err.message : "Could not undo wonly.", variant: "destructive" });
+      toast({ title: "Undo failed", description: err instanceof Error ? err.message : "Could not undo wonky.", variant: "destructive" });
     } finally {
       setWonlyLoading(null);
     }
@@ -2656,7 +2656,7 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
             </div>
             {(currentItem.wonlyCount ?? 0) > 0 && (
               <div className="bg-red-50 dark:bg-red-900/20 rounded-lg px-4 py-2 text-center min-w-[80px]">
-                <p className="text-xs text-muted-foreground">Wonlys</p>
+                <p className="text-xs text-muted-foreground">Wonky</p>
                 <p className="text-3xl font-bold text-red-600 dark:text-red-400">{currentItem.wonlyCount ?? 0}</p>
               </div>
             )}
@@ -2684,7 +2684,7 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
           <div className="border-t border-border/50 pt-3">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs font-semibold text-muted-foreground">QUALITY REJECTS (Wonly)</p>
+                <p className="text-xs font-semibold text-muted-foreground">QUALITY REJECTS (Wonky)</p>
                 <p className="text-xs text-muted-foreground">Substandard packs not counted in output</p>
               </div>
               <div className="flex items-center gap-2">
@@ -2724,7 +2724,7 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
           <p className="text-2xl font-bold tabular-nums">{sessionGrossPacks}</p>
         </div>
         <div className="bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-xl p-3 text-center">
-          <p className="text-xs text-red-700 dark:text-red-300 mb-1">Total Wonlys</p>
+          <p className="text-xs text-red-700 dark:text-red-300 mb-1">Total Wonky</p>
           <p className="text-2xl font-bold tabular-nums text-red-600 dark:text-red-400">{sessionWonly}</p>
         </div>
         <div className="bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3 text-center">
@@ -2761,7 +2761,7 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
               <th className="py-2 px-3 text-left font-medium">Recipe</th>
               <th className="py-2 px-3 text-center font-medium">Done</th>
               <th className="py-2 px-3 text-center font-medium">Packs</th>
-              <th className="py-2 px-3 text-center font-medium">Wonlys</th>
+              <th className="py-2 px-3 text-center font-medium">Wonky</th>
               <th className="py-2 px-3 text-center font-medium">Net</th>
               <th className="py-2 px-3 text-center font-medium">
                 <Snowflake className="w-3.5 h-3.5 inline text-cyan-500" />
@@ -2945,7 +2945,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
             <p className="text-lg font-bold tabular-nums">{totalGross}</p>
           </div>
           <div className="text-center bg-red-50 dark:bg-red-950/20 rounded-lg py-2">
-            <p className="text-xs text-red-600 dark:text-red-400">Wonlys</p>
+            <p className="text-xs text-red-600 dark:text-red-400">Wonky</p>
             <p className="text-lg font-bold tabular-nums text-red-600 dark:text-red-400">{totalWonly}</p>
           </div>
           <div className="text-center bg-purple-50 dark:bg-purple-950/20 rounded-lg py-2">
@@ -3016,7 +3016,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                     </div>
                     {wonlys > 0 && (
                       <div className="text-center">
-                        <span className="text-xs text-red-500 block">Wonlys</span>
+                        <span className="text-xs text-red-500 block">Wonky</span>
                         <span className="font-semibold tabular-nums text-red-600 dark:text-red-400">−{wonlys}</span>
                       </div>
                     )}
@@ -3245,7 +3245,7 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
                 <p className="text-lg font-bold tabular-nums">{packData.totalGrossPacks}</p>
               </div>
               <div className="text-center">
-                <p className="text-xs text-red-600 dark:text-red-400">Wonlys</p>
+                <p className="text-xs text-red-600 dark:text-red-400">Wonky</p>
                 <p className="text-lg font-bold tabular-nums text-red-600 dark:text-red-400">{packData.totalWonly}</p>
               </div>
               <div className="text-center">
@@ -3307,7 +3307,7 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
                     <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
                       <span>{packItem.batchesComplete} batches</span>
                       {packItem.wonlyCount > 0 && (
-                        <span className="text-red-600 dark:text-red-400">−{packItem.wonlyCount} wonlys</span>
+                        <span className="text-red-600 dark:text-red-400">−{packItem.wonlyCount} wonky</span>
                       )}
                     </div>
                   </div>

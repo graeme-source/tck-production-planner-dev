@@ -1442,7 +1442,7 @@ router.get("/:id/station-activity", async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// POST /:id/items/:itemId/wonly — atomically increment wonlyCount by 1 (quality reject)
+// POST /:id/items/:itemId/wonly — atomically increment wonkyCount by 1 (quality reject)
 // ──────────────────────────────────────────────────────────────────────────────
 router.post("/:id/items/:itemId/wonly", async (req, res) => {
   const planId = Number(req.params.id);
@@ -1469,7 +1469,7 @@ router.post("/:id/items/:itemId/wonly", async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// DELETE /:id/items/:itemId/wonly — atomically decrement wonlyCount (floor at 0)
+// DELETE /:id/items/:itemId/wonly — atomically decrement wonkyCount (floor at 0)
 // ──────────────────────────────────────────────────────────────────────────────
 router.delete("/:id/items/:itemId/wonly", async (req, res) => {
   const planId = Number(req.params.id);
@@ -1485,7 +1485,7 @@ router.delete("/:id/items/:itemId/wonly", async (req, res) => {
     return;
   }
   if ((item.wonlyCount ?? 0) <= 0) {
-    res.status(409).json({ error: "Wonly count is already 0" });
+    res.status(409).json({ error: "Wonky count is already 0" });
     return;
   }
 

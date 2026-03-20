@@ -82,7 +82,7 @@ All routes under `/api/`:
 - `/dispatch-orders` — CRUD with date filtering
 - `/production-plans/:id/dough-prep` — GET: dough breakdown, mix schedule, ball weights
 - `/production-plans/:id/packing` — GET: adjusted pack counts + dispatch cross-reference
-- `/production-plans/:id/items/:itemId/wonly` — POST: increment wonly; DELETE: decrement wonly
+- `/production-plans/:id/items/:itemId/wonly` — POST: increment wonky; DELETE: decrement wonky
 - `/production-plans/next-active` — GET: next weekday with active plan (used by prep/dough-prep stations)
 - `/app-settings/:key` — GET/PUT admin-only global settings (mixer_capacity_kg)
 
@@ -101,9 +101,9 @@ The station page (`/station`) provides a full-screen view with:
   - **Raw Meat** (prep_meat) — per-ingredient tray counts with per-tray kg breakdown, full-screen (rose badge) + overview modes
 - **Dough Prep** (dough_prep) — fetches `/api/production-plans/:id/dough-prep`; shows total dough kg, mixer capacity (from `app_settings`), number of mixes, per-ingredient breakdown (Flour/Water/Oil/Salt/Yeast) per mix, dough ball weights per recipe, batch counters
 - **Dough Sheeting** (dough_sheeting) — shows ordered sheeting queue with ball weight (from dough sub-recipe) and per-item "Ready" checkbox toggle
-- **Ovens** (ovens) — batch counters using per-station oven counts + cascade indicator showing "Built: X" from building; Wonly button; session totals: gross packs, total wonlys, net packs; blast chiller tray count (`ceil(netPacks/10)`); per-recipe table with snowflake icon column
+- **Ovens** (ovens) — batch counters using per-station oven counts + cascade indicator showing "Built: X" from building; Wonky button; session totals: gross packs, total wonky, net packs; blast chiller tray count (`ceil(netPacks/10)`); per-recipe table with snowflake icon column
 - **Wrapping** (wrapping) — per-recipe pack counts (gross/net from oven stationCompletions); 3 storage locations: Production Fridge (`fridgeQty`), Product Freezer (`freezerQty`), Prep Fridge (`prepFridgeQty`); tabbed storage controls with "Add 24" quick-add + custom + undo per location; wrapping-complete toggle per recipe
-- **Packing** (packing) — fetches `/api/production-plans/:id/packing`; per-recipe cards with net packs + dispatch order cross-reference (surplus/short indicator); packed checkbox toggle; session gross/wonly/net pack totals
+- **Packing** (packing) — fetches `/api/production-plans/:id/packing`; per-recipe cards with net packs + dispatch order cross-reference (surplus/short indicator); packed checkbox toggle; session gross/wonky/net pack totals
 - **Next-plan lookup**: `GET /api/production-plans/next-active` endpoint — finds next weekday (Mon-Fri) with `status='active'` within 7 days from **tomorrow** (i=1, not today). Used by PrepHub and DoughPrepStation to display "Prep for [Day], [Date]" on tiles and banners.
 
 Recipe fields added for station cards: `fill_weight_grams`, `base_type`, `base_weight_grams`, `sop_url`.

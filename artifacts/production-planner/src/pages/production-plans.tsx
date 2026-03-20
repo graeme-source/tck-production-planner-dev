@@ -1106,7 +1106,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
               <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Target</th>
               <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Packs</th>
               <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Done</th>
-              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Wonlys</th>
+              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Wonky</th>
               <th className="py-2.5 px-4 text-right font-medium text-muted-foreground">Tin Size</th>
               <th className="py-2.5 px-4 text-right font-medium text-muted-foreground">Tins</th>
               <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Status</th>
