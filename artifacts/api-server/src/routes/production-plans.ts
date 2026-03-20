@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable } from "@workspace/db";
-import { eq, and, desc, sql, gt, asc, inArray } from "drizzle-orm";
+import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, dptSettingsTable } from "@workspace/db";
+import { eq, and, desc, sql, gt, gte, lte, asc, inArray } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
 import * as z from "zod";
@@ -180,6 +180,253 @@ router.post("/", validate(CreatePlanBody), async (req, res) => {
     );
   }
   res.status(201).json(mapPlan(plan));
+});
+
+// GET /production-plans/calculate?planDate=YYYY-MM-DD
+// Returns per-recipe calculation data for creating a smart production plan.
+router.get("/calculate", async (req, res) => {
+  const planDate = String(req.query.planDate ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(planDate)) {
+    res.status(400).json({ error: "planDate query param required (YYYY-MM-DD)" });
+    return;
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Helper: get next N working days from a date string
+  function getNextWorkingDays(fromDate: string, count: number): string[] {
+    const dates: string[] = [];
+    const d = new Date(`${fromDate}T12:00:00Z`);
+    while (dates.length < count) {
+      d.setUTCDate(d.getUTCDate() + 1);
+      const dow = d.getUTCDay();
+      if (dow !== 0 && dow !== 6) {
+        dates.push(d.toISOString().slice(0, 10));
+      }
+    }
+    return dates;
+  }
+
+  // Delivery dates: the plan date itself is for the next dispatch, then +1 and +2 working days after
+  const deliveryDates = [planDate, ...getNextWorkingDays(planDate, 2)];
+
+  // 1. Get latest stock entries per recipe (finished goods), ordered by checked_at ascending
+  //    so that iterating overwrites with the most recent value per recipe
+  const stockRows = await db
+    .select({
+      recipeId: stockEntriesTable.recipeId,
+      quantity: stockEntriesTable.quantity,
+    })
+    .from(stockEntriesTable)
+    .where(eq(stockEntriesTable.itemType, "recipe"))
+    .orderBy(asc(stockEntriesTable.checkedAt));
+
+  const latestStock: Record<number, number> = {};
+  for (const row of stockRows) {
+    if (row.recipeId != null) {
+      latestStock[row.recipeId] = Number(row.quantity);
+    }
+  }
+
+  // 2. Get dispatch orders for today (pending/confirmed only)
+  const actionableStatuses = ["pending", "confirmed"];
+  const todayDispatches = await db
+    .select({
+      recipeId: dispatchOrdersTable.recipeId,
+      quantity: dispatchOrdersTable.quantity,
+    })
+    .from(dispatchOrdersTable)
+    .where(and(
+      eq(dispatchOrdersTable.dispatchDate, today),
+      inArray(dispatchOrdersTable.status, actionableStatuses),
+    ));
+
+  const todayDispatchByRecipe: Record<number, number> = {};
+  for (const d of todayDispatches) {
+    todayDispatchByRecipe[d.recipeId] = (todayDispatchByRecipe[d.recipeId] ?? 0) + Number(d.quantity);
+  }
+
+  // 3. Get today's production plan items (what we're producing today)
+  const todayPlans = await db
+    .select({
+      recipeId: productionPlanItemsTable.recipeId,
+      batchesTarget: productionPlanItemsTable.batchesTarget,
+      portionsPerBatch: recipesTable.portionsPerBatch,
+      packSize: recipesTable.packSize,
+    })
+    .from(productionPlanItemsTable)
+    .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
+    .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(eq(productionPlansTable.planDate, today));
+
+  const todayProductionByRecipe: Record<number, number> = {};
+  for (const p of todayPlans) {
+    const packs = p.batchesTarget * (Number(p.portionsPerBatch) || 10) / (Number(p.packSize) || 1);
+    todayProductionByRecipe[p.recipeId] = (todayProductionByRecipe[p.recipeId] ?? 0) + packs;
+  }
+
+  // 4. Get dispatch orders for the next 3 delivery dates (pending/confirmed only)
+  const allDeliveryDispatches = await db
+    .select({
+      recipeId: dispatchOrdersTable.recipeId,
+      dispatchDate: dispatchOrdersTable.dispatchDate,
+      quantity: dispatchOrdersTable.quantity,
+    })
+    .from(dispatchOrdersTable)
+    .where(and(
+      inArray(dispatchOrdersTable.dispatchDate, deliveryDates),
+      inArray(dispatchOrdersTable.status, actionableStatuses),
+    ));
+
+  const dispatchByDateRecipe: Record<string, Record<number, number>> = {};
+  for (const date of deliveryDates) dispatchByDateRecipe[date] = {};
+  for (const d of allDeliveryDispatches) {
+    if (dispatchByDateRecipe[d.dispatchDate]) {
+      dispatchByDateRecipe[d.dispatchDate][d.recipeId] = (dispatchByDateRecipe[d.dispatchDate][d.recipeId] ?? 0) + Number(d.quantity);
+    }
+  }
+
+  // 5. Get DPT settings with recipe info
+  const dptRows = await db
+    .select({
+      recipeId: dptSettingsTable.recipeId,
+      recipeName: recipesTable.name,
+      packsSold: dptSettingsTable.packsSold,
+      isActive: dptSettingsTable.isActive,
+      portionsPerBatch: recipesTable.portionsPerBatch,
+      packSize: recipesTable.packSize,
+      tinSize: recipesTable.tinSize,
+      maxBatchesPerTin: recipesTable.maxBatchesPerTin,
+      sopUrl: recipesTable.sopUrl,
+    })
+    .from(dptSettingsTable)
+    .innerJoin(recipesTable, eq(dptSettingsTable.recipeId, recipesTable.id))
+    .where(eq(dptSettingsTable.isActive, true));
+
+  // 6. Get total daily batches setting
+  const [totalBatchesSetting] = await db
+    .select()
+    .from(appSettingsTable)
+    .where(eq(appSettingsTable.key, "total_daily_batches"));
+  const totalDailyBatches = totalBatchesSetting ? Number(totalBatchesSetting.value) : 0;
+
+  const totalPacksSold = dptRows.reduce((sum, r) => sum + (r.packsSold ?? 0), 0);
+
+  // Build per-recipe calculation
+  const recipes = dptRows.map(r => {
+    const recipeId = r.recipeId;
+    const portionsPerBatch = Number(r.portionsPerBatch) || 10;
+    const packSize = Number(r.packSize) || 1;
+    const packsPerBatch = portionsPerBatch / packSize;
+
+    // Today's Factory Number = current stock - today's dispatches + today's production
+    const currentStock = latestStock[recipeId] ?? 0;
+    const todayDispatch = todayDispatchByRecipe[recipeId] ?? 0;
+    const todayProduction = todayProductionByRecipe[recipeId] ?? 0;
+    const todayFactoryNumber = currentStock - todayDispatch + todayProduction;
+
+    // Next dispatch sales (delivery date 0 = planDate)
+    const nextDispatchQty = dispatchByDateRecipe[deliveryDates[0]]?.[recipeId] ?? 0;
+
+    // Delivery +1 and +2
+    const deliveryPlus1Qty = dispatchByDateRecipe[deliveryDates[1]]?.[recipeId] ?? 0;
+    const deliveryPlus2Qty = dispatchByDateRecipe[deliveryDates[2]]?.[recipeId] ?? 0;
+
+    // Deficit: how many packs needed to reach zero after deducting next 3 delivery dates
+    const totalDemand = nextDispatchQty + deliveryPlus1Qty + deliveryPlus2Qty;
+    const deficit = Math.max(0, totalDemand - todayFactoryNumber);
+
+    // DPT percentage
+    const packsSold = r.packsSold ?? 0;
+    const salesPercent = totalPacksSold > 0 ? (packsSold / totalPacksSold) * 100 : 0;
+
+    // Deficit in batches (minimum needed)
+    const deficitBatches = packsPerBatch > 0 ? Math.ceil(deficit / packsPerBatch) : 0;
+
+    // Stock warning for next dispatch specifically
+    const stockAfterNextDispatch = todayFactoryNumber - nextDispatchQty;
+    let stockWarning: "ok" | "low" | "short" = "ok";
+    if (stockAfterNextDispatch < 0) {
+      stockWarning = "short";
+    } else if (stockAfterNextDispatch <= 10) {
+      stockWarning = "low";
+    }
+
+    return {
+      recipeId,
+      recipeName: r.recipeName ?? `Recipe #${recipeId}`,
+      portionsPerBatch,
+      packSize,
+      packsPerBatch,
+      tinSize: r.tinSize ?? null,
+      maxBatchesPerTin: r.maxBatchesPerTin ? Number(r.maxBatchesPerTin) : null,
+      sopUrl: r.sopUrl ?? null,
+      currentStock,
+      todayDispatch,
+      todayProduction,
+      todayFactoryNumber: Math.round(todayFactoryNumber),
+      nextDispatchQty,
+      deliveryPlus1Qty,
+      deliveryPlus2Qty,
+      deficit,
+      deficitBatches,
+      salesPercent: Math.round(salesPercent * 10) / 10,
+      packsSold,
+      stockWarning,
+    };
+  });
+
+  // Calculate suggested batches: first cover deficits, then distribute remaining capacity by DPT%
+  const totalDeficitBatches = recipes.reduce((s, r) => s + r.deficitBatches, 0);
+  const remainingCapacity = Math.max(0, totalDailyBatches - totalDeficitBatches);
+
+  // Distribute remaining capacity by DPT% using largest remainder method
+  const rawSurplus = recipes.map(r => {
+    const exact = totalPacksSold > 0 ? (r.salesPercent / 100) * remainingCapacity : 0;
+    return { exact, floor: Math.floor(exact) };
+  });
+
+  let leftover = remainingCapacity - rawSurplus.reduce((s, r) => s + r.floor, 0);
+  const surplusSorted = rawSurplus
+    .map((r, idx) => ({ idx, remainder: r.exact - r.floor }))
+    .sort((a, b) => b.remainder - a.remainder);
+  const bonusSet = new Set<number>();
+  for (const { idx } of surplusSorted) {
+    if (leftover <= 0) break;
+    bonusSet.add(idx);
+    leftover--;
+  }
+
+  const result = recipes.map((r, idx) => {
+    const surplusBatches = rawSurplus[idx].floor + (bonusSet.has(idx) ? 1 : 0);
+    const suggestedBatches = r.deficitBatches + surplusBatches;
+    const maxBatchesPerTin = r.maxBatchesPerTin;
+    const tinCount = maxBatchesPerTin && suggestedBatches > 0
+      ? Math.ceil(suggestedBatches / maxBatchesPerTin) : null;
+
+    // Next Factory Number = todayFactoryNumber + (suggestedBatches * packsPerBatch) - totalDemand
+    const nextFactoryNumber = r.todayFactoryNumber + (suggestedBatches * r.packsPerBatch) - (r.nextDispatchQty + r.deliveryPlus1Qty + r.deliveryPlus2Qty);
+
+    return {
+      ...r,
+      surplusBatches,
+      suggestedBatches,
+      tinCount,
+      nextFactoryNumber: Math.round(nextFactoryNumber),
+      totalDailyBatches,
+      totalPacksSold,
+    };
+  });
+
+  res.json({
+    planDate,
+    today,
+    deliveryDates,
+    totalDailyBatches,
+    totalDeficitBatches,
+    remainingCapacity,
+    recipes: result,
+  });
 });
 
 // GET /production-plans/next-active?afterDate=YYYY-MM-DD

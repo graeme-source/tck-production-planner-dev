@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   useListProductionPlans,
   useGetProductionPlan,
@@ -18,8 +18,9 @@ import {
   BarChart2, CheckCircle2,
   Loader2, RefreshCw, Info, Package, ClipboardList, ExternalLink,
   Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef,
-  ArrowRight, GripVertical,
+  ArrowRight, GripVertical, AlertTriangle, AlertCircle,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { format, addDays, parseISO, isWeekend, isToday } from "date-fns";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -113,8 +114,28 @@ interface PlanItem {
   tinSize: string | null;
   salesPercent: number;
   portionsPerBatch: number;
+  packsPerBatch: number;
   sopUrl: string | null;
   isFromDpt: boolean;
+  todayFactoryNumber: number;
+  nextDispatchQty: number;
+  deliveryPlus1Qty: number;
+  deliveryPlus2Qty: number;
+  deficit: number;
+  deficitBatches: number;
+  surplusBatches: number;
+  stockWarning: "ok" | "low" | "short";
+}
+
+function computeNextFactory(item: PlanItem): number {
+  return item.todayFactoryNumber + (item.batchesTarget * item.packsPerBatch) - item.nextDispatchQty - item.deliveryPlus1Qty - item.deliveryPlus2Qty;
+}
+
+function computeStockWarning(item: PlanItem): "ok" | "low" | "short" {
+  const surplus = item.todayFactoryNumber - item.nextDispatchQty;
+  if (surplus < 0) return "short";
+  if (surplus <= 10) return "low";
+  return "ok";
 }
 
 interface SortableRowProps {
@@ -134,6 +155,9 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onRemove }: Sortab
     opacity: isDragging ? 0.5 : 1,
   };
 
+  const nextFactory = computeNextFactory(item);
+  const warning = item.stockWarning;
+
   return (
     <tr
       ref={setNodeRef}
@@ -144,17 +168,17 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onRemove }: Sortab
         isDragging ? "shadow-lg" : ""
       )}
     >
-      <td className="py-2.5 px-2">
+      <td className="py-2 px-1.5">
         <button
           {...attributes}
           {...listeners}
-          className="cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground p-1"
+          className="cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground p-0.5"
           title="Drag to reorder"
         >
-          <GripVertical className="w-4 h-4" />
+          <GripVertical className="w-3.5 h-3.5" />
         </button>
       </td>
-      <td className="py-2.5 px-2">
+      <td className="py-2 px-1.5">
         <input
           type="checkbox"
           checked={item.included}
@@ -162,64 +186,71 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onRemove }: Sortab
           className="rounded border-border"
         />
       </td>
-      <td className="py-2.5 px-3">
-        <div className="flex items-center gap-2">
-          <span className="font-medium">{item.recipeName}</span>
+      <td className="py-2 px-2">
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium text-sm">{item.recipeName}</span>
           {item.sopUrl && (
-            <a
-              href={item.sopUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-muted-foreground hover:text-primary transition-colors"
-              title="Open SOP"
-            >
+            <a href={item.sopUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-primary transition-colors" title="Open SOP">
               <ExternalLink className="w-3 h-3" />
             </a>
           )}
           {!item.isFromDpt && (
-            <span className="text-xs bg-secondary text-muted-foreground px-1.5 py-0.5 rounded">manual</span>
+            <span className="text-[10px] bg-secondary text-muted-foreground px-1 py-0.5 rounded">manual</span>
           )}
         </div>
-        <div className="text-xs text-muted-foreground">
-          {item.portionsPerBatch} portions/batch
-          {item.maxBatchesPerTin ? ` · ${item.maxBatchesPerTin} batches/tin` : ""}
-          {item.tinSize ? ` · ${item.tinSize}` : ""}
+      </td>
+      <td className="py-2 px-2 text-right tabular-nums text-sm">
+        {item.todayFactoryNumber}
+      </td>
+      <td className="py-2 px-2 text-right tabular-nums text-sm">
+        <div className="flex items-center justify-end gap-1">
+          {warning === "short" && <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />}
+          {warning === "low" && <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
+          <span className={cn(
+            warning === "short" && "text-red-600 dark:text-red-400 font-semibold",
+            warning === "low" && "text-amber-600 dark:text-amber-400",
+          )}>
+            {item.nextDispatchQty}
+          </span>
         </div>
       </td>
-      <td className="py-2.5 px-3 text-right text-muted-foreground">
-        {item.isFromDpt && item.salesPercent > 0 ? (
-          <span className="font-mono text-xs">{item.salesPercent.toFixed(1)}%</span>
-        ) : (
-          <span className="opacity-40">—</span>
-        )}
+      <td className="py-2 px-2 text-right tabular-nums text-xs text-muted-foreground">{item.deliveryPlus1Qty || "—"}</td>
+      <td className="py-2 px-2 text-right tabular-nums text-xs text-muted-foreground">{item.deliveryPlus2Qty || "—"}</td>
+      <td className="py-2 px-2 text-right tabular-nums text-xs text-muted-foreground">
+        {item.deficit > 0 ? <span className="text-red-600 dark:text-red-400">-{item.deficit}</span> : "0"}
       </td>
-      <td className="py-2.5 px-3 text-right text-muted-foreground">
-        {item.isFromDpt ? item.suggestedBatches : <span className="opacity-40">—</span>}
+      <td className="py-2 px-2 text-right tabular-nums text-xs text-muted-foreground">
+        {item.isFromDpt && item.salesPercent > 0 ? `${item.salesPercent.toFixed(1)}%` : "—"}
       </td>
-      <td className="py-2.5 px-3 text-right">
+      <td className="py-2 px-2 text-right tabular-nums text-xs text-muted-foreground">
+        {item.suggestedBatches}
+      </td>
+      <td className="py-2 px-2 text-right">
         <input
           type="number"
           min={0}
           value={item.batchesTarget}
           onChange={e => onBatchChange(item.id, Number(e.target.value))}
           disabled={!item.included || saving}
-          className="w-20 px-2 py-1 bg-background border border-border rounded-lg text-sm text-right focus-ring disabled:opacity-40"
+          className="w-16 px-1.5 py-1 bg-background border border-border rounded-lg text-xs text-right focus-ring disabled:opacity-40 tabular-nums"
         />
       </td>
-      <td className="py-2.5 px-3 text-right font-medium">
-        {item.tinCount !== null ? (
-          <span className="text-emerald-600 dark:text-emerald-400">{item.tinCount}</span>
-        ) : (
-          <span className="text-muted-foreground opacity-40">—</span>
-        )}
+      <td className="py-2 px-2 text-right tabular-nums text-sm font-medium">
+        <span className={cn(
+          nextFactory < 0 && "text-red-600 dark:text-red-400",
+          nextFactory >= 0 && nextFactory <= 10 && "text-amber-600 dark:text-amber-400",
+          nextFactory > 10 && "text-emerald-600 dark:text-emerald-400",
+        )}>
+          {Math.round(nextFactory)}
+        </span>
       </td>
-      <td className="py-2.5 px-2 text-right">
+      <td className="py-2 px-1.5 text-right">
         <button
           onClick={() => onRemove(item.id)}
-          className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded"
+          className="p-0.5 text-muted-foreground hover:text-destructive transition-colors rounded"
           title="Remove from plan"
         >
-          <Trash2 className="w-3.5 h-3.5" />
+          <Trash2 className="w-3 h-3" />
         </button>
       </td>
     </tr>
@@ -235,6 +266,53 @@ interface CreatePlanDialogProps {
   onCreated?: (planId: number) => void;
 }
 
+interface CalcRecipe {
+  recipeId: number;
+  recipeName: string;
+  portionsPerBatch: number;
+  packSize: number;
+  packsPerBatch: number;
+  tinSize: string | null;
+  maxBatchesPerTin: number | null;
+  sopUrl: string | null;
+  currentStock: number;
+  todayDispatch: number;
+  todayProduction: number;
+  todayFactoryNumber: number;
+  nextDispatchQty: number;
+  deliveryPlus1Qty: number;
+  deliveryPlus2Qty: number;
+  deficit: number;
+  deficitBatches: number;
+  salesPercent: number;
+  packsSold: number;
+  stockWarning: "ok" | "low" | "short";
+  surplusBatches: number;
+  suggestedBatches: number;
+  tinCount: number | null;
+  nextFactoryNumber: number;
+  totalDailyBatches: number;
+  totalPacksSold: number;
+}
+
+interface CalcResponse {
+  planDate: string;
+  today: string;
+  deliveryDates: string[];
+  totalDailyBatches: number;
+  totalDeficitBatches: number;
+  remainingCapacity: number;
+  recipes: CalcRecipe[];
+}
+
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+async function fetchCalculation(planDate: string): Promise<CalcResponse> {
+  const res = await fetch(`${BASE}/api/production-plans/calculate?planDate=${planDate}`, { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to fetch calculation");
+  return res.json();
+}
+
 function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   const minPlanDate = getMinPlanDate();
   const [planDate, setPlanDate] = useState(toLocalDateStr(minPlanDate));
@@ -245,10 +323,12 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   const [addRecipeId, setAddRecipeId] = useState<string>("");
   const [dateWarning, setDateWarning] = useState<string | null>(null);
 
-  const { data: suggestions, isLoading: loadingDpt, refetch: refetchDpt } = useGetDptCalculator(
-    { date: planDate },
-    { query: { queryKey: getGetDptCalculatorQueryKey({ date: planDate }), enabled: open } }
-  );
+  const { data: calcData, isLoading: loadingCalc, refetch: refetchCalc } = useQuery({
+    queryKey: ["production-plan-calculate", planDate],
+    queryFn: () => fetchCalculation(planDate),
+    enabled: open && !!planDate,
+  });
+
   const { data: allRecipes } = useListRecipes({ query: { queryKey: getListRecipesQueryKey(), enabled: open } });
   const { createPlan } = useAppMutations();
 
@@ -259,7 +339,6 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
     let fixed = toNextWeekdayIfWeekend(raw);
     const warnings: string[] = [];
     if (fixed !== raw) warnings.push("Weekends are not production days — date moved to the next Monday.");
-    // Enforce 2 working-day minimum lead time
     const min = getMinPlanDate();
     if (parseISO(fixed) < min) {
       fixed = toLocalDateStr(min);
@@ -277,25 +356,34 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   }, [planDate]);
 
   useEffect(() => {
-    if (!suggestions) return;
+    if (!calcData?.recipes) return;
     setItems(
-      suggestions.map((s: DptSuggestion) => ({
-        id: `dpt-${s.recipeId}`,
-        recipeId: s.recipeId,
-        recipeName: s.recipeName ?? `Recipe #${s.recipeId}`,
-        included: s.suggestedBatches > 0,
-        suggestedBatches: s.suggestedBatches,
-        batchesTarget: s.suggestedBatches,
-        tinCount: s.tinCount ?? null,
-        maxBatchesPerTin: s.maxBatchesPerTin ?? null,
-        tinSize: s.tinSize ?? null,
-        salesPercent: s.salesPercent ?? 0,
-        portionsPerBatch: s.portionsPerBatch,
-        sopUrl: s.sopUrl ?? null,
+      calcData.recipes.map((r: CalcRecipe) => ({
+        id: `calc-${r.recipeId}`,
+        recipeId: r.recipeId,
+        recipeName: r.recipeName,
+        included: r.suggestedBatches > 0 || r.deficit > 0,
+        suggestedBatches: r.suggestedBatches,
+        batchesTarget: r.suggestedBatches,
+        tinCount: r.tinCount,
+        maxBatchesPerTin: r.maxBatchesPerTin,
+        tinSize: r.tinSize,
+        salesPercent: r.salesPercent,
+        portionsPerBatch: r.portionsPerBatch,
+        packsPerBatch: r.packsPerBatch,
+        sopUrl: r.sopUrl,
         isFromDpt: true,
+        todayFactoryNumber: r.todayFactoryNumber,
+        nextDispatchQty: r.nextDispatchQty,
+        deliveryPlus1Qty: r.deliveryPlus1Qty,
+        deliveryPlus2Qty: r.deliveryPlus2Qty,
+        deficit: r.deficit,
+        deficitBatches: r.deficitBatches,
+        surplusBatches: r.surplusBatches,
+        stockWarning: r.stockWarning,
       }))
     );
-  }, [suggestions]);
+  }, [calcData]);
 
   const recalcTins = (batchesTarget: number, maxBatchesPerTin: number | null): number | null => {
     if (!maxBatchesPerTin || batchesTarget <= 0) return null;
@@ -335,6 +423,8 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
     }
     const recipe = allRecipes?.find((r: Recipe) => r.id === recipeId);
     if (!recipe) return;
+    const portionsPerBatch = recipe.portionsPerBatch ?? 10;
+    const packSize = (recipe as any).packSize ?? 1;
     const newItem: PlanItem = {
       id: `manual-${recipeId}`,
       recipeId,
@@ -346,9 +436,18 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
       maxBatchesPerTin: recipe.maxBatchesPerTin ?? null,
       tinSize: recipe.tinSize ?? null,
       salesPercent: 0,
-      portionsPerBatch: recipe.portionsPerBatch ?? 10,
+      portionsPerBatch,
+      packsPerBatch: portionsPerBatch / packSize,
       sopUrl: recipe.sopUrl ?? null,
       isFromDpt: false,
+      todayFactoryNumber: 0,
+      nextDispatchQty: 0,
+      deliveryPlus1Qty: 0,
+      deliveryPlus2Qty: 0,
+      deficit: 0,
+      deficitBatches: 0,
+      surplusBatches: 0,
+      stockWarning: "ok",
     };
     setItems(prev => [...prev, newItem]);
     setAddRecipeId("");
@@ -392,10 +491,11 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
 
   const includedCount = items.filter(it => it.included).length;
   const availableToAdd = (allRecipes ?? []).filter((r: Recipe) => !items.some(it => it.recipeId === r.id));
+  const deliveryDates = calcData?.deliveryDates ?? [];
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-5xl bg-card border-border rounded-2xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-[95vw] w-[1200px] bg-card border-border rounded-2xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader className="pb-4 border-b border-border flex-shrink-0">
           <DialogTitle className="font-display text-xl flex items-center gap-2">
             <CalendarDays className="w-5 h-5 text-primary" />
@@ -404,7 +504,6 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
         </DialogHeader>
 
         <div className="overflow-y-auto flex-1 px-1 pt-1">
-          {/* Plan metadata */}
           <div className="grid grid-cols-2 gap-4 mb-5">
             <div>
               <label className="text-sm font-medium mb-1 block text-muted-foreground">Production Date</label>
@@ -443,25 +542,24 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
             </div>
           </div>
 
-          {/* Recipe table header */}
           <div className="flex items-center justify-between mb-2">
             <h3 className="font-semibold text-sm flex items-center gap-2">
               <BarChart2 className="w-4 h-4 text-primary" />
-              Production Items
+              Production Calculator
               <span className="text-muted-foreground font-normal text-xs">
                 ({includedCount} of {items.length} included · drag to reorder)
               </span>
             </h3>
             <button
-              onClick={() => refetchDpt()}
+              onClick={() => refetchCalc()}
               className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
             >
               <RefreshCw className="w-3 h-3" />
-              Refresh DPT
+              Recalculate
             </button>
           </div>
 
-          {loadingDpt ? (
+          {loadingCalc ? (
             <div className="flex items-center justify-center h-32 text-muted-foreground">
               <Loader2 className="w-5 h-5 animate-spin mr-2" />
               Calculating targets...
@@ -475,14 +573,14 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                   <p className="text-xs mt-1">Add recipes below or configure DPT settings in Admin Settings.</p>
                 </div>
               ) : (
-                <div className="border border-border rounded-xl overflow-hidden mb-3">
+                <div className="border border-border rounded-xl overflow-x-auto mb-3">
                   <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                     <SortableContext items={items.map(it => it.id)} strategy={verticalListSortingStrategy}>
-                      <table className="w-full text-sm">
+                      <table className="w-full text-xs">
                         <thead>
                           <tr className="bg-secondary/30 border-b border-border">
-                            <th className="w-8 py-2.5 px-2" />
-                            <th className="w-8 py-2.5 px-2">
+                            <th className="w-7 py-2 px-1.5" />
+                            <th className="w-7 py-2 px-1.5">
                               <input
                                 type="checkbox"
                                 checked={items.every(it => it.included)}
@@ -490,12 +588,23 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                                 className="rounded border-border"
                               />
                             </th>
-                            <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">Recipe</th>
-                            <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Sales %</th>
-                            <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Suggested</th>
-                            <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Batches</th>
-                            <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Tins</th>
-                            <th className="w-8 py-2.5 px-2" />
+                            <th className="py-2 px-2 text-left font-medium text-muted-foreground">Recipe</th>
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="End-of-day stock position">Factory #</th>
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title={deliveryDates[0] ? `Dispatch ${format(parseISO(deliveryDates[0]), "d MMM")}` : "Next dispatch"}>
+                              Dispatch
+                            </th>
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title={deliveryDates[1] ? format(parseISO(deliveryDates[1]), "d MMM") : "Del +1"}>
+                              Del+1
+                            </th>
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title={deliveryDates[2] ? format(parseISO(deliveryDates[2]), "d MMM") : "Del +2"}>
+                              Del+2
+                            </th>
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Packs needed to cover all demand">Deficit</th>
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">DPT%</th>
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Calculated suggestion">Sugg.</th>
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Batches</th>
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Projected stock after production">Next #</th>
+                            <th className="w-7 py-2 px-1.5" />
                           </tr>
                         </thead>
                         <tbody>
@@ -510,13 +619,27 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                             />
                           ))}
                         </tbody>
+                        <tfoot>
+                          <tr className="bg-secondary/20 border-t border-border font-medium text-xs">
+                            <td colSpan={3} className="py-2 px-2 text-right text-muted-foreground">Totals</td>
+                            <td className="py-2 px-2 text-right tabular-nums">{items.reduce((s, i) => s + i.todayFactoryNumber, 0)}</td>
+                            <td className="py-2 px-2 text-right tabular-nums">{items.reduce((s, i) => s + i.nextDispatchQty, 0)}</td>
+                            <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">{items.reduce((s, i) => s + i.deliveryPlus1Qty, 0) || "—"}</td>
+                            <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">{items.reduce((s, i) => s + i.deliveryPlus2Qty, 0) || "—"}</td>
+                            <td className="py-2 px-2 text-right tabular-nums">{items.reduce((s, i) => s + i.deficit, 0) || "—"}</td>
+                            <td className="py-2 px-2" />
+                            <td className="py-2 px-2 text-right tabular-nums">{items.reduce((s, i) => s + i.suggestedBatches, 0)}</td>
+                            <td className="py-2 px-2 text-right tabular-nums font-semibold">{items.filter(i => i.included).reduce((s, i) => s + i.batchesTarget, 0)}</td>
+                            <td className="py-2 px-2 text-right tabular-nums">{Math.round(items.filter(i => i.included).reduce((s, i) => s + computeNextFactory(i), 0))}</td>
+                            <td className="py-2 px-1.5" />
+                          </tr>
+                        </tfoot>
                       </table>
                     </SortableContext>
                   </DndContext>
                 </div>
               )}
 
-              {/* Add non-DPT recipe */}
               {availableToAdd.length > 0 && (
                 <div className="flex items-center gap-2 mb-3">
                   <select
@@ -540,6 +663,18 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                 </div>
               )}
 
+              {items.some(i => i.stockWarning === "short") && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/40 rounded-xl mb-3 text-sm text-red-700 dark:text-red-300">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  Stock shortfall detected — some recipes don't have enough to cover the next dispatch.
+                </div>
+              )}
+              {items.some(i => i.stockWarning === "low") && !items.some(i => i.stockWarning === "short") && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 rounded-xl mb-3 text-sm text-amber-700 dark:text-amber-300">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                  Low stock warning — some recipes are within 10 packs of covering the next dispatch.
+                </div>
+              )}
             </>
           )}
         </div>
@@ -547,6 +682,11 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
         <div className="border-t border-border pt-4 flex items-center justify-between flex-shrink-0">
           <div className="text-sm text-muted-foreground">
             Julian batch: <span className="font-mono font-semibold text-foreground">{julianBatchNumber(planDate)}</span>
+            {calcData && (
+              <span className="ml-3">
+                Capacity: <span className="font-semibold text-foreground">{calcData.totalDailyBatches}</span> batches
+              </span>
+            )}
           </div>
           <div className="flex gap-2">
             <button
