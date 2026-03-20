@@ -1150,42 +1150,91 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       marinadeIngredientName: string | null;
       marinadeSubRecipeId: number | null;
       marinadeSubRecipeName: string | null;
-      gramsPerKg: number;
       totalGrams: number;
     }> = [];
 
     if (station === "prep_meat" || station === "all") {
-      const marinadeIngAlias = alias(ingredientsTable, "marinadeIng");
-      const marinadeSubAlias = alias(subRecipesTable, "marinadeSub");
-      const marinadeRows = await db
+      const marinadeIngRows = await db
         .select({
-          rawMeatIngredientId: recipeMeatMarinadesTable.rawMeatIngredientId,
-          marinadeIngredientId: recipeMeatMarinadesTable.marinadeIngredientId,
-          marinadeIngredientName: marinadeIngAlias.name,
-          marinadeSubRecipeId: recipeMeatMarinadesTable.marinadeSubRecipeId,
-          marinadeSubRecipeName: marinadeSubAlias.name,
-          gramsPerKg: recipeMeatMarinadesTable.gramsPerKg,
+          ingredientId: recipeIngredientsTable.ingredientId,
+          ingredientName: ingredientsTable.name,
+          quantity: recipeIngredientsTable.quantity,
+          marinadeForIngredientId: recipeIngredientsTable.marinadeForIngredientId,
         })
-        .from(recipeMeatMarinadesTable)
-        .leftJoin(marinadeIngAlias, eq(recipeMeatMarinadesTable.marinadeIngredientId, marinadeIngAlias.id))
-        .leftJoin(marinadeSubAlias, eq(recipeMeatMarinadesTable.marinadeSubRecipeId, marinadeSubAlias.id))
-        .where(eq(recipeMeatMarinadesTable.recipeId, planItem.recipeId));
+        .from(recipeIngredientsTable)
+        .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
+        .where(eq(recipeIngredientsTable.recipeId, planItem.recipeId));
 
-      if (marinadeRows.length > 0) {
+      for (const mr of marinadeIngRows) {
+        if (!mr.marinadeForIngredientId) continue;
         hasRelevantIngredients = true;
-        for (const mr of marinadeRows) {
+        const totalQty = Number(mr.quantity) * portionsPerBatch * batchesTarget;
+        const totalGrams = Math.round(totalQty * 1000);
+        marinades.push({
+          rawMeatIngredientId: mr.marinadeForIngredientId,
+          marinadeIngredientId: mr.ingredientId,
+          marinadeIngredientName: mr.ingredientName ?? null,
+          marinadeSubRecipeId: null,
+          marinadeSubRecipeName: null,
+          totalGrams,
+        });
+      }
+
+      const marinadeSubRows = await db
+        .select({
+          subRecipeId: recipeSubRecipesTable.subRecipeId,
+          subRecipeName: subRecipesTable.name,
+          quantity: recipeSubRecipesTable.quantity,
+          marinadeForIngredientId: recipeSubRecipesTable.marinadeForIngredientId,
+        })
+        .from(recipeSubRecipesTable)
+        .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
+        .where(eq(recipeSubRecipesTable.recipeId, planItem.recipeId));
+
+      for (const sr of marinadeSubRows) {
+        if (!sr.marinadeForIngredientId) continue;
+        hasRelevantIngredients = true;
+        const totalQty = Number(sr.quantity) * portionsPerBatch * batchesTarget;
+        const totalGrams = Math.round(totalQty * 1000);
+        marinades.push({
+          rawMeatIngredientId: sr.marinadeForIngredientId,
+          marinadeIngredientId: null,
+          marinadeIngredientName: null,
+          marinadeSubRecipeId: sr.subRecipeId,
+          marinadeSubRecipeName: sr.subRecipeName ?? null,
+          totalGrams,
+        });
+      }
+
+      if (marinades.length === 0) {
+        const oldMarinadeIngAlias = alias(ingredientsTable, "marinadeIng");
+        const oldMarinadeSubAlias = alias(subRecipesTable, "marinadeSub");
+        const oldMarinadeRows = await db
+          .select({
+            rawMeatIngredientId: recipeMeatMarinadesTable.rawMeatIngredientId,
+            marinadeIngredientId: recipeMeatMarinadesTable.marinadeIngredientId,
+            marinadeIngredientName: oldMarinadeIngAlias.name,
+            marinadeSubRecipeId: recipeMeatMarinadesTable.marinadeSubRecipeId,
+            marinadeSubRecipeName: oldMarinadeSubAlias.name,
+            gramsPerKg: recipeMeatMarinadesTable.gramsPerKg,
+          })
+          .from(recipeMeatMarinadesTable)
+          .leftJoin(oldMarinadeIngAlias, eq(recipeMeatMarinadesTable.marinadeIngredientId, oldMarinadeIngAlias.id))
+          .leftJoin(oldMarinadeSubAlias, eq(recipeMeatMarinadesTable.marinadeSubRecipeId, oldMarinadeSubAlias.id))
+          .where(eq(recipeMeatMarinadesTable.recipeId, planItem.recipeId));
+
+        for (const mr of oldMarinadeRows) {
+          hasRelevantIngredients = true;
           const rawMeatIng = ingredients.find(i => i.ingredientId === mr.rawMeatIngredientId);
           const rawMeatKg = rawMeatIng ? rawMeatIng.rawQty / 1000 : 0;
           const gpkg = Number(mr.gramsPerKg);
           const totalGrams = Math.round(rawMeatKg * gpkg);
-
           marinades.push({
             rawMeatIngredientId: mr.rawMeatIngredientId,
             marinadeIngredientId: mr.marinadeIngredientId ?? null,
             marinadeIngredientName: mr.marinadeIngredientName ?? null,
             marinadeSubRecipeId: mr.marinadeSubRecipeId ?? null,
             marinadeSubRecipeName: mr.marinadeSubRecipeName ?? null,
-            gramsPerKg: gpkg,
             totalGrams,
           });
         }

@@ -548,12 +548,14 @@ export const CreateRecipeBody = zod.object({
     zod.object({
       ingredientId: zod.number(),
       quantity: zod.number(),
+      marinadeForIngredientId: zod.number().nullish(),
     }),
   ),
   subRecipes: zod.array(
     zod.object({
       subRecipeId: zod.number(),
       quantity: zod.number(),
+      marinadeForIngredientId: zod.number().nullish(),
     }),
   ),
   marinades: zod.array(
@@ -705,12 +707,14 @@ export const UpdateRecipeBody = zod.object({
     zod.object({
       ingredientId: zod.number(),
       quantity: zod.number(),
+      marinadeForIngredientId: zod.number().nullish(),
     }),
   ),
   subRecipes: zod.array(
     zod.object({
       subRecipeId: zod.number(),
       quantity: zod.number(),
+      marinadeForIngredientId: zod.number().nullish(),
     }),
   ),
   marinades: zod.array(

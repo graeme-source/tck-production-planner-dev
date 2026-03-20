@@ -33,6 +33,7 @@ export const recipeIngredientsTable = pgTable("recipe_ingredients", {
   recipeId: integer("recipe_id").notNull().references(() => recipesTable.id, { onDelete: "cascade" }),
   ingredientId: integer("ingredient_id").notNull().references(() => ingredientsTable.id, { onDelete: "restrict" }),
   quantity: numeric("quantity", { precision: 10, scale: 4 }).notNull(),
+  marinadeForIngredientId: integer("marinade_for_ingredient_id").references(() => ingredientsTable.id, { onDelete: "set null" }),
 });
 
 export const recipeSubRecipesTable = pgTable("recipe_sub_recipes", {
@@ -40,6 +41,7 @@ export const recipeSubRecipesTable = pgTable("recipe_sub_recipes", {
   recipeId: integer("recipe_id").notNull().references(() => recipesTable.id, { onDelete: "cascade" }),
   subRecipeId: integer("sub_recipe_id").notNull().references(() => subRecipesTable.id, { onDelete: "restrict" }),
   quantity: numeric("quantity", { precision: 10, scale: 4 }).notNull(),
+  marinadeForIngredientId: integer("marinade_for_ingredient_id").references(() => ingredientsTable.id, { onDelete: "set null" }),
 });
 
 export const recipeMeatMarinadesTable = pgTable("recipe_meat_marinades", {

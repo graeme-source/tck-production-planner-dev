@@ -59,7 +59,8 @@ artifacts-monorepo/
 - `recipes` — final product recipes (name, category, servings, serving_unit)
 - `recipe_ingredients` — recipe <-> ingredient junction
 - `recipe_sub_recipes` — recipe <-> sub_recipe junction
-- `recipe_meat_marinades` — per-meat marinade/seasoning assignments with g/kg rate. Columns: id, recipe_id, raw_meat_ingredient_id, marinade_ingredient_id (nullable), marinade_sub_recipe_id (nullable), grams_per_kg. CHECK constraint: exactly one of marinade_ingredient_id or marinade_sub_recipe_id must be set; grams_per_kg > 0.
+- `recipe_meat_marinades` — (legacy) per-meat marinade/seasoning assignments with g/kg rate. Columns: id, recipe_id, raw_meat_ingredient_id, marinade_ingredient_id (nullable), marinade_sub_recipe_id (nullable), grams_per_kg.
+- **New marinade system**: `recipe_ingredients` and `recipe_sub_recipes` both have `marinade_for_ingredient_id` (nullable FK → ingredients). When set, it marks that ingredient/sub-recipe as the marinade/seasoning for the referenced raw meat ingredient. This avoids double-counting costs since the item is already part of the recipe. The prep meat station reads from these columns (and falls back to legacy `recipe_meat_marinades`).
 - `production_plans` — daily plans (plan_date, name, status: draft/active/completed)
 - `production_plan_items` — plan items (recipe, target_qty, actual_qty, status: pending/in_progress/completed)
 - `stock_entries` — stock check entries (item_type: recipe|ingredient, quantity, unit)

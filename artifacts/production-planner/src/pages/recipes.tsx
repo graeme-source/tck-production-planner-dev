@@ -28,23 +28,13 @@ const schema = z.object({
   ingredients: z.array(z.object({
     ingredientId: z.coerce.number().min(1, "Select ingredient"),
     quantity: z.coerce.number().min(0.001, "Must be > 0"),
+    marinadeForIngredientId: z.preprocess(v => (v === "" || v === "0" || v == null ? null : Number(v)), z.number().nullable().optional()),
   })),
   subRecipes: z.array(z.object({
     subRecipeId: z.coerce.number().min(1, "Select sub-recipe"),
     quantity: z.coerce.number().min(0.001, "Must be > 0"),
+    marinadeForIngredientId: z.preprocess(v => (v === "" || v === "0" || v == null ? null : Number(v)), z.number().nullable().optional()),
   })),
-  marinades: z.array(z.object({
-    rawMeatIngredientId: z.coerce.number().min(1, "Select raw meat"),
-    marinadeIngredientId: z.coerce.number().optional(),
-    marinadeSubRecipeId: z.coerce.number().optional(),
-    gramsPerKg: z.coerce.number().min(0.01, "Must be > 0"),
-  }).refine(m => {
-    const hasIng = m.marinadeIngredientId != null && m.marinadeIngredientId > 0;
-    const hasSub = m.marinadeSubRecipeId != null && m.marinadeSubRecipeId > 0;
-    return hasIng !== hasSub;
-  }, {
-    message: "Select exactly one: a marinade ingredient or a sub-recipe",
-  })).optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -118,11 +108,10 @@ function RecipeForm({
 }) {
   const { register, control, handleSubmit, setValue, watch, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { ...defaultValues, marinades: defaultValues.marinades ?? [] },
+    defaultValues,
   });
   const { fields: ingFields, append: appendIng, remove: removeIng } = useFieldArray({ control, name: "ingredients" });
   const { fields: subFields, append: appendSub, remove: removeSub } = useFieldArray({ control, name: "subRecipes" });
-  const { fields: marinadeFields, append: appendMarinade, remove: removeMarinade } = useFieldArray({ control, name: "marinades" });
 
   const [localIngredients, setLocalIngredients] = useState(initialIngredients);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
@@ -189,14 +178,7 @@ function RecipeForm({
       <QuickAddIngredientDialog open={quickAddOpen} onOpenChange={setQuickAddOpen} onCreated={handleIngredientCreated} />
 
       <form onSubmit={handleSubmit((data) => {
-        const rawMeatIds = new Set(
-          (data.ingredients ?? [])
-            .map(wi => localIngredients.find(i => i.id === Number(wi.ingredientId)))
-            .filter((i): i is IngredientOption => !!i && i.category === "raw_meat")
-            .map(i => i.id)
-        );
-        const prunedMarinades = (data.marinades ?? []).filter(m => rawMeatIds.has(Number(m.rawMeatIngredientId)));
-        onSubmit({ ...data, marinades: prunedMarinades.length > 0 ? prunedMarinades : undefined });
+        onSubmit(data);
       })} className="space-y-5 mt-4">
         {/* Basic fields */}
         <div className="grid grid-cols-2 gap-4">
@@ -301,155 +283,111 @@ function RecipeForm({
         </div>
 
         {/* Unified Ingredients & Prep Items */}
-        <div className="border-t border-border pt-4 space-y-0">
-          {/* Column headers */}
-          <div className="grid grid-cols-[1fr_6rem_4.5rem_1.25rem] gap-2 px-1 mb-1.5">
-            <span className="text-xs text-muted-foreground font-medium">Name</span>
-            <span className="text-xs text-muted-foreground font-medium">Qty</span>
-            <span className="text-xs text-muted-foreground font-medium text-right">£/portion</span>
-            <span />
-          </div>
-
-          {/* Ingredients section */}
-          <div className="mb-1">
-            <div className="flex items-center justify-between py-1.5">
-              <span className="text-xs font-semibold text-primary uppercase tracking-wide">
-                Ingredients <span className="font-normal normal-case text-muted-foreground tracking-normal">(cooked qty)</span>
-              </span>
-              <button type="button" onClick={() => appendIng({ ingredientId: 0, quantity: 0 })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add</button>
-            </div>
-            {ingFields.length === 0 && <p className="text-xs text-muted-foreground italic pl-1 pb-1">No ingredients added</p>}
-            <div className="space-y-1.5">
-              {ingFields.map((field, index) => {
-                const cost = ingLineCost(index);
-                return (
-                  <div key={field.id} className="grid grid-cols-[1fr_6rem_4.5rem_1.25rem] gap-2 items-center">
-                    <div className="flex gap-1 min-w-0">
-                      <select {...register(`ingredients.${index}.ingredientId`)} className="flex-1 min-w-0 px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30">
-                        <option value={0} disabled>Select…</option>
-                        {localIngredients.map(i => <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>)}
-                      </select>
-                      <button type="button" title="Create a new ingredient" onClick={() => openQuickAdd(index)} className="flex-shrink-0 px-1.5 py-1.5 rounded-lg border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-colors text-xs font-bold leading-none">+</button>
-                    </div>
-                    <input type="number" step="0.0001" {...register(`ingredients.${index}.quantity`)} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0.000" />
-                    <span className="text-xs tabular-nums text-right text-muted-foreground">
-                      {cost !== null ? `£${(Math.ceil(cost * 100) / 100).toFixed(2)}` : "—"}
-                    </span>
-                    <button type="button" onClick={() => removeIng(index)} className="text-muted-foreground hover:text-destructive flex justify-center"><X className="w-3.5 h-3.5" /></button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Divider */}
-          <div className="border-t border-dashed border-border/60 my-2" />
-
-          {/* Sub-recipes section */}
-          <div>
-            <div className="flex items-center justify-between py-1.5">
-              <span className="text-xs font-semibold text-accent uppercase tracking-wide">Prep Items</span>
-              <button type="button" onClick={() => appendSub({ subRecipeId: 0, quantity: 0 })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add</button>
-            </div>
-            {subFields.length === 0 && <p className="text-xs text-muted-foreground italic pl-1 pb-1">No prep items added</p>}
-            <div className="space-y-1.5">
-              {subFields.map((field, index) => {
-                const cost = subLineCost(index);
-                return (
-                  <div key={field.id} className="grid grid-cols-[1fr_6rem_4.5rem_1.25rem] gap-2 items-center">
-                    <select {...register(`subRecipes.${index}.subRecipeId`)} className="min-w-0 px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30">
-                      <option value={0} disabled>Select…</option>
-                      {subRecipes.map(s => <option key={s.id} value={s.id}>{s.name} ({s.yieldUnit})</option>)}
-                    </select>
-                    <input type="number" step="0.0001" {...register(`subRecipes.${index}.quantity`)} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0.000" />
-                    <span className="text-xs tabular-nums text-right text-muted-foreground">
-                      {cost !== null ? `£${(Math.ceil(cost * 100) / 100).toFixed(2)}` : "—"}
-                    </span>
-                    <button type="button" onClick={() => removeSub(index)} className="text-muted-foreground hover:text-destructive flex justify-center"><X className="w-3.5 h-3.5" /></button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        {/* Marinades & Seasonings - shown when raw meat ingredients are present */}
         {(() => {
           const rawMeatIngs = (watchedIngredients ?? [])
             .map(wi => localIngredients.find(i => i.id === Number(wi.ingredientId)))
             .filter((i): i is IngredientOption => !!i && i.category === "raw_meat");
 
-          if (rawMeatIngs.length === 0) return null;
-
           return (
-            <div className="bg-rose-50 dark:bg-rose-900/10 rounded-xl p-4 space-y-3 border border-rose-200 dark:border-rose-800/40">
-              <div className="flex items-center justify-between">
-                <h4 className="text-sm font-semibold flex items-center gap-2 text-rose-800 dark:text-rose-200">
-                  <ChefHat className="w-4 h-4" /> Marinades & Seasonings
-                </h4>
-                <button
-                  type="button"
-                  onClick={() => appendMarinade({ rawMeatIngredientId: rawMeatIngs[0]?.id ?? 0, gramsPerKg: 0 })}
-                  className="text-xs font-medium bg-rose-100 dark:bg-rose-800/30 text-rose-700 dark:text-rose-300 px-2 py-1 rounded-md hover:bg-rose-200 dark:hover:bg-rose-800/50 transition-colors"
-                >
-                  + Add Marinade
-                </button>
+            <div className="border-t border-border pt-4 space-y-0">
+              {/* Column headers */}
+              <div className="grid grid-cols-[1fr_6rem_4.5rem_1.25rem] gap-2 px-1 mb-1.5">
+                <span className="text-xs text-muted-foreground font-medium">Name</span>
+                <span className="text-xs text-muted-foreground font-medium">Qty</span>
+                <span className="text-xs text-muted-foreground font-medium text-right">£/portion</span>
+                <span />
               </div>
-              <p className="text-xs text-rose-600 dark:text-rose-400">
-                Assign marinades or seasonings to specific raw meats. Quantities are in grams per kg of raw meat.
-              </p>
 
-              {marinadeFields.length === 0 && (
-                <p className="text-xs text-muted-foreground italic">No marinades assigned</p>
-              )}
+              {/* Ingredients section */}
+              <div className="mb-1">
+                <div className="flex items-center justify-between py-1.5">
+                  <span className="text-xs font-semibold text-primary uppercase tracking-wide">
+                    Ingredients <span className="font-normal normal-case text-muted-foreground tracking-normal">(cooked qty)</span>
+                  </span>
+                  <button type="button" onClick={() => appendIng({ ingredientId: 0, quantity: 0, marinadeForIngredientId: null })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add</button>
+                </div>
+                {ingFields.length === 0 && <p className="text-xs text-muted-foreground italic pl-1 pb-1">No ingredients added</p>}
+                <div className="space-y-1.5">
+                  {ingFields.map((field, index) => {
+                    const cost = ingLineCost(index);
+                    const thisIng = localIngredients.find(i => i.id === Number(watchedIngredients?.[index]?.ingredientId));
+                    const isRawMeat = thisIng?.category === "raw_meat";
+                    return (
+                      <div key={field.id} className="space-y-1">
+                        <div className="grid grid-cols-[1fr_6rem_4.5rem_1.25rem] gap-2 items-center">
+                          <div className="flex gap-1 min-w-0">
+                            <select {...register(`ingredients.${index}.ingredientId`)} className="flex-1 min-w-0 px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30">
+                              <option value={0} disabled>Select…</option>
+                              {localIngredients.map(i => <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>)}
+                            </select>
+                            <button type="button" title="Create a new ingredient" onClick={() => openQuickAdd(index)} className="flex-shrink-0 px-1.5 py-1.5 rounded-lg border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-colors text-xs font-bold leading-none">+</button>
+                          </div>
+                          <input type="number" step="0.0001" {...register(`ingredients.${index}.quantity`)} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0.000" />
+                          <span className="text-xs tabular-nums text-right text-muted-foreground">
+                            {cost !== null ? `£${(Math.ceil(cost * 100) / 100).toFixed(2)}` : "—"}
+                          </span>
+                          <button type="button" onClick={() => removeIng(index)} className="text-muted-foreground hover:text-destructive flex justify-center"><X className="w-3.5 h-3.5" /></button>
+                        </div>
+                        {!isRawMeat && rawMeatIngs.length > 0 && (
+                          <div className="pl-1 flex items-center gap-1.5">
+                            <ChefHat className="w-3 h-3 text-rose-400 flex-shrink-0" />
+                            <select
+                              {...register(`ingredients.${index}.marinadeForIngredientId`)}
+                              className="px-1.5 py-0.5 bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800/40 rounded text-xs text-rose-700 dark:text-rose-300 focus:outline-none focus:ring-1 focus:ring-rose-300"
+                            >
+                              <option value="">Not a marinade</option>
+                              {rawMeatIngs.map(m => <option key={m.id} value={m.id}>Marinade for {m.name}</option>)}
+                            </select>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
 
-              <div className="space-y-2">
-                {marinadeFields.map((field, index) => (
-                  <div key={field.id} className="grid grid-cols-[1fr_1fr_5rem_1.25rem] gap-2 items-center">
-                    <select
-                      {...register(`marinades.${index}.rawMeatIngredientId`)}
-                      className="min-w-0 px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
-                    >
-                      <option value={0} disabled>Raw meat…</option>
-                      {rawMeatIngs.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
-                    </select>
-                    <select
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val.startsWith("ing:")) {
-                          setValue(`marinades.${index}.marinadeIngredientId`, Number(val.slice(4)));
-                          setValue(`marinades.${index}.marinadeSubRecipeId`, undefined);
-                        } else if (val.startsWith("sub:")) {
-                          setValue(`marinades.${index}.marinadeSubRecipeId`, Number(val.slice(4)));
-                          setValue(`marinades.${index}.marinadeIngredientId`, undefined);
-                        }
-                      }}
-                      defaultValue={
-                        field.marinadeIngredientId ? `ing:${field.marinadeIngredientId}` :
-                        field.marinadeSubRecipeId ? `sub:${field.marinadeSubRecipeId}` : ""
-                      }
-                      className="min-w-0 px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
-                    >
-                      <option value="" disabled>Select marinade…</option>
-                      <optgroup label="Ingredients">
-                        {localIngredients.map(i => <option key={`ing:${i.id}`} value={`ing:${i.id}`}>{i.name}</option>)}
-                      </optgroup>
-                      <optgroup label="Sub-Recipes">
-                        {subRecipes.map(s => <option key={`sub:${s.id}`} value={`sub:${s.id}`}>{s.name}</option>)}
-                      </optgroup>
-                    </select>
-                    <input
-                      type="number"
-                      step="0.01"
-                      {...register(`marinades.${index}.gramsPerKg`)}
-                      className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
-                      placeholder="g/kg"
-                    />
-                    <button type="button" onClick={() => removeMarinade(index)} className="text-muted-foreground hover:text-destructive flex justify-center">
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
+              {/* Divider */}
+              <div className="border-t border-dashed border-border/60 my-2" />
+
+              {/* Sub-recipes section */}
+              <div>
+                <div className="flex items-center justify-between py-1.5">
+                  <span className="text-xs font-semibold text-accent uppercase tracking-wide">Prep Items</span>
+                  <button type="button" onClick={() => appendSub({ subRecipeId: 0, quantity: 0, marinadeForIngredientId: null })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add</button>
+                </div>
+                {subFields.length === 0 && <p className="text-xs text-muted-foreground italic pl-1 pb-1">No prep items added</p>}
+                <div className="space-y-1.5">
+                  {subFields.map((field, index) => {
+                    const cost = subLineCost(index);
+                    return (
+                      <div key={field.id} className="space-y-1">
+                        <div className="grid grid-cols-[1fr_6rem_4.5rem_1.25rem] gap-2 items-center">
+                          <select {...register(`subRecipes.${index}.subRecipeId`)} className="min-w-0 px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30">
+                            <option value={0} disabled>Select…</option>
+                            {subRecipes.map(s => <option key={s.id} value={s.id}>{s.name} ({s.yieldUnit})</option>)}
+                          </select>
+                          <input type="number" step="0.0001" {...register(`subRecipes.${index}.quantity`)} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0.000" />
+                          <span className="text-xs tabular-nums text-right text-muted-foreground">
+                            {cost !== null ? `£${(Math.ceil(cost * 100) / 100).toFixed(2)}` : "—"}
+                          </span>
+                          <button type="button" onClick={() => removeSub(index)} className="text-muted-foreground hover:text-destructive flex justify-center"><X className="w-3.5 h-3.5" /></button>
+                        </div>
+                        {rawMeatIngs.length > 0 && (
+                          <div className="pl-1 flex items-center gap-1.5">
+                            <ChefHat className="w-3 h-3 text-rose-400 flex-shrink-0" />
+                            <select
+                              {...register(`subRecipes.${index}.marinadeForIngredientId`)}
+                              className="px-1.5 py-0.5 bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800/40 rounded text-xs text-rose-700 dark:text-rose-300 focus:outline-none focus:ring-1 focus:ring-rose-300"
+                            >
+                              <option value="">Not a marinade</option>
+                              {rawMeatIngs.map(m => <option key={m.id} value={m.id}>Marinade for {m.name}</option>)}
+                            </select>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           );
@@ -499,16 +437,10 @@ function EditRecipeDialog({
         tinSize: detail.tinSize ?? "",
         maxBatchesPerTin: detail.maxBatchesPerTin != null ? Number(detail.maxBatchesPerTin) : null,
         sopUrl: detail.sopUrl ?? "",
-        ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity) })),
-        subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity) })),
-        marinades: (detail.marinades ?? []).map(m => ({
-          rawMeatIngredientId: m.rawMeatIngredientId,
-          marinadeIngredientId: m.marinadeIngredientId ?? undefined,
-          marinadeSubRecipeId: m.marinadeSubRecipeId ?? undefined,
-          gramsPerKg: Number(m.gramsPerKg),
-        })),
+        ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null })),
+        subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null })),
       }
-    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", ingredients: [], subRecipes: [], marinades: [] };
+    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", ingredients: [], subRecipes: [] };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -856,7 +788,7 @@ export default function Recipes() {
   const addDefaults: FormValues = {
     name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "",
     packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined,
-    tinSize: "", maxBatchesPerTin: null, sopUrl: "", ingredients: [], subRecipes: [], marinades: [],
+    tinSize: "", maxBatchesPerTin: null, sopUrl: "", ingredients: [], subRecipes: [],
   };
 
   return (

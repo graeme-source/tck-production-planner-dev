@@ -1673,7 +1673,7 @@ interface PrepMarinadeDetail {
   marinadeIngredientName: string | null;
   marinadeSubRecipeId: number | null;
   marinadeSubRecipeName: string | null;
-  gramsPerKg: number;
+  gramsPerKg?: number;
   totalGrams: number;
 }
 
@@ -2493,7 +2493,7 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
     const marinadeDetails = marinades.map(m => {
       const meatName = rawMeat.find(i => i.ingredientId === m.rawMeatIngredientId)?.ingredientName ?? "Meat";
       const name = m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown";
-      return `${meatName} → ${name} ${m.totalGrams}g (${m.gramsPerKg}g/kg)`;
+      return `${meatName} → ${name} ${m.totalGrams}g${m.gramsPerKg ? ` (${m.gramsPerKg}g/kg)` : ""}`;
     });
 
     return [{
@@ -2626,7 +2626,7 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                               </span>
                               <div className="text-right">
                                 <span className="tabular-nums">{m.totalGrams}g</span>
-                                <span className="text-xs ml-1">({m.gramsPerKg}g/kg)</span>
+                                {m.gramsPerKg != null && <span className="text-xs ml-1">({m.gramsPerKg}g/kg)</span>}
                                 {perTray != null && (
                                   <span className="text-xs ml-2">
                                     {perTray}g/tray

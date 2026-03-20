@@ -167,15 +167,17 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
 
   if (ingredients?.length) {
     await db.insert(recipeIngredientsTable).values(
-      ingredients.map((i: { ingredientId: number; quantity: number }) => ({
+      ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null }) => ({
         recipeId: recipe.id, ingredientId: i.ingredientId, quantity: String(i.quantity),
+        marinadeForIngredientId: i.marinadeForIngredientId ?? null,
       }))
     );
   }
   if (subRecipes?.length) {
     await db.insert(recipeSubRecipesTable).values(
-      subRecipes.map((s: { subRecipeId: number; quantity: number }) => ({
+      subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null }) => ({
         recipeId: recipe.id, subRecipeId: s.subRecipeId, quantity: String(s.quantity),
+        marinadeForIngredientId: s.marinadeForIngredientId ?? null,
       }))
     );
   }
@@ -213,6 +215,7 @@ router.get("/:id", async (req, res) => {
       packWeight: ingredientsTable.packWeight,
       costPerPack: ingredientsTable.costPerPack,
       processingRatio: ingredientsTable.processingRatio,
+      marinadeForIngredientId: recipeIngredientsTable.marinadeForIngredientId,
     })
     .from(recipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -226,6 +229,7 @@ router.get("/:id", async (req, res) => {
       quantity: recipeSubRecipesTable.quantity,
       yieldUnit: subRecipesTable.yieldUnit,
       subYield: subRecipesTable.yield,
+      marinadeForIngredientId: recipeSubRecipesTable.marinadeForIngredientId,
     })
     .from(recipeSubRecipesTable)
     .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
@@ -262,6 +266,7 @@ router.get("/:id", async (req, res) => {
       costPerUnit,
       lineCostBatch,
       lineCostPortion,
+      marinadeForIngredientId: i.marinadeForIngredientId ?? null,
     };
   });
 
@@ -284,6 +289,7 @@ router.get("/:id", async (req, res) => {
       subCostPerUnit: subCostPerUnitVal,
       lineCostBatch,
       lineCostPortion,
+      marinadeForIngredientId: s.marinadeForIngredientId ?? null,
     };
   });
 
@@ -370,19 +376,26 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
 
   await db.delete(recipeIngredientsTable).where(eq(recipeIngredientsTable.recipeId, id));
   await db.delete(recipeSubRecipesTable).where(eq(recipeSubRecipesTable.recipeId, id));
-  await db.delete(recipeMeatMarinadesTable).where(eq(recipeMeatMarinadesTable.recipeId, id));
+
+  const hasInlineMarinades = (ingredients ?? []).some((i: any) => i.marinadeForIngredientId) ||
+    (subRecipes ?? []).some((s: any) => s.marinadeForIngredientId);
+  if (marinades !== undefined || hasInlineMarinades) {
+    await db.delete(recipeMeatMarinadesTable).where(eq(recipeMeatMarinadesTable.recipeId, id));
+  }
 
   if (ingredients?.length) {
     await db.insert(recipeIngredientsTable).values(
-      ingredients.map((i: { ingredientId: number; quantity: number }) => ({
+      ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null }) => ({
         recipeId: id, ingredientId: i.ingredientId, quantity: String(i.quantity),
+        marinadeForIngredientId: i.marinadeForIngredientId ?? null,
       }))
     );
   }
   if (subRecipes?.length) {
     await db.insert(recipeSubRecipesTable).values(
-      subRecipes.map((s: { subRecipeId: number; quantity: number }) => ({
+      subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null }) => ({
         recipeId: id, subRecipeId: s.subRecipeId, quantity: String(s.quantity),
+        marinadeForIngredientId: s.marinadeForIngredientId ?? null,
       }))
     );
   }
