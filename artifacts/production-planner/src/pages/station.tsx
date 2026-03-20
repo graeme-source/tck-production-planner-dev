@@ -1424,9 +1424,21 @@ function useNextActivePlan(afterDate?: string) {
 // ──────────────────────────────────────────────────────────────────────────────
 // Prep date banner
 // ──────────────────────────────────────────────────────────────────────────────
-function PrepDateBanner({ planDate, planName, isLoading, labelPrefix = "Prep for" }: { planDate: string | null; planName: string | null; isLoading: boolean; labelPrefix?: string }) {
+function PrepDateBanner({
+  currentPlanDate,
+  targetPlanDate,
+  targetPlanName,
+  isLoading,
+  activityLabel = "Prep",
+}: {
+  currentPlanDate?: string | null;
+  targetPlanDate: string | null;
+  targetPlanName: string | null;
+  isLoading: boolean;
+  activityLabel?: string;
+}) {
   if (isLoading) return null;
-  if (!planDate) {
+  if (!targetPlanDate) {
     return (
       <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl px-4 py-3 text-sm text-amber-800 dark:text-amber-200 flex items-center gap-2">
         <CalendarCheck className="w-4 h-4 flex-shrink-0" />
@@ -1435,14 +1447,31 @@ function PrepDateBanner({ planDate, planName, isLoading, labelPrefix = "Prep for
     );
   }
 
-  const formatted = format(parseISO(planDate), "EEEE, d MMMM yyyy");
+  const targetFormatted = format(parseISO(targetPlanDate), "EEEE d MMMM");
+  const currentFormatted = currentPlanDate
+    ? format(parseISO(currentPlanDate), "EEEE d MMMM")
+    : null;
+
   return (
     <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-xl px-4 py-3 flex items-center gap-3">
       <CalendarCheck className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0" />
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wider text-green-700 dark:text-green-400">{labelPrefix}</p>
-        <p className="font-bold text-green-900 dark:text-green-100 text-lg leading-tight">{formatted}</p>
-        {planName && <p className="text-xs text-green-700 dark:text-green-400">{planName}</p>}
+      <div className="min-w-0">
+        {currentFormatted ? (
+          <>
+            <p className="font-bold text-green-900 dark:text-green-100 text-base leading-snug">
+              {activityLabel} on {currentFormatted}
+            </p>
+            <p className="text-sm text-green-700 dark:text-green-300 leading-snug">
+              for production on <span className="font-semibold">{targetFormatted}</span>
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-xs font-semibold uppercase tracking-wider text-green-700 dark:text-green-400">{activityLabel} for</p>
+            <p className="font-bold text-green-900 dark:text-green-100 text-lg leading-tight">{targetFormatted}</p>
+          </>
+        )}
+        {targetPlanName && <p className="text-xs text-green-700 dark:text-green-400 mt-0.5">{targetPlanName}</p>}
       </div>
     </div>
   );
@@ -1463,8 +1492,9 @@ interface PrepFullScreenItem {
 
 function PrepFullScreenMode({
   items,
-  planDate,
-  planName,
+  currentPlanDate,
+  targetPlanDate,
+  targetPlanName,
   isLoadingPlan,
   stationLabel,
   stationColor,
@@ -1472,8 +1502,9 @@ function PrepFullScreenMode({
   onOverviewClick,
 }: {
   items: PrepFullScreenItem[];
-  planDate: string | null;
-  planName: string | null;
+  currentPlanDate?: string | null;
+  targetPlanDate: string | null;
+  targetPlanName: string | null;
   isLoadingPlan: boolean;
   stationLabel: string;
   stationColor: string;
@@ -1494,7 +1525,7 @@ function PrepFullScreenMode({
 
   return (
     <div className="space-y-4">
-      <PrepDateBanner planDate={planDate} planName={planName} isLoading={isLoadingPlan} />
+      <PrepDateBanner currentPlanDate={currentPlanDate} targetPlanDate={targetPlanDate} targetPlanName={targetPlanName} isLoading={isLoadingPlan} />
 
       {/* Progress + overview toggle */}
       <div className="flex items-center justify-between">
@@ -1744,8 +1775,9 @@ function PrepVegStation({ plan }: { plan: ProductionPlanDetail }) {
     return (
       <PrepFullScreenMode
         items={fullScreenItems}
-        planDate={nextPlan?.planDate ?? null}
-        planName={nextPlan?.planName ?? null}
+        currentPlanDate={plan.planDate}
+        targetPlanDate={nextPlan?.planDate ?? null}
+        targetPlanName={nextPlan?.planName ?? null}
         isLoadingPlan={false}
         stationLabel="Veg Prep"
         stationColor="text-green-500"
@@ -1757,7 +1789,7 @@ function PrepVegStation({ plan }: { plan: ProductionPlanDetail }) {
 
   return (
     <div className="space-y-4">
-      <PrepDateBanner planDate={nextPlan?.planDate ?? null} planName={nextPlan?.planName ?? null} isLoading={false} />
+      <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
       <PrepModeToggle mode={mode} onToggle={() => setMode("fullscreen")} label="Veg Prep" icon={Salad} iconColor="text-green-500" />
 
       {recipes.length === 0 ? (
@@ -1855,8 +1887,9 @@ function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
     return (
       <PrepFullScreenMode
         items={fullScreenItems}
-        planDate={nextPlan?.planDate ?? null}
-        planName={nextPlan?.planName ?? null}
+        currentPlanDate={plan.planDate}
+        targetPlanDate={nextPlan?.planDate ?? null}
+        targetPlanName={nextPlan?.planName ?? null}
         isLoadingPlan={false}
         stationLabel="Bases & Mozzarella"
         stationColor="text-yellow-500"
@@ -1868,7 +1901,7 @@ function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
 
   return (
     <div className="space-y-4">
-      <PrepDateBanner planDate={nextPlan?.planDate ?? null} planName={nextPlan?.planName ?? null} isLoading={false} />
+      <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
       <PrepModeToggle mode={mode} onToggle={() => setMode("fullscreen")} label="Bases & Mozzarella" icon={Layers} iconColor="text-yellow-500" />
 
       {recipes.length === 0 ? (
@@ -1969,8 +2002,9 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
     return (
       <PrepFullScreenMode
         items={fullScreenItems}
-        planDate={nextPlan?.planDate ?? null}
-        planName={nextPlan?.planName ?? null}
+        currentPlanDate={plan.planDate}
+        targetPlanDate={nextPlan?.planDate ?? null}
+        targetPlanName={nextPlan?.planName ?? null}
         isLoadingPlan={false}
         stationLabel="Raw Meat Prep"
         stationColor="text-rose-500"
@@ -1982,7 +2016,7 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
 
   return (
     <div className="space-y-4">
-      <PrepDateBanner planDate={nextPlan?.planDate ?? null} planName={nextPlan?.planName ?? null} isLoading={false} />
+      <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -2189,13 +2223,13 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
 
   return (
     <div className="space-y-4">
-      {/* D-1 banner — show which production day this dough is for */}
       {doughData && (
         <PrepDateBanner
-          planDate={doughData.nextPlan?.planDate ?? null}
-          planName={doughData.nextPlan?.name ?? null}
+          currentPlanDate={plan.planDate}
+          targetPlanDate={doughData.nextPlan?.planDate ?? null}
+          targetPlanName={doughData.nextPlan?.name ?? null}
           isLoading={doughLoading}
-          labelPrefix="Dough for"
+          activityLabel="Dough prep"
         />
       )}
 
@@ -3543,8 +3577,9 @@ function PrepHub({ planId, planDate }: { planId: number; planDate?: string }) {
   return (
     <div className="space-y-5">
       <PrepDateBanner
-        planDate={nextPlan?.planDate ?? null}
-        planName={nextPlan?.planName ?? null}
+        currentPlanDate={planDate}
+        targetPlanDate={nextPlan?.planDate ?? null}
+        targetPlanName={nextPlan?.planName ?? null}
         isLoading={isLoading}
       />
 
@@ -3562,10 +3597,10 @@ function PrepHub({ planId, planDate }: { planId: number; planDate?: string }) {
                 ? (() => {
                     try {
                       const d = parseISO(nextPlan.planDate);
-                      return `Prep for ${format(d, "EEEE, d MMM")}`;
+                      return `For production on ${format(d, "EEEE d MMM")}`;
                     } catch { return nextPlan.planDate; }
                   })()
-                : "No active plan this week";
+                : "No upcoming production plan";
             return (
               <button
                 key={s.key}
