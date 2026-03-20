@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable } from "@workspace/db";
+import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, dispatchOrdersTable, appSettingsTable } from "@workspace/db";
 import { eq, and, desc, sql, gt, asc, inArray } from "drizzle-orm";
 import { validate } from "../middleware/validate";
 import * as z from "zod";
@@ -1239,6 +1239,314 @@ router.get("/:id/station-activity", async (req, res) => {
   }
 
   res.json(result);
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// POST /:id/items/:itemId/wonly — increment wonlyCount by 1 (quality reject)
+// ──────────────────────────────────────────────────────────────────────────────
+router.post("/:id/items/:itemId/wonly", async (req, res) => {
+  const planId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+
+  const [item] = await db.select({
+    id: productionPlanItemsTable.id,
+    wonlyCount: productionPlanItemsTable.wonlyCount,
+  })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
+
+  if (!item) {
+    res.status(404).json({ error: "Plan item not found" });
+    return;
+  }
+
+  const [updated] = await db
+    .update(productionPlanItemsTable)
+    .set({ wonlyCount: (item.wonlyCount ?? 0) + 1 })
+    .where(eq(productionPlanItemsTable.id, itemId))
+    .returning();
+
+  res.json({ itemId, wonlyCount: updated.wonlyCount });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// DELETE /:id/items/:itemId/wonly — undo last Wonly (decrement if > 0)
+// ──────────────────────────────────────────────────────────────────────────────
+router.delete("/:id/items/:itemId/wonly", async (req, res) => {
+  const planId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+
+  const [item] = await db.select({
+    id: productionPlanItemsTable.id,
+    wonlyCount: productionPlanItemsTable.wonlyCount,
+  })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
+
+  if (!item) {
+    res.status(404).json({ error: "Plan item not found" });
+    return;
+  }
+  if ((item.wonlyCount ?? 0) <= 0) {
+    res.status(409).json({ error: "Wonly count is already 0" });
+    return;
+  }
+
+  const [updated] = await db
+    .update(productionPlanItemsTable)
+    .set({ wonlyCount: (item.wonlyCount ?? 1) - 1 })
+    .where(eq(productionPlanItemsTable.id, itemId))
+    .returning();
+
+  res.json({ itemId, wonlyCount: updated.wonlyCount });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// GET /:id/dough-prep — computes dough requirements for the plan
+// Returns: total dough per ingredient, mixing schedule, per-recipe ball weights
+// ──────────────────────────────────────────────────────────────────────────────
+router.get("/:id/dough-prep", async (req, res) => {
+  const planId = Number(req.params.id);
+
+  // Get the plan items with recipe info
+  const planItems = await db
+    .select({
+      id: productionPlanItemsTable.id,
+      recipeId: productionPlanItemsTable.recipeId,
+      batchesTarget: productionPlanItemsTable.batchesTarget,
+      recipeName: recipesTable.name,
+      portionsPerBatch: recipesTable.portionsPerBatch,
+      orderPosition: productionPlanItemsTable.orderPosition,
+    })
+    .from(productionPlanItemsTable)
+    .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(eq(productionPlanItemsTable.planId, planId))
+    .orderBy(productionPlanItemsTable.orderPosition);
+
+  if (planItems.length === 0) {
+    res.json({ ingredients: [], recipes: [], totalDoughKg: 0, mixerCapacityKg: 25, mixCount: 0 });
+    return;
+  }
+
+  // Get mixer capacity from app settings
+  const [mixerSetting] = await db.select().from(appSettingsTable).where(eq(appSettingsTable.key, "mixer_capacity_kg"));
+  const mixerCapacityKg = mixerSetting ? Number(mixerSetting.value) : 25;
+
+  // For each recipe, find linked dough sub-recipes
+  // recipeSubRecipesTable.quantity = number of sub-recipe batches per recipe batch
+  const recipeIds = planItems.map(p => p.recipeId).filter(Boolean) as number[];
+  const subRecipeLinks = await db
+    .select({
+      recipeId: recipeSubRecipesTable.recipeId,
+      subRecipeId: recipeSubRecipesTable.subRecipeId,
+      quantityPerBatch: recipeSubRecipesTable.quantity,
+      subRecipeName: subRecipesTable.name,
+      subRecipeYield: subRecipesTable.yield,
+      subRecipeYieldUnit: subRecipesTable.yieldUnit,
+    })
+    .from(recipeSubRecipesTable)
+    .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
+    .where(inArray(recipeSubRecipesTable.recipeId, recipeIds));
+
+  // Find dough sub-recipes (any sub-recipe with "dough" in the name)
+  const doughSubRecipeIds = [...new Set(
+    subRecipeLinks
+      .filter(l => l.subRecipeName?.toLowerCase().includes("dough"))
+      .map(l => l.subRecipeId)
+  )];
+
+  if (doughSubRecipeIds.length === 0) {
+    res.json({ ingredients: [], recipes: [], totalDoughKg: 0, mixerCapacityKg, mixCount: 0 });
+    return;
+  }
+
+  // Fetch ingredients for all dough sub-recipes
+  const doughIngredientRows = await db
+    .select({
+      subRecipeId: subRecipeIngredientsTable.subRecipeId,
+      ingredientId: subRecipeIngredientsTable.ingredientId,
+      quantity: subRecipeIngredientsTable.quantity,
+      ingredientName: ingredientsTable.name,
+      unit: ingredientsTable.unit,
+    })
+    .from(subRecipeIngredientsTable)
+    .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
+    .where(inArray(subRecipeIngredientsTable.subRecipeId, doughSubRecipeIds));
+
+  // Per-recipe dough info
+  interface RecipeDoughInfo {
+    recipeId: number;
+    recipeName: string;
+    batchesTarget: number;
+    portionsPerBatch: number;
+    orderPosition: number;
+    doughBatchesNeeded: number;
+    doughKgTotal: number;
+    ballWeightG: number;
+    doughSubRecipeName: string;
+    subRecipeYieldKg: number;
+  }
+
+  const recipeResults: RecipeDoughInfo[] = [];
+
+  for (const planItem of planItems) {
+    const batchesTarget = Number(planItem.batchesTarget) || 0;
+    const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
+
+    // Find dough sub-recipe link for this recipe
+    const doughLink = subRecipeLinks.find(
+      l => l.recipeId === planItem.recipeId && doughSubRecipeIds.includes(l.subRecipeId)
+    );
+    if (!doughLink) continue;
+
+    // quantityPerBatch = number of sub-recipe batches per recipe batch
+    const quantityPerBatch = Number(doughLink.quantityPerBatch) || 0;
+    const subRecipeYieldKg = Number(doughLink.subRecipeYield) || 0;
+
+    // Total dough batches needed for this recipe
+    const doughBatchesNeeded = quantityPerBatch * batchesTarget;
+    // Total dough kg from this recipe
+    const doughKgTotal = doughBatchesNeeded * subRecipeYieldKg;
+    // Ball weight = (dough kg per recipe batch) / portionsPerBatch
+    const doughKgPerRecipeBatch = quantityPerBatch * subRecipeYieldKg;
+    const ballWeightG = portionsPerBatch > 0 ? Math.round((doughKgPerRecipeBatch / portionsPerBatch) * 1000) : 0;
+
+    recipeResults.push({
+      recipeId: planItem.recipeId!,
+      recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
+      batchesTarget,
+      portionsPerBatch,
+      orderPosition: planItem.orderPosition,
+      doughBatchesNeeded,
+      doughKgTotal,
+      ballWeightG,
+      doughSubRecipeName: doughLink.subRecipeName ?? "Dough",
+      subRecipeYieldKg,
+    });
+  }
+
+  // Aggregate ingredient totals across all recipes
+  // Total dough batches (in sub-recipe batches) = sum of doughBatchesNeeded per recipe
+  const totalDoughSubRecipeBatches = recipeResults.reduce((sum, r) => sum + r.doughBatchesNeeded, 0);
+  const totalDoughKg = recipeResults.reduce((sum, r) => sum + r.doughKgTotal, 0);
+
+  // Aggregate ingredient quantities: quantity from sub-recipe × total dough batches
+  // (Use first found dough sub-recipe ID — they should all be the same for a calzone kitchen)
+  const primaryDoughSubRecipeId = doughSubRecipeIds[0];
+  const primaryIngredients = doughIngredientRows.filter(r => r.subRecipeId === primaryDoughSubRecipeId);
+
+  const ingredients = primaryIngredients.map(ing => {
+    const qtyPerBatch = Number(ing.quantity) || 0;
+    const totalQty = qtyPerBatch * totalDoughSubRecipeBatches;
+    return {
+      ingredientId: ing.ingredientId,
+      ingredientName: ing.ingredientName ?? `Ingredient #${ing.ingredientId}`,
+      unit: ing.unit ?? "kg",
+      qtyPerBatch,
+      totalQty,
+    };
+  });
+
+  // Mixing schedule
+  const mixCount = mixerCapacityKg > 0 ? Math.ceil(totalDoughKg / mixerCapacityKg) : 0;
+  const kgPerMix = mixCount > 0 ? (totalDoughKg / mixCount) : 0;
+
+  // Per-mix ingredient quantities
+  const mixIngredients = ingredients.map(ing => ({
+    ...ing,
+    qtyPerMix: mixCount > 0 ? ing.totalQty / mixCount : 0,
+  }));
+
+  res.json({
+    totalDoughKg: Math.round(totalDoughKg * 100) / 100,
+    mixerCapacityKg,
+    mixCount,
+    kgPerMix: Math.round(kgPerMix * 100) / 100,
+    ingredients: mixIngredients,
+    recipes: recipeResults,
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// GET /:id/packing — returns adjusted pack counts + dispatch cross-reference
+// for today's production plan
+// ──────────────────────────────────────────────────────────────────────────────
+router.get("/:id/packing", async (req, res) => {
+  const planId = Number(req.params.id);
+
+  const [plan] = await db.select().from(productionPlansTable).where(eq(productionPlansTable.id, planId));
+  if (!plan) { res.status(404).json({ error: "Not found" }); return; }
+
+  const items = await db
+    .select({
+      id: productionPlanItemsTable.id,
+      recipeId: productionPlanItemsTable.recipeId,
+      recipeName: recipesTable.name,
+      batchesTarget: productionPlanItemsTable.batchesTarget,
+      batchesComplete: productionPlanItemsTable.batchesComplete,
+      wonlyCount: productionPlanItemsTable.wonlyCount,
+      status: productionPlanItemsTable.status,
+      orderPosition: productionPlanItemsTable.orderPosition,
+      portionsPerBatch: recipesTable.portionsPerBatch,
+    })
+    .from(productionPlanItemsTable)
+    .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(eq(productionPlanItemsTable.planId, planId))
+    .orderBy(productionPlanItemsTable.orderPosition);
+
+  // Dispatch orders for the plan date
+  const dispatches = await db
+    .select({
+      id: dispatchOrdersTable.id,
+      recipeId: dispatchOrdersTable.recipeId,
+      recipeName: recipesTable.name,
+      quantity: dispatchOrdersTable.quantity,
+      customer: dispatchOrdersTable.customer,
+      status: dispatchOrdersTable.status,
+      notes: dispatchOrdersTable.notes,
+    })
+    .from(dispatchOrdersTable)
+    .leftJoin(recipesTable, eq(dispatchOrdersTable.recipeId, recipesTable.id))
+    .where(eq(dispatchOrdersTable.dispatchDate, plan.planDate));
+
+  const packItems = items.map(item => {
+    const batchesComplete = Number(item.batchesComplete) || 0;
+    const portionsPerBatch = Number(item.portionsPerBatch) || 10;
+    const wonlyCount = Number(item.wonlyCount) || 0;
+    const grossPacks = Math.floor((batchesComplete * portionsPerBatch) / 2); // 2 portions per pack
+    const netPacks = Math.max(0, grossPacks - wonlyCount);
+    const itemDispatches = dispatches.filter(d => d.recipeId === item.recipeId);
+
+    return {
+      id: item.id,
+      recipeId: item.recipeId,
+      recipeName: item.recipeName ?? `Recipe #${item.recipeId}`,
+      batchesTarget: Number(item.batchesTarget) || 0,
+      batchesComplete,
+      wonlyCount,
+      grossPacks,
+      netPacks,
+      status: item.status,
+      orderPosition: item.orderPosition,
+      dispatches: itemDispatches.map(d => ({
+        id: d.id,
+        quantity: Number(d.quantity),
+        customer: d.customer,
+        status: d.status,
+        notes: d.notes,
+      })),
+      totalDispatch: itemDispatches.reduce((sum, d) => sum + Number(d.quantity), 0),
+    };
+  });
+
+  res.json({
+    planId,
+    planDate: plan.planDate,
+    items: packItems,
+    totalNetPacks: packItems.reduce((sum, p) => sum + p.netPacks, 0),
+    totalGrossPacks: packItems.reduce((sum, p) => sum + p.grossPacks, 0),
+    totalWonly: packItems.reduce((sum, p) => sum + p.wonlyCount, 0),
+  });
 });
 
 export default router;

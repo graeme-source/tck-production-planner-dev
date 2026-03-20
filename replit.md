@@ -64,6 +64,11 @@ artifacts-monorepo/
 - `stock_entries` — stock check entries (item_type: recipe|ingredient, quantity, unit)
 - `sales_entries` — sales records (recipe, sale_date, quantity_sold, channel)
 - `dispatch_orders` — dispatch records (recipe, dispatch_date, quantity, customer, status)
+- `app_settings` — simple key-value store for admin-configurable global settings (e.g., `mixer_capacity_kg=25`)
+- `batch_completions` — each oven/station batch completion event (for atomic increment/undo)
+- `station_breaks` — break start/end times per station
+- `dpt_settings` — per-recipe DPT configuration (defaultBatchesPerDay, surplusPercent, isActive)
+- `timing_standards` — per-station KPI targets (minBatchesPerHour, targetBatchesPerHour)
 
 ## API Routes
 
@@ -75,6 +80,11 @@ All routes under `/api/`:
 - `/stock-entries` — CRUD
 - `/sales-entries` — CRUD with date filtering
 - `/dispatch-orders` — CRUD with date filtering
+- `/production-plans/:id/dough-prep` — GET: dough breakdown, mix schedule, ball weights
+- `/production-plans/:id/packing` — GET: adjusted pack counts + dispatch cross-reference
+- `/production-plans/:id/items/:itemId/wonly` — POST: increment wonly; DELETE: decrement wonly
+- `/production-plans/next-active` — GET: next weekday with active plan (used by prep/dough-prep stations)
+- `/app-settings/:key` — GET/PUT admin-only global settings (mixer_capacity_kg)
 
 ## TypeScript & Composite Projects
 
@@ -89,7 +99,11 @@ The station page (`/station`) provides a full-screen view with:
   - **Raw Veg** (prep_veg) — fetches prep requirements for the next active plan; full-screen one-item-at-a-time mode with Done→Next + overview list toggle
   - **Bases & Mozzarella** (prep_bases) — per-recipe tin counts (green badge), full-screen + overview modes
   - **Raw Meat** (prep_meat) — per-ingredient tray counts with per-tray kg breakdown, full-screen (rose badge) + overview modes
-- **Dough, Ovens, Wrapping, Packing** — batch counters per item
+- **Dough Prep** (dough_prep) — fetches `/api/production-plans/:id/dough-prep`; shows total dough kg, mixer capacity (from `app_settings`), number of mixes, per-ingredient breakdown (Flour/Water/Oil/Salt/Yeast) per mix, dough ball weights per recipe, batch counters
+- **Dough Sheeting** (dough_sheeting) — shows ordered sheeting queue with ball weight (from dough sub-recipe) and per-item "Ready" checkbox toggle
+- **Ovens** (ovens) — batch counters + Wonly button (POST/DELETE `/api/production-plans/:id/items/:itemId/wonly` to record quality rejects); session totals: gross packs, total wonlys, net packs; blast chiller tray count (`ceil(netPacks/10)`); per-recipe table with snowflake icon column
+- **Wrapping** (wrapping) — batch counters + per-recipe pack counts: gross packs (`batchesComplete × portionsPerBatch / 2`) minus wonlyCount = net packs displayed live; session net pack total
+- **Packing** (packing) — fetches `/api/production-plans/:id/packing`; per-recipe cards with net packs + dispatch order cross-reference (surplus/short indicator); packed checkbox toggle; session gross/wonly/net pack totals
 - **Next-plan lookup**: `GET /api/production-plans/next-active` endpoint — finds next weekday (Mon-Fri) with `status='active'` within 7 days from **tomorrow** (i=1, not today). Used by PrepHub and DoughPrepStation to display "Prep for [Day], [Date]" on tiles and banners.
 
 Recipe fields added for station cards: `fill_weight_grams`, `base_type`, `base_weight_grams`, `sop_url`.

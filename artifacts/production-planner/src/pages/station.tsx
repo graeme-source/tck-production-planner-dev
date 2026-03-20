@@ -27,6 +27,7 @@ import {
   Construction, Waves, Flame, Gift, Box, Salad, Layers,
   Beef, TrendingUp, Trophy, ExternalLink, ChevronRight,
   List, LayoutGrid, CalendarCheck,
+  Snowflake, Truck, AlertCircle, Info, Droplets,
 } from "lucide-react";
 import { format, parseISO, differenceInMinutes } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -1981,13 +1982,53 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
 // ──────────────────────────────────────────────────────────────────────────────
 // Dough Prep Station
 // ──────────────────────────────────────────────────────────────────────────────
+interface DoughPrepData {
+  totalDoughKg: number;
+  mixerCapacityKg: number;
+  mixCount: number;
+  kgPerMix: number;
+  ingredients: Array<{
+    ingredientId: number | null;
+    ingredientName: string;
+    unit: string;
+    qtyPerBatch: number;
+    totalQty: number;
+    qtyPerMix: number;
+  }>;
+  recipes: Array<{
+    recipeId: number;
+    recipeName: string;
+    batchesTarget: number;
+    portionsPerBatch: number;
+    orderPosition: number;
+    doughBatchesNeeded: number;
+    doughKgTotal: number;
+    ballWeightG: number;
+    doughSubRecipeName: string;
+  }>;
+}
+
+function useDoughPrepData(planId: number) {
+  const [data, setData] = useState<DoughPrepData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch(`/api/production-plans/${planId}/dough-prep`, { credentials: "include" })
+      .then(r => r.json())
+      .then(d => { setData(d); setLoading(false); })
+      .catch(e => { setError(e.message); setLoading(false); });
+  }, [planId]);
+
+  return { data, loading, error };
+}
+
 function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const queryClient = useQueryClient();
-  const updateItem = useUpdateProductionPlanItem({
-    mutation: {
-      onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
-    },
-  });
+  const { data: doughData, loading: doughLoading } = useDoughPrepData(plan.id);
+  const [activeMix, setActiveMix] = useState<number>(1);
+
   const createBatch = useCreateBatchCompletion({
     mutation: {
       onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
@@ -1996,13 +2037,13 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
   const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
+  const totalComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
+  const overallPct = totalBatchesTarget > 0 ? Math.round((totalComplete / totalBatchesTarget) * 100) : 0;
 
-  // addBatch: only via createBatchCompletion (server increments)
   const addBatch = (item: ProductionPlanItem) => {
     createBatch.mutate({ id: plan.id, data: { planItemId: item.id, stationType: "dough_prep", completedAt: new Date().toISOString() } });
   };
 
-  // removeBatch: delete most recent batch_completion row + atomic decrement
   const removeBatch = async (item: ProductionPlanItem) => {
     if ((item.batchesComplete ?? 0) === 0) return;
     try {
@@ -2019,12 +2060,11 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     }
   };
 
-  const totalComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
-  const overallPct = totalBatchesTarget > 0 ? Math.round((totalComplete / totalBatchesTarget) * 100) : 0;
+  const mixCount = doughData?.mixCount ?? 0;
 
   return (
     <div className="space-y-4">
-      {/* Summary card */}
+      {/* Summary */}
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3">
@@ -2032,7 +2072,7 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
             <div>
               <h2 className="font-semibold text-base">Dough Prep</h2>
               <p className="text-xs text-muted-foreground">
-                {totalComplete} of {totalBatchesTarget} dough batches mixed
+                {totalComplete} of {totalBatchesTarget} recipe batches mixed
               </p>
             </div>
           </div>
@@ -2049,13 +2089,128 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
         </div>
       </div>
 
-      {/* Per-recipe dough batches */}
+      {/* Dough requirements */}
+      {doughLoading ? (
+        <div className="flex items-center justify-center py-8 text-muted-foreground">
+          <Loader2 className="w-5 h-5 animate-spin mr-2" />
+          Loading dough data…
+        </div>
+      ) : doughData && doughData.totalDoughKg > 0 ? (
+        <>
+          {/* Totals banner */}
+          <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-xl p-4">
+            <div className="flex items-start gap-3">
+              <Droplets className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+              <div className="flex-1">
+                <h3 className="font-semibold text-amber-900 dark:text-amber-100 mb-2">Total Dough Required</h3>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="text-center">
+                    <p className="text-xs text-amber-700 dark:text-amber-300">Total Dough</p>
+                    <p className="text-xl font-bold text-amber-800 dark:text-amber-200">{doughData.totalDoughKg.toFixed(1)} kg</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-amber-700 dark:text-amber-300">Mixer Capacity</p>
+                    <p className="text-xl font-bold text-amber-800 dark:text-amber-200">{doughData.mixerCapacityKg} kg</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-amber-700 dark:text-amber-300">No. of Mixes</p>
+                    <p className="text-xl font-bold text-amber-800 dark:text-amber-200">{doughData.mixCount}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Per-recipe ball weights */}
+          <div className="bg-card border border-border rounded-xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-border">
+              <h3 className="font-semibold text-sm">Dough Ball Weights</h3>
+            </div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-secondary/20 border-b border-border text-xs text-muted-foreground">
+                  <th className="py-2 px-4 text-left font-medium">Recipe</th>
+                  <th className="py-2 px-4 text-center font-medium">Batches</th>
+                  <th className="py-2 px-4 text-center font-medium">Ball Weight</th>
+                </tr>
+              </thead>
+              <tbody>
+                {doughData.recipes.map(r => (
+                  <tr key={r.recipeId} className="border-b border-border/50 last:border-0">
+                    <td className="py-2.5 px-4 font-medium">{r.recipeName}</td>
+                    <td className="py-2.5 px-4 text-center">{r.batchesTarget}</td>
+                    <td className="py-2.5 px-4 text-center font-semibold text-amber-700 dark:text-amber-400">
+                      {r.ballWeightG}g
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mixing schedule */}
+          {mixCount > 0 && (
+            <div className="bg-card border border-border rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+                <h3 className="font-semibold text-sm">Mixing Schedule — {doughData.kgPerMix.toFixed(1)} kg per mix</h3>
+                {mixCount > 1 && (
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: mixCount }, (_, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setActiveMix(i + 1)}
+                        className={cn(
+                          "w-7 h-7 rounded-full text-xs font-semibold transition-colors",
+                          activeMix === i + 1
+                            ? "bg-amber-500 text-white"
+                            : "bg-secondary text-muted-foreground hover:bg-secondary/80"
+                        )}
+                      >
+                        {i + 1}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="p-4">
+                <p className="text-xs text-muted-foreground mb-3">
+                  Mix {activeMix} of {mixCount} ({doughData.kgPerMix.toFixed(1)} kg)
+                </p>
+                <div className="space-y-2">
+                  {doughData.ingredients.map(ing => (
+                    <div key={ing.ingredientId ?? ing.ingredientName} className="flex items-center justify-between py-2 border-b border-border/40 last:border-0">
+                      <span className="text-sm font-medium">{ing.ingredientName}</span>
+                      <div className="flex items-center gap-4 text-right">
+                        <div>
+                          <span className="text-base font-bold tabular-nums">
+                            {ing.unit === "g"
+                              ? `${(ing.qtyPerMix).toFixed(0)}g`
+                              : `${ing.qtyPerMix.toFixed(2)} ${ing.unit}`}
+                          </span>
+                        </div>
+                        <div className="text-xs text-muted-foreground w-20 text-right">
+                          Total: {ing.unit === "g"
+                            ? `${ing.totalQty.toFixed(0)}g`
+                            : `${ing.totalQty.toFixed(2)} ${ing.unit}`}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      ) : null}
+
+      {/* Per-recipe batch counters */}
       <div className="space-y-2">
         {items.map(item => {
           const isComplete = item.status === "complete";
           const prog = (item.batchesTarget ?? 0) > 0
             ? Math.round(((item.batchesComplete ?? 0) / (item.batchesTarget ?? 0)) * 100)
             : 0;
+          const recipeInfo = doughData?.recipes.find(r => r.recipeId === item.recipeId);
           return (
             <div
               key={item.id}
@@ -2076,6 +2231,11 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                     </h3>
                     {isComplete && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
                   </div>
+                  {recipeInfo && (
+                    <p className="text-xs text-amber-700 dark:text-amber-400 mb-1">
+                      {recipeInfo.ballWeightG}g balls · {recipeInfo.portionsPerBatch} per batch
+                    </p>
+                  )}
                   <div className="flex items-center gap-2">
                     <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
                       <div
@@ -2087,9 +2247,6 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                       {item.batchesComplete ?? 0} / {item.batchesTarget ?? 0} batches
                     </span>
                   </div>
-                  {item.tinSize && (
-                    <p className="text-xs text-muted-foreground mt-1">{item.tinSize} tin</p>
-                  )}
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <button
@@ -2128,8 +2285,20 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
 // Dough Sheeting Station
 // ──────────────────────────────────────────────────────────────────────────────
 function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
+  const { data: doughData } = useDoughPrepData(plan.id);
+  const [sheetedItems, setSheetedItems] = useState<Set<number>>(new Set());
+
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
   const currentItem = items.find(it => it.status === "in-progress") ?? items.find(it => it.status === "pending");
+
+  const toggleSheeted = (itemId: number) => {
+    setSheetedItems(prev => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+  };
 
   return (
     <div className="space-y-4">
@@ -2147,6 +2316,14 @@ function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
               <p className="text-xs text-muted-foreground">Batches</p>
               <p className="text-2xl font-bold">{currentItem.batchesTarget ?? 0}</p>
             </div>
+            {doughData?.recipes.find(r => r.recipeId === currentItem.recipeId)?.ballWeightG && (
+              <div className="bg-amber-50 dark:bg-amber-900/20 rounded-lg px-4 py-2.5 text-center min-w-[80px]">
+                <p className="text-xs text-muted-foreground">Ball Weight</p>
+                <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">
+                  {doughData?.recipes.find(r => r.recipeId === currentItem.recipeId)?.ballWeightG}g
+                </p>
+              </div>
+            )}
             {currentItem.tinSize && (
               <div className="bg-secondary/50 rounded-lg px-4 py-2.5 text-center min-w-[80px]">
                 <p className="text-xs text-muted-foreground">Tin Size</p>
@@ -2184,9 +2361,10 @@ function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
               <th className="py-2.5 px-4 text-left font-medium">#</th>
               <th className="py-2.5 px-4 text-left font-medium">Recipe</th>
               <th className="py-2.5 px-4 text-center font-medium">Batches</th>
+              <th className="py-2.5 px-4 text-center font-medium">Ball Weight</th>
               <th className="py-2.5 px-4 text-center font-medium">Tin</th>
-              <th className="py-2.5 px-4 text-center font-medium">Tins to Cut</th>
-              <th className="py-2.5 px-4 text-center font-medium">Status</th>
+              <th className="py-2.5 px-4 text-center font-medium">Tins</th>
+              <th className="py-2.5 px-4 text-center font-medium">Ready</th>
             </tr>
           </thead>
           <tbody>
@@ -2195,30 +2373,42 @@ function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
                 ? Math.ceil((item.batchesTarget ?? 0) / item.maxBatchesPerTin)
                 : null;
               const isCurrent = item.id === currentItem?.id;
+              const isReady = sheetedItems.has(item.id);
+              const ballWeight = doughData?.recipes.find(r => r.recipeId === item.recipeId)?.ballWeightG;
               return (
                 <tr
                   key={item.id}
-                  className={cn("border-b border-border/50 last:border-0", isCurrent ? "bg-amber-50/60 dark:bg-amber-900/10" : "")}
+                  className={cn(
+                    "border-b border-border/50 last:border-0",
+                    isReady ? "bg-emerald-50/40 dark:bg-emerald-900/10" :
+                    isCurrent ? "bg-amber-50/60 dark:bg-amber-900/10" : ""
+                  )}
                 >
                   <td className="py-2.5 px-4 text-muted-foreground">{item.orderPosition}</td>
-                  <td className={cn("py-2.5 px-4 font-medium", item.status === "complete" ? "line-through text-muted-foreground" : "")}>
+                  <td className={cn("py-2.5 px-4 font-medium", isReady ? "line-through text-muted-foreground" : "")}>
                     {item.recipeName ?? `Recipe #${item.recipeId}`}
-                    {isCurrent && <span className="ml-2 text-xs text-amber-600 font-normal">← current</span>}
+                    {isCurrent && !isReady && <span className="ml-2 text-xs text-amber-600 font-normal">← current</span>}
                   </td>
                   <td className="py-2.5 px-4 text-center">{item.batchesTarget ?? 0}</td>
+                  <td className="py-2.5 px-4 text-center font-semibold text-amber-700 dark:text-amber-400">
+                    {ballWeight ? `${ballWeight}g` : <span className="text-muted-foreground">—</span>}
+                  </td>
                   <td className="py-2.5 px-4 text-center text-muted-foreground">{item.tinSize ?? "—"}</td>
                   <td className="py-2.5 px-4 text-center font-semibold">
                     {tins != null ? tins : <span className="text-muted-foreground">—</span>}
                   </td>
                   <td className="py-2.5 px-4 text-center">
-                    <span className={cn(
-                      "text-xs capitalize",
-                      item.status === "complete" ? "text-emerald-600 dark:text-emerald-400" :
-                      item.status === "in-progress" ? "text-amber-600 dark:text-amber-400 font-medium" :
-                      "text-muted-foreground"
-                    )}>
-                      {item.status === "in-progress" ? "In Progress" : item.status}
-                    </span>
+                    <button
+                      onClick={() => toggleSheeted(item.id)}
+                      className={cn(
+                        "w-8 h-8 rounded-full flex items-center justify-center mx-auto transition-colors",
+                        isReady
+                          ? "bg-emerald-500 text-white"
+                          : "bg-secondary border border-border text-muted-foreground hover:bg-secondary/80"
+                      )}
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                    </button>
                   </td>
                 </tr>
               );
@@ -2237,12 +2427,8 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
   const queryClient = useQueryClient();
   const { state } = useAuth();
   const isAdmin = state.status === "authenticated" && state.user.role === "admin";
+  const [wonlyLoading, setWonlyLoading] = useState<number | null>(null);
 
-  const updateItem = useUpdateProductionPlanItem({
-    mutation: {
-      onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
-    },
-  });
   const createBatch = useCreateBatchCompletion({
     mutation: {
       onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
@@ -2252,12 +2438,10 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
   const currentItem = items.find(it => it.status === "in-progress") ?? items.find(it => it.status === "pending");
 
-  // addBatch: only via createBatchCompletion (server increments)
   const addBatch = (item: ProductionPlanItem) => {
     createBatch.mutate({ id: plan.id, data: { planItemId: item.id, stationType: "ovens", completedAt: new Date().toISOString() } });
   };
 
-  // removeBatch: delete most recent batch_completion row + atomic decrement
   const removeBatch = async (item: ProductionPlanItem) => {
     if ((item.batchesComplete ?? 0) === 0) return;
     try {
@@ -2274,9 +2458,55 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
     }
   };
 
+  const addWonly = async (item: ProductionPlanItem) => {
+    setWonlyLoading(item.id);
+    try {
+      const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/wonly`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+      toast({ title: "Wonly recorded", description: `Quality reject logged for ${item.recipeName ?? "recipe"}.` });
+    } catch (err) {
+      toast({ title: "Wonly failed", description: err instanceof Error ? err.message : "Could not record wonly.", variant: "destructive" });
+    } finally {
+      setWonlyLoading(null);
+    }
+  };
+
+  const undoWonly = async (item: ProductionPlanItem) => {
+    if ((item.wonlyCount ?? 0) === 0) return;
+    setWonlyLoading(item.id);
+    try {
+      const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/wonly`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+    } catch (err) {
+      toast({ title: "Undo failed", description: err instanceof Error ? err.message : "Could not undo wonly.", variant: "destructive" });
+    } finally {
+      setWonlyLoading(null);
+    }
+  };
+
   const totalComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
   const totalTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
   const overallPct = totalTarget > 0 ? Math.round((totalComplete / totalTarget) * 100) : 0;
+
+  // Pack count helpers — 2 portions per pack, 10 packs per blast chiller tray
+  const grossPacks = (item: ProductionPlanItem) =>
+    Math.floor(((item.batchesComplete ?? 0) * (item.portionsPerBatch ?? 10)) / 2);
+  const netPacks = (item: ProductionPlanItem) =>
+    Math.max(0, grossPacks(item) - (item.wonlyCount ?? 0));
+  const chillerTrays = (item: ProductionPlanItem) =>
+    Math.ceil(netPacks(item) / 10);
+
+  const sessionGrossPacks = items.reduce((s, it) => s + grossPacks(it), 0);
+  const sessionWonly = items.reduce((s, it) => s + (it.wonlyCount ?? 0), 0);
+  const sessionNetPacks = items.reduce((s, it) => s + netPacks(it), 0);
 
   return (
     <div className="space-y-4">
@@ -2289,25 +2519,31 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
           <h2 className="font-display text-2xl font-bold mb-3">
             {currentItem.recipeName ?? `Recipe #${currentItem.recipeId}`}
           </h2>
-          <div className="flex items-center gap-4 mb-4">
-            <div className="bg-secondary/50 rounded-lg px-4 py-2 text-center">
+          <div className="flex flex-wrap items-center gap-3 mb-4">
+            <div className="bg-secondary/50 rounded-lg px-4 py-2 text-center min-w-[80px]">
               <p className="text-xs text-muted-foreground">Loads Done</p>
               <p className="text-3xl font-bold">{currentItem.batchesComplete ?? 0}</p>
             </div>
-            <div className="bg-secondary/50 rounded-lg px-4 py-2 text-center">
+            <div className="bg-secondary/50 rounded-lg px-4 py-2 text-center min-w-[80px]">
               <p className="text-xs text-muted-foreground">Target</p>
               <p className="text-3xl font-bold">{currentItem.batchesTarget ?? 0}</p>
             </div>
-            {currentItem.maxBatchesPerTin && (currentItem.batchesTarget ?? 0) > 0 && (
-              <div className="bg-red-50 dark:bg-red-900/20 rounded-lg px-4 py-2 text-center">
-                <p className="text-xs text-muted-foreground">Oven Loads</p>
-                <p className="text-3xl font-bold text-red-600 dark:text-red-400">
-                  {Math.ceil((currentItem.batchesTarget ?? 0) / currentItem.maxBatchesPerTin)}
-                </p>
+            <div className="bg-indigo-50 dark:bg-indigo-900/20 rounded-lg px-4 py-2 text-center min-w-[80px]">
+              <p className="text-xs text-muted-foreground">Net Packs</p>
+              <p className="text-3xl font-bold text-indigo-600 dark:text-indigo-400">{netPacks(currentItem)}</p>
+            </div>
+            <div className="bg-cyan-50 dark:bg-cyan-900/20 rounded-lg px-4 py-2 text-center min-w-[80px]">
+              <p className="text-xs text-muted-foreground">Chiller Trays</p>
+              <p className="text-3xl font-bold text-cyan-600 dark:text-cyan-400">{chillerTrays(currentItem)}</p>
+            </div>
+            {(currentItem.wonlyCount ?? 0) > 0 && (
+              <div className="bg-red-50 dark:bg-red-900/20 rounded-lg px-4 py-2 text-center min-w-[80px]">
+                <p className="text-xs text-muted-foreground">Wonlys</p>
+                <p className="text-3xl font-bold text-red-600 dark:text-red-400">{currentItem.wonlyCount ?? 0}</p>
               </div>
             )}
           </div>
-          <div className="flex items-center justify-center gap-4">
+          <div className="flex items-center justify-center gap-4 mb-4">
             <button
               onClick={() => removeBatch(currentItem)}
               disabled={(currentItem.batchesComplete ?? 0) === 0}
@@ -2326,6 +2562,34 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
               <Plus className="w-5 h-5" />
             </button>
           </div>
+          {/* Wonly section */}
+          <div className="border-t border-border/50 pt-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground">QUALITY REJECTS (Wonly)</p>
+                <p className="text-xs text-muted-foreground">Substandard packs not counted in output</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => undoWonly(currentItem)}
+                  disabled={(currentItem.wonlyCount ?? 0) === 0 || wonlyLoading === currentItem.id}
+                  className="w-8 h-8 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
+                >
+                  <Minus className="w-3.5 h-3.5" />
+                </button>
+                <span className="text-xl font-bold tabular-nums w-8 text-center text-red-600 dark:text-red-400">
+                  {wonlyLoading === currentItem.id ? "…" : (currentItem.wonlyCount ?? 0)}
+                </span>
+                <button
+                  onClick={() => addWonly(currentItem)}
+                  disabled={wonlyLoading === currentItem.id}
+                  className="w-8 h-8 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       ) : (
         <div className="bg-card border border-border rounded-xl p-8 text-center">
@@ -2335,7 +2599,23 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
         </div>
       )}
 
-      {/* Overall progress */}
+      {/* Session totals */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="bg-card border border-border rounded-xl p-3 text-center">
+          <p className="text-xs text-muted-foreground mb-1">Gross Packs</p>
+          <p className="text-2xl font-bold tabular-nums">{sessionGrossPacks}</p>
+        </div>
+        <div className="bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-xl p-3 text-center">
+          <p className="text-xs text-red-700 dark:text-red-300 mb-1">Total Wonlys</p>
+          <p className="text-2xl font-bold tabular-nums text-red-600 dark:text-red-400">{sessionWonly}</p>
+        </div>
+        <div className="bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3 text-center">
+          <p className="text-xs text-emerald-700 dark:text-emerald-300 mb-1">Net Packs</p>
+          <p className="text-2xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{sessionNetPacks}</p>
+        </div>
+      </div>
+
+      {/* Overall progress + breaks */}
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
           <p className="text-sm font-medium">Daily Progress</p>
@@ -2352,7 +2632,7 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
         </div>
       </div>
 
-      {/* Queue */}
+      {/* Per-recipe summary table */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
           <h3 className="font-semibold text-sm">Oven Queue</h3>
@@ -2360,40 +2640,52 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-secondary/20 border-b border-border text-xs text-muted-foreground">
-              <th className="py-2 px-4 text-left font-medium">#</th>
-              <th className="py-2 px-4 text-left font-medium">Recipe</th>
-              <th className="py-2 px-4 text-center font-medium">Target</th>
-              <th className="py-2 px-4 text-center font-medium">Done</th>
-              <th className="py-2 px-4 text-center font-medium">Oven Loads</th>
-              <th className="py-2 px-4 text-center font-medium">Status</th>
+              <th className="py-2 px-3 text-left font-medium">Recipe</th>
+              <th className="py-2 px-3 text-center font-medium">Done</th>
+              <th className="py-2 px-3 text-center font-medium">Packs</th>
+              <th className="py-2 px-3 text-center font-medium">Wonlys</th>
+              <th className="py-2 px-3 text-center font-medium">Net</th>
+              <th className="py-2 px-3 text-center font-medium">
+                <Snowflake className="w-3.5 h-3.5 inline text-cyan-500" />
+              </th>
             </tr>
           </thead>
           <tbody>
             {items.map(item => {
-              const loads = item.maxBatchesPerTin && (item.batchesTarget ?? 0) > 0
-                ? Math.ceil((item.batchesTarget ?? 0) / item.maxBatchesPerTin)
-                : null;
+              const isCurrentRow = item.id === currentItem?.id;
+              const gPacks = grossPacks(item);
+              const nPacks = netPacks(item);
+              const trays = chillerTrays(item);
+              const wonlys = item.wonlyCount ?? 0;
               return (
-                <tr key={item.id} className="border-b border-border/50 last:border-0">
-                  <td className="py-2.5 px-4 text-muted-foreground">{item.orderPosition}</td>
-                  <td className={cn("py-2.5 px-4 font-medium", item.status === "complete" ? "line-through text-muted-foreground" : "")}>
+                <tr key={item.id} className={cn(
+                  "border-b border-border/50 last:border-0",
+                  isCurrentRow ? "bg-red-50/40 dark:bg-red-900/10" :
+                  item.status === "complete" ? "bg-emerald-50/30 dark:bg-emerald-900/10" : ""
+                )}>
+                  <td className={cn("py-2 px-3 font-medium text-xs", item.status === "complete" ? "line-through text-muted-foreground" : "")}>
                     {item.recipeName ?? `Recipe #${item.recipeId}`}
                   </td>
-                  <td className="py-2.5 px-4 text-center">{item.batchesTarget ?? 0}</td>
-                  <td className="py-2.5 px-4 text-center">{item.batchesComplete ?? 0}</td>
-                  <td className="py-2.5 px-4 text-center font-medium">
-                    {loads != null ? loads : <span className="text-muted-foreground">—</span>}
+                  <td className="py-2 px-3 text-center tabular-nums text-xs">{item.batchesComplete ?? 0}</td>
+                  <td className="py-2 px-3 text-center tabular-nums text-xs">{gPacks}</td>
+                  <td className="py-2 px-3 text-center tabular-nums text-xs">
+                    <div className="flex items-center justify-center gap-1">
+                      <span className={cn(wonlys > 0 ? "text-red-600 dark:text-red-400 font-semibold" : "text-muted-foreground")}>
+                        {wonlys}
+                      </span>
+                      {isCurrentRow && (
+                        <button
+                          onClick={() => addWonly(item)}
+                          disabled={wonlyLoading === item.id}
+                          className="w-4 h-4 rounded-full bg-red-500 text-white flex items-center justify-center ml-0.5"
+                        >
+                          <Plus className="w-2.5 h-2.5" />
+                        </button>
+                      )}
+                    </div>
                   </td>
-                  <td className="py-2.5 px-4 text-center">
-                    <span className={cn(
-                      "text-xs capitalize",
-                      item.status === "complete" ? "text-emerald-600 dark:text-emerald-400" :
-                      item.status === "in-progress" ? "text-red-500 font-medium" :
-                      "text-muted-foreground"
-                    )}>
-                      {item.status === "in-progress" ? "In Oven" : item.status}
-                    </span>
-                  </td>
+                  <td className="py-2 px-3 text-center tabular-nums text-xs font-semibold text-indigo-600 dark:text-indigo-400">{nPacks}</td>
+                  <td className="py-2 px-3 text-center tabular-nums text-xs font-semibold text-cyan-600 dark:text-cyan-400">{trays > 0 ? trays : "—"}</td>
                 </tr>
               );
             })}
@@ -2412,11 +2704,6 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const { state } = useAuth();
   const isAdmin = state.status === "authenticated" && state.user.role === "admin";
 
-  const updateItem = useUpdateProductionPlanItem({
-    mutation: {
-      onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
-    },
-  });
   const createBatch = useCreateBatchCompletion({
     mutation: {
       onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
@@ -2428,12 +2715,10 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const totalTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
   const overallPct = totalTarget > 0 ? Math.round((totalComplete / totalTarget) * 100) : 0;
 
-  // addBatch: only via createBatchCompletion
   const addBatch = (item: ProductionPlanItem) => {
     createBatch.mutate({ id: plan.id, data: { planItemId: item.id, stationType: "wrapping", completedAt: new Date().toISOString() } });
   };
 
-  // removeBatch: delete most recent batch_completion row + atomic decrement
   const removeBatch = async (item: ProductionPlanItem) => {
     if ((item.batchesComplete ?? 0) === 0) return;
     try {
@@ -2450,6 +2735,13 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
     }
   };
 
+  // Pack counts: 2 portions per pack, deduct wonlys
+  const netPacks = (item: ProductionPlanItem) => {
+    const gross = Math.floor(((item.batchesComplete ?? 0) * (item.portionsPerBatch ?? 10)) / 2);
+    return Math.max(0, gross - (item.wonlyCount ?? 0));
+  };
+  const totalNetPacks = items.reduce((s, it) => s + netPacks(it), 0);
+
   return (
     <div className="space-y-4">
       {/* Summary */}
@@ -2460,7 +2752,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
             <div>
               <h2 className="font-semibold text-base">Wrapping Station</h2>
               <p className="text-xs text-muted-foreground">
-                {totalComplete} of {totalTarget} batches wrapped
+                {totalComplete} of {totalTarget} batches · {totalNetPacks} net packs
               </p>
             </div>
           </div>
@@ -2477,13 +2769,16 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
         </div>
       </div>
 
-      {/* Per-recipe wrapping list */}
+      {/* Per-recipe wrapping list with pack counts */}
       <div className="space-y-2">
         {items.map(item => {
           const isComplete = item.status === "complete";
           const prog = (item.batchesTarget ?? 0) > 0
             ? Math.round(((item.batchesComplete ?? 0) / (item.batchesTarget ?? 0)) * 100)
             : 0;
+          const gross = Math.floor(((item.batchesComplete ?? 0) * (item.portionsPerBatch ?? 10)) / 2);
+          const wonlys = item.wonlyCount ?? 0;
+          const net = Math.max(0, gross - wonlys);
           return (
             <div
               key={item.id}
@@ -2498,11 +2793,17 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
             >
               <div className="flex items-center gap-3">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1.5">
+                  <div className="flex items-center gap-2 mb-1">
                     <h3 className={cn("font-semibold", isComplete ? "line-through text-muted-foreground" : "")}>
                       {item.recipeName ?? `Recipe #${item.recipeId}`}
                     </h3>
                     {isComplete && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
+                  </div>
+                  {/* Pack counts row */}
+                  <div className="flex items-center gap-3 mb-1.5 text-xs">
+                    <span className="text-muted-foreground">{gross} gross packs</span>
+                    {wonlys > 0 && <span className="text-red-600 dark:text-red-400">−{wonlys} wonlys</span>}
+                    <span className="font-semibold text-purple-700 dark:text-purple-400">= {net} net</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
@@ -2512,7 +2813,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                       />
                     </div>
                     <span className="text-xs text-muted-foreground whitespace-nowrap">
-                      {item.batchesComplete ?? 0} / {item.batchesTarget ?? 0}
+                      {item.batchesComplete ?? 0} / {item.batchesTarget ?? 0} batches
                     </span>
                   </div>
                 </div>
@@ -2552,24 +2853,70 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
 // ──────────────────────────────────────────────────────────────────────────────
 // Packing Station
 // ──────────────────────────────────────────────────────────────────────────────
+interface PackingData {
+  items: Array<{
+    id: number;
+    recipeId: number | null;
+    recipeName: string;
+    batchesTarget: number;
+    batchesComplete: number;
+    wonlyCount: number;
+    grossPacks: number;
+    netPacks: number;
+    status: string;
+    orderPosition: number;
+    dispatches: Array<{ id: number; quantity: number; customer: string | null; status: string | null; notes: string | null }>;
+    totalDispatch: number;
+  }>;
+  totalNetPacks: number;
+  totalGrossPacks: number;
+  totalWonly: number;
+}
+
+function usePackingData(planId: number, planStatus: string) {
+  const [data, setData] = useState<PackingData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const refetch = useCallback(() => {
+    fetch(`/api/production-plans/${planId}/packing`, { credentials: "include" })
+      .then(r => r.json())
+      .then(d => { setData(d); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [planId]);
+
+  useEffect(() => { refetch(); }, [refetch]);
+
+  return { data, loading, refetch };
+}
+
 function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
+  const { data: packData, loading: packLoading } = usePackingData(plan.id, plan.status);
+  const [packedItems, setPackedItems] = useState<Set<number>>(new Set());
 
   const totalCompleteItems = items.filter(it => it.status === "complete").length;
-  const grandTotalBatches = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
   const allDone = items.length > 0 && items.every(it => it.status === "complete");
+
+  const togglePacked = (itemId: number) => {
+    setPackedItems(prev => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+  };
 
   return (
     <div className="space-y-4">
-      {/* Summary */}
+      {/* Summary header */}
       <div className="bg-card border border-border rounded-xl p-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3">
             <Box className="w-6 h-6 text-indigo-500" />
             <div>
               <h2 className="font-semibold text-base">Packing Station</h2>
               <p className="text-xs text-muted-foreground">
-                Final pack counts for today's production
+                Final pack counts for {format(parseISO(plan.planDate), "EEEE d MMMM")}
               </p>
             </div>
           </div>
@@ -2580,73 +2927,126 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
             </div>
           )}
         </div>
+        {/* Session totals */}
+        {packData && (
+          <div className="grid grid-cols-3 gap-2 pt-2 border-t border-border/50">
+            <div className="text-center">
+              <p className="text-xs text-muted-foreground">Gross Packs</p>
+              <p className="text-lg font-bold tabular-nums">{packData.totalGrossPacks}</p>
+            </div>
+            <div className="text-center">
+              <p className="text-xs text-red-600 dark:text-red-400">Wonlys</p>
+              <p className="text-lg font-bold tabular-nums text-red-600 dark:text-red-400">{packData.totalWonly}</p>
+            </div>
+            <div className="text-center">
+              <p className="text-xs text-emerald-700 dark:text-emerald-300">Net Packs</p>
+              <p className="text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{packData.totalNetPacks}</p>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Per-recipe packing summary */}
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <h3 className="font-semibold text-sm">Pack Summary</h3>
-          <span className="text-xs text-muted-foreground">
-            {totalCompleteItems} of {items.length} recipes complete
-          </span>
+      {/* Per-recipe pack cards with dispatch cross-reference */}
+      {packLoading ? (
+        <div className="flex items-center justify-center py-8 text-muted-foreground">
+          <Loader2 className="w-5 h-5 animate-spin mr-2" />
+          Loading pack data…
         </div>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-secondary/20 border-b border-border text-xs text-muted-foreground">
-              <th className="py-2.5 px-4 text-left font-medium">Recipe</th>
-              <th className="py-2.5 px-4 text-center font-medium">Batches Done</th>
-              <th className="py-2.5 px-4 text-center font-medium">Target Batches</th>
-              <th className="py-2.5 px-4 text-center font-medium">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map(item => {
-              const isComplete = item.status === "complete";
-              const batchDone = item.batchesComplete ?? 0;
-              const batchTarget = item.batchesTarget ?? 0;
-              const pct = batchTarget > 0 ? Math.round((batchDone / batchTarget) * 100) : 0;
+      ) : packData ? (
+        <div className="space-y-3">
+          {packData.items.map(packItem => {
+            const isPacked = packedItems.has(packItem.id);
+            const gap = packItem.netPacks - packItem.totalDispatch;
+            const hasDispatches = packItem.dispatches.length > 0;
+            return (
+              <div
+                key={packItem.id}
+                className={cn(
+                  "bg-card border rounded-xl overflow-hidden transition-all",
+                  isPacked
+                    ? "border-emerald-300 dark:border-emerald-700"
+                    : packItem.status === "complete"
+                      ? "border-border"
+                      : "border-border/60"
+                )}
+              >
+                {/* Recipe header */}
+                <div className={cn(
+                  "flex items-center justify-between px-4 py-3",
+                  isPacked ? "bg-emerald-50/50 dark:bg-emerald-900/10" : ""
+                )}>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h3 className={cn("font-semibold", isPacked ? "line-through text-muted-foreground" : "")}>
+                        {packItem.recipeName}
+                      </h3>
+                      {isPacked && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
+                    </div>
+                    <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
+                      <span>{packItem.batchesComplete} batches</span>
+                      {packItem.wonlyCount > 0 && (
+                        <span className="text-red-600 dark:text-red-400">−{packItem.wonlyCount} wonlys</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <p className="text-xs text-muted-foreground">Net Packs</p>
+                      <p className="text-2xl font-bold tabular-nums text-indigo-600 dark:text-indigo-400">
+                        {packItem.netPacks}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => togglePacked(packItem.id)}
+                      className={cn(
+                        "w-9 h-9 rounded-full flex items-center justify-center transition-colors flex-shrink-0",
+                        isPacked
+                          ? "bg-emerald-500 text-white"
+                          : "bg-secondary border border-border text-muted-foreground hover:bg-secondary/80"
+                      )}
+                    >
+                      <CheckCircle2 className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
 
-              return (
-                <tr key={item.id} className={cn("border-b border-border/50 last:border-0", isComplete ? "bg-emerald-50/30 dark:bg-emerald-900/10" : "")}>
-                  <td className={cn("py-3 px-4 font-medium", isComplete ? "line-through text-muted-foreground" : "")}>
-                    {item.recipeName ?? `Recipe #${item.recipeId}`}
-                  </td>
-                  <td className="py-3 px-4 text-center tabular-nums">
-                    <span className={cn("text-base font-bold", isComplete ? "text-emerald-600 dark:text-emerald-400" : batchDone > 0 ? "text-indigo-600 dark:text-indigo-400" : "text-muted-foreground")}>
-                      {batchDone}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4 text-center text-muted-foreground">{batchTarget}</td>
-                  <td className="py-3 px-4 text-center">
-                    <div className="flex items-center justify-center gap-1.5">
-                      {isComplete ? (
-                        <>
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                          <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">Done</span>
-                        </>
-                      ) : (
-                        <div className="flex items-center gap-2">
-                          <div className="w-16 h-1.5 bg-secondary rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-indigo-500 rounded-full transition-all"
-                              style={{ width: `${Math.min(pct, 100)}%` }}
-                            />
-                          </div>
-                          <span className="text-xs text-muted-foreground">{pct}%</span>
+                {/* Dispatch cross-reference */}
+                {hasDispatches && (
+                  <div className="border-t border-border/50 px-4 py-2 bg-secondary/10">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <Truck className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Dispatch Orders</span>
+                    </div>
+                    <div className="space-y-1">
+                      {packItem.dispatches.map(d => (
+                        <div key={d.id} className="flex items-center justify-between text-xs">
+                          <span className="text-muted-foreground">{d.customer ?? "Unknown customer"}</span>
+                          <span className="font-semibold">{d.quantity} packs</span>
+                        </div>
+                      ))}
+                      <div className="flex items-center justify-between text-xs font-semibold pt-1 border-t border-border/40 mt-1">
+                        <span>Total Dispatching</span>
+                        <span>{packItem.totalDispatch} packs</span>
+                      </div>
+                      {gap !== 0 && (
+                        <div className={cn(
+                          "flex items-center gap-1.5 text-xs mt-0.5",
+                          gap > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"
+                        )}>
+                          {gap > 0
+                            ? <><Info className="w-3 h-3" /> {gap} surplus packs</>
+                            : <><AlertCircle className="w-3 h-3" /> {Math.abs(gap)} packs short of dispatch</>
+                          }
                         </div>
                       )}
                     </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        <div className="px-4 py-3 border-t border-border bg-secondary/20 flex items-center justify-between">
-          <span className="text-sm font-semibold">Grand Total Batches</span>
-          <span className="text-lg font-bold tabular-nums">{grandTotalBatches}</span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
-      </div>
+      ) : null}
 
       <BreakTracker planId={plan.id} stationType="packing" />
 

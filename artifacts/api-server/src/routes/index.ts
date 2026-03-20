@@ -16,6 +16,7 @@ import usersRouter from "./users";
 import categoryDefaultsRouter from "./category-defaults";
 import shopifyRouter from "./shopify";
 import pagePermissionsRouter from "./page-permissions";
+import appSettingsRouter from "./app-settings";
 
 const router: IRouter = Router();
 
@@ -57,5 +58,6 @@ router.use("/sales-entries", salesRouter);
 router.use("/dispatch-orders", dispatchesRouter);
 router.use("/shopify", shopifyRouter);
 router.use("/page-permissions", pagePermissionsRouter);
+router.use("/app-settings", requireAdmin, appSettingsRouter);
 
 export default router;

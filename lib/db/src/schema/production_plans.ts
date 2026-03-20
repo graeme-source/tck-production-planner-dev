@@ -66,6 +66,15 @@ export const timingStandardsTable = pgTable("timing_standards", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+export const appSettingsTable = pgTable("app_settings", {
+  id: serial("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type AppSetting = typeof appSettingsTable.$inferSelect;
+
 export const insertProductionPlanSchema = createInsertSchema(productionPlansTable).omit({ id: true, createdAt: true });
 export const insertProductionPlanItemSchema = createInsertSchema(productionPlanItemsTable).omit({ id: true });
 export const insertBatchCompletionSchema = createInsertSchema(batchCompletionsTable).omit({ id: true });
