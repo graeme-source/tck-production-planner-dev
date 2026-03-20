@@ -1170,7 +1170,7 @@ router.get("/:id/ingredient-requirements", async (req, res) => {
     totalCookedQty: number;
     totalRawQty: number;
     trayCount: number | null;
-    recipes: Array<{ recipeName: string; batchesTarget: number; cookedQty: number; rawQty: number }>;
+    recipes: Array<{ recipeId: number; recipeName: string; batchesTarget: number; cookedQty: number; rawQty: number }>;
   }> = {};
 
   let totalBatches = 0;
@@ -1205,14 +1205,16 @@ router.get("/:id/ingredient-requirements", async (req, res) => {
       ingredientMap[iid].totalCookedQty += cookedQty;
       ingredientMap[iid].totalRawQty += rawQty;
 
-      const recipeName = planItem.recipeName ?? `Recipe #${planItem.recipeId}`;
-      const existingRecipe = ingredientMap[iid].recipes.find(r => r.recipeName === recipeName);
+      const recipeId = planItem.recipeId;
+      const recipeName = planItem.recipeName ?? `Recipe #${recipeId}`;
+      const existingRecipe = ingredientMap[iid].recipes.find(r => r.recipeId === recipeId);
       if (existingRecipe) {
         existingRecipe.batchesTarget += batchesTarget;
         existingRecipe.cookedQty += cookedQty;
         existingRecipe.rawQty += rawQty;
       } else {
         ingredientMap[iid].recipes.push({
+          recipeId,
           recipeName,
           batchesTarget,
           cookedQty,
