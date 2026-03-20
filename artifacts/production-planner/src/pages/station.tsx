@@ -187,6 +187,7 @@ interface BreakTrackerProps {
   stationType: StationType;
   /** Called with active break duration in minutes whenever break state changes */
   onBreakChange?: (activeBreakMinutes: number | null) => void;
+  onBreakActiveChange?: (active: boolean) => void;
 }
 
 interface ActiveBreak {
@@ -195,7 +196,7 @@ interface ActiveBreak {
   startedAt: string;
 }
 
-function BreakTracker({ planId, stationType, onBreakChange }: BreakTrackerProps) {
+function BreakTracker({ planId, stationType, onBreakChange, onBreakActiveChange }: BreakTrackerProps) {
   const [activeBreak, setActiveBreak] = useState<ActiveBreak | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [hydrated, setHydrated] = useState(false);
@@ -213,6 +214,9 @@ function BreakTracker({ planId, stationType, onBreakChange }: BreakTrackerProps)
         if (cancelled) return;
         if (data && data.id) {
           setActiveBreak({ id: data.id, type: (data.breakType as "morning" | "lunch") ?? "morning", startedAt: data.startedAt });
+          onBreakActiveChange?.(true);
+        } else {
+          onBreakActiveChange?.(false);
         }
         setHydrated(true);
       })
@@ -244,6 +248,7 @@ function BreakTracker({ planId, stationType, onBreakChange }: BreakTrackerProps)
       {
         onSuccess: (b: { id: number; startedAt?: string | null }) => {
           setActiveBreak({ id: b.id, type, startedAt: b.startedAt! });
+          onBreakActiveChange?.(true);
         },
       }
     );
@@ -258,7 +263,7 @@ function BreakTracker({ planId, stationType, onBreakChange }: BreakTrackerProps)
         data: { endedAt: new Date().toISOString() },
       },
       {
-        onSuccess: () => { setActiveBreak(null); onBreakChange?.(null); },
+        onSuccess: () => { setActiveBreak(null); onBreakChange?.(null); onBreakActiveChange?.(false); },
       }
     );
   };
@@ -602,6 +607,7 @@ function MixingStation({ plan }: MixingStationProps) {
   const { state } = useAuth();
   const isAdmin = state.status === "authenticated" && state.user.role === "admin";
   const queryClient = useQueryClient();
+  const [isOnBreak, setIsOnBreak] = useState(false);
 
   const updateItem = useUpdateProductionPlanItem({
     mutation: {
@@ -672,6 +678,7 @@ function MixingStation({ plan }: MixingStationProps) {
   };
 
   const addTin = async (item: ProductionPlanItem) => {
+    if (isOnBreak) return;
     const { tinsTarget, tinsComplete, batchesPerTinEven, mixed, target, allDone } = getTinInfo(item);
     if (allDone) return;
     const batchesAfterNextTin = Math.min((tinsComplete + 1) * batchesPerTinEven, target);
@@ -695,6 +702,7 @@ function MixingStation({ plan }: MixingStationProps) {
   };
 
   const undoTin = async (item: ProductionPlanItem) => {
+    if (isOnBreak) return;
     const { tinsComplete, batchesPerTinEven, mixed } = getTinInfo(item);
     if (tinsComplete === 0 && mixed === 0) return;
     const prevTinThreshold = Math.max((tinsComplete - 1) * batchesPerTinEven, 0);
@@ -747,7 +755,7 @@ function MixingStation({ plan }: MixingStationProps) {
         </div>
 
         <div className="mt-3 pt-3 border-t border-border/50 flex items-center justify-between">
-          <BreakTracker planId={plan.id} stationType="mixing" />
+          <BreakTracker planId={plan.id} stationType="mixing" onBreakActiveChange={setIsOnBreak} />
         </div>
       </div>
 
@@ -760,6 +768,7 @@ function MixingStation({ plan }: MixingStationProps) {
                 key={item.id}
                 item={item}
                 isAdmin={isAdmin}
+                isOnBreak={isOnBreak}
                 onAdd={() => addTin(item)}
                 onRemove={() => undoTin(item)}
               />
@@ -774,11 +783,12 @@ function MixingStation({ plan }: MixingStationProps) {
 interface SortableMixingItemProps {
   item: ProductionPlanItem;
   isAdmin: boolean;
+  isOnBreak: boolean;
   onAdd: () => void;
   onRemove: () => void;
 }
 
-function SortableMixingItem({ item, isAdmin, onAdd, onRemove }: SortableMixingItemProps) {
+function SortableMixingItem({ item, isAdmin, isOnBreak, onAdd, onRemove }: SortableMixingItemProps) {
   const mixingCount = getStationCount(item, "mixing");
   const isDraggable = isAdmin || (item.status === "pending" && mixingCount === 0);
   const {
@@ -873,7 +883,7 @@ function SortableMixingItem({ item, isAdmin, onAdd, onRemove }: SortableMixingIt
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={onRemove}
-              disabled={tinsComplete === 0}
+              disabled={tinsComplete === 0 || isOnBreak}
               className="w-9 h-9 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
             >
               <Minus className="w-4 h-4" />
@@ -884,12 +894,14 @@ function SortableMixingItem({ item, isAdmin, onAdd, onRemove }: SortableMixingIt
             </div>
             <button
               onClick={onAdd}
-              disabled={allTinsDone && !isAdmin}
+              disabled={(allTinsDone && !isAdmin) || isOnBreak}
               className={cn(
                 "w-9 h-9 flex items-center justify-center rounded-full transition-colors",
-                allTinsDone
-                  ? "border border-emerald-300 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 opacity-60"
-                  : "bg-primary text-primary-foreground hover:bg-primary/90"
+                isOnBreak
+                  ? "border border-amber-300 bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 opacity-60"
+                  : allTinsDone
+                    ? "border border-emerald-300 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 opacity-60"
+                    : "bg-primary text-primary-foreground hover:bg-primary/90"
               )}
             >
               <Plus className="w-4 h-4" />
@@ -923,6 +935,7 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   const [activeBreakMinutes, setActiveBreakMinutes] = useState(0);
   const [showEod, setShowEod] = useState(false);
   const [pendingTap, setPendingTap] = useState(false);
+  const [isOnBreak, setIsOnBreak] = useState(false);
 
   // Load timing standards for KPI color coding
   const { data: timingStandards } = useListTimingStandards();
@@ -982,7 +995,7 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
 
   // Large "BATCH COMPLETE" tap — single write via createBatchCompletion only
   const handleBatchComplete = () => {
-    if (!currentItem || pendingTap || available <= 0) return;
+    if (!currentItem || pendingTap || available <= 0 || isOnBreak) return;
     setPendingTap(true);
     createBatch.mutate({
       id: plan.id,
@@ -997,7 +1010,7 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   // Undo last batch — deletes the most recent batch_completion row for this user/station
   // and decrements batches_complete atomically, keeping KPI metrics consistent.
   const handleUndo = async () => {
-    if (!currentItem || buildingCount === 0) return;
+    if (!currentItem || buildingCount === 0 || isOnBreak) return;
     try {
       const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
         method: "DELETE",
@@ -1176,21 +1189,21 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
           {/* Large BATCH COMPLETE button */}
           <button
             onClick={handleBatchComplete}
-            disabled={pendingTap || activeBreakMinutes > 0 || available <= 0}
+            disabled={pendingTap || isOnBreak || available <= 0}
             className={cn(
               "w-full py-6 rounded-2xl text-2xl font-bold transition-all select-none active:scale-95",
               remaining === 0
                 ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 border-2 border-emerald-400 opacity-60 cursor-not-allowed"
-                : available <= 0
+                : isOnBreak
                   ? "bg-amber-100 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 border-2 border-amber-300 cursor-not-allowed opacity-70"
-                  : pendingTap
-                    ? "bg-primary/60 text-primary-foreground cursor-wait"
-                    : activeBreakMinutes > 0
-                      ? "bg-amber-100 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 border-2 border-amber-300 cursor-not-allowed opacity-70"
+                  : available <= 0
+                    ? "bg-amber-100 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 border-2 border-amber-300 cursor-not-allowed opacity-70"
+                    : pendingTap
+                      ? "bg-primary/60 text-primary-foreground cursor-wait"
                       : "bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg hover:shadow-xl"
             )}
           >
-            {activeBreakMinutes > 0
+            {isOnBreak
               ? "On Break — End Break First"
               : remaining === 0
                 ? "✓ All Batches Complete"
@@ -1202,7 +1215,7 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
           </button>
 
           {/* Undo */}
-          {buildingCount > 0 && (
+          {buildingCount > 0 && !isOnBreak && (
             <button
               onClick={handleUndo}
               className="mt-2 w-full py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-xl transition-colors"
@@ -1238,7 +1251,7 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
       />
 
       {/* Break tracker */}
-      <BreakTracker planId={plan.id} stationType={stationType} onBreakChange={handleBreakChange} />
+      <BreakTracker planId={plan.id} stationType={stationType} onBreakChange={handleBreakChange} onBreakActiveChange={setIsOnBreak} />
 
       {/* End of day button + queue */}
       <div className="flex justify-end">
@@ -2410,11 +2423,13 @@ function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
   // mode="current" bypasses D-1 next-plan lookup — sheeting always uses today's plan ball weights
   const { data: doughData } = useDoughPrepData(plan.id, "current");
   const [sheetedItems, setSheetedItems] = useState<Set<number>>(new Set());
+  const [isOnBreak, setIsOnBreak] = useState(false);
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
   const currentItem = items.find(it => it.status === "in-progress") ?? items.find(it => it.status === "pending");
 
   const toggleSheeted = (itemId: number) => {
+    if (isOnBreak) return;
     setSheetedItems(prev => {
       const next = new Set(prev);
       if (next.has(itemId)) next.delete(itemId);
@@ -2471,7 +2486,7 @@ function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
         </div>
       )}
 
-      <BreakTracker planId={plan.id} stationType="dough_sheeting" />
+      <BreakTracker planId={plan.id} stationType="dough_sheeting" onBreakActiveChange={setIsOnBreak} />
 
       {/* Full queue */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
@@ -2527,11 +2542,14 @@ function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
                   <td className="py-2.5 px-4 text-center">
                     <button
                       onClick={() => toggleSheeted(item.id)}
+                      disabled={isOnBreak}
                       className={cn(
                         "w-8 h-8 rounded-full flex items-center justify-center mx-auto transition-colors",
-                        isReady
-                          ? "bg-emerald-500 text-white"
-                          : "bg-secondary border border-border text-muted-foreground hover:bg-secondary/80"
+                        isOnBreak
+                          ? "bg-amber-100 border border-amber-300 text-amber-400 opacity-60 cursor-not-allowed"
+                          : isReady
+                            ? "bg-emerald-500 text-white"
+                            : "bg-secondary border border-border text-muted-foreground hover:bg-secondary/80"
                       )}
                     >
                       <CheckCircle2 className="w-4 h-4" />
@@ -2555,6 +2573,7 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
   const { state } = useAuth();
   const isAdmin = state.status === "authenticated" && state.user.role === "admin";
   const [wonlyLoading, setWonlyLoading] = useState<number | null>(null);
+  const [isOnBreak, setIsOnBreak] = useState(false);
 
   const createBatch = useCreateBatchCompletion({
     mutation: {
@@ -2569,6 +2588,7 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
   });
 
   const addBatch = (item: ProductionPlanItem) => {
+    if (isOnBreak) return;
     const avail = getAvailableFromPrev(item, "ovens");
     if (avail <= 0) {
       toast({ title: "Waiting for Building", description: "Building station must complete more batches first.", variant: "destructive" });
@@ -2578,7 +2598,7 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
   };
 
   const removeBatch = async (item: ProductionPlanItem) => {
-    if (getStationCount(item, "ovens") === 0) return;
+    if (isOnBreak || getStationCount(item, "ovens") === 0) return;
     try {
       const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
         method: "DELETE",
@@ -2690,7 +2710,7 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
           <div className="flex items-center justify-center gap-4 mb-4">
             <button
               onClick={() => removeBatch(currentItem)}
-              disabled={getStationCount(currentItem, "ovens") === 0}
+              disabled={getStationCount(currentItem, "ovens") === 0 || isOnBreak}
               className="w-12 h-12 flex items-center justify-center rounded-full border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
             >
               <Minus className="w-5 h-5" />
@@ -2700,8 +2720,11 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
             </div>
             <button
               onClick={() => addBatch(currentItem)}
-              disabled={(getStationCount(currentItem, "ovens") >= (currentItem.batchesTarget ?? 0) && !isAdmin) || getAvailableFromPrev(currentItem, "ovens") <= 0}
-              className="w-12 h-12 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
+              disabled={(getStationCount(currentItem, "ovens") >= (currentItem.batchesTarget ?? 0) && !isAdmin) || getAvailableFromPrev(currentItem, "ovens") <= 0 || isOnBreak}
+              className={cn(
+                "w-12 h-12 flex items-center justify-center rounded-full transition-colors disabled:opacity-50",
+                isOnBreak ? "bg-amber-300 text-amber-700" : "bg-red-500 text-white hover:bg-red-600"
+              )}
             >
               <Plus className="w-5 h-5" />
             </button>
@@ -2716,7 +2739,7 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => undoWonly(currentItem)}
-                  disabled={(currentItem.wonlyCount ?? 0) === 0 || wonlyLoading === currentItem.id}
+                  disabled={(currentItem.wonlyCount ?? 0) === 0 || wonlyLoading === currentItem.id || isOnBreak}
                   className="w-8 h-8 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
                 >
                   <Minus className="w-3.5 h-3.5" />
@@ -2726,7 +2749,7 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
                 </span>
                 <button
                   onClick={() => addWonly(currentItem)}
-                  disabled={wonlyLoading === currentItem.id}
+                  disabled={wonlyLoading === currentItem.id || isOnBreak}
                   className="w-8 h-8 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
                 >
                   <Plus className="w-3.5 h-3.5" />
@@ -2772,7 +2795,7 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
           />
         </div>
         <div className="mt-3 pt-3 border-t border-border/50">
-          <BreakTracker planId={plan.id} stationType="ovens" />
+          <BreakTracker planId={plan.id} stationType="ovens" onBreakActiveChange={setIsOnBreak} />
         </div>
       </div>
 
@@ -2848,6 +2871,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const queryClient = useQueryClient();
   const [wrappingLoading, setWrappingLoading] = useState<number | null>(null);
   const [storageLoading, setStorageLoading] = useState<number | null>(null);
+  const [isOnBreak, setIsOnBreak] = useState(false);
   const [customAmounts, setCustomAmounts] = useState<Record<number, string>>({});
   const [showCustom, setShowCustom] = useState<Record<number, boolean>>({});
   const [activeStorage, setActiveStorage] = useState<string>("fridge");
@@ -2869,6 +2893,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const allWrapped = items.length > 0 && items.every(it => it.wrappingComplete);
 
   const toggleWrapping = async (item: ProductionPlanItem) => {
+    if (isOnBreak) return;
     const newValue = !item.wrappingComplete;
     setWrappingLoading(item.id);
     try {
@@ -2910,7 +2935,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   };
 
   const addToStorage = async (item: ProductionPlanItem, qty: number, storageKey: string) => {
-    if (qty < 1) return;
+    if (isOnBreak || qty < 1) return;
     const loc = STORAGE_LOCATIONS.find(l => l.key === storageKey);
     if (!loc) return;
     setStorageLoading(item.id);
@@ -3005,7 +3030,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
           </div>
         </div>
         <div className="pt-3 border-t border-border/50">
-          <BreakTracker planId={plan.id} stationType="wrapping" />
+          <BreakTracker planId={plan.id} stationType="wrapping" onBreakActiveChange={setIsOnBreak} />
         </div>
       </div>
 
@@ -3078,7 +3103,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                 </div>
                 <button
                   onClick={() => toggleWrapping(item)}
-                  disabled={isLoading}
+                  disabled={isLoading || isOnBreak}
                   className={cn(
                     "w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 transition-all",
                     isWrapped
@@ -3121,7 +3146,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                   {remaining > 0 && (
                   <button
                     onClick={() => addToStorage(item, Math.min(STACK_SIZE, remaining), activeStorage)}
-                    disabled={isStorageLoading}
+                    disabled={isStorageLoading || isOnBreak}
                     className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
                   >
                     {isStorageLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
@@ -3150,7 +3175,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                       />
                       <button
                         onClick={() => { if (customNum > 0) addToStorage(item, customNum, activeStorage); }}
-                        disabled={isStorageLoading || !(customNum > 0)}
+                        disabled={isStorageLoading || !(customNum > 0) || isOnBreak}
                         className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
                       >
                         Add
@@ -3231,14 +3256,15 @@ function usePackingData(planId: number, planStatus: string) {
 function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
   const { data: packData, loading: packLoading } = usePackingData(plan.id, plan.status);
-  // Track packed state at DISPATCH level (dispatch id → boolean) and recipe level (item id → boolean)
   const [packedItems, setPackedItems] = useState<Set<number>>(new Set());
   const [packedDispatches, setPackedDispatches] = useState<Set<number>>(new Set());
+  const [isOnBreak, setIsOnBreak] = useState(false);
 
   const totalCompleteItems = items.filter(it => it.status === "complete").length;
   const allDone = items.length > 0 && items.every(it => it.status === "complete");
 
   const togglePacked = (itemId: number) => {
+    if (isOnBreak) return;
     setPackedItems(prev => {
       const next = new Set(prev);
       if (next.has(itemId)) next.delete(itemId);
@@ -3248,6 +3274,7 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
   };
 
   const toggleDispatchPacked = (dispatchId: number) => {
+    if (isOnBreak) return;
     setPackedDispatches(prev => {
       const next = new Set(prev);
       if (next.has(dispatchId)) next.delete(dispatchId);
@@ -3366,11 +3393,14 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
                     {isWrapped && (
                       <button
                         onClick={() => togglePacked(packItem.id)}
+                        disabled={isOnBreak}
                         className={cn(
                           "w-9 h-9 rounded-full flex items-center justify-center transition-colors flex-shrink-0",
-                          isPacked
-                            ? "bg-emerald-500 text-white"
-                            : "bg-secondary border border-border text-muted-foreground hover:bg-secondary/80"
+                          isOnBreak
+                            ? "bg-amber-100 border border-amber-300 text-amber-400 opacity-60 cursor-not-allowed"
+                            : isPacked
+                              ? "bg-emerald-500 text-white"
+                              : "bg-secondary border border-border text-muted-foreground hover:bg-secondary/80"
                         )}
                       >
                         <CheckCircle2 className="w-5 h-5" />
@@ -3402,7 +3432,7 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
                             <div className="flex items-center gap-2">
                               <button
                                 onClick={() => isWrapped && toggleDispatchPacked(d.id)}
-                                disabled={!isWrapped}
+                                disabled={!isWrapped || isOnBreak}
                                 aria-label={isDispatchPacked ? "Mark dispatch unpacked" : "Mark dispatch packed"}
                                 className={cn(
                                   "w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 transition-colors",
@@ -3455,7 +3485,7 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
         </div>
       ) : null}
 
-      <BreakTracker planId={plan.id} stationType="packing" />
+      <BreakTracker planId={plan.id} stationType="packing" onBreakActiveChange={setIsOnBreak} />
 
       {allDone && (
         <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-xl p-4 text-center">
