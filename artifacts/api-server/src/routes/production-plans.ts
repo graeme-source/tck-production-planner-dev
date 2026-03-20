@@ -836,7 +836,8 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       batchesTarget: productionPlanItemsTable.batchesTarget,
       recipeName: recipesTable.name,
       portionsPerBatch: recipesTable.portionsPerBatch,
-      sopUrl: productionPlanItemsTable.sopUrl,
+      sopUrlFromItem: productionPlanItemsTable.sopUrl,
+      sopUrlFromRecipe: recipesTable.sopUrl,
       tinSize: productionPlanItemsTable.tinSize,
       maxBatchesPerTin: productionPlanItemsTable.maxBatchesPerTin,
     })
@@ -969,7 +970,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       recipeId: planItem.recipeId,
       recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
       batchesTarget,
-      sopUrl: planItem.sopUrl ?? null,
+      sopUrl: planItem.sopUrlFromItem ?? planItem.sopUrlFromRecipe ?? null,
       tinSize: planItem.tinSize ?? null,
       maxBatchesPerTin: planItem.maxBatchesPerTin ?? null,
       tinCount: planItem.maxBatchesPerTin && batchesTarget > 0 ? Math.ceil(batchesTarget / planItem.maxBatchesPerTin) : null,

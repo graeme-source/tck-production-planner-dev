@@ -2717,6 +2717,17 @@ function PrepHub({ planId }: { planId: number }) {
         <div className="grid gap-4">
           {subStations.map(s => {
             const Icon = s.icon;
+            // Compute the prep date label for this tile
+            const prepDateLabel = isLoading
+              ? "Loading…"
+              : nextPlan?.planDate
+                ? (() => {
+                    try {
+                      const d = parseISO(nextPlan.planDate);
+                      return `Prep for ${format(d, "EEEE, d MMM")}`;
+                    } catch { return nextPlan.planDate; }
+                  })()
+                : "No active plan this week";
             return (
               <button
                 key={s.key}
@@ -2733,6 +2744,9 @@ function PrepHub({ planId }: { planId: number }) {
                 <div className="flex-1 min-w-0">
                   <h3 className="font-bold text-lg">{s.label}</h3>
                   <p className="text-sm text-muted-foreground leading-snug">{s.description}</p>
+                  <p className={cn("text-xs font-semibold mt-1.5", nextPlan?.planDate ? s.color : "text-muted-foreground")}>
+                    {prepDateLabel}
+                  </p>
                 </div>
                 <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
               </button>

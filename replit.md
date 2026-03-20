@@ -90,7 +90,7 @@ The station page (`/station`) provides a full-screen view with:
   - **Bases & Mozzarella** (prep_bases) — per-recipe tin counts (green badge), full-screen + overview modes
   - **Raw Meat** (prep_meat) — per-ingredient tray counts with per-tray kg breakdown, full-screen (rose badge) + overview modes
 - **Dough, Ovens, Wrapping, Packing** — batch counters per item
-- **Next-plan lookup**: `GET /api/production-plans/next-active` endpoint — finds next weekday with status active/prep/building within 14 days
+- **Next-plan lookup**: `GET /api/production-plans/next-active` endpoint — finds next weekday (Mon-Fri) with `status='active'` within 7 days from **tomorrow** (i=1, not today). Used by PrepHub and DoughPrepStation to display "Prep for [Day], [Date]" on tiles and banners.
 
 Recipe fields added for station cards: `fill_weight_grams`, `base_type`, `base_weight_grams`, `sop_url`.
 
