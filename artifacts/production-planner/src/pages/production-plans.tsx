@@ -128,7 +128,7 @@ interface PlanItem {
 }
 
 function computeNextFactory(item: PlanItem): number {
-  return item.todayFactoryNumber + (item.batchesTarget * item.packsPerBatch) - item.nextDispatchQty - item.deliveryPlus1Qty - item.deliveryPlus2Qty;
+  return item.todayFactoryNumber + (item.batchesTarget * item.packsPerBatch) - item.nextDispatchQty;
 }
 
 function computeStockWarning(item: PlanItem): "ok" | "low" | "short" {
@@ -600,7 +600,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                             <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title={deliveryDates[2] ? format(parseISO(deliveryDates[2]), "d MMM") : "Del +2"}>
                               Del+2
                             </th>
-                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Packs needed to cover all demand">Deficit</th>
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Packs short to cover next dispatch">Deficit</th>
                             <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">DPT%</th>
                             <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Calculated suggestion">Sugg.</th>
                             <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Batches</th>

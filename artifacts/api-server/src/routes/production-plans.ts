@@ -335,9 +335,8 @@ router.get("/calculate", async (req, res) => {
     const deliveryPlus1Qty = dispatchByDateRecipe[deliveryDates[1]]?.[recipeId] ?? 0;
     const deliveryPlus2Qty = dispatchByDateRecipe[deliveryDates[2]]?.[recipeId] ?? 0;
 
-    // Deficit: how many packs needed to reach zero after deducting next 3 delivery dates
-    const totalDemand = nextDispatchQty + deliveryPlus1Qty + deliveryPlus2Qty;
-    const deficit = Math.max(0, totalDemand - todayFactoryNumber);
+    // Deficit: packs needed to cover the next dispatch from current factory stock
+    const deficit = Math.max(0, nextDispatchQty - todayFactoryNumber);
 
     // DPT percentage
     const packsSold = r.packsSold ?? 0;
@@ -407,8 +406,8 @@ router.get("/calculate", async (req, res) => {
     const tinCount = maxBatchesPerTin && suggestedBatches > 0
       ? Math.ceil(suggestedBatches / maxBatchesPerTin) : null;
 
-    // Next Factory Number = todayFactoryNumber + (suggestedBatches * packsPerBatch) - totalDemand
-    const nextFactoryNumber = r.todayFactoryNumber + (suggestedBatches * r.packsPerBatch) - (r.nextDispatchQty + r.deliveryPlus1Qty + r.deliveryPlus2Qty);
+    // Next Factory Number = projected stock after production minus next dispatch
+    const nextFactoryNumber = r.todayFactoryNumber + (suggestedBatches * r.packsPerBatch) - r.nextDispatchQty;
 
     return {
       ...r,
