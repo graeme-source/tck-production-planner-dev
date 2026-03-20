@@ -49,6 +49,8 @@ interface WeeklyOrderDay {
   deliveryDate: string;
   day: string;
   orderCount: number;
+  fulfilledCount: number;
+  unfulfilledCount: number;
 }
 
 async function fetchWeeklyOrders(): Promise<WeeklyOrderDay[]> {
@@ -150,6 +152,10 @@ export default function Dispatches() {
             <p className="text-sm text-muted-foreground mt-0.5">
               Shopify orders by dispatch date · click a bar to view order details
             </p>
+            <div className="flex items-center gap-4 mt-1.5 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-emerald-500" /> Fulfilled</span>
+              <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm" style={{ background: "hsl(var(--primary) / 0.3)" }} /> Unfulfilled</span>
+            </div>
           </div>
           <button
             onClick={() => refetchWeekly()}
@@ -183,19 +189,28 @@ export default function Dispatches() {
                         <div className="bg-card border border-border rounded-xl px-4 py-3 shadow-lg text-sm space-y-1">
                           <p className="font-semibold">Dispatch: {item.date}</p>
                           <p className="text-muted-foreground text-xs">Delivery: {item.deliveryDate}</p>
-                          <p className="text-primary font-bold pt-1">{item.orderCount} orders</p>
-                          <p className="text-xs text-muted-foreground">Click to view breakdown</p>
+                          <p className="font-bold pt-1">{item.orderCount} total orders</p>
+                          <div className="flex items-center gap-2 text-xs">
+                            <span className="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-500" />
+                            <span>{item.fulfilledCount} fulfilled</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs">
+                            <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: "hsl(var(--primary) / 0.3)" }} />
+                            <span>{item.unfulfilledCount} unfulfilled</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground pt-1">Click to view breakdown</p>
                         </div>
                       );
                     }
                     return null;
                   }}
                 />
-                <Bar dataKey="orderCount" radius={[6, 6, 0, 0]} style={{ cursor: "pointer" }}>
+                <Bar dataKey="fulfilledCount" stackId="orders" fill="hsl(142 71% 45%)" radius={[0, 0, 0, 0]} style={{ cursor: "pointer" }} />
+                <Bar dataKey="unfulfilledCount" stackId="orders" radius={[6, 6, 0, 0]} style={{ cursor: "pointer" }}>
                   {weeklyOrders?.map((entry, i) => (
                     <Cell
                       key={entry.date}
-                      fill={i === todayIndex ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.4)"}
+                      fill={i === todayIndex ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.3)"}
                     />
                   ))}
                 </Bar>
@@ -205,17 +220,27 @@ export default function Dispatches() {
         </div>
 
         {weeklyOrders && (
-          <div className="flex gap-4 mt-3 pt-3 border-t border-border text-sm text-muted-foreground">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 pt-3 border-t border-border text-sm text-muted-foreground">
             <span>
               <span className="font-semibold text-foreground">
                 {weeklyOrders.reduce((s, d) => s + d.orderCount, 0)}
-              </span>{" "}total orders this week
+              </span>{" "}total orders
+            </span>
+            <span>
+              <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                {weeklyOrders.reduce((s, d) => s + d.fulfilledCount, 0)}
+              </span>{" "}fulfilled
+            </span>
+            <span>
+              <span className="font-semibold text-foreground">
+                {weeklyOrders.reduce((s, d) => s + d.unfulfilledCount, 0)}
+              </span>{" "}unfulfilled
             </span>
             {todayIndex >= 0 && (
               <span>
                 <span className="font-semibold text-primary">
                   {weeklyOrders[todayIndex].orderCount}
-                </span>{" "}today
+                </span>{" "}today ({weeklyOrders[todayIndex].fulfilledCount} done)
               </span>
             )}
           </div>

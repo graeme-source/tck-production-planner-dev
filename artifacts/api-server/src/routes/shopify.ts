@@ -76,11 +76,14 @@ router.get("/weekly-orders", async (req, res) => {
         const tag = toDateTag(deliveryDay);
         const orders = await getOrdersByTag(tag);
 
+        const fulfilledCount = orders.filter(o => o.fulfillment_status === "fulfilled").length;
         return {
           date: toDateTag(dispatchDay),
           deliveryDate: tag,
           day: DAY_NAMES[dispatchDay.getDay()],
           orderCount: orders.length,
+          fulfilledCount,
+          unfulfilledCount: orders.length - fulfilledCount,
         };
       })
     );

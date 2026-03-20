@@ -9,7 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 async function fetchWeeklyOrders() {
   const res = await fetch("/api/shopify/weekly-orders", { credentials: "include" });
   if (!res.ok) throw new Error("Failed to fetch weekly orders");
-  return res.json() as Promise<{ date: string; deliveryDate: string; day: string; orderCount: number }[]>;
+  return res.json() as Promise<{ date: string; deliveryDate: string; day: string; orderCount: number; fulfilledCount: number; unfulfilledCount: number }[]>;
 }
 
 export default function Dashboard() {
@@ -31,14 +31,22 @@ export default function Dashboard() {
   const todayTag = format(new Date(), "yyyy-MM-dd");
   const todayIndex = weeklyOrders?.findIndex(d => d.date === todayTag) ?? -1;
 
-  const CustomTooltip = ({ active, payload, label }: any) => {
+  const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
-      const item = weeklyOrders?.find(d => d.day === label);
+      const item = payload[0].payload;
       return (
         <div className="bg-card border border-border rounded-xl px-4 py-3 shadow-lg text-sm space-y-1">
-          <p className="font-semibold">Dispatch: {item?.date ?? label}</p>
-          <p className="text-muted-foreground text-xs">Delivery: {item?.deliveryDate}</p>
-          <p className="text-primary font-bold pt-1">{payload[0].value} orders</p>
+          <p className="font-semibold">Dispatch: {item.date}</p>
+          <p className="text-muted-foreground text-xs">Delivery: {item.deliveryDate}</p>
+          <p className="font-bold pt-1">{item.orderCount} total orders</p>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-500" />
+            <span>{item.fulfilledCount} fulfilled</span>
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: "hsl(var(--primary) / 0.3)" }} />
+            <span>{item.unfulfilledCount} unfulfilled</span>
+          </div>
         </div>
       );
     }
@@ -93,6 +101,10 @@ export default function Dashboard() {
             <div>
               <h3 className="font-display font-bold text-lg">Dispatch Orders — Next 7 Days</h3>
               <p className="text-sm text-muted-foreground mt-0.5">Shopify orders tagged by delivery date</p>
+              <div className="flex items-center gap-4 mt-1.5 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-emerald-500" /> Fulfilled</span>
+                <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm" style={{ background: "hsl(var(--primary) / 0.3)" }} /> Unfulfilled</span>
+              </div>
             </div>
             <button
               onClick={() => refetch()}
@@ -134,11 +146,12 @@ export default function Dashboard() {
                     width={32}
                   />
                   <Tooltip content={<CustomTooltip />} cursor={{ fill: "hsl(var(--secondary))" }} />
-                  <Bar dataKey="orderCount" radius={[6, 6, 0, 0]}>
+                  <Bar dataKey="fulfilledCount" stackId="orders" fill="hsl(142 71% 45%)" radius={[0, 0, 0, 0]} />
+                  <Bar dataKey="unfulfilledCount" stackId="orders" radius={[6, 6, 0, 0]}>
                     {weeklyOrders?.map((entry, i) => (
                       <Cell
                         key={entry.date}
-                        fill={i === todayIndex ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.4)"}
+                        fill={i === todayIndex ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.3)"}
                       />
                     ))}
                   </Bar>
