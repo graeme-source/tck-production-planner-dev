@@ -15,7 +15,7 @@ A full-stack production management app for food businesses with:
 - **Sales Data** — log sales per recipe by date, channel, and quantity
 - **Dispatch Orders** — upcoming dispatch orders with customer, date, quantity, and status
 - **Dashboard** — overview of today's plan, upcoming dispatches, low stock, and recent sales
-- **Settings** — user management (admin/manager/viewer roles) + category cost defaults (packaging & labour auto-fill per category)
+- **Settings** — user management (admin/manager/viewer roles) + category cost defaults (packaging & labour auto-fill per category) + Default Production Targets (DPT): enter packs sold per recipe → auto-calculates sales % and default batch allocation based on a total daily batch budget
 - **Category Defaults** — per-category default packaging/labour costs stored in `category_defaults` table; auto-fill recipe form when category matches
 - **Authentication** — session-based login (express-session + connect-pg-simple → `sessions` table). Login page at `/login`. All `/api/*` routes except `/api/auth/*` require a valid session. Default admin: `admin@proplanner.com` / `Admin1234!`
 
@@ -67,7 +67,7 @@ artifacts-monorepo/
 - `app_settings` — simple key-value store for admin-configurable global settings (e.g., `mixer_capacity_kg=25`)
 - `batch_completions` — each oven/station batch completion event (for atomic increment/undo)
 - `station_breaks` — break start/end times per station
-- `dpt_settings` — per-recipe DPT configuration (defaultBatchesPerDay, surplusPercent, isActive)
+- `dpt_settings` — per-recipe DPT configuration (packsSold, isActive); used with app_settings `total_daily_batches` to compute sales-based default batch allocations
 - `timing_standards` — per-station KPI targets (minBatchesPerHour, targetBatchesPerHour)
 
 ## API Routes

@@ -6,9 +6,12 @@ const router: IRouter = Router();
 
 function mapRow(r: typeof dptSettingsTable.$inferSelect & { recipeName?: string | null }) {
   return {
-    ...r,
+    id: r.id,
+    recipeId: r.recipeId,
+    packsSold: r.packsSold ?? 0,
     defaultBatchesPerDay: Number(r.defaultBatchesPerDay),
     surplusPercent: Number(r.surplusPercent ?? 20),
+    isActive: r.isActive,
     recipeName: r.recipeName ?? "",
     updatedAt: r.updatedAt.toISOString(),
   };
@@ -20,7 +23,9 @@ router.get("/", async (_req, res) => {
       id: dptSettingsTable.id,
       recipeId: dptSettingsTable.recipeId,
       recipeName: recipesTable.name,
+      packsSold: dptSettingsTable.packsSold,
       defaultBatchesPerDay: dptSettingsTable.defaultBatchesPerDay,
+      surplusPercent: dptSettingsTable.surplusPercent,
       isActive: dptSettingsTable.isActive,
       updatedAt: dptSettingsTable.updatedAt,
     })
@@ -31,11 +36,11 @@ router.get("/", async (_req, res) => {
 });
 
 router.post("/", async (req, res) => {
-  const { recipeId, defaultBatchesPerDay, surplusPercent, isActive } = req.body;
+  const { recipeId, packsSold, isActive } = req.body;
+  const pSold = Math.max(0, Math.floor(Number(packsSold ?? 0)));
   const [row] = await db.insert(dptSettingsTable).values({
     recipeId: Number(recipeId),
-    defaultBatchesPerDay: String(defaultBatchesPerDay ?? 0),
-    surplusPercent: String(surplusPercent ?? 20),
+    packsSold: pSold,
     isActive: isActive !== undefined ? Boolean(isActive) : true,
   }).returning();
   const recipeName = await db.select({ name: recipesTable.name }).from(recipesTable).where(eq(recipesTable.id, row.recipeId));
@@ -44,11 +49,10 @@ router.post("/", async (req, res) => {
 
 router.put("/:id", async (req, res) => {
   const id = Number(req.params.id);
-  const { defaultBatchesPerDay, surplusPercent, isActive } = req.body;
+  const { packsSold, isActive } = req.body;
 
   const setData: Partial<typeof dptSettingsTable.$inferInsert> = { updatedAt: new Date() };
-  if (defaultBatchesPerDay !== undefined) setData.defaultBatchesPerDay = String(defaultBatchesPerDay);
-  if (surplusPercent !== undefined) setData.surplusPercent = String(surplusPercent);
+  if (packsSold !== undefined) setData.packsSold = Math.max(0, Math.floor(Number(packsSold)));
   if (isActive !== undefined) setData.isActive = Boolean(isActive);
 
   const [row] = await db.update(dptSettingsTable)
@@ -66,17 +70,15 @@ router.delete("/:id", async (req, res) => {
   res.status(204).send();
 });
 
-// Upsert by recipeId
 router.put("/by-recipe/:recipeId", async (req, res) => {
   const recipeId = Number(req.params.recipeId);
-  const { defaultBatchesPerDay, surplusPercent, isActive } = req.body;
+  const { packsSold, isActive } = req.body;
 
   const existing = await db.select().from(dptSettingsTable).where(eq(dptSettingsTable.recipeId, recipeId));
   let row;
   if (existing.length > 0) {
     const setData: Partial<typeof dptSettingsTable.$inferInsert> = { updatedAt: new Date() };
-    if (defaultBatchesPerDay !== undefined) setData.defaultBatchesPerDay = String(defaultBatchesPerDay);
-    if (surplusPercent !== undefined) setData.surplusPercent = String(surplusPercent);
+    if (packsSold !== undefined) setData.packsSold = Math.max(0, Math.floor(Number(packsSold)));
     if (isActive !== undefined) setData.isActive = Boolean(isActive);
     [row] = await db.update(dptSettingsTable)
       .set(setData)
@@ -85,8 +87,7 @@ router.put("/by-recipe/:recipeId", async (req, res) => {
   } else {
     [row] = await db.insert(dptSettingsTable).values({
       recipeId,
-      defaultBatchesPerDay: String(defaultBatchesPerDay ?? 0),
-      surplusPercent: String(surplusPercent ?? 20),
+      packsSold: Math.max(0, Math.floor(Number(packsSold ?? 0))),
       isActive: isActive !== undefined ? Boolean(isActive) : true,
     }).returning();
   }

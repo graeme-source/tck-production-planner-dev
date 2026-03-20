@@ -111,8 +111,7 @@ interface PlanItem {
   tinCount: number | null;
   maxBatchesPerTin: number | null;
   tinSize: string | null;
-  currentStock: number;
-  demand: number;
+  salesPercent: number;
   portionsPerBatch: number;
   sopUrl: string | null;
   isFromDpt: boolean;
@@ -124,10 +123,9 @@ interface SortableRowProps {
   onToggle: (id: string) => void;
   onBatchChange: (id: string, val: number) => void;
   onRemove: (id: string) => void;
-  showStockDemand: boolean;
 }
 
-function SortableRow({ item, saving, onToggle, onBatchChange, onRemove, showStockDemand }: SortableRowProps) {
+function SortableRow({ item, saving, onToggle, onBatchChange, onRemove }: SortableRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
 
   const style = {
@@ -188,30 +186,16 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onRemove, showStoc
           {item.tinSize ? ` · ${item.tinSize}` : ""}
         </div>
       </td>
-      {showStockDemand && (
-        <>
-          <td className="py-2.5 px-3 text-right">
-            <span className={cn(
-              "text-xs px-2 py-0.5 rounded-full",
-              item.currentStock < item.demand
-                ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-            )}>
-              {item.currentStock}
-            </span>
-          </td>
-          <td className="py-2.5 px-3 text-right text-muted-foreground">
-            {item.demand > 0 ? (
-              <span className="text-amber-600 dark:text-amber-400">{item.demand}</span>
-            ) : (
-              <span className="opacity-40">—</span>
-            )}
-          </td>
-          <td className="py-2.5 px-3 text-right text-muted-foreground">
-            {item.isFromDpt ? item.suggestedBatches : <span className="opacity-40">—</span>}
-          </td>
-        </>
-      )}
+      <td className="py-2.5 px-3 text-right text-muted-foreground">
+        {item.isFromDpt && item.salesPercent > 0 ? (
+          <span className="font-mono text-xs">{item.salesPercent.toFixed(1)}%</span>
+        ) : (
+          <span className="opacity-40">—</span>
+        )}
+      </td>
+      <td className="py-2.5 px-3 text-right text-muted-foreground">
+        {item.isFromDpt ? item.suggestedBatches : <span className="opacity-40">—</span>}
+      </td>
       <td className="py-2.5 px-3 text-right">
         <input
           type="number"
@@ -259,7 +243,6 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   const [items, setItems] = useState<PlanItem[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [addRecipeId, setAddRecipeId] = useState<string>("");
-  const [showStockDemand, setShowStockDemand] = useState(true);
   const [dateWarning, setDateWarning] = useState<string | null>(null);
 
   const { data: suggestions, isLoading: loadingDpt, refetch: refetchDpt } = useGetDptCalculator(
@@ -306,8 +289,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
         tinCount: s.tinCount ?? null,
         maxBatchesPerTin: s.maxBatchesPerTin ?? null,
         tinSize: s.tinSize ?? null,
-        currentStock: s.currentStock,
-        demand: s.demand,
+        salesPercent: s.salesPercent ?? 0,
         portionsPerBatch: s.portionsPerBatch,
         sopUrl: s.sopUrl ?? null,
         isFromDpt: true,
@@ -363,8 +345,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
       tinCount: null,
       maxBatchesPerTin: recipe.maxBatchesPerTin ?? null,
       tinSize: recipe.tinSize ?? null,
-      currentStock: 0,
-      demand: 0,
+      salesPercent: 0,
       portionsPerBatch: recipe.portionsPerBatch ?? 10,
       sopUrl: recipe.sopUrl ?? null,
       isFromDpt: false,
@@ -471,21 +452,13 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                 ({includedCount} of {items.length} included · drag to reorder)
               </span>
             </h3>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowStockDemand(p => !p)}
-                className="text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg px-2 py-1 transition-colors"
-              >
-                {showStockDemand ? "Hide stock/demand" : "Show stock/demand"}
-              </button>
-              <button
-                onClick={() => refetchDpt()}
-                className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
-              >
-                <RefreshCw className="w-3 h-3" />
-                Refresh DPT
-              </button>
-            </div>
+            <button
+              onClick={() => refetchDpt()}
+              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
+            >
+              <RefreshCw className="w-3 h-3" />
+              Refresh DPT
+            </button>
           </div>
 
           {loadingDpt ? (
@@ -518,13 +491,8 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                               />
                             </th>
                             <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">Recipe</th>
-                            {showStockDemand && (
-                              <>
-                                <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Stock</th>
-                                <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Demand</th>
-                                <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Suggested</th>
-                              </>
-                            )}
+                            <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Sales %</th>
+                            <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Suggested</th>
                             <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Batches</th>
                             <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Tins</th>
                             <th className="w-8 py-2.5 px-2" />
@@ -536,7 +504,6 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                               key={it.id}
                               item={it}
                               saving={isSubmitting}
-                              showStockDemand={showStockDemand}
                               onToggle={(id) => updateItem(id, { included: !it.included })}
                               onBatchChange={(id, val) => updateItem(id, { batchesTarget: val })}
                               onRemove={(id) => setItems(prev => prev.filter(i => i.id !== id))}
@@ -573,23 +540,6 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                 </div>
               )}
 
-              {/* Legend */}
-              {showStockDemand && items.length > 0 && (
-                <div className="flex items-center gap-4 mt-1 mb-3 text-xs text-muted-foreground">
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                    Stock ≥ demand
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-red-500" />
-                    Stock &lt; demand
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-amber-500" />
-                    Demand (next 3 dispatches)
-                  </div>
-                </div>
-              )}
             </>
           )}
         </div>
@@ -658,8 +608,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
         ? Math.ceil((it.batchesTarget ?? 0) / it.maxBatchesPerTin) : null,
       maxBatchesPerTin: it.maxBatchesPerTin ?? null,
       tinSize: it.tinSize ?? null,
-      currentStock: 0,
-      demand: 0,
+      salesPercent: 0,
       portionsPerBatch: it.portionsPerBatch ?? 10,
       sopUrl: it.sopUrl ?? null,
       isFromDpt: false,
@@ -730,8 +679,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
       tinCount: null,
       maxBatchesPerTin: recipe.maxBatchesPerTin ?? null,
       tinSize: recipe.tinSize ?? null,
-      currentStock: 0,
-      demand: 0,
+      salesPercent: 0,
       portionsPerBatch: recipe.portionsPerBatch ?? 10,
       sopUrl: recipe.sopUrl ?? null,
       isFromDpt: false,
@@ -849,6 +797,8 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
                           />
                         </th>
                         <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">Recipe</th>
+                        <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Sales %</th>
+                        <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Suggested</th>
                         <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">Batches</th>
                         <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">Tins</th>
                         <th className="w-8 py-2.5 px-2" />
@@ -860,7 +810,6 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
                           key={it.id}
                           item={it}
                           saving={isSubmitting}
-                          showStockDemand={false}
                           onToggle={(id) => updateItem(id, { included: !it.included })}
                           onBatchChange={(id, val) => updateItem(id, { batchesTarget: val })}
                           onRemove={(id) => setItems(prev => prev.filter(i => i.id !== id))}

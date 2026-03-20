@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { useListUsers, useListCategoryDefaults, useListDptSettings, useListTimingStandards, useListRecipes } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
@@ -595,41 +595,113 @@ function DptSettingsSection() {
   const { data: dptSettings, isLoading: dptLoading } = useListDptSettings();
   const { data: recipes, isLoading: recipesLoading } = useListRecipes();
   const queryClient = useQueryClient();
-  const [saving, setSaving] = useState<number | null>(null);
-  const [editingRecipeId, setEditingRecipeId] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  const [localPacksSold, setLocalPacksSold] = useState<Record<number, number>>({});
+  const [totalDailyBatches, setTotalDailyBatches] = useState<number>(0);
+  const [totalBatchesLoaded, setTotalBatchesLoaded] = useState(false);
 
-  const settingsByRecipeId = new Map((dptSettings ?? []).map(d => [d.recipeId, d]));
+  const settingsByRecipeId = new Map((dptSettings ?? []).map((d: any) => [d.recipeId, d]));
 
-  const handleSave = async (recipeId: number, batchesVal: string, surplusVal: string) => {
-    setSaving(recipeId);
-    try {
-      await upsertDptSettingByRecipe(recipeId, {
-        defaultBatchesPerDay: Number(batchesVal) || 0,
-        surplusPercent: Number(surplusVal) || 0,
-        isActive: true,
-      });
-      await queryClient.invalidateQueries({ queryKey: getListDptSettingsQueryKey() });
-      setEditingRecipeId(null);
-      setSavedMsg("Saved"); setTimeout(() => setSavedMsg(null), 2000);
-    } finally { setSaving(null); }
+  useEffect(() => {
+    if (!totalBatchesLoaded) {
+      fetch("/api/app-settings/total_daily_batches", { credentials: "include" })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d?.value) setTotalDailyBatches(Number(d.value)); setTotalBatchesLoaded(true); })
+        .catch(() => setTotalBatchesLoaded(true));
+    }
+  }, [totalBatchesLoaded]);
+
+  useEffect(() => {
+    if (recipes && dptSettings) {
+      const map: Record<number, number> = {};
+      for (const r of recipes) {
+        const setting = settingsByRecipeId.get(r.id);
+        map[r.id] = setting?.packsSold ?? 0;
+      }
+      setLocalPacksSold(map);
+    }
+  }, [recipes, dptSettings]);
+
+  const isLoading = dptLoading || recipesLoading || !totalBatchesLoaded;
+  const allRecipes = [...(recipes ?? [])].sort((a: any, b: any) => a.name.localeCompare(b.name));
+
+  const totalPacksSold = Object.values(localPacksSold).reduce((s, v) => s + v, 0);
+
+  const getSalesPercent = (recipeId: number) => {
+    const sold = localPacksSold[recipeId] ?? 0;
+    return totalPacksSold > 0 ? (sold / totalPacksSold) * 100 : 0;
   };
 
-  const isLoading = dptLoading || recipesLoading;
-  const allRecipes = [...(recipes ?? [])].sort((a, b) => a.name.localeCompare(b.name));
+  const batchAllocation = useMemo(() => {
+    const map: Record<number, number> = {};
+    if (totalDailyBatches <= 0 || totalPacksSold <= 0) {
+      for (const r of allRecipes) map[r.id] = 0;
+      return map;
+    }
+    const items = allRecipes.map((r: any) => {
+      const exact = (getSalesPercent(r.id) / 100) * totalDailyBatches;
+      return { id: r.id, floor: Math.floor(exact), remainder: exact - Math.floor(exact) };
+    });
+    let remaining = totalDailyBatches - items.reduce((s, i) => s + i.floor, 0);
+    const sorted = [...items].sort((a, b) => b.remainder - a.remainder);
+    const bonus = new Set<number>();
+    for (const it of sorted) {
+      if (remaining <= 0) break;
+      bonus.add(it.id);
+      remaining--;
+    }
+    for (const it of items) map[it.id] = it.floor + (bonus.has(it.id) ? 1 : 0);
+    return map;
+  }, [allRecipes, totalDailyBatches, totalPacksSold, localPacksSold]);
+
+  const getDefaultBatches = (recipeId: number) => batchAllocation[recipeId] ?? 0;
+
+  const totalDefaultBatches = Object.values(batchAllocation).reduce((s, v) => s + v, 0);
+
+  const handleSaveAll = async () => {
+    setSaving(true);
+    try {
+      await fetch("/api/app-settings/total_daily_batches", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ value: String(totalDailyBatches) }),
+      });
+
+      for (const recipe of allRecipes) {
+        const sold = localPacksSold[recipe.id] ?? 0;
+        await upsertDptSettingByRecipe(recipe.id, { packsSold: sold, isActive: true });
+      }
+
+      await queryClient.invalidateQueries({ queryKey: getListDptSettingsQueryKey() });
+      setSavedMsg("All settings saved");
+      setTimeout(() => setSavedMsg(null), 2500);
+    } finally { setSaving(false); }
+  };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-base font-semibold flex items-center gap-2">
-            <BarChart2 className="w-4 h-4 text-primary" /> DPT Settings
+            <BarChart2 className="w-4 h-4 text-primary" /> Default Production Targets
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Total daily capacity (batches/day) is the shared batch budget for the day. After covering demand, remaining capacity is split by each recipe's surplus % weight.
+            Enter packs sold per recipe. The system calculates each recipe's share of total sales and assigns default batch counts to new production plans.
           </p>
         </div>
-        {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
+        <div className="flex items-center gap-2">
+          {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
+          <button
+            onClick={handleSaveAll}
+            disabled={saving || isLoading}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5 transition-colors"
+          >
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+            Save All
+          </button>
+        </div>
       </div>
 
       {isLoading ? (
@@ -637,88 +709,85 @@ function DptSettingsSection() {
       ) : !allRecipes.length ? (
         <div className="text-center py-8 text-muted-foreground text-sm">No recipes in the library yet. Add recipes first to configure DPT targets.</div>
       ) : (
-        <div className="rounded-2xl border border-border bg-card overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-secondary/30 text-muted-foreground text-xs">
-              <tr>
-                <th className="px-5 py-3 font-medium text-left">Recipe</th>
-                <th className="px-5 py-3 font-medium text-right">Daily Capacity (batches)</th>
-                <th className="px-5 py-3 font-medium text-right">Surplus Weight %</th>
-                <th className="px-5 py-3 font-medium text-right w-28">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/50">
-              {allRecipes.map(recipe => {
-                const setting = settingsByRecipeId.get(recipe.id);
-                const currentBatches = setting?.defaultBatchesPerDay ?? 0;
-                const currentSurplus = setting?.surplusPercent ?? 20;
-                const isEditing = editingRecipeId === recipe.id;
-                return (
-                  <tr key={recipe.id} className="hover:bg-secondary/10 transition-colors">
-                    <td className="px-5 py-3.5 font-medium">{recipe.name}</td>
-                    <td className="px-5 py-3.5 text-right">
-                      {isEditing ? (
+        <>
+          <div className="bg-card border border-border rounded-xl p-4 flex items-center gap-4">
+            <label className="text-sm font-medium whitespace-nowrap">Total Daily Batches</label>
+            <input
+              type="number"
+              min={0}
+              value={totalDailyBatches}
+              onChange={e => setTotalDailyBatches(Math.max(0, Number(e.target.value) || 0))}
+              className="w-24 px-3 py-2 bg-background border border-border rounded-lg text-sm text-right focus-ring font-mono"
+            />
+            <p className="text-xs text-muted-foreground flex-1">
+              The total batch budget for each production day. Distributed across recipes based on their sales %.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-border bg-card overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-secondary/30 text-muted-foreground text-xs">
+                <tr>
+                  <th className="px-5 py-3 font-medium text-left">Recipe</th>
+                  <th className="px-5 py-3 font-medium text-right">Packs Sold</th>
+                  <th className="px-5 py-3 font-medium text-right">Sales %</th>
+                  <th className="px-5 py-3 font-medium text-right">Default Batches</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/50">
+                {allRecipes.map((recipe: any) => {
+                  const sold = localPacksSold[recipe.id] ?? 0;
+                  const pct = getSalesPercent(recipe.id);
+                  const batches = getDefaultBatches(recipe.id);
+                  return (
+                    <tr key={recipe.id} className="hover:bg-secondary/10 transition-colors">
+                      <td className="px-5 py-3.5 font-medium">{recipe.name}</td>
+                      <td className="px-5 py-3.5 text-right">
                         <input
                           type="number"
-                          step="1"
-                          min="0"
-                          defaultValue={currentBatches}
-                          id={`dpt-batches-${recipe.id}`}
-                          className="w-20 px-2 py-1 border border-border rounded-lg text-sm text-right"
+                          min={0}
+                          value={sold}
+                          onChange={e => setLocalPacksSold(prev => ({ ...prev, [recipe.id]: Math.max(0, Number(e.target.value) || 0) }))}
+                          className="w-24 px-2 py-1 border border-border rounded-lg text-sm text-right font-mono focus-ring"
                         />
-                      ) : (
-                        <span className={cn("font-mono", currentBatches === 0 ? "text-muted-foreground" : "")}>
-                          {currentBatches}
+                      </td>
+                      <td className="px-5 py-3.5 text-right">
+                        <span className={cn("font-mono", pct === 0 ? "text-muted-foreground" : "text-primary font-semibold")}>
+                          {pct.toFixed(1)}%
                         </span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3.5 text-right">
-                      {isEditing ? (
-                        <input
-                          type="number"
-                          step="1"
-                          min="0"
-                          max="200"
-                          defaultValue={currentSurplus}
-                          id={`dpt-surplus-${recipe.id}`}
-                          className="w-20 px-2 py-1 border border-border rounded-lg text-sm text-right"
-                        />
-                      ) : (
-                        <span className="font-mono">{currentSurplus}%</span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3.5 text-right">
-                      {isEditing ? (
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => {
-                              const bInput = document.getElementById(`dpt-batches-${recipe.id}`) as HTMLInputElement;
-                              const sInput = document.getElementById(`dpt-surplus-${recipe.id}`) as HTMLInputElement;
-                              handleSave(recipe.id, bInput?.value ?? String(currentBatches), sInput?.value ?? String(currentSurplus));
-                            }}
-                            disabled={saving !== null}
-                            className="px-2 py-1 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1"
-                          >
-                            {saving === recipe.id ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Save
-                          </button>
-                          <button onClick={() => setEditingRecipeId(null)} className="px-2 py-1 text-muted-foreground text-xs">Cancel</button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => setEditingRecipeId(recipe.id)}
-                          className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
-                          title="Edit"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                      </td>
+                      <td className="px-5 py-3.5 text-right">
+                        <span className={cn(
+                          "font-mono text-base font-bold",
+                          batches > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"
+                        )}>
+                          {batches}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot className="bg-secondary/20 font-semibold border-t border-border">
+                <tr>
+                  <td className="px-5 py-3">Totals</td>
+                  <td className="px-5 py-3 text-right font-mono">{totalPacksSold}</td>
+                  <td className="px-5 py-3 text-right font-mono">{totalPacksSold > 0 ? "100%" : "—"}</td>
+                  <td className="px-5 py-3 text-right font-mono text-base">
+                    <span className={cn(totalDefaultBatches > 0 ? "text-emerald-600 dark:text-emerald-400" : "")}>
+                      {totalDefaultBatches}
+                    </span>
+                    {totalDailyBatches > 0 && totalDefaultBatches !== totalDailyBatches && (
+                      <span className="text-xs text-amber-600 dark:text-amber-400 ml-1">
+                        (target: {totalDailyBatches})
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </>
       )}
     </div>
   );

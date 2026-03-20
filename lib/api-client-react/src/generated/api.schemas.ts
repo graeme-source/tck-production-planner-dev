@@ -384,8 +384,8 @@ export interface DptSetting {
   id: number;
   recipeId: number;
   recipeName: string;
+  packsSold: number;
   defaultBatchesPerDay: number;
-  /** Percentage surplus buffer added on top of demand batches */
   surplusPercent: number;
   isActive: boolean;
   updatedAt: string;
@@ -422,15 +422,15 @@ export interface StationBreak {
 
 export interface CreateDptSetting {
   recipeId: number;
-  defaultBatchesPerDay: number;
-  /** Percentage surplus buffer (default 20) */
+  packsSold?: number;
+  defaultBatchesPerDay?: number;
   surplusPercent?: number;
   isActive?: boolean;
 }
 
 export interface UpdateDptSetting {
+  packsSold?: number;
   defaultBatchesPerDay?: number;
-  /** Percentage surplus buffer (default 20) */
   surplusPercent?: number;
   isActive?: boolean;
 }
@@ -468,20 +468,11 @@ export interface DptSuggestion {
   tinSize?: string | null;
   maxBatchesPerTin?: number | null;
   sopUrl?: string | null;
-  currentStock: number;
-  demand: number;
-  batchesForDemand: number;
-  /** This recipe's share weight of remaining capacity (%) */
-  surplusPercent: number;
-  /** This recipe's stored DPT default (informational) */
-  defaultBatchesPerDay: number;
-  /** Total shared batch capacity for the day */
-  totalDailyCapacity: number;
-  /** Remaining capacity after must-make batches */
-  remainingCapacity: number;
-  /** Batches allocated to this recipe from remaining capacity */
-  surplusShare: number;
+  packsSold: number;
+  salesPercent: number;
   suggestedBatches: number;
+  totalDailyBatches: number;
+  totalPacksSold: number;
   tinCount?: number | null;
   isActive: boolean;
 }
