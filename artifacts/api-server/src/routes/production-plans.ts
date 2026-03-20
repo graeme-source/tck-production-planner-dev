@@ -163,6 +163,51 @@ router.post("/", validate(CreatePlanBody), async (req, res) => {
   res.status(201).json(mapPlan(plan));
 });
 
+// GET /production-plans/next-active — returns the next Mon–Fri that has an active production plan.
+// Searches up to 14 calendar days from today (inclusive today).
+// Used by prep stations to show "Prep for [Day], [Date]" banners.
+router.get("/next-active", async (req, res) => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // Search up to 14 days from today (inclusive) for an active plan on a weekday
+  const candidates: string[] = [];
+  for (let i = 0; i <= 14; i++) {
+    const d = new Date(today);
+    d.setDate(d.getDate() + i);
+    const dow = d.getDay(); // 0=Sun, 6=Sat
+    if (dow !== 0 && dow !== 6) {
+      // Format as YYYY-MM-DD
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      candidates.push(`${yyyy}-${mm}-${dd}`);
+    }
+  }
+
+  if (candidates.length === 0) {
+    res.json({ planId: null, planDate: null, planName: null });
+    return;
+  }
+
+  const plans = await db
+    .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate, name: productionPlansTable.name, status: productionPlansTable.status })
+    .from(productionPlansTable)
+    .where(and(
+      inArray(productionPlansTable.planDate, candidates),
+      inArray(productionPlansTable.status, ["active", "prep", "building"])
+    ))
+    .orderBy(asc(productionPlansTable.planDate))
+    .limit(1);
+
+  if (plans.length === 0) {
+    res.json({ planId: null, planDate: null, planName: null });
+    return;
+  }
+
+  res.json({ planId: plans[0].id, planDate: plans[0].planDate, planName: plans[0].name, status: plans[0].status });
+});
+
 router.get("/:id", async (req, res) => {
   const id = Number(req.params.id);
   const [plan] = await db.select().from(productionPlansTable).where(eq(productionPlansTable.id, id));

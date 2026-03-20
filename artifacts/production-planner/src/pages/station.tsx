@@ -1,3 +1,4 @@
+import React from "react";
 import { useParams, useLocation } from "wouter";
 import {
   useGetProductionPlan,
@@ -24,7 +25,8 @@ import {
   Coffee, Utensils, Clock, CheckCircle2,
   PlayCircle, BarChart2, Loader2,
   Construction, Waves, Flame, Gift, Box, Salad, Layers,
-  Beef, TrendingUp, Trophy,
+  Beef, TrendingUp, Trophy, ExternalLink, ChevronRight,
+  List, LayoutGrid, CalendarCheck,
 } from "lucide-react";
 import { format, parseISO, differenceInMinutes } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -58,10 +60,10 @@ const STATIONS = [
   { key: "packing", label: "Packing", short: "Packing", icon: Box, color: "text-indigo-500" },
   { key: "dough_prep", label: "Dough Prep", short: "Dough Prep", icon: Layers, color: "text-amber-600" },
   { key: "dough_sheeting", label: "Dough Sheeting", short: "Sheeting", icon: Layers, color: "text-amber-500" },
-  { key: "prep_veg", label: "Veg Prep", short: "Veg", icon: Salad, color: "text-green-500" },
+  { key: "prep", label: "Prep", short: "Prep", icon: Salad, color: "text-green-500" },
 ] as const;
 
-type StationType = typeof STATIONS[number]["key"] | "prep_bases" | "prep_meat";
+type StationType = typeof STATIONS[number]["key"] | "prep_veg" | "prep_bases" | "prep_meat";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Station Layout (shared header)
@@ -76,7 +78,15 @@ interface StationLayoutProps {
 function StationLayout({ planId, stationType, plan, children }: StationLayoutProps) {
   const [, navigate] = useLocation();
   const station = STATIONS.find(s => s.key === stationType);
-  const StationIcon = station?.icon ?? BarChart2;
+  // Resolve station label for sub-stations
+  const resolveStationMeta = (key: StationType): { label: string; icon: React.ComponentType<{ className?: string }>; color: string } => {
+    if (key === "prep_veg") return { label: "Veg Prep", icon: Salad, color: "text-green-500" };
+    if (key === "prep_bases") return { label: "Bases & Mozzarella", icon: Layers, color: "text-yellow-500" };
+    if (key === "prep_meat") return { label: "Raw Meat Prep", icon: Beef, color: "text-rose-500" };
+    return station ?? { label: key, icon: BarChart2, color: "" };
+  };
+  const meta = resolveStationMeta(stationType);
+  const StationIcon = meta.icon;
 
   return (
     <div className="min-h-screen bg-background">
@@ -86,9 +96,9 @@ function StationLayout({ planId, stationType, plan, children }: StationLayoutPro
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 min-w-0">
               <div className="flex items-center gap-2 min-w-0">
-                <StationIcon className={cn("w-5 h-5 flex-shrink-0", station?.color)} />
+                <StationIcon className={cn("w-5 h-5 flex-shrink-0", meta.color)} />
                 <div className="min-w-0">
-                  <h1 className="font-semibold truncate">{station?.label}</h1>
+                  <h1 className="font-semibold truncate">{meta.label}</h1>
                   {plan && (
                     <p className="text-xs text-muted-foreground truncate">
                       Batch #{plan.batchNumber ?? ""} · {format(parseISO(plan.planDate), "EEEE d MMM yyyy")}
@@ -103,7 +113,8 @@ function StationLayout({ planId, stationType, plan, children }: StationLayoutPro
               <div className="hidden md:flex items-center gap-1 overflow-x-auto">
                 {STATIONS.map(s => {
                   const Icon = s.icon;
-                  const isActive = s.key === stationType;
+                  const prepSubStations = ["prep_veg", "prep_bases", "prep_meat"] as const;
+                  const isActive = s.key === stationType || (s.key === "prep" && prepSubStations.includes(stationType as typeof prepSubStations[number]));
                   return (
                     <button
                       key={s.key}
@@ -958,9 +969,21 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
               Currently Building — Line {lineNumber}
             </p>
-            <h2 className="font-display text-3xl font-bold leading-tight">
-              {currentItem.recipeName ?? `Recipe #${currentItem.recipeId}`}
-            </h2>
+            <div className="flex items-start gap-3">
+              <h2 className="font-display text-3xl font-bold leading-tight flex-1">
+                {currentItem.recipeName ?? `Recipe #${currentItem.recipeId}`}
+              </h2>
+              {currentItem.sopUrl && (
+                <a
+                  href={currentItem.sopUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-xl text-blue-700 dark:text-blue-300 text-sm font-medium hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors whitespace-nowrap mt-1"
+                >
+                  SOP <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              )}
+            </div>
             <div className="flex flex-wrap items-center gap-3 mt-2 text-sm text-muted-foreground">
               {currentItem.tinSize && (
                 <span className="bg-secondary/50 rounded px-2 py-0.5">{currentItem.tinSize} tin</span>
@@ -1182,7 +1205,16 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Shared prep ingredient table
+// Shared prep quantity formatter
+// ──────────────────────────────────────────────────────────────────────────────
+function fmtQty(q: number, unit: string): string {
+  if (unit === "g" && q >= 1000) return `${(q / 1000).toFixed(2)} kg`;
+  if (unit === "ml" && q >= 1000) return `${(q / 1000).toFixed(2)} l`;
+  return `${q % 1 === 0 ? q : q.toFixed(2)} ${unit}`;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Shared prep ingredient table (overview mode)
 // ──────────────────────────────────────────────────────────────────────────────
 function PrepIngredientTable({ items }: { items: PrepRequirementItem[] }) {
   if (items.length === 0) {
@@ -1209,20 +1241,15 @@ function PrepIngredientTable({ items }: { items: PrepRequirementItem[] }) {
         <tbody>
           {items.map(item => {
             const hasProcLoss = item.processingRatio != null && item.processingRatio < 1;
-            const formatQty = (q: number, unit: string) => {
-              if (unit === "g" && q >= 1000) return `${(q / 1000).toFixed(2)} kg`;
-              if (unit === "ml" && q >= 1000) return `${(q / 1000).toFixed(2)} l`;
-              return `${q % 1 === 0 ? q : q.toFixed(2)} ${unit}`;
-            };
             return (
               <tr key={item.ingredientId} className="border-b border-border/50 last:border-0">
                 <td className="py-3 px-4 font-medium">{item.ingredientName}</td>
                 <td className="py-3 px-4 text-muted-foreground text-xs">{item.recipes.join(", ")}</td>
                 <td className="py-3 px-4 text-right tabular-nums">
-                  {formatQty(item.totalCookedQty, item.unit)}
+                  {fmtQty(item.totalCookedQty, item.unit)}
                 </td>
                 <td className={cn("py-3 px-4 text-right tabular-nums font-medium", hasProcLoss ? "text-amber-600 dark:text-amber-400" : "")}>
-                  {formatQty(item.totalRawQty, item.unit)}
+                  {fmtQty(item.totalRawQty, item.unit)}
                   {hasProcLoss && (
                     <span className="ml-1 text-xs text-muted-foreground">
                       ({((item.processingRatio ?? 1) * 100).toFixed(0)}%)
@@ -1246,34 +1273,310 @@ function PrepIngredientTable({ items }: { items: PrepRequirementItem[] }) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Veg Prep Station
+// Next-plan lookup hook — fetches the next active plan from the server
 // ──────────────────────────────────────────────────────────────────────────────
-function PrepVegStation({ plan }: { plan: ProductionPlanDetail }) {
-  const { data, isLoading } = useGetPrepRequirements(plan.id, { station: "prep_veg" });
+interface NextActivePlan {
+  planId: number | null;
+  planDate: string | null;
+  planName: string | null;
+  status: string | null;
+}
+
+function useNextActivePlan() {
+  const [data, setData] = useState<NextActivePlan | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoading(true);
+    fetch("/api/production-plans/next-active", { credentials: "include" })
+      .then(r => r.json())
+      .then((json: NextActivePlan) => { if (!cancelled) { setData(json); setIsLoading(false); } })
+      .catch(() => { if (!cancelled) setIsLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  return { data, isLoading };
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Prep date banner
+// ──────────────────────────────────────────────────────────────────────────────
+function PrepDateBanner({ planDate, planName, isLoading }: { planDate: string | null; planName: string | null; isLoading: boolean }) {
+  if (isLoading) return null;
+  if (!planDate) {
+    return (
+      <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl px-4 py-3 text-sm text-amber-800 dark:text-amber-200 flex items-center gap-2">
+        <CalendarCheck className="w-4 h-4 flex-shrink-0" />
+        <span>No upcoming production plan found within 7 days.</span>
+      </div>
+    );
+  }
+
+  const formatted = format(parseISO(planDate), "EEEE, d MMMM yyyy");
+  return (
+    <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-xl px-4 py-3 flex items-center gap-3">
+      <CalendarCheck className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0" />
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wider text-green-700 dark:text-green-400">Prepping for</p>
+        <p className="font-bold text-green-900 dark:text-green-100 text-lg leading-tight">{formatted}</p>
+        {planName && <p className="text-xs text-green-700 dark:text-green-400">{planName}</p>}
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Full-screen prep item mode
+// A generic full-screen card that navigates through a list of items one at a time.
+// ──────────────────────────────────────────────────────────────────────────────
+interface PrepFullScreenItem {
+  id: string;
+  name: string;
+  quantity: string;
+  subDetail?: string;
+  badge?: { label: string; value: string | number; color: "green" | "rose" | "amber" | "blue" };
+  sopUrl?: string | null;
+}
+
+function PrepFullScreenMode({
+  items,
+  planDate,
+  planName,
+  isLoadingPlan,
+  stationLabel,
+  stationColor,
+  stationIcon: StationIcon,
+  onOverviewClick,
+}: {
+  items: PrepFullScreenItem[];
+  planDate: string | null;
+  planName: string | null;
+  isLoadingPlan: boolean;
+  stationLabel: string;
+  stationColor: string;
+  stationIcon: React.ComponentType<{ className?: string }>;
+  onOverviewClick: () => void;
+}) {
+  const [idx, setIdx] = useState(0);
+
+  const total = items.length;
+  const current = items[Math.min(idx, total - 1)];
+  const isDone = idx >= total;
+  const badgeColors = {
+    green: "bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-700 text-green-800 dark:text-green-200",
+    rose: "bg-rose-50 dark:bg-rose-900/20 border-rose-200 dark:border-rose-700 text-rose-800 dark:text-rose-200",
+    amber: "bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-700 text-amber-800 dark:text-amber-200",
+    blue: "bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-700 text-blue-800 dark:text-blue-200",
+  };
 
   return (
     <div className="space-y-4">
-      <div className="bg-card border border-border rounded-xl p-4">
+      <PrepDateBanner planDate={planDate} planName={planName} isLoading={isLoadingPlan} />
+
+      {/* Progress + overview toggle */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <StationIcon className={cn("w-5 h-5", stationColor)} />
+          <span className="font-semibold text-sm">{stationLabel}</span>
+        </div>
         <div className="flex items-center gap-3">
-          <Salad className="w-6 h-6 text-green-500" />
-          <div>
-            <h2 className="font-semibold text-base">Vegetable Prep</h2>
-            <p className="text-xs text-muted-foreground">
-              Total raw vegetable quantities to prepare for this production run
-            </p>
-          </div>
+          {total > 0 && !isDone && (
+            <span className="text-sm text-muted-foreground tabular-nums">{idx + 1} of {total}</span>
+          )}
+          <button
+            onClick={onOverviewClick}
+            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-1.5 transition-colors"
+          >
+            <List className="w-4 h-4" />
+            Overview
+          </button>
         </div>
       </div>
 
-      {isLoading ? (
-        <div className="flex items-center justify-center py-12 text-muted-foreground">
-          <Loader2 className="w-5 h-5 animate-spin mr-2" />
-          Loading requirements...
+      {/* Main card */}
+      {total === 0 ? (
+        <div className="bg-card border border-border rounded-2xl p-12 text-center text-muted-foreground">
+          <p className="font-medium text-lg">Nothing to prep</p>
+          <p className="text-sm mt-1">No ingredients found for this station</p>
+        </div>
+      ) : isDone ? (
+        <div className="bg-card border-2 border-green-500 rounded-2xl p-12 text-center space-y-4">
+          <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto" />
+          <h2 className="text-3xl font-bold text-green-700 dark:text-green-400">All done!</h2>
+          <p className="text-muted-foreground">All {total} item{total !== 1 ? "s" : ""} prepped</p>
+          <button
+            onClick={() => setIdx(0)}
+            className="px-6 py-2 rounded-xl border border-border text-sm font-medium hover:bg-secondary/50 transition-colors"
+          >
+            Start again
+          </button>
         </div>
       ) : (
-        <PrepIngredientTable items={data?.items ?? []} />
-      )}
+        <div className="bg-card border-2 border-primary rounded-2xl p-6 space-y-6">
+          {/* Header row */}
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+                Item {idx + 1} of {total}
+              </p>
+              <h2 className="font-display text-4xl font-bold leading-tight break-words">
+                {current.name}
+              </h2>
+            </div>
+            {current.sopUrl && (
+              <a
+                href={current.sopUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-xl text-blue-700 dark:text-blue-300 text-sm font-medium hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors whitespace-nowrap flex-shrink-0"
+              >
+                SOP <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            )}
+          </div>
 
+          {/* Quantity — huge */}
+          <div className="text-center py-4">
+            <p className="text-6xl font-bold font-display tabular-nums text-primary">
+              {current.quantity}
+            </p>
+            {current.subDetail && (
+              <p className="text-muted-foreground mt-2 text-lg">{current.subDetail}</p>
+            )}
+          </div>
+
+          {/* Optional badge (tray count, tin count, etc.) */}
+          {current.badge && (
+            <div className={cn("border rounded-xl px-4 py-3 flex items-center justify-between", badgeColors[current.badge.color])}>
+              <span className="font-medium text-sm">{current.badge.label}</span>
+              <span className="text-3xl font-bold tabular-nums">{current.badge.value}</span>
+            </div>
+          )}
+
+          {/* Progress bar */}
+          <div className="w-full bg-secondary/30 rounded-full h-2">
+            <div
+              className="bg-primary rounded-full h-2 transition-all"
+              style={{ width: `${((idx + 1) / total) * 100}%` }}
+            />
+          </div>
+
+          {/* Done → Next button */}
+          <button
+            onClick={() => setIdx(i => i + 1)}
+            className="w-full py-5 rounded-2xl bg-primary text-primary-foreground font-bold text-xl tracking-wide flex items-center justify-center gap-3 active:scale-[0.98] transition-transform"
+          >
+            {idx < total - 1 ? (
+              <>Done — Next <ChevronRight className="w-6 h-6" /></>
+            ) : (
+              <>All Done <CheckCircle2 className="w-6 h-6" /></>
+            )}
+          </button>
+
+          {/* Prev / skip navigation */}
+          <div className="flex gap-3">
+            <button
+              onClick={() => setIdx(i => Math.max(0, i - 1))}
+              disabled={idx === 0}
+              className="flex-1 py-3 rounded-xl border border-border text-sm font-medium hover:bg-secondary/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              ← Back
+            </button>
+            <button
+              onClick={() => setIdx(i => Math.min(total, i + 1))}
+              className="flex-1 py-3 rounded-xl border border-border text-sm font-medium hover:bg-secondary/50 transition-colors"
+            >
+              Skip →
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Shared: fetch prep requirements for the next active plan
+// ──────────────────────────────────────────────────────────────────────────────
+function usePrepRequirementsForNextPlan(station: string) {
+  const { data: nextPlan, isLoading: isPlanLoading } = useNextActivePlan() as { data: NextActivePlan | null; isLoading: boolean };
+  const planId = nextPlan?.planId ?? 0;
+  const { data: prepData, isLoading: isPrepLoading } = useGetPrepRequirements(
+    planId,
+    { station },
+  );
+  return {
+    items: (planId ? (prepData?.items ?? []) : []) as PrepRequirementItem[],
+    isLoading: isPlanLoading || (!!planId && isPrepLoading),
+    nextPlan,
+  };
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Veg Prep Station
+// Full-screen or overview view of vegetable ingredients grouped by recipe
+// ──────────────────────────────────────────────────────────────────────────────
+function PrepVegStation({ plan }: { plan: ProductionPlanDetail }) {
+  const [mode, setMode] = useState<"fullscreen" | "overview">("fullscreen");
+  const { items, isLoading, nextPlan } = usePrepRequirementsForNextPlan("prep_veg");
+
+  // Build full-screen items — grouped by recipe then ingredient
+  const fullScreenItems: PrepFullScreenItem[] = items.flatMap(item => {
+    const hasProcLoss = item.processingRatio != null && item.processingRatio < 1;
+    return [{
+      id: `${item.ingredientId}`,
+      name: item.ingredientName,
+      quantity: fmtQty(item.totalRawQty, item.unit),
+      subDetail: item.recipes.length > 0
+        ? `Used in: ${item.recipes.join(", ")}` + (hasProcLoss ? ` · Yield ratio: ${((item.processingRatio ?? 1) * 100).toFixed(0)}%` : "")
+        : hasProcLoss ? `Yield ratio: ${((item.processingRatio ?? 1) * 100).toFixed(0)}%` : undefined,
+    }];
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-20 text-muted-foreground">
+        <Loader2 className="w-5 h-5 animate-spin mr-2" />
+        Loading…
+      </div>
+    );
+  }
+
+  if (mode === "fullscreen") {
+    return (
+      <PrepFullScreenMode
+        items={fullScreenItems}
+        planDate={nextPlan?.planDate ?? null}
+        planName={nextPlan?.planName ?? null}
+        isLoadingPlan={false}
+        stationLabel="Veg Prep"
+        stationColor="text-green-500"
+        stationIcon={Salad}
+        onOverviewClick={() => setMode("overview")}
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <PrepDateBanner planDate={nextPlan?.planDate ?? null} planName={nextPlan?.planName ?? null} isLoading={false} />
+
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Salad className="w-5 h-5 text-green-500" />
+          <h2 className="font-semibold">Veg Prep — Overview</h2>
+        </div>
+        <button
+          onClick={() => setMode("fullscreen")}
+          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-1.5 transition-colors"
+        >
+          <LayoutGrid className="w-4 h-4" />
+          Full-screen
+        </button>
+      </div>
+
+      <PrepIngredientTable items={items} />
       <BreakTracker planId={plan.id} stationType="prep_veg" />
     </div>
   );
@@ -1281,33 +1584,152 @@ function PrepVegStation({ plan }: { plan: ProductionPlanDetail }) {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Bases & Mozzarella Prep Station
+// Shows sauce/base/cheese ingredients with per-recipe tin counts
 // ──────────────────────────────────────────────────────────────────────────────
 function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
-  const { data, isLoading } = useGetPrepRequirements(plan.id, { station: "prep_bases" });
+  const [mode, setMode] = useState<"fullscreen" | "overview">("fullscreen");
+  const { items, isLoading, nextPlan } = usePrepRequirementsForNextPlan("prep_bases");
+
+  // Fetch plan items for the next plan to compute tin counts
+  const nextPlanId = nextPlan?.planId ?? 0;
+  const [planItems, setPlanItems] = useState<Array<{
+    recipeId: number;
+    recipeName: string;
+    batchesTarget: number;
+    tinSize: string | null;
+    maxBatchesPerTin: number | null;
+    sopUrl: string | null;
+  }>>([]);
+
+  useEffect(() => {
+    if (!nextPlanId) { setPlanItems([]); return; }
+    let cancelled = false;
+    fetch(`/api/production-plans/${nextPlanId}`, { credentials: "include" })
+      .then(r => r.json())
+      .then((json: { items?: Array<{ recipeId: number; recipeName?: string; batchesTarget?: number; tinSize?: string | null; maxBatchesPerTin?: number | null; sopUrl?: string | null }> }) => {
+        if (!cancelled) {
+          setPlanItems((json.items ?? []).map(i => ({
+            recipeId: i.recipeId,
+            recipeName: i.recipeName ?? `Recipe #${i.recipeId}`,
+            batchesTarget: i.batchesTarget ?? 0,
+            tinSize: i.tinSize ?? null,
+            maxBatchesPerTin: i.maxBatchesPerTin ?? null,
+            sopUrl: i.sopUrl ?? null,
+          })));
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [nextPlanId]);
+
+  // Build full-screen items with tin counts per recipe
+  const fullScreenItems: PrepFullScreenItem[] = items.flatMap(item => {
+    const recipeEntries = planItems.filter(pi =>
+      item.recipes.includes(pi.recipeName)
+    );
+    const result: PrepFullScreenItem[] = [];
+
+    if (recipeEntries.length === 0) {
+      result.push({
+        id: `${item.ingredientId}`,
+        name: item.ingredientName,
+        quantity: fmtQty(item.totalCookedQty, item.unit),
+        subDetail: item.recipes.length > 0 ? `Recipes: ${item.recipes.join(", ")}` : undefined,
+      });
+    } else {
+      // One entry per recipe
+      for (const pi of recipeEntries) {
+        const tinCount = pi.maxBatchesPerTin ? Math.ceil(pi.batchesTarget / pi.maxBatchesPerTin) : null;
+        result.push({
+          id: `${item.ingredientId}-${pi.recipeId}`,
+          name: `${item.ingredientName} — ${pi.recipeName}`,
+          quantity: fmtQty(item.totalCookedQty / (recipeEntries.length || 1), item.unit),
+          subDetail: pi.tinSize ? `${pi.tinSize} tin` : undefined,
+          badge: tinCount != null ? {
+            label: "Number of tins",
+            value: tinCount,
+            color: "green",
+          } : undefined,
+          sopUrl: pi.sopUrl,
+        });
+      }
+    }
+    return result;
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-20 text-muted-foreground">
+        <Loader2 className="w-5 h-5 animate-spin mr-2" />
+        Loading…
+      </div>
+    );
+  }
+
+  if (mode === "fullscreen") {
+    return (
+      <PrepFullScreenMode
+        items={fullScreenItems}
+        planDate={nextPlan?.planDate ?? null}
+        planName={nextPlan?.planName ?? null}
+        isLoadingPlan={false}
+        stationLabel="Bases & Mozzarella"
+        stationColor="text-yellow-500"
+        stationIcon={Layers}
+        onOverviewClick={() => setMode("overview")}
+      />
+    );
+  }
 
   return (
     <div className="space-y-4">
-      <div className="bg-card border border-border rounded-xl p-4">
-        <div className="flex items-center gap-3">
-          <Layers className="w-6 h-6 text-yellow-500" />
-          <div>
-            <h2 className="font-semibold text-base">Bases & Mozzarella Prep</h2>
-            <p className="text-xs text-muted-foreground">
-              Sauce, base, and cheese quantities to portion for this production run
-            </p>
-          </div>
+      <PrepDateBanner planDate={nextPlan?.planDate ?? null} planName={nextPlan?.planName ?? null} isLoading={false} />
+
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Layers className="w-5 h-5 text-yellow-500" />
+          <h2 className="font-semibold">Bases & Mozzarella — Overview</h2>
         </div>
+        <button
+          onClick={() => setMode("fullscreen")}
+          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-1.5 transition-colors"
+        >
+          <LayoutGrid className="w-4 h-4" />
+          Full-screen
+        </button>
       </div>
 
-      {isLoading ? (
-        <div className="flex items-center justify-center py-12 text-muted-foreground">
-          <Loader2 className="w-5 h-5 animate-spin mr-2" />
-          Loading requirements...
+      {/* Per-recipe tin breakdown */}
+      {planItems.filter(pi => pi.tinSize || pi.maxBatchesPerTin).length > 0 && (
+        <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="px-4 py-2.5 bg-secondary/20 border-b border-border">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Tin Counts by Recipe</p>
+          </div>
+          <div className="divide-y divide-border/50">
+            {planItems.map(pi => {
+              if (!pi.tinSize && !pi.maxBatchesPerTin) return null;
+              const tinCount = pi.maxBatchesPerTin ? Math.ceil(pi.batchesTarget / pi.maxBatchesPerTin) : null;
+              return (
+                <div key={pi.recipeId} className="flex items-center justify-between px-4 py-3">
+                  <div>
+                    <p className="font-medium text-sm">{pi.recipeName}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {pi.batchesTarget} batch{pi.batchesTarget !== 1 ? "es" : ""}
+                      {pi.maxBatchesPerTin ? ` · ${pi.maxBatchesPerTin}/tin` : ""}
+                      {pi.tinSize ? ` · ${pi.tinSize}` : ""}
+                    </p>
+                  </div>
+                  {tinCount != null && (
+                    <span className="text-3xl font-bold text-green-600 dark:text-green-400 tabular-nums">{tinCount} <span className="text-sm font-normal text-muted-foreground">tins</span></span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
-      ) : (
-        <PrepIngredientTable items={data?.items ?? []} />
       )}
 
+      <PrepIngredientTable items={items} />
       <BreakTracker planId={plan.id} stationType="prep_bases" />
     </div>
   );
@@ -1315,47 +1737,127 @@ function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Raw Meat Prep Station
+// Per-recipe tray count and per-tray breakdown
 // ──────────────────────────────────────────────────────────────────────────────
 function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
-  const { data, isLoading } = useGetPrepRequirements(plan.id, { station: "prep_meat" });
+  const [mode, setMode] = useState<"fullscreen" | "overview">("fullscreen");
+  const { items, isLoading, nextPlan } = usePrepRequirementsForNextPlan("prep_meat");
 
-  const totalTrays = (data?.items ?? []).reduce((sum: number, i: PrepRequirementItem) => sum + (i.trayCount ?? 0), 0);
+  const totalTrays = items.reduce((sum: number, i: PrepRequirementItem) => sum + (i.trayCount ?? 0), 0);
+
+  // Build full-screen items — one entry per ingredient with per-tray detail
+  const fullScreenItems: PrepFullScreenItem[] = items.map(item => {
+    const trays = item.trayCount ?? null;
+    const perTrayKg = trays && trays > 0
+      ? ((item.totalRawQty / 1000) / trays).toFixed(2)
+      : null;
+    return {
+      id: `${item.ingredientId}`,
+      name: item.ingredientName,
+      quantity: fmtQty(item.totalRawQty, item.unit),
+      subDetail: [
+        item.recipes.length > 0 ? `Recipes: ${item.recipes.join(", ")}` : null,
+        perTrayKg ? `${perTrayKg} kg per tray` : null,
+        item.processingRatio != null && item.processingRatio < 1
+          ? `Yield: ${((item.processingRatio) * 100).toFixed(0)}%`
+          : null,
+      ].filter(Boolean).join(" · ") || undefined,
+      badge: trays != null ? {
+        label: "Trays needed",
+        value: trays,
+        color: "rose" as const,
+      } : undefined,
+    };
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-20 text-muted-foreground">
+        <Loader2 className="w-5 h-5 animate-spin mr-2" />
+        Loading…
+      </div>
+    );
+  }
+
+  if (mode === "fullscreen") {
+    return (
+      <PrepFullScreenMode
+        items={fullScreenItems}
+        planDate={nextPlan?.planDate ?? null}
+        planName={nextPlan?.planName ?? null}
+        isLoadingPlan={false}
+        stationLabel="Raw Meat Prep"
+        stationColor="text-rose-500"
+        stationIcon={Beef}
+        onOverviewClick={() => setMode("overview")}
+      />
+    );
+  }
 
   return (
     <div className="space-y-4">
-      <div className="bg-card border border-border rounded-xl p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Beef className="w-6 h-6 text-rose-500" />
-            <div>
-              <h2 className="font-semibold text-base">Raw Meat Prep</h2>
-              <p className="text-xs text-muted-foreground">
-                Raw meat quantities and tray counts for this production run
-              </p>
-            </div>
-          </div>
-          {!isLoading && totalTrays > 0 && (
+      <PrepDateBanner planDate={nextPlan?.planDate ?? null} planName={nextPlan?.planName ?? null} isLoading={false} />
+
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Beef className="w-5 h-5 text-rose-500" />
+          <h2 className="font-semibold">Raw Meat Prep — Overview</h2>
+        </div>
+        <div className="flex items-center gap-3">
+          {totalTrays > 0 && (
             <div className="text-right">
               <p className="text-xs text-muted-foreground">Total Trays</p>
-              <p className="text-3xl font-bold text-rose-600 dark:text-rose-400">{totalTrays}</p>
+              <p className="text-2xl font-bold text-rose-600 dark:text-rose-400">{totalTrays}</p>
             </div>
           )}
+          <button
+            onClick={() => setMode("fullscreen")}
+            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-1.5 transition-colors"
+          >
+            <LayoutGrid className="w-4 h-4" />
+            Full-screen
+          </button>
         </div>
       </div>
 
-      {isLoading ? (
-        <div className="flex items-center justify-center py-12 text-muted-foreground">
-          <Loader2 className="w-5 h-5 animate-spin mr-2" />
-          Loading requirements...
+      {/* Per-ingredient tray detail cards */}
+      {items.length > 0 && (
+        <div className="space-y-3">
+          {items.map(item => {
+            const trays = item.trayCount ?? null;
+            const perTrayKg = trays && trays > 0
+              ? ((item.totalRawQty / 1000) / trays).toFixed(2)
+              : null;
+            return (
+              <div key={item.ingredientId} className="bg-card border border-border rounded-xl p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1">
+                    <p className="font-semibold">{item.ingredientName}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{item.recipes.join(", ")}</p>
+                    <p className="text-sm mt-2 tabular-nums">
+                      Total raw: <span className="font-medium">{fmtQty(item.totalRawQty, item.unit)}</span>
+                    </p>
+                    {perTrayKg && (
+                      <p className="text-xs text-muted-foreground">
+                        {perTrayKg} kg/tray
+                      </p>
+                    )}
+                  </div>
+                  {trays != null && (
+                    <div className="text-right">
+                      <p className="text-xs text-muted-foreground">Trays</p>
+                      <p className="text-4xl font-bold text-rose-600 dark:text-rose-400 tabular-nums">{trays}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
-      ) : (
-        <PrepIngredientTable items={data?.items ?? []} />
       )}
 
-      {data?.nextPlanDate && (
-        <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
-          <span className="font-medium">Next production day:</span> {data.nextPlanDate}
-        </div>
+      {items.length === 0 && (
+        <PrepIngredientTable items={items} />
       )}
 
       <BreakTracker planId={plan.id} stationType="prep_meat" />
@@ -2051,6 +2553,85 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Prep Hub — sub-station picker shown when "Prep" tile is selected
+// ──────────────────────────────────────────────────────────────────────────────
+function PrepHub({ planId }: { planId: number }) {
+  const [, navigate] = useLocation();
+  const { data: nextPlan, isLoading } = useNextActivePlan() as { data: NextActivePlan | null; isLoading: boolean };
+
+  const subStations = [
+    {
+      key: "prep_veg",
+      label: "Raw Veg",
+      icon: Salad,
+      color: "text-green-500",
+      borderColor: "border-green-200 dark:border-green-800",
+      bgColor: "bg-green-50 dark:bg-green-950/20",
+      description: "Vegetable prep quantities for the next production run",
+    },
+    {
+      key: "prep_bases",
+      label: "Bases & Mozzarella",
+      icon: Layers,
+      color: "text-yellow-500",
+      borderColor: "border-yellow-200 dark:border-yellow-800",
+      bgColor: "bg-yellow-50 dark:bg-yellow-950/20",
+      description: "Sauce bases, dough bases, and mozzarella portioning with tin counts",
+    },
+    {
+      key: "prep_meat",
+      label: "Raw Meat",
+      icon: Beef,
+      color: "text-rose-500",
+      borderColor: "border-rose-200 dark:border-rose-800",
+      bgColor: "bg-rose-50 dark:bg-rose-950/20",
+      description: "Raw meat quantities, seasoning weights, and tray assignments",
+    },
+  ] as const;
+
+  return (
+    <div className="space-y-5">
+      <PrepDateBanner
+        planDate={nextPlan?.planDate ?? null}
+        planName={nextPlan?.planName ?? null}
+        isLoading={isLoading}
+      />
+
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+          Select prep station
+        </p>
+        <div className="grid gap-4">
+          {subStations.map(s => {
+            const Icon = s.icon;
+            return (
+              <button
+                key={s.key}
+                onClick={() => navigate(`/plans/${planId}/station/${s.key}`)}
+                className={cn(
+                  "flex items-center gap-4 p-5 border-2 rounded-2xl text-left transition-all hover:scale-[1.01] active:scale-[0.99]",
+                  s.borderColor,
+                  s.bgColor
+                )}
+              >
+                <div className={cn("p-3 bg-background rounded-xl border", s.borderColor)}>
+                  <Icon className={cn("w-8 h-8", s.color)} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-bold text-lg">{s.label}</h3>
+                  <p className="text-sm text-muted-foreground leading-snug">{s.description}</p>
+                </div>
+                <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Main Station Page — 5-second polling via refetchInterval
 // ──────────────────────────────────────────────────────────────────────────────
 export default function StationPage() {
@@ -2101,6 +2682,8 @@ export default function StationPage() {
         return <DoughPrepStation plan={plan} />;
       case "dough_sheeting":
         return <DoughSheetingStation plan={plan} />;
+      case "prep":
+        return <PrepHub planId={planId} />;
       case "prep_veg":
         return <PrepVegStation plan={plan} />;
       case "prep_bases":

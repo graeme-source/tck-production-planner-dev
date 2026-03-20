@@ -84,10 +84,15 @@ Every package extends `tsconfig.base.json` which sets `composite: true`.
 
 The station page (`/station`) provides a full-screen view with:
 - **Mixing & Cooking** — DnD reordering of recipe queue (pending items only; admin can reorder any); batch +/− counters; break tracker; EOD summary with avg mins/batch
-- **Building Line 1 & 2** — show fill weight, base type, base weight chips from recipe; batch counters; EOD summary
-- **Prep stations** (Raw Veg, Bases & Mozzarella, Raw Meat, Dough, Ovens, Wrapping & Packing) — batch counters per item
+- **Building Line 1 & 2** — show fill weight, base type, base weight chips from recipe; batch counters; EOD summary; SOP button on recipe header (opens sopUrl in new tab)
+- **Prep Hub** (stationType="prep") — 3-tile sub-station picker: Raw Veg, Bases & Mozzarella, Raw Meat. Shows "Prep for [Day], [Date]" banner using next active plan lookup.
+  - **Raw Veg** (prep_veg) — fetches prep requirements for the next active plan; full-screen one-item-at-a-time mode with Done→Next + overview list toggle
+  - **Bases & Mozzarella** (prep_bases) — per-recipe tin counts (green badge), full-screen + overview modes
+  - **Raw Meat** (prep_meat) — per-ingredient tray counts with per-tray kg breakdown, full-screen (rose badge) + overview modes
+- **Dough, Ovens, Wrapping, Packing** — batch counters per item
+- **Next-plan lookup**: `GET /api/production-plans/next-active` endpoint — finds next weekday with status active/prep/building within 14 days
 
-Recipe fields added for station cards: `fill_weight_grams`, `base_type`, `base_weight_grams`.
+Recipe fields added for station cards: `fill_weight_grams`, `base_type`, `base_weight_grams`, `sop_url`.
 
 ## Codegen Critical Notes
 

@@ -943,7 +943,7 @@ const STATION_BUTTONS = [
   { key: "packing", label: "Packing", icon: Box, color: "text-indigo-500 bg-indigo-50 dark:bg-indigo-900/20" },
   { key: "dough_prep", label: "Dough Prep", icon: Layers, color: "text-amber-600 bg-amber-50 dark:bg-amber-900/20" },
   { key: "dough_sheeting", label: "Sheeting", icon: Layers, color: "text-amber-500 bg-amber-50 dark:bg-amber-900/20" },
-  { key: "prep_veg", label: "Veg Prep", icon: Salad, color: "text-green-500 bg-green-50 dark:bg-green-900/20" },
+  { key: "prep", label: "Prep", icon: Salad, color: "text-green-500 bg-green-50 dark:bg-green-900/20" },
 ] as const;
 
 interface PlanDetailProps {
