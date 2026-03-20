@@ -20,7 +20,7 @@ import {
   Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef,
   ArrowRight, GripVertical,
 } from "lucide-react";
-import { format, addDays, parseISO, isWeekend } from "date-fns";
+import { format, addDays, parseISO, isWeekend, isToday } from "date-fns";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -1330,17 +1330,31 @@ function PlansList({ onViewPlan, onCreatePlan }: PlansListProps) {
           {filtered.map(plan => {
             const statusConfig = STATUS_CONFIG[plan.status as keyof typeof STATUS_CONFIG] ?? STATUS_CONFIG.draft;
             const StatusIcon = statusConfig.icon;
+            const planIsToday = isToday(parseISO(plan.planDate));
 
             return (
               <div
                 key={plan.id}
-                className="bg-card border border-border rounded-xl p-4 hover:border-primary/30 transition-all cursor-pointer group"
+                className={cn(
+                  "rounded-xl p-4 transition-all cursor-pointer group relative",
+                  planIsToday
+                    ? "bg-primary/[0.06] border-2 border-primary shadow-md ring-1 ring-primary/20"
+                    : "bg-card border border-border hover:border-primary/30"
+                )}
                 onClick={() => onViewPlan(plan.id)}
               >
+                {planIsToday && (
+                  <span className="absolute -top-2.5 left-4 bg-primary text-primary-foreground text-[11px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full shadow-sm">
+                    Today
+                  </span>
+                )}
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-0.5">
-                      <h3 className="font-semibold truncate group-hover:text-primary transition-colors">
+                      <h3 className={cn(
+                        "font-semibold truncate transition-colors",
+                        planIsToday ? "text-primary text-base" : "group-hover:text-primary"
+                      )}>
                         {plan.name}
                       </h3>
                       <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium flex items-center gap-1 flex-shrink-0", statusConfig.color)}>
@@ -1366,6 +1380,12 @@ function PlansList({ onViewPlan, onCreatePlan }: PlansListProps) {
                         <span className="text-xs truncate max-w-48">{plan.notes}</span>
                       )}
                     </div>
+                    {planIsToday && (
+                      <div className="mt-2 flex items-center gap-1.5 text-xs font-medium text-primary">
+                        <ArrowRight className="w-3.5 h-3.5" />
+                        Tap to open today's production plan
+                      </div>
+                    )}
                   </div>
 
                   <button
