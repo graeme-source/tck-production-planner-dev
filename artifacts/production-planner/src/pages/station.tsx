@@ -2864,13 +2864,11 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const STORAGE_LOCATIONS = [
     { key: "fridge", label: "Production Fridge", endpoint: "fridge", color: "blue" },
     { key: "freezer", label: "Product Freezer", endpoint: "freezer", color: "cyan" },
-    { key: "prep_fridge", label: "Prep Fridge", endpoint: "prep-fridge", color: "teal" },
   ] as const;
 
   const getStorageQty = (item: ProductionPlanItem, key: string): number => {
     if (key === "fridge") return (item as any).fridgeQty ?? 0;
     if (key === "freezer") return (item as any).freezerQty ?? 0;
-    if (key === "prep_fridge") return (item as any).prepFridgeQty ?? 0;
     return 0;
   };
 
@@ -2962,10 +2960,6 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
             <p className="text-xs text-cyan-700 dark:text-cyan-300">Freezer</p>
             <p className="text-lg font-bold tabular-nums text-cyan-700 dark:text-cyan-300">{items.reduce((s, it) => s + ((it as any).freezerQty ?? 0), 0)}</p>
           </div>
-          <div className="text-center bg-teal-50 dark:bg-teal-950/20 rounded-lg py-2">
-            <p className="text-xs text-teal-700 dark:text-teal-300">Prep Fridge</p>
-            <p className="text-lg font-bold tabular-nums text-teal-700 dark:text-teal-300">{items.reduce((s, it) => s + ((it as any).prepFridgeQty ?? 0), 0)}</p>
-          </div>
         </div>
         <div className="pt-3 border-t border-border/50">
           <BreakTracker planId={plan.id} stationType="wrapping" />
@@ -2980,8 +2974,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
           const net = netPacks(item);
           const fridge = (item as any).fridgeQty ?? 0;
           const freezer = (item as any).freezerQty ?? 0;
-          const prepFridge = (item as any).prepFridgeQty ?? 0;
-          const totalStored = fridge + freezer + prepFridge;
+          const totalStored = fridge + freezer;
           const remaining = net - totalStored;
           const isWrapped = item.wrappingComplete;
           const isLoading = wrappingLoading === item.id;
@@ -3037,7 +3030,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
                     {getStationCount(item, "ovens")} / {item.batchesTarget ?? 0} oven loads
-                    {totalStored > 0 && ` · ${fridge} fridge · ${freezer} freezer · ${prepFridge} prep`}
+                    {totalStored > 0 && ` · ${fridge} fridge · ${freezer} freezer`}
                   </p>
                 </div>
                 <button
@@ -3055,7 +3048,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                 </button>
               </div>
 
-              {/* Storage controls — tabbed for Production Fridge / Product Freezer / Prep Fridge */}
+              {/* Storage controls — tabbed for Production Fridge / Product Freezer */}
               <div className="mt-3 pt-3 border-t border-border/40">
                 <div className="flex gap-1 mb-2">
                   {STORAGE_LOCATIONS.map(loc => {
