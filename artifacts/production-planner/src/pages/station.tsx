@@ -687,9 +687,15 @@ function MixingStation({ plan }: MixingStationProps) {
     }
   };
 
-  const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
-  const totalMixingComplete = items.reduce((s, it) => s + getStationCount(it, "mixing"), 0);
-  const overallProgress = totalBatchesTarget > 0 ? Math.round((totalMixingComplete / totalBatchesTarget) * 100) : 0;
+  const totalTinsTarget = items.reduce((s, it) => {
+    const bpt = it.maxBatchesPerTin ?? 1;
+    return s + Math.ceil((it.batchesTarget ?? 0) / bpt);
+  }, 0);
+  const totalTinsComplete = items.reduce((s, it) => {
+    const bpt = it.maxBatchesPerTin ?? 1;
+    return s + Math.ceil(getStationCount(it, "mixing") / bpt);
+  }, 0);
+  const overallProgress = totalTinsTarget > 0 ? Math.round((totalTinsComplete / totalTinsTarget) * 100) : 0;
 
   return (
     <div className="space-y-4">
@@ -699,7 +705,7 @@ function MixingStation({ plan }: MixingStationProps) {
           <div>
             <h2 className="font-semibold">Today's Production</h2>
             <p className="text-sm text-muted-foreground">
-              {totalMixingComplete} of {totalBatchesTarget} batches mixed
+              {totalTinsComplete} of {totalTinsTarget} tins mixed
             </p>
           </div>
           <span className="text-2xl font-bold font-display">{overallProgress}%</span>
@@ -762,7 +768,10 @@ function SortableMixingItem({ item, isAdmin, onAdd, onRemove }: SortableMixingIt
   };
 
   const target = item.batchesTarget ?? 0;
-  const progress = target > 0 ? Math.round((mixingCount / target) * 100) : 0;
+  const bpt = item.maxBatchesPerTin ?? 1;
+  const tinsTarget = Math.ceil(target / bpt);
+  const tinsComplete = Math.ceil(mixingCount / bpt);
+  const progress = tinsTarget > 0 ? Math.round((tinsComplete / tinsTarget) * 100) : 0;
   const isComplete = mixingCount >= target && target > 0;
 
   const statusColors = {
@@ -823,21 +832,18 @@ function SortableMixingItem({ item, isAdmin, onAdd, onRemove }: SortableMixingIt
                 />
               </div>
               <span className="text-xs text-muted-foreground whitespace-nowrap">
-                {mixingCount} / {target}
+                {tinsComplete} / {tinsTarget} tin{tinsTarget !== 1 ? "s" : ""}
               </span>
             </div>
 
             <div className="flex items-center gap-3 text-xs text-muted-foreground">
               {item.tinSize && <span>{item.tinSize} tin</span>}
-              {item.maxBatchesPerTin && target > 0 && (
-                <span>
-                  {Math.ceil(target / item.maxBatchesPerTin)} tin{Math.ceil(target / item.maxBatchesPerTin) !== 1 ? "s" : ""}
-                </span>
-              )}
+              {bpt > 1 && <span>{bpt} batches per tin</span>}
+              <span>{mixingCount} / {target} batches</span>
             </div>
           </div>
 
-          {/* Batch counter */}
+          {/* Batch counter — each tap = 1 batch, displayed as tins */}
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={onRemove}
@@ -846,8 +852,9 @@ function SortableMixingItem({ item, isAdmin, onAdd, onRemove }: SortableMixingIt
             >
               <Minus className="w-4 h-4" />
             </button>
-            <div className="w-12 text-center">
-              <span className="text-xl font-bold">{mixingCount}</span>
+            <div className="w-14 text-center">
+              <span className="text-xl font-bold">{tinsComplete}</span>
+              <span className="text-xs text-muted-foreground block leading-tight">tin{tinsComplete !== 1 ? "s" : ""}</span>
             </div>
             <button
               onClick={onAdd}
