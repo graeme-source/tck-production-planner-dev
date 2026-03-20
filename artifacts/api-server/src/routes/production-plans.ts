@@ -676,6 +676,36 @@ router.delete("/:id/batch-completions/bulk", async (req, res) => {
   res.status(204).send();
 });
 
+// GET /:id/batch-completions/pace — avg mins/batch per plan item for a given station
+router.get("/:id/batch-completions/pace", async (req, res) => {
+  const planId = Number(req.params.id);
+  const stationType = String(req.query.stationType ?? "");
+  if (!stationType) { res.status(400).json({ error: "stationType required" }); return; }
+
+  const rows = await db.execute(sql`
+    SELECT
+      bc.plan_item_id,
+      COUNT(*)::int AS cnt,
+      MIN(bc.completed_at) AS first_at,
+      MAX(bc.completed_at) AS last_at,
+      EXTRACT(EPOCH FROM MAX(bc.completed_at) - MIN(bc.completed_at))::float AS span_secs
+    FROM batch_completions bc
+    JOIN production_plan_items ppi ON ppi.id = bc.plan_item_id AND ppi.plan_id = ${planId}
+    WHERE bc.station_type = ${stationType}
+    GROUP BY bc.plan_item_id
+    HAVING COUNT(*) >= 2
+  `);
+
+  const pace: Record<number, number> = {};
+  for (const row of rows.rows as Array<{ plan_item_id: number; cnt: number; span_secs: number }>) {
+    const intervals = row.cnt - 1;
+    if (intervals > 0 && row.span_secs > 0) {
+      pace[row.plan_item_id] = Math.round((row.span_secs / intervals / 60) * 10) / 10;
+    }
+  }
+  res.json({ pace });
+});
+
 // DELETE last batch completion — removes the most recent completion row for this item/user
 // and decrements batches_complete atomically, keeping KPI metrics consistent.
 router.delete("/:id/batch-completions/last", async (req, res) => {

@@ -27,7 +27,7 @@ import {
   Construction, Waves, Flame, Gift, Box, Salad, Layers,
   Beef, TrendingUp, Trophy, ExternalLink, ChevronRight,
   List, LayoutGrid, CalendarCheck,
-  Snowflake, Truck, AlertCircle, Info, Droplets,
+  Snowflake, Truck, AlertCircle, Info, Droplets, Timer,
 } from "lucide-react";
 import { format, parseISO, differenceInMinutes } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -954,6 +954,22 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     },
   });
 
+  const [paceData, setPaceData] = useState<Record<number, number>>({});
+  useEffect(() => {
+    const fetchPace = async () => {
+      try {
+        const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/pace?stationType=${stationType}`, { credentials: "include" });
+        if (res.ok) {
+          const data = await res.json();
+          setPaceData(data.pace ?? {});
+        }
+      } catch {}
+    };
+    fetchPace();
+    const interval = setInterval(fetchPace, 15000);
+    return () => clearInterval(interval);
+  }, [plan.id, stationType, sessionBatches]);
+
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
   const currentItem = items.find(it => {
     const sc = getStationCount(it, stationType);
@@ -1061,6 +1077,16 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                 <span className="italic text-xs">{currentItem.notes}</span>
               )}
             </div>
+
+            {/* Current pace for this recipe */}
+            {paceData[currentItem.id] != null && (
+              <div className="mt-3">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-700 text-sm font-medium text-violet-700 dark:text-violet-300">
+                  <Timer className="w-3.5 h-3.5" />
+                  {paceData[currentItem.id]} mins/batch
+                </span>
+              </div>
+            )}
 
             {/* Building-specific: fill weight, base type, base weight */}
             {(currentItem.fillWeightGrams != null || currentItem.baseType != null || currentItem.baseWeightGrams != null) && (
@@ -1237,7 +1263,7 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
               <th className="py-2 px-4 text-left font-medium text-muted-foreground">Recipe</th>
               <th className="py-2 px-4 text-center font-medium text-muted-foreground">Target</th>
               <th className="py-2 px-4 text-center font-medium text-muted-foreground">Done</th>
-              <th className="py-2 px-4 text-center font-medium text-muted-foreground">Remaining</th>
+              <th className="py-2 px-4 text-center font-medium text-muted-foreground">Mins/Batch</th>
               <th className="py-2 px-4 text-center font-medium text-muted-foreground">Status</th>
             </tr>
           </thead>
@@ -1263,9 +1289,9 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                   <td className="py-2.5 px-4 text-center">{item.batchesTarget ?? 0}</td>
                   <td className="py-2.5 px-4 text-center font-medium">{stCount}</td>
                   <td className="py-2.5 px-4 text-center">
-                    {item.status === "complete"
-                      ? <CheckCircle2 className="w-4 h-4 text-emerald-500 mx-auto" />
-                      : <span className="font-bold text-primary">{rem}</span>
+                    {paceData[item.id] != null
+                      ? <span className="text-violet-600 dark:text-violet-400 font-medium">{paceData[item.id]}</span>
+                      : <span className="text-muted-foreground">—</span>
                     }
                   </td>
                   <td className="py-2.5 px-4 text-center">
