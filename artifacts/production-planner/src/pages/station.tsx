@@ -658,21 +658,31 @@ function MixingStation({ plan }: MixingStationProps) {
     );
   };
 
-  const addTin = async (item: ProductionPlanItem) => {
+  const getTinInfo = (item: ProductionPlanItem) => {
     const bpt = item.maxBatchesPerTin ?? 1;
     const target = item.batchesTarget ?? 0;
     const mixed = getStationCount(item, "mixing");
-    const tinsComplete = Math.floor(mixed / bpt);
     const tinsTarget = Math.ceil(target / bpt);
-    if (tinsComplete >= tinsTarget) return;
-    const isLastTin = tinsComplete === tinsTarget - 1;
-    const batchesInThisTin = isLastTin ? target - tinsComplete * bpt : bpt;
+    const batchesPerTinEven = tinsTarget > 0 ? Math.ceil(target / tinsTarget) : target;
+    const tinsComplete = tinsTarget > 0 ? Math.min(Math.floor(mixed / batchesPerTinEven), tinsTarget) : 0;
+    if (mixed >= target && target > 0) {
+      return { tinsTarget, tinsComplete: tinsTarget, batchesPerTinEven, mixed, target, allDone: true };
+    }
+    return { tinsTarget, tinsComplete, batchesPerTinEven, mixed, target, allDone: false };
+  };
+
+  const addTin = async (item: ProductionPlanItem) => {
+    const { tinsTarget, tinsComplete, batchesPerTinEven, mixed, target, allDone } = getTinInfo(item);
+    if (allDone) return;
+    const batchesAfterNextTin = Math.min((tinsComplete + 1) * batchesPerTinEven, target);
+    const batchesToAdd = batchesAfterNextTin - mixed;
+    if (batchesToAdd <= 0) return;
     try {
       const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planItemId: item.id, stationType: "mixing", count: batchesInThisTin }),
+        body: JSON.stringify({ planItemId: item.id, stationType: "mixing", count: batchesToAdd }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -685,19 +695,17 @@ function MixingStation({ plan }: MixingStationProps) {
   };
 
   const undoTin = async (item: ProductionPlanItem) => {
-    const bpt = item.maxBatchesPerTin ?? 1;
-    const target = item.batchesTarget ?? 0;
-    const mixed = getStationCount(item, "mixing");
-    if (mixed === 0) return;
-    const tinsComplete = Math.floor(mixed / bpt);
-    const tinsTarget = Math.ceil(target / bpt);
-    const batchesInLastTin = tinsComplete >= tinsTarget ? target - (tinsTarget - 1) * bpt : bpt;
+    const { tinsComplete, batchesPerTinEven, mixed } = getTinInfo(item);
+    if (tinsComplete === 0 && mixed === 0) return;
+    const prevTinThreshold = Math.max((tinsComplete - 1) * batchesPerTinEven, 0);
+    const batchesToRemove = mixed - prevTinThreshold;
+    if (batchesToRemove <= 0) return;
     try {
       const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
         method: "DELETE",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planItemId: item.id, stationType: "mixing", count: batchesInLastTin }),
+        body: JSON.stringify({ planItemId: item.id, stationType: "mixing", count: batchesToRemove }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -709,16 +717,8 @@ function MixingStation({ plan }: MixingStationProps) {
     }
   };
 
-  const totalTinsTarget = items.reduce((s, it) => {
-    const bpt = it.maxBatchesPerTin ?? 1;
-    return s + Math.ceil((it.batchesTarget ?? 0) / bpt);
-  }, 0);
-  const totalTinsComplete = items.reduce((s, it) => {
-    const bpt = it.maxBatchesPerTin ?? 1;
-    const mixed = getStationCount(it, "mixing");
-    const tinsNeeded = Math.ceil((it.batchesTarget ?? 0) / bpt);
-    return s + Math.min(Math.floor(mixed / bpt), tinsNeeded);
-  }, 0);
+  const totalTinsTarget = items.reduce((s, it) => s + getTinInfo(it).tinsTarget, 0);
+  const totalTinsComplete = items.reduce((s, it) => s + getTinInfo(it).tinsComplete, 0);
   const totalBatchesDone = items.reduce((s, it) => s + getStationCount(it, "mixing"), 0);
   const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
   const overallProgress = totalTinsTarget > 0 ? Math.round((totalTinsComplete / totalTinsTarget) * 100) : 0;
@@ -796,7 +796,9 @@ function SortableMixingItem({ item, isAdmin, onAdd, onRemove }: SortableMixingIt
   const target = item.batchesTarget ?? 0;
   const bpt = item.maxBatchesPerTin ?? 1;
   const tinsTarget = Math.ceil(target / bpt);
-  const tinsComplete = Math.min(Math.floor(mixingCount / bpt), tinsTarget);
+  const batchesPerTinEven = tinsTarget > 0 ? Math.ceil(target / tinsTarget) : target;
+  let tinsComplete = tinsTarget > 0 ? Math.min(Math.floor(mixingCount / batchesPerTinEven), tinsTarget) : 0;
+  if (mixingCount >= target && target > 0) tinsComplete = tinsTarget;
   const allTinsDone = tinsComplete >= tinsTarget;
   const progress = tinsTarget > 0 ? Math.round((tinsComplete / tinsTarget) * 100) : 0;
   const isComplete = mixingCount >= target && target > 0;
@@ -862,7 +864,7 @@ function SortableMixingItem({ item, isAdmin, onAdd, onRemove }: SortableMixingIt
 
             <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
               {item.tinSize && <span>{item.tinSize}</span>}
-              <span>{bpt} batch{bpt !== 1 ? "es" : ""}/tin</span>
+              <span>~{batchesPerTinEven} batches/tin</span>
               <span>{mixingCount} / {target} batches total</span>
             </div>
           </div>
