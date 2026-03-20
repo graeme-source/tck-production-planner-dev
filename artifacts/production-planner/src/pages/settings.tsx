@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { useListUsers, useListCategoryDefaults, useListDptSettings, useListTimingStandards, useListRecipes } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
@@ -662,12 +663,17 @@ function DptSettingsSection() {
   const handleSaveAll = async () => {
     setSaving(true);
     try {
-      await fetch("/api/app-settings/total_daily_batches", {
+      const settingsRes = await fetch("/api/app-settings/total_daily_batches", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({ value: String(totalDailyBatches) }),
       });
+      if (!settingsRes.ok) {
+        const msg = settingsRes.status === 403 ? "Admin access required. Please log out and log back in." : "Failed to save total daily batches";
+        toast({ title: "Error", description: msg, variant: "destructive" });
+        return;
+      }
 
       for (const recipe of allRecipes) {
         const sold = localPacksSold[recipe.id] ?? 0;
@@ -677,6 +683,9 @@ function DptSettingsSection() {
       await queryClient.invalidateQueries({ queryKey: getListDptSettingsQueryKey() });
       setSavedMsg("All settings saved");
       setTimeout(() => setSavedMsg(null), 2500);
+    } catch (err: any) {
+      const msg = err?.status === 403 ? "Admin access required. Please log out and log back in." : (err?.message ?? "Failed to save DPT settings");
+      toast({ title: "Error", description: msg, variant: "destructive" });
     } finally { setSaving(false); }
   };
 

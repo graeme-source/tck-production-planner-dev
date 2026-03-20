@@ -1,4 +1,6 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
+import { db, usersTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 import healthRouter from "./health";
 import authRouter from "./auth";
 import ingredientsRouter from "./ingredients";
@@ -34,12 +36,19 @@ router.use((req: Request, res: Response, next: NextFunction) => {
 });
 
 // Admin-only middleware
-function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  if (req.session.userRole !== "admin") {
-    res.status(403).json({ error: "Admin access required" });
+async function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  if (req.session.userRole === "admin") {
+    next();
     return;
   }
-  next();
+  if (req.session.userId && !req.session.userRole) {
+    const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
+    if (user) {
+      req.session.userRole = user.role as "admin" | "manager" | "viewer";
+      if (user.role === "admin") { next(); return; }
+    }
+  }
+  res.status(403).json({ error: "Admin access required" });
 }
 
 // Protected routes
