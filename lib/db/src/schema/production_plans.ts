@@ -24,6 +24,7 @@ export const productionPlanItemsTable = pgTable("production_plan_items", {
   batchesTarget: integer("batches_target").notNull().default(0),
   batchesComplete: integer("batches_complete").notNull().default(0),
   wonlyCount: integer("wonly_count").notNull().default(0),
+  wrappingComplete: boolean("wrapping_complete").notNull().default(false),
   tinSize: text("tin_size"),
   maxBatchesPerTin: integer("max_batches_per_tin"),
   sopUrl: text("sop_url"),

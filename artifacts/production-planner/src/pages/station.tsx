@@ -1303,7 +1303,7 @@ function useNextActivePlan() {
 // ──────────────────────────────────────────────────────────────────────────────
 // Prep date banner
 // ──────────────────────────────────────────────────────────────────────────────
-function PrepDateBanner({ planDate, planName, isLoading }: { planDate: string | null; planName: string | null; isLoading: boolean }) {
+function PrepDateBanner({ planDate, planName, isLoading, labelPrefix = "Prep for" }: { planDate: string | null; planName: string | null; isLoading: boolean; labelPrefix?: string }) {
   if (isLoading) return null;
   if (!planDate) {
     return (
@@ -1319,7 +1319,7 @@ function PrepDateBanner({ planDate, planName, isLoading }: { planDate: string | 
     <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-xl px-4 py-3 flex items-center gap-3">
       <CalendarCheck className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0" />
       <div>
-        <p className="text-xs font-semibold uppercase tracking-wider text-green-700 dark:text-green-400">Prep for</p>
+        <p className="text-xs font-semibold uppercase tracking-wider text-green-700 dark:text-green-400">{labelPrefix}</p>
         <p className="font-bold text-green-900 dark:text-green-100 text-lg leading-tight">{formatted}</p>
         {planName && <p className="text-xs text-green-700 dark:text-green-400">{planName}</p>}
       </div>
@@ -1991,7 +1991,6 @@ interface DoughPrepData {
     ingredientId: number | null;
     ingredientName: string;
     unit: string;
-    qtyPerBatch: number;
     totalQty: number;
     qtyPerMix: number;
   }>;
@@ -2000,12 +1999,14 @@ interface DoughPrepData {
     recipeName: string;
     batchesTarget: number;
     portionsPerBatch: number;
+    ballCount: number;
     orderPosition: number;
     doughBatchesNeeded: number;
     doughKgTotal: number;
     ballWeightG: number;
     doughSubRecipeName: string;
   }>;
+  nextPlan: { id: number; planDate: string; name: string } | null;
 }
 
 function useDoughPrepData(planId: number) {
@@ -2064,6 +2065,16 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
 
   return (
     <div className="space-y-4">
+      {/* D-1 banner — show which production day this dough is for */}
+      {doughData && (
+        <PrepDateBanner
+          planDate={doughData.nextPlan?.planDate ?? null}
+          planName={doughData.nextPlan?.name ?? null}
+          isLoading={doughLoading}
+          labelPrefix="Dough for"
+        />
+      )}
+
       {/* Summary */}
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
@@ -2361,6 +2372,7 @@ function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
               <th className="py-2.5 px-4 text-left font-medium">#</th>
               <th className="py-2.5 px-4 text-left font-medium">Recipe</th>
               <th className="py-2.5 px-4 text-center font-medium">Batches</th>
+              <th className="py-2.5 px-4 text-center font-medium">Balls</th>
               <th className="py-2.5 px-4 text-center font-medium">Ball Weight</th>
               <th className="py-2.5 px-4 text-center font-medium">Tin</th>
               <th className="py-2.5 px-4 text-center font-medium">Tins</th>
@@ -2390,6 +2402,9 @@ function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
                     {isCurrent && !isReady && <span className="ml-2 text-xs text-amber-600 font-normal">← current</span>}
                   </td>
                   <td className="py-2.5 px-4 text-center">{item.batchesTarget ?? 0}</td>
+                  <td className="py-2.5 px-4 text-center font-semibold">
+                    {(item.batchesTarget ?? 0) * (item.portionsPerBatch ?? 10)}
+                  </td>
                   <td className="py-2.5 px-4 text-center font-semibold text-amber-700 dark:text-amber-400">
                     {ballWeight ? `${ballWeight}g` : <span className="text-muted-foreground">—</span>}
                   </td>
@@ -2698,149 +2713,146 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Wrapping Station
+// Per-recipe pack count display (read from oven completions) + wrapping-complete toggle
 // ──────────────────────────────────────────────────────────────────────────────
 function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const queryClient = useQueryClient();
-  const { state } = useAuth();
-  const isAdmin = state.status === "authenticated" && state.user.role === "admin";
-
-  const createBatch = useCreateBatchCompletion({
-    mutation: {
-      onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
-    },
-  });
+  const [wrappingLoading, setWrappingLoading] = useState<number | null>(null);
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
-  const totalComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
-  const totalTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
-  const overallPct = totalTarget > 0 ? Math.round((totalComplete / totalTarget) * 100) : 0;
 
-  const addBatch = (item: ProductionPlanItem) => {
-    createBatch.mutate({ id: plan.id, data: { planItemId: item.id, stationType: "wrapping", completedAt: new Date().toISOString() } });
-  };
+  // Pack counts from oven batches: 2 portions per pack, deduct wonlys
+  const grossPacks = (item: ProductionPlanItem) =>
+    Math.floor(((item.batchesComplete ?? 0) * (item.portionsPerBatch ?? 10)) / 2);
+  const netPacks = (item: ProductionPlanItem) =>
+    Math.max(0, grossPacks(item) - (item.wonlyCount ?? 0));
 
-  const removeBatch = async (item: ProductionPlanItem) => {
-    if ((item.batchesComplete ?? 0) === 0) return;
+  const totalGross = items.reduce((s, it) => s + grossPacks(it), 0);
+  const totalWonly = items.reduce((s, it) => s + (it.wonlyCount ?? 0), 0);
+  const totalNet = items.reduce((s, it) => s + netPacks(it), 0);
+  const wrappedCount = items.filter(it => it.wrappingComplete).length;
+  const allWrapped = items.length > 0 && items.every(it => it.wrappingComplete);
+
+  const toggleWrapping = async (item: ProductionPlanItem) => {
+    const newValue = !item.wrappingComplete;
+    setWrappingLoading(item.id);
     try {
-      const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
-        method: "DELETE",
+      const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/wrapping-complete`, {
+        method: "PATCH",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planItemId: item.id, stationType: "wrapping" }),
+        body: JSON.stringify({ complete: newValue }),
       });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
     } catch (err) {
-      toast({ title: "Undo failed", description: err instanceof Error ? err.message : "Could not undo batch. Please try again.", variant: "destructive" });
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Could not update wrapping status.", variant: "destructive" });
+    } finally {
+      setWrappingLoading(null);
     }
   };
 
-  // Pack counts: 2 portions per pack, deduct wonlys
-  const netPacks = (item: ProductionPlanItem) => {
-    const gross = Math.floor(((item.batchesComplete ?? 0) * (item.portionsPerBatch ?? 10)) / 2);
-    return Math.max(0, gross - (item.wonlyCount ?? 0));
-  };
-  const totalNetPacks = items.reduce((s, it) => s + netPacks(it), 0);
-
   return (
     <div className="space-y-4">
-      {/* Summary */}
+      {/* Session summary */}
       <div className="bg-card border border-border rounded-xl p-4">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-3">
-            <Gift className="w-6 h-6 text-purple-500" />
-            <div>
-              <h2 className="font-semibold text-base">Wrapping Station</h2>
-              <p className="text-xs text-muted-foreground">
-                {totalComplete} of {totalTarget} batches · {totalNetPacks} net packs
-              </p>
-            </div>
+        <div className="flex items-center gap-3 mb-3">
+          <Gift className="w-6 h-6 text-purple-500" />
+          <div>
+            <h2 className="font-semibold text-base">Wrapping Station</h2>
+            <p className="text-xs text-muted-foreground">
+              {wrappedCount} of {items.length} recipes wrapped · {totalNet} net packs
+            </p>
           </div>
-          <span className="text-2xl font-bold font-display">{overallPct}%</span>
+          {allWrapped && (
+            <div className="ml-auto flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-lg px-3 py-1.5">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              <span className="text-xs font-medium text-emerald-700 dark:text-emerald-300">All wrapped!</span>
+            </div>
+          )}
         </div>
-        <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden">
-          <div
-            className={cn("h-full rounded-full transition-all", overallPct >= 100 ? "bg-emerald-500" : "bg-purple-500")}
-            style={{ width: `${Math.min(overallPct, 100)}%` }}
-          />
+        <div className="grid grid-cols-3 gap-2 mb-3">
+          <div className="text-center bg-secondary/30 rounded-lg py-2">
+            <p className="text-xs text-muted-foreground">Gross Packs</p>
+            <p className="text-lg font-bold tabular-nums">{totalGross}</p>
+          </div>
+          <div className="text-center bg-red-50 dark:bg-red-950/20 rounded-lg py-2">
+            <p className="text-xs text-red-600 dark:text-red-400">Wonlys</p>
+            <p className="text-lg font-bold tabular-nums text-red-600 dark:text-red-400">{totalWonly}</p>
+          </div>
+          <div className="text-center bg-purple-50 dark:bg-purple-950/20 rounded-lg py-2">
+            <p className="text-xs text-purple-700 dark:text-purple-300">Net Packs</p>
+            <p className="text-lg font-bold tabular-nums text-purple-700 dark:text-purple-300">{totalNet}</p>
+          </div>
         </div>
-        <div className="mt-3 pt-3 border-t border-border/50">
+        <div className="pt-3 border-t border-border/50">
           <BreakTracker planId={plan.id} stationType="wrapping" />
         </div>
       </div>
 
-      {/* Per-recipe wrapping list with pack counts */}
+      {/* Per-recipe wrapping cards */}
       <div className="space-y-2">
         {items.map(item => {
-          const isComplete = item.status === "complete";
-          const prog = (item.batchesTarget ?? 0) > 0
-            ? Math.round(((item.batchesComplete ?? 0) / (item.batchesTarget ?? 0)) * 100)
-            : 0;
-          const gross = Math.floor(((item.batchesComplete ?? 0) * (item.portionsPerBatch ?? 10)) / 2);
+          const gross = grossPacks(item);
           const wonlys = item.wonlyCount ?? 0;
-          const net = Math.max(0, gross - wonlys);
+          const net = netPacks(item);
+          const isWrapped = item.wrappingComplete;
+          const isLoading = wrappingLoading === item.id;
           return (
             <div
               key={item.id}
               className={cn(
                 "bg-card border rounded-xl p-4 transition-all",
-                isComplete
+                isWrapped
                   ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-900/10"
-                  : (item.batchesComplete ?? 0) > 0
+                  : gross > 0
                     ? "border-purple-300 dark:border-purple-700 bg-purple-50/30 dark:bg-purple-900/10"
                     : "border-border"
               )}
             >
               <div className="flex items-center gap-3">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h3 className={cn("font-semibold", isComplete ? "line-through text-muted-foreground" : "")}>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <h3 className={cn("font-semibold", isWrapped ? "line-through text-muted-foreground" : "")}>
                       {item.recipeName ?? `Recipe #${item.recipeId}`}
                     </h3>
-                    {isComplete && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
+                    {isWrapped && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
                   </div>
-                  {/* Pack counts row */}
-                  <div className="flex items-center gap-3 mb-1.5 text-xs">
-                    <span className="text-muted-foreground">{gross} gross packs</span>
-                    {wonlys > 0 && <span className="text-red-600 dark:text-red-400">−{wonlys} wonlys</span>}
-                    <span className="font-semibold text-purple-700 dark:text-purple-400">= {net} net</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
-                      <div
-                        className={cn("h-full rounded-full transition-all", isComplete ? "bg-emerald-500" : "bg-purple-500")}
-                        style={{ width: `${Math.min(prog, 100)}%` }}
-                      />
+                  {/* Pack counts */}
+                  <div className="flex items-center gap-3 text-sm">
+                    <div className="text-center">
+                      <span className="text-xs text-muted-foreground block">Gross</span>
+                      <span className="font-semibold tabular-nums">{gross}</span>
                     </div>
-                    <span className="text-xs text-muted-foreground whitespace-nowrap">
-                      {item.batchesComplete ?? 0} / {item.batchesTarget ?? 0} batches
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <button
-                    onClick={() => removeBatch(item)}
-                    disabled={(item.batchesComplete ?? 0) === 0}
-                    className="w-9 h-9 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
-                  >
-                    <Minus className="w-4 h-4" />
-                  </button>
-                  <div className="w-10 text-center">
-                    <span className="text-xl font-bold">{item.batchesComplete ?? 0}</span>
-                  </div>
-                  <button
-                    onClick={() => addBatch(item)}
-                    disabled={isComplete && !isAdmin}
-                    className={cn(
-                      "w-9 h-9 flex items-center justify-center rounded-full transition-colors",
-                      isComplete
-                        ? "border border-emerald-300 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 opacity-60"
-                        : "bg-purple-500 text-white hover:bg-purple-600"
+                    {wonlys > 0 && (
+                      <div className="text-center">
+                        <span className="text-xs text-red-500 block">Wonlys</span>
+                        <span className="font-semibold tabular-nums text-red-600 dark:text-red-400">−{wonlys}</span>
+                      </div>
                     )}
-                  >
-                    <Plus className="w-4 h-4" />
-                  </button>
+                    <div className="text-center">
+                      <span className="text-xs text-purple-600 dark:text-purple-400 block">Net</span>
+                      <span className="text-xl font-bold tabular-nums text-purple-700 dark:text-purple-300">{net}</span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {item.batchesComplete ?? 0} / {item.batchesTarget ?? 0} batches from ovens
+                  </p>
                 </div>
+                {/* Wrapping-complete toggle */}
+                <button
+                  onClick={() => toggleWrapping(item)}
+                  disabled={isLoading}
+                  className={cn(
+                    "w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 transition-all",
+                    isWrapped
+                      ? "bg-emerald-500 text-white shadow-md"
+                      : "bg-secondary border-2 border-purple-300 dark:border-purple-700 text-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20"
+                  )}
+                  title={isWrapped ? "Mark as not wrapped" : "Mark wrapping complete"}
+                >
+                  {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
+                </button>
               </div>
             </div>
           );
@@ -2863,6 +2875,7 @@ interface PackingData {
     wonlyCount: number;
     grossPacks: number;
     netPacks: number;
+    wrappingComplete: boolean;
     status: string;
     orderPosition: number;
     dispatches: Array<{ id: number; quantity: number; customer: string | null; status: string | null; notes: string | null }>;
@@ -2927,20 +2940,23 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
             </div>
           )}
         </div>
-        {/* Session totals */}
+        {/* Session totals — only wrapping-complete items */}
         {packData && (
-          <div className="grid grid-cols-3 gap-2 pt-2 border-t border-border/50">
-            <div className="text-center">
-              <p className="text-xs text-muted-foreground">Gross Packs</p>
-              <p className="text-lg font-bold tabular-nums">{packData.totalGrossPacks}</p>
-            </div>
-            <div className="text-center">
-              <p className="text-xs text-red-600 dark:text-red-400">Wonlys</p>
-              <p className="text-lg font-bold tabular-nums text-red-600 dark:text-red-400">{packData.totalWonly}</p>
-            </div>
-            <div className="text-center">
-              <p className="text-xs text-emerald-700 dark:text-emerald-300">Net Packs</p>
-              <p className="text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{packData.totalNetPacks}</p>
+          <div className="pt-2 border-t border-border/50">
+            <p className="text-xs text-muted-foreground mb-2">Wrapped &amp; ready to pack</p>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="text-center">
+                <p className="text-xs text-muted-foreground">Gross Packs</p>
+                <p className="text-lg font-bold tabular-nums">{packData.totalGrossPacks}</p>
+              </div>
+              <div className="text-center">
+                <p className="text-xs text-red-600 dark:text-red-400">Wonlys</p>
+                <p className="text-lg font-bold tabular-nums text-red-600 dark:text-red-400">{packData.totalWonly}</p>
+              </div>
+              <div className="text-center">
+                <p className="text-xs text-emerald-700 dark:text-emerald-300">Net Packs</p>
+                <p className="text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{packData.totalNetPacks}</p>
+              </div>
             </div>
           </div>
         )}
@@ -2956,6 +2972,7 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
         <div className="space-y-3">
           {packData.items.map(packItem => {
             const isPacked = packedItems.has(packItem.id);
+            const isWrapped = packItem.wrappingComplete;
             const gap = packItem.netPacks - packItem.totalDispatch;
             const hasDispatches = packItem.dispatches.length > 0;
             return (
@@ -2965,15 +2982,15 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
                   "bg-card border rounded-xl overflow-hidden transition-all",
                   isPacked
                     ? "border-emerald-300 dark:border-emerald-700"
-                    : packItem.status === "complete"
-                      ? "border-border"
-                      : "border-border/60"
+                    : isWrapped
+                      ? "border-indigo-300 dark:border-indigo-700"
+                      : "border-border/60 opacity-70"
                 )}
               >
                 {/* Recipe header */}
                 <div className={cn(
                   "flex items-center justify-between px-4 py-3",
-                  isPacked ? "bg-emerald-50/50 dark:bg-emerald-900/10" : ""
+                  isPacked ? "bg-emerald-50/50 dark:bg-emerald-900/10" : isWrapped ? "bg-indigo-50/30 dark:bg-indigo-900/10" : ""
                 )}>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
@@ -2981,6 +2998,16 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
                         {packItem.recipeName}
                       </h3>
                       {isPacked && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
+                      {isWrapped && !isPacked && (
+                        <span className="text-xs font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 rounded px-1.5 py-0.5">
+                          Wrapped ✓
+                        </span>
+                      )}
+                      {!isWrapped && (
+                        <span className="text-xs font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 rounded px-1.5 py-0.5">
+                          Awaiting wrap
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
                       <span>{packItem.batchesComplete} batches</span>
@@ -2992,21 +3019,26 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
                   <div className="flex items-center gap-3">
                     <div className="text-right">
                       <p className="text-xs text-muted-foreground">Net Packs</p>
-                      <p className="text-2xl font-bold tabular-nums text-indigo-600 dark:text-indigo-400">
+                      <p className={cn(
+                        "text-2xl font-bold tabular-nums",
+                        isWrapped ? "text-indigo-600 dark:text-indigo-400" : "text-muted-foreground"
+                      )}>
                         {packItem.netPacks}
                       </p>
                     </div>
-                    <button
-                      onClick={() => togglePacked(packItem.id)}
-                      className={cn(
-                        "w-9 h-9 rounded-full flex items-center justify-center transition-colors flex-shrink-0",
-                        isPacked
-                          ? "bg-emerald-500 text-white"
-                          : "bg-secondary border border-border text-muted-foreground hover:bg-secondary/80"
-                      )}
-                    >
-                      <CheckCircle2 className="w-5 h-5" />
-                    </button>
+                    {isWrapped && (
+                      <button
+                        onClick={() => togglePacked(packItem.id)}
+                        className={cn(
+                          "w-9 h-9 rounded-full flex items-center justify-center transition-colors flex-shrink-0",
+                          isPacked
+                            ? "bg-emerald-500 text-white"
+                            : "bg-secondary border border-border text-muted-foreground hover:bg-secondary/80"
+                        )}
+                      >
+                        <CheckCircle2 className="w-5 h-5" />
+                      </button>
+                    )}
                   </div>
                 </div>
 

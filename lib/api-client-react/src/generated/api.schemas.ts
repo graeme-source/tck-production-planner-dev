@@ -269,6 +269,7 @@ export interface ProductionPlanItem {
   batchesTarget: number;
   batchesComplete: number;
   wonlyCount: number;
+  wrappingComplete: boolean;
   tinSize?: string | null;
   maxBatchesPerTin?: number | null;
   sopUrl?: string | null;
