@@ -229,6 +229,7 @@ router.get("/:id", async (req, res) => {
       batchesComplete: productionPlanItemsTable.batchesComplete,
       wonlyCount: productionPlanItemsTable.wonlyCount,
       wrappingComplete: productionPlanItemsTable.wrappingComplete,
+      fridgeQty: productionPlanItemsTable.fridgeQty,
       tinSize: productionPlanItemsTable.tinSize,
       maxBatchesPerTin: productionPlanItemsTable.maxBatchesPerTin,
       sopUrl: productionPlanItemsTable.sopUrl,
@@ -1329,6 +1330,58 @@ router.patch("/:id/items/:itemId/wrapping-complete", async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
+// POST /:id/items/:itemId/fridge — add wrapped packs to fridge stock (atomic increment)
+// ──────────────────────────────────────────────────────────────────────────────
+router.post("/:id/items/:itemId/fridge", async (req, res) => {
+  const planId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+  const qty = Number(req.body.qty);
+  if (!Number.isInteger(qty) || qty < 1) {
+    res.status(400).json({ error: "Body must contain { qty: positive integer }" });
+    return;
+  }
+
+  const [item] = await db.select({ id: productionPlanItemsTable.id })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
+
+  if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
+
+  const [updated] = await db
+    .update(productionPlanItemsTable)
+    .set({ fridgeQty: sql`${productionPlanItemsTable.fridgeQty} + ${qty}` })
+    .where(eq(productionPlanItemsTable.id, itemId))
+    .returning({ fridgeQty: productionPlanItemsTable.fridgeQty });
+
+  res.json({ itemId, fridgeQty: updated.fridgeQty });
+});
+
+// DELETE /:id/items/:itemId/fridge — undo last fridge addition (atomic decrement, floor 0)
+router.delete("/:id/items/:itemId/fridge", async (req, res) => {
+  const planId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+  const qty = Number(req.body.qty);
+  if (!Number.isInteger(qty) || qty < 1) {
+    res.status(400).json({ error: "Body must contain { qty: positive integer }" });
+    return;
+  }
+
+  const [item] = await db.select({ id: productionPlanItemsTable.id })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
+
+  if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
+
+  const [updated] = await db
+    .update(productionPlanItemsTable)
+    .set({ fridgeQty: sql`GREATEST(${productionPlanItemsTable.fridgeQty} - ${qty}, 0)` })
+    .where(eq(productionPlanItemsTable.id, itemId))
+    .returning({ fridgeQty: productionPlanItemsTable.fridgeQty });
+
+  res.json({ itemId, fridgeQty: updated.fridgeQty });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
 // GET /:id/dough-prep — computes dough requirements for the plan
 // Returns: total dough per ingredient, mixing schedule, per-recipe ball weights
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1558,6 +1611,7 @@ router.get("/:id/packing", async (req, res) => {
       batchesComplete: productionPlanItemsTable.batchesComplete,
       wonlyCount: productionPlanItemsTable.wonlyCount,
       wrappingComplete: productionPlanItemsTable.wrappingComplete,
+      fridgeQty: productionPlanItemsTable.fridgeQty,
       status: productionPlanItemsTable.status,
       orderPosition: productionPlanItemsTable.orderPosition,
       portionsPerBatch: recipesTable.portionsPerBatch,

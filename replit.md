@@ -102,7 +102,7 @@ The station page (`/station`) provides a full-screen view with:
 - **Dough Prep** (dough_prep) — fetches `/api/production-plans/:id/dough-prep`; shows total dough kg, mixer capacity (from `app_settings`), number of mixes, per-ingredient breakdown (Flour/Water/Oil/Salt/Yeast) per mix, dough ball weights per recipe, batch counters
 - **Dough Sheeting** (dough_sheeting) — shows ordered sheeting queue with ball weight (from dough sub-recipe) and per-item "Ready" checkbox toggle
 - **Ovens** (ovens) — batch counters + Wonly button (POST/DELETE `/api/production-plans/:id/items/:itemId/wonly` to record quality rejects); session totals: gross packs, total wonlys, net packs; blast chiller tray count (`ceil(netPacks/10)`); per-recipe table with snowflake icon column
-- **Wrapping** (wrapping) — batch counters + per-recipe pack counts: gross packs (`batchesComplete × portionsPerBatch / 2`) minus wonlyCount = net packs displayed live; session net pack total
+- **Wrapping** (wrapping) — per-recipe pack counts (gross/net from oven completions); fridge stock tracker: "Add 24" quick-add button (standard stack size) + custom amount entry + undo; tracks `fridgeQty` per plan item; wrapping-complete toggle per recipe
 - **Packing** (packing) — fetches `/api/production-plans/:id/packing`; per-recipe cards with net packs + dispatch order cross-reference (surplus/short indicator); packed checkbox toggle; session gross/wonly/net pack totals
 - **Next-plan lookup**: `GET /api/production-plans/next-active` endpoint — finds next weekday (Mon-Fri) with `status='active'` within 7 days from **tomorrow** (i=1, not today). Used by PrepHub and DoughPrepStation to display "Prep for [Day], [Date]" on tiles and banners.
 

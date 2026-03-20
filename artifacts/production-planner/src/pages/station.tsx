@@ -2722,10 +2722,14 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
 function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const queryClient = useQueryClient();
   const [wrappingLoading, setWrappingLoading] = useState<number | null>(null);
+  const [fridgeLoading, setFridgeLoading] = useState<number | null>(null);
+  const [customAmounts, setCustomAmounts] = useState<Record<number, string>>({});
+  const [showCustom, setShowCustom] = useState<Record<number, boolean>>({});
+
+  const STACK_SIZE = 24;
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
 
-  // Pack counts from oven batches: 2 portions per pack, deduct wonlys
   const grossPacks = (item: ProductionPlanItem) =>
     Math.floor(((item.batchesComplete ?? 0) * (item.portionsPerBatch ?? 10)) / 2);
   const netPacks = (item: ProductionPlanItem) =>
@@ -2734,6 +2738,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const totalGross = items.reduce((s, it) => s + grossPacks(it), 0);
   const totalWonly = items.reduce((s, it) => s + (it.wonlyCount ?? 0), 0);
   const totalNet = items.reduce((s, it) => s + netPacks(it), 0);
+  const totalFridge = items.reduce((s, it) => s + ((it as any).fridgeQty ?? 0), 0);
   const wrappedCount = items.filter(it => it.wrappingComplete).length;
   const allWrapped = items.length > 0 && items.every(it => it.wrappingComplete);
 
@@ -2756,6 +2761,48 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
     }
   };
 
+  const addToFridge = async (item: ProductionPlanItem, qty: number) => {
+    if (qty < 1) return;
+    setFridgeLoading(item.id);
+    try {
+      const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/fridge`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ qty }),
+      });
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+      setCustomAmounts(prev => ({ ...prev, [item.id]: "" }));
+      setShowCustom(prev => ({ ...prev, [item.id]: false }));
+      toast({ title: `+${qty} packs → fridge`, description: `${item.recipeName ?? "Recipe"}` });
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Could not add to fridge.", variant: "destructive" });
+    } finally {
+      setFridgeLoading(null);
+    }
+  };
+
+  const undoFridge = async (item: ProductionPlanItem, qty: number) => {
+    if (qty < 1) return;
+    setFridgeLoading(item.id);
+    try {
+      const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/fridge`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ qty }),
+      });
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+      toast({ title: `−${qty} packs from fridge`, description: `${item.recipeName ?? "Recipe"}` });
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Could not undo fridge entry.", variant: "destructive" });
+    } finally {
+      setFridgeLoading(null);
+    }
+  };
+
   return (
     <div className="space-y-4">
       {/* Session summary */}
@@ -2775,7 +2822,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
             </div>
           )}
         </div>
-        <div className="grid grid-cols-3 gap-2 mb-3">
+        <div className="grid grid-cols-4 gap-2 mb-3">
           <div className="text-center bg-secondary/30 rounded-lg py-2">
             <p className="text-xs text-muted-foreground">Gross Packs</p>
             <p className="text-lg font-bold tabular-nums">{totalGross}</p>
@@ -2787,6 +2834,10 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
           <div className="text-center bg-purple-50 dark:bg-purple-950/20 rounded-lg py-2">
             <p className="text-xs text-purple-700 dark:text-purple-300">Net Packs</p>
             <p className="text-lg font-bold tabular-nums text-purple-700 dark:text-purple-300">{totalNet}</p>
+          </div>
+          <div className="text-center bg-blue-50 dark:bg-blue-950/20 rounded-lg py-2">
+            <p className="text-xs text-blue-700 dark:text-blue-300">In Fridge</p>
+            <p className="text-lg font-bold tabular-nums text-blue-700 dark:text-blue-300">{totalFridge}</p>
           </div>
         </div>
         <div className="pt-3 border-t border-border/50">
@@ -2800,8 +2851,14 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
           const gross = grossPacks(item);
           const wonlys = item.wonlyCount ?? 0;
           const net = netPacks(item);
+          const fridge = (item as any).fridgeQty ?? 0;
+          const remaining = net - fridge;
           const isWrapped = item.wrappingComplete;
           const isLoading = wrappingLoading === item.id;
+          const isFridgeLoading = fridgeLoading === item.id;
+          const isCustomOpen = showCustom[item.id] ?? false;
+          const customVal = customAmounts[item.id] ?? "";
+          const customNum = parseInt(customVal, 10);
           return (
             <div
               key={item.id}
@@ -2822,7 +2879,6 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                     </h3>
                     {isWrapped && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
                   </div>
-                  {/* Pack counts */}
                   <div className="flex items-center gap-3 text-sm">
                     <div className="text-center">
                       <span className="text-xs text-muted-foreground block">Gross</span>
@@ -2838,12 +2894,22 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                       <span className="text-xs text-purple-600 dark:text-purple-400 block">Net</span>
                       <span className="text-xl font-bold tabular-nums text-purple-700 dark:text-purple-300">{net}</span>
                     </div>
+                    <div className="text-center border-l border-border/50 pl-3">
+                      <span className="text-xs text-blue-600 dark:text-blue-400 block">Fridge</span>
+                      <span className="text-xl font-bold tabular-nums text-blue-700 dark:text-blue-300">{fridge}</span>
+                    </div>
+                    {remaining > 0 && (
+                      <div className="text-center">
+                        <span className="text-xs text-amber-600 dark:text-amber-400 block">Left</span>
+                        <span className="font-semibold tabular-nums text-amber-600 dark:text-amber-400">{remaining}</span>
+                      </div>
+                    )}
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
                     {item.batchesComplete ?? 0} / {item.batchesTarget ?? 0} batches from ovens
+                    {fridge > 0 && ` · ${Math.floor(fridge / STACK_SIZE)} full stacks`}
                   </p>
                 </div>
-                {/* Wrapping-complete toggle */}
                 <button
                   onClick={() => toggleWrapping(item)}
                   disabled={isLoading}
@@ -2857,6 +2923,66 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                 >
                   {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
                 </button>
+              </div>
+
+              {/* Fridge stock controls */}
+              <div className="mt-3 pt-3 border-t border-border/40">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    onClick={() => addToFridge(item, STACK_SIZE)}
+                    disabled={isFridgeLoading}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                  >
+                    {isFridgeLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                    Add {STACK_SIZE}
+                  </button>
+
+                  {!isCustomOpen ? (
+                    <button
+                      onClick={() => setShowCustom(prev => ({ ...prev, [item.id]: true }))}
+                      className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:bg-secondary/50 transition-colors"
+                    >
+                      Custom
+                    </button>
+                  ) : (
+                    <div className="inline-flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min="1"
+                        placeholder="Qty"
+                        value={customVal}
+                        onChange={e => setCustomAmounts(prev => ({ ...prev, [item.id]: e.target.value }))}
+                        onKeyDown={e => { if (e.key === "Enter" && customNum > 0) addToFridge(item, customNum); }}
+                        className="w-20 h-9 rounded-lg border border-border bg-background px-2 text-sm tabular-nums text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        autoFocus
+                      />
+                      <button
+                        onClick={() => { if (customNum > 0) addToFridge(item, customNum); }}
+                        disabled={isFridgeLoading || !(customNum > 0)}
+                        className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                      >
+                        Add
+                      </button>
+                      <button
+                        onClick={() => { setShowCustom(prev => ({ ...prev, [item.id]: false })); setCustomAmounts(prev => ({ ...prev, [item.id]: "" })); }}
+                        className="px-2 py-2 rounded-lg text-muted-foreground hover:bg-secondary/50 text-sm transition-colors"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  )}
+
+                  {fridge > 0 && (
+                    <button
+                      onClick={() => undoFridge(item, STACK_SIZE)}
+                      disabled={isFridgeLoading}
+                      className="ml-auto inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm hover:bg-red-50 dark:hover:bg-red-950/20 disabled:opacity-50 transition-colors"
+                    >
+                      <Minus className="w-3.5 h-3.5" />
+                      Undo {STACK_SIZE}
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           );
