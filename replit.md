@@ -59,6 +59,7 @@ artifacts-monorepo/
 - `recipes` — final product recipes (name, category, servings, serving_unit)
 - `recipe_ingredients` — recipe <-> ingredient junction
 - `recipe_sub_recipes` — recipe <-> sub_recipe junction
+- `recipe_meat_marinades` — per-meat marinade/seasoning assignments with g/kg rate. Columns: id, recipe_id, raw_meat_ingredient_id, marinade_ingredient_id (nullable), marinade_sub_recipe_id (nullable), grams_per_kg. CHECK constraint: exactly one of marinade_ingredient_id or marinade_sub_recipe_id must be set; grams_per_kg > 0.
 - `production_plans` — daily plans (plan_date, name, status: draft/active/completed)
 - `production_plan_items` — plan items (recipe, target_qty, actual_qty, status: pending/in_progress/completed)
 - `stock_entries` — stock check entries (item_type: recipe|ingredient, quantity, unit)
@@ -105,7 +106,7 @@ The station page (`/station`) provides a full-screen view with:
 - **Prep Hub** (stationType="prep") — 3-tile sub-station picker: Main Prep, Bases & Mozzarella, Raw Meat. Shows "Prep on [Day] / for production on [Day]" banner using next active plan lookup.
   - **Main Prep** (main_prep) — fetches `/api/production-plans/:id/main-prep`; groups all non-meat ingredients by ingredient name across recipes; per-recipe tin breakdowns with individual tin checkboxes (POST/DELETE `/prep-completions`); overall progress bar (completed tins / total tins); "Stock Check After Prep" section for `stockCheckEnabled` ingredients with quantity inputs (POST `/stock-checks` with upsert); loads existing stock check values on mount via GET `/stock-checks?date=`
   - **Bases & Mozzarella** (prep_bases) — per-recipe tin counts (green badge), full-screen + overview modes
-  - **Raw Meat** (prep_meat) — per-ingredient tray counts with per-tray kg breakdown, full-screen (rose badge) + overview modes
+  - **Raw Meat** (prep_meat) — per-ingredient tray counts with per-tray kg breakdown, full-screen (rose badge) + overview modes. Marinades from `recipe_meat_marinades` table are shown indented under each raw meat ingredient with total quantity, g/kg rate, and per-tray breakdown.
 - **Dough Prep** (dough_prep) — fetches `/api/production-plans/:id/dough-prep`; shows total dough kg, mixer capacity (from `app_settings`), number of mixes, per-ingredient breakdown (Flour/Water/Oil/Salt/Yeast) per mix, dough ball weights per recipe, batch counters
 - **Dough Sheeting** (dough_sheeting) — shows ordered sheeting queue with ball weight (from dough sub-recipe) and per-item "Ready" checkbox toggle
 - **Ovens** (ovens) — batch counters using per-station oven counts + cascade indicator showing "Built: X" from building; Wonky button; session totals: gross packs, total wonky, net packs; blast chiller tray count (`ceil(netPacks/10)`); per-recipe table with snowflake icon column

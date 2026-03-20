@@ -195,9 +195,21 @@ export interface RecipeSubRecipe {
   breakdown?: RecipeSubRecipeBreakdownItem[] | null;
 }
 
+export type RecipeMarinade = {
+  id: number;
+  rawMeatIngredientId: number;
+  rawMeatIngredientName: string;
+  marinadeIngredientId?: number | null;
+  marinadeIngredientName?: string | null;
+  marinadeSubRecipeId?: number | null;
+  marinadeSubRecipeName?: string | null;
+  gramsPerKg: number;
+};
+
 export type RecipeDetail = Recipe & {
   ingredients: RecipeIngredient[];
   subRecipes: RecipeSubRecipe[];
+  marinades: RecipeMarinade[];
 };
 
 export type CreateRecipeIngredientsItem = {
@@ -208,6 +220,13 @@ export type CreateRecipeIngredientsItem = {
 export type CreateRecipeSubRecipesItem = {
   subRecipeId: number;
   quantity: number;
+};
+
+export type CreateRecipeMarinadeItem = {
+  rawMeatIngredientId: number;
+  marinadeIngredientId?: number | null;
+  marinadeSubRecipeId?: number | null;
+  gramsPerKg: number;
 };
 
 export interface CreateRecipe {
@@ -232,6 +251,7 @@ export interface CreateRecipe {
   baseWeightGrams?: number | null;
   ingredients: CreateRecipeIngredientsItem[];
   subRecipes: CreateRecipeSubRecipesItem[];
+  marinades?: CreateRecipeMarinadeItem[];
 }
 
 export interface CategoryDefault {

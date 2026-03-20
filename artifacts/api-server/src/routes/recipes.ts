@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
-import { db, recipesTable, recipeIngredientsTable, recipeSubRecipesTable, ingredientsTable, subRecipesTable, subRecipeIngredientsTable } from "@workspace/db";
+import { db, recipesTable, recipeIngredientsTable, recipeSubRecipesTable, recipeMeatMarinadesTable, ingredientsTable, subRecipesTable, subRecipeIngredientsTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { CreateRecipeBody, UpdateRecipeBody } from "@workspace/api-zod";
 import { validate } from "../middleware/validate";
 import { computeSubRecipeCosts } from "../lib/sub-recipe-costs";
@@ -113,8 +114,39 @@ router.get("/", async (_req, res) => {
   res.json(mapped.map(r => enrichWithCosts(r, rawCosts[r.id] ?? 0)));
 });
 
+interface MarinadeInput {
+  rawMeatIngredientId: number;
+  marinadeIngredientId?: number | null;
+  marinadeSubRecipeId?: number | null;
+  gramsPerKg: number;
+}
+
+function validateMarinades(marinades: MarinadeInput[], recipeIngredientIds: number[]): string | null {
+  for (const m of marinades) {
+    const hasIng = m.marinadeIngredientId != null;
+    const hasSub = m.marinadeSubRecipeId != null;
+    if (!hasIng && !hasSub) return "Each marinade must specify either an ingredient or a sub-recipe";
+    if (hasIng && hasSub) return "Each marinade must specify either an ingredient or a sub-recipe, not both";
+    if (!m.gramsPerKg || m.gramsPerKg <= 0) return "Marinade grams/kg must be greater than 0";
+    if (!recipeIngredientIds.includes(m.rawMeatIngredientId)) return "rawMeatIngredientId must reference an ingredient used in this recipe";
+  }
+  return null;
+}
+
 router.post("/", validate(CreateRecipeBody), async (req, res) => {
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, ingredients, subRecipes } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, ingredients, subRecipes, marinades } = req.body;
+
+  if (marinades?.length) {
+    const recipeIngIds = (ingredients ?? []).map(i => i.ingredientId);
+    const marinadeError = validateMarinades(marinades, recipeIngIds);
+    if (marinadeError) { res.status(400).json({ error: marinadeError }); return; }
+    const meatIds = [...new Set(marinades.map(m => m.rawMeatIngredientId))];
+    const meatRows = await db.select({ id: ingredientsTable.id, category: ingredientsTable.category })
+      .from(ingredientsTable).where(inArray(ingredientsTable.id, meatIds));
+    const nonMeat = meatRows.find(r => r.category !== "raw_meat");
+    if (nonMeat) { res.status(400).json({ error: `Ingredient ${nonMeat.id} is not in the raw_meat category` }); return; }
+  }
+
   const [recipe] = await db.insert(recipesTable).values({
     name, description,
     servings: String(servings),
@@ -144,6 +176,17 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
     await db.insert(recipeSubRecipesTable).values(
       subRecipes.map((s: { subRecipeId: number; quantity: number }) => ({
         recipeId: recipe.id, subRecipeId: s.subRecipeId, quantity: String(s.quantity),
+      }))
+    );
+  }
+  if (marinades?.length) {
+    await db.insert(recipeMeatMarinadesTable).values(
+      marinades.map((m) => ({
+        recipeId: recipe.id,
+        rawMeatIngredientId: m.rawMeatIngredientId,
+        marinadeIngredientId: m.marinadeIngredientId ?? null,
+        marinadeSubRecipeId: m.marinadeSubRecipeId ?? null,
+        gramsPerKg: String(m.gramsPerKg),
       }))
     );
   }
@@ -244,6 +287,37 @@ router.get("/:id", async (req, res) => {
     };
   });
 
+  const rawMeatIngAlias = alias(ingredientsTable, "rawMeatIng");
+  const marinadeIngAlias = alias(ingredientsTable, "marinadeIng");
+  const marinadeSubAlias = alias(subRecipesTable, "marinadeSub");
+  const marinadeRows = await db
+    .select({
+      id: recipeMeatMarinadesTable.id,
+      rawMeatIngredientId: recipeMeatMarinadesTable.rawMeatIngredientId,
+      rawMeatIngredientName: rawMeatIngAlias.name,
+      marinadeIngredientId: recipeMeatMarinadesTable.marinadeIngredientId,
+      marinadeIngredientName: marinadeIngAlias.name,
+      marinadeSubRecipeId: recipeMeatMarinadesTable.marinadeSubRecipeId,
+      marinadeSubRecipeName: marinadeSubAlias.name,
+      gramsPerKg: recipeMeatMarinadesTable.gramsPerKg,
+    })
+    .from(recipeMeatMarinadesTable)
+    .leftJoin(rawMeatIngAlias, eq(recipeMeatMarinadesTable.rawMeatIngredientId, rawMeatIngAlias.id))
+    .leftJoin(marinadeIngAlias, eq(recipeMeatMarinadesTable.marinadeIngredientId, marinadeIngAlias.id))
+    .leftJoin(marinadeSubAlias, eq(recipeMeatMarinadesTable.marinadeSubRecipeId, marinadeSubAlias.id))
+    .where(eq(recipeMeatMarinadesTable.recipeId, id));
+
+  const enrichedMarinades = marinadeRows.map(m => ({
+    id: m.id,
+    rawMeatIngredientId: m.rawMeatIngredientId,
+    rawMeatIngredientName: m.rawMeatIngredientName ?? `Ingredient #${m.rawMeatIngredientId}`,
+    marinadeIngredientId: m.marinadeIngredientId ?? null,
+    marinadeIngredientName: m.marinadeIngredientName ?? null,
+    marinadeSubRecipeId: m.marinadeSubRecipeId ?? null,
+    marinadeSubRecipeName: m.marinadeSubRecipeName ?? null,
+    gramsPerKg: Number(m.gramsPerKg),
+  }));
+
   const mapped = mapRecipe(row);
   const rawCosts = await computeCosts([id]);
   const enriched = enrichWithCosts(mapped, rawCosts[id] ?? 0);
@@ -252,12 +326,25 @@ router.get("/:id", async (req, res) => {
     ...enriched,
     ingredients: enrichedIngredients,
     subRecipes: enrichedSubRecipes,
+    marinades: enrichedMarinades,
   });
 });
 
 router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, ingredients, subRecipes } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, ingredients, subRecipes, marinades } = req.body;
+
+  if (marinades?.length) {
+    const recipeIngIds = (ingredients ?? []).map(i => i.ingredientId);
+    const marinadeError = validateMarinades(marinades, recipeIngIds);
+    if (marinadeError) { res.status(400).json({ error: marinadeError }); return; }
+    const meatIds = [...new Set(marinades.map(m => m.rawMeatIngredientId))];
+    const meatRows = await db.select({ id: ingredientsTable.id, category: ingredientsTable.category })
+      .from(ingredientsTable).where(inArray(ingredientsTable.id, meatIds));
+    const nonMeat = meatRows.find(r => r.category !== "raw_meat");
+    if (nonMeat) { res.status(400).json({ error: `Ingredient ${nonMeat.id} is not in the raw_meat category` }); return; }
+  }
+
   const [updated] = await db.update(recipesTable)
     .set({
       name, description,
@@ -283,6 +370,7 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
 
   await db.delete(recipeIngredientsTable).where(eq(recipeIngredientsTable.recipeId, id));
   await db.delete(recipeSubRecipesTable).where(eq(recipeSubRecipesTable.recipeId, id));
+  await db.delete(recipeMeatMarinadesTable).where(eq(recipeMeatMarinadesTable.recipeId, id));
 
   if (ingredients?.length) {
     await db.insert(recipeIngredientsTable).values(
@@ -295,6 +383,17 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
     await db.insert(recipeSubRecipesTable).values(
       subRecipes.map((s: { subRecipeId: number; quantity: number }) => ({
         recipeId: id, subRecipeId: s.subRecipeId, quantity: String(s.quantity),
+      }))
+    );
+  }
+  if (marinades?.length) {
+    await db.insert(recipeMeatMarinadesTable).values(
+      marinades.map((m) => ({
+        recipeId: id,
+        rawMeatIngredientId: m.rawMeatIngredientId,
+        marinadeIngredientId: m.marinadeIngredientId ?? null,
+        marinadeSubRecipeId: m.marinadeSubRecipeId ?? null,
+        gramsPerKg: String(m.gramsPerKg),
       }))
     );
   }

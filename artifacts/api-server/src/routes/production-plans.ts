@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
-import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, dailyStockChecksTable, usersTable } from "@workspace/db";
+import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable } from "@workspace/db";
 import { eq, and, desc, sql, gt, asc, inArray } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
 import * as z from "zod";
 import { resolveRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
@@ -1094,10 +1095,6 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
     return true;
   };
 
-  const isSeasoningForMeat = (category: string | null): boolean => {
-    return station === "prep_meat" && !["raw_meat", "vegetable", "base", "sauce", "cheese"].includes(category ?? "") && category != null;
-  };
-
   const result = [];
   for (const planItem of planItems) {
     const batchesTarget = Number(planItem.batchesTarget) || 0;
@@ -1124,13 +1121,8 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
     for (const [, ing] of agg) {
       const category = ing.category;
       const isMainStation = categoryMatchesStation(category);
-      const isSeasoning = isSeasoningForMeat(category);
 
-      if (station === "prep_meat") {
-        if (!isMainStation && !isSeasoning) continue;
-      } else {
-        if (!isMainStation) continue;
-      }
+      if (!isMainStation) continue;
 
       hasRelevantIngredients = true;
       const cookedQty = ing.quantityPerBatch * batchesTarget;
@@ -1146,8 +1138,56 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
         cookedQty: roundByUnit(cookedQty, ing.unit),
         rawQty: roundByUnit(rawQty, ing.unit),
         isRawMeat: category === "raw_meat",
-        isSeasoning: isSeasoning && category !== "raw_meat",
+        isSeasoning: false,
       });
+    }
+
+    let marinades: Array<{
+      rawMeatIngredientId: number;
+      marinadeIngredientId: number | null;
+      marinadeIngredientName: string | null;
+      marinadeSubRecipeId: number | null;
+      marinadeSubRecipeName: string | null;
+      gramsPerKg: number;
+      totalGrams: number;
+    }> = [];
+
+    if (station === "prep_meat" || station === "all") {
+      const marinadeIngAlias = alias(ingredientsTable, "marinadeIng");
+      const marinadeSubAlias = alias(subRecipesTable, "marinadeSub");
+      const marinadeRows = await db
+        .select({
+          rawMeatIngredientId: recipeMeatMarinadesTable.rawMeatIngredientId,
+          marinadeIngredientId: recipeMeatMarinadesTable.marinadeIngredientId,
+          marinadeIngredientName: marinadeIngAlias.name,
+          marinadeSubRecipeId: recipeMeatMarinadesTable.marinadeSubRecipeId,
+          marinadeSubRecipeName: marinadeSubAlias.name,
+          gramsPerKg: recipeMeatMarinadesTable.gramsPerKg,
+        })
+        .from(recipeMeatMarinadesTable)
+        .leftJoin(marinadeIngAlias, eq(recipeMeatMarinadesTable.marinadeIngredientId, marinadeIngAlias.id))
+        .leftJoin(marinadeSubAlias, eq(recipeMeatMarinadesTable.marinadeSubRecipeId, marinadeSubAlias.id))
+        .where(eq(recipeMeatMarinadesTable.recipeId, planItem.recipeId));
+
+      if (marinadeRows.length > 0) {
+        hasRelevantIngredients = true;
+        for (const mr of marinadeRows) {
+          const rawMeatIng = ingredients.find(i => i.ingredientId === mr.rawMeatIngredientId);
+          const rawMeatKg = rawMeatIng ? rawMeatIng.rawQty / 1000 : 0;
+          const gpkg = Number(mr.gramsPerKg);
+          const totalGrams = Math.round(rawMeatKg * gpkg);
+
+          marinades.push({
+            rawMeatIngredientId: mr.rawMeatIngredientId,
+            marinadeIngredientId: mr.marinadeIngredientId ?? null,
+            marinadeIngredientName: mr.marinadeIngredientName ?? null,
+            marinadeSubRecipeId: mr.marinadeSubRecipeId ?? null,
+            marinadeSubRecipeName: mr.marinadeSubRecipeName ?? null,
+            gramsPerKg: gpkg,
+            totalGrams,
+          });
+        }
+      }
     }
 
     if (!hasRelevantIngredients) continue;
@@ -1158,8 +1198,8 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       const trayCapacityKg = rawMeatIngredients.find(i => i.rawMeatTrayCapacityKg)?.rawMeatTrayCapacityKg ?? null;
       if (trayCapacityKg) {
         const totalRawMeatKg = rawMeatIngredients.reduce((sum, i) => sum + i.rawQty, 0) / 1000;
-        const totalSeasoningKg = ingredients.filter(i => i.isSeasoning).reduce((sum, i) => sum + i.rawQty, 0) / 1000;
-        const totalCombinedKg = totalRawMeatKg + totalSeasoningKg;
+        const totalMarinadeKg = marinades.reduce((sum, m) => sum + m.totalGrams, 0) / 1000;
+        const totalCombinedKg = totalRawMeatKg + totalMarinadeKg;
         trayCount = Math.ceil(totalCombinedKg / trayCapacityKg);
       }
     }
@@ -1174,6 +1214,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       tinCount: planItem.maxBatchesPerTin && batchesTarget > 0 ? Math.ceil(batchesTarget / planItem.maxBatchesPerTin) : null,
       trayCount,
       ingredients,
+      marinades,
     });
   }
 

@@ -1667,6 +1667,16 @@ interface PrepIngredientDetail {
   isSeasoning: boolean;
 }
 
+interface PrepMarinadeDetail {
+  rawMeatIngredientId: number;
+  marinadeIngredientId: number | null;
+  marinadeIngredientName: string | null;
+  marinadeSubRecipeId: number | null;
+  marinadeSubRecipeName: string | null;
+  gramsPerKg: number;
+  totalGrams: number;
+}
+
 interface PrepRecipeDetail {
   recipeId: number;
   recipeName: string;
@@ -1677,6 +1687,7 @@ interface PrepRecipeDetail {
   tinCount: number | null;
   trayCount: number | null;
   ingredients: PrepIngredientDetail[];
+  marinades?: PrepMarinadeDetail[];
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -2330,13 +2341,18 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
   // Build full-screen items — one card per recipe showing combined tray count
   const fullScreenItems: PrepFullScreenItem[] = recipes.flatMap(recipe => {
     const rawMeat = recipe.ingredients.filter(i => i.isRawMeat);
-    const seasoning = recipe.ingredients.filter(i => i.isSeasoning);
+    const marinades = recipe.marinades ?? [];
     const totalRawMeatKg = rawMeat.reduce((sum, i) => sum + i.rawQty, 0) / 1000;
-    const totalSeasoningKg = seasoning.reduce((sum, i) => sum + i.rawQty, 0) / 1000;
+    const totalMarinadeKg = marinades.reduce((sum, m) => sum + m.totalGrams, 0) / 1000;
     const trayCapacityKg = rawMeat.find(i => i.rawMeatTrayCapacityKg)?.rawMeatTrayCapacityKg ?? null;
     const trays = recipe.trayCount;
     const perTrayMeatKg = trays && trays > 0 ? (totalRawMeatKg / trays).toFixed(2) : null;
-    const perTraySeasoningKg = trays && trays > 0 && totalSeasoningKg > 0 ? (totalSeasoningKg / trays).toFixed(2) : null;
+
+    const marinadeDetails = marinades.map(m => {
+      const meatName = rawMeat.find(i => i.ingredientId === m.rawMeatIngredientId)?.ingredientName ?? "Meat";
+      const name = m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown";
+      return `${meatName} → ${name} ${m.totalGrams}g (${m.gramsPerKg}g/kg)`;
+    });
 
     return [{
       id: `${recipe.recipeId}`,
@@ -2344,10 +2360,10 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
       quantity: trays != null ? `${trays} tray${trays !== 1 ? "s" : ""}` : `${totalRawMeatKg.toFixed(2)} kg`,
       subDetail: [
         `${totalRawMeatKg.toFixed(2)} kg raw meat`,
-        totalSeasoningKg > 0 ? `${totalSeasoningKg.toFixed(2)} kg seasoning` : null,
+        totalMarinadeKg > 0 ? `${(totalMarinadeKg * 1000).toFixed(0)}g marinades` : null,
         trayCapacityKg ? `${trayCapacityKg} kg/tray capacity` : null,
         perTrayMeatKg ? `${perTrayMeatKg} kg meat/tray` : null,
-        perTraySeasoningKg ? `+ ${perTraySeasoningKg} kg seasoning/tray` : null,
+        ...marinadeDetails,
       ].filter(Boolean).join(" · ") || undefined,
       badge: trays != null ? { label: "Trays needed", value: trays, color: "rose" as const } : undefined,
       sopUrl: recipe.sopUrl,
@@ -2409,9 +2425,9 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
         <div className="space-y-4">
           {recipes.map(recipe => {
             const rawMeat = recipe.ingredients.filter(i => i.isRawMeat);
-            const seasoning = recipe.ingredients.filter(i => i.isSeasoning);
+            const marinades = recipe.marinades ?? [];
             const totalRawMeatKg = rawMeat.reduce((sum, i) => sum + i.rawQty, 0) / 1000;
-            const totalSeasoningKg = seasoning.reduce((sum, i) => sum + i.rawQty, 0) / 1000;
+            const totalMarinadeG = marinades.reduce((sum, m) => sum + m.totalGrams, 0);
             const trays = recipe.trayCount;
             const trayCapKg = rawMeat.find(i => i.rawMeatTrayCapacityKg)?.rawMeatTrayCapacityKg ?? null;
 
@@ -2442,45 +2458,49 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
 
                 {/* Ingredients breakdown */}
                 <div className="px-4 py-3 space-y-2">
-                  {/* Raw meat */}
-                  {rawMeat.map(ing => (
-                    <div key={ing.ingredientId} className="flex justify-between items-center text-sm">
-                      <span className="font-medium">{ing.ingredientName}</span>
-                      <div className="text-right">
-                        <span className="tabular-nums font-semibold">{fmtQty(ing.rawQty, ing.unit)}</span>
-                        {trays && trays > 0 && (
-                          <span className="text-xs text-muted-foreground ml-2">
-                            ({((ing.rawQty / 1000) / trays).toFixed(2)} kg/tray)
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  {/* Seasonings */}
-                  {seasoning.length > 0 && (
-                    <>
-                      <div className="border-t border-border/50 pt-2 mt-1">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Seasoning</p>
-                        {seasoning.map(ing => (
-                          <div key={ing.ingredientId} className="flex justify-between items-center text-sm">
-                            <span className="text-muted-foreground">{ing.ingredientName}</span>
-                            <div className="text-right">
-                              <span className="tabular-nums">{fmtQty(ing.rawQty, ing.unit)}</span>
-                              {trays && trays > 0 && (
-                                <span className="text-xs text-muted-foreground ml-2">
-                                  ({((ing.rawQty / 1000) / trays).toFixed(3)} kg/tray)
-                                </span>
-                              )}
-                            </div>
+                  {/* Raw meat with marinades indented below */}
+                  {rawMeat.map(ing => {
+                    const meatMarinades = marinades.filter(m => m.rawMeatIngredientId === ing.ingredientId);
+                    return (
+                      <div key={ing.ingredientId}>
+                        <div className="flex justify-between items-center text-sm">
+                          <span className="font-medium">{ing.ingredientName}</span>
+                          <div className="text-right">
+                            <span className="tabular-nums font-semibold">{fmtQty(ing.rawQty, ing.unit)}</span>
+                            {trays && trays > 0 && (
+                              <span className="text-xs text-muted-foreground ml-2">
+                                ({((ing.rawQty / 1000) / trays).toFixed(2)} kg/tray)
+                              </span>
+                            )}
                           </div>
-                        ))}
+                        </div>
+                        {meatMarinades.map((m, mi) => {
+                          const name = m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown";
+                          const perTray = trays && trays > 0 ? Math.round(m.totalGrams / trays) : null;
+                          return (
+                            <div key={mi} className="flex justify-between items-center text-sm pl-5 text-muted-foreground">
+                              <span className="flex items-center gap-1">
+                                <span className="text-xs">&#9492;</span> {name}
+                              </span>
+                              <div className="text-right">
+                                <span className="tabular-nums">{m.totalGrams}g</span>
+                                <span className="text-xs ml-1">({m.gramsPerKg}g/kg)</span>
+                                {perTray != null && (
+                                  <span className="text-xs ml-2">
+                                    {perTray}g/tray
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                    </>
-                  )}
+                    );
+                  })}
                   {/* Combined totals */}
                   <div className="border-t border-border pt-2 flex justify-between text-sm font-semibold">
                     <span>Total combined</span>
-                    <span className="tabular-nums">{(totalRawMeatKg + totalSeasoningKg).toFixed(2)} kg</span>
+                    <span className="tabular-nums">{(totalRawMeatKg + totalMarinadeG / 1000).toFixed(2)} kg</span>
                   </div>
                 </div>
               </div>

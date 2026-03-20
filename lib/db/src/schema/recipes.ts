@@ -1,4 +1,5 @@
-import { pgTable, serial, text, numeric, integer, timestamp, boolean } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, numeric, integer, timestamp, check } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { ingredientsTable } from "./ingredients";
@@ -41,10 +42,24 @@ export const recipeSubRecipesTable = pgTable("recipe_sub_recipes", {
   quantity: numeric("quantity", { precision: 10, scale: 4 }).notNull(),
 });
 
+export const recipeMeatMarinadesTable = pgTable("recipe_meat_marinades", {
+  id: serial("id").primaryKey(),
+  recipeId: integer("recipe_id").notNull().references(() => recipesTable.id, { onDelete: "cascade" }),
+  rawMeatIngredientId: integer("raw_meat_ingredient_id").notNull().references(() => ingredientsTable.id, { onDelete: "restrict" }),
+  marinadeIngredientId: integer("marinade_ingredient_id").references(() => ingredientsTable.id, { onDelete: "restrict" }),
+  marinadeSubRecipeId: integer("marinade_sub_recipe_id").references(() => subRecipesTable.id, { onDelete: "restrict" }),
+  gramsPerKg: numeric("grams_per_kg", { precision: 10, scale: 4 }).notNull(),
+}, (table) => [
+  check("marinade_xor", sql`(${table.marinadeIngredientId} IS NOT NULL AND ${table.marinadeSubRecipeId} IS NULL) OR (${table.marinadeIngredientId} IS NULL AND ${table.marinadeSubRecipeId} IS NOT NULL)`),
+  check("grams_per_kg_positive", sql`${table.gramsPerKg} > 0`),
+]);
+
 export const insertRecipeSchema = createInsertSchema(recipesTable).omit({ id: true, createdAt: true });
 export const insertRecipeIngredientSchema = createInsertSchema(recipeIngredientsTable).omit({ id: true });
 export const insertRecipeSubRecipeSchema = createInsertSchema(recipeSubRecipesTable).omit({ id: true });
+export const insertRecipeMeatMarinadeSchema = createInsertSchema(recipeMeatMarinadesTable).omit({ id: true });
 export type InsertRecipe = z.infer<typeof insertRecipeSchema>;
 export type Recipe = typeof recipesTable.$inferSelect;
 export type RecipeIngredient = typeof recipeIngredientsTable.$inferSelect;
 export type RecipeSubRecipe = typeof recipeSubRecipesTable.$inferSelect;
+export type RecipeMeatMarinade = typeof recipeMeatMarinadesTable.$inferSelect;

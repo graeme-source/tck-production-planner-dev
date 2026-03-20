@@ -556,6 +556,17 @@ export const CreateRecipeBody = zod.object({
       quantity: zod.number(),
     }),
   ),
+  marinades: zod.array(
+    zod.object({
+      rawMeatIngredientId: zod.number(),
+      marinadeIngredientId: zod.number().nullish(),
+      marinadeSubRecipeId: zod.number().nullish(),
+      gramsPerKg: zod.number().positive(),
+    }).refine(
+      m => (m.marinadeIngredientId != null) !== (m.marinadeSubRecipeId != null),
+      { message: "Exactly one of marinadeIngredientId or marinadeSubRecipeId must be set" },
+    ),
+  ).optional(),
 });
 
 /**
@@ -646,6 +657,18 @@ export const GetRecipeResponse = zod
           breakdown: zod.array(zod.object({}).passthrough()).nullish(),
         }),
       ),
+      marinades: zod.array(
+        zod.object({
+          id: zod.number(),
+          rawMeatIngredientId: zod.number(),
+          rawMeatIngredientName: zod.string(),
+          marinadeIngredientId: zod.number().nullish(),
+          marinadeIngredientName: zod.string().nullish(),
+          marinadeSubRecipeId: zod.number().nullish(),
+          marinadeSubRecipeName: zod.string().nullish(),
+          gramsPerKg: zod.number(),
+        }),
+      ),
     }),
   );
 
@@ -690,6 +713,17 @@ export const UpdateRecipeBody = zod.object({
       quantity: zod.number(),
     }),
   ),
+  marinades: zod.array(
+    zod.object({
+      rawMeatIngredientId: zod.number(),
+      marinadeIngredientId: zod.number().nullish(),
+      marinadeSubRecipeId: zod.number().nullish(),
+      gramsPerKg: zod.number().positive(),
+    }).refine(
+      m => (m.marinadeIngredientId != null) !== (m.marinadeSubRecipeId != null),
+      { message: "Exactly one of marinadeIngredientId or marinadeSubRecipeId must be set" },
+    ),
+  ).optional(),
 });
 
 export const UpdateRecipeResponse = zod.object({
