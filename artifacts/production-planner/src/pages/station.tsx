@@ -3075,14 +3075,16 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                   })}
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
+                  {remaining > 0 && (
                   <button
-                    onClick={() => addToStorage(item, STACK_SIZE, activeStorage)}
+                    onClick={() => addToStorage(item, Math.min(STACK_SIZE, remaining), activeStorage)}
                     disabled={isStorageLoading}
                     className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
                   >
                     {isStorageLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                    Add {STACK_SIZE}
+                    {remaining < STACK_SIZE ? `Add ${remaining} remaining` : `Add ${STACK_SIZE}`}
                   </button>
+                  )}
 
                   {!isCustomOpen ? (
                     <button
@@ -3119,16 +3121,20 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                     </div>
                   )}
 
-                  {getStorageQty(item, activeStorage) > 0 && (
+                  {getStorageQty(item, activeStorage) > 0 && (() => {
+                    const storageQty = getStorageQty(item, activeStorage);
+                    const undoAmt = Math.min(STACK_SIZE, storageQty);
+                    return (
                     <button
-                      onClick={() => undoStorage(item, STACK_SIZE, activeStorage)}
+                      onClick={() => undoStorage(item, undoAmt, activeStorage)}
                       disabled={isStorageLoading}
                       className="ml-auto inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm hover:bg-red-50 dark:hover:bg-red-950/20 disabled:opacity-50 transition-colors"
                     >
                       <Minus className="w-3.5 h-3.5" />
-                      Undo {STACK_SIZE}
+                      Undo {undoAmt}
                     </button>
-                  )}
+                    );
+                  })()}
                 </div>
               </div>
             </div>
