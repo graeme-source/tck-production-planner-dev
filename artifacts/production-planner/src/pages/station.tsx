@@ -1403,19 +1403,20 @@ interface NextActivePlan {
   status: string | null;
 }
 
-function useNextActivePlan() {
+function useNextActivePlan(afterDate?: string) {
   const [data, setData] = useState<NextActivePlan | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     setIsLoading(true);
-    fetch("/api/production-plans/next-active", { credentials: "include" })
+    const qs = afterDate ? `?afterDate=${afterDate}` : "";
+    fetch(`/api/production-plans/next-active${qs}`, { credentials: "include" })
       .then(r => r.json())
       .then((json: NextActivePlan) => { if (!cancelled) { setData(json); setIsLoading(false); } })
       .catch(() => { if (!cancelled) setIsLoading(false); });
     return () => { cancelled = true; };
-  }, []);
+  }, [afterDate]);
 
   return { data, isLoading };
 }
@@ -1429,7 +1430,7 @@ function PrepDateBanner({ planDate, planName, isLoading, labelPrefix = "Prep for
     return (
       <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl px-4 py-3 text-sm text-amber-800 dark:text-amber-200 flex items-center gap-2">
         <CalendarCheck className="w-4 h-4 flex-shrink-0" />
-        <span>No upcoming production plan found within 7 days.</span>
+        <span>No upcoming production plan found.</span>
       </div>
     );
   }
@@ -1648,8 +1649,8 @@ interface PrepRecipeDetail {
 // ──────────────────────────────────────────────────────────────────────────────
 // Hook: fetch per-recipe prep requirements for the next active plan
 // ──────────────────────────────────────────────────────────────────────────────
-function usePrepByRecipe(station: string) {
-  const { data: nextPlan, isLoading: isPlanLoading } = useNextActivePlan() as { data: NextActivePlan | null; isLoading: boolean };
+function usePrepByRecipe(station: string, afterDate?: string) {
+  const { data: nextPlan, isLoading: isPlanLoading } = useNextActivePlan(afterDate) as { data: NextActivePlan | null; isLoading: boolean };
   const planId = nextPlan?.planId ?? 0;
   const [recipes, setRecipes] = useState<PrepRecipeDetail[]>([]);
   const [isPrepLoading, setIsPrepLoading] = useState(false);
@@ -1716,7 +1717,7 @@ function PrepModeToggle({
 // ──────────────────────────────────────────────────────────────────────────────
 function PrepVegStation({ plan }: { plan: ProductionPlanDetail }) {
   const [mode, setMode] = useState<"fullscreen" | "overview">("fullscreen");
-  const { recipes, isLoading, nextPlan } = usePrepByRecipe("prep_veg");
+  const { recipes, isLoading, nextPlan } = usePrepByRecipe("prep_veg", plan.planDate);
 
   // Build full-screen items: recipe header → each veg ingredient for that recipe
   const fullScreenItems: PrepFullScreenItem[] = recipes.flatMap(recipe =>
@@ -1813,7 +1814,7 @@ function PrepVegStation({ plan }: { plan: ProductionPlanDetail }) {
 // ──────────────────────────────────────────────────────────────────────────────
 function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
   const [mode, setMode] = useState<"fullscreen" | "overview">("fullscreen");
-  const { recipes, isLoading, nextPlan } = usePrepByRecipe("prep_bases");
+  const { recipes, isLoading, nextPlan } = usePrepByRecipe("prep_bases", plan.planDate);
 
   // Build full-screen items — per recipe → ingredients + tin badge per recipe
   const fullScreenItems: PrepFullScreenItem[] = recipes.flatMap(recipe => {
@@ -1929,7 +1930,7 @@ function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
 // ──────────────────────────────────────────────────────────────────────────────
 function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
   const [mode, setMode] = useState<"fullscreen" | "overview">("fullscreen");
-  const { recipes, isLoading, nextPlan } = usePrepByRecipe("prep_meat");
+  const { recipes, isLoading, nextPlan } = usePrepByRecipe("prep_meat", plan.planDate);
 
   const totalTrays = recipes.reduce((sum, r) => sum + (r.trayCount ?? 0), 0);
 
@@ -3505,9 +3506,9 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
 // ──────────────────────────────────────────────────────────────────────────────
 // Prep Hub — sub-station picker shown when "Prep" tile is selected
 // ──────────────────────────────────────────────────────────────────────────────
-function PrepHub({ planId }: { planId: number }) {
+function PrepHub({ planId, planDate }: { planId: number; planDate?: string }) {
   const [, navigate] = useLocation();
-  const { data: nextPlan, isLoading } = useNextActivePlan() as { data: NextActivePlan | null; isLoading: boolean };
+  const { data: nextPlan, isLoading } = useNextActivePlan(planDate) as { data: NextActivePlan | null; isLoading: boolean };
 
   const subStations = [
     {
@@ -3647,7 +3648,7 @@ export default function StationPage() {
       case "dough_sheeting":
         return <DoughSheetingStation plan={plan} />;
       case "prep":
-        return <PrepHub planId={planId} />;
+        return <PrepHub planId={planId} planDate={plan.planDate} />;
       case "prep_veg":
         return <PrepVegStation plan={plan} />;
       case "prep_bases":

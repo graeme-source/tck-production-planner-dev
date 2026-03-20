@@ -181,39 +181,29 @@ router.post("/", validate(CreatePlanBody), async (req, res) => {
   res.status(201).json(mapPlan(plan));
 });
 
-// GET /production-plans/next-active — returns the next Mon–Fri that has an active production plan.
-// Searches from tomorrow up to 7 calendar days ahead (exclusive today).
-// Only matches plans with status = 'active'.
-// Used by prep stations to show "Prep for [Day], [Date]" banners.
+// GET /production-plans/next-active?afterDate=YYYY-MM-DD
+// Returns the next active production plan after a given date.
+// If afterDate is provided, searches for the first active plan with plan_date > afterDate.
+// If omitted, defaults to searching from tomorrow onwards (legacy behaviour).
 router.get("/next-active", async (req, res) => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  // Search from tomorrow up to 7 calendar days ahead for an active plan on a weekday
-  const candidates: string[] = [];
-  for (let i = 1; i <= 7; i++) {
-    const d = new Date(today);
-    d.setDate(d.getDate() + i);
-    const dow = d.getDay(); // 0=Sun, 6=Sat
-    if (dow !== 0 && dow !== 6) {
-      // Format as YYYY-MM-DD
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, "0");
-      const dd = String(d.getDate()).padStart(2, "0");
-      candidates.push(`${yyyy}-${mm}-${dd}`);
+  let afterDateStr: string;
+  if (req.query.afterDate && typeof req.query.afterDate === "string") {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(req.query.afterDate)) {
+      res.status(400).json({ error: "afterDate must be YYYY-MM-DD" });
+      return;
     }
-  }
-
-  if (candidates.length === 0) {
-    res.json({ planId: null, planDate: null, planName: null });
-    return;
+    afterDateStr = req.query.afterDate;
+  } else {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    afterDateStr = today.toISOString().slice(0, 10);
   }
 
   const plans = await db
     .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate, name: productionPlansTable.name, status: productionPlansTable.status })
     .from(productionPlansTable)
     .where(and(
-      inArray(productionPlansTable.planDate, candidates),
+      gt(productionPlansTable.planDate, afterDateStr),
       eq(productionPlansTable.status, "active")
     ))
     .orderBy(asc(productionPlansTable.planDate))
@@ -1727,38 +1717,30 @@ router.get("/:id/dough-prep", async (req, res) => {
 
   // ── 1. Determine target plan ──
   // mode=current: use planId as-is (used by Dough Sheeting which runs on production day D)
-  // default (D-1 mode): look up next-active plan within 7 days — used by Dough Prep station
+  // default (D-1 mode): look up next active plan after the current plan's date
+  // Optional afterDate=YYYY-MM-DD to override which date to search from
   const useCurrentPlan = req.query.mode === "current";
 
   let nextPlan: { id: number; planDate: string; name: string } | null = null;
   let targetPlanId = planId;
 
   if (!useCurrentPlan) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const candidates: string[] = [];
-    for (let i = 1; i <= 7; i++) {
-      const d = new Date(today);
-      d.setDate(d.getDate() + i);
-      const dow = d.getDay();
-      if (dow !== 0 && dow !== 6) {
-        const yyyy = d.getFullYear();
-        const mm = String(d.getMonth() + 1).padStart(2, "0");
-        const dd = String(d.getDate()).padStart(2, "0");
-        candidates.push(`${yyyy}-${mm}-${dd}`);
-      }
+    let afterDate: string;
+    if (req.query.afterDate && typeof req.query.afterDate === "string") {
+      afterDate = req.query.afterDate;
+    } else {
+      const currentPlan = await db.select({ planDate: productionPlansTable.planDate }).from(productionPlansTable).where(eq(productionPlansTable.id, planId)).limit(1);
+      afterDate = currentPlan.length > 0 ? currentPlan[0].planDate : new Date().toISOString().slice(0, 10);
     }
 
-    if (candidates.length > 0) {
-      const nextPlans = await db
-        .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate, name: productionPlansTable.name })
-        .from(productionPlansTable)
-        .where(and(inArray(productionPlansTable.planDate, candidates), eq(productionPlansTable.status, "active")))
-        .orderBy(asc(productionPlansTable.planDate));
-      if (nextPlans.length > 0) nextPlan = nextPlans[0];
-    }
+    const nextPlans = await db
+      .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate, name: productionPlansTable.name })
+      .from(productionPlansTable)
+      .where(and(gt(productionPlansTable.planDate, afterDate), eq(productionPlansTable.status, "active")))
+      .orderBy(asc(productionPlansTable.planDate))
+      .limit(1);
+    if (nextPlans.length > 0) nextPlan = nextPlans[0];
 
-    // Use next-active plan for dough requirements; fall back to current plan if none found
     targetPlanId = nextPlan?.id ?? planId;
   }
 
