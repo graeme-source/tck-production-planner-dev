@@ -164,15 +164,16 @@ router.post("/", validate(CreatePlanBody), async (req, res) => {
 });
 
 // GET /production-plans/next-active — returns the next Mon–Fri that has an active production plan.
-// Searches up to 14 calendar days from today (inclusive today).
+// Searches from tomorrow up to 7 calendar days ahead (exclusive today).
+// Only matches plans with status = 'active'.
 // Used by prep stations to show "Prep for [Day], [Date]" banners.
 router.get("/next-active", async (req, res) => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // Search up to 14 days from today (inclusive) for an active plan on a weekday
+  // Search from tomorrow up to 7 calendar days ahead for an active plan on a weekday
   const candidates: string[] = [];
-  for (let i = 0; i <= 14; i++) {
+  for (let i = 1; i <= 7; i++) {
     const d = new Date(today);
     d.setDate(d.getDate() + i);
     const dow = d.getDay(); // 0=Sun, 6=Sat
@@ -195,7 +196,7 @@ router.get("/next-active", async (req, res) => {
     .from(productionPlansTable)
     .where(and(
       inArray(productionPlansTable.planDate, candidates),
-      inArray(productionPlansTable.status, ["active", "prep", "building"])
+      eq(productionPlansTable.status, "active")
     ))
     .orderBy(asc(productionPlansTable.planDate))
     .limit(1);
@@ -817,6 +818,167 @@ router.get("/:id/prep-requirements", async (req, res) => {
   }
 
   res.json({ items, nextPlanDate });
+});
+
+// GET /:id/prep-requirements-by-recipe?station=prep_veg|prep_bases|prep_meat
+// Returns per-recipe per-ingredient breakdown for prep stations.
+// Each recipe entry includes: recipeId, recipeName, batchesTarget, sopUrl, tinSize, maxBatchesPerTin
+// and an ingredients array with per-ingredient cooked/raw qty, category, processingRatio, trayCapacity.
+// The Raw Meat view uses this to compute combined (raw_meat+seasoning) tray counts per recipe.
+router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
+  const planId = Number(req.params.id);
+  const station = String(req.query.station ?? "all");
+
+  const planItems = await db
+    .select({
+      id: productionPlanItemsTable.id,
+      recipeId: productionPlanItemsTable.recipeId,
+      batchesTarget: productionPlanItemsTable.batchesTarget,
+      recipeName: recipesTable.name,
+      portionsPerBatch: recipesTable.portionsPerBatch,
+      sopUrl: productionPlanItemsTable.sopUrl,
+      tinSize: productionPlanItemsTable.tinSize,
+      maxBatchesPerTin: productionPlanItemsTable.maxBatchesPerTin,
+    })
+    .from(productionPlanItemsTable)
+    .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(eq(productionPlanItemsTable.planId, planId));
+
+  if (planItems.length === 0) {
+    res.json({ recipes: [] });
+    return;
+  }
+
+  const recipeIds = planItems.map(p => p.recipeId).filter(Boolean) as number[];
+
+  // Fetch all ingredient rows for all recipes
+  const allIngredientRows: {
+    recipeId: number;
+    ingredientId: number;
+    quantityPerBatch: string;
+    ingredientName: string | null;
+    unit: string | null;
+    category: string | null;
+    processingRatio: string | null;
+    rawMeatTrayCapacityKg: string | null;
+  }[] = [];
+
+  for (const rid of recipeIds) {
+    const rows = await db
+      .select({
+        recipeId: recipeIngredientsTable.recipeId,
+        ingredientId: recipeIngredientsTable.ingredientId,
+        quantityPerBatch: recipeIngredientsTable.quantity,
+        ingredientName: ingredientsTable.name,
+        unit: ingredientsTable.unit,
+        category: ingredientsTable.category,
+        processingRatio: ingredientsTable.processingRatio,
+        rawMeatTrayCapacityKg: ingredientsTable.rawMeatTrayCapacityKg,
+      })
+      .from(recipeIngredientsTable)
+      .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
+      .where(eq(recipeIngredientsTable.recipeId, rid));
+    allIngredientRows.push(...rows);
+  }
+
+  // Station category filters
+  const categoryMatchesStation = (category: string | null): boolean => {
+    if (station === "prep_meat") return category === "raw_meat";
+    if (station === "prep_veg") return category === "vegetable";
+    if (station === "prep_bases") return ["base", "sauce", "cheese"].includes(category ?? "");
+    return true; // "all"
+  };
+
+  // "Seasoning" for raw meat station: dry ingredients in same recipe that are NOT raw_meat
+  // (but are relevant to the recipe weight for tray calculation)
+  const isSeasoningForMeat = (category: string | null): boolean => {
+    return station === "prep_meat" && !["raw_meat", "vegetable", "base", "sauce", "cheese"].includes(category ?? "") && category != null;
+  };
+
+  const result = [];
+  for (const planItem of planItems) {
+    const batchesTarget = Number(planItem.batchesTarget) || 0;
+    const itemIngredients = allIngredientRows.filter(i => i.recipeId === planItem.recipeId);
+
+    const ingredients: Array<{
+      ingredientId: number;
+      ingredientName: string;
+      unit: string;
+      category: string | null;
+      processingRatio: number | null;
+      rawMeatTrayCapacityKg: number | null;
+      cookedQty: number;
+      rawQty: number;
+      isRawMeat: boolean;
+      isSeasoning: boolean;
+    }> = [];
+
+    let hasRelevantIngredients = false;
+
+    for (const ing of itemIngredients) {
+      if (!ing.ingredientId) continue;
+      const category = ing.category ?? null;
+      const isMainStation = categoryMatchesStation(category);
+      const isSeasoning = isSeasoningForMeat(category);
+
+      // For raw_meat station: include raw_meat ingredients + seasonings used in same recipe
+      if (station === "prep_meat") {
+        if (!isMainStation && !isSeasoning) continue;
+      } else {
+        if (!isMainStation) continue;
+      }
+
+      hasRelevantIngredients = true;
+      const qtyPerBatch = Number(ing.quantityPerBatch) || 0;
+      const cookedQty = qtyPerBatch * batchesTarget;
+      const processingRatio = ing.processingRatio ? Number(ing.processingRatio) : null;
+      const rawQty = processingRatio ? cookedQty / processingRatio : cookedQty;
+
+      ingredients.push({
+        ingredientId: ing.ingredientId,
+        ingredientName: ing.ingredientName ?? `Ingredient #${ing.ingredientId}`,
+        unit: ing.unit ?? "g",
+        category,
+        processingRatio,
+        rawMeatTrayCapacityKg: ing.rawMeatTrayCapacityKg ? Number(ing.rawMeatTrayCapacityKg) : null,
+        cookedQty,
+        rawQty,
+        isRawMeat: category === "raw_meat",
+        isSeasoning: isSeasoning && category !== "raw_meat",
+      });
+    }
+
+    // Skip recipes with no relevant ingredients
+    if (!hasRelevantIngredients) continue;
+
+    // For raw meat station: compute combined tray count (raw meat + seasoning)
+    let trayCount: number | null = null;
+    if (station === "prep_meat") {
+      const rawMeatIngredients = ingredients.filter(i => i.isRawMeat);
+      // Use the tray capacity from the first raw_meat ingredient (they should all be the same)
+      const trayCapacityKg = rawMeatIngredients.find(i => i.rawMeatTrayCapacityKg)?.rawMeatTrayCapacityKg ?? null;
+      if (trayCapacityKg) {
+        const totalRawMeatKg = rawMeatIngredients.reduce((sum, i) => sum + i.rawQty, 0) / 1000;
+        const totalSeasoningKg = ingredients.filter(i => i.isSeasoning).reduce((sum, i) => sum + i.rawQty, 0) / 1000;
+        const totalCombinedKg = totalRawMeatKg + totalSeasoningKg;
+        trayCount = Math.ceil(totalCombinedKg / trayCapacityKg);
+      }
+    }
+
+    result.push({
+      recipeId: planItem.recipeId,
+      recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
+      batchesTarget,
+      sopUrl: planItem.sopUrl ?? null,
+      tinSize: planItem.tinSize ?? null,
+      maxBatchesPerTin: planItem.maxBatchesPerTin ?? null,
+      tinCount: planItem.maxBatchesPerTin && batchesTarget > 0 ? Math.ceil(batchesTarget / planItem.maxBatchesPerTin) : null,
+      trayCount,
+      ingredients,
+    });
+  }
+
+  res.json({ recipes: result });
 });
 
 // GET /:id/eod-summary?stationType=...
