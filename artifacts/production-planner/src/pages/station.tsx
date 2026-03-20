@@ -1825,9 +1825,21 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const [stockValues, setStockValues] = useState<Record<number, string>>({});
   const [stockLoaded, setStockLoaded] = useState(false);
   const [savingStock, setSavingStock] = useState<Record<number, boolean>>({});
-  const [expandedIngredients, setExpandedIngredients] = useState<Set<number>>(new Set());
+  const [selectedIngredientId, setSelectedIngredientId] = useState<number | null>(null);
 
   const checkDate = nextPlan?.planDate ?? plan.planDate;
+
+  useEffect(() => {
+    setSelectedIngredientId(null);
+    setStockValues({});
+    setStockLoaded(false);
+  }, [targetPlanId]);
+
+  useEffect(() => {
+    if (!checkDate) return;
+    setStockLoaded(false);
+  }, [checkDate]);
+
   useEffect(() => {
     if (!checkDate || stockLoaded) return;
     fetch(`/api/production-plans/stock-checks?date=${checkDate}`, { credentials: "include" })
@@ -1854,6 +1866,28 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const getCompletion = (ingredientId: number, recipeId: number, tinNumber: number) =>
     completions.find(c => c.ingredientId === ingredientId && c.recipeId === recipeId && c.tinNumber === tinNumber);
 
+  const ingredientDoneStatus = (ing: MainPrepIngredient) => {
+    const allTinsDone = ing.recipes.every(r =>
+      Array.from({ length: r.tinCount }, (_, i) => i + 1).every(tn => isCompleted(ing.ingredientId, r.recipeId, tn))
+    );
+    const stockSaved = stockValues[ing.ingredientId] !== undefined && stockValues[ing.ingredientId] !== "";
+    const needsStockCheck = ing.stockCheckEnabled && allTinsDone;
+    const isFullyDone = allTinsDone && (!ing.stockCheckEnabled || stockSaved);
+    const totalTinsForIng = ing.recipes.reduce((s, r) => s + r.tinCount, 0);
+    const completedTinsForIng = ing.recipes.reduce((s, r) =>
+      s + Array.from({ length: r.tinCount }, (_, i) => i + 1).filter(tn => isCompleted(ing.ingredientId, r.recipeId, tn)).length, 0);
+    return { allTinsDone, needsStockCheck, stockSaved, isFullyDone, totalTinsForIng, completedTinsForIng };
+  };
+
+  const firstIncompleteId = ingredients.find(ing => !ingredientDoneStatus(ing).isFullyDone)?.ingredientId ?? null;
+
+  useEffect(() => {
+    if (ingredients.length === 0) return;
+    if (selectedIngredientId === null || !ingredients.some(i => i.ingredientId === selectedIngredientId)) {
+      setSelectedIngredientId(firstIncompleteId ?? ingredients[0].ingredientId);
+    }
+  }, [ingredients, selectedIngredientId, firstIncompleteId]);
+
   const toggleTin = async (ingredientId: number, recipeId: number, tinNumber: number) => {
     const existing = getCompletion(ingredientId, recipeId, tinNumber);
     if (existing) {
@@ -1874,15 +1908,16 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     const val = stockValues[ingredientId];
     if (val === undefined || val === "") return;
     setSavingStock(s => ({ ...s, [ingredientId]: true }));
-    const checkDate = nextPlan?.planDate ?? plan.planDate;
+    const cd = nextPlan?.planDate ?? plan.planDate;
     try {
       const resp = await fetch("/api/production-plans/stock-checks", {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ingredientId, checkDate, quantity: Number(val) }),
+        body: JSON.stringify({ ingredientId, checkDate: cd, quantity: Number(val) }),
       });
       if (!resp.ok) throw new Error("Save failed");
       toast({ title: "Stock check saved" });
+      setTimeout(() => advanceToNext(ingredientId), 400);
     } catch {
       toast({ title: "Failed to save stock check", variant: "destructive" });
     } finally {
@@ -1890,17 +1925,34 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     }
   };
 
-  const toggleExpand = (id: number) => {
-    setExpandedIngredients(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+  const advanceToNext = (currentIngId: number) => {
+    const idx = ingredients.findIndex(i => i.ingredientId === currentIngId);
+    for (let offset = 1; offset < ingredients.length; offset++) {
+      const next = ingredients[(idx + offset) % ingredients.length];
+      if (!ingredientDoneStatus(next).isFullyDone) {
+        setSelectedIngredientId(next.ingredientId);
+        return;
+      }
+    }
   };
+
+  useEffect(() => {
+    if (!selectedIngredientId || ingredients.length === 0) return;
+    const ing = ingredients.find(i => i.ingredientId === selectedIngredientId);
+    if (!ing) return;
+    const status = ingredientDoneStatus(ing);
+    if (status.allTinsDone && !ing.stockCheckEnabled) {
+      const timer = setTimeout(() => advanceToNext(selectedIngredientId), 600);
+      return () => clearTimeout(timer);
+    }
+  }, [completions, selectedIngredientId]);
 
   const totalTins = ingredients.reduce((s, ing) => s + ing.recipes.reduce((rs, r) => rs + r.tinCount, 0), 0);
   const completedTins = completions.length;
   const overallPct = totalTins > 0 ? Math.round((completedTins / totalTins) * 100) : 0;
+
+  const selectedIng = ingredients.find(i => i.ingredientId === selectedIngredientId) ?? null;
+  const selectedStatus = selectedIng ? ingredientDoneStatus(selectedIng) : null;
 
   if (loading || isNextPlanLoading) {
     return <div className="flex items-center justify-center py-20 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin mr-2" />Loading…</div>;
@@ -1939,172 +1991,262 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
           <p className="font-medium">No ingredients to prep</p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {ingredients.map(ing => {
-            const isMultiRecipe = ing.recipes.length > 1;
-            const allTinsDone = ing.recipes.every(r =>
-              Array.from({ length: r.tinCount }, (_, i) => i + 1).every(tn =>
-                isCompleted(ing.ingredientId, r.recipeId, tn)
-              )
-            );
-            const needsStockCheck = ing.stockCheckEnabled && allTinsDone;
-            const stockSaved = stockValues[ing.ingredientId] !== undefined && stockValues[ing.ingredientId] !== "";
-            const isFullyDone = allTinsDone && (!ing.stockCheckEnabled || stockSaved);
-            const isExpanded = expandedIngredients.has(ing.ingredientId) || isMultiRecipe;
+        <div className="flex flex-col lg:flex-row gap-4">
+          <div className="lg:w-72 xl:w-80 flex-shrink-0">
+            <div className="bg-card border border-border rounded-xl overflow-hidden">
+              <div className="px-4 py-2.5 bg-secondary/30 border-b border-border">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Ingredients</p>
+              </div>
+              <div className="divide-y divide-border/50 max-h-[calc(100vh-280px)] overflow-y-auto">
+                {ingredients.map(ing => {
+                  const status = ingredientDoneStatus(ing);
+                  const isSelected = ing.ingredientId === selectedIngredientId;
+                  return (
+                    <button
+                      key={ing.ingredientId}
+                      onClick={() => setSelectedIngredientId(ing.ingredientId)}
+                      className={cn(
+                        "w-full flex items-center gap-3 px-4 py-3 text-left transition-colors",
+                        isSelected
+                          ? "bg-primary/10 border-l-4 border-l-primary"
+                          : "hover:bg-secondary/40 border-l-4 border-l-transparent",
+                        status.isFullyDone && !isSelected && "opacity-60"
+                      )}
+                    >
+                      {status.isFullyDone ? (
+                        <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
+                      ) : status.needsStockCheck ? (
+                        <Package className="w-5 h-5 text-blue-500 flex-shrink-0 animate-pulse" />
+                      ) : (
+                        <div className="relative w-5 h-5 flex-shrink-0">
+                          <svg className="w-5 h-5 -rotate-90" viewBox="0 0 20 20">
+                            <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" strokeWidth="2" className="text-border" />
+                            {status.totalTinsForIng > 0 && (
+                              <circle
+                                cx="10" cy="10" r="8" fill="none"
+                                stroke="currentColor" strokeWidth="2"
+                                className="text-emerald-500"
+                                strokeDasharray={`${(status.completedTinsForIng / status.totalTinsForIng) * 50.26} 50.26`}
+                              />
+                            )}
+                          </svg>
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className={cn(
+                          "text-sm font-medium truncate",
+                          isSelected && "font-semibold",
+                          status.isFullyDone && "line-through text-muted-foreground"
+                        )}>
+                          {ing.ingredientName}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {fmtQty(ing.totalQty, ing.unit)}
+                          {status.totalTinsForIng > 1 && ` · ${status.completedTinsForIng}/${status.totalTinsForIng}`}
+                        </p>
+                      </div>
+                      {ing.stockCheckEnabled && !status.stockSaved && (
+                        <Package className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
 
-            return (
-              <div key={ing.ingredientId} className={cn(
-                "bg-card border rounded-xl overflow-hidden transition-colors",
-                isFullyDone
-                  ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/20"
-                  : needsStockCheck
-                    ? "border-blue-300 dark:border-blue-700 bg-blue-50/50 dark:bg-blue-950/20"
-                    : "border-border"
+          <div className="flex-1 min-w-0">
+            {selectedIng && selectedStatus ? (
+              <div className={cn(
+                "bg-card border-2 rounded-2xl p-6 transition-colors",
+                selectedStatus.isFullyDone
+                  ? "border-emerald-400 dark:border-emerald-600 bg-emerald-50/30 dark:bg-emerald-950/20"
+                  : selectedStatus.needsStockCheck
+                    ? "border-blue-400 dark:border-blue-600 bg-blue-50/30 dark:bg-blue-950/20"
+                    : "border-primary"
               )}>
-                <button
-                  onClick={() => toggleExpand(ing.ingredientId)}
-                  className="w-full flex items-center justify-between px-4 py-3 text-left"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    {isFullyDone ? (
-                      <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
-                    ) : needsStockCheck ? (
-                      <Package className="w-5 h-5 text-blue-500 flex-shrink-0 animate-pulse" />
-                    ) : (
-                      <div className="w-5 h-5 rounded-full border-2 border-muted-foreground/30 flex-shrink-0" />
+                <div className="mb-6">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+                    {selectedStatus.isFullyDone ? "Completed" : selectedStatus.needsStockCheck ? "Stock Check Required" : "Currently Prepping"}
+                  </p>
+                  <h2 className="font-display text-3xl font-bold leading-tight">
+                    {selectedIng.ingredientName}
+                  </h2>
+                  <div className="flex flex-wrap items-center gap-3 mt-2 text-sm text-muted-foreground">
+                    {selectedIng.recipes.length > 1 && (
+                      <span className="bg-secondary/50 rounded px-2 py-0.5">{selectedIng.recipes.length} recipes</span>
                     )}
-                    <div className="min-w-0">
-                      <p className={cn(
-                        "font-semibold text-sm",
-                        isFullyDone && "text-emerald-700 dark:text-emerald-300",
-                        needsStockCheck && !isFullyDone && "text-blue-700 dark:text-blue-300"
-                      )}>
-                        {ing.ingredientName}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Total: {fmtQty(ing.totalQty, ing.unit)}
-                        {isMultiRecipe && ` · ${ing.recipes.length} recipes`}
-                        {ing.stockCheckEnabled && (
-                          <span className="ml-1.5 text-blue-600 dark:text-blue-400">· stock check required</span>
-                        )}
-                      </p>
+                    {selectedIng.stockCheckEnabled && (
+                      <span className="bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 rounded px-2 py-0.5 text-xs font-medium">Stock check required</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-center gap-8 my-6">
+                  <div className="text-center">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Total</p>
+                    <p className="text-5xl font-bold font-display tabular-nums text-primary">
+                      {fmtQty(selectedIng.totalQty, selectedIng.unit)}
+                    </p>
+                  </div>
+                  <div className="text-4xl font-light text-muted-foreground">·</div>
+                  <div className="text-center">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Tins Done</p>
+                    <p className="text-5xl font-bold font-display tabular-nums">
+                      <span className={selectedStatus.allTinsDone ? "text-emerald-600" : ""}>{selectedStatus.completedTinsForIng}</span>
+                      <span className="text-2xl text-muted-foreground"> / {selectedStatus.totalTinsForIng}</span>
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mb-6">
+                  <div className="flex justify-between text-xs text-muted-foreground mb-1.5">
+                    <span>{selectedStatus.totalTinsForIng - selectedStatus.completedTinsForIng} tin{selectedStatus.totalTinsForIng - selectedStatus.completedTinsForIng !== 1 ? "s" : ""} remaining</span>
+                    <span>{selectedStatus.totalTinsForIng > 0 ? Math.round((selectedStatus.completedTinsForIng / selectedStatus.totalTinsForIng) * 100) : 0}%</span>
+                  </div>
+                  <div className="w-full h-3 bg-secondary rounded-full overflow-hidden">
+                    <div
+                      className={cn("h-full rounded-full transition-all", selectedStatus.allTinsDone ? "bg-emerald-500" : "bg-primary")}
+                      style={{ width: `${selectedStatus.totalTinsForIng > 0 ? Math.min((selectedStatus.completedTinsForIng / selectedStatus.totalTinsForIng) * 100, 100) : 0}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-5">
+                  {selectedIng.recipes.map(recipe => {
+                    const tins = Array.from({ length: recipe.tinCount }, (_, i) => i + 1);
+                    return (
+                      <div key={recipe.recipeId}>
+                        <div className="flex items-center justify-between mb-3">
+                          <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+                            {recipe.recipeName}
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            {recipe.batchesTarget} batches · {fmtQty(recipe.qtyForRecipe, selectedIng.unit)}
+                          </p>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                          {tins.map(tn => {
+                            const done = isCompleted(selectedIng.ingredientId, recipe.recipeId, tn);
+                            const completion = getCompletion(selectedIng.ingredientId, recipe.recipeId, tn);
+                            return (
+                              <button
+                                key={tn}
+                                onClick={() => toggleTin(selectedIng.ingredientId, recipe.recipeId, tn)}
+                                className={cn(
+                                  "relative flex flex-col items-center border-2 rounded-2xl px-4 py-4 transition-all active:scale-95",
+                                  done
+                                    ? "bg-emerald-50 dark:bg-emerald-900/30 border-emerald-400 dark:border-emerald-600 shadow-sm"
+                                    : "bg-background border-border hover:border-primary hover:shadow-md"
+                                )}
+                              >
+                                <div className="flex items-center gap-2 mb-2">
+                                  {done ? (
+                                    <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                                  ) : (
+                                    <div className="w-5 h-5 rounded-full border-2 border-muted-foreground/40" />
+                                  )}
+                                  <span className="text-sm font-bold">
+                                    Tin {tn}
+                                  </span>
+                                </div>
+                                {recipe.tinSize && (
+                                  <span className="text-xs text-muted-foreground mb-1">{recipe.tinSize}</span>
+                                )}
+                                <span className={cn("text-xl font-bold tabular-nums", done ? "text-emerald-700 dark:text-emerald-300" : "text-foreground")}>
+                                  {fmtQty(recipe.qtyPerTin, selectedIng.unit)}
+                                </span>
+                                {done && completion && (
+                                  <span className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-1.5 leading-tight">
+                                    {completion.userName ?? "User"} · {format(new Date(completion.completedAt), "HH:mm")}
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {selectedStatus.needsStockCheck && (
+                  <div className="mt-6 border-t-2 border-blue-200 dark:border-blue-800 pt-6">
+                    <div className="bg-blue-50/70 dark:bg-blue-950/30 rounded-2xl p-6">
+                      <div className="flex items-center gap-3 mb-3">
+                        <Package className="w-6 h-6 text-blue-600 animate-pulse" />
+                        <div>
+                          <p className="text-lg font-bold text-blue-800 dark:text-blue-200">
+                            Stock Check
+                          </p>
+                          <p className="text-sm text-blue-600 dark:text-blue-400">
+                            How much {selectedIng.ingredientName.toLowerCase()} is left after prep?
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 mt-4">
+                        <input
+                          type="number"
+                          step="0.01"
+                          autoFocus
+                          placeholder={`Remaining ${selectedIng.unit}`}
+                          className="flex-1 max-w-[200px] text-lg border-2 border-blue-300 dark:border-blue-600 rounded-xl px-4 py-3 text-right bg-background focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                          value={stockValues[selectedIng.ingredientId] ?? ""}
+                          onChange={e => setStockValues(v => ({ ...v, [selectedIng.ingredientId]: e.target.value }))}
+                          onKeyDown={e => { if (e.key === "Enter") saveStockCheck(selectedIng.ingredientId); }}
+                        />
+                        <span className="text-sm text-muted-foreground font-medium">{selectedIng.unit}</span>
+                        <button
+                          onClick={() => saveStockCheck(selectedIng.ingredientId)}
+                          disabled={!stockValues[selectedIng.ingredientId] || savingStock[selectedIng.ingredientId]}
+                          className={cn(
+                            "px-6 py-3 rounded-xl text-base font-bold transition-all",
+                            stockValues[selectedIng.ingredientId]
+                              ? "bg-blue-600 text-white hover:bg-blue-700 shadow-md active:scale-95"
+                              : "bg-blue-200 text-blue-400 cursor-not-allowed"
+                          )}
+                        >
+                          {savingStock[selectedIng.ingredientId] ? (
+                            <Loader2 className="w-5 h-5 animate-spin" />
+                          ) : selectedStatus.stockSaved ? (
+                            <Check className="w-5 h-5" />
+                          ) : (
+                            "Save & Next"
+                          )}
+                        </button>
+                      </div>
+                      {selectedStatus.stockSaved && (
+                        <p className="text-sm text-emerald-600 dark:text-emerald-400 mt-3 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4" />
+                          Stock check recorded: {stockValues[selectedIng.ingredientId]} {selectedIng.unit} remaining
+                        </p>
+                      )}
                     </div>
                   </div>
-                  <ChevronDown className={cn(
-                    "w-4 h-4 text-muted-foreground transition-transform flex-shrink-0",
-                    isExpanded && "rotate-180"
-                  )} />
-                </button>
+                )}
 
-                {isExpanded && (
-                  <div className="border-t border-border/50 divide-y divide-border/50">
-                    {ing.recipes.map(recipe => {
-                      const tins = Array.from({ length: recipe.tinCount }, (_, i) => i + 1);
-                      return (
-                        <div key={recipe.recipeId} className="px-4 py-2.5">
-                          <div className="flex items-center justify-between mb-2">
-                            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                              {recipe.recipeName}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {recipe.batchesTarget} batches · {fmtQty(recipe.qtyForRecipe, ing.unit)} total
-                            </p>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            {tins.map(tn => {
-                              const done = isCompleted(ing.ingredientId, recipe.recipeId, tn);
-                              const completion = getCompletion(ing.ingredientId, recipe.recipeId, tn);
-                              return (
-                                <button
-                                  key={tn}
-                                  onClick={() => toggleTin(ing.ingredientId, recipe.recipeId, tn)}
-                                  className={cn(
-                                    "relative flex flex-col items-center border rounded-xl px-3 py-2 min-w-[80px] transition-all",
-                                    done
-                                      ? "bg-emerald-50 dark:bg-emerald-900/30 border-emerald-300 dark:border-emerald-700"
-                                      : "bg-background border-border hover:border-emerald-400"
-                                  )}
-                                >
-                                  <div className="flex items-center gap-1.5 mb-1">
-                                    {done ? (
-                                      <Check className="w-3.5 h-3.5 text-emerald-600" />
-                                    ) : (
-                                      <div className="w-3.5 h-3.5 rounded border border-muted-foreground/40" />
-                                    )}
-                                    <span className="text-xs font-semibold">
-                                      Tin {tn}{recipe.tinSize ? ` (${recipe.tinSize})` : ""}
-                                    </span>
-                                  </div>
-                                  <span className={cn("text-sm font-bold", done ? "text-emerald-700 dark:text-emerald-300" : "")}>
-                                    {fmtQty(recipe.qtyPerTin, ing.unit)}
-                                  </span>
-                                  {done && completion && (
-                                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-0.5 leading-tight">
-                                      {completion.userName ?? "User"} · {format(new Date(completion.completedAt), "HH:mm")}
-                                    </span>
-                                  )}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                    {needsStockCheck && (
-                      <div className="px-4 py-3 bg-blue-50/70 dark:bg-blue-950/30">
-                        <div className="flex items-center gap-2 mb-2">
-                          <Package className="w-4 h-4 text-blue-600" />
-                          <p className="text-sm font-semibold text-blue-800 dark:text-blue-200">
-                            Check remaining stock
-                          </p>
-                        </div>
-                        <p className="text-xs text-blue-600 dark:text-blue-400 mb-2">
-                          How much {ing.ingredientName.toLowerCase()} is left after prep?
-                        </p>
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            step="0.01"
-                            placeholder={`Remaining ${ing.unit}`}
-                            className="w-32 text-sm border border-blue-200 dark:border-blue-700 rounded-lg px-3 py-2 text-right bg-background focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
-                            value={stockValues[ing.ingredientId] ?? ""}
-                            onChange={e => setStockValues(v => ({ ...v, [ing.ingredientId]: e.target.value }))}
-                            onKeyDown={e => { if (e.key === "Enter") saveStockCheck(ing.ingredientId); }}
-                          />
-                          <span className="text-xs text-muted-foreground">{ing.unit}</span>
-                          <button
-                            onClick={() => saveStockCheck(ing.ingredientId)}
-                            disabled={!stockValues[ing.ingredientId] || savingStock[ing.ingredientId]}
-                            className={cn(
-                              "px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                              stockValues[ing.ingredientId]
-                                ? "bg-blue-600 text-white hover:bg-blue-700"
-                                : "bg-blue-200 text-blue-400 cursor-not-allowed"
-                            )}
-                          >
-                            {savingStock[ing.ingredientId] ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : stockSaved ? (
-                              <Check className="w-4 h-4" />
-                            ) : (
-                              "Save"
-                            )}
-                          </button>
-                        </div>
-                        {stockSaved && (
-                          <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1.5 flex items-center gap-1">
-                            <Check className="w-3 h-3" />
-                            Stock check recorded: {stockValues[ing.ingredientId]} {ing.unit} remaining
-                          </p>
-                        )}
-                      </div>
+                {selectedStatus.isFullyDone && (
+                  <div className="mt-6 flex flex-col items-center gap-3 py-4">
+                    <CheckCircle2 className="w-12 h-12 text-emerald-500" />
+                    <p className="text-lg font-bold text-emerald-700 dark:text-emerald-300">All done!</p>
+                    {firstIncompleteId && firstIncompleteId !== selectedIngredientId && (
+                      <button
+                        onClick={() => setSelectedIngredientId(firstIncompleteId)}
+                        className="px-6 py-3 rounded-xl bg-primary text-primary-foreground font-bold text-base hover:bg-primary/90 transition-all active:scale-95"
+                      >
+                        Next Ingredient →
+                      </button>
                     )}
                   </div>
                 )}
               </div>
-            );
-          })}
+            ) : (
+              <div className="bg-card border-2 border-dashed border-border rounded-2xl p-12 flex flex-col items-center justify-center text-muted-foreground">
+                <ClipboardList className="w-12 h-12 mb-3 opacity-40" />
+                <p className="font-medium">Select an ingredient to start prepping</p>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
