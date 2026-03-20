@@ -38,7 +38,7 @@ function mapPlan(p: typeof productionPlansTable.$inferSelect) {
   };
 }
 
-function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?: string | null; portionsPerBatch?: number | null; fillWeightGrams?: string | null; baseType?: string | null; baseWeightGrams?: string | null; wrappingComplete?: boolean | null }) {
+function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?: string | null; portionsPerBatch?: number | null; fillWeightGrams?: string | null; baseType?: string | null; baseWeightGrams?: string | null; wrappingComplete?: boolean | null }, stationCompletions?: Record<string, number>) {
   return {
     ...i,
     recipeName: i.recipeName ?? "",
@@ -47,7 +47,19 @@ function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?
     baseType: i.baseType ?? null,
     baseWeightGrams: i.baseWeightGrams ? Number(i.baseWeightGrams) : null,
     wrappingComplete: i.wrappingComplete ?? false,
+    stationCompletions: stationCompletions ?? {},
   };
+}
+
+const STATION_DEPENDENCIES: Record<string, string[]> = {
+  building_1: ["mixing"],
+  building_2: ["mixing"],
+  ovens: ["building_1", "building_2"],
+  wrapping: ["ovens"],
+};
+
+function getPreviousStations(stationType: string): string[] {
+  return STATION_DEPENDENCIES[stationType] ?? [];
 }
 
 const CreatePlanBody = z.object({
@@ -230,6 +242,8 @@ router.get("/:id", async (req, res) => {
       wonlyCount: productionPlanItemsTable.wonlyCount,
       wrappingComplete: productionPlanItemsTable.wrappingComplete,
       fridgeQty: productionPlanItemsTable.fridgeQty,
+      freezerQty: productionPlanItemsTable.freezerQty,
+      prepFridgeQty: productionPlanItemsTable.prepFridgeQty,
       tinSize: productionPlanItemsTable.tinSize,
       maxBatchesPerTin: productionPlanItemsTable.maxBatchesPerTin,
       sopUrl: productionPlanItemsTable.sopUrl,
@@ -242,7 +256,22 @@ router.get("/:id", async (req, res) => {
     .where(eq(productionPlanItemsTable.planId, id))
     .orderBy(productionPlanItemsTable.orderPosition);
 
-  res.json({ ...mapPlan(plan), items: items.map(mapItem) });
+  const itemIds = items.map(it => it.id);
+  let completionsByItem: Record<number, Record<string, number>> = {};
+  if (itemIds.length > 0) {
+    const completionRows = await db.execute(sql`
+      SELECT plan_item_id, station_type, COUNT(*)::int as cnt
+      FROM batch_completions
+      WHERE plan_item_id IN (${sql.join(itemIds.map(id => sql`${id}`), sql`, `)})
+      GROUP BY plan_item_id, station_type
+    `);
+    for (const row of completionRows.rows as Array<{ plan_item_id: number; station_type: string; cnt: number }>) {
+      if (!completionsByItem[row.plan_item_id]) completionsByItem[row.plan_item_id] = {};
+      completionsByItem[row.plan_item_id][row.station_type] = row.cnt;
+    }
+  }
+
+  res.json({ ...mapPlan(plan), items: items.map(it => mapItem(it, completionsByItem[it.id] ?? {})) });
 });
 
 // Statuses that lock structural plan edits (date, name, items)
@@ -425,29 +454,54 @@ router.post("/:id/batch-completions", async (req, res) => {
     return;
   }
 
-  // Cap check before transaction (fast fail)
   const target = planItem.batchesTarget ?? 0;
-  if (target > 0 && (planItem.batchesComplete ?? 0) >= target) {
-    res.status(409).json({ error: "Batch target already met" });
-    return;
+
+  // Per-station cap check: count THIS station's completions (not the shared batches_complete)
+  if (stationType && target > 0) {
+    const stationCountResult = await db.execute(sql`
+      SELECT COUNT(*)::int as cnt FROM batch_completions
+      WHERE plan_item_id = ${Number(planItemId)} AND station_type = ${stationType}
+    `);
+    const stationCount = (stationCountResult.rows[0] as { cnt: number })?.cnt ?? 0;
+    if (stationCount >= target) {
+      res.status(409).json({ error: "Batch target already met for this station" });
+      return;
+    }
+
+    // Cascade check: previous station(s) must have enough completions
+    const prevStations = getPreviousStations(stationType);
+    if (prevStations.length > 0) {
+      const prevCountResult = await db.execute(sql`
+        SELECT COUNT(*)::int as cnt FROM batch_completions
+        WHERE plan_item_id = ${Number(planItemId)}
+          AND station_type IN (${sql.join(prevStations.map(s => sql`${s}`), sql`, `)})
+      `);
+      const prevCount = (prevCountResult.rows[0] as { cnt: number })?.cnt ?? 0;
+      if (prevCount <= stationCount) {
+        const prevLabel = prevStations.length === 1 ? prevStations[0] : prevStations.join("/");
+        res.status(409).json({ error: `Previous station (${prevLabel}) must complete more batches first` });
+        return;
+      }
+    }
   }
 
-  // Atomic: lock the item row, increment only if still below target, then insert completion
-  // Using a single CTE transaction so increment and insert are either both committed or both rolled back
+  // Atomic: insert completion and update item status
   const completedAtDate = completedAt ? new Date(completedAt) : new Date();
   const startedAtDate = startedAt ? new Date(startedAt) : null;
 
   const result = await db.execute(sql`
-    WITH incremented AS (
+    WITH station_check AS (
+      SELECT COUNT(*)::int as cnt FROM batch_completions
+      WHERE plan_item_id = ${Number(planItemId)}
+        AND station_type = ${stationType ?? ''}
+    ),
+    incremented AS (
       UPDATE production_plan_items
       SET
         batches_complete = batches_complete + 1,
-        status = CASE
-          WHEN batches_complete + 1 >= batches_target THEN 'complete'
-          ELSE 'in-progress'
-        END
+        status = 'in-progress'
       WHERE id = ${Number(planItemId)}
-        AND (batches_target = 0 OR batches_complete < batches_target)
+        AND (${target} = 0 OR (SELECT cnt FROM station_check) < ${target})
       RETURNING id
     )
     INSERT INTO batch_completions (plan_item_id, station_type, user_id, started_at, completed_at)
@@ -555,7 +609,7 @@ router.get("/:id/batch-completions", async (req, res) => {
   if (itemIds.length === 0) { res.json([]); return; }
 
   let completions = await db.select().from(batchCompletionsTable)
-    .where(sql`plan_item_id = ANY(${itemIds})`)
+    .where(inArray(batchCompletionsTable.planItemId, itemIds))
     .orderBy(desc(batchCompletionsTable.completedAt));
 
   if (stationType) {
@@ -589,7 +643,7 @@ router.get("/:id/batch-completions/summary", async (req, res) => {
     planItemId: batchCompletionsTable.planItemId,
   }).from(batchCompletionsTable)
     .where(and(
-      sql`plan_item_id = ANY(${itemIds})`,
+      inArray(batchCompletionsTable.planItemId, itemIds),
       eq(batchCompletionsTable.stationType, String(stationType))
     ));
 
@@ -1022,7 +1076,7 @@ router.get("/:id/eod-summary", async (req, res) => {
 
   // Fetch this user's completions for this station
   const allCompletions = await db.select().from(batchCompletionsTable)
-    .where(sql`plan_item_id = ANY(${itemIds})`);
+    .where(inArray(batchCompletionsTable.planItemId, itemIds));
 
   const myCompletions = sessionUserId
     ? allCompletions.filter(c => c.stationType === stationType && c.userId === sessionUserId)
@@ -1136,7 +1190,7 @@ router.get("/:id/kpi", async (req, res) => {
     .from(batchCompletionsTable)
     .where(
       and(
-        sql`plan_item_id = ANY(${itemIds})`,
+        inArray(batchCompletionsTable.planItemId, itemIds),
         eq(batchCompletionsTable.stationType, stationType),
         sql`completed_at >= ${today.toISOString()} AND completed_at < ${tomorrow.toISOString()}`,
         sessionUserId != null ? eq(batchCompletionsTable.userId, sessionUserId) : undefined,
@@ -1211,7 +1265,7 @@ router.get("/:id/station-activity", async (req, res) => {
         .from(batchCompletionsTable)
         .where(
           and(
-            sql`plan_item_id = ANY(${itemIds})`,
+            inArray(batchCompletionsTable.planItemId, itemIds),
             sql`completed_at >= ${today.toISOString()} AND completed_at < ${tomorrow.toISOString()}`
           )
         )
@@ -1379,6 +1433,72 @@ router.delete("/:id/items/:itemId/fridge", async (req, res) => {
     .returning({ fridgeQty: productionPlanItemsTable.fridgeQty });
 
   res.json({ itemId, fridgeQty: updated.fridgeQty });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// POST/DELETE /:id/items/:itemId/freezer — freezer stock (atomic increment/decrement)
+// ──────────────────────────────────────────────────────────────────────────────
+router.post("/:id/items/:itemId/freezer", async (req, res) => {
+  const planId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+  const qty = Number(req.body.qty);
+  if (!Number.isInteger(qty) || qty < 1) { res.status(400).json({ error: "Body must contain { qty: positive integer }" }); return; }
+  const [item] = await db.select({ id: productionPlanItemsTable.id }).from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
+  if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
+  const [updated] = await db.update(productionPlanItemsTable)
+    .set({ freezerQty: sql`${productionPlanItemsTable.freezerQty} + ${qty}` })
+    .where(eq(productionPlanItemsTable.id, itemId))
+    .returning({ freezerQty: productionPlanItemsTable.freezerQty });
+  res.json({ itemId, freezerQty: updated.freezerQty });
+});
+
+router.delete("/:id/items/:itemId/freezer", async (req, res) => {
+  const planId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+  const qty = Number(req.body.qty);
+  if (!Number.isInteger(qty) || qty < 1) { res.status(400).json({ error: "Body must contain { qty: positive integer }" }); return; }
+  const [item] = await db.select({ id: productionPlanItemsTable.id }).from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
+  if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
+  const [updated] = await db.update(productionPlanItemsTable)
+    .set({ freezerQty: sql`GREATEST(${productionPlanItemsTable.freezerQty} - ${qty}, 0)` })
+    .where(eq(productionPlanItemsTable.id, itemId))
+    .returning({ freezerQty: productionPlanItemsTable.freezerQty });
+  res.json({ itemId, freezerQty: updated.freezerQty });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// POST/DELETE /:id/items/:itemId/prep-fridge — prep fridge stock (atomic increment/decrement)
+// ──────────────────────────────────────────────────────────────────────────────
+router.post("/:id/items/:itemId/prep-fridge", async (req, res) => {
+  const planId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+  const qty = Number(req.body.qty);
+  if (!Number.isInteger(qty) || qty < 1) { res.status(400).json({ error: "Body must contain { qty: positive integer }" }); return; }
+  const [item] = await db.select({ id: productionPlanItemsTable.id }).from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
+  if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
+  const [updated] = await db.update(productionPlanItemsTable)
+    .set({ prepFridgeQty: sql`${productionPlanItemsTable.prepFridgeQty} + ${qty}` })
+    .where(eq(productionPlanItemsTable.id, itemId))
+    .returning({ prepFridgeQty: productionPlanItemsTable.prepFridgeQty });
+  res.json({ itemId, prepFridgeQty: updated.prepFridgeQty });
+});
+
+router.delete("/:id/items/:itemId/prep-fridge", async (req, res) => {
+  const planId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+  const qty = Number(req.body.qty);
+  if (!Number.isInteger(qty) || qty < 1) { res.status(400).json({ error: "Body must contain { qty: positive integer }" }); return; }
+  const [item] = await db.select({ id: productionPlanItemsTable.id }).from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
+  if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
+  const [updated] = await db.update(productionPlanItemsTable)
+    .set({ prepFridgeQty: sql`GREATEST(${productionPlanItemsTable.prepFridgeQty} - ${qty}, 0)` })
+    .where(eq(productionPlanItemsTable.id, itemId))
+    .returning({ prepFridgeQty: productionPlanItemsTable.prepFridgeQty });
+  res.json({ itemId, prepFridgeQty: updated.prepFridgeQty });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────

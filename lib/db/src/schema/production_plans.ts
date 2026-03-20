@@ -26,6 +26,8 @@ export const productionPlanItemsTable = pgTable("production_plan_items", {
   wonlyCount: integer("wonly_count").notNull().default(0),
   wrappingComplete: boolean("wrapping_complete").notNull().default(false),
   fridgeQty: integer("fridge_qty").notNull().default(0),
+  freezerQty: integer("freezer_qty").notNull().default(0),
+  prepFridgeQty: integer("prep_fridge_qty").notNull().default(0),
   tinSize: text("tin_size"),
   maxBatchesPerTin: integer("max_batches_per_tin"),
   sopUrl: text("sop_url"),

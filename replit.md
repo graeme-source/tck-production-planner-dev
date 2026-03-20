@@ -65,7 +65,7 @@ artifacts-monorepo/
 - `sales_entries` — sales records (recipe, sale_date, quantity_sold, channel)
 - `dispatch_orders` — dispatch records (recipe, dispatch_date, quantity, customer, status)
 - `app_settings` — simple key-value store for admin-configurable global settings (e.g., `mixer_capacity_kg=25`)
-- `batch_completions` — each oven/station batch completion event (for atomic increment/undo)
+- `batch_completions` — each station batch completion event with `station_type` column (for per-station counts and cascade validation)
 - `station_breaks` — break start/end times per station
 - `dpt_settings` — per-recipe DPT configuration (packsSold, isActive); used with app_settings `total_daily_batches` to compute sales-based default batch allocations
 - `timing_standards` — per-station KPI targets (minBatchesPerHour, targetBatchesPerHour)
@@ -101,12 +101,21 @@ The station page (`/station`) provides a full-screen view with:
   - **Raw Meat** (prep_meat) — per-ingredient tray counts with per-tray kg breakdown, full-screen (rose badge) + overview modes
 - **Dough Prep** (dough_prep) — fetches `/api/production-plans/:id/dough-prep`; shows total dough kg, mixer capacity (from `app_settings`), number of mixes, per-ingredient breakdown (Flour/Water/Oil/Salt/Yeast) per mix, dough ball weights per recipe, batch counters
 - **Dough Sheeting** (dough_sheeting) — shows ordered sheeting queue with ball weight (from dough sub-recipe) and per-item "Ready" checkbox toggle
-- **Ovens** (ovens) — batch counters + Wonly button (POST/DELETE `/api/production-plans/:id/items/:itemId/wonly` to record quality rejects); session totals: gross packs, total wonlys, net packs; blast chiller tray count (`ceil(netPacks/10)`); per-recipe table with snowflake icon column
-- **Wrapping** (wrapping) — per-recipe pack counts (gross/net from oven completions); fridge stock tracker: "Add 24" quick-add button (standard stack size) + custom amount entry + undo; tracks `fridgeQty` per plan item; wrapping-complete toggle per recipe
+- **Ovens** (ovens) — batch counters using per-station oven counts + cascade indicator showing "Built: X" from building; Wonly button; session totals: gross packs, total wonlys, net packs; blast chiller tray count (`ceil(netPacks/10)`); per-recipe table with snowflake icon column
+- **Wrapping** (wrapping) — per-recipe pack counts (gross/net from oven stationCompletions); 3 storage locations: Production Fridge (`fridgeQty`), Product Freezer (`freezerQty`), Prep Fridge (`prepFridgeQty`); tabbed storage controls with "Add 24" quick-add + custom + undo per location; wrapping-complete toggle per recipe
 - **Packing** (packing) — fetches `/api/production-plans/:id/packing`; per-recipe cards with net packs + dispatch order cross-reference (surplus/short indicator); packed checkbox toggle; session gross/wonly/net pack totals
 - **Next-plan lookup**: `GET /api/production-plans/next-active` endpoint — finds next weekday (Mon-Fri) with `status='active'` within 7 days from **tomorrow** (i=1, not today). Used by PrepHub and DoughPrepStation to display "Prep for [Day], [Date]" on tiles and banners.
 
 Recipe fields added for station cards: `fill_weight_grams`, `base_type`, `base_weight_grams`, `sop_url`.
+
+## Station Cascade System
+
+Stations enforce a cascade: downstream stations can only complete as many batches as the upstream station has done.
+- **Dependencies**: mixing → building_1/building_2 → ovens → wrapping
+- **API**: `stationCompletions` map returned per plan item (e.g., `{ mixing: 5, building_1: 3, ovens: 2 }`)
+- **Validation**: POST batch completion returns 409 if previous station hasn't completed enough
+- **UI helpers**: `getStationCount(item, stationType)`, `getPrevStationCount(item, stationType)`, `getAvailableFromPrev(item, stationType)` in station.tsx
+- **Storage**: `production_plan_items` has `fridge_qty`, `freezer_qty`, `prep_fridge_qty` columns with POST/DELETE endpoints for each
 
 ## Codegen Critical Notes
 

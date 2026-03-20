@@ -66,6 +66,30 @@ const STATIONS = [
 
 type StationType = typeof STATIONS[number]["key"] | "prep_veg" | "prep_bases" | "prep_meat";
 
+function getStationCount(item: ProductionPlanItem, stationType: string): number {
+  const sc = (item as any).stationCompletions;
+  if (!sc || typeof sc !== "object") return 0;
+  return sc[stationType] ?? 0;
+}
+
+function getPrevStationCount(item: ProductionPlanItem, stationType: string): number {
+  const sc = (item as any).stationCompletions;
+  if (!sc || typeof sc !== "object") return item.batchesTarget ?? 0;
+  const deps: Record<string, string[]> = {
+    building_1: ["mixing"],
+    building_2: ["mixing"],
+    ovens: ["building_1", "building_2"],
+    wrapping: ["ovens"],
+  };
+  const prevStations = deps[stationType];
+  if (!prevStations) return item.batchesTarget ?? 0;
+  return prevStations.reduce((sum, s) => sum + (sc[s] ?? 0), 0);
+}
+
+function getAvailableFromPrev(item: ProductionPlanItem, stationType: string): number {
+  return Math.max(0, getPrevStationCount(item, stationType) - getStationCount(item, stationType));
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Station Layout (shared header)
 // ──────────────────────────────────────────────────────────────────────────────
@@ -432,7 +456,7 @@ function EodSummary({ planId, items, stationType, sessionBatches, totalBreakMinu
   const localBph = localActiveHours > 0 ? sessionBatches / localActiveHours : 0;
   const localMinsPerBatch = sessionBatches > 0 && localActiveMinutes > 0 ? localActiveMinutes / sessionBatches : null;
   const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
-  const totalBatchesComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
+  const totalBatchesComplete = items.reduce((s, it) => s + getStationCount(it, stationType), 0);
   const localCompletionRate = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
 
   const displayBatches = serverData?.totalBatches ?? sessionBatches;
@@ -535,7 +559,7 @@ function EodSummary({ planId, items, stationType, sessionBatches, totalBreakMinu
                         {item.recipeName ?? `Recipe #${item.recipeId}`}
                       </td>
                       <td className="px-3 py-2 text-center tabular-nums font-bold">
-                        {item.batchesComplete ?? 0}
+                        {getStationCount(item, stationType)}
                       </td>
                       <td className="px-3 py-2 text-center tabular-nums text-muted-foreground">—</td>
                     </tr>
@@ -648,7 +672,7 @@ function MixingStation({ plan }: MixingStationProps) {
 
   // removeBatch: delete most recent batch_completion row + atomic decrement (keeps KPI metrics consistent)
   const removeBatch = async (item: ProductionPlanItem) => {
-    if ((item.batchesComplete ?? 0) === 0) return;
+    if (getStationCount(item, "mixing") === 0) return;
     try {
       const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
         method: "DELETE",
@@ -664,8 +688,8 @@ function MixingStation({ plan }: MixingStationProps) {
   };
 
   const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
-  const totalBatchesComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
-  const overallProgress = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
+  const totalMixingComplete = items.reduce((s, it) => s + getStationCount(it, "mixing"), 0);
+  const overallProgress = totalBatchesTarget > 0 ? Math.round((totalMixingComplete / totalBatchesTarget) * 100) : 0;
 
   return (
     <div className="space-y-4">
@@ -675,7 +699,7 @@ function MixingStation({ plan }: MixingStationProps) {
           <div>
             <h2 className="font-semibold">Today's Production</h2>
             <p className="text-sm text-muted-foreground">
-              {totalBatchesComplete} of {totalBatchesTarget} batches complete
+              {totalMixingComplete} of {totalBatchesTarget} batches mixed
             </p>
           </div>
           <span className="text-2xl font-bold font-display">{overallProgress}%</span>
@@ -723,7 +747,8 @@ interface SortableMixingItemProps {
 }
 
 function SortableMixingItem({ item, isAdmin, onAdd, onRemove }: SortableMixingItemProps) {
-  const isDraggable = isAdmin || (item.status === "pending" && (item.batchesComplete ?? 0) === 0);
+  const mixingCount = getStationCount(item, "mixing");
+  const isDraggable = isAdmin || (item.status === "pending" && mixingCount === 0);
   const {
     attributes, listeners, setNodeRef,
     transform, transition, isDragging,
@@ -736,10 +761,9 @@ function SortableMixingItem({ item, isAdmin, onAdd, onRemove }: SortableMixingIt
     zIndex: isDragging ? 50 : "auto",
   };
 
-  const progress = (item.batchesTarget ?? 0) > 0
-    ? Math.round(((item.batchesComplete ?? 0) / (item.batchesTarget ?? 0)) * 100)
-    : 0;
-  const isComplete = item.status === "complete";
+  const target = item.batchesTarget ?? 0;
+  const progress = target > 0 ? Math.round((mixingCount / target) * 100) : 0;
+  const isComplete = mixingCount >= target && target > 0;
 
   const statusColors = {
     pending: "border-border",
@@ -799,15 +823,15 @@ function SortableMixingItem({ item, isAdmin, onAdd, onRemove }: SortableMixingIt
                 />
               </div>
               <span className="text-xs text-muted-foreground whitespace-nowrap">
-                {item.batchesComplete ?? 0} / {item.batchesTarget ?? 0}
+                {mixingCount} / {target}
               </span>
             </div>
 
             <div className="flex items-center gap-3 text-xs text-muted-foreground">
               {item.tinSize && <span>{item.tinSize} tin</span>}
-              {item.maxBatchesPerTin && (item.batchesTarget ?? 0) > 0 && (
+              {item.maxBatchesPerTin && target > 0 && (
                 <span>
-                  {Math.ceil((item.batchesTarget ?? 0) / item.maxBatchesPerTin)} tin{Math.ceil((item.batchesTarget ?? 0) / item.maxBatchesPerTin) !== 1 ? "s" : ""}
+                  {Math.ceil(target / item.maxBatchesPerTin)} tin{Math.ceil(target / item.maxBatchesPerTin) !== 1 ? "s" : ""}
                 </span>
               )}
             </div>
@@ -817,13 +841,13 @@ function SortableMixingItem({ item, isAdmin, onAdd, onRemove }: SortableMixingIt
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={onRemove}
-              disabled={(item.batchesComplete ?? 0) === 0}
+              disabled={mixingCount === 0}
               className="w-9 h-9 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
             >
               <Minus className="w-4 h-4" />
             </button>
             <div className="w-12 text-center">
-              <span className="text-xl font-bold">{item.batchesComplete ?? 0}</span>
+              <span className="text-xl font-bold">{mixingCount}</span>
             </div>
             <button
               onClick={onAdd}
@@ -898,13 +922,18 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   });
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
-  const currentItem = items.find(it => it.status === "in-progress") ?? items.find(it => it.status === "pending");
-  const remaining = currentItem ? Math.max(0, (currentItem.batchesTarget ?? 0) - (currentItem.batchesComplete ?? 0)) : 0;
+  const currentItem = items.find(it => {
+    const sc = getStationCount(it, stationType);
+    return sc < (it.batchesTarget ?? 0);
+  });
+  const buildingCount = currentItem ? getStationCount(currentItem, stationType) : 0;
+  const available = currentItem ? getAvailableFromPrev(currentItem, stationType) : 0;
+  const remaining = currentItem ? Math.max(0, (currentItem.batchesTarget ?? 0) - buildingCount) : 0;
   const allDone = items.length > 0 && !currentItem;
 
   // Large "BATCH COMPLETE" tap — single write via createBatchCompletion only
   const handleBatchComplete = () => {
-    if (!currentItem || pendingTap) return;
+    if (!currentItem || pendingTap || available <= 0) return;
     setPendingTap(true);
     createBatch.mutate({
       id: plan.id,
@@ -919,7 +948,7 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   // Undo last batch — deletes the most recent batch_completion row for this user/station
   // and decrements batches_complete atomically, keeping KPI metrics consistent.
   const handleUndo = async () => {
-    if (!currentItem || (currentItem.batchesComplete ?? 0) === 0) return;
+    if (!currentItem || buildingCount === 0) return;
     try {
       const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
         method: "DELETE",
@@ -945,7 +974,7 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   }, [activeBreakMinutes]);
 
   const pct = currentItem && (currentItem.batchesTarget ?? 0) > 0
-    ? Math.round(((currentItem.batchesComplete ?? 0) / (currentItem.batchesTarget ?? 0)) * 100)
+    ? Math.round((buildingCount / (currentItem.batchesTarget ?? 0)) * 100)
     : 0;
 
   return (
@@ -1025,12 +1054,20 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
             )}
           </div>
 
+          {/* Cascade availability badge */}
+          {available <= 0 && (
+            <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-xl mb-4">
+              <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+              <p className="text-sm text-amber-700 dark:text-amber-300">Waiting for Mixing to complete more batches</p>
+            </div>
+          )}
+
           {/* Large batch counter */}
           <div className="flex items-center justify-center gap-8 my-6">
             <div className="text-center">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Complete</p>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Built</p>
               <p className="text-6xl font-bold font-display tabular-nums text-primary">
-                {currentItem.batchesComplete ?? 0}
+                {buildingCount}
               </p>
             </div>
             <div className="text-4xl font-light text-muted-foreground">/</div>
@@ -1038,6 +1075,13 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Target</p>
               <p className="text-6xl font-bold font-display tabular-nums">
                 {currentItem.batchesTarget ?? 0}
+              </p>
+            </div>
+            <div className="text-4xl font-light text-muted-foreground hidden sm:block">·</div>
+            <div className="text-center hidden sm:block">
+              <p className="text-xs font-medium text-blue-600 dark:text-blue-400 uppercase tracking-wide mb-1">Mixed</p>
+              <p className="text-4xl font-bold font-display tabular-nums text-blue-600 dark:text-blue-400">
+                {getPrevStationCount(currentItem, stationType)}
               </p>
             </div>
             {currentItem.maxBatchesPerTin && (currentItem.batchesTarget ?? 0) > 0 && (
@@ -1073,29 +1117,33 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
           {/* Large BATCH COMPLETE button */}
           <button
             onClick={handleBatchComplete}
-            disabled={pendingTap || activeBreakMinutes > 0}
+            disabled={pendingTap || activeBreakMinutes > 0 || available <= 0}
             className={cn(
               "w-full py-6 rounded-2xl text-2xl font-bold transition-all select-none active:scale-95",
               remaining === 0
                 ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 border-2 border-emerald-400 opacity-60 cursor-not-allowed"
-                : pendingTap
-                  ? "bg-primary/60 text-primary-foreground cursor-wait"
-                  : activeBreakMinutes > 0
-                    ? "bg-amber-100 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 border-2 border-amber-300 cursor-not-allowed opacity-70"
-                    : "bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg hover:shadow-xl"
+                : available <= 0
+                  ? "bg-amber-100 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 border-2 border-amber-300 cursor-not-allowed opacity-70"
+                  : pendingTap
+                    ? "bg-primary/60 text-primary-foreground cursor-wait"
+                    : activeBreakMinutes > 0
+                      ? "bg-amber-100 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 border-2 border-amber-300 cursor-not-allowed opacity-70"
+                      : "bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg hover:shadow-xl"
             )}
           >
             {activeBreakMinutes > 0
               ? "On Break — End Break First"
               : remaining === 0
                 ? "✓ All Batches Complete"
-                : pendingTap
-                  ? "Recording..."
-                  : "BATCH COMPLETE ✓"}
+                : available <= 0
+                  ? "Waiting for Mixing…"
+                  : pendingTap
+                    ? "Recording..."
+                    : "BATCH COMPLETE ✓"}
           </button>
 
           {/* Undo */}
-          {(currentItem.batchesComplete ?? 0) > 0 && (
+          {buildingCount > 0 && (
             <button
               onClick={handleUndo}
               className="mt-2 w-full py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-xl transition-colors"
@@ -1162,13 +1210,10 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
           </thead>
           <tbody>
             {items.map(item => {
-              const rem = Math.max(0, (item.batchesTarget ?? 0) - (item.batchesComplete ?? 0));
+              const stCount = getStationCount(item, stationType);
+              const rem = Math.max(0, (item.batchesTarget ?? 0) - stCount);
               const isCurrent = item.id === currentItem?.id;
-              const statusColors = {
-                pending: "text-muted-foreground",
-                "in-progress": "text-blue-600 dark:text-blue-400 font-medium",
-                complete: "text-emerald-600 dark:text-emerald-400",
-              };
+              const isDone = stCount >= (item.batchesTarget ?? 0);
               return (
                 <tr
                   key={item.id}
@@ -1178,12 +1223,12 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                   )}
                 >
                   <td className="py-2.5 px-4 text-muted-foreground">{item.orderPosition}</td>
-                  <td className={cn("py-2.5 px-4 font-medium", item.status === "complete" ? "line-through text-muted-foreground" : "")}>
+                  <td className={cn("py-2.5 px-4 font-medium", isDone ? "line-through text-muted-foreground" : "")}>
                     {item.recipeName ?? `Recipe #${item.recipeId}`}
                     {isCurrent && <span className="ml-2 text-xs text-primary font-normal">← now</span>}
                   </td>
                   <td className="py-2.5 px-4 text-center">{item.batchesTarget ?? 0}</td>
-                  <td className="py-2.5 px-4 text-center font-medium">{item.batchesComplete ?? 0}</td>
+                  <td className="py-2.5 px-4 text-center font-medium">{stCount}</td>
                   <td className="py-2.5 px-4 text-center">
                     {item.status === "complete"
                       ? <CheckCircle2 className="w-4 h-4 text-emerald-500 mx-auto" />
@@ -1191,9 +1236,12 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                     }
                   </td>
                   <td className="py-2.5 px-4 text-center">
-                    <span className={cn("text-xs capitalize", statusColors[item.status as keyof typeof statusColors] ?? "text-muted-foreground")}>
-                      {item.status === "in-progress" ? "In Progress" : item.status}
-                    </span>
+                    {isDone
+                      ? <CheckCircle2 className="w-4 h-4 text-emerald-500 mx-auto" />
+                      : stCount > 0
+                        ? <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">In Progress</span>
+                        : <span className="text-xs text-muted-foreground">Pending</span>
+                    }
                   </td>
                 </tr>
               );
@@ -2041,7 +2089,7 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
   const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
-  const totalComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
+  const totalComplete = items.reduce((s, it) => s + getStationCount(it, "dough_prep"), 0);
   const overallPct = totalBatchesTarget > 0 ? Math.round((totalComplete / totalBatchesTarget) * 100) : 0;
 
   const addBatch = (item: ProductionPlanItem) => {
@@ -2049,7 +2097,7 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   };
 
   const removeBatch = async (item: ProductionPlanItem) => {
-    if ((item.batchesComplete ?? 0) === 0) return;
+    if (getStationCount(item, "dough_prep") === 0) return;
     try {
       const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
         method: "DELETE",
@@ -2220,9 +2268,10 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
       {/* Per-recipe batch counters */}
       <div className="space-y-2">
         {items.map(item => {
-          const isComplete = item.status === "complete";
+          const dpCount = getStationCount(item, "dough_prep");
+          const isComplete = dpCount >= (item.batchesTarget ?? 0);
           const prog = (item.batchesTarget ?? 0) > 0
-            ? Math.round(((item.batchesComplete ?? 0) / (item.batchesTarget ?? 0)) * 100)
+            ? Math.round((dpCount / (item.batchesTarget ?? 0)) * 100)
             : 0;
           const recipeInfo = doughData?.recipes.find(r => r.recipeId === item.recipeId);
           return (
@@ -2232,7 +2281,7 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                 "bg-card border rounded-xl p-4 transition-all",
                 isComplete
                   ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-900/10"
-                  : (item.batchesComplete ?? 0) > 0
+                  : dpCount > 0
                     ? "border-amber-300 dark:border-amber-700 bg-amber-50/30 dark:bg-amber-900/10"
                     : "border-border"
               )}
@@ -2258,20 +2307,20 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                       />
                     </div>
                     <span className="text-xs text-muted-foreground whitespace-nowrap">
-                      {item.batchesComplete ?? 0} / {item.batchesTarget ?? 0} batches
+                      {dpCount} / {item.batchesTarget ?? 0} batches
                     </span>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <button
                     onClick={() => removeBatch(item)}
-                    disabled={(item.batchesComplete ?? 0) === 0}
+                    disabled={dpCount === 0}
                     className="w-9 h-9 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
                   >
                     <Minus className="w-4 h-4" />
                   </button>
                   <div className="w-10 text-center">
-                    <span className="text-xl font-bold">{item.batchesComplete ?? 0}</span>
+                    <span className="text-xl font-bold">{dpCount}</span>
                   </div>
                   <button
                     onClick={() => addBatch(item)}
@@ -2455,14 +2504,22 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
   });
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
-  const currentItem = items.find(it => it.status === "in-progress") ?? items.find(it => it.status === "pending");
+  const currentItem = items.find(it => {
+    const ovenCount = getStationCount(it, "ovens");
+    return ovenCount < (it.batchesTarget ?? 0);
+  });
 
   const addBatch = (item: ProductionPlanItem) => {
+    const avail = getAvailableFromPrev(item, "ovens");
+    if (avail <= 0) {
+      toast({ title: "Waiting for Building", description: "Building station must complete more batches first.", variant: "destructive" });
+      return;
+    }
     createBatch.mutate({ id: plan.id, data: { planItemId: item.id, stationType: "ovens", completedAt: new Date().toISOString() } });
   };
 
   const removeBatch = async (item: ProductionPlanItem) => {
-    if ((item.batchesComplete ?? 0) === 0) return;
+    if (getStationCount(item, "ovens") === 0) return;
     try {
       const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
         method: "DELETE",
@@ -2511,13 +2568,12 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
     }
   };
 
-  const totalComplete = items.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
+  const totalOvenComplete = items.reduce((s, it) => s + getStationCount(it, "ovens"), 0);
   const totalTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
-  const overallPct = totalTarget > 0 ? Math.round((totalComplete / totalTarget) * 100) : 0;
+  const overallPct = totalTarget > 0 ? Math.round((totalOvenComplete / totalTarget) * 100) : 0;
 
-  // Pack count helpers — 2 portions per pack, 10 packs per blast chiller tray
   const grossPacks = (item: ProductionPlanItem) =>
-    Math.floor(((item.batchesComplete ?? 0) * (item.portionsPerBatch ?? 10)) / 2);
+    Math.floor((getStationCount(item, "ovens") * (item.portionsPerBatch ?? 10)) / 2);
   const netPacks = (item: ProductionPlanItem) =>
     Math.max(0, grossPacks(item) - (item.wonlyCount ?? 0));
   const chillerTrays = (item: ProductionPlanItem) =>
@@ -2538,14 +2594,24 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
           <h2 className="font-display text-2xl font-bold mb-3">
             {currentItem.recipeName ?? `Recipe #${currentItem.recipeId}`}
           </h2>
+          {getAvailableFromPrev(currentItem, "ovens") <= 0 && (
+            <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg mb-3">
+              <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+              <p className="text-sm text-amber-700 dark:text-amber-300">Waiting for Building to complete more batches</p>
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-3 mb-4">
             <div className="bg-secondary/50 rounded-lg px-4 py-2 text-center min-w-[80px]">
-              <p className="text-xs text-muted-foreground">Loads Done</p>
-              <p className="text-3xl font-bold">{currentItem.batchesComplete ?? 0}</p>
+              <p className="text-xs text-muted-foreground">Oven Loads</p>
+              <p className="text-3xl font-bold">{getStationCount(currentItem, "ovens")}</p>
             </div>
             <div className="bg-secondary/50 rounded-lg px-4 py-2 text-center min-w-[80px]">
               <p className="text-xs text-muted-foreground">Target</p>
               <p className="text-3xl font-bold">{currentItem.batchesTarget ?? 0}</p>
+            </div>
+            <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg px-4 py-2 text-center min-w-[80px]">
+              <p className="text-xs text-blue-600 dark:text-blue-400">Built</p>
+              <p className="text-3xl font-bold text-blue-600 dark:text-blue-400">{getPrevStationCount(currentItem, "ovens")}</p>
             </div>
             <div className="bg-indigo-50 dark:bg-indigo-900/20 rounded-lg px-4 py-2 text-center min-w-[80px]">
               <p className="text-xs text-muted-foreground">Net Packs</p>
@@ -2565,17 +2631,17 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
           <div className="flex items-center justify-center gap-4 mb-4">
             <button
               onClick={() => removeBatch(currentItem)}
-              disabled={(currentItem.batchesComplete ?? 0) === 0}
+              disabled={getStationCount(currentItem, "ovens") === 0}
               className="w-12 h-12 flex items-center justify-center rounded-full border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
             >
               <Minus className="w-5 h-5" />
             </button>
             <div className="text-5xl font-bold font-display tabular-nums w-20 text-center">
-              {currentItem.batchesComplete ?? 0}
+              {getStationCount(currentItem, "ovens")}
             </div>
             <button
               onClick={() => addBatch(currentItem)}
-              disabled={currentItem.status === "complete" && !isAdmin}
+              disabled={(getStationCount(currentItem, "ovens") >= (currentItem.batchesTarget ?? 0) && !isAdmin) || getAvailableFromPrev(currentItem, "ovens") <= 0}
               className="w-12 h-12 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
             >
               <Plus className="w-5 h-5" />
@@ -2685,7 +2751,7 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
                   <td className={cn("py-2 px-3 font-medium text-xs", item.status === "complete" ? "line-through text-muted-foreground" : "")}>
                     {item.recipeName ?? `Recipe #${item.recipeId}`}
                   </td>
-                  <td className="py-2 px-3 text-center tabular-nums text-xs">{item.batchesComplete ?? 0}</td>
+                  <td className="py-2 px-3 text-center tabular-nums text-xs">{getStationCount(item, "ovens")}</td>
                   <td className="py-2 px-3 text-center tabular-nums text-xs">{gPacks}</td>
                   <td className="py-2 px-3 text-center tabular-nums text-xs">
                     <div className="flex items-center justify-center gap-1">
@@ -2722,16 +2788,17 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
 function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const queryClient = useQueryClient();
   const [wrappingLoading, setWrappingLoading] = useState<number | null>(null);
-  const [fridgeLoading, setFridgeLoading] = useState<number | null>(null);
+  const [storageLoading, setStorageLoading] = useState<number | null>(null);
   const [customAmounts, setCustomAmounts] = useState<Record<number, string>>({});
   const [showCustom, setShowCustom] = useState<Record<number, boolean>>({});
+  const [activeStorage, setActiveStorage] = useState<string>("fridge");
 
   const STACK_SIZE = 24;
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
 
   const grossPacks = (item: ProductionPlanItem) =>
-    Math.floor(((item.batchesComplete ?? 0) * (item.portionsPerBatch ?? 10)) / 2);
+    Math.floor((getStationCount(item, "ovens") * (item.portionsPerBatch ?? 10)) / 2);
   const netPacks = (item: ProductionPlanItem) =>
     Math.max(0, grossPacks(item) - (item.wonlyCount ?? 0));
 
@@ -2761,11 +2828,26 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
     }
   };
 
-  const addToFridge = async (item: ProductionPlanItem, qty: number) => {
+  const STORAGE_LOCATIONS = [
+    { key: "fridge", label: "Production Fridge", endpoint: "fridge", color: "blue" },
+    { key: "freezer", label: "Product Freezer", endpoint: "freezer", color: "cyan" },
+    { key: "prep_fridge", label: "Prep Fridge", endpoint: "prep-fridge", color: "teal" },
+  ] as const;
+
+  const getStorageQty = (item: ProductionPlanItem, key: string): number => {
+    if (key === "fridge") return (item as any).fridgeQty ?? 0;
+    if (key === "freezer") return (item as any).freezerQty ?? 0;
+    if (key === "prep_fridge") return (item as any).prepFridgeQty ?? 0;
+    return 0;
+  };
+
+  const addToStorage = async (item: ProductionPlanItem, qty: number, storageKey: string) => {
     if (qty < 1) return;
-    setFridgeLoading(item.id);
+    const loc = STORAGE_LOCATIONS.find(l => l.key === storageKey);
+    if (!loc) return;
+    setStorageLoading(item.id);
     try {
-      const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/fridge`, {
+      const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/${loc.endpoint}`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -2775,19 +2857,21 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
       setCustomAmounts(prev => ({ ...prev, [item.id]: "" }));
       setShowCustom(prev => ({ ...prev, [item.id]: false }));
-      toast({ title: `+${qty} packs → fridge`, description: `${item.recipeName ?? "Recipe"}` });
+      toast({ title: `+${qty} packs → ${loc.label}`, description: `${item.recipeName ?? "Recipe"}` });
     } catch (err) {
-      toast({ title: "Error", description: err instanceof Error ? err.message : "Could not add to fridge.", variant: "destructive" });
+      toast({ title: "Error", description: err instanceof Error ? err.message : `Could not add to ${loc.label}.`, variant: "destructive" });
     } finally {
-      setFridgeLoading(null);
+      setStorageLoading(null);
     }
   };
 
-  const undoFridge = async (item: ProductionPlanItem, qty: number) => {
+  const undoStorage = async (item: ProductionPlanItem, qty: number, storageKey: string) => {
     if (qty < 1) return;
-    setFridgeLoading(item.id);
+    const loc = STORAGE_LOCATIONS.find(l => l.key === storageKey);
+    if (!loc) return;
+    setStorageLoading(item.id);
     try {
-      const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/fridge`, {
+      const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/${loc.endpoint}`, {
         method: "DELETE",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -2795,11 +2879,11 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
       });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
-      toast({ title: `−${qty} packs from fridge`, description: `${item.recipeName ?? "Recipe"}` });
+      toast({ title: `−${qty} packs from ${loc.label}`, description: `${item.recipeName ?? "Recipe"}` });
     } catch (err) {
-      toast({ title: "Error", description: err instanceof Error ? err.message : "Could not undo fridge entry.", variant: "destructive" });
+      toast({ title: "Error", description: err instanceof Error ? err.message : `Could not undo from ${loc.label}.`, variant: "destructive" });
     } finally {
-      setFridgeLoading(null);
+      setStorageLoading(null);
     }
   };
 
@@ -2822,7 +2906,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
             </div>
           )}
         </div>
-        <div className="grid grid-cols-4 gap-2 mb-3">
+        <div className="grid grid-cols-3 gap-2 mb-2">
           <div className="text-center bg-secondary/30 rounded-lg py-2">
             <p className="text-xs text-muted-foreground">Gross Packs</p>
             <p className="text-lg font-bold tabular-nums">{totalGross}</p>
@@ -2835,9 +2919,19 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
             <p className="text-xs text-purple-700 dark:text-purple-300">Net Packs</p>
             <p className="text-lg font-bold tabular-nums text-purple-700 dark:text-purple-300">{totalNet}</p>
           </div>
+        </div>
+        <div className="grid grid-cols-3 gap-2 mb-3">
           <div className="text-center bg-blue-50 dark:bg-blue-950/20 rounded-lg py-2">
-            <p className="text-xs text-blue-700 dark:text-blue-300">In Fridge</p>
+            <p className="text-xs text-blue-700 dark:text-blue-300">Prod Fridge</p>
             <p className="text-lg font-bold tabular-nums text-blue-700 dark:text-blue-300">{totalFridge}</p>
+          </div>
+          <div className="text-center bg-cyan-50 dark:bg-cyan-950/20 rounded-lg py-2">
+            <p className="text-xs text-cyan-700 dark:text-cyan-300">Freezer</p>
+            <p className="text-lg font-bold tabular-nums text-cyan-700 dark:text-cyan-300">{items.reduce((s, it) => s + ((it as any).freezerQty ?? 0), 0)}</p>
+          </div>
+          <div className="text-center bg-teal-50 dark:bg-teal-950/20 rounded-lg py-2">
+            <p className="text-xs text-teal-700 dark:text-teal-300">Prep Fridge</p>
+            <p className="text-lg font-bold tabular-nums text-teal-700 dark:text-teal-300">{items.reduce((s, it) => s + ((it as any).prepFridgeQty ?? 0), 0)}</p>
           </div>
         </div>
         <div className="pt-3 border-t border-border/50">
@@ -2852,10 +2946,13 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
           const wonlys = item.wonlyCount ?? 0;
           const net = netPacks(item);
           const fridge = (item as any).fridgeQty ?? 0;
-          const remaining = net - fridge;
+          const freezer = (item as any).freezerQty ?? 0;
+          const prepFridge = (item as any).prepFridgeQty ?? 0;
+          const totalStored = fridge + freezer + prepFridge;
+          const remaining = net - totalStored;
           const isWrapped = item.wrappingComplete;
           const isLoading = wrappingLoading === item.id;
-          const isFridgeLoading = fridgeLoading === item.id;
+          const isStorageLoading = storageLoading === item.id;
           const isCustomOpen = showCustom[item.id] ?? false;
           const customVal = customAmounts[item.id] ?? "";
           const customNum = parseInt(customVal, 10);
@@ -2895,8 +2992,8 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                       <span className="text-xl font-bold tabular-nums text-purple-700 dark:text-purple-300">{net}</span>
                     </div>
                     <div className="text-center border-l border-border/50 pl-3">
-                      <span className="text-xs text-blue-600 dark:text-blue-400 block">Fridge</span>
-                      <span className="text-xl font-bold tabular-nums text-blue-700 dark:text-blue-300">{fridge}</span>
+                      <span className="text-xs text-blue-600 dark:text-blue-400 block">Stored</span>
+                      <span className="text-xl font-bold tabular-nums text-blue-700 dark:text-blue-300">{totalStored}</span>
                     </div>
                     {remaining > 0 && (
                       <div className="text-center">
@@ -2906,8 +3003,8 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    {item.batchesComplete ?? 0} / {item.batchesTarget ?? 0} batches from ovens
-                    {fridge > 0 && ` · ${Math.floor(fridge / STACK_SIZE)} full stacks`}
+                    {getStationCount(item, "ovens")} / {item.batchesTarget ?? 0} oven loads
+                    {totalStored > 0 && ` · ${fridge} fridge · ${freezer} freezer · ${prepFridge} prep`}
                   </p>
                 </div>
                 <button
@@ -2925,15 +3022,39 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                 </button>
               </div>
 
-              {/* Fridge stock controls */}
+              {/* Storage controls — tabbed for Production Fridge / Product Freezer / Prep Fridge */}
               <div className="mt-3 pt-3 border-t border-border/40">
+                <div className="flex gap-1 mb-2">
+                  {STORAGE_LOCATIONS.map(loc => {
+                    const qty = getStorageQty(item, loc.key);
+                    const colorMap: Record<string, string> = {
+                      blue: "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-700",
+                      cyan: "bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300 border-cyan-300 dark:border-cyan-700",
+                      teal: "bg-teal-100 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300 border-teal-300 dark:border-teal-700",
+                    };
+                    const inactiveColor = "bg-secondary/30 text-muted-foreground border-border";
+                    const isActive = activeStorage === loc.key;
+                    return (
+                      <button
+                        key={loc.key}
+                        onClick={() => setActiveStorage(loc.key)}
+                        className={cn(
+                          "flex-1 px-2 py-1.5 rounded-lg text-xs font-medium border transition-colors",
+                          isActive ? colorMap[loc.color] : inactiveColor
+                        )}
+                      >
+                        {loc.label} {qty > 0 && <span className="font-bold ml-0.5">({qty})</span>}
+                      </button>
+                    );
+                  })}
+                </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <button
-                    onClick={() => addToFridge(item, STACK_SIZE)}
-                    disabled={isFridgeLoading}
+                    onClick={() => addToStorage(item, STACK_SIZE, activeStorage)}
+                    disabled={isStorageLoading}
                     className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
                   >
-                    {isFridgeLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                    {isStorageLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
                     Add {STACK_SIZE}
                   </button>
 
@@ -2952,13 +3073,13 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                         placeholder="Qty"
                         value={customVal}
                         onChange={e => setCustomAmounts(prev => ({ ...prev, [item.id]: e.target.value }))}
-                        onKeyDown={e => { if (e.key === "Enter" && customNum > 0) addToFridge(item, customNum); }}
+                        onKeyDown={e => { if (e.key === "Enter" && customNum > 0) addToStorage(item, customNum, activeStorage); }}
                         className="w-20 h-9 rounded-lg border border-border bg-background px-2 text-sm tabular-nums text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
                         autoFocus
                       />
                       <button
-                        onClick={() => { if (customNum > 0) addToFridge(item, customNum); }}
-                        disabled={isFridgeLoading || !(customNum > 0)}
+                        onClick={() => { if (customNum > 0) addToStorage(item, customNum, activeStorage); }}
+                        disabled={isStorageLoading || !(customNum > 0)}
                         className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
                       >
                         Add
@@ -2972,10 +3093,10 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                     </div>
                   )}
 
-                  {fridge > 0 && (
+                  {getStorageQty(item, activeStorage) > 0 && (
                     <button
-                      onClick={() => undoFridge(item, STACK_SIZE)}
-                      disabled={isFridgeLoading}
+                      onClick={() => undoStorage(item, STACK_SIZE, activeStorage)}
+                      disabled={isStorageLoading}
                       className="ml-auto inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm hover:bg-red-50 dark:hover:bg-red-950/20 disabled:opacity-50 transition-colors"
                     >
                       <Minus className="w-3.5 h-3.5" />
