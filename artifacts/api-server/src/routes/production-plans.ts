@@ -1,10 +1,11 @@
 import { Router, type IRouter } from "express";
 import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, dptSettingsTable } from "@workspace/db";
-import { eq, and, desc, sql, gt, gte, lte, asc, inArray } from "drizzle-orm";
+import { eq, and, desc, sql, gt, gte, lte, asc, inArray, sum as drizzleSum, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
 import * as z from "zod";
 import { resolveRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
+import { countProductsByTag } from "../services/shopify";
 
 const router: IRouter = Router();
 
@@ -210,8 +211,26 @@ router.get("/calculate", async (req, res) => {
   // Delivery dates: the plan date itself is for the next dispatch, then +1 and +2 working days after
   const deliveryDates = [planDate, ...getNextWorkingDays(planDate, 2)];
 
-  // 1. Get latest stock entries per recipe (finished goods), ordered by checked_at ascending
-  //    so that iterating overwrites with the most recent value per recipe
+  // 1. Get fridge stock per recipe from production plan items (the production fridge)
+  //    Sum fridge_qty across active/prep/building plans only (not drafts or complete)
+  const fridgeRows = await db
+    .select({
+      recipeId: productionPlanItemsTable.recipeId,
+      totalFridge: drizzleSum(productionPlanItemsTable.fridgeQty),
+    })
+    .from(productionPlanItemsTable)
+    .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
+    .where(inArray(productionPlansTable.status, ["active", "prep", "building"]))
+    .groupBy(productionPlanItemsTable.recipeId);
+
+  const fridgeStock: Record<number, number> = {};
+  for (const row of fridgeRows) {
+    if (row.recipeId != null) {
+      fridgeStock[row.recipeId] = Number(row.totalFridge ?? 0);
+    }
+  }
+
+  // Also get stock_entries as fallback (manual stock checks for recipes not yet in any plan)
   const stockRows = await db
     .select({
       recipeId: stockEntriesTable.recipeId,
@@ -268,7 +287,25 @@ router.get("/calculate", async (req, res) => {
     todayProductionByRecipe[p.recipeId] = (todayProductionByRecipe[p.recipeId] ?? 0) + packs;
   }
 
-  // 4. Get dispatch orders for the next 3 delivery dates (pending/confirmed only)
+  // 4. Get Shopify "2 Pack" sales data for the plan date
+  //    The dispatch page uses delivery-date tags. We fetch for the plan date to get real sales.
+  let shopifySalesByProduct: Record<string, number> = {};
+  try {
+    const shopifyProducts = await countProductsByTag(planDate);
+    for (const p of shopifyProducts) {
+      const twoPackVariant = p.variants.find(v => {
+        const t = v.title.toLowerCase();
+        return t.includes("2 pack") || t.includes("2-pack") || t === "2pack";
+      });
+      if (twoPackVariant) {
+        shopifySalesByProduct[p.productTitle.toLowerCase().trim()] = twoPackVariant.quantity;
+      }
+    }
+  } catch (err: any) {
+    console.warn("[calculate] Shopify sales fetch failed, falling back to DPT settings:", err.message);
+  }
+
+  // 4b. Get dispatch orders for the next 3 delivery dates (pending/confirmed only)
   const allDeliveryDispatches = await db
     .select({
       recipeId: dispatchOrdersTable.recipeId,
@@ -313,17 +350,39 @@ router.get("/calculate", async (req, res) => {
     .where(eq(appSettingsTable.key, "total_daily_batches"));
   const totalDailyBatches = totalBatchesSetting ? Number(totalBatchesSetting.value) : 0;
 
-  const totalPacksSold = dptRows.reduce((sum, r) => sum + (r.packsSold ?? 0), 0);
+  // Map Shopify product titles to recipe names for sales data lookup
+  // Match by checking if the recipe name appears in the Shopify product title (case-insensitive)
+  function matchShopifySales(recipeName: string): number {
+    const recipeNameLower = recipeName.toLowerCase().trim();
+    for (const [productTitle, qty] of Object.entries(shopifySalesByProduct)) {
+      if (productTitle.includes(recipeNameLower) || recipeNameLower.includes(productTitle)) {
+        return qty;
+      }
+    }
+    return 0;
+  }
+
+  // Use Shopify sales if available, otherwise fall back to DPT packsSold
+  const hasShopifyData = Object.keys(shopifySalesByProduct).length > 0;
+
+  const recipesWithSales = dptRows.map(r => {
+    const recipeName = r.recipeName ?? `Recipe #${r.recipeId}`;
+    const shopifySales = matchShopifySales(recipeName);
+    const packsSold = hasShopifyData ? shopifySales : (r.packsSold ?? 0);
+    return { ...r, effectivePacksSold: packsSold, recipeName };
+  });
+
+  const totalPacksSold = recipesWithSales.reduce((sum, r) => sum + r.effectivePacksSold, 0);
 
   // Build per-recipe calculation
-  const recipes = dptRows.map(r => {
+  const recipes = recipesWithSales.map(r => {
     const recipeId = r.recipeId;
     const portionsPerBatch = Number(r.portionsPerBatch) || 10;
     const packSize = Number(r.packSize) || 1;
     const packsPerBatch = portionsPerBatch / packSize;
 
-    // Today's Factory Number = current stock - today's dispatches + today's production
-    const currentStock = latestStock[recipeId] ?? 0;
+    // Today's Factory Number: use fridge stock (production fridge) first, fall back to stock_entries
+    const currentStock = fridgeStock[recipeId] ?? latestStock[recipeId] ?? 0;
     const todayDispatch = todayDispatchByRecipe[recipeId] ?? 0;
     const todayProduction = todayProductionByRecipe[recipeId] ?? 0;
     const todayFactoryNumber = currentStock - todayDispatch + todayProduction;
@@ -338,8 +397,8 @@ router.get("/calculate", async (req, res) => {
     // Deficit: packs needed to cover the next dispatch from current factory stock
     const deficit = Math.max(0, nextDispatchQty - todayFactoryNumber);
 
-    // DPT percentage
-    const packsSold = r.packsSold ?? 0;
+    // DPT percentage based on effective sales data
+    const packsSold = r.effectivePacksSold;
     const salesPercent = totalPacksSold > 0 ? (packsSold / totalPacksSold) * 100 : 0;
 
     // Deficit in batches (minimum needed)
@@ -356,7 +415,7 @@ router.get("/calculate", async (req, res) => {
 
     return {
       recipeId,
-      recipeName: r.recipeName ?? `Recipe #${recipeId}`,
+      recipeName: r.recipeName,
       portionsPerBatch,
       packSize,
       packsPerBatch,
@@ -375,6 +434,7 @@ router.get("/calculate", async (req, res) => {
       salesPercent: Math.round(salesPercent * 10) / 10,
       packsSold,
       stockWarning,
+      salesSource: hasShopifyData ? "shopify" as const : "dpt" as const,
     };
   });
 
@@ -427,6 +487,7 @@ router.get("/calculate", async (req, res) => {
     totalDailyBatches,
     totalDeficitBatches,
     remainingCapacity,
+    salesSource: hasShopifyData ? "shopify" : "dpt",
     recipes: result,
   });
 });

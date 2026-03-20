@@ -288,6 +288,7 @@ interface CalcRecipe {
   salesPercent: number;
   packsSold: number;
   stockWarning: "ok" | "low" | "short";
+  salesSource: "shopify" | "dpt";
   surplusBatches: number;
   suggestedBatches: number;
   tinCount: number | null;
@@ -303,6 +304,7 @@ interface CalcResponse {
   totalDailyBatches: number;
   totalDeficitBatches: number;
   remainingCapacity: number;
+  salesSource: "shopify" | "dpt";
   recipes: CalcRecipe[];
 }
 
@@ -643,7 +645,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                               />
                             </th>
                             <th className="py-2 px-2 text-left font-medium text-muted-foreground">Recipe</th>
-                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="End-of-day stock position">Factory #</th>
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Current fridge stock position">Factory #</th>
                             <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title={deliveryDates[0] ? `Dispatch ${format(parseISO(deliveryDates[0]), "d MMM")}` : "Next dispatch"}>
                               Dispatch
                             </th>
@@ -654,7 +656,12 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                               Del+2
                             </th>
                             <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Packs short to cover next dispatch">Deficit</th>
-                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">DPT%</th>
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title={calcData?.salesSource === "shopify" ? "Sales % from Shopify orders" : "Sales % from DPT settings"}>
+                              DPT%
+                              {calcData?.salesSource === "shopify" && (
+                                <span className="ml-1 text-[10px] text-green-600 font-normal">LIVE</span>
+                              )}
+                            </th>
                             <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Calculated suggestion">Sugg.</th>
                             <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Batches</th>
                             <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Projected stock after production">Next #</th>
