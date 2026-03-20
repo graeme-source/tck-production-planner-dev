@@ -999,7 +999,8 @@ router.get("/:id/prep-requirements", async (req, res) => {
     const batchesTarget = Number(planItem.batchesTarget) || 0;
     if (!planItem.recipeId || batchesTarget === 0) continue;
 
-    const resolved = await resolveRecipeIngredients(planItem.recipeId);
+    const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
+    const resolved = await resolveRecipeIngredients(planItem.recipeId, portionsPerBatch);
     const agg = aggregateIngredients(resolved);
 
     for (const [iid, ing] of agg) {
@@ -1100,7 +1101,8 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
     const batchesTarget = Number(planItem.batchesTarget) || 0;
     if (!planItem.recipeId || batchesTarget === 0) continue;
 
-    const resolved = await resolveRecipeIngredients(planItem.recipeId);
+    const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
+    const resolved = await resolveRecipeIngredients(planItem.recipeId, portionsPerBatch);
     const agg = aggregateIngredients(resolved);
 
     const ingredients: Array<{
@@ -1231,6 +1233,7 @@ router.get("/:id/ingredient-requirements", async (req, res) => {
       recipeId: productionPlanItemsTable.recipeId,
       batchesTarget: productionPlanItemsTable.batchesTarget,
       recipeName: recipesTable.name,
+      portionsPerBatch: recipesTable.portionsPerBatch,
     })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
@@ -1261,7 +1264,8 @@ router.get("/:id/ingredient-requirements", async (req, res) => {
     if (!planItem.recipeId || batchesTarget === 0) continue;
     totalBatches += batchesTarget;
 
-    const resolved = await resolveRecipeIngredients(planItem.recipeId);
+    const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
+    const resolved = await resolveRecipeIngredients(planItem.recipeId, portionsPerBatch);
     const agg = aggregateIngredients(resolved);
 
     for (const [iid, ing] of agg) {
@@ -2164,8 +2168,9 @@ router.get("/:id/main-prep", async (req, res) => {
       const cat = row.category ?? "";
       if (EXCLUDED_CATEGORIES.includes(cat)) continue;
 
-      const qtyPerBatch = Number(row.quantity) || 0;
-      const cookedQty = qtyPerBatch * batchesTarget;
+      const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
+      const qtyPerPortion = Number(row.quantity) || 0;
+      const cookedQty = qtyPerPortion * portionsPerBatch * batchesTarget;
       const ratio = row.processingRatio ? Number(row.processingRatio) : null;
       const rawQty = ratio ? cookedQty / ratio : cookedQty;
       const unit = row.unit ?? "g";

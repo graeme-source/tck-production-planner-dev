@@ -89,6 +89,7 @@ async function resolveSubRecipeIngredients(
 
 export async function resolveRecipeIngredients(
   recipeId: number,
+  portionsPerBatch: number = 1,
 ): Promise<ResolvedIngredient[]> {
   const directIngredients = await db
     .select({
@@ -113,7 +114,7 @@ export async function resolveRecipeIngredients(
     processingRatio: row.processingRatio ? Number(row.processingRatio) : null,
     rawMeatTrayCapacityKg: row.rawMeatTrayCapacityKg ? Number(row.rawMeatTrayCapacityKg) : null,
     stockCheckEnabled: row.stockCheckEnabled ?? false,
-    quantityPerBatch: Number(row.quantity),
+    quantityPerBatch: Number(row.quantity) * portionsPerBatch,
   }));
 
   const recipeSubRecipes = await db
