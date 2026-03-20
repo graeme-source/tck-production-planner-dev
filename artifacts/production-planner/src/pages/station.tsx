@@ -2009,18 +2009,21 @@ interface DoughPrepData {
   nextPlan: { id: number; planDate: string; name: string } | null;
 }
 
-function useDoughPrepData(planId: number) {
+function useDoughPrepData(planId: number, mode?: "current") {
   const [data, setData] = useState<DoughPrepData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/production-plans/${planId}/dough-prep`, { credentials: "include" })
+    const url = mode
+      ? `/api/production-plans/${planId}/dough-prep?mode=${mode}`
+      : `/api/production-plans/${planId}/dough-prep`;
+    fetch(url, { credentials: "include" })
       .then(r => r.json())
       .then(d => { setData(d); setLoading(false); })
       .catch(e => { setError(e.message); setLoading(false); });
-  }, [planId]);
+  }, [planId, mode]);
 
   return { data, loading, error };
 }
@@ -2296,7 +2299,8 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
 // Dough Sheeting Station
 // ──────────────────────────────────────────────────────────────────────────────
 function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
-  const { data: doughData } = useDoughPrepData(plan.id);
+  // mode="current" bypasses D-1 next-plan lookup — sheeting always uses today's plan ball weights
+  const { data: doughData } = useDoughPrepData(plan.id, "current");
   const [sheetedItems, setSheetedItems] = useState<Set<number>>(new Set());
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
@@ -2905,7 +2909,9 @@ function usePackingData(planId: number, planStatus: string) {
 function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
   const { data: packData, loading: packLoading } = usePackingData(plan.id, plan.status);
+  // Track packed state at DISPATCH level (dispatch id → boolean) and recipe level (item id → boolean)
   const [packedItems, setPackedItems] = useState<Set<number>>(new Set());
+  const [packedDispatches, setPackedDispatches] = useState<Set<number>>(new Set());
 
   const totalCompleteItems = items.filter(it => it.status === "complete").length;
   const allDone = items.length > 0 && items.every(it => it.status === "complete");
@@ -2915,6 +2921,15 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
       const next = new Set(prev);
       if (next.has(itemId)) next.delete(itemId);
       else next.add(itemId);
+      return next;
+    });
+  };
+
+  const toggleDispatchPacked = (dispatchId: number) => {
+    setPackedDispatches(prev => {
+      const next = new Set(prev);
+      if (next.has(dispatchId)) next.delete(dispatchId);
+      else next.add(dispatchId);
       return next;
     });
   };
@@ -3042,7 +3057,7 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
                   </div>
                 </div>
 
-                {/* Dispatch cross-reference */}
+                {/* Dispatch cross-reference with per-dispatch packed checkboxes */}
                 {hasDispatches && (
                   <div className="border-t border-border/50 px-4 py-2 bg-secondary/10">
                     <div className="flex items-center gap-2 mb-1.5">
@@ -3050,12 +3065,50 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
                       <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Dispatch Orders</span>
                     </div>
                     <div className="space-y-1">
-                      {packItem.dispatches.map(d => (
-                        <div key={d.id} className="flex items-center justify-between text-xs">
-                          <span className="text-muted-foreground">{d.customer ?? "Unknown customer"}</span>
-                          <span className="font-semibold">{d.quantity} packs</span>
-                        </div>
-                      ))}
+                      {packItem.dispatches.map(d => {
+                        const isDispatchPacked = packedDispatches.has(d.id);
+                        return (
+                          <div
+                            key={d.id}
+                            className={cn(
+                              "flex items-center justify-between text-xs rounded px-2 py-1.5 transition-colors",
+                              isDispatchPacked
+                                ? "bg-emerald-50 dark:bg-emerald-900/20"
+                                : "hover:bg-secondary/50"
+                            )}
+                          >
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => isWrapped && toggleDispatchPacked(d.id)}
+                                disabled={!isWrapped}
+                                aria-label={isDispatchPacked ? "Mark dispatch unpacked" : "Mark dispatch packed"}
+                                className={cn(
+                                  "w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 transition-colors",
+                                  isWrapped
+                                    ? isDispatchPacked
+                                      ? "bg-emerald-500 border-emerald-500 text-white"
+                                      : "border-border bg-background hover:border-emerald-400"
+                                    : "border-border/40 bg-background opacity-40 cursor-not-allowed"
+                                )}
+                              >
+                                {isDispatchPacked && <CheckCircle2 className="w-3 h-3" />}
+                              </button>
+                              <span className={cn(
+                                "text-muted-foreground",
+                                isDispatchPacked && "line-through opacity-60"
+                              )}>
+                                {d.customer ?? "Unknown customer"}
+                              </span>
+                            </div>
+                            <span className={cn(
+                              "font-semibold tabular-nums",
+                              isDispatchPacked && "text-muted-foreground line-through opacity-60"
+                            )}>
+                              {d.quantity} packs
+                            </span>
+                          </div>
+                        );
+                      })}
                       <div className="flex items-center justify-between text-xs font-semibold pt-1 border-t border-border/40 mt-1">
                         <span>Total Dispatching</span>
                         <span>{packItem.totalDispatch} packs</span>

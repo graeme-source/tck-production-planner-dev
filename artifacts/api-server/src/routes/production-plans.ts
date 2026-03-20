@@ -1337,37 +1337,42 @@ router.patch("/:id/items/:itemId/wrapping-complete", async (req, res) => {
 router.get("/:id/dough-prep", async (req, res) => {
   const planId = Number(req.params.id);
 
-  // ── 1. Look up the next-active plan (D-1 behaviour: dough is prepped the day before) ──
-  // Searches from tomorrow up to 7 calendar days for a weekday plan with status='active'.
-  // If found, use that plan's items for dough calculations. The `planId` in the URL is the
-  // CURRENT plan (today's), used only to track batch completions on this station.
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const candidates: string[] = [];
-  for (let i = 1; i <= 7; i++) {
-    const d = new Date(today);
-    d.setDate(d.getDate() + i);
-    const dow = d.getDay();
-    if (dow !== 0 && dow !== 6) {
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, "0");
-      const dd = String(d.getDate()).padStart(2, "0");
-      candidates.push(`${yyyy}-${mm}-${dd}`);
-    }
-  }
+  // ── 1. Determine target plan ──
+  // mode=current: use planId as-is (used by Dough Sheeting which runs on production day D)
+  // default (D-1 mode): look up next-active plan within 7 days — used by Dough Prep station
+  const useCurrentPlan = req.query.mode === "current";
 
   let nextPlan: { id: number; planDate: string; name: string } | null = null;
-  if (candidates.length > 0) {
-    const nextPlans = await db
-      .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate, name: productionPlansTable.name })
-      .from(productionPlansTable)
-      .where(and(inArray(productionPlansTable.planDate, candidates), eq(productionPlansTable.status, "active")))
-      .orderBy(asc(productionPlansTable.planDate));
-    if (nextPlans.length > 0) nextPlan = nextPlans[0];
-  }
+  let targetPlanId = planId;
 
-  // Use next-active plan for dough requirements; fall back to current plan if none found
-  const targetPlanId = nextPlan?.id ?? planId;
+  if (!useCurrentPlan) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const candidates: string[] = [];
+    for (let i = 1; i <= 7; i++) {
+      const d = new Date(today);
+      d.setDate(d.getDate() + i);
+      const dow = d.getDay();
+      if (dow !== 0 && dow !== 6) {
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const dd = String(d.getDate()).padStart(2, "0");
+        candidates.push(`${yyyy}-${mm}-${dd}`);
+      }
+    }
+
+    if (candidates.length > 0) {
+      const nextPlans = await db
+        .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate, name: productionPlansTable.name })
+        .from(productionPlansTable)
+        .where(and(inArray(productionPlansTable.planDate, candidates), eq(productionPlansTable.status, "active")))
+        .orderBy(asc(productionPlansTable.planDate));
+      if (nextPlans.length > 0) nextPlan = nextPlans[0];
+    }
+
+    // Use next-active plan for dough requirements; fall back to current plan if none found
+    targetPlanId = nextPlan?.id ?? planId;
+  }
 
   // ── 2. Get mixer capacity ──
   const [mixerSetting] = await db.select().from(appSettingsTable).where(eq(appSettingsTable.key, "mixer_capacity_kg"));
