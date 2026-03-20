@@ -53,15 +53,15 @@ import { GripVertical } from "lucide-react";
 // Station metadata
 // ──────────────────────────────────────────────────────────────────────────────
 const STATIONS = [
+  { key: "dough_prep", label: "Dough Prep", short: "Dough Prep", icon: Layers, color: "text-amber-600" },
+  { key: "dough_sheeting", label: "Dough Sheeting", short: "Sheeting", icon: Layers, color: "text-amber-500" },
+  { key: "prep", label: "Prep", short: "Prep", icon: Salad, color: "text-green-500" },
   { key: "mixing", label: "Mixing & Cooking", short: "Mixing", icon: Waves, color: "text-blue-500" },
   { key: "building_1", label: "Building Line 1", short: "Build 1", icon: Construction, color: "text-orange-500" },
   { key: "building_2", label: "Building Line 2", short: "Build 2", icon: Construction, color: "text-orange-400" },
   { key: "ovens", label: "Ovens", short: "Ovens", icon: Flame, color: "text-red-500" },
   { key: "wrapping", label: "Wrapping", short: "Wrapping", icon: Gift, color: "text-purple-500" },
   { key: "packing", label: "Packing", short: "Packing", icon: Box, color: "text-indigo-500" },
-  { key: "dough_prep", label: "Dough Prep", short: "Dough Prep", icon: Layers, color: "text-amber-600" },
-  { key: "dough_sheeting", label: "Dough Sheeting", short: "Sheeting", icon: Layers, color: "text-amber-500" },
-  { key: "prep", label: "Prep", short: "Prep", icon: Salad, color: "text-green-500" },
 ] as const;
 
 type StationType = typeof STATIONS[number]["key"] | "prep_veg" | "prep_bases" | "prep_meat";
