@@ -132,7 +132,8 @@ function computeNextFactory(item: PlanItem): number {
 }
 
 function computeStockWarning(item: PlanItem): "ok" | "low" | "short" {
-  const surplus = item.todayFactoryNumber - item.nextDispatchQty;
+  const afterProduction = item.todayFactoryNumber + (item.batchesTarget * item.packsPerBatch);
+  const surplus = afterProduction - item.nextDispatchQty;
   if (surplus < 0) return "short";
   if (surplus <= 10) return "low";
   return "ok";
@@ -156,7 +157,7 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onRemove }: Sortab
   };
 
   const nextFactory = computeNextFactory(item);
-  const warning = item.stockWarning;
+  const warning = computeStockWarning(item);
 
   return (
     <tr
@@ -424,7 +425,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
     const recipe = allRecipes?.find((r: Recipe) => r.id === recipeId);
     if (!recipe) return;
     const portionsPerBatch = recipe.portionsPerBatch ?? 10;
-    const packSize = (recipe as any).packSize ?? 1;
+    const packSize = recipe.packSize ?? 1;
     const newItem: PlanItem = {
       id: `manual-${recipeId}`,
       recipeId,
@@ -663,13 +664,13 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                 </div>
               )}
 
-              {items.some(i => i.stockWarning === "short") && (
+              {items.some(i => computeStockWarning(i) === "short") && (
                 <div className="flex items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/40 rounded-xl mb-3 text-sm text-red-700 dark:text-red-300">
                   <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  Stock shortfall detected — some recipes don't have enough to cover the next dispatch.
+                  Stock shortfall detected — some recipes don't have enough to cover the next dispatch even with planned production.
                 </div>
               )}
-              {items.some(i => i.stockWarning === "low") && !items.some(i => i.stockWarning === "short") && (
+              {items.some(i => computeStockWarning(i) === "low") && !items.some(i => computeStockWarning(i) === "short") && (
                 <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 rounded-xl mb-3 text-sm text-amber-700 dark:text-amber-300">
                   <AlertTriangle className="w-4 h-4 flex-shrink-0" />
                   Low stock warning — some recipes are within 10 packs of covering the next dispatch.
@@ -750,8 +751,17 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
       tinSize: it.tinSize ?? null,
       salesPercent: 0,
       portionsPerBatch: it.portionsPerBatch ?? 10,
+      packsPerBatch: (it.portionsPerBatch ?? 10),
       sopUrl: it.sopUrl ?? null,
       isFromDpt: false,
+      todayFactoryNumber: 0,
+      nextDispatchQty: 0,
+      deliveryPlus1Qty: 0,
+      deliveryPlus2Qty: 0,
+      deficit: 0,
+      deficitBatches: 0,
+      surplusBatches: 0,
+      stockWarning: "ok" as const,
     }))
   );
 
@@ -809,6 +819,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
     if (items.some(it => it.recipeId === recipeId)) { setAddRecipeId(""); return; }
     const recipe = (allRecipes as Recipe[] | undefined)?.find(r => r.id === recipeId);
     if (!recipe) return;
+    const ppb = recipe.portionsPerBatch ?? 10;
     setItems(prev => [...prev, {
       id: `add-${recipeId}`,
       recipeId,
@@ -820,9 +831,18 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
       maxBatchesPerTin: recipe.maxBatchesPerTin ?? null,
       tinSize: recipe.tinSize ?? null,
       salesPercent: 0,
-      portionsPerBatch: recipe.portionsPerBatch ?? 10,
+      portionsPerBatch: ppb,
+      packsPerBatch: ppb / (recipe.packSize ?? 1),
       sopUrl: recipe.sopUrl ?? null,
       isFromDpt: false,
+      todayFactoryNumber: 0,
+      nextDispatchQty: 0,
+      deliveryPlus1Qty: 0,
+      deliveryPlus2Qty: 0,
+      deficit: 0,
+      deficitBatches: 0,
+      surplusBatches: 0,
+      stockWarning: "ok" as const,
     }]);
     setAddRecipeId("");
   };
@@ -861,7 +881,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-5xl bg-card border-border rounded-2xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-[95vw] w-[1200px] bg-card border-border rounded-2xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader className="pb-4 border-b border-border flex-shrink-0">
           <DialogTitle className="font-display text-xl flex items-center gap-2">
             <ClipboardList className="w-5 h-5 text-primary" />
@@ -921,14 +941,14 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
               <p className="text-sm">No items — add recipes below.</p>
             </div>
           ) : (
-            <div className="border border-border rounded-xl overflow-hidden mb-3">
+            <div className="border border-border rounded-xl overflow-x-auto mb-3">
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                 <SortableContext items={items.map(it => it.id)} strategy={verticalListSortingStrategy}>
-                  <table className="w-full text-sm">
+                  <table className="w-full text-xs">
                     <thead>
                       <tr className="bg-secondary/30 border-b border-border">
-                        <th className="w-8 py-2.5 px-2" />
-                        <th className="w-8 py-2.5 px-2">
+                        <th className="w-7 py-2 px-1.5" />
+                        <th className="w-7 py-2 px-1.5">
                           <input
                             type="checkbox"
                             checked={items.every(it => it.included)}
@@ -936,12 +956,17 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
                             className="rounded border-border"
                           />
                         </th>
-                        <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">Recipe</th>
-                        <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Sales %</th>
-                        <th className="py-2.5 px-3 text-right font-medium text-muted-foreground whitespace-nowrap">Suggested</th>
-                        <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">Batches</th>
-                        <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">Tins</th>
-                        <th className="w-8 py-2.5 px-2" />
+                        <th className="py-2 px-2 text-left font-medium text-muted-foreground">Recipe</th>
+                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Factory #</th>
+                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Dispatch</th>
+                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Del+1</th>
+                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Del+2</th>
+                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Deficit</th>
+                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">DPT%</th>
+                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Sugg.</th>
+                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Batches</th>
+                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Next #</th>
+                        <th className="w-7 py-2 px-1.5" />
                       </tr>
                     </thead>
                     <tbody>

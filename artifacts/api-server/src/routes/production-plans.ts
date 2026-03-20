@@ -257,7 +257,10 @@ router.get("/calculate", async (req, res) => {
     .from(productionPlanItemsTable)
     .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
     .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
-    .where(eq(productionPlansTable.planDate, today));
+    .where(and(
+      eq(productionPlansTable.planDate, today),
+      inArray(productionPlansTable.status, ["active", "prep", "building"]),
+    ));
 
   const todayProductionByRecipe: Record<number, number> = {};
   for (const p of todayPlans) {
