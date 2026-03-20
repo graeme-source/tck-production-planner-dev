@@ -1244,44 +1244,41 @@ router.get("/:id/station-activity", async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// POST /:id/items/:itemId/wonly — increment wonlyCount by 1 (quality reject)
+// POST /:id/items/:itemId/wonly — atomically increment wonlyCount by 1 (quality reject)
 // ──────────────────────────────────────────────────────────────────────────────
 router.post("/:id/items/:itemId/wonly", async (req, res) => {
   const planId = Number(req.params.id);
   const itemId = Number(req.params.itemId);
 
-  const [item] = await db.select({
-    id: productionPlanItemsTable.id,
-    wonlyCount: productionPlanItemsTable.wonlyCount,
-  })
+  // Verify item belongs to this plan first
+  const [exists] = await db.select({ id: productionPlanItemsTable.id })
     .from(productionPlanItemsTable)
     .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
 
-  if (!item) {
+  if (!exists) {
     res.status(404).json({ error: "Plan item not found" });
     return;
   }
 
+  // Atomic increment — avoids read-modify-write race under concurrent taps
   const [updated] = await db
     .update(productionPlanItemsTable)
-    .set({ wonlyCount: (item.wonlyCount ?? 0) + 1 })
+    .set({ wonlyCount: sql`${productionPlanItemsTable.wonlyCount} + 1` })
     .where(eq(productionPlanItemsTable.id, itemId))
-    .returning();
+    .returning({ wonlyCount: productionPlanItemsTable.wonlyCount });
 
   res.json({ itemId, wonlyCount: updated.wonlyCount });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// DELETE /:id/items/:itemId/wonly — undo last Wonly (decrement if > 0)
+// DELETE /:id/items/:itemId/wonly — atomically decrement wonlyCount (floor at 0)
 // ──────────────────────────────────────────────────────────────────────────────
 router.delete("/:id/items/:itemId/wonly", async (req, res) => {
   const planId = Number(req.params.id);
   const itemId = Number(req.params.itemId);
 
-  const [item] = await db.select({
-    id: productionPlanItemsTable.id,
-    wonlyCount: productionPlanItemsTable.wonlyCount,
-  })
+  // Read current count only to enforce the floor-at-zero guard
+  const [item] = await db.select({ id: productionPlanItemsTable.id, wonlyCount: productionPlanItemsTable.wonlyCount })
     .from(productionPlanItemsTable)
     .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
 
@@ -1294,11 +1291,12 @@ router.delete("/:id/items/:itemId/wonly", async (req, res) => {
     return;
   }
 
+  // Atomic decrement with GREATEST guard so DB can never go below 0
   const [updated] = await db
     .update(productionPlanItemsTable)
-    .set({ wonlyCount: (item.wonlyCount ?? 1) - 1 })
+    .set({ wonlyCount: sql`GREATEST(${productionPlanItemsTable.wonlyCount} - 1, 0)` })
     .where(eq(productionPlanItemsTable.id, itemId))
-    .returning();
+    .returning({ wonlyCount: productionPlanItemsTable.wonlyCount });
 
   res.json({ itemId, wonlyCount: updated.wonlyCount });
 });
