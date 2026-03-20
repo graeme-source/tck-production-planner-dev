@@ -658,32 +658,54 @@ function MixingStation({ plan }: MixingStationProps) {
     );
   };
 
-  // addBatch: only via createBatchCompletion (server increments batchesComplete + status)
-  const addBatch = (item: ProductionPlanItem) => {
-    createBatch.mutate({
-      id: plan.id,
-      data: {
-        planItemId: item.id,
-        stationType: "mixing",
-        completedAt: new Date().toISOString(),
-      },
-    });
+  const addTin = async (item: ProductionPlanItem) => {
+    const bpt = item.maxBatchesPerTin ?? 1;
+    const target = item.batchesTarget ?? 0;
+    const mixed = getStationCount(item, "mixing");
+    const tinsComplete = Math.floor(mixed / bpt);
+    const tinsTarget = Math.ceil(target / bpt);
+    if (tinsComplete >= tinsTarget) return;
+    const isLastTin = tinsComplete === tinsTarget - 1;
+    const batchesInThisTin = isLastTin ? target - tinsComplete * bpt : bpt;
+    try {
+      const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planItemId: item.id, stationType: "mixing", count: batchesInThisTin }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Server error ${res.status}`);
+      }
+      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+    } catch (err) {
+      toast({ title: "Could not complete tin", description: err instanceof Error ? err.message : "Please try again.", variant: "destructive" });
+    }
   };
 
-  // removeBatch: delete most recent batch_completion row + atomic decrement (keeps KPI metrics consistent)
-  const removeBatch = async (item: ProductionPlanItem) => {
-    if (getStationCount(item, "mixing") === 0) return;
+  const undoTin = async (item: ProductionPlanItem) => {
+    const bpt = item.maxBatchesPerTin ?? 1;
+    const target = item.batchesTarget ?? 0;
+    const mixed = getStationCount(item, "mixing");
+    if (mixed === 0) return;
+    const tinsComplete = Math.floor(mixed / bpt);
+    const tinsTarget = Math.ceil(target / bpt);
+    const batchesInLastTin = tinsComplete >= tinsTarget ? target - (tinsTarget - 1) * bpt : bpt;
     try {
-      const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
+      const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
         method: "DELETE",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planItemId: item.id, stationType: "mixing" }),
+        body: JSON.stringify({ planItemId: item.id, stationType: "mixing", count: batchesInLastTin }),
       });
-      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Server error ${res.status}`);
+      }
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
     } catch (err) {
-      toast({ title: "Undo failed", description: err instanceof Error ? err.message : "Could not undo batch. Please try again.", variant: "destructive" });
+      toast({ title: "Undo failed", description: err instanceof Error ? err.message : "Could not undo tin. Please try again.", variant: "destructive" });
     }
   };
 
@@ -738,8 +760,8 @@ function MixingStation({ plan }: MixingStationProps) {
                 key={item.id}
                 item={item}
                 isAdmin={isAdmin}
-                onAdd={() => addBatch(item)}
-                onRemove={() => removeBatch(item)}
+                onAdd={() => addTin(item)}
+                onRemove={() => undoTin(item)}
               />
             ))}
           </div>
@@ -775,7 +797,6 @@ function SortableMixingItem({ item, isAdmin, onAdd, onRemove }: SortableMixingIt
   const bpt = item.maxBatchesPerTin ?? 1;
   const tinsTarget = Math.ceil(target / bpt);
   const tinsComplete = Math.min(Math.floor(mixingCount / bpt), tinsTarget);
-  const batchesInCurrentTin = mixingCount % bpt;
   const allTinsDone = tinsComplete >= tinsTarget;
   const progress = tinsTarget > 0 ? Math.round((tinsComplete / tinsTarget) * 100) : 0;
   const isComplete = mixingCount >= target && target > 0;
@@ -837,42 +858,34 @@ function SortableMixingItem({ item, isAdmin, onAdd, onRemove }: SortableMixingIt
                   style={{ width: `${Math.min(progress, 100)}%` }}
                 />
               </div>
-              <span className="text-xs text-muted-foreground whitespace-nowrap">
-                {tinsComplete} / {tinsTarget} tin{tinsTarget !== 1 ? "s" : ""}
-              </span>
             </div>
 
             <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
               {item.tinSize && <span>{item.tinSize}</span>}
               <span>{bpt} batch{bpt !== 1 ? "es" : ""}/tin</span>
-              <span>{mixingCount} / {target} batches</span>
-              {!allTinsDone && mixingCount > 0 && (
-                <span className="text-blue-600 dark:text-blue-400 font-medium">
-                  Tin {tinsComplete + 1}: {batchesInCurrentTin} / {Math.min(bpt, target - tinsComplete * bpt)} batches
-                </span>
-              )}
+              <span>{mixingCount} / {target} batches total</span>
             </div>
           </div>
 
-          {/* Batch counter — each tap = 1 batch */}
+          {/* Tin counter — each tap = 1 full tin */}
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={onRemove}
-              disabled={mixingCount === 0}
+              disabled={tinsComplete === 0}
               className="w-9 h-9 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
             >
               <Minus className="w-4 h-4" />
             </button>
             <div className="w-14 text-center">
-              <span className="text-xl font-bold">{mixingCount}</span>
-              <span className="text-xs text-muted-foreground block leading-tight">batch{mixingCount !== 1 ? "es" : ""}</span>
+              <span className="text-xl font-bold">{tinsComplete}</span>
+              <span className="text-xs text-muted-foreground block leading-tight">/ {tinsTarget} tin{tinsTarget !== 1 ? "s" : ""}</span>
             </div>
             <button
               onClick={onAdd}
-              disabled={isComplete && !isAdmin}
+              disabled={allTinsDone && !isAdmin}
               className={cn(
                 "w-9 h-9 flex items-center justify-center rounded-full transition-colors",
-                isComplete
+                allTinsDone
                   ? "border border-emerald-300 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 opacity-60"
                   : "bg-primary text-primary-foreground hover:bg-primary/90"
               )}

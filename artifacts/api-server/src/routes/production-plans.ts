@@ -541,6 +541,141 @@ router.post("/:id/batch-completions", async (req, res) => {
   });
 });
 
+// POST /:id/batch-completions/bulk — create N batch_completion rows in one request (for tin completion)
+router.post("/:id/batch-completions/bulk", async (req, res) => {
+  const planId = Number(req.params.id);
+  const { planItemId, stationType, count } = req.body;
+  const n = Number(count);
+  if (!n || n < 1 || n > 50) {
+    res.status(400).json({ error: "count must be between 1 and 50" });
+    return;
+  }
+  const sessionUserId = (req.session as { userId?: number }).userId ?? null;
+
+  const [planItem] = await db.select({
+    id: productionPlanItemsTable.id,
+    batchesTarget: productionPlanItemsTable.batchesTarget,
+  })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, Number(planItemId)), eq(productionPlanItemsTable.planId, planId)));
+  if (!planItem) {
+    res.status(400).json({ error: "planItemId does not belong to this plan" });
+    return;
+  }
+
+  const target = planItem.batchesTarget ?? 0;
+
+  if (stationType && target > 0) {
+    const stationCountResult = await db.execute(sql`
+      SELECT COUNT(*)::int as cnt FROM batch_completions
+      WHERE plan_item_id = ${Number(planItemId)} AND station_type = ${stationType}
+    `);
+    const stationCount = (stationCountResult.rows[0] as { cnt: number })?.cnt ?? 0;
+    if (stationCount + n > target) {
+      res.status(409).json({ error: `Adding ${n} would exceed target (${stationCount}/${target})` });
+      return;
+    }
+
+    const prevStations = getPreviousStations(stationType);
+    if (prevStations.length > 0) {
+      const prevCountResult = await db.execute(sql`
+        SELECT COUNT(*)::int as cnt FROM batch_completions
+        WHERE plan_item_id = ${Number(planItemId)}
+          AND station_type IN (${sql.join(prevStations.map(s => sql`${s}`), sql`, `)})
+      `);
+      const prevCount = (prevCountResult.rows[0] as { cnt: number })?.cnt ?? 0;
+      if (prevCount < stationCount + n) {
+        res.status(409).json({ error: `Previous station must complete more batches first` });
+        return;
+      }
+    }
+  }
+
+  const now = new Date();
+  const values = Array.from({ length: n }, () =>
+    sql`(${Number(planItemId)}, ${stationType ?? null}, ${sessionUserId}, ${now}::timestamptz)`
+  );
+
+  const result = await db.execute(sql`
+    WITH inserted AS (
+      INSERT INTO batch_completions (plan_item_id, station_type, user_id, completed_at)
+      VALUES ${sql.join(values, sql`, `)}
+      RETURNING id
+    )
+    UPDATE production_plan_items
+    SET
+      batches_complete = batches_complete + (SELECT COUNT(*) FROM inserted)::int,
+      status = 'in-progress'
+    WHERE id = ${Number(planItemId)}
+    RETURNING id
+  `);
+
+  if ((result as { rows: unknown[] }).rows.length === 0) {
+    res.status(409).json({ error: "Could not record completions" });
+    return;
+  }
+
+  res.status(201).json({ created: n });
+});
+
+// DELETE /:id/batch-completions/bulk — remove N most recent batch_completion rows (for tin undo)
+router.delete("/:id/batch-completions/bulk", async (req, res) => {
+  const planId = Number(req.params.id);
+  const { planItemId, stationType, count } = req.body;
+  const n = Number(count);
+  if (!n || n < 1 || n > 50) {
+    res.status(400).json({ error: "count must be between 1 and 50" });
+    return;
+  }
+  const sessionUserId = (req.session as { userId?: number }).userId ?? null;
+  const sessionUserRole = (req.session as { userRole?: string }).userRole ?? null;
+  const isAdmin = sessionUserRole === "admin";
+
+  const [planItem] = await db.select({ id: productionPlanItemsTable.id, batchesComplete: productionPlanItemsTable.batchesComplete })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, Number(planItemId)), eq(productionPlanItemsTable.planId, planId)));
+  if (!planItem) {
+    res.status(400).json({ error: "planItemId does not belong to this plan" });
+    return;
+  }
+
+  const conditions = [eq(batchCompletionsTable.planItemId, Number(planItemId))];
+  if (stationType) conditions.push(eq(batchCompletionsTable.stationType, stationType));
+  if (!isAdmin && sessionUserId) conditions.push(eq(batchCompletionsTable.userId, sessionUserId));
+
+  const result = await db.execute(sql`
+    WITH targets AS (
+      SELECT id FROM batch_completions
+      WHERE ${and(...conditions)}
+      ORDER BY completed_at DESC
+      LIMIT ${n}
+    ),
+    deleted AS (
+      DELETE FROM batch_completions
+      WHERE id IN (SELECT id FROM targets)
+      RETURNING id
+    )
+    UPDATE production_plan_items
+    SET
+      batches_complete = GREATEST(batches_complete - (SELECT COUNT(*) FROM deleted)::int, 0),
+      status = CASE
+        WHEN GREATEST(batches_complete - (SELECT COUNT(*) FROM deleted)::int, 0) = 0 THEN 'pending'
+        WHEN status = 'complete' THEN 'in-progress'
+        ELSE status
+      END
+    WHERE id = ${Number(planItemId)}
+      AND EXISTS (SELECT 1 FROM deleted)
+    RETURNING id
+  `);
+
+  if ((result as { rows: unknown[] }).rows.length === 0) {
+    res.status(404).json({ error: "No matching completions found to undo" });
+    return;
+  }
+
+  res.status(204).send();
+});
+
 // DELETE last batch completion — removes the most recent completion row for this item/user
 // and decrements batches_complete atomically, keeping KPI metrics consistent.
 router.delete("/:id/batch-completions/last", async (req, res) => {
