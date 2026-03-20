@@ -82,6 +82,7 @@ All routes under `/api/`:
 - `/dispatch-orders` — CRUD with date filtering
 - `/production-plans/:id/dough-prep` — GET: dough breakdown, mix schedule, ball weights
 - `/production-plans/:id/packing` — GET: adjusted pack counts + dispatch cross-reference
+- `/production-plans/:id/ingredient-requirements?station=` — GET: full ingredient breakdown for a plan with recursive sub-recipe explosion. Returns per-ingredient totals (cooked/raw qty with processing ratio) and per-recipe breakdown. Station filter: prep_veg, prep_bases, prep_meat, all (default).
 - `/production-plans/:id/items/:itemId/wonly` — POST: increment wonky; DELETE: decrement wonky
 - `/production-plans/next-active` — GET: next weekday with active plan (used by prep/dough-prep stations)
 - `/app-settings/:key` — GET/PUT admin-only global settings (mixer_capacity_kg)
@@ -116,6 +117,10 @@ Stations enforce a cascade: downstream stations can only complete as many batche
 - **Validation**: POST batch completion returns 409 if previous station hasn't completed enough
 - **UI helpers**: `getStationCount(item, stationType)`, `getPrevStationCount(item, stationType)`, `getAvailableFromPrev(item, stationType)` in station.tsx
 - **Storage**: `production_plan_items` has `fridge_qty`, `freezer_qty`, `prep_fridge_qty` columns with POST/DELETE endpoints for each
+
+## Ingredient Resolver
+
+`artifacts/api-server/src/lib/ingredient-resolver.ts` — Shared utility for recursively resolving all raw ingredients for a recipe, including through sub-recipes and nested sub-recipes. Used by `prep-requirements`, `prep-requirements-by-recipe`, and `ingredient-requirements` endpoints. Uses path-based cycle detection (not global dedup) so the same sub-recipe appearing in multiple sibling branches is correctly counted. Scaling: `quantity_used / sub_recipe_yield` at each nesting level.
 
 ## Codegen Critical Notes
 

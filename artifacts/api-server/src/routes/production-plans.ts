@@ -1,8 +1,9 @@
 import { Router, type IRouter } from "express";
-import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, dispatchOrdersTable, appSettingsTable } from "@workspace/db";
+import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable } from "@workspace/db";
 import { eq, and, desc, sql, gt, asc, inArray } from "drizzle-orm";
 import { validate } from "../middleware/validate";
 import * as z from "zod";
+import { resolveRecipeIngredients, aggregateIngredients, type ResolvedIngredient } from "../lib/ingredient-resolver";
 
 const router: IRouter = Router();
 
@@ -940,37 +941,6 @@ router.get("/:id/prep-requirements", async (req, res) => {
     return;
   }
 
-  const recipeIds = planItems.map(p => p.recipeId).filter(Boolean) as number[];
-
-  const allIngredientRows: {
-    recipeId: number;
-    ingredientId: number;
-    quantityPerBatch: string;
-    ingredientName: string | null;
-    unit: string | null;
-    category: string | null;
-    processingRatio: string | null;
-    rawMeatTrayCapacityKg: string | null;
-  }[] = [];
-
-  for (const rid of recipeIds) {
-    const rows = await db
-      .select({
-        recipeId: recipeIngredientsTable.recipeId,
-        ingredientId: recipeIngredientsTable.ingredientId,
-        quantityPerBatch: recipeIngredientsTable.quantity,
-        ingredientName: ingredientsTable.name,
-        unit: ingredientsTable.unit,
-        category: ingredientsTable.category,
-        processingRatio: ingredientsTable.processingRatio,
-        rawMeatTrayCapacityKg: ingredientsTable.rawMeatTrayCapacityKg,
-      })
-      .from(recipeIngredientsTable)
-      .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
-      .where(eq(recipeIngredientsTable.recipeId, rid));
-    allIngredientRows.push(...rows);
-  }
-
   const aggregated: Record<number, {
     ingredientId: number;
     ingredientName: string;
@@ -986,24 +956,23 @@ router.get("/:id/prep-requirements", async (req, res) => {
 
   for (const planItem of planItems) {
     const batchesTarget = Number(planItem.batchesTarget) || 0;
-    const itemIngredients = allIngredientRows.filter(i => i.recipeId === planItem.recipeId);
+    if (!planItem.recipeId || batchesTarget === 0) continue;
 
-    for (const ing of itemIngredients) {
-      if (!ing.ingredientId) continue;
-      const iid = ing.ingredientId;
-      const qtyPerBatch = Number(ing.quantityPerBatch) || 0;
-      const totalCookedQty = qtyPerBatch * batchesTarget;
-      const processingRatio = ing.processingRatio ? Number(ing.processingRatio) : null;
-      const totalRawQty = processingRatio ? totalCookedQty / processingRatio : totalCookedQty;
+    const resolved = await resolveRecipeIngredients(planItem.recipeId);
+    const agg = aggregateIngredients(resolved);
+
+    for (const [iid, ing] of agg) {
+      const totalCookedQty = ing.quantityPerBatch * batchesTarget;
+      const totalRawQty = ing.processingRatio ? totalCookedQty / ing.processingRatio : totalCookedQty;
 
       if (!aggregated[iid]) {
         aggregated[iid] = {
           ingredientId: iid,
-          ingredientName: ing.ingredientName ?? `Ingredient #${iid}`,
-          unit: ing.unit ?? "g",
-          category: ing.category ?? null,
-          processingRatio,
-          rawMeatTrayCapacityKg: ing.rawMeatTrayCapacityKg ? Number(ing.rawMeatTrayCapacityKg) : null,
+          ingredientName: ing.ingredientName,
+          unit: ing.unit,
+          category: ing.category,
+          processingRatio: ing.processingRatio,
+          rawMeatTrayCapacityKg: ing.rawMeatTrayCapacityKg,
           totalCookedQty: 0,
           totalRawQty: 0,
           trayCount: null,
@@ -1051,10 +1020,6 @@ router.get("/:id/prep-requirements", async (req, res) => {
 });
 
 // GET /:id/prep-requirements-by-recipe?station=prep_veg|prep_bases|prep_meat
-// Returns per-recipe per-ingredient breakdown for prep stations.
-// Each recipe entry includes: recipeId, recipeName, batchesTarget, sopUrl, tinSize, maxBatchesPerTin
-// and an ingredients array with per-ingredient cooked/raw qty, category, processingRatio, trayCapacity.
-// The Raw Meat view uses this to compute combined (raw_meat+seasoning) tray counts per recipe.
 router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
   const planId = Number(req.params.id);
   const station = String(req.query.station ?? "all");
@@ -1080,48 +1045,13 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
     return;
   }
 
-  const recipeIds = planItems.map(p => p.recipeId).filter(Boolean) as number[];
-
-  // Fetch all ingredient rows for all recipes
-  const allIngredientRows: {
-    recipeId: number;
-    ingredientId: number;
-    quantityPerBatch: string;
-    ingredientName: string | null;
-    unit: string | null;
-    category: string | null;
-    processingRatio: string | null;
-    rawMeatTrayCapacityKg: string | null;
-  }[] = [];
-
-  for (const rid of recipeIds) {
-    const rows = await db
-      .select({
-        recipeId: recipeIngredientsTable.recipeId,
-        ingredientId: recipeIngredientsTable.ingredientId,
-        quantityPerBatch: recipeIngredientsTable.quantity,
-        ingredientName: ingredientsTable.name,
-        unit: ingredientsTable.unit,
-        category: ingredientsTable.category,
-        processingRatio: ingredientsTable.processingRatio,
-        rawMeatTrayCapacityKg: ingredientsTable.rawMeatTrayCapacityKg,
-      })
-      .from(recipeIngredientsTable)
-      .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
-      .where(eq(recipeIngredientsTable.recipeId, rid));
-    allIngredientRows.push(...rows);
-  }
-
-  // Station category filters
   const categoryMatchesStation = (category: string | null): boolean => {
     if (station === "prep_meat") return category === "raw_meat";
     if (station === "prep_veg") return category === "vegetable";
     if (station === "prep_bases") return ["base", "sauce", "cheese"].includes(category ?? "");
-    return true; // "all"
+    return true;
   };
 
-  // "Seasoning" for raw meat station: dry ingredients in same recipe that are NOT raw_meat
-  // (but are relevant to the recipe weight for tray calculation)
   const isSeasoningForMeat = (category: string | null): boolean => {
     return station === "prep_meat" && !["raw_meat", "vegetable", "base", "sauce", "cheese"].includes(category ?? "") && category != null;
   };
@@ -1129,7 +1059,10 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
   const result = [];
   for (const planItem of planItems) {
     const batchesTarget = Number(planItem.batchesTarget) || 0;
-    const itemIngredients = allIngredientRows.filter(i => i.recipeId === planItem.recipeId);
+    if (!planItem.recipeId || batchesTarget === 0) continue;
+
+    const resolved = await resolveRecipeIngredients(planItem.recipeId);
+    const agg = aggregateIngredients(resolved);
 
     const ingredients: Array<{
       ingredientId: number;
@@ -1146,13 +1079,11 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
 
     let hasRelevantIngredients = false;
 
-    for (const ing of itemIngredients) {
-      if (!ing.ingredientId) continue;
-      const category = ing.category ?? null;
+    for (const [, ing] of agg) {
+      const category = ing.category;
       const isMainStation = categoryMatchesStation(category);
       const isSeasoning = isSeasoningForMeat(category);
 
-      // For raw_meat station: include raw_meat ingredients + seasonings used in same recipe
       if (station === "prep_meat") {
         if (!isMainStation && !isSeasoning) continue;
       } else {
@@ -1160,18 +1091,16 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       }
 
       hasRelevantIngredients = true;
-      const qtyPerBatch = Number(ing.quantityPerBatch) || 0;
-      const cookedQty = qtyPerBatch * batchesTarget;
-      const processingRatio = ing.processingRatio ? Number(ing.processingRatio) : null;
-      const rawQty = processingRatio ? cookedQty / processingRatio : cookedQty;
+      const cookedQty = ing.quantityPerBatch * batchesTarget;
+      const rawQty = ing.processingRatio ? cookedQty / ing.processingRatio : cookedQty;
 
       ingredients.push({
         ingredientId: ing.ingredientId,
-        ingredientName: ing.ingredientName ?? `Ingredient #${ing.ingredientId}`,
-        unit: ing.unit ?? "g",
+        ingredientName: ing.ingredientName,
+        unit: ing.unit,
         category,
-        processingRatio,
-        rawMeatTrayCapacityKg: ing.rawMeatTrayCapacityKg ? Number(ing.rawMeatTrayCapacityKg) : null,
+        processingRatio: ing.processingRatio,
+        rawMeatTrayCapacityKg: ing.rawMeatTrayCapacityKg,
         cookedQty,
         rawQty,
         isRawMeat: category === "raw_meat",
@@ -1179,14 +1108,11 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       });
     }
 
-    // Skip recipes with no relevant ingredients
     if (!hasRelevantIngredients) continue;
 
-    // For raw meat station: compute combined tray count (raw meat + seasoning)
     let trayCount: number | null = null;
     if (station === "prep_meat") {
       const rawMeatIngredients = ingredients.filter(i => i.isRawMeat);
-      // Use the tray capacity from the first raw_meat ingredient (they should all be the same)
       const trayCapacityKg = rawMeatIngredients.find(i => i.rawMeatTrayCapacityKg)?.rawMeatTrayCapacityKg ?? null;
       if (trayCapacityKg) {
         const totalRawMeatKg = rawMeatIngredients.reduce((sum, i) => sum + i.rawQty, 0) / 1000;
@@ -1210,6 +1136,111 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
   }
 
   res.json({ recipes: result });
+});
+
+// GET /:id/ingredient-requirements?station=prep_veg|prep_bases|prep_meat|all
+router.get("/:id/ingredient-requirements", async (req, res) => {
+  const planId = Number(req.params.id);
+  const station = String(req.query.station ?? "all");
+
+  const planItems = await db
+    .select({
+      recipeId: productionPlanItemsTable.recipeId,
+      batchesTarget: productionPlanItemsTable.batchesTarget,
+      recipeName: recipesTable.name,
+    })
+    .from(productionPlanItemsTable)
+    .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(eq(productionPlanItemsTable.planId, planId));
+
+  if (planItems.length === 0) {
+    res.json({ ingredients: [], totalRecipes: 0, totalBatches: 0 });
+    return;
+  }
+
+  const ingredientMap: Record<number, {
+    ingredientId: number;
+    ingredientName: string;
+    unit: string;
+    category: string | null;
+    processingRatio: number | null;
+    rawMeatTrayCapacityKg: number | null;
+    totalCookedQty: number;
+    totalRawQty: number;
+    trayCount: number | null;
+    recipes: Array<{ recipeName: string; batchesTarget: number; cookedQty: number; rawQty: number }>;
+  }> = {};
+
+  let totalBatches = 0;
+
+  for (const planItem of planItems) {
+    const batchesTarget = Number(planItem.batchesTarget) || 0;
+    if (!planItem.recipeId || batchesTarget === 0) continue;
+    totalBatches += batchesTarget;
+
+    const resolved = await resolveRecipeIngredients(planItem.recipeId);
+    const agg = aggregateIngredients(resolved);
+
+    for (const [iid, ing] of agg) {
+      const cookedQty = ing.quantityPerBatch * batchesTarget;
+      const rawQty = ing.processingRatio ? cookedQty / ing.processingRatio : cookedQty;
+
+      if (!ingredientMap[iid]) {
+        ingredientMap[iid] = {
+          ingredientId: iid,
+          ingredientName: ing.ingredientName,
+          unit: ing.unit,
+          category: ing.category,
+          processingRatio: ing.processingRatio,
+          rawMeatTrayCapacityKg: ing.rawMeatTrayCapacityKg,
+          totalCookedQty: 0,
+          totalRawQty: 0,
+          trayCount: null,
+          recipes: [],
+        };
+      }
+
+      ingredientMap[iid].totalCookedQty += cookedQty;
+      ingredientMap[iid].totalRawQty += rawQty;
+      ingredientMap[iid].recipes.push({
+        recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
+        batchesTarget,
+        cookedQty,
+        rawQty,
+      });
+    }
+  }
+
+  for (const item of Object.values(ingredientMap)) {
+    if (item.rawMeatTrayCapacityKg && item.totalRawQty > 0) {
+      const totalRawKg = item.totalRawQty / 1000;
+      item.trayCount = Math.ceil(totalRawKg / item.rawMeatTrayCapacityKg);
+    }
+    item.totalCookedQty = Math.round(item.totalCookedQty * 100) / 100;
+    item.totalRawQty = Math.round(item.totalRawQty * 100) / 100;
+    for (const r of item.recipes) {
+      r.cookedQty = Math.round(r.cookedQty * 100) / 100;
+      r.rawQty = Math.round(r.rawQty * 100) / 100;
+    }
+  }
+
+  let ingredients = Object.values(ingredientMap);
+
+  if (station === "prep_meat") {
+    ingredients = ingredients.filter(i => i.category === "raw_meat" || i.rawMeatTrayCapacityKg != null);
+  } else if (station === "prep_veg") {
+    ingredients = ingredients.filter(i => i.category === "vegetable");
+  } else if (station === "prep_bases") {
+    ingredients = ingredients.filter(i => ["base", "sauce", "cheese"].includes(i.category ?? ""));
+  }
+
+  ingredients.sort((a, b) => a.ingredientName.localeCompare(b.ingredientName));
+
+  res.json({
+    ingredients,
+    totalRecipes: planItems.filter(p => (Number(p.batchesTarget) || 0) > 0).length,
+    totalBatches,
+  });
 });
 
 // GET /:id/eod-summary?stationType=...
