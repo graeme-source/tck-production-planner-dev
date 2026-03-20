@@ -323,12 +323,15 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [addRecipeId, setAddRecipeId] = useState<string>("");
   const [dateWarning, setDateWarning] = useState<string | null>(null);
+  const [totalBatchesOverride, setTotalBatchesOverride] = useState<number | null>(null);
 
   const { data: calcData, isLoading: loadingCalc, refetch: refetchCalc } = useQuery({
     queryKey: ["production-plan-calculate", planDate],
     queryFn: () => fetchCalculation(planDate),
     enabled: open && !!planDate,
   });
+
+  const effectiveTotalBatches = totalBatchesOverride ?? calcData?.totalDailyBatches ?? 0;
 
   const { data: allRecipes } = useListRecipes({ query: { queryKey: getListRecipesQueryKey(), enabled: open } });
   const { createPlan } = useAppMutations();
@@ -356,16 +359,46 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
     }
   }, [planDate]);
 
+  const allocateBatches = useCallback((recipes: CalcRecipe[], capacity: number): { suggestedBatches: number; surplusBatches: number }[] => {
+    const totalDeficitBatches = recipes.reduce((s, r) => s + r.deficitBatches, 0);
+    const remaining = Math.max(0, capacity - totalDeficitBatches);
+    const totalPacksSold = recipes.reduce((s, r) => s + r.packsSold, 0);
+
+    const rawSurplus = recipes.map(r => {
+      const exact = totalPacksSold > 0 ? (r.salesPercent / 100) * remaining : 0;
+      return { exact, floor: Math.floor(exact) };
+    });
+
+    let leftover = remaining - rawSurplus.reduce((s, r) => s + r.floor, 0);
+    const sorted = rawSurplus
+      .map((r, idx) => ({ idx, remainder: r.exact - r.floor }))
+      .sort((a, b) => b.remainder - a.remainder);
+    const bonusSet = new Set<number>();
+    for (const { idx } of sorted) {
+      if (leftover <= 0) break;
+      bonusSet.add(idx);
+      leftover--;
+    }
+
+    return recipes.map((r, idx) => {
+      const surplusBatches = rawSurplus[idx].floor + (bonusSet.has(idx) ? 1 : 0);
+      return { suggestedBatches: r.deficitBatches + surplusBatches, surplusBatches };
+    });
+  }, []);
+
   useEffect(() => {
     if (!calcData?.recipes) return;
+    setTotalBatchesOverride(null);
+    const capacity = calcData.totalDailyBatches;
+    const alloc = allocateBatches(calcData.recipes, capacity);
     setItems(
-      calcData.recipes.map((r: CalcRecipe) => ({
+      calcData.recipes.map((r: CalcRecipe, idx: number) => ({
         id: `calc-${r.recipeId}`,
         recipeId: r.recipeId,
         recipeName: r.recipeName,
-        included: r.suggestedBatches > 0 || r.deficit > 0,
-        suggestedBatches: r.suggestedBatches,
-        batchesTarget: r.suggestedBatches,
+        included: alloc[idx].suggestedBatches > 0 || r.deficit > 0,
+        suggestedBatches: alloc[idx].suggestedBatches,
+        batchesTarget: alloc[idx].suggestedBatches,
         tinCount: r.tinCount,
         maxBatchesPerTin: r.maxBatchesPerTin,
         tinSize: r.tinSize,
@@ -380,11 +413,31 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
         deliveryPlus2Qty: r.deliveryPlus2Qty,
         deficit: r.deficit,
         deficitBatches: r.deficitBatches,
-        surplusBatches: r.surplusBatches,
+        surplusBatches: alloc[idx].surplusBatches,
         stockWarning: r.stockWarning,
       }))
     );
-  }, [calcData]);
+  }, [calcData, allocateBatches]);
+
+  const handleTotalBatchesChange = useCallback((newTotal: number) => {
+    setTotalBatchesOverride(newTotal);
+    if (!calcData?.recipes) return;
+    const alloc = allocateBatches(calcData.recipes, newTotal);
+    setItems(prev => prev.map((item, idx) => {
+      const calcRecipe = calcData.recipes.find((r: CalcRecipe) => r.recipeId === item.recipeId);
+      if (!calcRecipe || !item.isFromDpt) return item;
+      const allocIdx = calcData.recipes.indexOf(calcRecipe);
+      if (allocIdx < 0) return item;
+      const suggested = alloc[allocIdx].suggestedBatches;
+      return {
+        ...item,
+        suggestedBatches: suggested,
+        batchesTarget: suggested,
+        surplusBatches: alloc[allocIdx].surplusBatches,
+        tinCount: item.maxBatchesPerTin && suggested > 0 ? Math.ceil(suggested / item.maxBatchesPerTin) : null,
+      };
+    }));
+  }, [calcData, allocateBatches]);
 
   const recalcTins = (batchesTarget: number, maxBatchesPerTin: number | null): number | null => {
     if (!maxBatchesPerTin || batchesTarget <= 0) return null;
@@ -681,13 +734,43 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
         </div>
 
         <div className="border-t border-border pt-4 flex items-center justify-between flex-shrink-0">
-          <div className="text-sm text-muted-foreground">
-            Julian batch: <span className="font-mono font-semibold text-foreground">{julianBatchNumber(planDate)}</span>
+          <div className="text-sm text-muted-foreground flex items-center gap-4">
+            <span>
+              Julian batch: <span className="font-mono font-semibold text-foreground">{julianBatchNumber(planDate)}</span>
+            </span>
             {calcData && (
-              <span className="ml-3">
-                Capacity: <span className="font-semibold text-foreground">{calcData.totalDailyBatches}</span> batches
+              <span className="flex items-center gap-1.5">
+                Total batches:
+                <input
+                  type="number"
+                  min={0}
+                  value={effectiveTotalBatches}
+                  onChange={e => handleTotalBatchesChange(Math.max(0, Number(e.target.value)))}
+                  className="w-16 px-1.5 py-0.5 bg-background border border-border rounded-lg text-sm text-center font-semibold text-foreground focus-ring tabular-nums"
+                />
+                {totalBatchesOverride !== null && totalBatchesOverride !== calcData.totalDailyBatches && (
+                  <button
+                    onClick={() => handleTotalBatchesChange(calcData.totalDailyBatches)}
+                    className="text-xs text-muted-foreground hover:text-foreground transition-colors underline"
+                    title={`Reset to default (${calcData.totalDailyBatches})`}
+                  >
+                    reset
+                  </button>
+                )}
               </span>
             )}
+            <span className="text-xs">
+              Planned: <span className={cn(
+                "font-semibold",
+                items.filter(i => i.included).reduce((s, i) => s + i.batchesTarget, 0) > effectiveTotalBatches
+                  ? "text-red-600 dark:text-red-400"
+                  : "text-foreground"
+              )}>
+                {items.filter(i => i.included).reduce((s, i) => s + i.batchesTarget, 0)}
+              </span>
+              {" / "}
+              {effectiveTotalBatches}
+            </span>
           </div>
           <div className="flex gap-2">
             <button
