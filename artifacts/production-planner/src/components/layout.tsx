@@ -16,6 +16,8 @@ import {
   BarChart2,
   Settings,
   LogOut,
+  Scan,
+  MapPin,
 } from "lucide-react";
 
 const navItems = [
@@ -28,6 +30,7 @@ const navItems = [
   { name: "Stock Inventory", href: "/stock", icon: PackageSearch },
   { name: "Sales Data", href: "/sales", icon: TrendingUp },
   { name: "Dispatches", href: "/dispatches", icon: Truck },
+  { name: "Fulfilment", href: "/fulfilment", icon: Scan },
   { name: "Reports", href: "/reports", icon: BarChart2 },
 ];
 
@@ -66,27 +69,50 @@ export function Layout({ children }: { children: ReactNode }) {
         <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
           {visibleNavItems.map((item) => {
             const isActive = location === item.href;
+            const isFulfilment = item.href === "/fulfilment";
             return (
-              <Link 
-                key={item.name} 
-                href={item.href}
-                className={`
-                  flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group relative
-                  ${isActive 
-                    ? "text-primary font-semibold" 
-                    : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}
-                `}
-              >
-                {isActive && (
-                  <motion.div 
-                    layoutId="activeNav" 
-                    className="absolute inset-0 bg-primary/10 rounded-xl" 
-                    transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                  />
+              <React.Fragment key={item.name}>
+                <Link 
+                  href={item.href}
+                  className={`
+                    flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group relative
+                    ${isActive 
+                      ? "text-primary font-semibold" 
+                      : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}
+                  `}
+                >
+                  {isActive && (
+                    <motion.div 
+                      layoutId="activeNav" 
+                      className="absolute inset-0 bg-primary/10 rounded-xl" 
+                      transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                    />
+                  )}
+                  <item.icon className={`w-5 h-5 relative z-10 ${isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary"}`} />
+                  <span className="relative z-10">{item.name}</span>
+                </Link>
+                {isFulfilment && user?.role === "admin" && (
+                  <Link
+                    href="/locations"
+                    className={`
+                      flex items-center gap-3 pl-9 pr-4 py-2 rounded-xl transition-all duration-200 group relative text-sm
+                      ${location === "/locations"
+                        ? "text-primary font-semibold"
+                        : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}
+                    `}
+                  >
+                    {location === "/locations" && (
+                      <motion.div
+                        layoutId="activeNav"
+                        className="absolute inset-0 bg-primary/10 rounded-xl"
+                        transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                      />
+                    )}
+                    <MapPin className={`w-4 h-4 relative z-10 ${location === "/locations" ? "text-primary" : "text-muted-foreground group-hover:text-primary"}`} />
+                    <span className="relative z-10">Bin Locations</span>
+                  </Link>
                 )}
-                <item.icon className={`w-5 h-5 relative z-10 ${isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary"}`} />
-                <span className="relative z-10">{item.name}</span>
-              </Link>
+              </React.Fragment>
             );
           })}
         </nav>
@@ -143,7 +169,7 @@ export function Layout({ children }: { children: ReactNode }) {
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">
         <header className="h-16 border-b border-border bg-background/80 backdrop-blur-md flex items-center px-8 z-10">
           <h2 className="font-display font-semibold text-lg text-muted-foreground capitalize">
-            {[...navItems, ...bottomNavItems].find(n => n.href === location)?.name || "Dashboard"}
+            {location === "/locations" ? "Bin Locations" : ([...navItems, ...bottomNavItems].find(n => n.href === location)?.name || "Dashboard")}
           </h2>
         </header>
         

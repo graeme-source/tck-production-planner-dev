@@ -13,12 +13,16 @@ const KNOWN_PAGES = [
   { pageKey: "/stock", label: "Stock Inventory" },
   { pageKey: "/sales", label: "Sales Data" },
   { pageKey: "/dispatches", label: "Dispatches" },
+  { pageKey: "/fulfilment", label: "Fulfilment" },
+  { pageKey: "/locations", label: "Bin Locations" },
   { pageKey: "/reports", label: "Reports" },
 ];
 
 const DEFAULT_PERMISSIONS: Record<string, string> = {
   "/sales": "manager",
   "/reports": "manager",
+  "/fulfilment": "viewer",
+  "/locations": "admin",
 };
 
 // GET /api/page-permissions

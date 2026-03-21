@@ -37,6 +37,25 @@ async function getAccessToken(): Promise<string> {
   return cachedToken;
 }
 
+async function shopifyPost(path: string, body: unknown) {
+  const token = await getAccessToken();
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: {
+      "X-Shopify-Access-Token": token,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Shopify API error ${res.status}: ${text}`);
+  }
+
+  return res.json();
+}
+
 async function shopifyFetch(path: string, params?: Record<string, string>) {
   const token = await getAccessToken();
   const url = new URL(`${API_BASE}${path}`);
@@ -78,16 +97,21 @@ export interface ShopifyOrder {
   total_price: string;
   subtotal_price: string;
   total_discounts: string;
+  total_weight: number;
   customer: {
     first_name: string;
     last_name: string;
     email: string;
+    phone?: string;
   } | null;
   shipping_address: {
     name: string;
     address1: string;
+    address2?: string;
     city: string;
     zip: string;
+    country_code?: string;
+    phone?: string;
   } | null;
   line_items: ShopifyLineItem[];
   note: string | null;
@@ -117,7 +141,7 @@ export async function getOrdersByTag(tag: string): Promise<ShopifyOrder[]> {
       limit,
       status: "any",
       fields:
-        "id,name,tags,created_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,customer,shipping_address,line_items,note",
+        "id,name,tags,created_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,total_weight,customer,shipping_address,line_items,note",
     };
     if (pageInfo) {
       params.page_info = pageInfo;
@@ -220,4 +244,42 @@ export async function countProductsByTag(tag: string): Promise<ProductCount[]> {
   return Array.from(counts.values()).sort((a, b) =>
     a.productTitle.localeCompare(b.productTitle)
   );
+}
+
+export async function fulfillOrder(
+  orderId: number,
+  trackingNumber: string,
+  trackingCompany: string = "APC Overnight",
+  trackingUrl?: string,
+): Promise<void> {
+  const fulfillmentsRes = (await shopifyFetch(`/orders/${orderId}/fulfillment_orders.json`)) as {
+    fulfillment_orders: Array<{ id: number; status: string; line_items: unknown[] }>;
+  };
+
+  const pendingFulfillmentOrders = fulfillmentsRes.fulfillment_orders.filter(
+    fo => fo.status === "open" || fo.status === "in_progress",
+  );
+
+  if (pendingFulfillmentOrders.length === 0) {
+    throw new Error("No open fulfillment orders found for this order — it may already be fulfilled.");
+  }
+
+  await shopifyPost(`/fulfillments.json`, {
+    fulfillment: {
+      line_items_by_fulfillment_order: pendingFulfillmentOrders.map(fo => ({
+        fulfillment_order_id: fo.id,
+      })),
+      tracking_info: {
+        number: trackingNumber,
+        company: trackingCompany,
+        url: trackingUrl ?? `https://apc.co.uk/tracking/${trackingNumber}`,
+      },
+      notify_customer: true,
+    },
+  });
+}
+
+export async function getUnfulfilledOrdersByTag(tag: string): Promise<ShopifyOrder[]> {
+  const orders = await getOrdersByTag(tag);
+  return orders.filter(o => o.fulfillment_status !== "fulfilled");
 }

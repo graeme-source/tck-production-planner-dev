@@ -20,6 +20,7 @@ import shopifyRouter from "./shopify";
 import pagePermissionsRouter from "./page-permissions";
 import appSettingsRouter from "./app-settings";
 import reportsRouter from "./reports";
+import fulfilmentRouter from "./fulfilment";
 
 const router: IRouter = Router();
 
@@ -70,5 +71,6 @@ router.use("/shopify", shopifyRouter);
 router.use("/page-permissions", pagePermissionsRouter);
 router.use("/app-settings", appSettingsRouter);
 router.use("/reports", reportsRouter);
+router.use("/fulfilment", fulfilmentRouter);
 
 export default router;

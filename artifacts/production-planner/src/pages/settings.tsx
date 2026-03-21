@@ -9,7 +9,7 @@ import { PageHeader } from "@/components/page-header";
 import {
   Plus, Trash2, Edit2, Loader2, Users, ShieldCheck, Eye, Wrench,
   CheckCircle2, XCircle, KeyRound, Package, ChevronDown, ChevronUp,
-  Lock, Timer, BarChart2, Coffee,
+  Lock, Timer, BarChart2, Coffee, Truck,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { upsertDptSettingByRecipe, updateTimingStandard, getListDptSettingsQueryKey, getListTimingStandardsQueryKey } from "@workspace/api-client-react";
@@ -413,6 +413,9 @@ export default function Settings() {
       {user?.role === "admin" && <TimingStandardsSection />}
       {user?.role === "admin" && <MixerCapacitySection />}
       {user?.role === "admin" && <BreakDefaultsSection />}
+
+      {/* APC Fulfilment — admin only */}
+      {user?.role === "admin" && <ApcServiceCodesSection />}
 
       {/* Access Control — admin only */}
       {user?.role === "admin" && <AccessControlSection />}
@@ -1065,6 +1068,177 @@ function BreakDefaultsSection() {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+function ApcServiceCodesSection() {
+  const [codes, setCodes] = useState({
+    smallWeekday: "",
+    largeWeekday: "",
+    smallFriday: "",
+    largeFriday: "",
+    weightThreshold: "1000",
+  });
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    Promise.all([
+      fetch(`${BASE}/api/app-settings/apc_service_code_small_weekday`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
+      fetch(`${BASE}/api/app-settings/apc_service_code_large_weekday`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
+      fetch(`${BASE}/api/app-settings/apc_service_code_small_friday`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
+      fetch(`${BASE}/api/app-settings/apc_service_code_large_friday`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
+      fetch(`${BASE}/api/app-settings/apc_weight_threshold_grams`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
+    ]).then(([sw, lw, sf, lf, wt]) => {
+      setCodes({
+        smallWeekday: sw?.value ?? "",
+        largeWeekday: lw?.value ?? "",
+        smallFriday: sf?.value ?? "",
+        largeFriday: lf?.value ?? "",
+        weightThreshold: wt?.value ?? "1000",
+      });
+      setLoaded(true);
+    }).catch(() => setLoaded(true));
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const pairs = [
+        ["apc_service_code_small_weekday", codes.smallWeekday],
+        ["apc_service_code_large_weekday", codes.largeWeekday],
+        ["apc_service_code_small_friday", codes.smallFriday],
+        ["apc_service_code_large_friday", codes.largeFriday],
+        ["apc_weight_threshold_grams", codes.weightThreshold],
+      ];
+      await Promise.all(pairs.map(([key, value]) =>
+        fetch(`${BASE}/api/app-settings/${key}`, {
+          method: "PUT",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ value }),
+        }).then(r => { if (!r.ok) throw new Error(`Failed to save ${key}`); })
+      ));
+      setSavedMsg("Saved");
+      setTimeout(() => setSavedMsg(null), 2500);
+    } catch {
+      setSavedMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputCls = "px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono";
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <Truck className="w-4 h-4 text-primary" /> APC Service Codes
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Configure the 4 APC service codes used for fulfilment. Service code is chosen automatically based on box size and dispatch day.
+          </p>
+        </div>
+        {savedMsg && <span className={`text-xs font-medium ${savedMsg.startsWith("Error") ? "text-destructive" : "text-green-600"}`}>{savedMsg}</span>}
+      </div>
+
+      {!loaded ? (
+        <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+      ) : (
+        <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs font-medium mb-1 block text-muted-foreground">Small Box — Weekday</label>
+              <input
+                className={inputCls + " w-full"}
+                placeholder="e.g. SWD01"
+                value={codes.smallWeekday}
+                onChange={e => setCodes(c => ({ ...c, smallWeekday: e.target.value }))}
+              />
+              <p className="text-xs text-muted-foreground mt-1">Standard small parcel, Mon–Thu delivery</p>
+            </div>
+            <div>
+              <label className="text-xs font-medium mb-1 block text-muted-foreground">Large Box — Weekday</label>
+              <input
+                className={inputCls + " w-full"}
+                placeholder="e.g. LWD01"
+                value={codes.largeWeekday}
+                onChange={e => setCodes(c => ({ ...c, largeWeekday: e.target.value }))}
+              />
+              <p className="text-xs text-muted-foreground mt-1">Large parcel, Mon–Thu delivery</p>
+            </div>
+            <div>
+              <label className="text-xs font-medium mb-1 block text-muted-foreground">Small Box — Friday/Weekend</label>
+              <input
+                className={inputCls + " w-full"}
+                placeholder="e.g. SFR01"
+                value={codes.smallFriday}
+                onChange={e => setCodes(c => ({ ...c, smallFriday: e.target.value }))}
+              />
+              <p className="text-xs text-muted-foreground mt-1">Small parcel, Friday/weekend delivery</p>
+            </div>
+            <div>
+              <label className="text-xs font-medium mb-1 block text-muted-foreground">Large Box — Friday/Weekend</label>
+              <input
+                className={inputCls + " w-full"}
+                placeholder="e.g. LFR01"
+                value={codes.largeFriday}
+                onChange={e => setCodes(c => ({ ...c, largeFriday: e.target.value }))}
+              />
+              <p className="text-xs text-muted-foreground mt-1">Large parcel, Friday/weekend delivery</p>
+            </div>
+          </div>
+
+          <div className="border-t border-border pt-4 flex items-center gap-4">
+            <div>
+              <label className="text-xs font-medium mb-1 block text-muted-foreground">Large Box Threshold (grams)</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min="100"
+                  step="100"
+                  className={inputCls + " w-28 text-right"}
+                  value={codes.weightThreshold}
+                  onChange={e => setCodes(c => ({ ...c, weightThreshold: e.target.value }))}
+                />
+                <span className="text-sm text-muted-foreground">g</span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">Orders at or above this weight are treated as large-box</p>
+            </div>
+          </div>
+
+          <div className="flex justify-end pt-2 border-t border-border">
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="px-5 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+            >
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+              Save Service Codes
+            </button>
+          </div>
+
+          <div className="bg-secondary/30 rounded-xl p-4 text-xs space-y-2">
+            <p className="font-semibold text-sm">Chrome Kiosk Printing Setup</p>
+            <p className="text-muted-foreground">
+              For silent label printing on the dispatch PC, create a Chrome shortcut with the{" "}
+              <code className="bg-secondary px-1 py-0.5 rounded font-mono">--kiosk-printing</code> flag.
+            </p>
+            <p className="font-mono text-muted-foreground bg-background px-3 py-2 rounded-lg">
+              "C:\Program Files\Google\Chrome\Application\chrome.exe" --kiosk-printing
+            </p>
+            <p className="text-muted-foreground">
+              Without this flag, Chrome will show a print dialog for each label instead of printing silently.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -9,3 +9,4 @@ export * from "./production_plans";
 export * from "./stock";
 export * from "./sales";
 export * from "./dispatches";
+export * from "./sku_locations";
