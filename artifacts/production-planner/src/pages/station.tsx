@@ -3630,7 +3630,7 @@ function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
 
   const sheetNext = () => {
     if (isOnBreak || !nextItem) return;
-    createBatch.mutate({ planId: plan.id, data: { planItemId: nextItem.id, stationType: "dough_sheeting" } });
+    createBatch.mutate({ id: plan.id, data: { planItemId: nextItem.id, stationType: "dough_sheeting" } });
   };
 
   const undoLast = async () => {
