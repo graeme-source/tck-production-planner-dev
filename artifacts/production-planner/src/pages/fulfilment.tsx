@@ -168,7 +168,7 @@ function printLabel(
 
 type PrintStatus = "idle" | "printing" | "done" | "failed";
 
-type View = "list" | "picking" | "confirm";
+type View = "list" | "picking" | "pre-confirm" | "confirm";
 
 export default function Fulfilment() {
   const today = format(new Date(), "yyyy-MM-dd");
@@ -177,7 +177,6 @@ export default function Fulfilment() {
   const [includeAll, setIncludeAll] = useState(false);
   const [view, setView] = useState<View>("list");
   const [activeOrder, setActiveOrder] = useState<ShopifyOrder | null>(null);
-  const [activeOrderIndex, setActiveOrderIndex] = useState<number>(0);
   const [shipment, setShipment] = useState<ShipmentResult | null>(null);
   const [printStatus, setPrintStatus] = useState<PrintStatus>("idle");
   const [shipmentError, setShipmentError] = useState<string | null>(null);
@@ -207,19 +206,21 @@ export default function Fulfilment() {
   const unfulfilledOrders = orders?.filter(o => o.fulfillment_status !== "fulfilled") ?? [];
   const fulfilledOrders = orders?.filter(o => o.fulfillment_status === "fulfilled") ?? [];
 
-  function preQueueNextOrder(currentIdx: number) {
-    const nextOrder = unfulfilledOrders[currentIdx + 1];
-    if (!nextOrder || preQueueRef.current.has(nextOrder.id)) return;
-    const promise = createShipment(nextOrder.id, queryTag, queryTag).catch((err) => {
-      preQueueRef.current.delete(nextOrder.id);
-      throw err; // re-throw so startPicking can handle the error correctly
+  function preQueueNextOrder(nextOrderId: number) {
+    if (preQueueRef.current.has(nextOrderId)) return;
+    const promise = createShipment(nextOrderId, queryTag, queryTag).catch((err) => {
+      preQueueRef.current.delete(nextOrderId);
+      throw err;
     });
-    preQueueRef.current.set(nextOrder.id, promise);
+    preQueueRef.current.set(nextOrderId, promise);
   }
 
-  async function startPicking(order: ShopifyOrder, index: number) {
+  function clearPreQueue() {
+    preQueueRef.current.clear();
+  }
+
+  async function startPicking(order: ShopifyOrder) {
     setActiveOrder(order);
-    setActiveOrderIndex(index);
     setCheckedItems(new Set());
     setBarcodeInput("");
     setShipment(null);
@@ -245,7 +246,10 @@ export default function Fulfilment() {
         () => setPrintStatus("failed"),
       );
 
-      preQueueNextOrder(index);
+      // Pre-queue the next unfulfilled order (after current) to minimise wait time
+      const currentPos = unfulfilledOrders.findIndex(o => o.id === order.id);
+      const nextOrder = unfulfilledOrders[currentPos + 1];
+      if (nextOrder) preQueueNextOrder(nextOrder.id);
     } catch (err: any) {
       setShipmentError(err.message ?? "Failed to create APC shipment");
       setPrintStatus("failed");
@@ -256,7 +260,7 @@ export default function Fulfilment() {
 
   function retryShipment() {
     if (!activeOrder) return;
-    startPicking(activeOrder, activeOrderIndex);
+    startPicking(activeOrder);
   }
 
   const sortedLineItems = activeOrder ? [...activeOrder.line_items].sort((a, b) => {
@@ -330,10 +334,14 @@ export default function Fulfilment() {
   }
 
   function advanceToNext() {
-    const nextIndex = activeOrderIndex + 1;
-    const nextOrder = unfulfilledOrders[nextIndex];
+    // Find next unfulfilled order that isn't the one just completed.
+    // After refetch, the completed order is removed from the list, so we
+    // pick the first remaining order. Pre-queued shipments are keyed by
+    // order ID, so they still resolve correctly regardless of list position.
+    const remaining = unfulfilledOrders.filter(o => o.id !== activeOrder?.id);
+    const nextOrder = remaining[0];
     if (nextOrder) {
-      startPicking(nextOrder, nextIndex);
+      startPicking(nextOrder);
     } else {
       setView("list");
       setActiveOrder(null);
@@ -341,24 +349,20 @@ export default function Fulfilment() {
   }
 
   function goBack() {
+    clearPreQueue(); // discard any stale pre-queued shipments
     setView("list");
     setActiveOrder(null);
     setShipment(null);
     setPrintStatus("idle");
     setShipmentError(null);
+    setCompletionError(null);
   }
 
-  // Auto-complete when all items are picked and shipment is ready
+  // When all items are picked and shipment is ready, advance to pre-confirm step.
+  // The operator then explicitly taps "Confirm & Complete" before the APC call is made.
   useEffect(() => {
-    if (
-      view === "picking" &&
-      allChecked &&
-      expandedItems.length > 0 &&
-      shipment &&
-      !completing &&
-      !completionError
-    ) {
-      handleComplete();
+    if (view === "picking" && allChecked && expandedItems.length > 0 && shipment && !completing) {
+      setView("pre-confirm");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allChecked, shipment, view]);
@@ -410,6 +414,90 @@ export default function Fulfilment() {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === "pre-confirm" && activeOrder && shipment) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <button onClick={() => setView("picking")} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <div className="flex-1">
+            <h1 className="font-display font-bold text-xl">{activeOrder.name}</h1>
+            <p className="text-sm text-muted-foreground">{activeOrder.shipping_address?.name ?? `${activeOrder.customer?.first_name} ${activeOrder.customer?.last_name}`}</p>
+          </div>
+          <button onClick={goBack} className="text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg border border-border hover:bg-secondary/50 transition-colors">
+            Back to list
+          </button>
+        </div>
+
+        <div className="glass-panel p-6 rounded-2xl border border-primary/30 bg-primary/5 space-y-4">
+          <div className="flex items-center gap-3 mb-2">
+            <CheckCircle2 className="w-8 h-8 text-green-500 flex-shrink-0" />
+            <div>
+              <h2 className="font-bold text-lg">All items picked!</h2>
+              <p className="text-sm text-muted-foreground">Review the shipment details then confirm to complete.</p>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border bg-card p-4 space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Order</span>
+              <span className="font-semibold">{activeOrder.name}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Customer</span>
+              <span className="font-semibold">{activeOrder.shipping_address?.name ?? `${activeOrder.customer?.first_name} ${activeOrder.customer?.last_name}`}</span>
+            </div>
+            {activeOrder.shipping_address && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Address</span>
+                <span className="text-right font-medium">
+                  {activeOrder.shipping_address.address1}<br />
+                  {activeOrder.shipping_address.city}, {activeOrder.shipping_address.zip}
+                </span>
+              </div>
+            )}
+            <div className="border-t border-border pt-2 flex justify-between">
+              <span className="text-muted-foreground">Consignment</span>
+              <span className="font-mono font-bold text-primary">{shipment.consignmentNumber}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Service</span>
+              <span className="font-mono text-xs">{shipment.serviceCode}</span>
+            </div>
+          </div>
+
+          {completionError && (
+            <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/10 rounded-xl px-4 py-3">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>{completionError}</span>
+            </div>
+          )}
+
+          <button
+            onClick={handleComplete}
+            disabled={completing}
+            className="w-full py-4 bg-primary text-primary-foreground rounded-xl font-bold text-xl hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-3"
+          >
+            {completing ? (
+              <><Loader2 className="w-6 h-6 animate-spin" /> Completing…</>
+            ) : (
+              <><Truck className="w-6 h-6" /> Confirm &amp; Complete</>
+            )}
+          </button>
+
+          <button
+            onClick={() => setView("picking")}
+            disabled={completing}
+            className="w-full py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-xl hover:bg-secondary/50 transition-colors disabled:opacity-40"
+          >
+            ← Back to picking
+          </button>
         </div>
       </div>
     );
@@ -646,14 +734,12 @@ export default function Fulfilment() {
             <SkipForward className="w-4 h-4" /> Skip
           </button>
           <button
-            onClick={handleComplete}
-            disabled={!allChecked || !shipment || completing}
+            onClick={() => setView("pre-confirm")}
+            disabled={!allChecked || !shipment}
             className="flex-1 py-3 bg-primary text-primary-foreground rounded-xl font-semibold text-lg hover:bg-primary/90 transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
           >
-            {completing ? (
-              <><Loader2 className="w-5 h-5 animate-spin" /> Completing…</>
-            ) : allChecked ? (
-              <><CheckCircle2 className="w-5 h-5" /> Complete Order</>
+            {allChecked ? (
+              <><CheckCircle2 className="w-5 h-5" /> Review &amp; Complete</>
             ) : (
               `${expandedItems.length - checkedItems.size} items remaining`
             )}
@@ -774,7 +860,7 @@ export default function Fulfilment() {
                   </div>
                 </div>
                 <button
-                  onClick={() => startPicking(order, idx)}
+                  onClick={() => { clearPreQueue(); startPicking(order); }}
                   className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground rounded-xl font-semibold hover:bg-primary/90 transition-colors flex-shrink-0"
                 >
                   <Scan className="w-4 h-4" /> Start Picking
