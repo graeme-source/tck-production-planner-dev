@@ -1,6 +1,16 @@
 import { Router, type IRouter } from "express";
-import { db, stationBreaksTable, usersTable, productionPlansTable, appSettingsTable } from "@workspace/db";
-import { eq, and, gte, lte, sql, isNotNull } from "drizzle-orm";
+import {
+  db,
+  stationBreaksTable,
+  usersTable,
+  productionPlansTable,
+  appSettingsTable,
+  batchCompletionsTable,
+  productionPlanItemsTable,
+  recipesTable,
+  timingStandardsTable,
+} from "@workspace/db";
+import { eq, and, gte, lte, sql, isNotNull, inArray } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -97,6 +107,279 @@ router.get("/breaks", async (req, res) => {
     records,
     userSummaries,
     defaults: { breakMinutes: defaultBreakMinutes, lunchMinutes: defaultLunchMinutes },
+  });
+});
+
+router.get("/production-kpis", async (req, res) => {
+  const { from, to } = req.query;
+
+  if (from && isNaN(new Date(String(from)).getTime())) {
+    res.status(400).json({ error: "Invalid 'from' date" });
+    return;
+  }
+  if (to && isNaN(new Date(String(to)).getTime())) {
+    res.status(400).json({ error: "Invalid 'to' date" });
+    return;
+  }
+
+  const completionConditions: any[] = [];
+  if (from) completionConditions.push(sql`${batchCompletionsTable.completedAt} >= ${new Date(String(from)).toISOString()}`);
+  if (to) {
+    const toDate = new Date(String(to));
+    toDate.setHours(23, 59, 59, 999);
+    completionConditions.push(sql`${batchCompletionsTable.completedAt} <= ${toDate.toISOString()}`);
+  }
+
+  const completions = await db
+    .select({
+      id: batchCompletionsTable.id,
+      planItemId: batchCompletionsTable.planItemId,
+      stationType: batchCompletionsTable.stationType,
+      userId: batchCompletionsTable.userId,
+      startedAt: batchCompletionsTable.startedAt,
+      completedAt: batchCompletionsTable.completedAt,
+      planId: productionPlanItemsTable.planId,
+      recipeId: productionPlanItemsTable.recipeId,
+      recipeName: recipesTable.name,
+      planDate: productionPlansTable.planDate,
+      planName: productionPlansTable.name,
+      userName: usersTable.name,
+    })
+    .from(batchCompletionsTable)
+    .innerJoin(productionPlanItemsTable, eq(batchCompletionsTable.planItemId, productionPlanItemsTable.id))
+    .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
+    .leftJoin(usersTable, eq(batchCompletionsTable.userId, usersTable.id))
+    .where(completionConditions.length > 0 ? and(...completionConditions) : undefined)
+    .orderBy(sql`${batchCompletionsTable.completedAt} DESC`);
+
+  const timingStandards = await db.select().from(timingStandardsTable);
+  const standardsMap = new Map(timingStandards.map(t => [t.stationType, {
+    target: Number(t.targetBatchesPerHour),
+    min: Number(t.minBatchesPerHour),
+    label: t.stationLabel,
+  }]));
+
+  const breakConditions: any[] = [isNotNull(stationBreaksTable.endedAt)];
+  if (from) breakConditions.push(sql`${stationBreaksTable.startedAt} >= ${new Date(String(from)).toISOString()}`);
+  if (to) {
+    const toDate = new Date(String(to));
+    toDate.setHours(23, 59, 59, 999);
+    breakConditions.push(sql`${stationBreaksTable.startedAt} <= ${toDate.toISOString()}`);
+  }
+
+  const breaks = await db
+    .select({
+      planId: stationBreaksTable.planId,
+      stationType: stationBreaksTable.stationType,
+      userId: stationBreaksTable.userId,
+      startedAt: stationBreaksTable.startedAt,
+      endedAt: stationBreaksTable.endedAt,
+    })
+    .from(stationBreaksTable)
+    .where(and(...breakConditions));
+
+  type SessionKey = string;
+  function makeKey(date: string, station: string, userId: number | null, planId: number): SessionKey {
+    return `${date}|${station}|${userId ?? 0}|${planId}`;
+  }
+
+  const sessionMap = new Map<SessionKey, {
+    date: string;
+    station: string;
+    userId: number | null;
+    userName: string;
+    batchCount: number;
+    earliestAt: Date;
+    latestAt: Date;
+    breakMinutes: number;
+    planId: number;
+    planName: string;
+    recipes: Map<string, number>;
+  }>();
+
+  for (const c of completions) {
+    const date = c.planDate ?? c.completedAt.toISOString().slice(0, 10);
+    const key = makeKey(date, c.stationType, c.userId, c.planId);
+    if (!sessionMap.has(key)) {
+      sessionMap.set(key, {
+        date,
+        station: c.stationType,
+        userId: c.userId,
+        userName: c.userName ?? "Unknown",
+        batchCount: 0,
+        earliestAt: c.completedAt,
+        latestAt: c.completedAt,
+        breakMinutes: 0,
+        planId: c.planId,
+        planName: c.planName,
+        recipes: new Map(),
+      });
+    }
+    const s = sessionMap.get(key)!;
+    s.batchCount++;
+    const ts = c.startedAt ?? c.completedAt;
+    if (ts < s.earliestAt) s.earliestAt = ts;
+    if (c.completedAt > s.latestAt) s.latestAt = c.completedAt;
+    s.recipes.set(c.recipeName, (s.recipes.get(c.recipeName) ?? 0) + 1);
+  }
+
+  for (const b of breaks) {
+    if (!b.endedAt) continue;
+    const date = b.startedAt.toISOString().slice(0, 10);
+    const key = makeKey(date, b.stationType, b.userId, b.planId);
+    const s = sessionMap.get(key);
+    if (s) {
+      const mins = Math.max(0, (b.endedAt.getTime() - b.startedAt.getTime()) / 60000);
+      s.breakMinutes += mins;
+    }
+  }
+
+  const dailySessions: Array<{
+    date: string;
+    station: string;
+    stationLabel: string;
+    userId: number | null;
+    userName: string;
+    planId: number;
+    planName: string;
+    batchCount: number;
+    activeMinutes: number;
+    breakMinutes: number;
+    bph: number;
+    targetBph: number | null;
+    minBph: number | null;
+    status: "above" | "on-target" | "below" | "unknown";
+    recipes: Array<{ name: string; count: number }>;
+  }> = [];
+
+  for (const s of sessionMap.values()) {
+    const totalElapsed = Math.max(0, (s.latestAt.getTime() - s.earliestAt.getTime()) / 60000);
+    const activeMinutes = Math.max(0, totalElapsed - s.breakMinutes);
+    const bph = activeMinutes > 0 ? s.batchCount / (activeMinutes / 60) : 0;
+    const standard = standardsMap.get(s.station);
+    const targetBph = standard?.target ?? null;
+    const minBph = standard?.min ?? null;
+    let status: "above" | "on-target" | "below" | "unknown" = "unknown";
+    if (targetBph !== null && minBph !== null) {
+      if (bph >= targetBph) status = "above";
+      else if (bph >= minBph) status = "on-target";
+      else status = "below";
+    }
+
+    dailySessions.push({
+      date: s.date,
+      station: s.station,
+      stationLabel: standard?.label ?? s.station,
+      userId: s.userId,
+      userName: s.userName,
+      planId: s.planId,
+      planName: s.planName,
+      batchCount: s.batchCount,
+      activeMinutes: Math.round(activeMinutes),
+      breakMinutes: Math.round(s.breakMinutes),
+      bph: Math.round(bph * 10) / 10,
+      targetBph,
+      minBph,
+      status,
+      recipes: Array.from(s.recipes.entries()).map(([name, count]) => ({ name, count })),
+    });
+  }
+
+  dailySessions.sort((a, b) => b.date.localeCompare(a.date) || a.station.localeCompare(b.station));
+
+  const stationSummary = new Map<string, {
+    label: string;
+    totalBatches: number;
+    totalActiveMinutes: number;
+    sessionCount: number;
+    targetBph: number | null;
+    minBph: number | null;
+  }>();
+  for (const ds of dailySessions) {
+    if (!stationSummary.has(ds.station)) {
+      stationSummary.set(ds.station, {
+        label: ds.stationLabel,
+        totalBatches: 0,
+        totalActiveMinutes: 0,
+        sessionCount: 0,
+        targetBph: ds.targetBph,
+        minBph: ds.minBph,
+      });
+    }
+    const ss = stationSummary.get(ds.station)!;
+    ss.totalBatches += ds.batchCount;
+    ss.totalActiveMinutes += ds.activeMinutes;
+    ss.sessionCount++;
+  }
+
+  const stationSummaries = Array.from(stationSummary.entries()).map(([station, ss]) => ({
+    station,
+    label: ss.label,
+    totalBatches: ss.totalBatches,
+    avgBph: ss.totalActiveMinutes > 0
+      ? Math.round((ss.totalBatches / (ss.totalActiveMinutes / 60)) * 10) / 10
+      : 0,
+    sessionCount: ss.sessionCount,
+    targetBph: ss.targetBph,
+    minBph: ss.minBph,
+  }));
+
+  const userSummary = new Map<number, {
+    name: string;
+    totalBatches: number;
+    totalActiveMinutes: number;
+    sessionCount: number;
+    stations: Set<string>;
+  }>();
+  for (const ds of dailySessions) {
+    if (!ds.userId) continue;
+    if (!userSummary.has(ds.userId)) {
+      userSummary.set(ds.userId, {
+        name: ds.userName,
+        totalBatches: 0,
+        totalActiveMinutes: 0,
+        sessionCount: 0,
+        stations: new Set(),
+      });
+    }
+    const us = userSummary.get(ds.userId)!;
+    us.totalBatches += ds.batchCount;
+    us.totalActiveMinutes += ds.activeMinutes;
+    us.sessionCount++;
+    us.stations.add(ds.stationLabel);
+  }
+
+  const userSummaries = Array.from(userSummary.entries()).map(([userId, us]) => ({
+    userId,
+    userName: us.name,
+    totalBatches: us.totalBatches,
+    avgBph: us.totalActiveMinutes > 0
+      ? Math.round((us.totalBatches / (us.totalActiveMinutes / 60)) * 10) / 10
+      : 0,
+    totalActiveMinutes: us.totalActiveMinutes,
+    sessionCount: us.sessionCount,
+    stations: Array.from(us.stations),
+  }));
+
+  const totalBatches = dailySessions.reduce((s, ds) => s + ds.batchCount, 0);
+  const totalActiveMinutes = dailySessions.reduce((s, ds) => s + ds.activeMinutes, 0);
+  const overallBph = totalActiveMinutes > 0
+    ? Math.round((totalBatches / (totalActiveMinutes / 60)) * 10) / 10
+    : 0;
+  const uniqueDays = new Set(dailySessions.map(ds => ds.date)).size;
+
+  res.json({
+    overview: {
+      totalBatches,
+      totalActiveMinutes,
+      overallBph,
+      uniqueDays,
+      avgBatchesPerDay: uniqueDays > 0 ? Math.round(totalBatches / uniqueDays) : 0,
+    },
+    stationSummaries,
+    userSummaries,
+    dailySessions,
   });
 });
 
