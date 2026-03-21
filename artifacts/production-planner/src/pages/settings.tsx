@@ -1082,7 +1082,7 @@ function ApcServiceCodesSection() {
     largeFriday: "",
     weightThreshold: "1000",
   });
-  const [loaded, setLoaded] = useState(false);
+  const [fetching, setFetching] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
 
@@ -1101,8 +1101,9 @@ function ApcServiceCodesSection() {
         largeFriday: lf?.value ?? "",
         weightThreshold: wt?.value ?? "1000",
       });
-      setLoaded(true);
-    }).catch(() => setLoaded(true));
+    }).catch(() => {
+      // Leave defaults if fetch fails
+    }).finally(() => setFetching(false));
   }, []);
 
   const handleSave = async () => {
@@ -1148,11 +1149,9 @@ function ApcServiceCodesSection() {
         {savedMsg && <span className={`text-xs font-medium ${savedMsg.startsWith("Error") ? "text-destructive" : "text-green-600"}`}>{savedMsg}</span>}
       </div>
 
-      {!loaded ? (
-        <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
-      ) : (
-        <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+      <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
+        {fetching && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3 h-3 animate-spin" /> Loading saved values…</div>}
+        <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-xs font-medium mb-1 block text-muted-foreground">Small Box — Weekday</label>
               <input
@@ -1238,7 +1237,6 @@ function ApcServiceCodesSection() {
             </p>
           </div>
         </div>
-      )}
     </div>
   );
 }

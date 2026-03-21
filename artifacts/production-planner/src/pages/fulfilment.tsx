@@ -126,19 +126,44 @@ const ZONE_STYLES: Record<string, { bg: string; border: string; text: string; ba
   },
 };
 
-function printLabel(base64Pdf: string) {
+function printLabel(
+  base64Pdf: string,
+  onPrinted: () => void,
+  onPrintFailed: () => void,
+) {
   const iframe = document.getElementById("label-print-frame") as HTMLIFrameElement | null;
-  if (!iframe) return;
+  if (!iframe) { onPrintFailed(); return; }
 
-  const src = `data:application/pdf;base64,${base64Pdf}`;
-  iframe.src = src;
+  let settled = false;
+
+  function settle(success: boolean) {
+    if (settled) return;
+    settled = true;
+    window.removeEventListener("afterprint", handleAfterPrint);
+    clearTimeout(fallbackTimer);
+    if (success) onPrinted(); else onPrintFailed();
+  }
+
+  function handleAfterPrint() { settle(true); }
+
+  // Kiosk mode fires afterprint immediately after sending job to printer.
+  // Non-kiosk: fires when the print dialog is dismissed (could be cancel).
+  // We treat dismiss as "done" — the user is responsible for printer setup.
+  // Fallback: 10 s timeout in case afterprint never fires (e.g. data-URL sandbox).
+  const fallbackTimer = setTimeout(() => settle(true), 10_000);
+
+  iframe.onerror = () => settle(false);
+
   iframe.onload = () => {
     try {
+      window.addEventListener("afterprint", handleAfterPrint, { once: true });
       iframe.contentWindow?.print();
     } catch {
-      // Handled by print status UI
+      settle(false);
     }
   };
+
+  iframe.src = `data:application/pdf;base64,${base64Pdf}`;
 }
 
 type PrintStatus = "idle" | "printing" | "done" | "failed";
@@ -185,9 +210,10 @@ export default function Fulfilment() {
   function preQueueNextOrder(currentIdx: number) {
     const nextOrder = unfulfilledOrders[currentIdx + 1];
     if (!nextOrder || preQueueRef.current.has(nextOrder.id)) return;
-    const promise = createShipment(nextOrder.id, queryTag, queryTag).catch(() => {
+    const promise = createShipment(nextOrder.id, queryTag, queryTag).catch((err) => {
       preQueueRef.current.delete(nextOrder.id);
-    }) as Promise<ShipmentResult>;
+      throw err; // re-throw so startPicking can handle the error correctly
+    });
     preQueueRef.current.set(nextOrder.id, promise);
   }
 
@@ -213,8 +239,11 @@ export default function Fulfilment() {
       }
       setShipment(result);
       setPrintStatus("printing");
-      printLabel(result.labelPdfBase64);
-      setTimeout(() => setPrintStatus("done"), 3000);
+      printLabel(
+        result.labelPdfBase64,
+        () => setPrintStatus("done"),
+        () => setPrintStatus("failed"),
+      );
 
       preQueueNextOrder(index);
     } catch (err: any) {
@@ -319,6 +348,29 @@ export default function Fulfilment() {
     setShipmentError(null);
   }
 
+  // Auto-complete when all items are picked and shipment is ready
+  useEffect(() => {
+    if (
+      view === "picking" &&
+      allChecked &&
+      expandedItems.length > 0 &&
+      shipment &&
+      !completing &&
+      !completionError
+    ) {
+      handleComplete();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allChecked, shipment, view]);
+
+  // Auto-advance after confirm is shown — give user 4 s to read consignment number
+  useEffect(() => {
+    if (view !== "confirm") return;
+    const timer = setTimeout(() => advanceToNext(), 4000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+
   useEffect(() => {
     if (view === "picking" && barcodeRef.current) {
       barcodeRef.current.focus();
@@ -364,6 +416,7 @@ export default function Fulfilment() {
   }
 
   if (view === "confirm" && activeOrder && shipment) {
+    const hasNext = unfulfilledOrders.filter(o => o.id !== activeOrder.id).length > 0;
     return (
       <div className="space-y-6">
         <PageHeader title="Fulfilment" description="APC order scanning and label printing." />
@@ -380,8 +433,13 @@ export default function Fulfilment() {
           <p className="text-sm text-green-600 dark:text-green-400 mb-6">
             {activeOrder.shipping_address?.address1}, {activeOrder.shipping_address?.city}, {activeOrder.shipping_address?.zip}
           </p>
+          {hasNext && (
+            <p className="text-xs text-green-600/70 dark:text-green-400/70 mb-3 animate-pulse">
+              Auto-advancing to next order in 4 s…
+            </p>
+          )}
           <div className="flex gap-3 justify-center">
-            {unfulfilledOrders.filter(o => o.id !== activeOrder.id).length > 0 ? (
+            {hasNext ? (
               <button
                 onClick={advanceToNext}
                 className="px-8 py-3 bg-primary text-primary-foreground rounded-xl font-semibold text-lg hover:bg-primary/90 transition-colors flex items-center gap-2"
@@ -393,7 +451,7 @@ export default function Fulfilment() {
               onClick={() => setView("list")}
               className="px-6 py-3 bg-secondary text-foreground rounded-xl font-medium hover:bg-secondary/80 transition-colors"
             >
-              Back to List
+              {hasNext ? "Back to List" : "All Done — Back to List"}
             </button>
           </div>
         </div>
@@ -426,7 +484,27 @@ export default function Fulfilment() {
                 <CheckCircle2 className="w-4 h-4" /> Label printed
               </span>
             )}
-            {printStatus === "failed" && (
+            {printStatus === "failed" && shipment && (
+              <div className="flex items-center gap-2">
+                <span className="flex items-center gap-1.5 text-xs text-destructive">
+                  <XCircle className="w-4 h-4" /> Print failed
+                </span>
+                <button
+                  onClick={() => {
+                    setPrintStatus("printing");
+                    printLabel(
+                      shipment.labelPdfBase64,
+                      () => setPrintStatus("done"),
+                      () => setPrintStatus("failed"),
+                    );
+                  }}
+                  className="text-xs px-2 py-1 bg-destructive/10 hover:bg-destructive/20 text-destructive rounded-lg flex items-center gap-1 transition-colors"
+                >
+                  <RotateCcw className="w-3 h-3" /> Retry print
+                </button>
+              </div>
+            )}
+            {printStatus === "failed" && !shipment && (
               <span className="flex items-center gap-1.5 text-xs text-destructive">
                 <XCircle className="w-4 h-4" /> Print failed
               </span>
@@ -572,8 +650,13 @@ export default function Fulfilment() {
             disabled={!allChecked || !shipment || completing}
             className="flex-1 py-3 bg-primary text-primary-foreground rounded-xl font-semibold text-lg hover:bg-primary/90 transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
           >
-            {completing ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
-            {allChecked ? "Complete Order" : `${expandedItems.length - checkedItems.size} items remaining`}
+            {completing ? (
+              <><Loader2 className="w-5 h-5 animate-spin" /> Completing…</>
+            ) : allChecked ? (
+              <><CheckCircle2 className="w-5 h-5" /> Complete Order</>
+            ) : (
+              `${expandedItems.length - checkedItems.size} items remaining`
+            )}
           </button>
         </div>
 
