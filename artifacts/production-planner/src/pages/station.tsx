@@ -2811,11 +2811,16 @@ function useDoughPrepData(planId: number, mode?: "current") {
   return { data, loading, error };
 }
 
+type DoughView = "mixing" | "balling" | "overview";
+
 function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const queryClient = useQueryClient();
   const { data: doughData, loading: doughLoading } = useDoughPrepData(plan.id);
   const [activeMix, setActiveMix] = useState<number>(1);
   const [isOnBreak, setIsOnBreak] = useState(false);
+  const [activeView, setActiveView] = useState<DoughView>("mixing");
+  const [checkedIngredients, setCheckedIngredients] = useState<Record<number, Set<string>>>({});
+  const [completedMixes, setCompletedMixes] = useState<Set<number>>(new Set());
 
   const createBatch = useCreateBatchCompletion({
     mutation: {
@@ -2827,6 +2832,18 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
   const totalComplete = items.reduce((s, it) => s + getStationCount(it, "dough_prep"), 0);
   const overallPct = totalBatchesTarget > 0 ? Math.round((totalComplete / totalBatchesTarget) * 100) : 0;
+  const mixCount = doughData?.mixCount ?? 0;
+
+  const serverBallCount = doughData
+    ? items.reduce((s, it) => {
+        const recipe = doughData.recipes.find(r => r.recipeId === it.recipeId);
+        if (!recipe) return s;
+        return s + getStationCount(it, "dough_prep") * recipe.portionsPerBatch;
+      }, 0)
+    : 0;
+
+  const hasServerProgress = totalComplete > 0;
+  const hasAnyMixDone = completedMixes.size > 0 || hasServerProgress;
 
   const addBatch = (item: ProductionPlanItem) => {
     createBatch.mutate({ id: plan.id, data: { planItemId: item.id, stationType: "dough_prep", completedAt: new Date().toISOString() } });
@@ -2848,29 +2865,533 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     }
   };
 
-  const mixCount = doughData?.mixCount ?? 0;
+  const toggleIngredient = (mixNum: number, ingredientKey: string) => {
+    if (isOnBreak) return;
+    setCheckedIngredients(prev => {
+      const mixSet = new Set(prev[mixNum] ?? []);
+      if (mixSet.has(ingredientKey)) mixSet.delete(ingredientKey);
+      else mixSet.add(ingredientKey);
+      return { ...prev, [mixNum]: mixSet };
+    });
+  };
+
+  const completeMix = (mixNum: number) => {
+    if (isOnBreak) return;
+    setCompletedMixes(prev => new Set(prev).add(mixNum));
+    if (mixNum < mixCount) {
+      setActiveMix(mixNum + 1);
+    }
+  };
+
+  const checkedForMix = checkedIngredients[activeMix] ?? new Set<string>();
+  const ingredientCount = doughData?.ingredients.length ?? 0;
+  const allChecked = ingredientCount > 0 && checkedForMix.size >= ingredientCount;
+  const isMixComplete = completedMixes.has(activeMix);
+  const allMixesDone = mixCount > 0 && completedMixes.size >= mixCount;
+
+  const totalBallsNeeded = doughData?.recipes.reduce((s, r) => s + r.ballCount, 0) ?? 0;
+  const ballCount = serverBallCount;
+  const allBallingDone = ballCount >= totalBallsNeeded;
+
+  const addBalls = (count: number) => {
+    if (isOnBreak || !doughData) return;
+    const newTotal = Math.min(ballCount + count, totalBallsNeeded);
+    const oldTotal = ballCount;
+
+    let remaining = newTotal;
+    let oldRemaining = oldTotal;
+    for (const recipe of doughData.recipes) {
+      const needed = recipe.ballCount;
+      const oldAllocated = Math.min(oldRemaining, needed);
+      const newAllocated = Math.min(remaining, needed);
+
+      const batchesAdded = Math.floor(newAllocated / recipe.portionsPerBatch) - Math.floor(oldAllocated / recipe.portionsPerBatch);
+      if (batchesAdded > 0) {
+        const item = items.find(it => it.recipeId === recipe.recipeId);
+        if (item) {
+          for (let i = 0; i < batchesAdded; i++) {
+            addBatch(item);
+          }
+        }
+      }
+      remaining -= newAllocated;
+      oldRemaining -= oldAllocated;
+    }
+  };
+
+  const undoBall = () => {
+    if (isOnBreak || ballCount <= 0 || !doughData) return;
+    let remaining = ballCount;
+    for (let ri = doughData.recipes.length - 1; ri >= 0; ri--) {
+      const recipe = doughData.recipes[ri];
+      const allocated = Math.min(remaining, recipe.ballCount);
+      if (allocated > 0 && allocated % recipe.portionsPerBatch === 0) {
+        const item = items.find(it => it.recipeId === recipe.recipeId);
+        if (item && getStationCount(item, "dough_prep") > 0) {
+          removeBatch(item);
+          return;
+        }
+      }
+      remaining -= allocated;
+    }
+    const lastItemWithCount = [...items].reverse().find(it => getStationCount(it, "dough_prep") > 0);
+    if (lastItemWithCount) {
+      removeBatch(lastItemWithCount);
+    }
+  };
+
+  const getBallAllocation = () => {
+    if (!doughData) return [];
+    let remaining = ballCount;
+    return doughData.recipes.map(r => {
+      const allocated = Math.min(remaining, r.ballCount);
+      remaining -= allocated;
+      return { ...r, ballsDone: allocated };
+    });
+  };
+
+  if (doughLoading) {
+    return (
+      <div className="flex items-center justify-center py-16 text-muted-foreground">
+        <Loader2 className="w-6 h-6 animate-spin mr-3" />
+        <span className="text-lg">Loading dough data…</span>
+      </div>
+    );
+  }
+
+  if (!doughData || doughData.totalDoughKg <= 0) {
+    return (
+      <div className="bg-card border border-border rounded-xl p-8 text-center">
+        <Layers className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-50" />
+        <h2 className="font-semibold text-lg mb-1">No dough requirements</h2>
+        <p className="text-muted-foreground text-sm">No dough recipes found for this plan.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
-      {doughData && (
+      {doughData.nextPlan && (
         <PrepDateBanner
           currentPlanDate={plan.planDate}
-          targetPlanDate={doughData.nextPlan?.planDate ?? null}
-          targetPlanName={doughData.nextPlan?.name ?? null}
+          targetPlanDate={doughData.nextPlan.planDate ?? null}
+          targetPlanName={doughData.nextPlan.name ?? null}
           isLoading={doughLoading}
           activityLabel="Dough prep"
         />
       )}
 
-      {/* Summary */}
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 bg-secondary/30 rounded-xl p-1 flex-1">
+          <button
+            onClick={() => setActiveView("mixing")}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all flex-1 justify-center",
+              activeView === "mixing"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Droplets className="w-4 h-4" />
+            Mixing
+            {allMixesDone && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+          </button>
+          <button
+            onClick={() => hasAnyMixDone ? setActiveView("balling") : toast({ title: "Complete a mix first", description: "Balling starts after the first mix is done." })}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all flex-1 justify-center",
+              activeView === "balling"
+                ? "bg-background text-foreground shadow-sm"
+                : !hasAnyMixDone
+                  ? "text-muted-foreground/40"
+                  : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Layers className="w-4 h-4" />
+            Balling
+            {allBallingDone && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+          </button>
+          <button
+            onClick={() => setActiveView("overview")}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all justify-center",
+              activeView === "overview"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <ClipboardList className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      <BreakTracker planId={plan.id} stationType="dough_prep" onBreakActiveChange={setIsOnBreak} />
+
+      {activeView === "mixing" && (
+        <DoughMixingView
+          doughData={doughData}
+          mixCount={mixCount}
+          activeMix={activeMix}
+          setActiveMix={setActiveMix}
+          checkedForMix={checkedForMix}
+          toggleIngredient={toggleIngredient}
+          completedMixes={completedMixes}
+          completeMix={completeMix}
+          allChecked={allChecked}
+          isMixComplete={isMixComplete}
+          allMixesDone={allMixesDone}
+          isOnBreak={isOnBreak}
+        />
+      )}
+
+      {activeView === "balling" && (
+        <DoughBallingView
+          doughData={doughData}
+          ballCount={ballCount}
+          totalBallsNeeded={totalBallsNeeded}
+          allBallingDone={allBallingDone}
+          addBalls={addBalls}
+          undoBall={undoBall}
+          getBallAllocation={getBallAllocation}
+          isOnBreak={isOnBreak}
+        />
+      )}
+
+      {activeView === "overview" && (
+        <DoughOverview
+          doughData={doughData}
+          items={items}
+          completedMixes={completedMixes}
+          mixCount={mixCount}
+          ballCount={ballCount}
+          totalBallsNeeded={totalBallsNeeded}
+          overallPct={overallPct}
+          totalComplete={totalComplete}
+          totalBatchesTarget={totalBatchesTarget}
+        />
+      )}
+    </div>
+  );
+}
+
+function DoughMixingView({
+  doughData, mixCount, activeMix, setActiveMix,
+  checkedForMix, toggleIngredient, completedMixes, completeMix,
+  allChecked, isMixComplete, allMixesDone, isOnBreak,
+}: {
+  doughData: DoughPrepData;
+  mixCount: number;
+  activeMix: number;
+  setActiveMix: (n: number) => void;
+  checkedForMix: Set<string>;
+  toggleIngredient: (mix: number, key: string) => void;
+  completedMixes: Set<number>;
+  completeMix: (mix: number) => void;
+  allChecked: boolean;
+  isMixComplete: boolean;
+  allMixesDone: boolean;
+  isOnBreak: boolean;
+}) {
+  if (allMixesDone) {
+    return (
+      <div className="bg-emerald-50 dark:bg-emerald-950/20 border-2 border-emerald-300 dark:border-emerald-700 rounded-2xl p-8 text-center">
+        <CheckCircle2 className="w-16 h-16 text-emerald-500 mx-auto mb-4" />
+        <h2 className="font-display text-2xl font-bold text-emerald-800 dark:text-emerald-200 mb-2">
+          All {mixCount} mix{mixCount !== 1 ? "es" : ""} complete!
+        </h2>
+        <p className="text-emerald-700 dark:text-emerald-300">
+          Switch to Balling to start portioning dough balls.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 justify-between">
+        <div className="flex items-center gap-2">
+          {Array.from({ length: mixCount }, (_, i) => {
+            const n = i + 1;
+            const done = completedMixes.has(n);
+            return (
+              <button
+                key={n}
+                onClick={() => setActiveMix(n)}
+                className={cn(
+                  "w-10 h-10 rounded-full text-sm font-bold transition-all",
+                  activeMix === n
+                    ? done
+                      ? "bg-emerald-500 text-white ring-2 ring-emerald-300"
+                      : "bg-amber-500 text-white ring-2 ring-amber-300"
+                    : done
+                      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+                      : "bg-secondary text-muted-foreground hover:bg-secondary/80"
+                )}
+              >
+                {done ? <Check className="w-4 h-4 mx-auto" /> : n}
+              </button>
+            );
+          })}
+        </div>
+        <div className="text-right">
+          <p className="text-xs text-muted-foreground">
+            {completedMixes.size} of {mixCount} mixes done
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {(doughData.flourPerMix ?? 0).toFixed(1)} kg flour → ~{(doughData.doughPerMix ?? 0).toFixed(1)} kg dough
+          </p>
+        </div>
+      </div>
+
+      <div className={cn(
+        "border-2 rounded-2xl overflow-hidden transition-all",
+        isMixComplete
+          ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-950/10"
+          : "border-amber-300 dark:border-amber-700 bg-card"
+      )}>
+        <div className={cn(
+          "px-5 py-4 flex items-center justify-between",
+          isMixComplete
+            ? "bg-emerald-100/50 dark:bg-emerald-900/20"
+            : "bg-amber-50 dark:bg-amber-950/20"
+        )}>
+          <div>
+            <h2 className="font-display text-xl font-bold">Mix {activeMix}</h2>
+            <p className="text-sm text-muted-foreground">
+              {checkedForMix.size} of {doughData.ingredients.length} ingredients added
+            </p>
+          </div>
+          {isMixComplete && <CheckCircle2 className="w-8 h-8 text-emerald-500" />}
+        </div>
+
+        <div className="divide-y divide-border/40">
+          {doughData.ingredients.map(ing => {
+            const key = ing.ingredientId != null ? String(ing.ingredientId) : ing.ingredientName;
+            const isChecked = checkedForMix.has(key) || isMixComplete;
+            return (
+              <button
+                key={key}
+                onClick={() => !isMixComplete && toggleIngredient(activeMix, key)}
+                disabled={isOnBreak || isMixComplete}
+                className={cn(
+                  "w-full flex items-center gap-4 px-5 py-4 text-left transition-all",
+                  isChecked
+                    ? "bg-emerald-50/50 dark:bg-emerald-900/10"
+                    : "hover:bg-secondary/30",
+                  isOnBreak && "opacity-50"
+                )}
+              >
+                <div className={cn(
+                  "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-all border-2",
+                  isChecked
+                    ? "bg-emerald-500 border-emerald-500 text-white"
+                    : "border-border bg-background"
+                )}>
+                  {isChecked && <Check className="w-5 h-5" />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className={cn(
+                    "font-semibold text-base",
+                    isChecked && "line-through text-muted-foreground"
+                  )}>
+                    {ing.ingredientName}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {ing.pctOfDough > 0 ? `${ing.pctOfDough}%` : "<0.1%"} of dough
+                  </p>
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <p className={cn(
+                    "text-xl font-bold tabular-nums",
+                    isChecked ? "text-emerald-700 dark:text-emerald-300" : "text-foreground"
+                  )}>
+                    {ing.unit === "g"
+                      ? `${(ing.qtyPerMix).toFixed(0)}g`
+                      : `${ing.qtyPerMix.toFixed(2)} ${ing.unit}`}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Day total: {ing.unit === "g"
+                      ? `${ing.totalQty.toFixed(0)}g`
+                      : `${ing.totalQty.toFixed(2)} ${ing.unit}`}
+                  </p>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {!isMixComplete && (
+          <div className="px-5 py-4 border-t border-border/40">
+            <button
+              onClick={() => completeMix(activeMix)}
+              disabled={!allChecked || isOnBreak}
+              className={cn(
+                "w-full py-4 rounded-xl text-lg font-bold transition-all",
+                allChecked && !isOnBreak
+                  ? "bg-emerald-500 text-white hover:bg-emerald-600 shadow-lg shadow-emerald-500/20"
+                  : "bg-secondary text-muted-foreground cursor-not-allowed"
+              )}
+            >
+              {allChecked ? `✓ Mix ${activeMix} Complete` : `Add all ingredients to continue`}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DoughBallingView({
+  doughData, ballCount, totalBallsNeeded, allBallingDone,
+  addBalls, undoBall, getBallAllocation, isOnBreak,
+}: {
+  doughData: DoughPrepData;
+  ballCount: number;
+  totalBallsNeeded: number;
+  allBallingDone: boolean;
+  addBalls: (n: number) => void;
+  undoBall: () => void;
+  getBallAllocation: () => Array<{ recipeId: number; recipeName: string; ballCount: number; ballWeightG: number; portionsPerBatch: number; ballsDone: number }>;
+  isOnBreak: boolean;
+}) {
+  const allocation = getBallAllocation();
+  const ballPct = totalBallsNeeded > 0 ? Math.round((ballCount / totalBallsNeeded) * 100) : 0;
+
+  return (
+    <div className="space-y-4">
+      <div className={cn(
+        "border-2 rounded-2xl p-6 text-center transition-all",
+        allBallingDone
+          ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/20"
+          : "border-amber-300 dark:border-amber-700 bg-card"
+      )}>
+        <p className="text-sm text-muted-foreground mb-2">Balls Made</p>
+        <p className={cn(
+          "font-display text-6xl font-bold tabular-nums mb-2",
+          allBallingDone ? "text-emerald-600" : "text-foreground"
+        )}>
+          {ballCount}
+        </p>
+        <p className="text-lg text-muted-foreground mb-4">of {totalBallsNeeded}</p>
+
+        <div className="w-full h-3 bg-secondary rounded-full overflow-hidden mb-6">
+          <div
+            className={cn("h-full rounded-full transition-all", allBallingDone ? "bg-emerald-500" : "bg-amber-500")}
+            style={{ width: `${Math.min(ballPct, 100)}%` }}
+          />
+        </div>
+
+        {!allBallingDone ? (
+          <div className="flex items-center justify-center gap-3">
+            <button
+              onClick={undoBall}
+              disabled={ballCount === 0 || isOnBreak}
+              className="w-14 h-14 flex items-center justify-center rounded-2xl border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
+            >
+              <Minus className="w-6 h-6" />
+            </button>
+            <button
+              onClick={() => addBalls(1)}
+              disabled={isOnBreak}
+              className={cn(
+                "h-16 px-8 rounded-2xl text-lg font-bold transition-all shadow-lg",
+                isOnBreak
+                  ? "bg-secondary text-muted-foreground"
+                  : "bg-amber-500 text-white hover:bg-amber-600 shadow-amber-500/20 active:scale-95"
+              )}
+            >
+              + Add Ball
+            </button>
+            <button
+              onClick={() => addBalls(4)}
+              disabled={isOnBreak}
+              className={cn(
+                "h-16 px-8 rounded-2xl text-lg font-bold transition-all shadow-lg",
+                isOnBreak
+                  ? "bg-secondary text-muted-foreground"
+                  : "bg-amber-600 text-white hover:bg-amber-700 shadow-amber-600/20 active:scale-95"
+              )}
+            >
+              + Add 4
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center justify-center gap-2 text-emerald-600">
+            <CheckCircle2 className="w-6 h-6" />
+            <span className="text-lg font-semibold">All balls complete!</span>
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        {allocation.map(r => {
+          const pct = r.ballCount > 0 ? Math.round((r.ballsDone / r.ballCount) * 100) : 0;
+          const done = r.ballsDone >= r.ballCount;
+          return (
+            <div
+              key={r.recipeId}
+              className={cn(
+                "bg-card border rounded-xl px-4 py-3 transition-all",
+                done
+                  ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-900/10"
+                  : r.ballsDone > 0
+                    ? "border-amber-200 dark:border-amber-800"
+                    : "border-border"
+              )}
+            >
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-2">
+                  <span className={cn("font-semibold text-sm", done && "text-muted-foreground line-through")}>
+                    {r.recipeName}
+                  </span>
+                  {done && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+                </div>
+                <span className="text-sm tabular-nums">
+                  <span className="font-bold">{r.ballsDone}</span>
+                  <span className="text-muted-foreground"> / {r.ballCount}</span>
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
+                  <div
+                    className={cn("h-full rounded-full transition-all", done ? "bg-emerald-500" : "bg-amber-500")}
+                    style={{ width: `${Math.min(pct, 100)}%` }}
+                  />
+                </div>
+                <span className="text-xs text-amber-600 dark:text-amber-400 font-medium">{r.ballWeightG}g</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function DoughOverview({
+  doughData, items, completedMixes, mixCount,
+  ballCount, totalBallsNeeded, overallPct, totalComplete, totalBatchesTarget,
+}: {
+  doughData: DoughPrepData;
+  items: ProductionPlanItem[];
+  completedMixes: Set<number>;
+  mixCount: number;
+  ballCount: number;
+  totalBallsNeeded: number;
+  overallPct: number;
+  totalComplete: number;
+  totalBatchesTarget: number;
+}) {
+  return (
+    <div className="space-y-4">
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3">
             <Layers className="w-6 h-6 text-amber-600" />
             <div>
-              <h2 className="font-semibold text-base">Dough Prep</h2>
+              <h2 className="font-semibold text-base">Day Overview</h2>
               <p className="text-xs text-muted-foreground">
-                {totalComplete} of {totalBatchesTarget} recipe batches mixed
+                {totalComplete} of {totalBatchesTarget} recipe batches
               </p>
             </div>
           </div>
@@ -2882,211 +3403,106 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
             style={{ width: `${Math.min(overallPct, 100)}%` }}
           />
         </div>
-        <div className="mt-3 pt-3 border-t border-border/50">
-          <BreakTracker planId={plan.id} stationType="dough_prep" onBreakActiveChange={setIsOnBreak} />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-card border border-border rounded-xl p-4 text-center">
+          <p className="text-xs text-muted-foreground mb-1">Mixes</p>
+          <p className="text-2xl font-bold tabular-nums">{completedMixes.size} / {mixCount}</p>
+        </div>
+        <div className="bg-card border border-border rounded-xl p-4 text-center">
+          <p className="text-xs text-muted-foreground mb-1">Balls</p>
+          <p className="text-2xl font-bold tabular-nums">{ballCount} / {totalBallsNeeded}</p>
         </div>
       </div>
 
-      {/* Dough requirements */}
-      {doughLoading ? (
-        <div className="flex items-center justify-center py-8 text-muted-foreground">
-          <Loader2 className="w-5 h-5 animate-spin mr-2" />
-          Loading dough data…
+      <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-xl p-4">
+        <h3 className="font-semibold text-amber-900 dark:text-amber-100 mb-2 text-sm">Dough Requirements</h3>
+        <div className="grid grid-cols-4 gap-3">
+          <div className="text-center">
+            <p className="text-xs text-amber-700 dark:text-amber-300">Total Dough</p>
+            <p className="text-lg font-bold text-amber-800 dark:text-amber-200">{doughData.totalDoughKg.toFixed(1)} kg</p>
+          </div>
+          <div className="text-center">
+            <p className="text-xs text-amber-700 dark:text-amber-300">Total Flour</p>
+            <p className="text-lg font-bold text-amber-800 dark:text-amber-200">{(doughData.totalFlourKg ?? 0).toFixed(1)} kg</p>
+          </div>
+          <div className="text-center">
+            <p className="text-xs text-amber-700 dark:text-amber-300">Flour/Mix</p>
+            <p className="text-lg font-bold text-amber-800 dark:text-amber-200">{(doughData.flourPerMix ?? 0).toFixed(1)} kg</p>
+          </div>
+          <div className="text-center">
+            <p className="text-xs text-amber-700 dark:text-amber-300">Mixes</p>
+            <p className="text-lg font-bold text-amber-800 dark:text-amber-200">{doughData.mixCount}</p>
+          </div>
         </div>
-      ) : doughData && doughData.totalDoughKg > 0 ? (
-        <>
-          {/* Totals banner */}
-          <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-xl p-4">
-            <div className="flex items-start gap-3">
-              <Droplets className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
-              <div className="flex-1">
-                <h3 className="font-semibold text-amber-900 dark:text-amber-100 mb-2">Dough Requirements</h3>
-                <div className="grid grid-cols-4 gap-3">
-                  <div className="text-center">
-                    <p className="text-xs text-amber-700 dark:text-amber-300">Total Dough</p>
-                    <p className="text-xl font-bold text-amber-800 dark:text-amber-200">{doughData.totalDoughKg.toFixed(1)} kg</p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-xs text-amber-700 dark:text-amber-300">Total Flour</p>
-                    <p className="text-xl font-bold text-amber-800 dark:text-amber-200">{(doughData.totalFlourKg ?? 0).toFixed(1)} kg</p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-xs text-amber-700 dark:text-amber-300">Flour per Mix</p>
-                    <p className="text-xl font-bold text-amber-800 dark:text-amber-200">{(doughData.flourPerMix ?? 0).toFixed(1)} kg</p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-xs text-amber-700 dark:text-amber-300">No. of Mixes</p>
-                    <p className="text-xl font-bold text-amber-800 dark:text-amber-200">{doughData.mixCount}</p>
-                  </div>
-                </div>
-                <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
-                  Mixer capacity: {doughData.mixerCapacityKg} kg flour &middot; Each mix produces ~{(doughData.doughPerMix ?? 0).toFixed(1)} kg dough
-                </p>
-              </div>
-            </div>
-          </div>
+      </div>
 
-          {/* Per-recipe ball weights */}
-          <div className="bg-card border border-border rounded-xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-border">
-              <h3 className="font-semibold text-sm">Dough Ball Weights</h3>
-            </div>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-secondary/20 border-b border-border text-xs text-muted-foreground">
-                  <th className="py-2 px-4 text-left font-medium">Recipe</th>
-                  <th className="py-2 px-4 text-center font-medium">Batches</th>
-                  <th className="py-2 px-4 text-center font-medium">Ball Weight</th>
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-border">
+          <h3 className="font-semibold text-sm">Recipe Breakdown</h3>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-secondary/20 border-b border-border text-xs text-muted-foreground">
+              <th className="py-2 px-4 text-left font-medium">Recipe</th>
+              <th className="py-2 px-4 text-center font-medium">Batches</th>
+              <th className="py-2 px-4 text-center font-medium">Balls</th>
+              <th className="py-2 px-4 text-center font-medium">Ball Wt</th>
+              <th className="py-2 px-4 text-center font-medium">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map(item => {
+              const recipeInfo = doughData.recipes.find(r => r.recipeId === item.recipeId);
+              const dpCount = getStationCount(item, "dough_prep");
+              const isComplete = dpCount >= (item.batchesTarget ?? 0);
+              return (
+                <tr key={item.id} className="border-b border-border/50 last:border-0">
+                  <td className={cn("py-2.5 px-4 font-medium", isComplete && "text-muted-foreground line-through")}>
+                    {item.recipeName ?? `Recipe #${item.recipeId}`}
+                  </td>
+                  <td className="py-2.5 px-4 text-center tabular-nums">
+                    {dpCount} / {item.batchesTarget ?? 0}
+                  </td>
+                  <td className="py-2.5 px-4 text-center tabular-nums">
+                    {recipeInfo ? recipeInfo.ballCount : "—"}
+                  </td>
+                  <td className="py-2.5 px-4 text-center font-semibold text-amber-700 dark:text-amber-400">
+                    {recipeInfo ? `${recipeInfo.ballWeightG}g` : "—"}
+                  </td>
+                  <td className="py-2.5 px-4 text-center">
+                    {isComplete
+                      ? <CheckCircle2 className="w-4 h-4 text-emerald-500 mx-auto" />
+                      : <span className="text-xs text-muted-foreground">In progress</span>
+                    }
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {doughData.recipes.map(r => (
-                  <tr key={r.recipeId} className="border-b border-border/50 last:border-0">
-                    <td className="py-2.5 px-4 font-medium">{r.recipeName}</td>
-                    <td className="py-2.5 px-4 text-center">{r.batchesTarget}</td>
-                    <td className="py-2.5 px-4 text-center font-semibold text-amber-700 dark:text-amber-400">
-                      {r.ballWeightG}g
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
 
-          {/* Mixing schedule */}
-          {mixCount > 0 && (
-            <div className="bg-card border border-border rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-                <h3 className="font-semibold text-sm">Dough Recipe — {(doughData.flourPerMix ?? 0).toFixed(1)} kg flour per mix</h3>
-                {mixCount > 1 && (
-                  <div className="flex items-center gap-1">
-                    {Array.from({ length: mixCount }, (_, i) => (
-                      <button
-                        key={i}
-                        onClick={() => setActiveMix(i + 1)}
-                        className={cn(
-                          "w-7 h-7 rounded-full text-xs font-semibold transition-colors",
-                          activeMix === i + 1
-                            ? "bg-amber-500 text-white"
-                            : "bg-secondary text-muted-foreground hover:bg-secondary/80"
-                        )}
-                      >
-                        {i + 1}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className="p-4">
-                <p className="text-xs text-muted-foreground mb-3">
-                  Mix {activeMix} of {mixCount} &middot; {(doughData.flourPerMix ?? 0).toFixed(1)} kg flour &rarr; ~{(doughData.doughPerMix ?? 0).toFixed(1)} kg dough
-                </p>
-                <div className="space-y-2">
-                  {doughData.ingredients.map(ing => (
-                    <div key={ing.ingredientId ?? ing.ingredientName} className="flex items-center justify-between py-2 border-b border-border/40 last:border-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium">{ing.ingredientName}</span>
-                        <span className="text-xs text-muted-foreground">
-                          ({ing.pctOfDough > 0 ? `${ing.pctOfDough}%` : "<0.1%"})
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-4 text-right">
-                        <div>
-                          <span className="text-base font-bold tabular-nums">
-                            {ing.unit === "g"
-                              ? `${(ing.qtyPerMix).toFixed(0)}g`
-                              : `${ing.qtyPerMix.toFixed(2)} ${ing.unit}`}
-                          </span>
-                        </div>
-                        <div className="text-xs text-muted-foreground w-20 text-right">
-                          Total: {ing.unit === "g"
-                            ? `${ing.totalQty.toFixed(0)}g`
-                            : `${ing.totalQty.toFixed(2)} ${ing.unit}`}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-border">
+          <h3 className="font-semibold text-sm">Dough Recipe (per mix)</h3>
+        </div>
+        <div className="divide-y divide-border/40">
+          {doughData.ingredients.map(ing => (
+            <div key={ing.ingredientId ?? ing.ingredientName} className="flex items-center justify-between px-4 py-2.5">
+              <span className="text-sm font-medium">{ing.ingredientName}</span>
+              <div className="flex items-center gap-4 text-right">
+                <span className="text-sm font-bold tabular-nums">
+                  {ing.unit === "g" ? `${ing.qtyPerMix.toFixed(0)}g` : `${ing.qtyPerMix.toFixed(2)} ${ing.unit}`}
+                </span>
+                <span className="text-xs text-muted-foreground w-20 text-right">
+                  ({ing.pctOfDough > 0 ? `${ing.pctOfDough}%` : "<0.1%"})
+                </span>
               </div>
             </div>
-          )}
-        </>
-      ) : null}
-
-      {/* Per-recipe batch counters */}
-      <div className="space-y-2">
-        {items.map(item => {
-          const dpCount = getStationCount(item, "dough_prep");
-          const isComplete = dpCount >= (item.batchesTarget ?? 0);
-          const prog = (item.batchesTarget ?? 0) > 0
-            ? Math.round((dpCount / (item.batchesTarget ?? 0)) * 100)
-            : 0;
-          const recipeInfo = doughData?.recipes.find(r => r.recipeId === item.recipeId);
-          return (
-            <div
-              key={item.id}
-              className={cn(
-                "bg-card border rounded-xl p-4 transition-all",
-                isComplete
-                  ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-900/10"
-                  : dpCount > 0
-                    ? "border-amber-300 dark:border-amber-700 bg-amber-50/30 dark:bg-amber-900/10"
-                    : "border-border"
-              )}
-            >
-              <div className="flex items-center gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <h3 className={cn("font-semibold", isComplete ? "line-through text-muted-foreground" : "")}>
-                      {item.recipeName ?? `Recipe #${item.recipeId}`}
-                    </h3>
-                    {isComplete && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
-                  </div>
-                  {recipeInfo && (
-                    <p className="text-xs text-amber-700 dark:text-amber-400 mb-1">
-                      {recipeInfo.ballWeightG}g balls · {recipeInfo.portionsPerBatch} per batch
-                    </p>
-                  )}
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
-                      <div
-                        className={cn("h-full rounded-full transition-all", isComplete ? "bg-emerald-500" : "bg-amber-500")}
-                        style={{ width: `${Math.min(prog, 100)}%` }}
-                      />
-                    </div>
-                    <span className="text-xs text-muted-foreground whitespace-nowrap">
-                      {dpCount} / {item.batchesTarget ?? 0} batches
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <button
-                    onClick={() => removeBatch(item)}
-                    disabled={dpCount === 0 || isOnBreak}
-                    className="w-9 h-9 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
-                  >
-                    <Minus className="w-4 h-4" />
-                  </button>
-                  <div className="w-10 text-center">
-                    <span className="text-xl font-bold">{dpCount}</span>
-                  </div>
-                  <button
-                    onClick={() => addBatch(item)}
-                    disabled={isComplete || isOnBreak}
-                    className={cn(
-                      "w-9 h-9 flex items-center justify-center rounded-full transition-colors",
-                      isComplete
-                        ? "border border-emerald-300 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 opacity-60"
-                        : "bg-amber-500 text-white hover:bg-amber-600"
-                    )}
-                  >
-                    <Plus className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })}
+          ))}
+        </div>
       </div>
     </div>
   );
