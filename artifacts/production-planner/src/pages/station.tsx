@@ -3622,24 +3622,27 @@ function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
 
-  const sheetBatch = async (item: ProductionPlanItem) => {
-    if (isOnBreak) return;
-    const sheeted = getStationCount(item, "dough_sheeting");
-    const target = item.batchesTarget ?? 0;
-    if (sheeted >= target) return;
-    createBatch.mutate({ planId: plan.id, data: { planItemId: item.id, stationType: "dough_sheeting" } });
+  const nextItem = items.find(it => {
+    const sheeted = getStationCount(it, "dough_sheeting");
+    const target = it.batchesTarget ?? 0;
+    return target > 0 && sheeted < target;
+  });
+
+  const sheetNext = () => {
+    if (isOnBreak || !nextItem) return;
+    createBatch.mutate({ planId: plan.id, data: { planItemId: nextItem.id, stationType: "dough_sheeting" } });
   };
 
-  const undoBatch = async (item: ProductionPlanItem) => {
+  const undoLast = async () => {
     if (isOnBreak) return;
-    const sheeted = getStationCount(item, "dough_sheeting");
-    if (sheeted === 0) return;
+    const lastItemWithCount = [...items].reverse().find(it => getStationCount(it, "dough_sheeting") > 0);
+    if (!lastItemWithCount) return;
     try {
       const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
         method: "DELETE",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planItemId: item.id, stationType: "dough_sheeting" }),
+        body: JSON.stringify({ planItemId: lastItemWithCount.id, stationType: "dough_sheeting" }),
       });
       if (!res.ok) throw new Error("Failed to undo");
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
@@ -3653,100 +3656,126 @@ function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
   const overallProgress = totalTarget > 0 ? Math.round((totalSheeted / totalTarget) * 100) : 0;
   const allDone = totalTarget > 0 && totalSheeted >= totalTarget;
 
+  const nextBallWeight = nextItem
+    ? doughData?.recipes.find(r => r.recipeId === nextItem.recipeId)?.ballWeightG
+    : null;
+
   return (
     <div className="space-y-4">
       {allDone ? (
-        <div className="bg-card border border-border rounded-xl p-8 text-center">
+        <div className="bg-card border-2 border-emerald-400 dark:border-emerald-600 rounded-xl p-6 text-center">
           <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
           <h2 className="font-semibold text-lg mb-1">All sheeting complete!</h2>
           <p className="text-muted-foreground text-sm">{totalSheeted} batches sheeted and passed to builders.</p>
         </div>
       ) : (
-        <div className="bg-card border border-border rounded-xl p-4">
-          <div className="flex items-center justify-between mb-2">
-            <h2 className="font-semibold">Sheeting Progress</h2>
-            <span className="text-2xl font-bold font-display">{overallProgress}%</span>
+        <div className="bg-card border-2 border-amber-400 dark:border-amber-600 rounded-xl p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400 mb-0.5">
+                Now Sheeting
+              </p>
+              <h2 className="font-display text-xl font-bold">
+                {nextItem?.recipeName ?? "—"}
+              </h2>
+            </div>
+            <div className="text-right">
+              <p className="text-3xl font-bold font-display tabular-nums">{totalSheeted} <span className="text-lg text-muted-foreground font-normal">/ {totalTarget}</span></p>
+              <p className="text-xs text-muted-foreground">batches sheeted</p>
+            </div>
           </div>
-          <div className="w-full bg-secondary rounded-full h-3 mb-1">
+
+          <div className="w-full bg-secondary rounded-full h-3 mb-4">
             <div
               className="bg-amber-500 h-3 rounded-full transition-all duration-300"
               style={{ width: `${overallProgress}%` }}
             />
           </div>
-          <p className="text-sm text-muted-foreground">{totalSheeted} of {totalTarget} batches sheeted</p>
+
+          {nextBallWeight && (
+            <p className="text-sm text-muted-foreground mb-3">
+              Ball weight: <span className="font-semibold text-amber-600 dark:text-amber-400">{nextBallWeight}g</span>
+            </p>
+          )}
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={undoLast}
+              disabled={isOnBreak || totalSheeted === 0}
+              className="flex items-center gap-1.5 px-4 py-3 text-sm rounded-xl border border-border text-muted-foreground hover:bg-secondary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              <Minus className="w-4 h-4" />
+              Undo
+            </button>
+            <button
+              onClick={sheetNext}
+              disabled={isOnBreak || !nextItem}
+              className="flex-1 flex items-center justify-center gap-2 px-6 py-3 text-base rounded-xl bg-amber-500 text-white font-semibold hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              <Plus className="w-5 h-5" />
+              Sheet Batch
+            </button>
+          </div>
         </div>
       )}
 
       <BreakTracker planId={plan.id} stationType="dough_sheeting" onBreakActiveChange={setIsOnBreak} />
 
-      <div className="space-y-3">
-        {items.map(item => {
-          const target = item.batchesTarget ?? 0;
-          const sheeted = getStationCount(item, "dough_sheeting");
-          const isDone = sheeted >= target && target > 0;
-          const ballWeight = doughData?.recipes.find(r => r.recipeId === item.recipeId)?.ballWeightG;
-          const progress = target > 0 ? Math.round((sheeted / target) * 100) : 0;
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-border">
+          <h3 className="font-semibold text-sm">Recipe Breakdown</h3>
+        </div>
+        <div className="divide-y divide-border/50">
+          {items.map(item => {
+            const target = item.batchesTarget ?? 0;
+            const sheeted = getStationCount(item, "dough_sheeting");
+            const isDone = sheeted >= target && target > 0;
+            const isActive = item.id === nextItem?.id;
+            const ballWeight = doughData?.recipes.find(r => r.recipeId === item.recipeId)?.ballWeightG;
+            const progress = target > 0 ? Math.round((sheeted / target) * 100) : 0;
 
-          return (
-            <div
-              key={item.id}
-              className={cn(
-                "bg-card border rounded-xl p-4 transition-colors",
-                isDone ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-900/10" : "border-border"
-              )}
-            >
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  {isDone && <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />}
-                  <h3 className={cn("font-semibold truncate", isDone && "text-muted-foreground")}>
-                    {item.recipeName ?? `Recipe #${item.recipeId}`}
-                  </h3>
-                </div>
-                {ballWeight && (
-                  <span className="text-sm font-medium text-amber-600 dark:text-amber-400 flex-shrink-0 ml-2">
-                    {ballWeight}g
-                  </span>
+            return (
+              <div
+                key={item.id}
+                className={cn(
+                  "px-4 py-3 transition-colors",
+                  isDone ? "bg-emerald-50/30 dark:bg-emerald-900/10" :
+                  isActive ? "bg-amber-50/40 dark:bg-amber-900/10" : ""
                 )}
-              </div>
-
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <div className="w-full bg-secondary rounded-full h-2.5">
-                    <div
-                      className={cn(
-                        "h-2.5 rounded-full transition-all duration-300",
-                        isDone ? "bg-emerald-500" : "bg-amber-500"
-                      )}
-                      style={{ width: `${Math.min(progress, 100)}%` }}
-                    />
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {isDone ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                    ) : isActive ? (
+                      <div className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
+                    ) : null}
+                    <span className={cn("text-sm font-medium truncate", isDone && "text-muted-foreground line-through")}>
+                      {item.recipeName ?? `Recipe #${item.recipeId}`}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 flex-shrink-0 ml-2">
+                    {ballWeight && (
+                      <span className="text-xs text-muted-foreground">{ballWeight}g</span>
+                    )}
+                    <span className={cn("text-sm font-bold tabular-nums", isDone ? "text-emerald-600 dark:text-emerald-400" : "")}>
+                      {sheeted}/{target}
+                    </span>
                   </div>
                 </div>
-                <span className={cn("text-sm font-bold tabular-nums min-w-[60px] text-right", isDone ? "text-emerald-600 dark:text-emerald-400" : "")}>
-                  {sheeted} / {target}
-                </span>
+                <div className="w-full bg-secondary rounded-full h-1.5">
+                  <div
+                    className={cn(
+                      "h-1.5 rounded-full transition-all duration-300",
+                      isDone ? "bg-emerald-500" : "bg-amber-500"
+                    )}
+                    style={{ width: `${Math.min(progress, 100)}%` }}
+                  />
+                </div>
               </div>
-
-              <div className="flex items-center justify-end gap-2 mt-3">
-                <button
-                  onClick={() => undoBatch(item)}
-                  disabled={isOnBreak || sheeted === 0}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border text-muted-foreground hover:bg-secondary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  <Minus className="w-4 h-4" />
-                  Undo
-                </button>
-                <button
-                  onClick={() => sheetBatch(item)}
-                  disabled={isOnBreak || isDone}
-                  className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-amber-500 text-white font-medium hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  <Plus className="w-4 h-4" />
-                  Sheet Batch
-                </button>
-              </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     </div>
   );
