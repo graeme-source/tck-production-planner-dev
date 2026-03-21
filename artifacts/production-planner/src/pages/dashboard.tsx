@@ -20,7 +20,7 @@ export default function Dashboard() {
   const { data: sales } = useListSalesEntries();
 
   const { data: weeklyOrders, isLoading: weeklyLoading, error: weeklyError, refetch } = useQuery({
-    queryKey: ["shopify-weekly-orders"],
+    queryKey: ["shopify-weekly-orders-dashboard"],
     queryFn: fetchWeeklyOrders,
     staleTime: 5 * 60 * 1000,
   });

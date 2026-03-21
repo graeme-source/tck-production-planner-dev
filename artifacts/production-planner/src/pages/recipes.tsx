@@ -314,9 +314,11 @@ function RecipeForm({
                     const cost = ingLineCost(index);
                     const thisIng = localIngredients.find(i => i.id === Number(watchedIngredients?.[index]?.ingredientId));
                     const isRawMeat = thisIng?.category === "raw_meat";
+                    const ingMarinadeVal = watchedIngredients?.[index]?.marinadeForIngredientId;
+                    const ingMarinadeSet = ingMarinadeVal != null && ingMarinadeVal !== "" && ingMarinadeVal !== 0 && ingMarinadeVal !== "0";
                     return (
-                      <div key={field.id} className="space-y-1">
-                        <div className="grid grid-cols-[1fr_6rem_4.5rem_1.25rem] gap-2 items-center">
+                      <div key={field.id} className="space-y-0.5">
+                        <div className="grid grid-cols-[1fr_6rem_4.5rem_auto_1.25rem] gap-2 items-center">
                           <div className="flex gap-1 min-w-0">
                             <select {...register(`ingredients.${index}.ingredientId`)} className="flex-1 min-w-0 px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30">
                               <option value={0} disabled>Select…</option>
@@ -328,12 +330,14 @@ function RecipeForm({
                           <span className="text-xs tabular-nums text-right text-muted-foreground">
                             {cost !== null ? `£${(Math.ceil(cost * 100) / 100).toFixed(2)}` : "—"}
                           </span>
+                          <label className="flex items-center gap-1 cursor-pointer whitespace-nowrap" title="Include in filling mix">
+                            <input type="checkbox" {...register(`ingredients.${index}.includeInFillingMix`)} className="rounded border-border text-primary focus:ring-primary/30 w-3 h-3" />
+                            <span className="text-[10px] text-muted-foreground">Filling</span>
+                          </label>
                           <button type="button" onClick={() => removeIng(index)} className="text-muted-foreground hover:text-destructive flex justify-center"><X className="w-3.5 h-3.5" /></button>
                         </div>
-                        {!isRawMeat && rawMeatIngs.length > 0 && (() => {
-                          const val = watchedIngredients?.[index]?.marinadeForIngredientId;
-                          const isSet = val != null && val !== "" && val !== 0 && val !== "0";
-                          return isSet ? (
+                        {!isRawMeat && rawMeatIngs.length > 0 && (
+                          ingMarinadeSet ? (
                             <div className="pl-1 flex items-center gap-1.5">
                               <select
                                 {...register(`ingredients.${index}.marinadeForIngredientId`)}
@@ -348,12 +352,8 @@ function RecipeForm({
                             <button type="button" onClick={() => { setValue(`ingredients.${index}.marinadeForIngredientId`, rawMeatIngs[0]?.id ?? 0); }} className="pl-1 text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors">
                               + Mark as marinade
                             </button>
-                          );
-                        })()}
-                        <label className="pl-1 flex items-center gap-1.5 cursor-pointer">
-                          <input type="checkbox" {...register(`ingredients.${index}.includeInFillingMix`)} className="rounded border-border text-primary focus:ring-primary/30 w-3 h-3" />
-                          <span className="text-[10px] text-muted-foreground">Include in filling mix</span>
-                        </label>
+                          )
+                        )}
                       </div>
                     );
                   })}
@@ -373,9 +373,11 @@ function RecipeForm({
                 <div className="space-y-1.5">
                   {subFields.map((field, index) => {
                     const cost = subLineCost(index);
+                    const subMarinadeVal = watchedSubRecipes?.[index]?.marinadeForIngredientId;
+                    const subMarinadeSet = subMarinadeVal != null && subMarinadeVal !== "" && subMarinadeVal !== 0 && subMarinadeVal !== "0";
                     return (
-                      <div key={field.id} className="space-y-1">
-                        <div className="grid grid-cols-[1fr_6rem_4.5rem_1.25rem] gap-2 items-center">
+                      <div key={field.id} className="space-y-0.5">
+                        <div className="grid grid-cols-[1fr_6rem_4.5rem_auto_1.25rem] gap-2 items-center">
                           <select {...register(`subRecipes.${index}.subRecipeId`)} className="min-w-0 px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30">
                             <option value={0} disabled>Select…</option>
                             {subRecipes.map(s => <option key={s.id} value={s.id}>{s.name} ({s.yieldUnit})</option>)}
@@ -384,12 +386,14 @@ function RecipeForm({
                           <span className="text-xs tabular-nums text-right text-muted-foreground">
                             {cost !== null ? `£${(Math.ceil(cost * 100) / 100).toFixed(2)}` : "—"}
                           </span>
+                          <label className="flex items-center gap-1 cursor-pointer whitespace-nowrap" title="Include in filling mix">
+                            <input type="checkbox" {...register(`subRecipes.${index}.includeInFillingMix`)} className="rounded border-border text-primary focus:ring-primary/30 w-3 h-3" />
+                            <span className="text-[10px] text-muted-foreground">Filling</span>
+                          </label>
                           <button type="button" onClick={() => removeSub(index)} className="text-muted-foreground hover:text-destructive flex justify-center"><X className="w-3.5 h-3.5" /></button>
                         </div>
-                        {rawMeatIngs.length > 0 && (() => {
-                          const val = watchedSubRecipes?.[index]?.marinadeForIngredientId;
-                          const isSet = val != null && val !== "" && val !== 0 && val !== "0";
-                          return isSet ? (
+                        {rawMeatIngs.length > 0 && (
+                          subMarinadeSet ? (
                             <div className="pl-1 flex items-center gap-1.5">
                               <select
                                 {...register(`subRecipes.${index}.marinadeForIngredientId`)}
@@ -404,12 +408,8 @@ function RecipeForm({
                             <button type="button" onClick={() => { setValue(`subRecipes.${index}.marinadeForIngredientId`, rawMeatIngs[0]?.id ?? 0); }} className="pl-1 text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors">
                               + Mark as marinade
                             </button>
-                          );
-                        })()}
-                        <label className="pl-1 flex items-center gap-1.5 cursor-pointer">
-                          <input type="checkbox" {...register(`subRecipes.${index}.includeInFillingMix`)} className="rounded border-border text-primary focus:ring-primary/30 w-3 h-3" />
-                          <span className="text-[10px] text-muted-foreground">Include in filling mix</span>
-                        </label>
+                          )
+                        )}
                       </div>
                     );
                   })}
