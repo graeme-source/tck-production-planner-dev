@@ -7,16 +7,29 @@ import { createShipment, isConfigured as isApcConfigured } from "../services/apc
 
 const router = Router();
 
-async function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  if (req.session.userRole === "admin") { next(); return; }
-  if (req.session.userId && !req.session.userRole) {
-    const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
-    if (user) {
-      req.session.userRole = user.role as "admin" | "manager" | "viewer";
-      if (user.role === "admin") { next(); return; }
-    }
+async function resolveRole(req: Request): Promise<"admin" | "manager" | "viewer" | null> {
+  if (req.session.userRole) return req.session.userRole as "admin" | "manager" | "viewer";
+  if (!req.session.userId) return null;
+  const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
+  if (user) {
+    req.session.userRole = user.role as "admin" | "manager" | "viewer";
+    return req.session.userRole;
   }
+  return null;
+}
+
+async function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  const role = await resolveRole(req);
+  if (role === "admin") { next(); return; }
   res.status(403).json({ error: "Admin access required" });
+}
+
+// Managers and admins can perform operational fulfilment actions (create shipments, complete orders).
+// Viewers cannot — they are read-only users.
+async function requireManagerOrAdmin(req: Request, res: Response, next: NextFunction) {
+  const role = await resolveRole(req);
+  if (role === "admin" || role === "manager") { next(); return; }
+  res.status(403).json({ error: "Manager or admin access required to perform fulfilment operations" });
 }
 
 async function getAppSetting(key: string): Promise<string | null> {
@@ -119,7 +132,7 @@ const CreateShipmentBody = z.object({
   dispatchDate: z.string().optional(), // ISO date string e.g. "2025-01-17"
 });
 
-router.post("/shipments", async (req: Request, res: Response) => {
+router.post("/shipments", requireManagerOrAdmin, async (req: Request, res: Response) => {
   const parsed = CreateShipmentBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "orderId (number) and tag (string) are required" });
@@ -218,7 +231,7 @@ const CompleteOrderBody = z.object({
   trackingUrl: z.string().optional(),
 });
 
-router.post("/orders/:id/complete", async (req: Request, res: Response) => {
+router.post("/orders/:id/complete", requireManagerOrAdmin, async (req: Request, res: Response) => {
   const orderId = Number(req.params.id);
   if (isNaN(orderId)) {
     res.status(400).json({ error: "Invalid order ID" });

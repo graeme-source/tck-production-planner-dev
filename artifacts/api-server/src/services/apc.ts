@@ -74,9 +74,7 @@ export interface ApcShipmentResult {
   trackingUrl?: string;
 }
 
-export async function createShipment(req: ApcShipmentRequest): Promise<ApcShipmentResult> {
-  const token = await getApcToken();
-
+async function createShipmentOnce(req: ApcShipmentRequest, token: string): Promise<ApcShipmentResult> {
   const payload = {
     account_number: APC_ACCOUNT_NUMBER,
     service_code: req.serviceCode,
@@ -154,6 +152,23 @@ export async function createShipment(req: ApcShipmentRequest): Promise<ApcShipme
     labelPdfBase64,
     trackingUrl: data.tracking_url,
   };
+}
+
+// Public entrypoint — retries once with a fresh token if APC returns 401.
+// This handles token expiry windows without requiring callers to retry.
+export async function createShipment(req: ApcShipmentRequest): Promise<ApcShipmentResult> {
+  const token = await getApcToken();
+  try {
+    return await createShipmentOnce(req, token);
+  } catch (err: any) {
+    // If the 401 path inside createShipmentOnce already cleared the cached token,
+    // get a fresh one and retry exactly once before propagating the error.
+    if (err.message?.includes("401") || err.message?.toLowerCase().includes("unauthorized")) {
+      const freshToken = await getApcToken();
+      return await createShipmentOnce(req, freshToken);
+    }
+    throw err;
+  }
 }
 
 export interface ApcServiceCodes {
