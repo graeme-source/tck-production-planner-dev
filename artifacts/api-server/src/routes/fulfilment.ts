@@ -66,7 +66,7 @@ function pickServiceCode(
 // Used by the fulfilment landing page to show operators what needs to be done each day.
 const DATE_TAG_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-router.get("/dispatch-tags", async (_req: Request, res: Response) => {
+router.get("/dispatch-tags", requireManagerOrAdmin, async (_req: Request, res: Response) => {
   try {
     const orders = await getRecentUnfulfilledOrders(30);
 
@@ -95,7 +95,7 @@ router.get("/dispatch-tags", async (_req: Request, res: Response) => {
   }
 });
 
-router.get("/orders", async (req: Request, res: Response) => {
+router.get("/orders", requireManagerOrAdmin, async (req: Request, res: Response) => {
   const { tag, includeAll } = req.query as { tag?: string; includeAll?: string };
 
   if (!tag) {
@@ -349,7 +349,7 @@ router.delete("/sku-locations/:sku", requireAdmin, async (req: Request, res: Res
   }
 });
 
-router.get("/config-status", async (_req: Request, res: Response) => {
+router.get("/config-status", requireManagerOrAdmin, async (_req: Request, res: Response) => {
   try {
     const [smallWeekday, largeWeekday, smallFriday, largeFriday] = await Promise.all([
       getAppSetting("apc_service_code_small_weekday"),
