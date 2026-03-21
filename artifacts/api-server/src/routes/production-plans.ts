@@ -2293,8 +2293,8 @@ router.get("/:id/dough-prep", async (req, res) => {
     const subRecipeYieldKg = Number(doughLink.subRecipeYield) || 0;
     const doughKgPerBatch = quantityPerPortion * portionsPerBatch;
     const doughKgTotal = doughKgPerBatch * batchesTarget;
-    const ballWeightG = Math.round((doughKgPerBatch / portionsPerBatch) * 1000);
-    const ballCount = batchesTarget * portionsPerBatch;
+    const ballWeightG = Math.round(doughKgPerBatch * 1000);
+    const ballCount = batchesTarget;
 
     recipeResults.push({
       recipeId: planItem.recipeId!,

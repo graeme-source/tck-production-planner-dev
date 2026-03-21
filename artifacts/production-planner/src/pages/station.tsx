@@ -2834,16 +2834,9 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const overallPct = totalBatchesTarget > 0 ? Math.round((totalComplete / totalBatchesTarget) * 100) : 0;
   const mixCount = doughData?.mixCount ?? 0;
 
-  const serverBallCount = doughData
-    ? items.reduce((s, it) => {
-        const recipe = doughData.recipes.find(r => r.recipeId === it.recipeId);
-        if (!recipe) return s;
-        return s + getStationCount(it, "dough_prep") * recipe.portionsPerBatch;
-      }, 0)
-    : 0;
-
   const hasServerProgress = totalComplete > 0;
   const hasAnyMixDone = completedMixes.size > 0 || hasServerProgress;
+  const BALLS_PER_TRAY = 4;
 
   const addBatch = (item: ProductionPlanItem) => {
     createBatch.mutate({ id: plan.id, data: { planItemId: item.id, stationType: "dough_prep", completedAt: new Date().toISOString() } });
@@ -2889,51 +2882,32 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const isMixComplete = completedMixes.has(activeMix);
   const allMixesDone = mixCount > 0 && completedMixes.size >= mixCount;
 
-  const totalBallsNeeded = doughData?.recipes.reduce((s, r) => s + r.ballCount, 0) ?? 0;
-  const ballCount = serverBallCount;
+  const totalBallsNeeded = totalBatchesTarget;
+  const ballCount = totalComplete;
   const allBallingDone = ballCount >= totalBallsNeeded;
+  const totalTraysNeeded = totalBallsNeeded / BALLS_PER_TRAY;
+  const traysDone = ballCount / BALLS_PER_TRAY;
 
   const addBalls = (count: number) => {
     if (isOnBreak || !doughData) return;
-    const newTotal = Math.min(ballCount + count, totalBallsNeeded);
-    const oldTotal = ballCount;
-
-    let remaining = newTotal;
-    let oldRemaining = oldTotal;
+    let toAdd = count;
     for (const recipe of doughData.recipes) {
-      const needed = recipe.ballCount;
-      const oldAllocated = Math.min(oldRemaining, needed);
-      const newAllocated = Math.min(remaining, needed);
-
-      const batchesAdded = Math.floor(newAllocated / recipe.portionsPerBatch) - Math.floor(oldAllocated / recipe.portionsPerBatch);
-      if (batchesAdded > 0) {
-        const item = items.find(it => it.recipeId === recipe.recipeId);
-        if (item) {
-          for (let i = 0; i < batchesAdded; i++) {
-            addBatch(item);
-          }
-        }
+      if (toAdd <= 0) break;
+      const item = items.find(it => it.recipeId === recipe.recipeId);
+      if (!item) continue;
+      const done = getStationCount(item, "dough_prep");
+      const needed = recipe.ballCount - done;
+      if (needed <= 0) continue;
+      const adding = Math.min(toAdd, needed);
+      for (let i = 0; i < adding; i++) {
+        addBatch(item);
       }
-      remaining -= newAllocated;
-      oldRemaining -= oldAllocated;
+      toAdd -= adding;
     }
   };
 
   const undoBall = () => {
-    if (isOnBreak || ballCount <= 0 || !doughData) return;
-    let remaining = ballCount;
-    for (let ri = doughData.recipes.length - 1; ri >= 0; ri--) {
-      const recipe = doughData.recipes[ri];
-      const allocated = Math.min(remaining, recipe.ballCount);
-      if (allocated > 0 && allocated % recipe.portionsPerBatch === 0) {
-        const item = items.find(it => it.recipeId === recipe.recipeId);
-        if (item && getStationCount(item, "dough_prep") > 0) {
-          removeBatch(item);
-          return;
-        }
-      }
-      remaining -= allocated;
-    }
+    if (isOnBreak || ballCount <= 0) return;
     const lastItemWithCount = [...items].reverse().find(it => getStationCount(it, "dough_prep") > 0);
     if (lastItemWithCount) {
       removeBatch(lastItemWithCount);
@@ -2942,11 +2916,10 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
 
   const getBallAllocation = () => {
     if (!doughData) return [];
-    let remaining = ballCount;
     return doughData.recipes.map(r => {
-      const allocated = Math.min(remaining, r.ballCount);
-      remaining -= allocated;
-      return { ...r, ballsDone: allocated };
+      const item = items.find(it => it.recipeId === r.recipeId);
+      const ballsDone = item ? getStationCount(item, "dough_prep") : 0;
+      return { ...r, ballsDone };
     });
   };
 
@@ -3054,6 +3027,9 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
           undoBall={undoBall}
           getBallAllocation={getBallAllocation}
           isOnBreak={isOnBreak}
+          traysDone={traysDone}
+          totalTraysNeeded={totalTraysNeeded}
+          ballsPerTray={BALLS_PER_TRAY}
         />
       )}
 
@@ -3244,6 +3220,7 @@ function DoughMixingView({
 function DoughBallingView({
   doughData, ballCount, totalBallsNeeded, allBallingDone,
   addBalls, undoBall, getBallAllocation, isOnBreak,
+  traysDone, totalTraysNeeded, ballsPerTray,
 }: {
   doughData: DoughPrepData;
   ballCount: number;
@@ -3253,9 +3230,17 @@ function DoughBallingView({
   undoBall: () => void;
   getBallAllocation: () => Array<{ recipeId: number; recipeName: string; ballCount: number; ballWeightG: number; portionsPerBatch: number; ballsDone: number }>;
   isOnBreak: boolean;
+  traysDone: number;
+  totalTraysNeeded: number;
+  ballsPerTray: number;
 }) {
   const allocation = getBallAllocation();
   const ballPct = totalBallsNeeded > 0 ? Math.round((ballCount / totalBallsNeeded) * 100) : 0;
+
+  const fmtTrays = (n: number) => {
+    const rounded = Math.round(n * 100) / 100;
+    return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2).replace(/0$/, "");
+  };
 
   return (
     <div className="space-y-4">
@@ -3265,14 +3250,32 @@ function DoughBallingView({
           ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/20"
           : "border-amber-300 dark:border-amber-700 bg-card"
       )}>
-        <p className="text-sm text-muted-foreground mb-2">Balls Made</p>
-        <p className={cn(
-          "font-display text-6xl font-bold tabular-nums mb-2",
-          allBallingDone ? "text-emerald-600" : "text-foreground"
-        )}>
-          {ballCount}
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          <div>
+            <p className="text-xs text-muted-foreground mb-1">Balls</p>
+            <p className={cn(
+              "font-display text-5xl font-bold tabular-nums",
+              allBallingDone ? "text-emerald-600" : "text-foreground"
+            )}>
+              {ballCount}
+            </p>
+            <p className="text-sm text-muted-foreground">of {totalBallsNeeded}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground mb-1">Trays</p>
+            <p className={cn(
+              "font-display text-5xl font-bold tabular-nums",
+              allBallingDone ? "text-emerald-600" : "text-foreground"
+            )}>
+              {fmtTrays(traysDone)}
+            </p>
+            <p className="text-sm text-muted-foreground">of {fmtTrays(totalTraysNeeded)}</p>
+          </div>
+        </div>
+
+        <p className="text-xs text-muted-foreground mb-3">
+          Each ball = {doughData.recipes[0]?.ballWeightG ?? 0}g · {ballsPerTray} balls per tray
         </p>
-        <p className="text-lg text-muted-foreground mb-4">of {totalBallsNeeded}</p>
 
         <div className="w-full h-3 bg-secondary rounded-full overflow-hidden mb-6">
           <div
@@ -3300,7 +3303,7 @@ function DoughBallingView({
                   : "bg-amber-500 text-white hover:bg-amber-600 shadow-amber-500/20 active:scale-95"
               )}
             >
-              + Add Ball
+              + 1 Ball
             </button>
             <button
               onClick={() => addBalls(4)}
@@ -3312,7 +3315,7 @@ function DoughBallingView({
                   : "bg-amber-600 text-white hover:bg-amber-700 shadow-amber-600/20 active:scale-95"
               )}
             >
-              + Add 4
+              + 1 Tray
             </button>
           </div>
         ) : (
@@ -3327,6 +3330,8 @@ function DoughBallingView({
         {allocation.map(r => {
           const pct = r.ballCount > 0 ? Math.round((r.ballsDone / r.ballCount) * 100) : 0;
           const done = r.ballsDone >= r.ballCount;
+          const recipeTrays = r.ballCount / ballsPerTray;
+          const recipeTraysDone = r.ballsDone / ballsPerTray;
           return (
             <div
               key={r.recipeId}
@@ -3346,19 +3351,26 @@ function DoughBallingView({
                   </span>
                   {done && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
                 </div>
-                <span className="text-sm tabular-nums">
-                  <span className="font-bold">{r.ballsDone}</span>
-                  <span className="text-muted-foreground"> / {r.ballCount}</span>
-                </span>
+                <div className="text-right">
+                  <span className="text-sm tabular-nums">
+                    <span className="font-bold">{r.ballsDone}</span>
+                    <span className="text-muted-foreground"> / {r.ballCount} balls</span>
+                  </span>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 mb-1">
                 <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
                   <div
                     className={cn("h-full rounded-full transition-all", done ? "bg-emerald-500" : "bg-amber-500")}
                     style={{ width: `${Math.min(pct, 100)}%` }}
                   />
                 </div>
-                <span className="text-xs text-amber-600 dark:text-amber-400 font-medium">{r.ballWeightG}g</span>
+              </div>
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>{r.ballWeightG}g per ball</span>
+                <span className="font-medium text-amber-700 dark:text-amber-400">
+                  {fmtTrays(recipeTraysDone)} / {fmtTrays(recipeTrays)} trays
+                </span>
               </div>
             </div>
           );
@@ -3405,7 +3417,7 @@ function DoughOverview({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         <div className="bg-card border border-border rounded-xl p-4 text-center">
           <p className="text-xs text-muted-foreground mb-1">Mixes</p>
           <p className="text-2xl font-bold tabular-nums">{completedMixes.size} / {mixCount}</p>
@@ -3413,6 +3425,12 @@ function DoughOverview({
         <div className="bg-card border border-border rounded-xl p-4 text-center">
           <p className="text-xs text-muted-foreground mb-1">Balls</p>
           <p className="text-2xl font-bold tabular-nums">{ballCount} / {totalBallsNeeded}</p>
+        </div>
+        <div className="bg-card border border-border rounded-xl p-4 text-center">
+          <p className="text-xs text-muted-foreground mb-1">Trays</p>
+          <p className="text-2xl font-bold tabular-nums">
+            {(ballCount / 4).toFixed(ballCount % 4 === 0 ? 0 : 1)} / {(totalBallsNeeded / 4).toFixed(totalBallsNeeded % 4 === 0 ? 0 : 1)}
+          </p>
         </div>
       </div>
 
@@ -3446,8 +3464,8 @@ function DoughOverview({
           <thead>
             <tr className="bg-secondary/20 border-b border-border text-xs text-muted-foreground">
               <th className="py-2 px-4 text-left font-medium">Recipe</th>
-              <th className="py-2 px-4 text-center font-medium">Batches</th>
               <th className="py-2 px-4 text-center font-medium">Balls</th>
+              <th className="py-2 px-4 text-center font-medium">Trays</th>
               <th className="py-2 px-4 text-center font-medium">Ball Wt</th>
               <th className="py-2 px-4 text-center font-medium">Status</th>
             </tr>
@@ -3456,19 +3474,22 @@ function DoughOverview({
             {items.map(item => {
               const recipeInfo = doughData.recipes.find(r => r.recipeId === item.recipeId);
               const dpCount = getStationCount(item, "dough_prep");
-              const isComplete = dpCount >= (item.batchesTarget ?? 0);
+              const target = item.batchesTarget ?? 0;
+              const isComplete = dpCount >= target;
+              const trays = target / 4;
+              const fmtT = Number.isInteger(trays) ? String(trays) : trays.toFixed(2).replace(/0$/, "");
               return (
                 <tr key={item.id} className="border-b border-border/50 last:border-0">
                   <td className={cn("py-2.5 px-4 font-medium", isComplete && "text-muted-foreground line-through")}>
                     {item.recipeName ?? `Recipe #${item.recipeId}`}
                   </td>
                   <td className="py-2.5 px-4 text-center tabular-nums">
-                    {dpCount} / {item.batchesTarget ?? 0}
+                    {dpCount} / {target}
                   </td>
-                  <td className="py-2.5 px-4 text-center tabular-nums">
-                    {recipeInfo ? recipeInfo.ballCount : "—"}
+                  <td className="py-2.5 px-4 text-center tabular-nums font-medium text-amber-700 dark:text-amber-400">
+                    {fmtT}
                   </td>
-                  <td className="py-2.5 px-4 text-center font-semibold text-amber-700 dark:text-amber-400">
+                  <td className="py-2.5 px-4 text-center font-semibold text-muted-foreground">
                     {recipeInfo ? `${recipeInfo.ballWeightG}g` : "—"}
                   </td>
                   <td className="py-2.5 px-4 text-center">
