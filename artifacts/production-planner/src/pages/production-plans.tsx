@@ -1139,15 +1139,15 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
 // Plan Detail View
 // ──────────────────────────────────────────────────────────────────────────────
 const STATION_BUTTONS = [
+  { key: "dough_prep", label: "Dough Prep", icon: Layers, color: "text-amber-600 bg-amber-50 dark:bg-amber-900/20" },
+  { key: "dough_sheeting", label: "Sheeting", icon: Layers, color: "text-amber-500 bg-amber-50 dark:bg-amber-900/20" },
+  { key: "prep", label: "Prep", icon: Salad, color: "text-green-500 bg-green-50 dark:bg-green-900/20" },
   { key: "mixing", label: "Mixing & Cooking", icon: Waves, color: "text-blue-500 bg-blue-50 dark:bg-blue-900/20" },
   { key: "building_1", label: "Building Line 1", icon: Construction, color: "text-orange-500 bg-orange-50 dark:bg-orange-900/20" },
   { key: "building_2", label: "Building Line 2", icon: Construction, color: "text-orange-400 bg-orange-50 dark:bg-orange-900/20" },
   { key: "ovens", label: "Ovens", icon: Flame, color: "text-red-500 bg-red-50 dark:bg-red-900/20" },
   { key: "wrapping", label: "Wrapping", icon: Gift, color: "text-purple-500 bg-purple-50 dark:bg-purple-900/20" },
   { key: "packing", label: "Packing", icon: Box, color: "text-indigo-500 bg-indigo-50 dark:bg-indigo-900/20" },
-  { key: "dough_prep", label: "Dough Prep", icon: Layers, color: "text-amber-600 bg-amber-50 dark:bg-amber-900/20" },
-  { key: "dough_sheeting", label: "Sheeting", icon: Layers, color: "text-amber-500 bg-amber-50 dark:bg-amber-900/20" },
-  { key: "prep", label: "Prep", icon: Salad, color: "text-green-500 bg-green-50 dark:bg-green-900/20" },
 ] as const;
 
 interface PlanDetailProps {
