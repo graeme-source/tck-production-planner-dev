@@ -35,8 +35,11 @@ async function fetchLocations(): Promise<SkuLocation[]> {
   return res.json();
 }
 
-async function fetchRecentSkus(tag: string): Promise<RecentSku[]> {
-  const res = await fetch(`${BASE}/api/fulfilment/sku-locations/recent-skus?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
+async function fetchRecentSkus(tag?: string): Promise<RecentSku[]> {
+  const url = tag
+    ? `${BASE}/api/fulfilment/sku-locations/recent-skus?tag=${encodeURIComponent(tag)}`
+    : `${BASE}/api/fulfilment/sku-locations/recent-skus`;
+  const res = await fetch(url, { credentials: "include" });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error ?? "Failed to fetch recent SKUs");
@@ -71,9 +74,11 @@ export default function Locations() {
   const [form, setForm] = useState({ sku: "", zone: "fridge" as ZoneValue, locationLabel: "" });
   const [editForm, setEditForm] = useState({ zone: "fridge" as ZoneValue, locationLabel: "" });
 
-  // Recent order SKU scanning
+  // Recent order SKU discovery — loads broadly by default (no tag), with optional tag filter
   const [scanTag, setScanTag] = useState(today);
+  // null = broad recent orders; string = filtered to specific dispatch tag
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [tagFilterActive, setTagFilterActive] = useState(false);
   const [quickAssignSku, setQuickAssignSku] = useState<string | null>(null);
   const [quickForm, setQuickForm] = useState({ zone: "ambient" as ZoneValue, locationLabel: "" });
 
@@ -84,9 +89,8 @@ export default function Locations() {
   });
 
   const { data: recentSkus, isLoading: recentLoading, error: recentError } = useQuery({
-    queryKey: ["sku-locations-recent", activeTag],
-    queryFn: () => fetchRecentSkus(activeTag!),
-    enabled: !!activeTag,
+    queryKey: ["sku-locations-recent", tagFilterActive ? activeTag : null],
+    queryFn: () => fetchRecentSkus(tagFilterActive && activeTag ? activeTag : undefined),
     staleTime: 2 * 60 * 1000,
   });
 
@@ -155,28 +159,38 @@ export default function Locations() {
               <PackageSearch className="w-4 h-4 text-primary" /> SKUs from Recent Orders
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Enter a Shopify order tag (e.g. today's dispatch date) to see which SKUs need bin locations assigned.
+              {tagFilterActive && activeTag
+                ? `Showing SKUs from tag "${activeTag}". `
+                : "Showing all SKUs from the last 14 days of orders. "}
+              <button onClick={() => setTagFilterActive(f => !f)} className="underline hover:no-underline text-primary">
+                {tagFilterActive ? "Clear tag filter" : "Filter by dispatch tag"}
+              </button>
             </p>
           </div>
         </div>
-        <div className="flex gap-2">
-          <input
-            className={inputCls + " flex-1 font-mono"}
-            placeholder="e.g. 2025-03-21"
-            value={scanTag}
-            onChange={e => setScanTag(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && setScanTag(s => { setActiveTag(s); return s; })}
-          />
-          <button
-            onClick={() => setActiveTag(scanTag)}
-            disabled={!scanTag.trim()}
-            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2"
-          >
-            <Search className="w-4 h-4" /> Load
-          </button>
-        </div>
 
-        {activeTag && (
+        {tagFilterActive && (
+          <div className="flex gap-2">
+            <input
+              className={inputCls + " flex-1 font-mono"}
+              placeholder="e.g. 2026-03-21"
+              value={scanTag}
+              onChange={e => setScanTag(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter") { setActiveTag(scanTag); }
+              }}
+            />
+            <button
+              onClick={() => setActiveTag(scanTag)}
+              disabled={!scanTag.trim()}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2"
+            >
+              <Search className="w-4 h-4" /> Load
+            </button>
+          </div>
+        )}
+
+        {(
           recentLoading ? (
             <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
           ) : recentError ? (
@@ -185,7 +199,9 @@ export default function Locations() {
               {(recentError as Error).message}
             </div>
           ) : !recentSkus?.length ? (
-            <p className="text-sm text-muted-foreground text-center py-4">No orders found with tag "{activeTag}".</p>
+            <p className="text-sm text-muted-foreground text-center py-4">
+              {tagFilterActive && activeTag ? `No orders found with tag "${activeTag}".` : "No recent unfulfilled orders found."}
+            </p>
           ) : (
             <div className="space-y-3">
               {unassignedRecent.length > 0 && (
@@ -280,7 +296,7 @@ export default function Locations() {
 
               {unassignedRecent.length === 0 && (
                 <div className="flex items-center gap-2 p-3 bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 rounded-lg text-green-700 dark:text-green-300 text-sm">
-                  All {recentSkus.length} SKUs from tag "{activeTag}" have bin locations assigned.
+                  All {recentSkus.length} SKU{recentSkus.length !== 1 ? "s" : ""} have bin locations assigned.
                 </div>
               )}
             </div>

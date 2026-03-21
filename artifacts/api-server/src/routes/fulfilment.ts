@@ -33,7 +33,11 @@ function pickServiceCode(
   const tags = order.tags.split(",").map(t => t.trim().toLowerCase());
   const weightG = order.total_weight ?? 0;
 
-  const isLargeBox = tags.includes("large-box") || weightG >= weightThresholdG;
+  // Use explicit box-size tags when present. Weight is a fallback only when
+  // neither tag is found (e.g. no Shopify tagging rule has run yet).
+  const hasLargeTag = tags.includes("large-box");
+  const hasSmallTag = tags.includes("small-box");
+  const isLargeBox = hasLargeTag || (!hasSmallTag && weightG >= weightThresholdG);
 
   // Friday if tag present OR the actual dispatch date falls on a Friday (day=5)
   const refDate = dispatchDate ?? new Date();
@@ -238,7 +242,7 @@ router.post("/orders/:id/complete", async (req: Request, res: Response) => {
   }
 });
 
-router.get("/sku-locations", async (_req: Request, res: Response) => {
+router.get("/sku-locations", requireAdmin, async (_req: Request, res: Response) => {
   try {
     const rows = await db.select().from(skuLocationsTable).orderBy(skuLocationsTable.sku);
     res.json(rows);
@@ -248,7 +252,7 @@ router.get("/sku-locations", async (_req: Request, res: Response) => {
 });
 
 // Returns all unique SKUs seen in recent Shopify orders, with their location assignment status
-router.get("/sku-locations/recent-skus", async (req: Request, res: Response) => {
+router.get("/sku-locations/recent-skus", requireAdmin, async (req: Request, res: Response) => {
   const { tag } = req.query as { tag?: string };
   try {
     // If a specific dispatch tag is provided, use it. Otherwise fall back to
