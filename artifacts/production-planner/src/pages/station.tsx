@@ -3608,119 +3608,145 @@ function DoughOverview({
 // Dough Sheeting Station
 // ──────────────────────────────────────────────────────────────────────────────
 function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
-  // mode="current" bypasses D-1 next-plan lookup — sheeting always uses today's plan ball weights
+  const queryClient = useQueryClient();
   const { data: doughData } = useDoughPrepData(plan.id, "current");
-  const [sheetedItems, setSheetedItems] = useState<Set<number>>(new Set());
   const [isOnBreak, setIsOnBreak] = useState(false);
 
-  const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
-  const currentItem = items.find(it => it.status === "in-progress") ?? items.find(it => it.status === "pending");
+  const createBatch = useCreateBatchCompletion({
+    mutation: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+      },
+    },
+  });
 
-  const toggleSheeted = (itemId: number) => {
+  const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
+
+  const sheetBatch = async (item: ProductionPlanItem) => {
     if (isOnBreak) return;
-    setSheetedItems(prev => {
-      const next = new Set(prev);
-      if (next.has(itemId)) next.delete(itemId);
-      else next.add(itemId);
-      return next;
-    });
+    const sheeted = getStationCount(item, "dough_sheeting");
+    const target = item.batchesTarget ?? 0;
+    if (sheeted >= target) return;
+    createBatch.mutate({ planId: plan.id, data: { planItemId: item.id, stationType: "dough_sheeting" } });
   };
+
+  const undoBatch = async (item: ProductionPlanItem) => {
+    if (isOnBreak) return;
+    const sheeted = getStationCount(item, "dough_sheeting");
+    if (sheeted === 0) return;
+    try {
+      const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planItemId: item.id, stationType: "dough_sheeting" }),
+      });
+      if (!res.ok) throw new Error("Failed to undo");
+      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+    } catch {
+      toast({ title: "Undo failed", variant: "destructive" });
+    }
+  };
+
+  const totalSheeted = items.reduce((s, it) => s + getStationCount(it, "dough_sheeting"), 0);
+  const totalTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
+  const overallProgress = totalTarget > 0 ? Math.round((totalSheeted / totalTarget) * 100) : 0;
+  const allDone = totalTarget > 0 && totalSheeted >= totalTarget;
 
   return (
     <div className="space-y-4">
-      {/* Active recipe spotlight */}
-      {currentItem ? (
-        <div className="bg-card border-2 border-amber-400 dark:border-amber-600 rounded-xl p-5">
-          <p className="text-xs font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400 mb-1">
-            Now Sheeting
-          </p>
-          <h2 className="font-display text-2xl font-bold mb-3">
-            {currentItem.recipeName ?? `Recipe #${currentItem.recipeId}`}
-          </h2>
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="bg-secondary/50 rounded-lg px-4 py-2.5 text-center min-w-[80px]">
-              <p className="text-xs text-muted-foreground">Batches</p>
-              <p className="text-2xl font-bold">{currentItem.batchesTarget ?? 0}</p>
-            </div>
-            {doughData?.recipes.find(r => r.recipeId === currentItem.recipeId)?.ballWeightG && (
-              <div className="bg-amber-50 dark:bg-amber-900/20 rounded-lg px-4 py-2.5 text-center min-w-[80px]">
-                <p className="text-xs text-muted-foreground">Ball Weight</p>
-                <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">
-                  {doughData?.recipes.find(r => r.recipeId === currentItem.recipeId)?.ballWeightG}g
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-      ) : (
+      {allDone ? (
         <div className="bg-card border border-border rounded-xl p-8 text-center">
           <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
           <h2 className="font-semibold text-lg mb-1">All sheeting complete!</h2>
-          <p className="text-muted-foreground text-sm">Dough sheeting is done for today.</p>
+          <p className="text-muted-foreground text-sm">{totalSheeted} batches sheeted and passed to builders.</p>
+        </div>
+      ) : (
+        <div className="bg-card border border-border rounded-xl p-4">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="font-semibold">Sheeting Progress</h2>
+            <span className="text-2xl font-bold font-display">{overallProgress}%</span>
+          </div>
+          <div className="w-full bg-secondary rounded-full h-3 mb-1">
+            <div
+              className="bg-amber-500 h-3 rounded-full transition-all duration-300"
+              style={{ width: `${overallProgress}%` }}
+            />
+          </div>
+          <p className="text-sm text-muted-foreground">{totalSheeted} of {totalTarget} batches sheeted</p>
         </div>
       )}
 
       <BreakTracker planId={plan.id} stationType="dough_sheeting" onBreakActiveChange={setIsOnBreak} />
 
-      {/* Full queue */}
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-border">
-          <h3 className="font-semibold text-sm">Sheeting Queue</h3>
-        </div>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-secondary/20 border-b border-border text-xs text-muted-foreground">
-              <th className="py-2.5 px-4 text-left font-medium">#</th>
-              <th className="py-2.5 px-4 text-left font-medium">Recipe</th>
-              <th className="py-2.5 px-4 text-center font-medium">Batches</th>
-              <th className="py-2.5 px-4 text-center font-medium">Ball Weight</th>
-              <th className="py-2.5 px-4 text-center font-medium">Ready</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map(item => {
-              const isCurrent = item.id === currentItem?.id;
-              const isReady = sheetedItems.has(item.id);
-              const ballWeight = doughData?.recipes.find(r => r.recipeId === item.recipeId)?.ballWeightG;
-              return (
-                <tr
-                  key={item.id}
-                  className={cn(
-                    "border-b border-border/50 last:border-0",
-                    isReady ? "bg-emerald-50/40 dark:bg-emerald-900/10" :
-                    isCurrent ? "bg-amber-50/60 dark:bg-amber-900/10" : ""
-                  )}
-                >
-                  <td className="py-2.5 px-4 text-muted-foreground">{item.orderPosition}</td>
-                  <td className={cn("py-2.5 px-4 font-medium", isReady ? "line-through text-muted-foreground" : "")}>
+      <div className="space-y-3">
+        {items.map(item => {
+          const target = item.batchesTarget ?? 0;
+          const sheeted = getStationCount(item, "dough_sheeting");
+          const isDone = sheeted >= target && target > 0;
+          const ballWeight = doughData?.recipes.find(r => r.recipeId === item.recipeId)?.ballWeightG;
+          const progress = target > 0 ? Math.round((sheeted / target) * 100) : 0;
+
+          return (
+            <div
+              key={item.id}
+              className={cn(
+                "bg-card border rounded-xl p-4 transition-colors",
+                isDone ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-900/10" : "border-border"
+              )}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  {isDone && <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />}
+                  <h3 className={cn("font-semibold truncate", isDone && "text-muted-foreground")}>
                     {item.recipeName ?? `Recipe #${item.recipeId}`}
-                    {isCurrent && !isReady && <span className="ml-2 text-xs text-amber-600 font-normal">← current</span>}
-                  </td>
-                  <td className="py-2.5 px-4 text-center">{item.batchesTarget ?? 0}</td>
-                  <td className="py-2.5 px-4 text-center font-semibold text-amber-700 dark:text-amber-400">
-                    {ballWeight ? `${ballWeight}g` : <span className="text-muted-foreground">—</span>}
-                  </td>
-                  <td className="py-2.5 px-4 text-center">
-                    <button
-                      onClick={() => toggleSheeted(item.id)}
-                      disabled={isOnBreak}
+                  </h3>
+                </div>
+                {ballWeight && (
+                  <span className="text-sm font-medium text-amber-600 dark:text-amber-400 flex-shrink-0 ml-2">
+                    {ballWeight}g
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <div className="w-full bg-secondary rounded-full h-2.5">
+                    <div
                       className={cn(
-                        "w-8 h-8 rounded-full flex items-center justify-center mx-auto transition-colors",
-                        isOnBreak
-                          ? "bg-amber-100 border border-amber-300 text-amber-400 opacity-60 cursor-not-allowed"
-                          : isReady
-                            ? "bg-emerald-500 text-white"
-                            : "bg-secondary border border-border text-muted-foreground hover:bg-secondary/80"
+                        "h-2.5 rounded-full transition-all duration-300",
+                        isDone ? "bg-emerald-500" : "bg-amber-500"
                       )}
-                    >
-                      <CheckCircle2 className="w-4 h-4" />
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                      style={{ width: `${Math.min(progress, 100)}%` }}
+                    />
+                  </div>
+                </div>
+                <span className={cn("text-sm font-bold tabular-nums min-w-[60px] text-right", isDone ? "text-emerald-600 dark:text-emerald-400" : "")}>
+                  {sheeted} / {target}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 mt-3">
+                <button
+                  onClick={() => undoBatch(item)}
+                  disabled={isOnBreak || sheeted === 0}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border text-muted-foreground hover:bg-secondary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  <Minus className="w-4 h-4" />
+                  Undo
+                </button>
+                <button
+                  onClick={() => sheetBatch(item)}
+                  disabled={isOnBreak || isDone}
+                  className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-amber-500 text-white font-medium hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                  Sheet Batch
+                </button>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
