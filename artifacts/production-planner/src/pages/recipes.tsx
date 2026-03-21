@@ -29,11 +29,13 @@ const schema = z.object({
     ingredientId: z.coerce.number().min(1, "Select ingredient"),
     quantity: z.coerce.number().min(0.001, "Must be > 0"),
     marinadeForIngredientId: z.preprocess(v => (v === "" || v === "0" || v == null ? null : Number(v)), z.number().nullable().optional()),
+    includeInFillingMix: z.boolean().optional(),
   })),
   subRecipes: z.array(z.object({
     subRecipeId: z.coerce.number().min(1, "Select sub-recipe"),
     quantity: z.coerce.number().min(0.001, "Must be > 0"),
     marinadeForIngredientId: z.preprocess(v => (v === "" || v === "0" || v == null ? null : Number(v)), z.number().nullable().optional()),
+    includeInFillingMix: z.boolean().optional(),
   })),
 });
 
@@ -304,7 +306,7 @@ function RecipeForm({
                   <span className="text-xs font-semibold text-primary uppercase tracking-wide">
                     Ingredients <span className="font-normal normal-case text-muted-foreground tracking-normal">(cooked qty)</span>
                   </span>
-                  <button type="button" onClick={() => appendIng({ ingredientId: 0, quantity: 0, marinadeForIngredientId: null })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add</button>
+                  <button type="button" onClick={() => appendIng({ ingredientId: 0, quantity: 0, marinadeForIngredientId: null, includeInFillingMix: false })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add</button>
                 </div>
                 {ingFields.length === 0 && <p className="text-xs text-muted-foreground italic pl-1 pb-1">No ingredients added</p>}
                 <div className="space-y-1.5">
@@ -348,6 +350,10 @@ function RecipeForm({
                             </button>
                           );
                         })()}
+                        <label className="pl-1 flex items-center gap-1.5 cursor-pointer">
+                          <input type="checkbox" {...register(`ingredients.${index}.includeInFillingMix`)} className="rounded border-border text-primary focus:ring-primary/30 w-3 h-3" />
+                          <span className="text-[10px] text-muted-foreground">Include in filling mix</span>
+                        </label>
                       </div>
                     );
                   })}
@@ -361,7 +367,7 @@ function RecipeForm({
               <div>
                 <div className="flex items-center justify-between py-1.5">
                   <span className="text-xs font-semibold text-accent uppercase tracking-wide">Prep Items</span>
-                  <button type="button" onClick={() => appendSub({ subRecipeId: 0, quantity: 0, marinadeForIngredientId: null })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add</button>
+                  <button type="button" onClick={() => appendSub({ subRecipeId: 0, quantity: 0, marinadeForIngredientId: null, includeInFillingMix: false })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add</button>
                 </div>
                 {subFields.length === 0 && <p className="text-xs text-muted-foreground italic pl-1 pb-1">No prep items added</p>}
                 <div className="space-y-1.5">
@@ -400,6 +406,10 @@ function RecipeForm({
                             </button>
                           );
                         })()}
+                        <label className="pl-1 flex items-center gap-1.5 cursor-pointer">
+                          <input type="checkbox" {...register(`subRecipes.${index}.includeInFillingMix`)} className="rounded border-border text-primary focus:ring-primary/30 w-3 h-3" />
+                          <span className="text-[10px] text-muted-foreground">Include in filling mix</span>
+                        </label>
                       </div>
                     );
                   })}
@@ -453,8 +463,8 @@ function EditRecipeDialog({
         tinSize: detail.tinSize ?? "",
         maxBatchesPerTin: detail.maxBatchesPerTin != null ? Number(detail.maxBatchesPerTin) : null,
         sopUrl: detail.sopUrl ?? "",
-        ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null })),
-        subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null })),
+        ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false })),
+        subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false })),
       }
     : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", ingredients: [], subRecipes: [] };
 

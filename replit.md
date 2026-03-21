@@ -57,8 +57,8 @@ artifacts-monorepo/
 - `sub_recipes` — sub-recipes with yield and yield unit
 - `sub_recipe_ingredients` — sub_recipe <-> ingredient junction with quantity
 - `recipes` — final product recipes (name, category, servings, serving_unit)
-- `recipe_ingredients` — recipe <-> ingredient junction
-- `recipe_sub_recipes` — recipe <-> sub_recipe junction
+- `recipe_ingredients` — recipe <-> ingredient junction; has `include_in_filling_mix` boolean for mixing station display
+- `recipe_sub_recipes` — recipe <-> sub_recipe junction; has `include_in_filling_mix` boolean for mixing station display
 - `recipe_meat_marinades` — (legacy) per-meat marinade/seasoning assignments with g/kg rate. Columns: id, recipe_id, raw_meat_ingredient_id, marinade_ingredient_id (nullable), marinade_sub_recipe_id (nullable), grams_per_kg.
 - **New marinade system**: `recipe_ingredients` and `recipe_sub_recipes` both have `marinade_for_ingredient_id` (nullable FK → ingredients). When set, it marks that ingredient/sub-recipe as the marinade/seasoning for the referenced raw meat ingredient. This avoids double-counting costs since the item is already part of the recipe. The prep meat station reads from these columns (and falls back to legacy `recipe_meat_marinades`).
 - `production_plans` — daily plans (plan_date, name, status: draft/active/completed)
@@ -103,7 +103,7 @@ Every package extends `tsconfig.base.json` which sets `composite: true`.
 ## Station Features (9-station workflow)
 
 The station page (`/station`) provides a full-screen view with:
-- **Mixing & Cooking** — DnD reordering of recipe queue (pending items only; admin can reorder any); batch +/− counters; break tracker; EOD summary with avg mins/batch
+- **Mixing & Cooking** — DnD reordering of recipe queue (pending items only; admin can reorder any); batch +/− counters; break tracker; EOD summary with avg mins/batch; **Filling mix display**: expandable per-recipe ingredient checklist showing ingredients/sub-recipes marked `includeInFillingMix` with per-tin quantities scaled to actual current tin batches; tick-off checkboxes; "Complete Tin" button appears when all checked; API endpoint `GET /api/production-plans/:id/filling-mix`
 - **Building Line 1 & 2** — show fill weight, base type, base weight chips from recipe; batch counters; EOD summary; SOP button on recipe header (opens sopUrl in new tab)
 - **Prep Hub** (stationType="prep") — 3-tile sub-station picker: Main Prep, Bases & Mozzarella, Raw Meat. Shows "Prep on [Day] / for production on [Day]" banner using next active plan lookup.
   - **Main Prep** (main_prep) — fetches `/api/production-plans/:id/main-prep`; groups all non-meat ingredients by ingredient name across recipes; per-recipe tin breakdowns with individual tin checkboxes (POST/DELETE `/prep-completions`); overall progress bar (completed tins / total tins); "Stock Check After Prep" section for `stockCheckEnabled` ingredients with quantity inputs (POST `/stock-checks` with upsert); loads existing stock check values on mount via GET `/stock-checks?date=`

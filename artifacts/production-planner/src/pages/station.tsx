@@ -636,6 +636,19 @@ function EodSummary({ planId, items, stationType, sessionBatches, totalBreakMinu
 // ──────────────────────────────────────────────────────────────────────────────
 // Mixing & Cooking Station
 // ──────────────────────────────────────────────────────────────────────────────
+
+interface FillingMixItem {
+  itemId: number;
+  recipeId: number;
+  recipeName: string | null;
+  tinSize: string | null;
+  tinsTarget: number;
+  batchesPerTin: number;
+  servingsPerTin: number;
+  fillingIngredients: Array<{ ingredientId: number; name: string | null; unit: string | null; qtyPerBatch: number; qtyPerTin: number }>;
+  fillingSubRecipes: Array<{ subRecipeId: number; name: string | null; unit: string | null; qtyPerBatch: number; qtyPerTin: number }>;
+}
+
 interface MixingStationProps {
   plan: ProductionPlanDetail;
 }
@@ -645,24 +658,18 @@ function MixingStation({ plan }: MixingStationProps) {
   const isAdmin = state.status === "authenticated" && state.user.role === "admin";
   const queryClient = useQueryClient();
   const [isOnBreak, setIsOnBreak] = useState(false);
+  const [expandedItemId, setExpandedItemId] = useState<number | null>(null);
+  const [checkedIngredients, setCheckedIngredients] = useState<Record<string, boolean>>({});
 
-  const updateItem = useUpdateProductionPlanItem({
-    mutation: {
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
-      },
-    },
-  });
+  const [fillingData, setFillingData] = useState<FillingMixItem[]>([]);
+  useEffect(() => {
+    fetch(`/api/production-plans/${plan.id}/filling-mix`, { credentials: "include" })
+      .then(r => r.json())
+      .then(d => setFillingData(d.items ?? []))
+      .catch(() => {});
+  }, [plan.id]);
 
   const updateOrder = useUpdateProductionPlanOrder({
-    mutation: {
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
-      },
-    },
-  });
-
-  const createBatch = useCreateBatchCompletion({
     mutation: {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
@@ -685,7 +692,6 @@ function MixingStation({ plan }: MixingStationProps) {
     const movingItem = items[oldIndex];
     const swappingWith = items[newIndex];
 
-    // Block if either item is started/in-progress (unless admin)
     if (!isAdmin) {
       if (movingItem.status !== "pending" || swappingWith.status !== "pending") return;
     }
@@ -714,13 +720,13 @@ function MixingStation({ plan }: MixingStationProps) {
     return { tinsTarget, tinsComplete, batchesPerTinEven, mixed, target, allDone: false };
   };
 
-  const addTin = async (item: ProductionPlanItem) => {
-    if (isOnBreak) return;
-    const { tinsTarget, tinsComplete, batchesPerTinEven, mixed, target, allDone } = getTinInfo(item);
-    if (allDone) return;
+  const addTin = async (item: ProductionPlanItem): Promise<boolean> => {
+    if (isOnBreak) return false;
+    const { tinsComplete, batchesPerTinEven, mixed, target, allDone } = getTinInfo(item);
+    if (allDone) return false;
     const batchesAfterNextTin = Math.min((tinsComplete + 1) * batchesPerTinEven, target);
     const batchesToAdd = batchesAfterNextTin - mixed;
-    if (batchesToAdd <= 0) return;
+    if (batchesToAdd <= 0) return false;
     try {
       const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
         method: "POST",
@@ -733,8 +739,10 @@ function MixingStation({ plan }: MixingStationProps) {
         throw new Error(data.error || `Server error ${res.status}`);
       }
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+      return true;
     } catch (err) {
       toast({ title: "Could not complete tin", description: err instanceof Error ? err.message : "Please try again.", variant: "destructive" });
+      return false;
     }
   };
 
@@ -762,6 +770,39 @@ function MixingStation({ plan }: MixingStationProps) {
     }
   };
 
+  const toggleIngredient = (itemId: number, key: string) => {
+    setCheckedIngredients(prev => ({ ...prev, [`${itemId}-${key}`]: !prev[`${itemId}-${key}`] }));
+  };
+
+  const getFillingForItem = (itemId: number) => fillingData.find(f => f.itemId === itemId);
+
+  const allCheckedForItem = (item: ProductionPlanItem) => {
+    const filling = getFillingForItem(item.id);
+    if (!filling) return false;
+    const total = filling.fillingIngredients.length + filling.fillingSubRecipes.length;
+    if (total === 0) return false;
+    for (const fi of filling.fillingIngredients) {
+      if (!checkedIngredients[`${item.id}-ing-${fi.ingredientId}`]) return false;
+    }
+    for (const fs of filling.fillingSubRecipes) {
+      if (!checkedIngredients[`${item.id}-sub-${fs.subRecipeId}`]) return false;
+    }
+    return true;
+  };
+
+  const handleCompleteTin = async (item: ProductionPlanItem) => {
+    const success = await addTin(item);
+    if (success) {
+      setCheckedIngredients(prev => {
+        const next = { ...prev };
+        for (const key of Object.keys(next)) {
+          if (key.startsWith(`${item.id}-`)) delete next[key];
+        }
+        return next;
+      });
+    }
+  };
+
   const totalTinsTarget = items.reduce((s, it) => s + getTinInfo(it).tinsTarget, 0);
   const totalTinsComplete = items.reduce((s, it) => s + getTinInfo(it).tinsComplete, 0);
   const totalBatchesDone = items.reduce((s, it) => s + getStationCount(it, "mixing"), 0);
@@ -770,7 +811,6 @@ function MixingStation({ plan }: MixingStationProps) {
 
   return (
     <div className="space-y-4">
-      {/* Overall progress */}
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
           <div>
@@ -796,7 +836,6 @@ function MixingStation({ plan }: MixingStationProps) {
         </div>
       </div>
 
-      {/* Recipes list — drag-to-reorder (pending items only, unless admin) */}
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={items.map(it => it.id)} strategy={verticalListSortingStrategy}>
           <div className="space-y-2">
@@ -808,6 +847,13 @@ function MixingStation({ plan }: MixingStationProps) {
                 isOnBreak={isOnBreak}
                 onAdd={() => addTin(item)}
                 onRemove={() => undoTin(item)}
+                expanded={expandedItemId === item.id}
+                onToggleExpand={() => setExpandedItemId(expandedItemId === item.id ? null : item.id)}
+                filling={getFillingForItem(item.id)}
+                checkedIngredients={checkedIngredients}
+                onToggleIngredient={(key) => toggleIngredient(item.id, key)}
+                allChecked={allCheckedForItem(item)}
+                onCompleteTin={() => handleCompleteTin(item)}
               />
             ))}
           </div>
@@ -823,9 +869,16 @@ interface SortableMixingItemProps {
   isOnBreak: boolean;
   onAdd: () => void;
   onRemove: () => void;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  filling?: FillingMixItem;
+  checkedIngredients: Record<string, boolean>;
+  onToggleIngredient: (key: string) => void;
+  allChecked: boolean;
+  onCompleteTin: () => void;
 }
 
-function SortableMixingItem({ item, isAdmin, isOnBreak, onAdd, onRemove }: SortableMixingItemProps) {
+function SortableMixingItem({ item, isAdmin, isOnBreak, onAdd, onRemove, expanded, onToggleExpand, filling, checkedIngredients, onToggleIngredient, allChecked, onCompleteTin }: SortableMixingItemProps) {
   const mixingCount = getStationCount(item, "mixing");
   const isDraggable = isAdmin || (item.status === "pending" && mixingCount === 0);
   const {
@@ -849,11 +902,25 @@ function SortableMixingItem({ item, isAdmin, isOnBreak, onAdd, onRemove }: Sorta
   const allTinsDone = tinsComplete >= tinsTarget;
   const progress = tinsTarget > 0 ? Math.round((tinsComplete / tinsTarget) * 100) : 0;
   const isComplete = mixingCount >= target && target > 0;
+  const hasFillingItems = filling && (filling.fillingIngredients.length > 0 || filling.fillingSubRecipes.length > 0);
+
+  const currentTinBatches = (() => {
+    if (allTinsDone || tinsTarget === 0) return batchesPerTinEven;
+    const batchesAfterNextTin = Math.min((tinsComplete + 1) * batchesPerTinEven, target);
+    return batchesAfterNextTin - mixingCount;
+  })();
 
   const statusColors = {
     pending: "border-border",
     "in-progress": "border-blue-300 dark:border-blue-700 bg-blue-50/30 dark:bg-blue-900/10",
     complete: "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-900/10",
+  };
+
+  const formatQty = (qty: number, unit: string | null) => {
+    if (qty >= 1000 && (unit === "g" || unit === "ml")) {
+      return `${(qty / 1000).toFixed(2)} ${unit === "g" ? "kg" : "L"}`;
+    }
+    return `${qty % 1 === 0 ? qty : qty.toFixed(1)} ${unit ?? ""}`;
   };
 
   return (
@@ -868,7 +935,6 @@ function SortableMixingItem({ item, isAdmin, isOnBreak, onAdd, onRemove }: Sorta
     >
       <div className="p-4">
         <div className="flex items-start gap-3">
-          {/* Drag handle */}
           <div className="flex flex-col items-center gap-0.5 flex-shrink-0 pt-1">
             <span className="text-xs font-mono text-muted-foreground w-6 text-center leading-tight">
               {item.orderPosition}
@@ -889,17 +955,20 @@ function SortableMixingItem({ item, isAdmin, isOnBreak, onAdd, onRemove }: Sorta
             )}
           </div>
 
-          {/* Recipe info */}
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0 cursor-pointer" onClick={hasFillingItems ? onToggleExpand : undefined}>
             <div className="flex items-center gap-2 mb-1">
               <h3 className={cn("font-semibold", isComplete ? "line-through text-muted-foreground" : "")}>
                 {item.recipeName ?? `Recipe #${item.recipeId}`}
               </h3>
               {isComplete && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
               {item.status === "in-progress" && <PlayCircle className="w-4 h-4 text-blue-500 flex-shrink-0" />}
+              {hasFillingItems && (
+                expanded
+                  ? <ChevronUp className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                  : <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+              )}
             </div>
 
-            {/* Tin progress */}
             <div className="flex items-center gap-2 mb-2">
               <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
                 <div
@@ -916,7 +985,6 @@ function SortableMixingItem({ item, isAdmin, isOnBreak, onAdd, onRemove }: Sorta
             </div>
           </div>
 
-          {/* Tin counter — each tap = 1 full tin */}
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={onRemove}
@@ -946,6 +1014,87 @@ function SortableMixingItem({ item, isAdmin, isOnBreak, onAdd, onRemove }: Sorta
           </div>
         </div>
       </div>
+
+      {expanded && hasFillingItems && !isComplete && (
+        <div className="border-t border-border/50 bg-muted/20 px-4 py-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Filling Mix — Tin {tinsComplete + 1} of {tinsTarget}
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              {currentTinBatches} batches this tin
+            </span>
+          </div>
+
+          <div className="space-y-1">
+            {filling!.fillingIngredients.map(fi => {
+              const key = `ing-${fi.ingredientId}`;
+              const checked = !!checkedIngredients[`${item.id}-${key}`];
+              return (
+                <label
+                  key={key}
+                  className={cn(
+                    "flex items-center gap-3 py-1.5 px-2 rounded-lg cursor-pointer transition-colors",
+                    checked ? "bg-emerald-50 dark:bg-emerald-900/20" : "hover:bg-muted/40"
+                  )}
+                  onClick={(e) => { e.stopPropagation(); }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => onToggleIngredient(key)}
+                    className="rounded border-border text-emerald-600 focus:ring-emerald-500/30 w-4 h-4"
+                  />
+                  <span className={cn("flex-1 text-sm", checked && "line-through text-muted-foreground")}>
+                    {fi.name ?? `Ingredient #${fi.ingredientId}`}
+                  </span>
+                  <span className={cn("text-sm font-mono tabular-nums font-medium", checked ? "text-muted-foreground" : "text-foreground")}>
+                    {formatQty(fi.qtyPerBatch * currentTinBatches, fi.unit)}
+                  </span>
+                </label>
+              );
+            })}
+            {filling!.fillingSubRecipes.map(fs => {
+              const key = `sub-${fs.subRecipeId}`;
+              const checked = !!checkedIngredients[`${item.id}-${key}`];
+              return (
+                <label
+                  key={key}
+                  className={cn(
+                    "flex items-center gap-3 py-1.5 px-2 rounded-lg cursor-pointer transition-colors",
+                    checked ? "bg-emerald-50 dark:bg-emerald-900/20" : "hover:bg-muted/40"
+                  )}
+                  onClick={(e) => { e.stopPropagation(); }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => onToggleIngredient(key)}
+                    className="rounded border-border text-emerald-600 focus:ring-emerald-500/30 w-4 h-4"
+                  />
+                  <span className={cn("flex-1 text-sm", checked && "line-through text-muted-foreground")}>
+                    {fs.name ?? `Sub-recipe #${fs.subRecipeId}`}
+                  </span>
+                  <span className={cn("text-sm font-mono tabular-nums font-medium", checked ? "text-muted-foreground" : "text-foreground")}>
+                    {formatQty(fs.qtyPerBatch * currentTinBatches, fs.unit)}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+
+          {allChecked && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onCompleteTin(); }}
+              disabled={isOnBreak}
+              className="w-full mt-2 py-2.5 rounded-lg bg-emerald-600 text-white font-semibold text-sm hover:bg-emerald-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              <Check className="w-4 h-4" />
+              Complete Tin {tinsComplete + 1}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

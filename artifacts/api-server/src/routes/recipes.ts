@@ -167,17 +167,19 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
 
   if (ingredients?.length) {
     await db.insert(recipeIngredientsTable).values(
-      ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null }) => ({
+      ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean }) => ({
         recipeId: recipe.id, ingredientId: i.ingredientId, quantity: String(i.quantity),
         marinadeForIngredientId: i.marinadeForIngredientId ?? null,
+        includeInFillingMix: i.includeInFillingMix ?? false,
       }))
     );
   }
   if (subRecipes?.length) {
     await db.insert(recipeSubRecipesTable).values(
-      subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null }) => ({
+      subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean }) => ({
         recipeId: recipe.id, subRecipeId: s.subRecipeId, quantity: String(s.quantity),
         marinadeForIngredientId: s.marinadeForIngredientId ?? null,
+        includeInFillingMix: s.includeInFillingMix ?? false,
       }))
     );
   }
@@ -216,6 +218,7 @@ router.get("/:id", async (req, res) => {
       costPerPack: ingredientsTable.costPerPack,
       processingRatio: ingredientsTable.processingRatio,
       marinadeForIngredientId: recipeIngredientsTable.marinadeForIngredientId,
+      includeInFillingMix: recipeIngredientsTable.includeInFillingMix,
     })
     .from(recipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -230,6 +233,7 @@ router.get("/:id", async (req, res) => {
       yieldUnit: subRecipesTable.yieldUnit,
       subYield: subRecipesTable.yield,
       marinadeForIngredientId: recipeSubRecipesTable.marinadeForIngredientId,
+      includeInFillingMix: recipeSubRecipesTable.includeInFillingMix,
     })
     .from(recipeSubRecipesTable)
     .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
@@ -267,6 +271,7 @@ router.get("/:id", async (req, res) => {
       lineCostBatch,
       lineCostPortion,
       marinadeForIngredientId: i.marinadeForIngredientId ?? null,
+      includeInFillingMix: i.includeInFillingMix,
     };
   });
 
@@ -290,6 +295,7 @@ router.get("/:id", async (req, res) => {
       lineCostBatch,
       lineCostPortion,
       marinadeForIngredientId: s.marinadeForIngredientId ?? null,
+      includeInFillingMix: s.includeInFillingMix,
     };
   });
 
@@ -385,17 +391,19 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
 
   if (ingredients?.length) {
     await db.insert(recipeIngredientsTable).values(
-      ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null }) => ({
+      ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean }) => ({
         recipeId: id, ingredientId: i.ingredientId, quantity: String(i.quantity),
         marinadeForIngredientId: i.marinadeForIngredientId ?? null,
+        includeInFillingMix: i.includeInFillingMix ?? false,
       }))
     );
   }
   if (subRecipes?.length) {
     await db.insert(recipeSubRecipesTable).values(
-      subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null }) => ({
+      subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean }) => ({
         recipeId: id, subRecipeId: s.subRecipeId, quantity: String(s.quantity),
         marinadeForIngredientId: s.marinadeForIngredientId ?? null,
+        includeInFillingMix: s.includeInFillingMix ?? false,
       }))
     );
   }

@@ -1581,6 +1581,102 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
   res.json({ recipes: result });
 });
 
+// GET /:id/filling-mix — per-item filling mix ingredients with per-tin weights
+router.get("/:id/filling-mix", async (req, res) => {
+  try {
+  const planId = Number(req.params.id);
+
+  const planItemsResult = await db.execute(sql`
+    SELECT ppi.id, ppi.recipe_id as "recipeId", r.name as "recipeName",
+           ppi.batches_target as "batchesTarget", r.portions_per_batch as "portionsPerBatch",
+           ppi.max_batches_per_tin as "maxBatchesPerTin", ppi.tin_size as "tinSize",
+           ppi.order_position as "orderPosition"
+    FROM production_plan_items ppi
+    LEFT JOIN recipes r ON ppi.recipe_id = r.id
+    WHERE ppi.plan_id = ${planId}
+    ORDER BY ppi.order_position
+  `);
+  const planItems = planItemsResult.rows as Array<{ id: number; recipeId: number; recipeName: string | null; batchesTarget: number | null; portionsPerBatch: number | null; maxBatchesPerTin: number | null; tinSize: string | null; orderPosition: number }>;
+
+  if (planItems.length === 0) {
+    res.json({ items: [] });
+    return;
+  }
+
+  const recipeIds = [...new Set(planItems.map(i => i.recipeId))].filter((x): x is number => x != null);
+  if (recipeIds.length === 0) {
+    res.json({ items: planItems.map(item => ({ itemId: item.id, recipeId: item.recipeId, recipeName: item.recipeName, tinSize: item.tinSize, tinsTarget: 0, batchesPerTin: 0, servingsPerTin: 0, fillingIngredients: [], fillingSubRecipes: [] })) });
+    return;
+  }
+
+  const fillingIngredients = await db.execute(sql`
+    SELECT ri.recipe_id as "recipeId", ri.ingredient_id as "ingredientId",
+           i.name as "ingredientName", i.unit, ri.quantity
+    FROM recipe_ingredients ri
+    LEFT JOIN ingredients i ON ri.ingredient_id = i.id
+    WHERE ri.recipe_id IN (${sql.join(recipeIds.map(id => sql`${id}`), sql`, `)})
+      AND ri.include_in_filling_mix = true
+  `);
+
+  const fillingSubRecipeRows = await db.execute(sql`
+    SELECT rs.recipe_id as "recipeId", rs.sub_recipe_id as "subRecipeId",
+           s.name as "subRecipeName", s.yield_unit as unit, rs.quantity
+    FROM recipe_sub_recipes rs
+    LEFT JOIN sub_recipes s ON rs.sub_recipe_id = s.id
+    WHERE rs.recipe_id IN (${sql.join(recipeIds.map(id => sql`${id}`), sql`, `)})
+      AND rs.include_in_filling_mix = true
+  `);
+
+  const fiRows = fillingIngredients.rows as Array<{ recipeId: number; ingredientId: number; ingredientName: string; unit: string; quantity: string }>;
+  const fsRows = fillingSubRecipeRows.rows as Array<{ recipeId: number; subRecipeId: number; subRecipeName: string; unit: string; quantity: string }>;
+
+  const result = planItems.map(item => {
+    const bpt = item.maxBatchesPerTin ?? 1;
+    const target = item.batchesTarget ?? 0;
+    const tinsTarget = Math.ceil(target / bpt);
+    const batchesPerTin = tinsTarget > 0 ? Math.ceil(target / tinsTarget) : target;
+    const servingsPerTin = batchesPerTin * (item.portionsPerBatch ?? 1);
+
+    const ingredients = fiRows
+      .filter(fi => fi.recipeId === item.recipeId)
+      .map(fi => ({
+        ingredientId: fi.ingredientId,
+        name: fi.ingredientName,
+        unit: fi.unit,
+        qtyPerBatch: Number(fi.quantity),
+        qtyPerTin: Number(fi.quantity) * batchesPerTin,
+      }));
+
+    const subRecipes = fsRows
+      .filter(fs => fs.recipeId === item.recipeId)
+      .map(fs => ({
+        subRecipeId: fs.subRecipeId,
+        name: fs.subRecipeName,
+        unit: fs.unit,
+        qtyPerBatch: Number(fs.quantity),
+        qtyPerTin: Number(fs.quantity) * batchesPerTin,
+      }));
+
+    return {
+      itemId: item.id,
+      recipeId: item.recipeId,
+      recipeName: item.recipeName,
+      tinSize: item.tinSize,
+      tinsTarget,
+      batchesPerTin,
+      servingsPerTin,
+      fillingIngredients: ingredients,
+      fillingSubRecipes: subRecipes,
+    };
+  });
+
+  res.json({ items: result });
+  } catch (err) {
+    console.error("filling-mix error:", err);
+    res.status(500).json({ error: "Internal error computing filling mix" });
+  }
+});
+
 // GET /:id/ingredient-requirements?station=prep_veg|prep_bases|prep_meat|all
 router.get("/:id/ingredient-requirements", async (req, res) => {
   const planId = Number(req.params.id);

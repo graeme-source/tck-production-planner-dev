@@ -549,6 +549,7 @@ export const CreateRecipeBody = zod.object({
       ingredientId: zod.number(),
       quantity: zod.number(),
       marinadeForIngredientId: zod.number().nullish(),
+      includeInFillingMix: zod.boolean().optional(),
     }),
   ),
   subRecipes: zod.array(
@@ -556,6 +557,7 @@ export const CreateRecipeBody = zod.object({
       subRecipeId: zod.number(),
       quantity: zod.number(),
       marinadeForIngredientId: zod.number().nullish(),
+      includeInFillingMix: zod.boolean().optional(),
     }),
   ),
   marinades: zod.array(
@@ -708,6 +710,7 @@ export const UpdateRecipeBody = zod.object({
       ingredientId: zod.number(),
       quantity: zod.number(),
       marinadeForIngredientId: zod.number().nullish(),
+      includeInFillingMix: zod.boolean().optional(),
     }),
   ),
   subRecipes: zod.array(
@@ -715,6 +718,7 @@ export const UpdateRecipeBody = zod.object({
       subRecipeId: zod.number(),
       quantity: zod.number(),
       marinadeForIngredientId: zod.number().nullish(),
+      includeInFillingMix: zod.boolean().optional(),
     }),
   ),
   marinades: zod.array(

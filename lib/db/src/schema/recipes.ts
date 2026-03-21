@@ -1,4 +1,4 @@
-import { pgTable, serial, text, numeric, integer, timestamp, check } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, numeric, integer, timestamp, check, boolean } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -34,6 +34,7 @@ export const recipeIngredientsTable = pgTable("recipe_ingredients", {
   ingredientId: integer("ingredient_id").notNull().references(() => ingredientsTable.id, { onDelete: "restrict" }),
   quantity: numeric("quantity", { precision: 10, scale: 4 }).notNull(),
   marinadeForIngredientId: integer("marinade_for_ingredient_id").references(() => ingredientsTable.id, { onDelete: "set null" }),
+  includeInFillingMix: boolean("include_in_filling_mix").notNull().default(false),
 });
 
 export const recipeSubRecipesTable = pgTable("recipe_sub_recipes", {
@@ -42,6 +43,7 @@ export const recipeSubRecipesTable = pgTable("recipe_sub_recipes", {
   subRecipeId: integer("sub_recipe_id").notNull().references(() => subRecipesTable.id, { onDelete: "restrict" }),
   quantity: numeric("quantity", { precision: 10, scale: 4 }).notNull(),
   marinadeForIngredientId: integer("marinade_for_ingredient_id").references(() => ingredientsTable.id, { onDelete: "set null" }),
+  includeInFillingMix: boolean("include_in_filling_mix").notNull().default(false),
 });
 
 export const recipeMeatMarinadesTable = pgTable("recipe_meat_marinades", {
