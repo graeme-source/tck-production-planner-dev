@@ -1166,7 +1166,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const [isEditingDraft, setIsEditingDraft] = useState(false);
   const [, navigate] = useLocation();
   const { data: stationActivity } = useGetStationActivity(planId, {
-    query: { queryKey: getGetStationActivityQueryKey(planId), refetchInterval: 30000 },
+    query: { queryKey: getGetStationActivityQueryKey(planId), refetchInterval: 10000 },
   });
 
   if (isLoading) {

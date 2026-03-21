@@ -19,7 +19,7 @@ import {
 import type { ProductionPlanDetail, ProductionPlanItem, PrepRequirementItem, StationKpi } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   ChevronLeft, ChevronUp, ChevronDown, Plus, Minus,
   Coffee, Utensils, Clock, CheckCircle2,
@@ -980,9 +980,9 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   const targetBph = standard?.targetBatchesPerHour != null ? Number(standard.targetBatchesPerHour) : null;
   const minBph = standard?.minBatchesPerHour != null ? Number(standard.minBatchesPerHour) : null;
 
-  // Server-side KPI (polled every 30s — refreshes from DB-persisted completions and breaks)
+  // Server-side KPI (polled every 5s — refreshes from DB-persisted completions and breaks)
   const { data: serverKpi } = useGetStationKpi(plan.id, { stationType }, {
-    query: { queryKey: getGetStationKpiQueryKey(plan.id, { stationType }), refetchInterval: 30000 },
+    query: { queryKey: getGetStationKpiQueryKey(plan.id, { stationType }), refetchInterval: 5000 },
   });
 
   const createBatch = useCreateBatchCompletion({
@@ -1016,7 +1016,7 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
       } catch {}
     };
     fetchPace();
-    const interval = setInterval(fetchPace, 15000);
+    const interval = setInterval(fetchPace, 5000);
     return () => clearInterval(interval);
   }, [plan.id, stationType, sessionBatches]);
 
@@ -1443,17 +1443,27 @@ interface NextActivePlan {
 function useNextActivePlan(afterDate?: string) {
   const [data, setData] = useState<NextActivePlan | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const initialLoadDone = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const doFetch = useCallback(() => {
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    if (!initialLoadDone.current) setIsLoading(true);
+    const qs = afterDate ? `?afterDate=${afterDate}` : "";
+    fetch(`/api/production-plans/next-active${qs}`, { credentials: "include", signal: ctrl.signal })
+      .then(r => r.json())
+      .then((json: NextActivePlan) => { setData(json); initialLoadDone.current = true; setIsLoading(false); })
+      .catch((e) => { if (e.name !== "AbortError") { initialLoadDone.current = true; setIsLoading(false); } });
+  }, [afterDate]);
 
   useEffect(() => {
-    let cancelled = false;
-    setIsLoading(true);
-    const qs = afterDate ? `?afterDate=${afterDate}` : "";
-    fetch(`/api/production-plans/next-active${qs}`, { credentials: "include" })
-      .then(r => r.json())
-      .then((json: NextActivePlan) => { if (!cancelled) { setData(json); setIsLoading(false); } })
-      .catch(() => { if (!cancelled) setIsLoading(false); });
-    return () => { cancelled = true; };
-  }, [afterDate]);
+    initialLoadDone.current = false;
+    doFetch();
+    const interval = setInterval(doFetch, 5000);
+    return () => { clearInterval(interval); abortRef.current?.abort(); };
+  }, [doFetch]);
 
   return { data, isLoading };
 }
@@ -1733,19 +1743,31 @@ function usePrepByRecipe(station: string, afterDate?: string) {
   const planId = nextPlan?.planId ?? 0;
   const [recipes, setRecipes] = useState<PrepRecipeDetail[]>([]);
   const [isPrepLoading, setIsPrepLoading] = useState(false);
+  const initialLoadDone = useRef(false);
 
-  useEffect(() => {
+  const abortRef = useRef<AbortController | null>(null);
+
+  const doFetch = useCallback(() => {
     if (!planId) { setRecipes([]); return; }
-    let cancelled = false;
-    setIsPrepLoading(true);
-    fetch(`/api/production-plans/${planId}/prep-requirements-by-recipe?station=${station}`, { credentials: "include" })
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    if (!initialLoadDone.current) setIsPrepLoading(true);
+    fetch(`/api/production-plans/${planId}/prep-requirements-by-recipe?station=${station}`, { credentials: "include", signal: ctrl.signal })
       .then(r => r.json())
       .then((json: { recipes?: PrepRecipeDetail[] }) => {
-        if (!cancelled) { setRecipes(json.recipes ?? []); setIsPrepLoading(false); }
+        setRecipes(json.recipes ?? []); initialLoadDone.current = true; setIsPrepLoading(false);
       })
-      .catch(() => { if (!cancelled) setIsPrepLoading(false); });
-    return () => { cancelled = true; };
+      .catch((e) => { if (e.name !== "AbortError") { initialLoadDone.current = true; setIsPrepLoading(false); } });
   }, [planId, station]);
+
+  useEffect(() => {
+    initialLoadDone.current = false;
+    doFetch();
+    if (!planId) return;
+    const interval = setInterval(doFetch, 5000);
+    return () => { clearInterval(interval); abortRef.current?.abort(); };
+  }, [doFetch, planId]);
 
   return {
     recipes,
@@ -1835,19 +1857,28 @@ interface StockCheckEntry {
 function useMainPrepData(planId: number) {
   const [data, setData] = useState<{ ingredients: MainPrepIngredient[]; completions: PrepTinCompletion[] } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [revision, setRevision] = useState(0);
+  const initialLoadDone = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const doFetch = useCallback(() => {
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    if (!initialLoadDone.current) setLoading(true);
+    fetch(`/api/production-plans/${planId}/main-prep`, { credentials: "include", signal: ctrl.signal })
+      .then(r => r.json())
+      .then(d => { setData(d); initialLoadDone.current = true; setLoading(false); })
+      .catch((e) => { if (e.name !== "AbortError") { initialLoadDone.current = true; setLoading(false); } });
+  }, [planId]);
 
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    fetch(`/api/production-plans/${planId}/main-prep`, { credentials: "include" })
-      .then(r => r.json())
-      .then(d => { if (!cancelled) { setData(d); setLoading(false); } })
-      .catch(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [planId, revision]);
+    initialLoadDone.current = false;
+    doFetch();
+    const interval = setInterval(doFetch, 5000);
+    return () => { clearInterval(interval); abortRef.current?.abort(); };
+  }, [doFetch]);
 
-  const refetch = useCallback(() => setRevision(r => r + 1), []);
+  const refetch = useCallback(() => doFetch(), [doFetch]);
   return { data, loading, refetch };
 }
 
@@ -1860,6 +1891,7 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const [stockValues, setStockValues] = useState<Record<number, string>>({});
   const [stockLoaded, setStockLoaded] = useState(false);
   const [savingStock, setSavingStock] = useState<Record<number, boolean>>({});
+  const dirtyStockIds = useRef<Set<number>>(new Set());
   const [selectedIngredientId, setSelectedIngredientId] = useState<number | null>(null);
   const [isOnBreak, setIsOnBreak] = useState(false);
 
@@ -1869,6 +1901,7 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     setSelectedIngredientId(null);
     setStockValues({});
     setStockLoaded(false);
+    dirtyStockIds.current.clear();
   }, [targetPlanId]);
 
   useEffect(() => {
@@ -1876,22 +1909,35 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     setStockLoaded(false);
   }, [checkDate]);
 
-  useEffect(() => {
-    if (!checkDate || stockLoaded) return;
+  const fetchStockChecks = useCallback(() => {
+    if (!checkDate) return;
     fetch(`/api/production-plans/stock-checks?date=${checkDate}`, { credentials: "include" })
       .then(r => r.json())
       .then(d => {
         if (d?.checks) {
-          const vals: Record<number, string> = {};
+          const serverVals: Record<number, string> = {};
           for (const c of d.checks) {
-            if (c.quantity) vals[c.ingredientId] = String(parseFloat(c.quantity));
+            if (c.quantity) serverVals[c.ingredientId] = String(parseFloat(c.quantity));
           }
-          setStockValues(vals);
+          setStockValues(prev => {
+            const merged = { ...serverVals };
+            for (const id of dirtyStockIds.current) {
+              if (id in prev) merged[id] = prev[id];
+            }
+            return merged;
+          });
         }
         setStockLoaded(true);
       })
       .catch(() => setStockLoaded(true));
-  }, [checkDate, stockLoaded]);
+  }, [checkDate]);
+
+  useEffect(() => {
+    if (!checkDate) return;
+    fetchStockChecks();
+    const interval = setInterval(fetchStockChecks, 5000);
+    return () => clearInterval(interval);
+  }, [fetchStockChecks]);
 
   const ingredients = data?.ingredients ?? [];
   const completions = data?.completions ?? [];
@@ -1952,6 +1998,7 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
         body: JSON.stringify({ ingredientId, checkDate: cd, quantity: Number(val) }),
       });
       if (!resp.ok) throw new Error("Save failed");
+      dirtyStockIds.current.delete(ingredientId);
       toast({ title: "Stock check saved" });
       setTimeout(() => advanceToNext(ingredientId), 400);
     } catch {
@@ -2232,7 +2279,7 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                           placeholder={`Remaining ${selectedIng.unit}`}
                           className="flex-1 max-w-[200px] text-lg border-2 border-blue-300 dark:border-blue-600 rounded-xl px-4 py-3 text-right bg-background focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
                           value={stockValues[selectedIng.ingredientId] ?? ""}
-                          onChange={e => setStockValues(v => ({ ...v, [selectedIng.ingredientId]: e.target.value }))}
+                          onChange={e => { dirtyStockIds.current.add(selectedIng.ingredientId); setStockValues(v => ({ ...v, [selectedIng.ingredientId]: e.target.value })); }}
                           onKeyDown={e => { if (e.key === "Enter") saveStockCheck(selectedIng.ingredientId); }}
                         />
                         <span className="text-sm text-muted-foreground font-medium">{selectedIng.unit}</span>
@@ -2737,17 +2784,29 @@ function useDoughPrepData(planId: number, mode?: "current") {
   const [data, setData] = useState<DoughPrepData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const initialLoadDone = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    setLoading(true);
+  const doFetch = useCallback(() => {
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    if (!initialLoadDone.current) setLoading(true);
     const url = mode
       ? `/api/production-plans/${planId}/dough-prep?mode=${mode}`
       : `/api/production-plans/${planId}/dough-prep`;
-    fetch(url, { credentials: "include" })
+    fetch(url, { credentials: "include", signal: ctrl.signal })
       .then(r => r.json())
-      .then(d => { setData(d); setLoading(false); })
-      .catch(e => { setError(e.message); setLoading(false); });
+      .then(d => { setData(d); initialLoadDone.current = true; setLoading(false); })
+      .catch(e => { if (e.name !== "AbortError") { setError(e.message); initialLoadDone.current = true; setLoading(false); } });
   }, [planId, mode]);
+
+  useEffect(() => {
+    initialLoadDone.current = false;
+    doFetch();
+    const interval = setInterval(doFetch, 5000);
+    return () => { clearInterval(interval); abortRef.current?.abort(); };
+  }, [doFetch]);
 
   return { data, loading, error };
 }
@@ -3857,15 +3916,26 @@ interface PackingData {
 function usePackingData(planId: number, planStatus: string) {
   const [data, setData] = useState<PackingData | null>(null);
   const [loading, setLoading] = useState(true);
+  const initialLoadDone = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   const refetch = useCallback(() => {
-    fetch(`/api/production-plans/${planId}/packing`, { credentials: "include" })
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    if (!initialLoadDone.current) setLoading(true);
+    fetch(`/api/production-plans/${planId}/packing`, { credentials: "include", signal: ctrl.signal })
       .then(r => r.json())
-      .then(d => { setData(d); setLoading(false); })
-      .catch(() => setLoading(false));
+      .then(d => { setData(d); initialLoadDone.current = true; setLoading(false); })
+      .catch((e) => { if (e.name !== "AbortError") { initialLoadDone.current = true; setLoading(false); } });
   }, [planId]);
 
-  useEffect(() => { refetch(); }, [refetch]);
+  useEffect(() => {
+    initialLoadDone.current = false;
+    refetch();
+    const interval = setInterval(refetch, 5000);
+    return () => { clearInterval(interval); abortRef.current?.abort(); };
+  }, [refetch]);
 
   return { data, loading, refetch };
 }
