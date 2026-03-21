@@ -1637,14 +1637,16 @@ router.get("/:id/filling-mix", async (req, res) => {
     const batchesPerTin = tinsTarget > 0 ? Math.ceil(target / tinsTarget) : target;
     const servingsPerTin = batchesPerTin * (item.portionsPerBatch ?? 1);
 
+    const ppb = item.portionsPerBatch ?? 1;
+
     const ingredients = fiRows
       .filter(fi => fi.recipeId === item.recipeId)
       .map(fi => ({
         ingredientId: fi.ingredientId,
         name: fi.ingredientName,
         unit: fi.unit,
-        qtyPerBatch: Number(fi.quantity),
-        qtyPerTin: Number(fi.quantity) * batchesPerTin,
+        qtyPerBatch: Number(fi.quantity) * ppb,
+        qtyPerTin: Number(fi.quantity) * ppb * batchesPerTin,
       }));
 
     const subRecipes = fsRows
@@ -1653,8 +1655,8 @@ router.get("/:id/filling-mix", async (req, res) => {
         subRecipeId: fs.subRecipeId,
         name: fs.subRecipeName,
         unit: fs.unit,
-        qtyPerBatch: Number(fs.quantity),
-        qtyPerTin: Number(fs.quantity) * batchesPerTin,
+        qtyPerBatch: Number(fs.quantity) * ppb,
+        qtyPerTin: Number(fs.quantity) * ppb * batchesPerTin,
       }));
 
     return {
