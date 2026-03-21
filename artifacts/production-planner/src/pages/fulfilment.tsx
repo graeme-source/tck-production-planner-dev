@@ -185,7 +185,8 @@ function printLabel(
   // Non-kiosk: fires when the print dialog is dismissed (could be cancel).
   // We treat dismiss as "done" — the user is responsible for printer setup.
   // Fallback: 10 s timeout in case afterprint never fires (e.g. data-URL sandbox).
-  const fallbackTimer = setTimeout(() => settle(true), 10_000);
+  // Resolves as failure so the operator sees a deterministic state and can retry.
+  const fallbackTimer = setTimeout(() => settle(false), 10_000);
 
   iframe.onerror = () => settle(false);
 
@@ -658,23 +659,33 @@ export default function Fulfilment() {
               </span>
             )}
             {printStatus === "failed" && shipment && (
-              <div className="flex items-center gap-2">
-                <span className="flex items-center gap-1.5 text-xs text-destructive">
-                  <XCircle className="w-4 h-4" /> Print failed
-                </span>
-                <button
-                  onClick={() => {
-                    setPrintStatus("printing");
-                    printLabel(
-                      shipment.labelPdfBase64,
-                      () => setPrintStatus("done"),
-                      () => setPrintStatus("failed"),
-                    );
-                  }}
-                  className="text-xs px-2 py-1 bg-destructive/10 hover:bg-destructive/20 text-destructive rounded-lg flex items-center gap-1 transition-colors"
-                >
-                  <RotateCcw className="w-3 h-3" /> Retry print
-                </button>
+              <div className="flex flex-col items-end gap-1">
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center gap-1.5 text-xs text-destructive">
+                    <XCircle className="w-4 h-4" /> Print failed
+                  </span>
+                  <button
+                    onClick={() => {
+                      setPrintStatus("printing");
+                      printLabel(
+                        shipment.labelPdfBase64,
+                        () => setPrintStatus("done"),
+                        () => setPrintStatus("failed"),
+                      );
+                    }}
+                    className="text-xs px-2 py-1 bg-destructive/10 hover:bg-destructive/20 text-destructive rounded-lg flex items-center gap-1 transition-colors"
+                  >
+                    <RotateCcw className="w-3 h-3" /> Retry print
+                  </button>
+                  <button
+                    onClick={() => setPrintStatus("done")}
+                    className="text-xs px-2 py-1 bg-secondary hover:bg-secondary/80 rounded-lg flex items-center gap-1 transition-colors"
+                    title="Manually mark as printed if the label came out correctly"
+                  >
+                    Mark printed
+                  </button>
+                </div>
+                <a href="/settings" className="text-xs text-muted-foreground underline hover:text-foreground transition-colors">Check printer setup</a>
               </div>
             )}
             {printStatus === "failed" && !shipment && (
@@ -718,13 +729,14 @@ export default function Fulfilment() {
           </div>
         )}
 
-        {creatingShipment && (
-          <div className="flex items-center gap-2 p-3 bg-secondary/30 rounded-xl text-sm text-muted-foreground">
-            <Loader2 className="w-4 h-4 animate-spin" /> Creating APC shipment…
+        {creatingShipment && !shipmentError && (
+          <div className="flex items-center justify-center py-8 gap-3 text-muted-foreground">
+            <Loader2 className="w-5 h-5 animate-spin" />
+            <span>Creating APC shipment — please wait before scanning…</span>
           </div>
         )}
 
-        <form onSubmit={handleBarcodeSubmit}>
+        <form onSubmit={handleBarcodeSubmit} hidden={creatingShipment || !!shipmentError}>
           <div className={`relative transition-all ${flashWrong ? "ring-2 ring-destructive rounded-xl" : ""}`}>
             <Scan className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground pointer-events-none" />
             <input
@@ -739,7 +751,7 @@ export default function Fulfilment() {
           </div>
         </form>
 
-        <div className="space-y-2">
+        <div className="space-y-2" hidden={creatingShipment || !!shipmentError}>
           <div className="flex items-center gap-3 text-xs text-muted-foreground px-1 mb-1">
             <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-blue-400 inline-block" /> Fridge</span>
             <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-purple-400 inline-block" /> Freezer</span>
@@ -794,8 +806,13 @@ export default function Fulfilment() {
                     <MapPin className="w-3 h-3" />
                     {item.location.locationLabel}
                   </div>
+                ) : !item.sku ? (
+                  <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300 flex-shrink-0" title="This line item has no SKU — cannot look up bin location">
+                    <AlertCircle className="w-3 h-3" />
+                    No SKU
+                  </div>
                 ) : (
-                  <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300 flex-shrink-0">
+                  <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300 flex-shrink-0" title="SKU exists but no bin location has been assigned">
                     <AlertCircle className="w-3 h-3" />
                     No location
                   </div>
