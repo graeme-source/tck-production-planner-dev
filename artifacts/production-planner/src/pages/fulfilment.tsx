@@ -228,7 +228,7 @@ export default function Fulfilment() {
   const preQueueRef = useRef<Map<number, Promise<ShipmentResult>>>(new Map());
   const prePrintRef = useRef<Map<number, PrintStatus>>(new Map());
 
-  const { data: configStatus } = useQuery({
+  const { data: configStatus, isLoading: configStatusLoading } = useQuery({
     queryKey: ["fulfilment-config-status"],
     queryFn: fetchConfigStatus,
     staleTime: 60_000,
@@ -331,11 +331,11 @@ export default function Fulfilment() {
     startPicking(activeOrder);
   }
 
+  const ZONE_PICK_ORDER = ["fridge", "freezer", "ambient"];
   const sortedLineItems = activeOrder ? [...activeOrder.line_items].sort((a, b) => {
-    const zA = a.location?.zone ?? "z";
-    const zB = b.location?.zone ?? "z";
-    const order = ["fridge", "freezer", "ambient"];
-    return (order.indexOf(zA) - order.indexOf(zB)) || a.title.localeCompare(b.title);
+    const idxA = a.location ? ZONE_PICK_ORDER.indexOf(a.location.zone) : ZONE_PICK_ORDER.length;
+    const idxB = b.location ? ZONE_PICK_ORDER.indexOf(b.location.zone) : ZONE_PICK_ORDER.length;
+    return (idxA - idxB) || a.title.localeCompare(b.title);
   }) : [];
 
   const expandedItems = sortedLineItems.flatMap(item =>
@@ -467,7 +467,7 @@ export default function Fulfilment() {
     }
   }, [view]);
 
-  if (!configStatus?.apcCredentialsConfigured || !configStatus?.serviceCodesConfigured) {
+  if (!configStatusLoading && (!configStatus?.apcCredentialsConfigured || !configStatus?.serviceCodesConfigured)) {
     return (
       <div className="space-y-6">
         <PageHeader title="Fulfilment" description="APC order scanning and label printing." />
