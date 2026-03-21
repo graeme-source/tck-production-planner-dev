@@ -1,4 +1,5 @@
 import React from "react";
+import { createPortal } from "react-dom";
 import { useParams, useLocation } from "wouter";
 import {
   useGetProductionPlan,
@@ -30,7 +31,7 @@ import {
   Snowflake, Truck, AlertCircle, Info, Droplets, Timer,
   ClipboardList, Check, Package, RotateCcw,
 } from "lucide-react";
-import { format, parseISO, differenceInMinutes } from "date-fns";
+import { format, parseISO, differenceInMinutes, differenceInSeconds } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -200,7 +201,7 @@ interface ActiveBreak {
 
 function BreakTracker({ planId, stationType, onBreakChange, onBreakActiveChange }: BreakTrackerProps) {
   const [activeBreak, setActiveBreak] = useState<ActiveBreak | null>(null);
-  const [elapsed, setElapsed] = useState(0);
+  const [elapsedSecs, setElapsedSecs] = useState(0);
   const [hydrated, setHydrated] = useState(false);
   const [defaults, setDefaults] = useState<{ breakMins: number; lunchMins: number }>({ breakMins: 15, lunchMins: 45 });
   const createBreak = useCreateStationBreak();
@@ -232,15 +233,17 @@ function BreakTracker({ planId, stationType, onBreakChange, onBreakActiveChange 
   useEffect(() => {
     if (!activeBreak) {
       onBreakChange?.(null);
+      setElapsedSecs(0);
       return;
     }
     const update = () => {
-      const mins = differenceInMinutes(new Date(), parseISO(activeBreak.startedAt));
-      setElapsed(mins);
+      const secs = differenceInSeconds(new Date(), parseISO(activeBreak.startedAt));
+      setElapsedSecs(secs);
+      const mins = Math.floor(secs / 60);
       onBreakChange?.(mins);
     };
     update();
-    const interval = setInterval(update, 15000);
+    const interval = setInterval(update, 1000);
     return () => clearInterval(interval);
   }, [activeBreak]);
 
@@ -282,78 +285,137 @@ function BreakTracker({ planId, stationType, onBreakChange, onBreakActiveChange 
     );
   }
 
-  if (activeBreak) {
-    const allowed = activeBreak.type === "lunch" ? defaults.lunchMins : defaults.breakMins;
-    const remaining = allowed - elapsed;
-    const overrun = elapsed > allowed;
-    const approaching = !overrun && remaining <= 2;
+  const breakOverlay = activeBreak ? (() => {
+    const allowedSecs = (activeBreak.type === "lunch" ? defaults.lunchMins : defaults.breakMins) * 60;
+    const remainingSecs = allowedSecs - elapsedSecs;
+    const overrun = elapsedSecs > allowedSecs;
+    const approaching = !overrun && remainingSecs <= 120;
 
-    const borderColor = overrun
-      ? "border-red-300 dark:border-red-800"
-      : approaching
-        ? "border-amber-300 dark:border-amber-700"
-        : "border-green-300 dark:border-green-800";
-    const bgColor = overrun
-      ? "bg-red-50 dark:bg-red-900/10"
-      : approaching
-        ? "bg-amber-50 dark:bg-amber-900/10"
-        : "bg-green-50 dark:bg-green-900/10";
-    const textColor = overrun
-      ? "text-red-800 dark:text-red-300"
-      : approaching
-        ? "text-amber-800 dark:text-amber-300"
-        : "text-green-800 dark:text-green-300";
-    const subTextColor = overrun
-      ? "text-red-600 dark:text-red-400"
-      : approaching
-        ? "text-amber-600 dark:text-amber-400"
-        : "text-green-600 dark:text-green-400";
+    const elapsedMins = Math.floor(elapsedSecs / 60);
+    const elapsedSecsRem = elapsedSecs % 60;
+    const elapsedLabel = `${String(elapsedMins).padStart(2, "0")}:${String(elapsedSecsRem).padStart(2, "0")}`;
 
-    return (
-      <div className={`flex items-center gap-3 ${bgColor} border ${borderColor} rounded-xl px-4 py-3`}>
-        <Clock className={`w-5 h-5 ${subTextColor} animate-pulse`} />
-        <div>
-          <p className={`text-sm font-medium ${textColor}`}>
-            {activeBreak.type === "morning" ? "Morning Break" : "Lunch Break"} · {elapsed} / {allowed} min
-          </p>
-          <p className={`text-xs ${subTextColor}`}>
-            Started {format(parseISO(activeBreak.startedAt), "HH:mm")}
-            {overrun && ` · ${elapsed - allowed} min over`}
-            {!overrun && remaining > 0 && ` · ${remaining} min remaining`}
-          </p>
+    const overrunSecs = Math.max(0, elapsedSecs - allowedSecs);
+    const overrunMins = Math.floor(overrunSecs / 60);
+    const overrunSecsRem = overrunSecs % 60;
+    const overrunLabel = `${String(overrunMins).padStart(2, "0")}:${String(overrunSecsRem).padStart(2, "0")}`;
+
+    const remSecs = Math.max(0, remainingSecs);
+    const remMins = Math.floor(remSecs / 60);
+    const remSecsRem = remSecs % 60;
+    const remainingLabel = `${String(remMins).padStart(2, "0")}:${String(remSecsRem).padStart(2, "0")}`;
+
+    const timerColor = overrun
+      ? "text-red-400"
+      : approaching
+        ? "text-amber-400"
+        : "text-emerald-400";
+
+    const ringBg = overrun
+      ? "border-red-500/40"
+      : approaching
+        ? "border-amber-500/40"
+        : "border-emerald-500/40";
+
+    const badgeBg = overrun
+      ? "bg-red-500/20 text-red-300 border border-red-500/30"
+      : approaching
+        ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+        : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30";
+
+    const btnClass = overrun
+      ? "bg-red-500 hover:bg-red-400 text-white"
+      : "bg-white/10 hover:bg-white/20 text-white border border-white/20";
+
+    const BreakIcon = activeBreak.type === "lunch" ? Utensils : Coffee;
+    const breakLabel = activeBreak.type === "lunch" ? "Lunch Break" : "Morning Break";
+    const allowedMins = activeBreak.type === "lunch" ? defaults.lunchMins : defaults.breakMins;
+
+    return createPortal(
+      <div
+        className="fixed inset-0 z-[9999] flex items-center justify-center"
+        style={{ backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", background: "rgba(0,0,0,0.75)" }}
+      >
+        <div className={cn(
+          "relative flex flex-col items-center gap-6 rounded-3xl border-2 p-10 shadow-2xl w-full max-w-sm mx-4",
+          "bg-gray-900/95",
+          ringBg
+        )}>
+          {/* Icon + label */}
+          <div className="flex flex-col items-center gap-3">
+            <div className={cn("flex items-center justify-center w-16 h-16 rounded-2xl", badgeBg)}>
+              <BreakIcon className="w-8 h-8" />
+            </div>
+            <p className="text-white text-xl font-bold tracking-tight">{breakLabel}</p>
+            <p className="text-gray-400 text-sm">
+              Started {format(parseISO(activeBreak.startedAt), "HH:mm")} · {allowedMins} min allowed
+            </p>
+          </div>
+
+          {/* Live timer */}
+          <div className="flex flex-col items-center gap-1">
+            <p className="text-gray-400 text-xs font-semibold uppercase tracking-widest">Elapsed</p>
+            <p className={cn("text-7xl font-bold font-mono tabular-nums tracking-tight", timerColor)}>
+              {elapsedLabel}
+            </p>
+            {overrun ? (
+              <p className="text-red-400 text-sm font-semibold mt-1">
+                {overrunLabel} over time
+              </p>
+            ) : (
+              <p className={cn("text-sm font-medium mt-1", approaching ? "text-amber-400" : "text-gray-400")}>
+                {remainingLabel} remaining
+              </p>
+            )}
+          </div>
+
+          {/* End break button */}
+          <button
+            onClick={stopBreak}
+            disabled={endBreak.isPending}
+            className={cn(
+              "w-full py-4 rounded-2xl text-base font-bold transition-all active:scale-95",
+              btnClass,
+              endBreak.isPending && "opacity-60 cursor-not-allowed"
+            )}
+          >
+            {endBreak.isPending ? (
+              <span className="flex items-center justify-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" /> Ending…
+              </span>
+            ) : (
+              `End ${activeBreak.type === "lunch" ? "Lunch" : "Break"}`
+            )}
+          </button>
         </div>
-        <button
-          onClick={stopBreak}
-          className={`ml-auto px-4 py-2 text-white text-sm rounded-lg font-semibold transition-colors ${
-            overrun
-              ? "bg-red-600 hover:bg-red-700"
-              : "bg-amber-600 hover:bg-amber-700"
-          }`}
-        >
-          End {activeBreak.type === "morning" ? "Break" : "Lunch"}
-        </button>
-      </div>
+      </div>,
+      document.body
     );
-  }
+  })() : null;
 
   return (
-    <div className="flex items-center gap-2">
-      <span className="text-xs text-muted-foreground">Breaks:</span>
-      <button
-        onClick={() => startBreak("morning")}
-        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs border border-border rounded-lg hover:bg-secondary/60 transition-colors"
-      >
-        <Coffee className="w-3.5 h-3.5" />
-        Morning ({defaults.breakMins}m)
-      </button>
-      <button
-        onClick={() => startBreak("lunch")}
-        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs border border-border rounded-lg hover:bg-secondary/60 transition-colors"
-      >
-        <Utensils className="w-3.5 h-3.5" />
-        Lunch ({defaults.lunchMins}m)
-      </button>
-    </div>
+    <>
+      {breakOverlay}
+      {!activeBreak && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">Breaks:</span>
+          <button
+            onClick={() => startBreak("morning")}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs border border-border rounded-lg hover:bg-secondary/60 transition-colors"
+          >
+            <Coffee className="w-3.5 h-3.5" />
+            Morning ({defaults.breakMins}m)
+          </button>
+          <button
+            onClick={() => startBreak("lunch")}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs border border-border rounded-lg hover:bg-secondary/60 transition-colors"
+          >
+            <Utensils className="w-3.5 h-3.5" />
+            Lunch ({defaults.lunchMins}m)
+          </button>
+        </div>
+      )}
+    </>
   );
 }
 
