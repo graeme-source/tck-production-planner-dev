@@ -28,7 +28,7 @@ import {
   Beef, TrendingUp, Trophy, ExternalLink, ChevronRight,
   List, LayoutGrid, CalendarCheck,
   Snowflake, Truck, AlertCircle, Info, Droplets, Timer,
-  ClipboardList, Check, Package,
+  ClipboardList, Check, Package, RotateCcw,
 } from "lucide-react";
 import { format, parseISO, differenceInMinutes } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -661,6 +661,7 @@ function MixingStation({ plan }: MixingStationProps) {
   const [activeItemId, setActiveItemId] = useState<number | null>(null);
   const [checkedIngredients, setCheckedIngredients] = useState<Record<string, boolean>>({});
   const [completing, setCompleting] = useState(false);
+  const [completeFailed, setCompleteFailed] = useState(false);
   const fillingViewRef = useRef<HTMLDivElement>(null);
 
   const [fillingData, setFillingData] = useState<FillingMixItem[]>([]);
@@ -805,6 +806,7 @@ function MixingStation({ plan }: MixingStationProps) {
   const handleAutoComplete = useCallback(async (item: ProductionPlanItem) => {
     if (completing || isOnBreak) return;
     setCompleting(true);
+    setCompleteFailed(false);
     const success = await addTin(item);
     if (success) {
       clearChecksForItem(item.id);
@@ -820,6 +822,8 @@ function MixingStation({ plan }: MixingStationProps) {
         });
         setActiveItemId(nextItem ? nextItem.id : null);
       }
+    } else {
+      setCompleteFailed(true);
     }
     setCompleting(false);
   }, [completing, isOnBreak, items, fillingData]);
@@ -985,6 +989,18 @@ function MixingStation({ plan }: MixingStationProps) {
                 <Loader2 className="w-4 h-4 animate-spin" />
                 Completing tin...
               </div>
+            </div>
+          )}
+
+          {completeFailed && !completing && (
+            <div className="px-4 pb-3">
+              <button
+                onClick={() => activeItem && handleAutoComplete(activeItem)}
+                className="w-full py-2.5 rounded-lg bg-red-600 text-white font-semibold text-sm hover:bg-red-700 transition-colors flex items-center justify-center gap-2"
+              >
+                <RotateCcw className="w-4 h-4" />
+                Retry — Complete Tin {activeTinInfo.tinsComplete + 1}
+              </button>
             </div>
           )}
         </div>
