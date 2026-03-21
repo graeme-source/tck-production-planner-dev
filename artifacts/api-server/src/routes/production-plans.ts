@@ -1611,7 +1611,8 @@ router.get("/:id/filling-mix", async (req, res) => {
 
   const fillingIngredients = await db.execute(sql`
     SELECT ri.recipe_id as "recipeId", ri.ingredient_id as "ingredientId",
-           i.name as "ingredientName", i.unit, ri.quantity
+           i.name as "ingredientName", i.unit, ri.quantity,
+           ri.marinade_for_ingredient_id as "marinadeForIngredientId"
     FROM recipe_ingredients ri
     LEFT JOIN ingredients i ON ri.ingredient_id = i.id
     WHERE ri.recipe_id IN (${sql.join(recipeIds.map(id => sql`${id}`), sql`, `)})
@@ -1627,7 +1628,7 @@ router.get("/:id/filling-mix", async (req, res) => {
       AND rs.include_in_filling_mix = true
   `);
 
-  const fiRows = fillingIngredients.rows as Array<{ recipeId: number; ingredientId: number; ingredientName: string; unit: string; quantity: string }>;
+  const fiRows = fillingIngredients.rows as Array<{ recipeId: number; ingredientId: number; ingredientName: string; unit: string; quantity: string; marinadeForIngredientId: number | null }>;
   const fsRows = fillingSubRecipeRows.rows as Array<{ recipeId: number; subRecipeId: number; subRecipeName: string; unit: string; quantity: string }>;
 
   const result = planItems.map(item => {
@@ -1639,15 +1640,34 @@ router.get("/:id/filling-mix", async (req, res) => {
 
     const ppb = item.portionsPerBatch ?? 1;
 
-    const ingredients = fiRows
-      .filter(fi => fi.recipeId === item.recipeId)
-      .map(fi => ({
-        ingredientId: fi.ingredientId,
-        name: fi.ingredientName,
-        unit: fi.unit,
-        qtyPerBatch: Number(fi.quantity) * ppb,
-        qtyPerTin: Number(fi.quantity) * ppb * batchesPerTin,
-      }));
+    const recipeRows = fiRows.filter(fi => fi.recipeId === item.recipeId);
+
+    // Build a map of marinadeIngredientId → parentMeatIngredientId + qty to add
+    // Marinades are rows where marinadeForIngredientId is set — their qty gets
+    // merged into the parent meat so mixing staff see one combined processed weight.
+    const extraQtyByMeatId = new Map<number, number>();
+    const marinadeIds = new Set<number>();
+    for (const fi of recipeRows) {
+      if (fi.marinadeForIngredientId != null) {
+        marinadeIds.add(fi.ingredientId);
+        const current = extraQtyByMeatId.get(fi.marinadeForIngredientId) ?? 0;
+        extraQtyByMeatId.set(fi.marinadeForIngredientId, current + Number(fi.quantity));
+      }
+    }
+
+    const ingredients = recipeRows
+      .filter(fi => !marinadeIds.has(fi.ingredientId))
+      .map(fi => {
+        const extra = extraQtyByMeatId.get(fi.ingredientId) ?? 0;
+        const totalQtyPerPortion = Number(fi.quantity) + extra;
+        return {
+          ingredientId: fi.ingredientId,
+          name: fi.ingredientName,
+          unit: fi.unit,
+          qtyPerBatch: totalQtyPerPortion * ppb,
+          qtyPerTin: totalQtyPerPortion * ppb * batchesPerTin,
+        };
+      });
 
     const subRecipes = fsRows
       .filter(fs => fs.recipeId === item.recipeId)
