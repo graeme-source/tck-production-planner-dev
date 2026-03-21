@@ -918,7 +918,7 @@ function MixingStation({ plan }: MixingStationProps) {
               <div>
                 <h3 className="font-semibold text-lg">{activeItem.recipeName ?? `Recipe #${activeItem.recipeId}`}</h3>
                 <p className="text-sm text-muted-foreground">
-                  Filling Mix — Tin {activeTinInfo.tinsComplete + 1} of {activeTinInfo.tinsTarget} · {activeTinInfo.currentTinBatches} batches this tin
+                  Filling Mix — Tin {activeTinInfo.tinsComplete + 1} of {activeTinInfo.tinsTarget}
                 </p>
               </div>
               <div className="text-center">
@@ -1155,7 +1155,7 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
 
             <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
               {item.tinSize && <span>{item.tinSize}</span>}
-              <span>~{batchesPerTinEven} batches/tin</span>
+
               <span>{mixingCount} / {target} batches total</span>
             </div>
           </div>
@@ -1363,9 +1363,7 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
               {currentItem.portionsPerBatch > 0 && (
                 <span className="bg-secondary/50 rounded px-2 py-0.5">{currentItem.portionsPerBatch} portions/batch</span>
               )}
-              {currentItem.maxBatchesPerTin && (
-                <span className="bg-secondary/50 rounded px-2 py-0.5">Max {currentItem.maxBatchesPerTin} batches/tin</span>
-              )}
+
               {currentItem.notes && (
                 <span className="italic text-xs">{currentItem.notes}</span>
               )}
