@@ -52,7 +52,7 @@ function Router() {
               <Route path="/sales">{() => <ProtectedRoute component={Sales} pageKey="/sales" />}</Route>
               <Route path="/dispatches" component={Dispatches} />
               <Route path="/suppliers" component={Suppliers} />
-              <Route path="/reports" component={Reports} />
+              <Route path="/reports">{() => <ProtectedRoute component={Reports} pageKey="/reports" />}</Route>
               <Route path="/settings" component={Settings} />
               <Route component={NotFound} />
             </Switch>
