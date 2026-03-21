@@ -933,10 +933,10 @@ function MixerCapacitySection() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-base font-semibold flex items-center gap-2">
-            <Wrench className="w-4 h-4 text-primary" /> Mixer Capacity
+            <Wrench className="w-4 h-4 text-primary" /> Mixer Capacity (Flour)
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Set the maximum dough capacity of your mixer in kg — used to calculate the number of mixing batches on the Dough Prep station.
+            Set the maximum flour weight your mixer can handle in kg — used to calculate the number of mixes on the Dough Prep station.
           </p>
         </div>
         {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}

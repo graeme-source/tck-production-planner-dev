@@ -2661,8 +2661,11 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
 // ──────────────────────────────────────────────────────────────────────────────
 interface DoughPrepData {
   totalDoughKg: number;
+  totalFlourKg: number;
   mixerCapacityKg: number;
   mixCount: number;
+  flourPerMix: number;
+  doughPerMix: number;
   kgPerMix: number;
   ingredients: Array<{
     ingredientId: number | null;
@@ -2670,6 +2673,7 @@ interface DoughPrepData {
     unit: string;
     totalQty: number;
     qtyPerMix: number;
+    pctOfDough: number;
   }>;
   recipes: Array<{
     recipeId: number;
@@ -2678,7 +2682,7 @@ interface DoughPrepData {
     portionsPerBatch: number;
     ballCount: number;
     orderPosition: number;
-    doughBatchesNeeded: number;
+    doughKgPerBatch: number;
     doughKgTotal: number;
     ballWeightG: number;
     doughSubRecipeName: string;
@@ -2793,21 +2797,28 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
             <div className="flex items-start gap-3">
               <Droplets className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
               <div className="flex-1">
-                <h3 className="font-semibold text-amber-900 dark:text-amber-100 mb-2">Total Dough Required</h3>
-                <div className="grid grid-cols-3 gap-3">
+                <h3 className="font-semibold text-amber-900 dark:text-amber-100 mb-2">Dough Requirements</h3>
+                <div className="grid grid-cols-4 gap-3">
                   <div className="text-center">
                     <p className="text-xs text-amber-700 dark:text-amber-300">Total Dough</p>
                     <p className="text-xl font-bold text-amber-800 dark:text-amber-200">{doughData.totalDoughKg.toFixed(1)} kg</p>
                   </div>
                   <div className="text-center">
-                    <p className="text-xs text-amber-700 dark:text-amber-300">Mixer Capacity</p>
-                    <p className="text-xl font-bold text-amber-800 dark:text-amber-200">{doughData.mixerCapacityKg} kg</p>
+                    <p className="text-xs text-amber-700 dark:text-amber-300">Total Flour</p>
+                    <p className="text-xl font-bold text-amber-800 dark:text-amber-200">{(doughData.totalFlourKg ?? 0).toFixed(1)} kg</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-amber-700 dark:text-amber-300">Flour per Mix</p>
+                    <p className="text-xl font-bold text-amber-800 dark:text-amber-200">{(doughData.flourPerMix ?? 0).toFixed(1)} kg</p>
                   </div>
                   <div className="text-center">
                     <p className="text-xs text-amber-700 dark:text-amber-300">No. of Mixes</p>
                     <p className="text-xl font-bold text-amber-800 dark:text-amber-200">{doughData.mixCount}</p>
                   </div>
                 </div>
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+                  Mixer capacity: {doughData.mixerCapacityKg} kg flour &middot; Each mix produces ~{(doughData.doughPerMix ?? 0).toFixed(1)} kg dough
+                </p>
               </div>
             </div>
           </div>
@@ -2843,7 +2854,7 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
           {mixCount > 0 && (
             <div className="bg-card border border-border rounded-xl overflow-hidden">
               <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-                <h3 className="font-semibold text-sm">Mixing Schedule — {doughData.kgPerMix.toFixed(1)} kg per mix</h3>
+                <h3 className="font-semibold text-sm">Dough Recipe — {(doughData.flourPerMix ?? 0).toFixed(1)} kg flour per mix</h3>
                 {mixCount > 1 && (
                   <div className="flex items-center gap-1">
                     {Array.from({ length: mixCount }, (_, i) => (
@@ -2865,12 +2876,17 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
               </div>
               <div className="p-4">
                 <p className="text-xs text-muted-foreground mb-3">
-                  Mix {activeMix} of {mixCount} ({doughData.kgPerMix.toFixed(1)} kg)
+                  Mix {activeMix} of {mixCount} &middot; {(doughData.flourPerMix ?? 0).toFixed(1)} kg flour &rarr; ~{(doughData.doughPerMix ?? 0).toFixed(1)} kg dough
                 </p>
                 <div className="space-y-2">
                   {doughData.ingredients.map(ing => (
                     <div key={ing.ingredientId ?? ing.ingredientName} className="flex items-center justify-between py-2 border-b border-border/40 last:border-0">
-                      <span className="text-sm font-medium">{ing.ingredientName}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium">{ing.ingredientName}</span>
+                        <span className="text-xs text-muted-foreground">
+                          ({ing.pctOfDough > 0 ? `${ing.pctOfDough}%` : "<0.1%"})
+                        </span>
+                      </div>
                       <div className="flex items-center gap-4 text-right">
                         <div>
                           <span className="text-base font-bold tabular-nums">

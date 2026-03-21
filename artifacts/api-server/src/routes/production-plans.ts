@@ -2260,6 +2260,9 @@ router.get("/:id/dough-prep", async (req, res) => {
     .where(inArray(subRecipeIngredientsTable.subRecipeId, doughSubRecipeIds));
 
   // ── 6. Compute per-recipe dough info ──
+  // The quantity on the recipe→sub-recipe link is kg of dough per PORTION (e.g. 0.115 = 115g).
+  // Total dough per recipe batch = quantityPerPortion × portionsPerBatch.
+  // The "dough ball" for a recipe batch = quantityPerPortion × portionsPerBatch in grams.
   interface RecipeDoughInfo {
     recipeId: number;
     recipeName: string;
@@ -2267,7 +2270,7 @@ router.get("/:id/dough-prep", async (req, res) => {
     portionsPerBatch: number;
     ballCount: number;
     orderPosition: number;
-    doughBatchesNeeded: number;
+    doughKgPerBatch: number;
     doughKgTotal: number;
     ballWeightG: number;
     doughSubRecipeName: string;
@@ -2286,13 +2289,12 @@ router.get("/:id/dough-prep", async (req, res) => {
     );
     if (!doughLink) continue;
 
-    const quantityPerBatch = Number(doughLink.quantityPerBatch) || 0;
+    const quantityPerPortion = Number(doughLink.quantityPerBatch) || 0;
     const subRecipeYieldKg = Number(doughLink.subRecipeYield) || 0;
-    const doughBatchesNeeded = quantityPerBatch * batchesTarget;
-    const doughKgTotal = doughBatchesNeeded * subRecipeYieldKg;
-    const doughKgPerRecipeBatch = quantityPerBatch * subRecipeYieldKg;
-    const ballWeightG = portionsPerBatch > 0 ? Math.round((doughKgPerRecipeBatch / portionsPerBatch) * 1000) : 0;
-    const ballCount = batchesTarget * portionsPerBatch;
+    const doughKgPerBatch = quantityPerPortion * portionsPerBatch;
+    const doughKgTotal = doughKgPerBatch * batchesTarget;
+    const ballWeightG = Math.round(doughKgPerBatch * 1000);
+    const ballCount = batchesTarget;
 
     recipeResults.push({
       recipeId: planItem.recipeId!,
@@ -2301,7 +2303,7 @@ router.get("/:id/dough-prep", async (req, res) => {
       portionsPerBatch,
       ballCount,
       orderPosition: planItem.orderPosition,
-      doughBatchesNeeded,
+      doughKgPerBatch,
       doughKgTotal,
       ballWeightG,
       doughSubRecipeName: doughLink.subRecipeName ?? "Dough",
@@ -2312,23 +2314,58 @@ router.get("/:id/dough-prep", async (req, res) => {
 
   const totalDoughKg = recipeResults.reduce((sum, r) => sum + r.doughKgTotal, 0);
 
-  // ── 7. Aggregate ingredients per sub-recipe correctly ──
-  // For each unique dough sub-recipe, sum the dough batches needed by all recipes using it,
-  // then multiply per-batch ingredient quantities by that sub-recipe's total dough batches.
-  // This handles cases where different recipes use different dough sub-recipes.
+  // ── 7. Compute flour-based mixing ──
+  // The mixer capacity setting is for FLOUR weight, not total dough.
+  // We need to find the flour ingredient in the dough sub-recipe to compute the ratio.
+  // For each dough sub-recipe, flour weight / total yield = flour ratio.
+  // Then: total flour needed = totalDoughKg × flourRatio
+  // And mixes = ceil(totalFlourKg / mixerCapacityKg)
+
+  let totalFlourKg = 0;
+
+  for (const srId of doughSubRecipeIds) {
+    const srYield = Number(
+      subRecipeLinks.find(l => l.subRecipeId === srId)?.subRecipeYield ?? 0
+    );
+    if (srYield <= 0) continue;
+
+    const srFlour = doughIngredientRows.find(r =>
+      r.subRecipeId === srId && r.ingredientName?.toLowerCase().includes("flour")
+    );
+    const flourPerBatch = srFlour ? (
+      srFlour.unit === "g"
+        ? (Number(srFlour.quantity) || 0) / 1000
+        : Number(srFlour.quantity) || 0
+    ) : 0;
+    const srFlourRatio = srYield > 0 ? flourPerBatch / srYield : 0;
+
+    const recipesUsingSr = recipeResults.filter(r => r.subRecipeId === srId);
+    const totalDoughForSr = recipesUsingSr.reduce((sum, r) => sum + r.doughKgTotal, 0);
+    totalFlourKg += totalDoughForSr * srFlourRatio;
+  }
+
+  const mixCount = mixerCapacityKg > 0 ? Math.ceil(totalFlourKg / mixerCapacityKg) : 0;
+  const flourPerMix = mixCount > 0 ? totalFlourKg / mixCount : 0;
+  const doughPerMix = mixCount > 0 ? totalDoughKg / mixCount : 0;
+
+  // ── 8. Aggregate ingredients scaled to total dough needed ──
   const ingredientTotals = new Map<number, { ingredientId: number | null; ingredientName: string; unit: string; totalQty: number }>();
 
   for (const srId of doughSubRecipeIds) {
-    // How many dough batches (sub-recipe batches) does this sub-recipe need in total?
-    const srTotalBatches = recipeResults
-      .filter(r => r.subRecipeId === srId)
-      .reduce((sum, r) => sum + r.doughBatchesNeeded, 0);
+    const srYield = Number(
+      subRecipeLinks.find(l => l.subRecipeId === srId)?.subRecipeYield ?? 0
+    );
+    if (srYield <= 0) continue;
+
+    const recipesUsingSr = recipeResults.filter(r => r.subRecipeId === srId);
+    const totalDoughForSr = recipesUsingSr.reduce((sum, r) => sum + r.doughKgTotal, 0);
+    const scaleFactor = totalDoughForSr / srYield;
 
     const srIngredients = doughIngredientRows.filter(r => r.subRecipeId === srId);
     for (const ing of srIngredients) {
       const key = ing.ingredientId ?? -1;
       const qtyPerBatch = Number(ing.quantity) || 0;
-      const contribution = qtyPerBatch * srTotalBatches;
+      const contribution = qtyPerBatch * scaleFactor;
       const existing = ingredientTotals.get(key);
       if (existing) {
         existing.totalQty += contribution;
@@ -2343,20 +2380,24 @@ router.get("/:id/dough-prep", async (req, res) => {
     }
   }
 
-  // ── 8. Mixing schedule ──
-  const mixCount = mixerCapacityKg > 0 ? Math.ceil(totalDoughKg / mixerCapacityKg) : 0;
-  const kgPerMix = mixCount > 0 ? totalDoughKg / mixCount : 0;
-
-  const ingredients = Array.from(ingredientTotals.values()).map(ing => ({
-    ...ing,
-    qtyPerMix: mixCount > 0 ? ing.totalQty / mixCount : 0,
-  }));
+  const ingredients = Array.from(ingredientTotals.values()).map(ing => {
+    const totalKg = ing.unit === "g" ? ing.totalQty / 1000 : ing.totalQty;
+    const pctRaw = totalDoughKg > 0 ? (totalKg / totalDoughKg) * 100 : 0;
+    return {
+      ...ing,
+      pctOfDough: Math.round(pctRaw * 10) / 10,
+      qtyPerMix: mixCount > 0 ? ing.totalQty / mixCount : 0,
+    };
+  });
 
   res.json({
     totalDoughKg: Math.round(totalDoughKg * 100) / 100,
+    totalFlourKg: Math.round(totalFlourKg * 100) / 100,
     mixerCapacityKg,
     mixCount,
-    kgPerMix: Math.round(kgPerMix * 100) / 100,
+    flourPerMix: Math.round(flourPerMix * 100) / 100,
+    doughPerMix: Math.round(doughPerMix * 100) / 100,
+    kgPerMix: Math.round(doughPerMix * 100) / 100,
     ingredients,
     recipes: recipeResults,
     nextPlan,
