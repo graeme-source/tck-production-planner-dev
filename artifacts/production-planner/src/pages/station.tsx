@@ -3650,20 +3650,6 @@ function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
                 </p>
               </div>
             )}
-            {currentItem.tinSize && (
-              <div className="bg-secondary/50 rounded-lg px-4 py-2.5 text-center min-w-[80px]">
-                <p className="text-xs text-muted-foreground">Tin Size</p>
-                <p className="text-2xl font-bold">{currentItem.tinSize}</p>
-              </div>
-            )}
-            {currentItem.maxBatchesPerTin && (currentItem.batchesTarget ?? 0) > 0 && (
-              <div className="bg-amber-50 dark:bg-amber-900/20 rounded-lg px-4 py-2.5 text-center min-w-[80px]">
-                <p className="text-xs text-muted-foreground">Tins to Cut</p>
-                <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">
-                  {Math.ceil((currentItem.batchesTarget ?? 0) / currentItem.maxBatchesPerTin)}
-                </p>
-              </div>
-            )}
           </div>
         </div>
       ) : (
@@ -3687,18 +3673,12 @@ function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
               <th className="py-2.5 px-4 text-left font-medium">#</th>
               <th className="py-2.5 px-4 text-left font-medium">Recipe</th>
               <th className="py-2.5 px-4 text-center font-medium">Batches</th>
-              <th className="py-2.5 px-4 text-center font-medium">Balls</th>
               <th className="py-2.5 px-4 text-center font-medium">Ball Weight</th>
-              <th className="py-2.5 px-4 text-center font-medium">Tin</th>
-              <th className="py-2.5 px-4 text-center font-medium">Tins</th>
               <th className="py-2.5 px-4 text-center font-medium">Ready</th>
             </tr>
           </thead>
           <tbody>
             {items.map(item => {
-              const tins = item.maxBatchesPerTin && (item.batchesTarget ?? 0) > 0
-                ? Math.ceil((item.batchesTarget ?? 0) / item.maxBatchesPerTin)
-                : null;
               const isCurrent = item.id === currentItem?.id;
               const isReady = sheetedItems.has(item.id);
               const ballWeight = doughData?.recipes.find(r => r.recipeId === item.recipeId)?.ballWeightG;
@@ -3717,15 +3697,8 @@ function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
                     {isCurrent && !isReady && <span className="ml-2 text-xs text-amber-600 font-normal">← current</span>}
                   </td>
                   <td className="py-2.5 px-4 text-center">{item.batchesTarget ?? 0}</td>
-                  <td className="py-2.5 px-4 text-center font-semibold">
-                    {(item.batchesTarget ?? 0) * (item.portionsPerBatch ?? 10)}
-                  </td>
                   <td className="py-2.5 px-4 text-center font-semibold text-amber-700 dark:text-amber-400">
                     {ballWeight ? `${ballWeight}g` : <span className="text-muted-foreground">—</span>}
-                  </td>
-                  <td className="py-2.5 px-4 text-center text-muted-foreground">{item.tinSize ?? "—"}</td>
-                  <td className="py-2.5 px-4 text-center font-semibold">
-                    {tins != null ? tins : <span className="text-muted-foreground">—</span>}
                   </td>
                   <td className="py-2.5 px-4 text-center">
                     <button
