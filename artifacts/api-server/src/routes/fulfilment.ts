@@ -2,7 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { db, skuLocationsTable, appSettingsTable, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
-import { getUnfulfilledOrdersByTag, getOrdersByTag, fulfillOrder, type ShopifyOrder } from "../services/shopify";
+import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, type ShopifyOrder } from "../services/shopify";
 import { createShipment, isConfigured as isApcConfigured } from "../services/apc";
 
 const router = Router();
@@ -44,6 +44,39 @@ function pickServiceCode(
   if (isFriday) return codes.smallFriday;
   return codes.smallWeekday;
 }
+
+// GET /dispatch-tags — returns all active dispatch dates with unfulfilled order counts/weights.
+// Used by the fulfilment landing page to show operators what needs to be done each day.
+const DATE_TAG_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+router.get("/dispatch-tags", async (_req: Request, res: Response) => {
+  try {
+    const orders = await getRecentUnfulfilledOrders(30);
+
+    const groups = new Map<string, { orderCount: number; totalItems: number; totalWeightG: number }>();
+
+    for (const order of orders) {
+      const tags = order.tags.split(",").map(t => t.trim());
+      const dateTag = tags.find(t => DATE_TAG_RE.test(t));
+      if (!dateTag) continue; // skip orders without a dispatch date tag
+
+      const existing = groups.get(dateTag) ?? { orderCount: 0, totalItems: 0, totalWeightG: 0 };
+      existing.orderCount += 1;
+      existing.totalItems += order.line_items.reduce((s, i) => s + i.quantity, 0);
+      existing.totalWeightG += order.total_weight ?? 0;
+      groups.set(dateTag, existing);
+    }
+
+    const result = [...groups.entries()]
+      .map(([tag, stats]) => ({ tag, ...stats }))
+      .sort((a, b) => a.tag.localeCompare(b.tag)); // ascending by date
+
+    res.json(result);
+  } catch (err: any) {
+    console.error("[Fulfilment] dispatch-tags error:", err.message);
+    res.status(502).json({ error: err.message });
+  }
+});
 
 router.get("/orders", async (req: Request, res: Response) => {
   const { tag, includeAll } = req.query as { tag?: string; includeAll?: string };

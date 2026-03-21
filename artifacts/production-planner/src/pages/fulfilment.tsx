@@ -66,6 +66,22 @@ interface ConfigStatus {
   };
 }
 
+interface DispatchTagGroup {
+  tag: string;
+  orderCount: number;
+  totalItems: number;
+  totalWeightG: number;
+}
+
+async function fetchDispatchTags(): Promise<DispatchTagGroup[]> {
+  const res = await fetch(`${BASE}/api/fulfilment/dispatch-tags`, { credentials: "include" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error ?? "Failed to fetch dispatch tags");
+  }
+  return res.json();
+}
+
 async function fetchOrders(tag: string, includeAll = false): Promise<ShopifyOrder[]> {
   const url = `${BASE}/api/fulfilment/orders?tag=${encodeURIComponent(tag)}${includeAll ? "&includeAll=1" : ""}`;
   const res = await fetch(url, { credentials: "include" });
@@ -126,12 +142,31 @@ const ZONE_STYLES: Record<string, { bg: string; border: string; text: string; ba
   },
 };
 
+// Wraps the PDF in an HTML page with explicit @page sizing for 100mm×150mm thermal labels.
+// This ensures Chrome respects the label dimensions regardless of default printer paper settings.
+function makeLabelHtml(base64Pdf: string): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+<style>
+@page { size: 100mm 150mm; margin: 0; }
+html, body { margin: 0; padding: 0; width: 100mm; height: 150mm; overflow: hidden; }
+embed { width: 100%; height: 100%; display: block; }
+</style>
+</head>
+<body>
+<embed src="data:application/pdf;base64,${base64Pdf}" type="application/pdf" />
+</body>
+</html>`;
+}
+
 function printLabel(
   base64Pdf: string,
   onPrinted: () => void,
   onPrintFailed: () => void,
+  frameId = "label-print-frame",
 ) {
-  const iframe = document.getElementById("label-print-frame") as HTMLIFrameElement | null;
+  const iframe = document.getElementById(frameId) as HTMLIFrameElement | null;
   if (!iframe) { onPrintFailed(); return; }
 
   let settled = false;
@@ -163,19 +198,19 @@ function printLabel(
     }
   };
 
-  iframe.src = `data:application/pdf;base64,${base64Pdf}`;
+  iframe.srcdoc = makeLabelHtml(base64Pdf);
 }
 
 type PrintStatus = "idle" | "printing" | "done" | "failed";
 
-type View = "list" | "picking" | "pre-confirm" | "confirm";
+type View = "dates" | "list" | "picking" | "pre-confirm" | "confirm";
 
 export default function Fulfilment() {
   const today = format(new Date(), "yyyy-MM-dd");
   const [tag, setTag] = useState(today);
   const [queryTag, setQueryTag] = useState(today);
   const [includeAll, setIncludeAll] = useState(false);
-  const [view, setView] = useState<View>("list");
+  const [view, setView] = useState<View>("dates");
   const [activeOrder, setActiveOrder] = useState<ShopifyOrder | null>(null);
   const [shipment, setShipment] = useState<ShipmentResult | null>(null);
   const [printStatus, setPrintStatus] = useState<PrintStatus>("idle");
@@ -190,11 +225,19 @@ export default function Fulfilment() {
   const barcodeRef = useRef<HTMLInputElement>(null);
   const itemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const preQueueRef = useRef<Map<number, Promise<ShipmentResult>>>(new Map());
+  const prePrintRef = useRef<Map<number, PrintStatus>>(new Map());
 
   const { data: configStatus } = useQuery({
     queryKey: ["fulfilment-config-status"],
     queryFn: fetchConfigStatus,
     staleTime: 60_000,
+  });
+
+  const { data: dispatchTags, isLoading: tagsLoading, error: tagsError, refetch: refetchTags } = useQuery({
+    queryKey: ["fulfilment-dispatch-tags"],
+    queryFn: fetchDispatchTags,
+    staleTime: 2 * 60 * 1000,
+    enabled: !!configStatus?.apcCredentialsConfigured && !!configStatus?.serviceCodesConfigured,
   });
 
   const { data: orders, isLoading, error, refetch } = useQuery({
@@ -208,15 +251,28 @@ export default function Fulfilment() {
 
   function preQueueNextOrder(nextOrderId: number) {
     if (preQueueRef.current.has(nextOrderId)) return;
-    const promise = createShipment(nextOrderId, queryTag, queryTag).catch((err) => {
-      preQueueRef.current.delete(nextOrderId);
-      throw err;
-    });
+    const promise = createShipment(nextOrderId, queryTag, queryTag)
+      .then((result) => {
+        // Background print the next order's label so it's done before the operator advances
+        prePrintRef.current.set(nextOrderId, "printing");
+        printLabel(
+          result.labelPdfBase64,
+          () => prePrintRef.current.set(nextOrderId, "done"),
+          () => prePrintRef.current.set(nextOrderId, "failed"),
+          "label-preprint-frame",
+        );
+        return result;
+      })
+      .catch((err) => {
+        preQueueRef.current.delete(nextOrderId);
+        throw err;
+      });
     preQueueRef.current.set(nextOrderId, promise);
   }
 
   function clearPreQueue() {
     preQueueRef.current.clear();
+    prePrintRef.current.clear();
   }
 
   async function startPicking(order: ShopifyOrder) {
@@ -239,14 +295,25 @@ export default function Fulfilment() {
         result = await createShipment(order.id, queryTag, queryTag);
       }
       setShipment(result);
-      setPrintStatus("printing");
-      printLabel(
-        result.labelPdfBase64,
-        () => setPrintStatus("done"),
-        () => setPrintStatus("failed"),
-      );
 
-      // Pre-queue the next unfulfilled order (after current) to minimise wait time
+      // Check whether the label was already background-printed (pre-print)
+      const prePrinted = prePrintRef.current.get(order.id);
+      prePrintRef.current.delete(order.id);
+
+      if (prePrinted === "done") {
+        // Label already printed in background — no need to print again
+        setPrintStatus("done");
+      } else {
+        // Print now (either first time or pre-print failed)
+        setPrintStatus("printing");
+        printLabel(
+          result.labelPdfBase64,
+          () => setPrintStatus("done"),
+          () => setPrintStatus("failed"),
+        );
+      }
+
+      // Pre-queue AND background-print the next unfulfilled order's label
       const currentPos = unfulfilledOrders.findIndex(o => o.id === order.id);
       const nextOrder = unfulfilledOrders[currentPos + 1];
       if (nextOrder) preQueueNextOrder(nextOrder.id);
@@ -752,36 +819,142 @@ export default function Fulfilment() {
           className="hidden"
           style={{ position: "fixed", top: "-9999px", left: "-9999px", width: "100mm", height: "150mm" }}
         />
+        <iframe
+          id="label-preprint-frame"
+          title="Label Pre-Print"
+          className="hidden"
+          style={{ position: "fixed", top: "-9999px", left: "-9998px", width: "100mm", height: "150mm" }}
+        />
+      </div>
+    );
+  }
+
+  // DATES VIEW: landing page showing all dispatch dates with unfulfilled order groups
+  if (view === "dates") {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <PageHeader title="Fulfilment" description="Select a dispatch date to start picking." />
+          <button
+            onClick={() => refetchTags()}
+            disabled={tagsLoading}
+            className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
+            title="Refresh"
+          >
+            <RefreshCw className={`w-4 h-4 ${tagsLoading ? "animate-spin" : ""}`} />
+          </button>
+        </div>
+
+        {tagsError && (
+          <div className="flex items-center gap-3 p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive">
+            <AlertCircle className="w-5 h-5 flex-shrink-0" />
+            <p className="text-sm">{(tagsError as Error).message}</p>
+          </div>
+        )}
+
+        {tagsLoading && (
+          <div className="flex items-center justify-center py-16 text-muted-foreground gap-2">
+            <Loader2 className="w-5 h-5 animate-spin" />
+            <span>Loading dispatch schedule…</span>
+          </div>
+        )}
+
+        {!tagsLoading && dispatchTags && dispatchTags.length === 0 && (
+          <div className="glass-panel p-10 rounded-2xl border border-border text-center text-muted-foreground">
+            <CheckCircle2 className="w-12 h-12 mx-auto mb-3 text-green-500 opacity-60" />
+            <p className="font-medium">No pending orders</p>
+            <p className="text-sm mt-1">All recent orders have been fulfilled.</p>
+          </div>
+        )}
+
+        {!tagsLoading && dispatchTags && dispatchTags.length > 0 && (
+          <div className="space-y-3">
+            {dispatchTags.map(group => {
+              const isToday = group.tag === today;
+              const isPast = group.tag < today;
+              const weightKg = (group.totalWeightG / 1000).toFixed(1);
+
+              return (
+                <div
+                  key={group.tag}
+                  className={`glass-panel p-5 rounded-2xl border flex items-center gap-4 transition-colors ${
+                    isPast
+                      ? "border-red-200 dark:border-red-800 bg-red-50/30 dark:bg-red-950/10"
+                      : isToday
+                      ? "border-primary/30 bg-primary/5"
+                      : "border-border"
+                  }`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-bold text-lg font-mono">{group.tag}</span>
+                      {isToday && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">Today</span>
+                      )}
+                      {isPast && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 font-semibold">Overdue</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                      <span className="flex items-center gap-1"><Package className="w-3.5 h-3.5" /> {group.orderCount} orders</span>
+                      <span>{group.totalItems} items</span>
+                      <span>{weightKg} kg</span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setQueryTag(group.tag);
+                      setTag(group.tag);
+                      setIncludeAll(false);
+                      setView("list");
+                    }}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground rounded-xl font-semibold hover:bg-primary/90 transition-colors flex-shrink-0"
+                  >
+                    <Truck className="w-4 h-4" /> Start Picking
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Manual override for dates without a dispatch tag */}
+        <details className="text-sm text-muted-foreground">
+          <summary className="cursor-pointer hover:text-foreground transition-colors">Load a specific date manually</summary>
+          <div className="flex gap-3 items-end mt-3">
+            <div>
+              <label className="text-xs font-medium mb-1 block">Date tag</label>
+              <input
+                type="date"
+                value={tag}
+                onChange={e => setTag(e.target.value)}
+                className="px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </div>
+            <button
+              onClick={() => { setQueryTag(tag); setIncludeAll(false); setView("list"); }}
+              className="px-4 py-2 bg-secondary text-foreground rounded-xl font-medium hover:bg-secondary/80 transition-colors"
+            >
+              Load Date
+            </button>
+          </div>
+        </details>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Fulfilment" description="APC order scanning and label printing." />
-
-      <div className="flex gap-3 items-end flex-wrap">
-        <div className="flex-1 min-w-[200px] max-w-xs">
-          <label className="text-sm font-medium mb-1 block">Dispatch tag</label>
-          <input
-            type="date"
-            value={tag}
-            onChange={e => setTag(e.target.value)}
-            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-          />
-        </div>
-        <button
-          onClick={() => setQueryTag(tag)}
-          disabled={isLoading}
-          className="px-5 py-2 bg-primary text-primary-foreground rounded-xl font-medium flex items-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-60"
-        >
-          {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
-          Load Orders
+      <div className="flex items-center gap-3">
+        <button onClick={() => setView("dates")} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
+          <ArrowLeft className="w-5 h-5" />
         </button>
+        <PageHeader title={`Fulfilment — ${queryTag}`} description="Orders for this dispatch date." />
         <button
           onClick={() => refetch()}
           disabled={isLoading}
-          className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
+          className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors ml-auto"
           title="Refresh"
         >
           <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />

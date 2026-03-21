@@ -283,3 +283,29 @@ export async function getUnfulfilledOrdersByTag(tag: string): Promise<ShopifyOrd
   const orders = await getOrdersByTag(tag);
   return orders.filter(o => o.fulfillment_status !== "fulfilled");
 }
+
+// Returns recent unfulfilled orders (last N days) to derive all active dispatch tags.
+// Shopify API doesn't support querying by tag-pattern, so we fetch recent open orders.
+export async function getRecentUnfulfilledOrders(daysBack = 30): Promise<ShopifyOrder[]> {
+  const since = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
+  const allOrders: ShopifyOrder[] = [];
+  let pageInfo: string | null = null;
+
+  do {
+    const params: Record<string, string> = {
+      limit: "250",
+      status: "open",
+      fulfillment_status: "unshipped",
+      created_at_min: since,
+      fields:
+        "id,name,tags,created_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,total_weight,customer,shipping_address,line_items,note",
+    };
+    if (pageInfo) params.page_info = pageInfo;
+
+    const data = (await shopifyFetch("/orders.json", params)) as { orders: ShopifyOrder[] };
+    allOrders.push(...data.orders);
+    pageInfo = null;
+  } while (pageInfo);
+
+  return allOrders.filter(o => o.fulfillment_status !== "fulfilled");
+}
