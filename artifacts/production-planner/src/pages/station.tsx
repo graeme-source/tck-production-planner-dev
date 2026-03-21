@@ -2942,6 +2942,14 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     );
   }
 
+  const ballPct = totalBallsNeeded > 0 ? Math.round((ballCount / totalBallsNeeded) * 100) : 0;
+  const mixPct = mixCount > 0 ? Math.round((completedMixes.size / mixCount) * 100) : 0;
+
+  const fmtTrays = (n: number) => {
+    const rounded = Math.round(n * 100) / 100;
+    return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2).replace(/0$/, "");
+  };
+
   return (
     <div className="space-y-4">
       {doughData.nextPlan && (
@@ -2954,86 +2962,24 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
         />
       )}
 
-      <div className="flex items-center gap-2">
-        <div className="flex items-center gap-1 bg-secondary/30 rounded-xl p-1 flex-1">
-          <button
-            onClick={() => setActiveView("mixing")}
-            className={cn(
-              "flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all flex-1 justify-center",
-              activeView === "mixing"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            <Droplets className="w-4 h-4" />
-            Mixing
-            {allMixesDone && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
-          </button>
-          <button
-            onClick={() => hasAnyMixDone ? setActiveView("balling") : toast({ title: "Complete a mix first", description: "Balling starts after the first mix is done." })}
-            className={cn(
-              "flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all flex-1 justify-center",
-              activeView === "balling"
-                ? "bg-background text-foreground shadow-sm"
-                : !hasAnyMixDone
-                  ? "text-muted-foreground/40"
-                  : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            <Layers className="w-4 h-4" />
-            Balling
-            {allBallingDone && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
-          </button>
-          <button
-            onClick={() => setActiveView("overview")}
-            className={cn(
-              "flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all justify-center",
-              activeView === "overview"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            <ClipboardList className="w-4 h-4" />
-          </button>
-        </div>
+      <div className="flex items-center gap-2 justify-end">
+        <button
+          onClick={() => setActiveView("overview")}
+          className={cn(
+            "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
+            activeView === "overview"
+              ? "bg-background text-foreground shadow-sm border border-border"
+              : "text-muted-foreground hover:text-foreground hover:bg-secondary/40"
+          )}
+        >
+          <ClipboardList className="w-3.5 h-3.5" />
+          Overview
+        </button>
       </div>
 
       <BreakTracker planId={plan.id} stationType="dough_prep" onBreakActiveChange={setIsOnBreak} />
 
-      {activeView === "mixing" && (
-        <DoughMixingView
-          doughData={doughData}
-          mixCount={mixCount}
-          activeMix={activeMix}
-          setActiveMix={setActiveMix}
-          checkedForMix={checkedForMix}
-          toggleIngredient={toggleIngredient}
-          completedMixes={completedMixes}
-          completeMix={completeMix}
-          allChecked={allChecked}
-          isMixComplete={isMixComplete}
-          allMixesDone={allMixesDone}
-          isOnBreak={isOnBreak}
-        />
-      )}
-
-      {activeView === "balling" && (
-        <DoughBallingView
-          doughData={doughData}
-          ballCount={ballCount}
-          totalBallsNeeded={totalBallsNeeded}
-          allBallingDone={allBallingDone}
-          addBalls={addBalls}
-          undoBall={undoBall}
-          getBallAllocation={getBallAllocation}
-          isOnBreak={isOnBreak}
-          traysDone={traysDone}
-          totalTraysNeeded={totalTraysNeeded}
-          ballsPerTray={BALLS_PER_TRAY}
-        />
-      )}
-
-      {activeView === "overview" && (
+      {activeView === "overview" ? (
         <DoughOverview
           doughData={doughData}
           items={items}
@@ -3045,6 +2991,135 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
           totalComplete={totalComplete}
           totalBatchesTarget={totalBatchesTarget}
         />
+      ) : activeView === "mixing" ? (
+        <>
+          <DoughMixingView
+            doughData={doughData}
+            mixCount={mixCount}
+            activeMix={activeMix}
+            setActiveMix={setActiveMix}
+            checkedForMix={checkedForMix}
+            toggleIngredient={toggleIngredient}
+            completedMixes={completedMixes}
+            completeMix={completeMix}
+            allChecked={allChecked}
+            isMixComplete={isMixComplete}
+            allMixesDone={allMixesDone}
+            isOnBreak={isOnBreak}
+          />
+
+          <button
+            onClick={() => hasAnyMixDone ? setActiveView("balling") : toast({ title: "Complete a mix first", description: "Balling starts after the first mix is done." })}
+            disabled={!hasAnyMixDone}
+            className={cn(
+              "w-full border-2 rounded-2xl p-4 transition-all text-left",
+              !hasAnyMixDone
+                ? "border-border/50 bg-secondary/20 opacity-50"
+                : allBallingDone
+                  ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/10"
+                  : "border-amber-200 dark:border-amber-800 bg-amber-50/30 dark:bg-amber-950/10 hover:border-amber-400 dark:hover:border-amber-600"
+            )}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Layers className="w-5 h-5 text-amber-600" />
+                <span className="font-semibold text-sm">Balling</span>
+                {allBallingDone && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+              </div>
+              <div className="flex items-center gap-3 text-sm tabular-nums">
+                <span><span className="font-bold">{ballCount}</span><span className="text-muted-foreground"> / {totalBallsNeeded} balls</span></span>
+                <span className="text-muted-foreground">·</span>
+                <span><span className="font-bold">{fmtTrays(traysDone)}</span><span className="text-muted-foreground"> / {fmtTrays(totalTraysNeeded)} trays</span></span>
+                <ChevronRight className="w-4 h-4 text-muted-foreground" />
+              </div>
+            </div>
+            <div className="w-full h-2 bg-secondary rounded-full overflow-hidden mb-3">
+              <div
+                className={cn("h-full rounded-full transition-all", allBallingDone ? "bg-emerald-500" : "bg-amber-500")}
+                style={{ width: `${Math.min(ballPct, 100)}%` }}
+              />
+            </div>
+            {hasAnyMixDone && !allBallingDone && (
+              <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                <button
+                  onClick={(e) => { e.stopPropagation(); undoBall(); }}
+                  disabled={ballCount === 0 || isOnBreak}
+                  className="h-10 w-10 flex items-center justify-center rounded-xl border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
+                >
+                  <Minus className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); addBalls(1); }}
+                  disabled={isOnBreak}
+                  className={cn(
+                    "h-10 px-5 rounded-xl text-sm font-bold transition-all",
+                    isOnBreak
+                      ? "bg-secondary text-muted-foreground"
+                      : "bg-amber-500 text-white hover:bg-amber-600 active:scale-95"
+                  )}
+                >
+                  + 1 Ball
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); addBalls(4); }}
+                  disabled={isOnBreak}
+                  className={cn(
+                    "h-10 px-5 rounded-xl text-sm font-bold transition-all",
+                    isOnBreak
+                      ? "bg-secondary text-muted-foreground"
+                      : "bg-amber-600 text-white hover:bg-amber-700 active:scale-95"
+                  )}
+                >
+                  + 1 Tray
+                </button>
+              </div>
+            )}
+          </button>
+        </>
+      ) : (
+        <>
+          <DoughBallingView
+            doughData={doughData}
+            ballCount={ballCount}
+            totalBallsNeeded={totalBallsNeeded}
+            allBallingDone={allBallingDone}
+            addBalls={addBalls}
+            undoBall={undoBall}
+            getBallAllocation={getBallAllocation}
+            isOnBreak={isOnBreak}
+            traysDone={traysDone}
+            totalTraysNeeded={totalTraysNeeded}
+            ballsPerTray={BALLS_PER_TRAY}
+          />
+
+          <button
+            onClick={() => setActiveView("mixing")}
+            className={cn(
+              "w-full border-2 rounded-2xl p-4 transition-all text-left",
+              allMixesDone
+                ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/10"
+                : "border-blue-200 dark:border-blue-800 bg-blue-50/30 dark:bg-blue-950/10 hover:border-blue-400 dark:hover:border-blue-600"
+            )}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Droplets className="w-5 h-5 text-blue-600" />
+                <span className="font-semibold text-sm">Mixing</span>
+                {allMixesDone && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+              </div>
+              <div className="flex items-center gap-2 text-sm tabular-nums">
+                <span><span className="font-bold">{completedMixes.size}</span><span className="text-muted-foreground"> / {mixCount} mixes</span></span>
+                <ChevronRight className="w-4 h-4 text-muted-foreground" />
+              </div>
+            </div>
+            <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
+              <div
+                className={cn("h-full rounded-full transition-all", allMixesDone ? "bg-emerald-500" : "bg-blue-500")}
+                style={{ width: `${Math.min(mixPct, 100)}%` }}
+              />
+            </div>
+          </button>
+        </>
       )}
     </div>
   );
