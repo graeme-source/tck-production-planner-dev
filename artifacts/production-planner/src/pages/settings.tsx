@@ -1107,6 +1107,20 @@ function ApcServiceCodesSection() {
   }, []);
 
   const handleSave = async () => {
+    // Client-side validation before saving
+    const serviceCodes = [codes.smallWeekday, codes.largeWeekday, codes.smallFriday, codes.largeFriday];
+    if (serviceCodes.some(c => !c.trim())) {
+      setSavedMsg("Error: all 4 service codes are required");
+      setTimeout(() => setSavedMsg(null), 3000);
+      return;
+    }
+    const threshold = Number(codes.weightThreshold);
+    if (!Number.isFinite(threshold) || threshold <= 0) {
+      setSavedMsg("Error: weight threshold must be a positive number");
+      setTimeout(() => setSavedMsg(null), 3000);
+      return;
+    }
+
     setSaving(true);
     try {
       const pairs = [

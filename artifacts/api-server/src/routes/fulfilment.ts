@@ -250,13 +250,12 @@ router.get("/sku-locations", async (_req: Request, res: Response) => {
 // Returns all unique SKUs seen in recent Shopify orders, with their location assignment status
 router.get("/sku-locations/recent-skus", async (req: Request, res: Response) => {
   const { tag } = req.query as { tag?: string };
-  if (!tag) {
-    res.status(400).json({ error: "tag query param required" });
-    return;
-  }
   try {
+    // If a specific dispatch tag is provided, use it. Otherwise fall back to
+    // all recent unfulfilled orders (last 14 days) so the Bin Locations page
+    // can show a broad SKU inventory without requiring a specific date tag.
     const [orders, existingLocations] = await Promise.all([
-      getOrdersByTag(tag),
+      tag ? getOrdersByTag(tag) : getRecentUnfulfilledOrders(14),
       db.select().from(skuLocationsTable),
     ]);
 
