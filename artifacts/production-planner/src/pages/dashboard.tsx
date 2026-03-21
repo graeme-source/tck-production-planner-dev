@@ -100,7 +100,10 @@ export default function Dashboard() {
         <div className="lg:col-span-2 glass-panel p-6 rounded-2xl">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h3 className="font-display font-bold text-lg">Dispatch Orders — Next 7 Days</h3>
+              <Link href="/dispatches" className="group inline-flex items-center gap-1.5 hover:text-primary transition-colors">
+                <h3 className="font-display font-bold text-lg group-hover:text-primary transition-colors">Dispatch Orders — Next 7 Days</h3>
+                <ArrowRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </Link>
               <p className="text-sm text-muted-foreground mt-0.5">Shopify orders tagged by delivery date</p>
               <div className="flex items-center gap-4 mt-1.5 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-emerald-500" /> Fulfilled</span>
