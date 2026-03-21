@@ -1,8 +1,8 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
-import { ShoppingBag, Package, RefreshCw, AlertCircle, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
-import { format } from "date-fns";
+import { ShoppingBag, Package, RefreshCw, AlertCircle, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { format, startOfWeek, addWeeks, isSameWeek, parseISO } from "date-fns";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -53,10 +53,23 @@ interface WeeklyOrderDay {
   unfulfilledCount: number;
 }
 
-async function fetchWeeklyOrders(): Promise<WeeklyOrderDay[]> {
-  const res = await fetch(`${BASE}/api/shopify/weekly-orders`, { credentials: "include" });
+interface WeeklyOrdersResponse {
+  weekStart: string;
+  days: WeeklyOrderDay[];
+}
+
+async function fetchWeeklyOrders(weekStart: string): Promise<WeeklyOrdersResponse> {
+  const res = await fetch(`${BASE}/api/shopify/weekly-orders?weekStart=${encodeURIComponent(weekStart)}`, { credentials: "include" });
   if (!res.ok) throw new Error("Failed to fetch weekly orders");
   return res.json();
+}
+
+function getMonday(date: Date): Date {
+  return startOfWeek(date, { weekStartsOn: 1 });
+}
+
+function formatMonday(d: Date): string {
+  return format(d, "yyyy-MM-dd");
 }
 
 type SortCol = "product" | "orders" | "qty";
@@ -68,6 +81,16 @@ function SortIcon({ col, sortCol, sortDir }: { col: SortCol; sortCol: SortCol; s
 }
 
 export default function Dispatches() {
+  const today = new Date();
+  const currentMonday = getMonday(today);
+
+  const [weekOffset, setWeekOffset] = useState(0);
+  const selectedMonday = addWeeks(currentMonday, weekOffset);
+  const weekStartStr = formatMonday(selectedMonday);
+
+  const isCurrentWeek = weekOffset === 0;
+  const todayStr = format(today, "yyyy-MM-dd");
+
   const [dateTag, setDateTag] = useState(format(new Date(), "yyyy-MM-dd"));
   const [queryTag, setQueryTag] = useState<string | null>(null);
   const [sortCol, setSortCol] = useState<SortCol>("qty");
@@ -76,14 +99,23 @@ export default function Dispatches() {
   const [excludeVariant, setExcludeVariant] = useState("8 Pack Bag");
   const [excludeTitle, setExcludeTitle] = useState("F2F");
 
-  const { data: weeklyOrders, isLoading: weeklyLoading, refetch: refetchWeekly } = useQuery({
-    queryKey: ["shopify-weekly-orders"],
-    queryFn: fetchWeeklyOrders,
+  const { data: weeklyData, isLoading: weeklyLoading, refetch: refetchWeekly } = useQuery({
+    queryKey: ["shopify-weekly-orders", weekStartStr],
+    queryFn: () => fetchWeeklyOrders(weekStartStr),
     staleTime: 5 * 60 * 1000,
   });
 
-  const todayTag = format(new Date(), "yyyy-MM-dd");
-  const todayIndex = weeklyOrders?.findIndex(d => d.date === todayTag) ?? -1;
+  const weeklyOrders = weeklyData?.days;
+
+  const todayIndex = weeklyOrders?.findIndex(d => d.date === todayStr) ?? -1;
+
+  const weekSunday = addWeeks(selectedMonday, 1);
+  weekSunday.setDate(weekSunday.getDate() - 1);
+  const weekLabel = `${format(selectedMonday, "d MMM")} – ${format(weekSunday, "d MMM yyyy")}`;
+
+  const dayOfWeekIndex = isCurrentWeek ? today.getDay() : -1;
+  const daysElapsed = isCurrentWeek ? (dayOfWeekIndex === 0 ? 7 : dayOfWeekIndex) : (weekOffset < 0 ? 7 : 0);
+  const progressPct = (daysElapsed / 7) * 100;
 
   function handleBarClick(entry: WeeklyOrderDay) {
     setDateTag(entry.deliveryDate);
@@ -137,6 +169,10 @@ export default function Dispatches() {
     else { setSortCol(col); setSortDir("desc"); }
   }
 
+  const totalOrders = weeklyOrders?.reduce((s, d) => s + d.orderCount, 0) ?? 0;
+  const totalFulfilled = weeklyOrders?.reduce((s, d) => s + d.fulfilledCount, 0) ?? 0;
+  const totalUnfulfilled = weeklyOrders?.reduce((s, d) => s + d.unfulfilledCount, 0) ?? 0;
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -144,15 +180,47 @@ export default function Dispatches() {
         description="Manage wholesale orders and outgoing deliveries."
       />
 
-      {/* Weekly dispatch chart */}
       <div className="glass-panel p-6 rounded-2xl border border-border">
         <div className="flex items-center justify-between mb-1">
-          <div>
-            <h3 className="font-display font-bold text-lg">Dispatch Schedule — Next 7 Days</h3>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              Shopify orders by dispatch date · click a bar to view order details
-            </p>
-            <div className="flex items-center gap-4 mt-1.5 text-xs text-muted-foreground">
+          <div className="flex-1">
+            <div className="flex items-center gap-3">
+              <h3 className="font-display font-bold text-lg">Dispatch Schedule</h3>
+              {isCurrentWeek && (
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary">This Week</span>
+              )}
+              {weekOffset < 0 && (
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-muted text-muted-foreground">Past</span>
+              )}
+              {weekOffset > 0 && (
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400">Upcoming</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 mt-1">
+              <button
+                onClick={() => setWeekOffset(o => o - 1)}
+                className="p-1 rounded hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+                title="Previous week"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="text-sm font-medium min-w-[180px] text-center">{weekLabel}</span>
+              <button
+                onClick={() => setWeekOffset(o => o + 1)}
+                className="p-1 rounded hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+                title="Next week"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+              {!isCurrentWeek && (
+                <button
+                  onClick={() => setWeekOffset(0)}
+                  className="text-xs text-primary hover:underline ml-1"
+                >
+                  Back to this week
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
               <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-emerald-500" /> Fulfilled</span>
               <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm" style={{ background: "hsl(var(--primary) / 0.3)" }} /> Unfulfilled</span>
             </div>
@@ -166,6 +234,21 @@ export default function Dispatches() {
             Refresh
           </button>
         </div>
+
+        {isCurrentWeek && weeklyOrders && (
+          <div className="mt-3 mb-1">
+            <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+              <span>Week progress</span>
+              <span>{daysElapsed}/7 days</span>
+            </div>
+            <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden">
+              <div
+                className="h-full bg-primary rounded-full transition-all duration-500"
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
+          </div>
+        )}
 
         <div className="h-[200px] w-full mt-4">
           {weeklyLoading ? (
@@ -210,7 +293,7 @@ export default function Dispatches() {
                   {weeklyOrders?.map((entry, i) => (
                     <Cell
                       key={entry.date}
-                      fill={i === todayIndex ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.3)"}
+                      fill={entry.date === todayStr ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.3)"}
                     />
                   ))}
                 </Bar>
@@ -223,17 +306,17 @@ export default function Dispatches() {
           <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 pt-3 border-t border-border text-sm text-muted-foreground">
             <span>
               <span className="font-semibold text-foreground">
-                {weeklyOrders.reduce((s, d) => s + d.orderCount, 0)}
-              </span>{" "}total orders
+                {totalOrders}
+              </span>{" "}total orders {isCurrentWeek ? "this week" : ""}
             </span>
             <span>
               <span className="font-semibold text-emerald-600 dark:text-emerald-400">
-                {weeklyOrders.reduce((s, d) => s + d.fulfilledCount, 0)}
+                {totalFulfilled}
               </span>{" "}fulfilled
             </span>
             <span>
               <span className="font-semibold text-foreground">
-                {weeklyOrders.reduce((s, d) => s + d.unfulfilledCount, 0)}
+                {totalUnfulfilled}
               </span>{" "}unfulfilled
             </span>
             {todayIndex >= 0 && (
@@ -247,16 +330,13 @@ export default function Dispatches() {
         )}
       </div>
 
-      {/* Product Sales Section */}
       <div className="space-y-6">
-        {/* Date lookup */}
         <div className="glass-panel p-6 rounded-2xl border border-border">
           <h3 className="font-display font-semibold text-lg mb-1">Look up orders by date tag</h3>
           <p className="text-sm text-muted-foreground mb-4">
             Enter a date to count how many of each product appear in Shopify orders tagged with that date.
           </p>
           <div className="space-y-3">
-            {/* Row 1: date + fetch */}
             <div className="flex gap-3 items-end flex-wrap">
               <div className="flex-1 min-w-[200px] max-w-xs">
                 <label className="text-sm font-medium mb-1 block">Delivery date</label>
@@ -280,7 +360,6 @@ export default function Dispatches() {
               </button>
             </div>
 
-            {/* Row 2: filters */}
             <div className="flex gap-3 items-end flex-wrap pt-1 border-t border-border/50">
               <FilterInput
                 label="Include variant"
@@ -309,7 +388,6 @@ export default function Dispatches() {
           </div>
         </div>
 
-        {/* Error */}
         {shopifyError && (
           <div className="flex items-center gap-3 p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive">
             <AlertCircle className="w-5 h-5 flex-shrink-0" />
@@ -320,7 +398,6 @@ export default function Dispatches() {
           </div>
         )}
 
-        {/* Results */}
         {shopifyData && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">

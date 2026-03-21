@@ -61,17 +61,27 @@ router.get("/order-summary", async (req, res) => {
 
 router.get("/weekly-orders", async (req, res) => {
   try {
-    const today = new Date();
+    const weekStartParam = req.query.weekStart as string | undefined;
+    let monday: Date;
 
-    // Each bar represents the dispatch day.
-    // Delivery is next-day, so we tag orders by (dispatch day + 1).
+    if (weekStartParam) {
+      monday = new Date(weekStartParam + "T00:00:00");
+    } else {
+      const today = new Date();
+      const dayOfWeek = today.getDay();
+      const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+      monday = new Date(today);
+      monday.setDate(today.getDate() + diff);
+    }
+    monday.setHours(0, 0, 0, 0);
+
     const results = await Promise.all(
       Array.from({ length: 7 }, async (_, i) => {
-        const dispatchDay = new Date(today);
-        dispatchDay.setDate(today.getDate() + i);
+        const dispatchDay = new Date(monday);
+        dispatchDay.setDate(monday.getDate() + i);
 
-        const deliveryDay = new Date(today);
-        deliveryDay.setDate(today.getDate() + i + 1);
+        const deliveryDay = new Date(monday);
+        deliveryDay.setDate(monday.getDate() + i + 1);
 
         const tag = toDateTag(deliveryDay);
         const orders = await getOrdersByTag(tag);
@@ -88,7 +98,7 @@ router.get("/weekly-orders", async (req, res) => {
       })
     );
 
-    res.json(results);
+    res.json({ weekStart: toDateTag(monday), days: results });
   } catch (err: any) {
     console.error("[Shopify] weekly-orders error:", err.message);
     res.status(502).json({ error: err.message });

@@ -9,7 +9,8 @@ import { useQuery } from "@tanstack/react-query";
 async function fetchWeeklyOrders() {
   const res = await fetch("/api/shopify/weekly-orders", { credentials: "include" });
   if (!res.ok) throw new Error("Failed to fetch weekly orders");
-  return res.json() as Promise<{ date: string; deliveryDate: string; day: string; orderCount: number; fulfilledCount: number; unfulfilledCount: number }[]>;
+  const data = await res.json();
+  return (data.days ?? data) as { date: string; deliveryDate: string; day: string; orderCount: number; fulfilledCount: number; unfulfilledCount: number }[];
 }
 
 export default function Dashboard() {
