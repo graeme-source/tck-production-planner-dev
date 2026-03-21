@@ -156,4 +156,25 @@ export async function createShipment(req: ApcShipmentRequest): Promise<ApcShipme
   };
 }
 
-export { isConfigured };
+export interface ApcServiceCodes {
+  smallWeekday: string;
+  largeWeekday: string;
+  smallFriday: string;
+  largeFriday: string;
+  weightThresholdGrams: number;
+}
+
+// Reads current APC service codes from env/config. Callers that need the live
+// DB-backed codes should call the fulfilment route instead; this is a
+// lightweight helper for code that only needs env-level defaults.
+function getDefaultServiceCodes(): ApcServiceCodes {
+  return {
+    smallWeekday: process.env.APC_SERVICE_CODE_SMALL_WEEKDAY ?? "",
+    largeWeekday: process.env.APC_SERVICE_CODE_LARGE_WEEKDAY ?? "",
+    smallFriday: process.env.APC_SERVICE_CODE_SMALL_FRIDAY ?? "",
+    largeFriday: process.env.APC_SERVICE_CODE_LARGE_FRIDAY ?? "",
+    weightThresholdGrams: Number(process.env.APC_WEIGHT_THRESHOLD_GRAMS ?? 5000),
+  };
+}
+
+export { isConfigured, getDefaultServiceCodes };

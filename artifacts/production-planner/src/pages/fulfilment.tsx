@@ -355,6 +355,24 @@ export default function Fulfilment() {
     );
 
     if (match) {
+      // Play a short success beep via Web Audio API
+      try {
+        const ctx = new AudioContext();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(880, ctx.currentTime);
+        gain.gain.setValueAtTime(0.2, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.15);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.15);
+        osc.onended = () => ctx.close();
+      } catch {
+        // AudioContext not available; silent fallback
+      }
+
       setCheckedItems(prev => {
         const next = new Set([...prev, match._key]);
         // After state update, scroll to next unchecked item

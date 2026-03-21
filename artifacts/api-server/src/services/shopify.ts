@@ -56,7 +56,25 @@ async function shopifyPost(path: string, body: unknown) {
   return res.json();
 }
 
-async function shopifyFetch(path: string, params?: Record<string, string>) {
+// Parse the Shopify cursor from a `Link` response header.
+// Returns the `page_info` value for rel="next", or null if absent.
+function parseNextPageInfo(linkHeader: string | null): string | null {
+  if (!linkHeader) return null;
+  // Link header format: <url>; rel="next", <url>; rel="previous"
+  for (const part of linkHeader.split(",")) {
+    const match = part.match(/<([^>]+)>;\s*rel="next"/);
+    if (match) {
+      try {
+        return new URL(match[1]).searchParams.get("page_info");
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+async function shopifyFetchRaw(path: string, params?: Record<string, string>): Promise<Response> {
   const token = await getAccessToken();
   const url = new URL(`${API_BASE}${path}`);
   if (params) {
@@ -75,6 +93,11 @@ async function shopifyFetch(path: string, params?: Record<string, string>) {
     throw new Error(`Shopify API error ${res.status}: ${text}`);
   }
 
+  return res;
+}
+
+async function shopifyFetch(path: string, params?: Record<string, string>) {
+  const res = await shopifyFetchRaw(path, params);
   return res.json();
 }
 
@@ -149,10 +172,11 @@ export async function getOrdersByTag(tag: string): Promise<ShopifyOrder[]> {
       params.tag = tag;
     }
 
-    const data = (await shopifyFetch("/orders.json", params)) as { orders: ShopifyOrder[] };
+    const res = await shopifyFetchRaw("/orders.json", params);
+    const data = (await res.json()) as { orders: ShopifyOrder[] };
     allOrders.push(...data.orders);
 
-    pageInfo = null;
+    pageInfo = parseNextPageInfo(res.headers.get("Link"));
   } while (pageInfo);
 
   return allOrders.filter((o) => o.tags.split(",").map((t) => t.trim()).includes(tag));
@@ -302,9 +326,10 @@ export async function getRecentUnfulfilledOrders(daysBack = 30): Promise<Shopify
     };
     if (pageInfo) params.page_info = pageInfo;
 
-    const data = (await shopifyFetch("/orders.json", params)) as { orders: ShopifyOrder[] };
+    const res = await shopifyFetchRaw("/orders.json", params);
+    const data = (await res.json()) as { orders: ShopifyOrder[] };
     allOrders.push(...data.orders);
-    pageInfo = null;
+    pageInfo = parseNextPageInfo(res.headers.get("Link"));
   } while (pageInfo);
 
   return allOrders.filter(o => o.fulfillment_status !== "fulfilled");
