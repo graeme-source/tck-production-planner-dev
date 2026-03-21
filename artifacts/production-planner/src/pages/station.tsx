@@ -658,8 +658,10 @@ function MixingStation({ plan }: MixingStationProps) {
   const isAdmin = state.status === "authenticated" && state.user.role === "admin";
   const queryClient = useQueryClient();
   const [isOnBreak, setIsOnBreak] = useState(false);
-  const [expandedItemId, setExpandedItemId] = useState<number | null>(null);
+  const [activeItemId, setActiveItemId] = useState<number | null>(null);
   const [checkedIngredients, setCheckedIngredients] = useState<Record<string, boolean>>({});
+  const [completing, setCompleting] = useState(false);
+  const fillingViewRef = useRef<HTMLDivElement>(null);
 
   const [fillingData, setFillingData] = useState<FillingMixItem[]>([]);
   useEffect(() => {
@@ -770,44 +772,113 @@ function MixingStation({ plan }: MixingStationProps) {
     }
   };
 
+  const getFillingForItem = (itemId: number) => fillingData.find(f => f.itemId === itemId);
+
   const toggleIngredient = (itemId: number, key: string) => {
     setCheckedIngredients(prev => ({ ...prev, [`${itemId}-${key}`]: !prev[`${itemId}-${key}`] }));
   };
-
-  const getFillingForItem = (itemId: number) => fillingData.find(f => f.itemId === itemId);
 
   const allCheckedForItem = (item: ProductionPlanItem) => {
     const filling = getFillingForItem(item.id);
     if (!filling) return false;
     const total = filling.fillingIngredients.length + filling.fillingSubRecipes.length;
     if (total === 0) return false;
-    for (const fi of filling.fillingIngredients) {
-      if (!checkedIngredients[`${item.id}-ing-${fi.ingredientId}`]) return false;
+    for (let i = 0; i < filling.fillingIngredients.length; i++) {
+      if (!checkedIngredients[`${item.id}-ing-${i}`]) return false;
     }
-    for (const fs of filling.fillingSubRecipes) {
-      if (!checkedIngredients[`${item.id}-sub-${fs.subRecipeId}`]) return false;
+    for (let i = 0; i < filling.fillingSubRecipes.length; i++) {
+      if (!checkedIngredients[`${item.id}-sub-${i}`]) return false;
     }
     return true;
   };
 
-  const handleCompleteTin = async (item: ProductionPlanItem) => {
+  const clearChecksForItem = (itemId: number) => {
+    setCheckedIngredients(prev => {
+      const next = { ...prev };
+      for (const key of Object.keys(next)) {
+        if (key.startsWith(`${itemId}-`)) delete next[key];
+      }
+      return next;
+    });
+  };
+
+  const handleAutoComplete = useCallback(async (item: ProductionPlanItem) => {
+    if (completing || isOnBreak) return;
+    setCompleting(true);
     const success = await addTin(item);
     if (success) {
-      setCheckedIngredients(prev => {
-        const next = { ...prev };
-        for (const key of Object.keys(next)) {
-          if (key.startsWith(`${item.id}-`)) delete next[key];
-        }
-        return next;
-      });
+      clearChecksForItem(item.id);
+      const info = getTinInfo(item);
+      const newTinsComplete = info.tinsComplete + 1;
+      if (newTinsComplete >= info.tinsTarget) {
+        const currentIdx = items.findIndex(it => it.id === item.id);
+        const nextItem = items.slice(currentIdx + 1).find(it => {
+          const f = getFillingForItem(it.id);
+          const mc = getStationCount(it, "mixing");
+          const tgt = it.batchesTarget ?? 0;
+          return f && (f.fillingIngredients.length > 0 || f.fillingSubRecipes.length > 0) && mc < tgt;
+        });
+        setActiveItemId(nextItem ? nextItem.id : null);
+      }
+    }
+    setCompleting(false);
+  }, [completing, isOnBreak, items, fillingData]);
+
+  useEffect(() => {
+    if (activeItemId === null) return;
+    const item = items.find(it => it.id === activeItemId);
+    if (!item) return;
+    if (allCheckedForItem(item) && !completing && !isOnBreak) {
+      handleAutoComplete(item);
+    }
+  }, [checkedIngredients, activeItemId]);
+
+  const activateItem = (itemId: number) => {
+    if (activeItemId === itemId) {
+      setActiveItemId(null);
+    } else {
+      setActiveItemId(itemId);
+      setTimeout(() => fillingViewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
     }
   };
+
+  const activeItem = activeItemId ? items.find(it => it.id === activeItemId) : null;
+  const activeFilling = activeItemId ? getFillingForItem(activeItemId) : null;
+  const activeHasFilling = activeFilling && (activeFilling.fillingIngredients.length > 0 || activeFilling.fillingSubRecipes.length > 0);
 
   const totalTinsTarget = items.reduce((s, it) => s + getTinInfo(it).tinsTarget, 0);
   const totalTinsComplete = items.reduce((s, it) => s + getTinInfo(it).tinsComplete, 0);
   const totalBatchesDone = items.reduce((s, it) => s + getStationCount(it, "mixing"), 0);
   const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
   const overallProgress = totalTinsTarget > 0 ? Math.round((totalTinsComplete / totalTinsTarget) * 100) : 0;
+
+  const formatQty = (qty: number, unit: string | null) => {
+    if (qty >= 1000 && (unit === "g" || unit === "ml")) {
+      return `${(qty / 1000).toFixed(2)} ${unit === "g" ? "kg" : "L"}`;
+    }
+    return `${qty % 1 === 0 ? qty : qty.toFixed(1)} ${unit ?? ""}`;
+  };
+
+  const getActiveTinInfo = () => {
+    if (!activeItem) return { tinsTarget: 0, tinsComplete: 0, batchesPerTinEven: 0, currentTinBatches: 0, isComplete: false };
+    const target = activeItem.batchesTarget ?? 0;
+    const bpt = activeItem.maxBatchesPerTin ?? 1;
+    const mixingCount = getStationCount(activeItem, "mixing");
+    const tinsTarget = Math.ceil(target / bpt);
+    const batchesPerTinEven = tinsTarget > 0 ? Math.ceil(target / tinsTarget) : target;
+    let tinsComplete = tinsTarget > 0 ? Math.min(Math.floor(mixingCount / batchesPerTinEven), tinsTarget) : 0;
+    if (mixingCount >= target && target > 0) tinsComplete = tinsTarget;
+    const allDone = tinsComplete >= tinsTarget;
+    const isComplete = mixingCount >= target && target > 0;
+    const currentTinBatches = (() => {
+      if (allDone || tinsTarget === 0) return batchesPerTinEven;
+      const batchesAfterNextTin = Math.min((tinsComplete + 1) * batchesPerTinEven, target);
+      return batchesAfterNextTin - mixingCount;
+    })();
+    return { tinsTarget, tinsComplete, batchesPerTinEven, currentTinBatches, isComplete };
+  };
+
+  const activeTinInfo = getActiveTinInfo();
 
   return (
     <div className="space-y-4">
@@ -836,51 +907,164 @@ function MixingStation({ plan }: MixingStationProps) {
         </div>
       </div>
 
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <SortableContext items={items.map(it => it.id)} strategy={verticalListSortingStrategy}>
-          <div className="space-y-2">
-            {items.map(item => (
-              <SortableMixingItem
-                key={item.id}
-                item={item}
-                isAdmin={isAdmin}
-                isOnBreak={isOnBreak}
-                onAdd={() => addTin(item)}
-                onRemove={() => undoTin(item)}
-                expanded={expandedItemId === item.id}
-                onToggleExpand={() => setExpandedItemId(expandedItemId === item.id ? null : item.id)}
-                filling={getFillingForItem(item.id)}
-                checkedIngredients={checkedIngredients}
-                onToggleIngredient={(key) => toggleIngredient(item.id, key)}
-                allChecked={allCheckedForItem(item)}
-                onCompleteTin={() => handleCompleteTin(item)}
-              />
-            ))}
+      {activeItem && activeHasFilling && !activeTinInfo.isComplete && (
+        <div ref={fillingViewRef} className="bg-card border-2 border-primary/30 rounded-xl overflow-hidden">
+          <div className="bg-primary/5 px-4 py-3 border-b border-primary/20">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold text-lg">{activeItem.recipeName ?? `Recipe #${activeItem.recipeId}`}</h3>
+                <p className="text-sm text-muted-foreground">
+                  Filling Mix — Tin {activeTinInfo.tinsComplete + 1} of {activeTinInfo.tinsTarget} · {activeTinInfo.currentTinBatches} batches this tin
+                </p>
+              </div>
+              <div className="text-center">
+                <span className="text-2xl font-bold">{activeTinInfo.tinsComplete}</span>
+                <span className="text-xs text-muted-foreground block">/ {activeTinInfo.tinsTarget} tin{activeTinInfo.tinsTarget !== 1 ? "s" : ""}</span>
+              </div>
+            </div>
           </div>
-        </SortableContext>
-      </DndContext>
+
+          <div className="px-4 py-3 space-y-1">
+            {activeFilling!.fillingIngredients.map((fi, idx) => {
+              const key = `ing-${idx}`;
+              const checked = !!checkedIngredients[`${activeItem.id}-${key}`];
+              return (
+                <label
+                  key={key}
+                  className={cn(
+                    "flex items-center gap-3 py-2 px-3 rounded-lg cursor-pointer transition-colors",
+                    checked ? "bg-emerald-50 dark:bg-emerald-900/20" : "hover:bg-muted/40"
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleIngredient(activeItem.id, key)}
+                    className="rounded border-border text-emerald-600 focus:ring-emerald-500/30 w-5 h-5"
+                  />
+                  <span className={cn("flex-1 text-base", checked && "line-through text-muted-foreground")}>
+                    {fi.name ?? `Ingredient #${fi.ingredientId}`}
+                  </span>
+                  <span className={cn("text-base font-mono tabular-nums font-medium", checked ? "text-muted-foreground" : "text-foreground")}>
+                    {formatQty(fi.qtyPerBatch * activeTinInfo.currentTinBatches, fi.unit)}
+                  </span>
+                </label>
+              );
+            })}
+            {activeFilling!.fillingSubRecipes.map((fs, idx) => {
+              const key = `sub-${idx}`;
+              const checked = !!checkedIngredients[`${activeItem.id}-${key}`];
+              return (
+                <label
+                  key={key}
+                  className={cn(
+                    "flex items-center gap-3 py-2 px-3 rounded-lg cursor-pointer transition-colors",
+                    checked ? "bg-emerald-50 dark:bg-emerald-900/20" : "hover:bg-muted/40"
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleIngredient(activeItem.id, key)}
+                    className="rounded border-border text-emerald-600 focus:ring-emerald-500/30 w-5 h-5"
+                  />
+                  <span className={cn("flex-1 text-base", checked && "line-through text-muted-foreground")}>
+                    {fs.name ?? `Sub-recipe #${fs.subRecipeId}`}
+                  </span>
+                  <span className={cn("text-base font-mono tabular-nums font-medium", checked ? "text-muted-foreground" : "text-foreground")}>
+                    {formatQty(fs.qtyPerBatch * activeTinInfo.currentTinBatches, fs.unit)}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+
+          {completing && (
+            <div className="px-4 pb-3">
+              <div className="w-full py-2.5 rounded-lg bg-emerald-600/80 text-white font-semibold text-sm flex items-center justify-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Completing tin...
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div>
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 px-1">
+          {activeItem ? "All Recipes" : "Click a recipe to start filling"}
+        </h3>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={items.map(it => it.id)} strategy={verticalListSortingStrategy}>
+            <div className="space-y-2">
+              {items.map(item => {
+                const mixingCount = getStationCount(item, "mixing");
+                const target = item.batchesTarget ?? 0;
+                const bpt = item.maxBatchesPerTin ?? 1;
+                const tinsTarget = Math.ceil(target / bpt);
+                const batchesPerTinEven = tinsTarget > 0 ? Math.ceil(target / tinsTarget) : target;
+                let tinsComplete = tinsTarget > 0 ? Math.min(Math.floor(mixingCount / batchesPerTinEven), tinsTarget) : 0;
+                if (mixingCount >= target && target > 0) tinsComplete = tinsTarget;
+                const allTinsDone = tinsComplete >= tinsTarget;
+                const progress = tinsTarget > 0 ? Math.round((tinsComplete / tinsTarget) * 100) : 0;
+                const isComplete = mixingCount >= target && target > 0;
+                const filling = getFillingForItem(item.id);
+                const hasFillingItems = filling && (filling.fillingIngredients.length > 0 || filling.fillingSubRecipes.length > 0);
+                const isActive = activeItemId === item.id;
+                const isDraggable = isAdmin || (item.status === "pending" && mixingCount === 0);
+
+                return (
+                  <MixingOverviewRow
+                    key={item.id}
+                    item={item}
+                    isActive={isActive}
+                    isComplete={isComplete}
+                    isDraggable={isDraggable}
+                    hasFillingItems={!!hasFillingItems}
+                    tinsComplete={tinsComplete}
+                    tinsTarget={tinsTarget}
+                    allTinsDone={allTinsDone}
+                    progress={progress}
+                    mixingCount={mixingCount}
+                    target={target}
+                    batchesPerTinEven={batchesPerTinEven}
+                    isOnBreak={isOnBreak}
+                    isAdmin={isAdmin}
+                    onActivate={() => activateItem(item.id)}
+                    onAdd={() => addTin(item)}
+                    onRemove={() => undoTin(item)}
+                  />
+                );
+              })}
+            </div>
+          </SortableContext>
+        </DndContext>
+      </div>
     </div>
   );
 }
 
-interface SortableMixingItemProps {
+interface MixingOverviewRowProps {
   item: ProductionPlanItem;
-  isAdmin: boolean;
+  isActive: boolean;
+  isComplete: boolean;
+  isDraggable: boolean;
+  hasFillingItems: boolean;
+  tinsComplete: number;
+  tinsTarget: number;
+  allTinsDone: boolean;
+  progress: number;
+  mixingCount: number;
+  target: number;
+  batchesPerTinEven: number;
   isOnBreak: boolean;
+  isAdmin: boolean;
+  onActivate: () => void;
   onAdd: () => void;
   onRemove: () => void;
-  expanded: boolean;
-  onToggleExpand: () => void;
-  filling?: FillingMixItem;
-  checkedIngredients: Record<string, boolean>;
-  onToggleIngredient: (key: string) => void;
-  allChecked: boolean;
-  onCompleteTin: () => void;
 }
 
-function SortableMixingItem({ item, isAdmin, isOnBreak, onAdd, onRemove, expanded, onToggleExpand, filling, checkedIngredients, onToggleIngredient, allChecked, onCompleteTin }: SortableMixingItemProps) {
-  const mixingCount = getStationCount(item, "mixing");
-  const isDraggable = isAdmin || (item.status === "pending" && mixingCount === 0);
+function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFillingItems, tinsComplete, tinsTarget, allTinsDone, progress, mixingCount, target, batchesPerTinEven, isOnBreak, isAdmin, onActivate, onAdd, onRemove }: MixingOverviewRowProps) {
   const {
     attributes, listeners, setNodeRef,
     transform, transition, isDragging,
@@ -893,34 +1077,10 @@ function SortableMixingItem({ item, isAdmin, isOnBreak, onAdd, onRemove, expande
     zIndex: isDragging ? 50 : "auto",
   };
 
-  const target = item.batchesTarget ?? 0;
-  const bpt = item.maxBatchesPerTin ?? 1;
-  const tinsTarget = Math.ceil(target / bpt);
-  const batchesPerTinEven = tinsTarget > 0 ? Math.ceil(target / tinsTarget) : target;
-  let tinsComplete = tinsTarget > 0 ? Math.min(Math.floor(mixingCount / batchesPerTinEven), tinsTarget) : 0;
-  if (mixingCount >= target && target > 0) tinsComplete = tinsTarget;
-  const allTinsDone = tinsComplete >= tinsTarget;
-  const progress = tinsTarget > 0 ? Math.round((tinsComplete / tinsTarget) * 100) : 0;
-  const isComplete = mixingCount >= target && target > 0;
-  const hasFillingItems = filling && (filling.fillingIngredients.length > 0 || filling.fillingSubRecipes.length > 0);
-
-  const currentTinBatches = (() => {
-    if (allTinsDone || tinsTarget === 0) return batchesPerTinEven;
-    const batchesAfterNextTin = Math.min((tinsComplete + 1) * batchesPerTinEven, target);
-    return batchesAfterNextTin - mixingCount;
-  })();
-
   const statusColors = {
     pending: "border-border",
     "in-progress": "border-blue-300 dark:border-blue-700 bg-blue-50/30 dark:bg-blue-900/10",
     complete: "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-900/10",
-  };
-
-  const formatQty = (qty: number, unit: string | null) => {
-    if (qty >= 1000 && (unit === "g" || unit === "ml")) {
-      return `${(qty / 1000).toFixed(2)} ${unit === "g" ? "kg" : "L"}`;
-    }
-    return `${qty % 1 === 0 ? qty : qty.toFixed(1)} ${unit ?? ""}`;
   };
 
   return (
@@ -929,7 +1089,7 @@ function SortableMixingItem({ item, isAdmin, isOnBreak, onAdd, onRemove, expande
       style={style}
       className={cn(
         "bg-card border rounded-xl overflow-hidden transition-colors",
-        statusColors[item.status as keyof typeof statusColors] ?? "border-border",
+        isActive ? "border-primary ring-1 ring-primary/30" : statusColors[item.status as keyof typeof statusColors] ?? "border-border",
         isDragging && "shadow-xl"
       )}
     >
@@ -955,18 +1115,17 @@ function SortableMixingItem({ item, isAdmin, isOnBreak, onAdd, onRemove, expande
             )}
           </div>
 
-          <div className="flex-1 min-w-0 cursor-pointer" onClick={hasFillingItems ? onToggleExpand : undefined}>
+          <div
+            className={cn("flex-1 min-w-0", hasFillingItems && !isComplete ? "cursor-pointer" : "")}
+            onClick={hasFillingItems && !isComplete ? onActivate : undefined}
+          >
             <div className="flex items-center gap-2 mb-1">
               <h3 className={cn("font-semibold", isComplete ? "line-through text-muted-foreground" : "")}>
                 {item.recipeName ?? `Recipe #${item.recipeId}`}
               </h3>
               {isComplete && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
-              {item.status === "in-progress" && <PlayCircle className="w-4 h-4 text-blue-500 flex-shrink-0" />}
-              {hasFillingItems && (
-                expanded
-                  ? <ChevronUp className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                  : <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-              )}
+              {item.status === "in-progress" && !isComplete && <PlayCircle className="w-4 h-4 text-blue-500 flex-shrink-0" />}
+              {isActive && <ChevronUp className="w-4 h-4 text-primary flex-shrink-0" />}
             </div>
 
             <div className="flex items-center gap-2 mb-2">
@@ -1014,87 +1173,6 @@ function SortableMixingItem({ item, isAdmin, isOnBreak, onAdd, onRemove, expande
           </div>
         </div>
       </div>
-
-      {expanded && hasFillingItems && !isComplete && (
-        <div className="border-t border-border/50 bg-muted/20 px-4 py-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Filling Mix — Tin {tinsComplete + 1} of {tinsTarget}
-            </span>
-            <span className="text-[10px] text-muted-foreground">
-              {currentTinBatches} batches this tin
-            </span>
-          </div>
-
-          <div className="space-y-1">
-            {filling!.fillingIngredients.map(fi => {
-              const key = `ing-${fi.ingredientId}`;
-              const checked = !!checkedIngredients[`${item.id}-${key}`];
-              return (
-                <label
-                  key={key}
-                  className={cn(
-                    "flex items-center gap-3 py-1.5 px-2 rounded-lg cursor-pointer transition-colors",
-                    checked ? "bg-emerald-50 dark:bg-emerald-900/20" : "hover:bg-muted/40"
-                  )}
-                  onClick={(e) => { e.stopPropagation(); }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => onToggleIngredient(key)}
-                    className="rounded border-border text-emerald-600 focus:ring-emerald-500/30 w-4 h-4"
-                  />
-                  <span className={cn("flex-1 text-sm", checked && "line-through text-muted-foreground")}>
-                    {fi.name ?? `Ingredient #${fi.ingredientId}`}
-                  </span>
-                  <span className={cn("text-sm font-mono tabular-nums font-medium", checked ? "text-muted-foreground" : "text-foreground")}>
-                    {formatQty(fi.qtyPerBatch * currentTinBatches, fi.unit)}
-                  </span>
-                </label>
-              );
-            })}
-            {filling!.fillingSubRecipes.map(fs => {
-              const key = `sub-${fs.subRecipeId}`;
-              const checked = !!checkedIngredients[`${item.id}-${key}`];
-              return (
-                <label
-                  key={key}
-                  className={cn(
-                    "flex items-center gap-3 py-1.5 px-2 rounded-lg cursor-pointer transition-colors",
-                    checked ? "bg-emerald-50 dark:bg-emerald-900/20" : "hover:bg-muted/40"
-                  )}
-                  onClick={(e) => { e.stopPropagation(); }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => onToggleIngredient(key)}
-                    className="rounded border-border text-emerald-600 focus:ring-emerald-500/30 w-4 h-4"
-                  />
-                  <span className={cn("flex-1 text-sm", checked && "line-through text-muted-foreground")}>
-                    {fs.name ?? `Sub-recipe #${fs.subRecipeId}`}
-                  </span>
-                  <span className={cn("text-sm font-mono tabular-nums font-medium", checked ? "text-muted-foreground" : "text-foreground")}>
-                    {formatQty(fs.qtyPerBatch * currentTinBatches, fs.unit)}
-                  </span>
-                </label>
-              );
-            })}
-          </div>
-
-          {allChecked && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onCompleteTin(); }}
-              disabled={isOnBreak}
-              className="w-full mt-2 py-2.5 rounded-lg bg-emerald-600 text-white font-semibold text-sm hover:bg-emerald-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              <Check className="w-4 h-4" />
-              Complete Tin {tinsComplete + 1}
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }
