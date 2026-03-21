@@ -1,26 +1,46 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
-import { MapPin, Plus, Edit2, Trash2, Loader2, AlertCircle, Save, X, RefreshCw } from "lucide-react";
+import { MapPin, Plus, Edit2, Trash2, Loader2, AlertCircle, Save, X, RefreshCw, Search, PackageSearch } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
+type ZoneValue = "fridge" | "freezer" | "ambient";
+
 interface SkuLocation {
   sku: string;
-  zone: "fridge" | "freezer" | "ambient";
+  zone: ZoneValue;
   locationLabel: string;
   updatedAt: string;
 }
 
-const ZONES: { value: "fridge" | "freezer" | "ambient"; label: string; color: string }[] = [
+interface RecentSku {
+  sku: string;
+  title: string;
+  orderCount: number;
+  location: SkuLocation | null;
+}
+
+const ZONES: { value: ZoneValue; label: string; color: string }[] = [
   { value: "fridge", label: "Fridge", color: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200" },
   { value: "freezer", label: "Freezer", color: "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-200" },
   { value: "ambient", label: "Ambient", color: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200" },
 ];
 
+const today = new Date().toISOString().slice(0, 10);
+
 async function fetchLocations(): Promise<SkuLocation[]> {
   const res = await fetch(`${BASE}/api/fulfilment/sku-locations`, { credentials: "include" });
   if (!res.ok) throw new Error("Failed to fetch locations");
+  return res.json();
+}
+
+async function fetchRecentSkus(tag: string): Promise<RecentSku[]> {
+  const res = await fetch(`${BASE}/api/fulfilment/sku-locations/recent-skus?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error ?? "Failed to fetch recent SKUs");
+  }
   return res.json();
 }
 
@@ -48,8 +68,14 @@ export default function Locations() {
   const queryClient = useQueryClient();
   const [adding, setAdding] = useState(false);
   const [editingSku, setEditingSku] = useState<string | null>(null);
-  const [form, setForm] = useState({ sku: "", zone: "fridge" as "fridge" | "freezer" | "ambient", locationLabel: "" });
-  const [editForm, setEditForm] = useState({ zone: "fridge" as "fridge" | "freezer" | "ambient", locationLabel: "" });
+  const [form, setForm] = useState({ sku: "", zone: "fridge" as ZoneValue, locationLabel: "" });
+  const [editForm, setEditForm] = useState({ zone: "fridge" as ZoneValue, locationLabel: "" });
+
+  // Recent order SKU scanning
+  const [scanTag, setScanTag] = useState(today);
+  const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [quickAssignSku, setQuickAssignSku] = useState<string | null>(null);
+  const [quickForm, setQuickForm] = useState({ zone: "ambient" as ZoneValue, locationLabel: "" });
 
   const { data: locations, isLoading, error, refetch } = useQuery({
     queryKey: ["sku-locations"],
@@ -57,30 +83,51 @@ export default function Locations() {
     staleTime: 5 * 60 * 1000,
   });
 
+  const { data: recentSkus, isLoading: recentLoading, error: recentError } = useQuery({
+    queryKey: ["sku-locations-recent", activeTag],
+    queryFn: () => fetchRecentSkus(activeTag!),
+    enabled: !!activeTag,
+    staleTime: 2 * 60 * 1000,
+  });
+
   const upsertMutation = useMutation({
     mutationFn: ({ sku, zone, locationLabel }: { sku: string; zone: string; locationLabel: string }) =>
       upsertLocation(sku, zone, locationLabel),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["sku-locations"] });
+      queryClient.invalidateQueries({ queryKey: ["sku-locations-recent"] });
       setAdding(false);
       setEditingSku(null);
+      setQuickAssignSku(null);
       setForm({ sku: "", zone: "fridge", locationLabel: "" });
+      setQuickForm({ zone: "ambient", locationLabel: "" });
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: deleteLocation,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["sku-locations"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["sku-locations"] });
+      queryClient.invalidateQueries({ queryKey: ["sku-locations-recent"] });
+    },
   });
 
   function startEdit(loc: SkuLocation) {
     setEditingSku(loc.sku);
     setEditForm({ zone: loc.zone, locationLabel: loc.locationLabel });
     setAdding(false);
+    setQuickAssignSku(null);
   }
 
   function cancelEdit() {
     setEditingSku(null);
+  }
+
+  function startQuickAssign(sku: string, title: string) {
+    setQuickAssignSku(sku);
+    setQuickForm({ zone: "ambient", locationLabel: "" });
+    setEditingSku(null);
+    setAdding(false);
   }
 
   const inputCls = "px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30";
@@ -90,13 +137,158 @@ export default function Locations() {
     locations: (locations ?? []).filter(l => l.zone === z.value).sort((a, b) => a.locationLabel.localeCompare(b.locationLabel)),
   }));
 
+  const unassignedRecent = recentSkus?.filter(s => !s.location) ?? [];
+  const assignedRecent = recentSkus?.filter(s => s.location) ?? [];
+
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Location Management"
-        description="Assign bin locations to product SKUs for the picking list."
+        title="Bin Locations"
+        description="Assign bin locations to product SKUs for the fulfilment picking list."
       />
 
+      {/* Recent Order SKU Inventory */}
+      <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold flex items-center gap-2">
+              <PackageSearch className="w-4 h-4 text-primary" /> SKUs from Recent Orders
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Enter a Shopify order tag (e.g. today's dispatch date) to see which SKUs need bin locations assigned.
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <input
+            className={inputCls + " flex-1 font-mono"}
+            placeholder="e.g. 2025-03-21"
+            value={scanTag}
+            onChange={e => setScanTag(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && setScanTag(s => { setActiveTag(s); return s; })}
+          />
+          <button
+            onClick={() => setActiveTag(scanTag)}
+            disabled={!scanTag.trim()}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2"
+          >
+            <Search className="w-4 h-4" /> Load
+          </button>
+        </div>
+
+        {activeTag && (
+          recentLoading ? (
+            <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+          ) : recentError ? (
+            <div className="flex items-center gap-2 p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              {(recentError as Error).message}
+            </div>
+          ) : !recentSkus?.length ? (
+            <p className="text-sm text-muted-foreground text-center py-4">No orders found with tag "{activeTag}".</p>
+          ) : (
+            <div className="space-y-3">
+              {unassignedRecent.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-amber-600 dark:text-amber-400 mb-2 uppercase tracking-wide">
+                    {unassignedRecent.length} Unassigned SKU{unassignedRecent.length !== 1 ? "s" : ""}
+                  </p>
+                  <div className="space-y-2">
+                    {unassignedRecent.map(s => (
+                      <div key={s.sku}>
+                        <div className="flex items-center gap-3 p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-xl">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-mono text-sm font-medium">{s.sku}</p>
+                            <p className="text-xs text-muted-foreground truncate">{s.title}</p>
+                          </div>
+                          <span className="text-xs text-muted-foreground whitespace-nowrap">{s.orderCount} order{s.orderCount !== 1 ? "s" : ""}</span>
+                          <button
+                            onClick={() => startQuickAssign(s.sku, s.title)}
+                            className="px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 flex items-center gap-1 flex-shrink-0"
+                          >
+                            <Plus className="w-3 h-3" /> Assign
+                          </button>
+                        </div>
+                        {quickAssignSku === s.sku && (
+                          <div className="mt-2 p-3 bg-secondary/20 rounded-xl border border-border space-y-2">
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-xs font-medium mb-1 block text-muted-foreground">Zone</label>
+                                <select
+                                  className={inputCls + " w-full"}
+                                  value={quickForm.zone}
+                                  onChange={e => setQuickForm(f => ({ ...f, zone: e.target.value as ZoneValue }))}
+                                >
+                                  {ZONES.map(z => <option key={z.value} value={z.value}>{z.label}</option>)}
+                                </select>
+                              </div>
+                              <div>
+                                <label className="text-xs font-medium mb-1 block text-muted-foreground">Location Label</label>
+                                <input
+                                  className={inputCls + " w-full"}
+                                  placeholder="e.g. Fridge Door 3"
+                                  value={quickForm.locationLabel}
+                                  autoFocus
+                                  onChange={e => setQuickForm(f => ({ ...f, locationLabel: e.target.value }))}
+                                  onKeyDown={e => e.key === "Enter" && quickForm.locationLabel && upsertMutation.mutate({ sku: s.sku, ...quickForm })}
+                                />
+                              </div>
+                            </div>
+                            <div className="flex gap-2 justify-end">
+                              <button
+                                onClick={() => setQuickAssignSku(null)}
+                                className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg"
+                              >Cancel</button>
+                              <button
+                                onClick={() => upsertMutation.mutate({ sku: s.sku, ...quickForm })}
+                                disabled={!quickForm.locationLabel || upsertMutation.isPending}
+                                className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1"
+                              >
+                                {upsertMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                                Save
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {assignedRecent.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-green-600 dark:text-green-400 mb-2 uppercase tracking-wide">
+                    {assignedRecent.length} Assigned
+                  </p>
+                  <div className="space-y-1">
+                    {assignedRecent.map(s => {
+                      const zone = ZONES.find(z => z.value === s.location?.zone);
+                      return (
+                        <div key={s.sku} className="flex items-center gap-3 px-3 py-2 bg-secondary/20 rounded-lg text-sm">
+                          <span className="font-mono font-medium flex-1">{s.sku}</span>
+                          {zone && <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${zone.color}`}>{zone.label}</span>}
+                          <span className="text-muted-foreground flex items-center gap-1">
+                            <MapPin className="w-3 h-3" />{s.location?.locationLabel}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {unassignedRecent.length === 0 && (
+                <div className="flex items-center gap-2 p-3 bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 rounded-lg text-green-700 dark:text-green-300 text-sm">
+                  All {recentSkus.length} SKUs from tag "{activeTag}" have bin locations assigned.
+                </div>
+              )}
+            </div>
+          )
+        )}
+      </div>
+
+      {/* All Assigned Locations */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
           {locations?.length ?? 0} SKU{(locations?.length ?? 0) !== 1 ? "s" : ""} assigned
@@ -111,7 +303,7 @@ export default function Locations() {
           </button>
           {!adding && (
             <button
-              onClick={() => { setAdding(true); setEditingSku(null); }}
+              onClick={() => { setAdding(true); setEditingSku(null); setQuickAssignSku(null); }}
               className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90 transition-colors"
             >
               <Plus className="w-4 h-4" /> Add Location
@@ -146,7 +338,7 @@ export default function Locations() {
               <select
                 className={inputCls + " w-full"}
                 value={form.zone}
-                onChange={e => setForm(f => ({ ...f, zone: e.target.value as any }))}
+                onChange={e => setForm(f => ({ ...f, zone: e.target.value as ZoneValue }))}
               >
                 {ZONES.map(z => (
                   <option key={z.value} value={z.value}>{z.label}</option>
@@ -229,7 +421,7 @@ export default function Locations() {
                               <select
                                 className={inputCls}
                                 value={editForm.zone}
-                                onChange={e => setEditForm(f => ({ ...f, zone: e.target.value as any }))}
+                                onChange={e => setEditForm(f => ({ ...f, zone: e.target.value as ZoneValue }))}
                               >
                                 {ZONES.map(z => (
                                   <option key={z.value} value={z.value}>{z.label}</option>

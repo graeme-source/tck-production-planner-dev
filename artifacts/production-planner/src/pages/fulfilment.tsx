@@ -82,12 +82,12 @@ async function fetchConfigStatus(): Promise<ConfigStatus> {
   return res.json();
 }
 
-async function createShipment(orderId: number, tag: string): Promise<ShipmentResult> {
+async function createShipment(orderId: number, tag: string, dispatchDate?: string): Promise<ShipmentResult> {
   const res = await fetch(`${BASE}/api/fulfilment/shipments`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ orderId, tag }),
+    body: JSON.stringify({ orderId, tag, dispatchDate }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Failed to create shipment");
@@ -164,6 +164,7 @@ export default function Fulfilment() {
   const [flashItem, setFlashItem] = useState<string | null>(null);
   const [flashWrong, setFlashWrong] = useState(false);
   const barcodeRef = useRef<HTMLInputElement>(null);
+  const itemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const preQueueRef = useRef<Map<number, Promise<ShipmentResult>>>(new Map());
 
   const { data: configStatus } = useQuery({
@@ -184,7 +185,7 @@ export default function Fulfilment() {
   function preQueueNextOrder(currentIdx: number) {
     const nextOrder = unfulfilledOrders[currentIdx + 1];
     if (!nextOrder || preQueueRef.current.has(nextOrder.id)) return;
-    const promise = createShipment(nextOrder.id, queryTag).catch(() => {
+    const promise = createShipment(nextOrder.id, queryTag, queryTag).catch(() => {
       preQueueRef.current.delete(nextOrder.id);
     }) as Promise<ShipmentResult>;
     preQueueRef.current.set(nextOrder.id, promise);
@@ -208,7 +209,7 @@ export default function Fulfilment() {
         result = await preQueueRef.current.get(order.id)!;
         preQueueRef.current.delete(order.id);
       } else {
-        result = await createShipment(order.id, queryTag);
+        result = await createShipment(order.id, queryTag, queryTag);
       }
       setShipment(result);
       setPrintStatus("printing");
@@ -254,7 +255,18 @@ export default function Fulfilment() {
     );
 
     if (match) {
-      setCheckedItems(prev => new Set([...prev, match._key]));
+      setCheckedItems(prev => {
+        const next = new Set([...prev, match._key]);
+        // After state update, scroll to next unchecked item
+        setTimeout(() => {
+          const remaining = expandedItems.filter(item => !next.has(item._key));
+          const nextItem = remaining[0];
+          if (nextItem) {
+            itemRefs.current.get(nextItem._key)?.scrollIntoView({ behavior: "smooth", block: "center" });
+          }
+        }, 100);
+        return next;
+      });
       setFlashItem(match._key);
       setTimeout(() => setFlashItem(null), 800);
       setBarcodeInput("");
@@ -495,6 +507,10 @@ export default function Fulfilment() {
             return (
               <button
                 key={item._key}
+                ref={el => {
+                  if (el) itemRefs.current.set(item._key, el);
+                  else itemRefs.current.delete(item._key);
+                }}
                 onClick={() => toggleItem(item._key)}
                 className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 text-left transition-all
                   ${checked

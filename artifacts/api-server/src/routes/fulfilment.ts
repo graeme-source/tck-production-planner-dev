@@ -1,11 +1,23 @@
-import { Router, type Request, type Response } from "express";
-import { db, skuLocationsTable, appSettingsTable } from "@workspace/db";
+import { Router, type Request, type Response, type NextFunction } from "express";
+import { db, skuLocationsTable, appSettingsTable, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
 import { getUnfulfilledOrdersByTag, getOrdersByTag, fulfillOrder, type ShopifyOrder } from "../services/shopify";
 import { createShipment, isConfigured as isApcConfigured } from "../services/apc";
 
 const router = Router();
+
+async function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  if (req.session.userRole === "admin") { next(); return; }
+  if (req.session.userId && !req.session.userRole) {
+    const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
+    if (user) {
+      req.session.userRole = user.role as "admin" | "manager" | "viewer";
+      if (user.role === "admin") { next(); return; }
+    }
+  }
+  res.status(403).json({ error: "Admin access required" });
+}
 
 async function getAppSetting(key: string): Promise<string | null> {
   const [row] = await db.select().from(appSettingsTable).where(eq(appSettingsTable.key, key));
@@ -16,12 +28,16 @@ function pickServiceCode(
   order: ShopifyOrder,
   codes: { smallWeekday: string; largeWeekday: string; smallFriday: string; largeFriday: string },
   weightThresholdG: number,
+  dispatchDate?: Date,
 ): string {
   const tags = order.tags.split(",").map(t => t.trim().toLowerCase());
   const weightG = order.total_weight ?? 0;
 
   const isLargeBox = tags.includes("large-box") || weightG >= weightThresholdG;
-  const isFriday = tags.includes("friday-delivery");
+
+  // Friday if tag present OR the actual dispatch date falls on a Friday (day=5)
+  const refDate = dispatchDate ?? new Date();
+  const isFriday = tags.includes("friday-delivery") || refDate.getDay() === 5;
 
   if (isLargeBox && isFriday) return codes.largeFriday;
   if (isLargeBox) return codes.largeWeekday;
@@ -63,6 +79,7 @@ router.get("/orders", async (req: Request, res: Response) => {
 const CreateShipmentBody = z.object({
   orderId: z.number(),
   tag: z.string(),
+  dispatchDate: z.string().optional(), // ISO date string e.g. "2025-01-17"
 });
 
 router.post("/shipments", async (req: Request, res: Response) => {
@@ -77,7 +94,8 @@ router.post("/shipments", async (req: Request, res: Response) => {
     return;
   }
 
-  const { orderId, tag } = parsed.data;
+  const { orderId, tag, dispatchDate: dispatchDateStr } = parsed.data;
+  const dispatchDate = dispatchDateStr ? new Date(dispatchDateStr) : new Date();
 
   try {
     const [smallWeekday, largeWeekday, smallFriday, largeFriday, weightThreshStr] = await Promise.all([
@@ -119,6 +137,7 @@ router.post("/shipments", async (req: Request, res: Response) => {
       order,
       { smallWeekday, largeWeekday, smallFriday, largeFriday },
       weightThresholdG,
+      dispatchDate,
     );
 
     const weightKg = (order.total_weight ?? 500) / 1000;
@@ -195,12 +214,60 @@ router.get("/sku-locations", async (_req: Request, res: Response) => {
   }
 });
 
+// Returns all unique SKUs seen in recent Shopify orders, with their location assignment status
+router.get("/sku-locations/recent-skus", async (req: Request, res: Response) => {
+  const { tag } = req.query as { tag?: string };
+  if (!tag) {
+    res.status(400).json({ error: "tag query param required" });
+    return;
+  }
+  try {
+    const [orders, existingLocations] = await Promise.all([
+      getOrdersByTag(tag),
+      db.select().from(skuLocationsTable),
+    ]);
+
+    const locationBySku = new Map(existingLocations.map(l => [l.sku, l]));
+
+    // Collect unique SKUs from recent orders
+    const skuMap = new Map<string, { sku: string; title: string; orderCount: number; location: (typeof existingLocations)[0] | null }>();
+    for (const order of orders) {
+      for (const item of order.line_items) {
+        if (!item.sku) continue;
+        const existing = skuMap.get(item.sku);
+        if (existing) {
+          existing.orderCount++;
+        } else {
+          skuMap.set(item.sku, {
+            sku: item.sku,
+            title: item.title,
+            orderCount: 1,
+            location: locationBySku.get(item.sku) ?? null,
+          });
+        }
+      }
+    }
+
+    const result = Array.from(skuMap.values()).sort((a, b) => {
+      // Unassigned first, then by SKU
+      if (!a.location && b.location) return -1;
+      if (a.location && !b.location) return 1;
+      return a.sku.localeCompare(b.sku);
+    });
+
+    res.json(result);
+  } catch (err: any) {
+    console.error("[Fulfilment] recent-skus error:", err.message);
+    res.status(502).json({ error: err.message });
+  }
+});
+
 const UpsertLocationBody = z.object({
   zone: z.enum(["fridge", "freezer", "ambient"]),
   locationLabel: z.string().min(1, "Location label is required"),
 });
 
-router.put("/sku-locations/:sku", async (req: Request, res: Response) => {
+router.put("/sku-locations/:sku", requireAdmin, async (req: Request, res: Response) => {
   const sku = decodeURIComponent(req.params.sku);
   const parsed = UpsertLocationBody.safeParse(req.body);
   if (!parsed.success) {
@@ -223,7 +290,7 @@ router.put("/sku-locations/:sku", async (req: Request, res: Response) => {
   }
 });
 
-router.delete("/sku-locations/:sku", async (req: Request, res: Response) => {
+router.delete("/sku-locations/:sku", requireAdmin, async (req: Request, res: Response) => {
   const sku = decodeURIComponent(req.params.sku);
   try {
     await db.delete(skuLocationsTable).where(eq(skuLocationsTable.sku, sku));
