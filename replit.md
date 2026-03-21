@@ -68,7 +68,7 @@ artifacts-monorepo/
 - `dispatch_orders` — dispatch records (recipe, dispatch_date, quantity, customer, status)
 - `app_settings` — simple key-value store for admin-configurable global settings (e.g., `mixer_capacity_kg=25`)
 - `batch_completions` — each station batch completion event with `station_type` column (for per-station counts and cascade validation)
-- `station_breaks` — break start/end times per station
+- `station_breaks` — break start/end times per station per user; duration compared against configurable defaults (app_settings: `default_break_minutes`, `default_lunch_minutes`)
 - `dpt_settings` — per-recipe DPT configuration (packsSold, isActive); used with app_settings `total_daily_batches` to compute sales-based default batch allocations
 - `timing_standards` — per-station KPI targets (minBatchesPerHour, targetBatchesPerHour)
 - `prep_completions` — per-tin prep completion tracking (plan_id, ingredient_id, recipe_id, tin_number, user_id, completed_at); unique on (plan_id, ingredient_id, recipe_id, tin_number)
@@ -93,7 +93,8 @@ All routes under `/api/`:
 - `/production-plans/stock-checks` — GET `?date=`: daily stock checks; POST: upsert stock check quantity
 - `/production-plans/:id/items/:itemId/wonly` — POST: increment wonky; DELETE: decrement wonky
 - `/production-plans/next-active` — GET: next weekday with active plan (used by prep/dough-prep stations)
-- `/app-settings/:key` — GET/PUT admin-only global settings (mixer_capacity_kg)
+- `/app-settings/:key` — GET (all users)/PUT (admin only) global settings (mixer_capacity_kg, default_break_minutes, default_lunch_minutes)
+- `/reports/breaks?from=&to=` — GET: break/lunch records with user info, duration vs allowed, per-user averages
 
 ## TypeScript & Composite Projects
 

@@ -17,6 +17,7 @@ import Sales from "@/pages/sales";
 import Dispatches from "@/pages/dispatches";
 import Suppliers from "@/pages/suppliers";
 import Settings from "@/pages/settings";
+import Reports from "@/pages/reports";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import { Loader2 } from "lucide-react";
@@ -51,6 +52,7 @@ function Router() {
               <Route path="/sales">{() => <ProtectedRoute component={Sales} pageKey="/sales" />}</Route>
               <Route path="/dispatches" component={Dispatches} />
               <Route path="/suppliers" component={Suppliers} />
+              <Route path="/reports" component={Reports} />
               <Route path="/settings" component={Settings} />
               <Route component={NotFound} />
             </Switch>

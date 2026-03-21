@@ -13,6 +13,7 @@ import {
   TrendingUp, 
   Truck,
   Building2,
+  BarChart2,
   Settings,
   LogOut,
 } from "lucide-react";
@@ -27,6 +28,7 @@ const navItems = [
   { name: "Stock Inventory", href: "/stock", icon: PackageSearch },
   { name: "Sales Data", href: "/sales", icon: TrendingUp },
   { name: "Dispatches", href: "/dispatches", icon: Truck },
+  { name: "Reports", href: "/reports", icon: BarChart2 },
 ];
 
 const bottomNavItems = [

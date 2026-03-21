@@ -9,7 +9,7 @@ import { PageHeader } from "@/components/page-header";
 import {
   Plus, Trash2, Edit2, Loader2, Users, ShieldCheck, Eye, Wrench,
   CheckCircle2, XCircle, KeyRound, Package, ChevronDown, ChevronUp,
-  Lock, Timer, BarChart2,
+  Lock, Timer, BarChart2, Coffee,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { upsertDptSettingByRecipe, updateTimingStandard, getListDptSettingsQueryKey, getListTimingStandardsQueryKey } from "@workspace/api-client-react";
@@ -412,6 +412,7 @@ export default function Settings() {
       {user?.role === "admin" && <DptSettingsSection />}
       {user?.role === "admin" && <TimingStandardsSection />}
       {user?.role === "admin" && <MixerCapacitySection />}
+      {user?.role === "admin" && <BreakDefaultsSection />}
 
       {/* Access Control — admin only */}
       {user?.role === "admin" && <AccessControlSection />}
@@ -956,6 +957,107 @@ function MixerCapacitySection() {
           <button
             onClick={handleSave}
             disabled={saving || !capacity}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BreakDefaultsSection() {
+  const [breakMins, setBreakMins] = useState<string>("15");
+  const [lunchMins, setLunchMins] = useState<string>("45");
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/app-settings/default_break_minutes", { credentials: "include" })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d?.value) setBreakMins(d.value); }),
+      fetch("/api/app-settings/default_lunch_minutes", { credentials: "include" })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d?.value) setLunchMins(d.value); }),
+    ]).finally(() => setLoaded(true));
+  }, []);
+
+  const handleSave = async () => {
+    const b = Number(breakMins);
+    const l = Number(lunchMins);
+    if (!b || b <= 0 || !l || l <= 0) return;
+    setSaving(true);
+    try {
+      const [r1, r2] = await Promise.all([
+        fetch("/api/app-settings/default_break_minutes", {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ value: String(b) }),
+        }),
+        fetch("/api/app-settings/default_lunch_minutes", {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ value: String(l) }),
+        }),
+      ]);
+      if (!r1.ok || !r2.ok) throw new Error("Failed to save");
+      setSavedMsg("Saved");
+      setTimeout(() => setSavedMsg(null), 2000);
+    } catch {
+      setSavedMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <Coffee className="w-4 h-4 text-primary" /> Break & Lunch Defaults
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Set the default allowed duration for morning breaks and lunch breaks. Actual time is tracked and compared against these values in reports.
+          </p>
+        </div>
+        {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
+      </div>
+      <div className="rounded-2xl border border-border bg-card p-5">
+        <div className="flex flex-wrap items-center gap-6">
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-medium w-36">Morning Break</label>
+            <input
+              type="number"
+              min="1"
+              max="120"
+              step="1"
+              value={breakMins}
+              onChange={e => setBreakMins(e.target.value)}
+              className="w-20 px-3 py-2 border border-border rounded-lg text-sm text-right"
+            />
+            <span className="text-sm text-muted-foreground">min</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-medium w-36">Lunch Break</label>
+            <input
+              type="number"
+              min="1"
+              max="120"
+              step="1"
+              value={lunchMins}
+              onChange={e => setLunchMins(e.target.value)}
+              className="w-20 px-3 py-2 border border-border rounded-lg text-sm text-right"
+            />
+            <span className="text-sm text-muted-foreground">min</span>
+          </div>
+          <button
+            onClick={handleSave}
+            disabled={saving || !loaded}
             className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5"
           >
             {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}

@@ -202,27 +202,30 @@ function BreakTracker({ planId, stationType, onBreakChange, onBreakActiveChange 
   const [activeBreak, setActiveBreak] = useState<ActiveBreak | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [hydrated, setHydrated] = useState(false);
+  const [defaults, setDefaults] = useState<{ breakMins: number; lunchMins: number }>({ breakMins: 15, lunchMins: 45 });
   const createBreak = useCreateStationBreak();
   const endBreak = useEndStationBreak();
 
-  // Hydrate active break from server on mount — recovers state after refresh/navigation
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/production-plans/${planId}/station-breaks/active?stationType=${encodeURIComponent(stationType)}`, {
-      credentials: "include",
-    })
-      .then(r => r.ok ? r.json() : null)
-      .then((data: { id: number; breakType: string; startedAt: string } | null) => {
-        if (cancelled) return;
-        if (data && data.id) {
-          setActiveBreak({ id: data.id, type: (data.breakType as "morning" | "lunch") ?? "morning", startedAt: data.startedAt });
-          onBreakActiveChange?.(true);
-        } else {
-          onBreakActiveChange?.(false);
-        }
-        setHydrated(true);
-      })
-      .catch(() => setHydrated(true));
+    Promise.all([
+      fetch(`/api/production-plans/${planId}/station-breaks/active?stationType=${encodeURIComponent(stationType)}`, { credentials: "include" })
+        .then(r => r.ok ? r.json() : null),
+      fetch("/api/app-settings", { credentials: "include" })
+        .then(r => r.ok ? r.json() : {})
+        .catch(() => ({})),
+    ]).then(([breakData, settings]: [{ id: number; breakType: string; startedAt: string } | null, Record<string, string>]) => {
+      if (cancelled) return;
+      if (settings.default_break_minutes) setDefaults(d => ({ ...d, breakMins: Number(settings.default_break_minutes) }));
+      if (settings.default_lunch_minutes) setDefaults(d => ({ ...d, lunchMins: Number(settings.default_lunch_minutes) }));
+      if (breakData && breakData.id) {
+        setActiveBreak({ id: breakData.id, type: (breakData.breakType as "morning" | "lunch") ?? "morning", startedAt: breakData.startedAt });
+        onBreakActiveChange?.(true);
+      } else {
+        onBreakActiveChange?.(false);
+      }
+      setHydrated(true);
+    }).catch(() => setHydrated(true));
     return () => { cancelled = true; };
   }, [planId, stationType]);
 
@@ -237,7 +240,7 @@ function BreakTracker({ planId, stationType, onBreakChange, onBreakActiveChange 
       onBreakChange?.(mins);
     };
     update();
-    const interval = setInterval(update, 30000);
+    const interval = setInterval(update, 15000);
     return () => clearInterval(interval);
   }, [activeBreak]);
 
@@ -280,22 +283,54 @@ function BreakTracker({ planId, stationType, onBreakChange, onBreakActiveChange 
   }
 
   if (activeBreak) {
+    const allowed = activeBreak.type === "lunch" ? defaults.lunchMins : defaults.breakMins;
+    const remaining = allowed - elapsed;
+    const overrun = elapsed > allowed;
+    const approaching = !overrun && remaining <= 2;
+
+    const borderColor = overrun
+      ? "border-red-300 dark:border-red-800"
+      : approaching
+        ? "border-amber-300 dark:border-amber-700"
+        : "border-green-300 dark:border-green-800";
+    const bgColor = overrun
+      ? "bg-red-50 dark:bg-red-900/10"
+      : approaching
+        ? "bg-amber-50 dark:bg-amber-900/10"
+        : "bg-green-50 dark:bg-green-900/10";
+    const textColor = overrun
+      ? "text-red-800 dark:text-red-300"
+      : approaching
+        ? "text-amber-800 dark:text-amber-300"
+        : "text-green-800 dark:text-green-300";
+    const subTextColor = overrun
+      ? "text-red-600 dark:text-red-400"
+      : approaching
+        ? "text-amber-600 dark:text-amber-400"
+        : "text-green-600 dark:text-green-400";
+
     return (
-      <div className="flex items-center gap-3 bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-900/30 rounded-xl px-4 py-3">
-        <Clock className="w-5 h-5 text-amber-600 animate-pulse" />
+      <div className={`flex items-center gap-3 ${bgColor} border ${borderColor} rounded-xl px-4 py-3`}>
+        <Clock className={`w-5 h-5 ${subTextColor} animate-pulse`} />
         <div>
-          <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
-            {activeBreak.type === "morning" ? "Morning" : "Lunch"} break · {elapsed} min
+          <p className={`text-sm font-medium ${textColor}`}>
+            {activeBreak.type === "morning" ? "Morning Break" : "Lunch Break"} · {elapsed} / {allowed} min
           </p>
-          <p className="text-xs text-amber-600 dark:text-amber-400">
+          <p className={`text-xs ${subTextColor}`}>
             Started {format(parseISO(activeBreak.startedAt), "HH:mm")}
+            {overrun && ` · ${elapsed - allowed} min over`}
+            {!overrun && remaining > 0 && ` · ${remaining} min remaining`}
           </p>
         </div>
         <button
           onClick={stopBreak}
-          className="ml-auto px-3 py-1.5 bg-amber-600 text-white text-sm rounded-lg hover:bg-amber-700 transition-colors font-medium"
+          className={`ml-auto px-4 py-2 text-white text-sm rounded-lg font-semibold transition-colors ${
+            overrun
+              ? "bg-red-600 hover:bg-red-700"
+              : "bg-amber-600 hover:bg-amber-700"
+          }`}
         >
-          End Break
+          End {activeBreak.type === "morning" ? "Break" : "Lunch"}
         </button>
       </div>
     );
@@ -309,14 +344,14 @@ function BreakTracker({ planId, stationType, onBreakChange, onBreakActiveChange 
         className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs border border-border rounded-lg hover:bg-secondary/60 transition-colors"
       >
         <Coffee className="w-3.5 h-3.5" />
-        Morning
+        Morning ({defaults.breakMins}m)
       </button>
       <button
         onClick={() => startBreak("lunch")}
         className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs border border-border rounded-lg hover:bg-secondary/60 transition-colors"
       >
         <Utensils className="w-3.5 h-3.5" />
-        Lunch
+        Lunch ({defaults.lunchMins}m)
       </button>
     </div>
   );
@@ -1826,6 +1861,7 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const [stockLoaded, setStockLoaded] = useState(false);
   const [savingStock, setSavingStock] = useState<Record<number, boolean>>({});
   const [selectedIngredientId, setSelectedIngredientId] = useState<number | null>(null);
+  const [isOnBreak, setIsOnBreak] = useState(false);
 
   const checkDate = nextPlan?.planDate ?? plan.planDate;
 
@@ -2133,8 +2169,12 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                               <button
                                 key={tn}
                                 onClick={() => toggleTin(selectedIng.ingredientId, recipe.recipeId, tn)}
+                                disabled={isOnBreak}
                                 className={cn(
                                   "relative flex flex-col items-center border-2 rounded-2xl px-4 py-4 transition-all active:scale-95",
+                                  isOnBreak
+                                    ? "opacity-50 cursor-not-allowed"
+                                    : "",
                                   done
                                     ? "bg-emerald-50 dark:bg-emerald-900/30 border-emerald-400 dark:border-emerald-600 shadow-sm"
                                     : "bg-background border-border hover:border-primary hover:shadow-md"
@@ -2250,7 +2290,7 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
         </div>
       )}
 
-      <BreakTracker planId={targetPlanId} stationType="main_prep" />
+      <BreakTracker planId={targetPlanId} stationType="main_prep" onBreakActiveChange={setIsOnBreak} />
     </div>
   );
 }
@@ -2261,6 +2301,7 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
 // ──────────────────────────────────────────────────────────────────────────────
 function PrepVegStation({ plan }: { plan: ProductionPlanDetail }) {
   const [mode, setMode] = useState<"fullscreen" | "overview">("fullscreen");
+  const [isOnBreak, setIsOnBreak] = useState(false);
   const { recipes, isLoading, nextPlan } = usePrepByRecipe("prep_veg", plan.planDate);
 
   // Build full-screen items: recipe header → each veg ingredient for that recipe
@@ -2348,7 +2389,7 @@ function PrepVegStation({ plan }: { plan: ProductionPlanDetail }) {
         </div>
       )}
 
-      <BreakTracker planId={plan.id} stationType="prep_veg" />
+      <BreakTracker planId={plan.id} stationType="prep_veg" onBreakActiveChange={setIsOnBreak} />
     </div>
   );
 }
@@ -2359,6 +2400,7 @@ function PrepVegStation({ plan }: { plan: ProductionPlanDetail }) {
 // ──────────────────────────────────────────────────────────────────────────────
 function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
   const [mode, setMode] = useState<"fullscreen" | "overview">("fullscreen");
+  const [isOnBreak, setIsOnBreak] = useState(false);
   const { recipes, isLoading, nextPlan } = usePrepByRecipe("prep_bases", plan.planDate);
 
   // Build full-screen items — per recipe → ingredients + tin badge per recipe
@@ -2465,7 +2507,7 @@ function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
         </div>
       )}
 
-      <BreakTracker planId={plan.id} stationType="prep_bases" />
+      <BreakTracker planId={plan.id} stationType="prep_bases" onBreakActiveChange={setIsOnBreak} />
     </div>
   );
 }
@@ -2476,6 +2518,7 @@ function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
 // ──────────────────────────────────────────────────────────────────────────────
 function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
   const [mode, setMode] = useState<"fullscreen" | "overview">("fullscreen");
+  const [isOnBreak, setIsOnBreak] = useState(false);
   const { recipes, isLoading, nextPlan } = usePrepByRecipe("prep_meat", plan.planDate);
 
   const totalTrays = recipes.reduce((sum, r) => sum + (r.trayCount ?? 0), 0);
@@ -2651,7 +2694,7 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
         </div>
       )}
 
-      <BreakTracker planId={plan.id} stationType="prep_meat" />
+      <BreakTracker planId={plan.id} stationType="prep_meat" onBreakActiveChange={setIsOnBreak} />
     </div>
   );
 }
@@ -2713,6 +2756,7 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const queryClient = useQueryClient();
   const { data: doughData, loading: doughLoading } = useDoughPrepData(plan.id);
   const [activeMix, setActiveMix] = useState<number>(1);
+  const [isOnBreak, setIsOnBreak] = useState(false);
 
   const createBatch = useCreateBatchCompletion({
     mutation: {
@@ -2780,7 +2824,7 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
           />
         </div>
         <div className="mt-3 pt-3 border-t border-border/50">
-          <BreakTracker planId={plan.id} stationType="dough_prep" />
+          <BreakTracker planId={plan.id} stationType="dough_prep" onBreakActiveChange={setIsOnBreak} />
         </div>
       </div>
 
@@ -2959,7 +3003,7 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <button
                     onClick={() => removeBatch(item)}
-                    disabled={dpCount === 0}
+                    disabled={dpCount === 0 || isOnBreak}
                     className="w-9 h-9 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
                   >
                     <Minus className="w-4 h-4" />
@@ -2969,7 +3013,7 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                   </div>
                   <button
                     onClick={() => addBatch(item)}
-                    disabled={isComplete}
+                    disabled={isComplete || isOnBreak}
                     className={cn(
                       "w-9 h-9 flex items-center justify-center rounded-full transition-colors",
                       isComplete

@@ -1,11 +1,25 @@
-import { Router, type IRouter } from "express";
-import { db, appSettingsTable } from "@workspace/db";
+import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
+import { db, appSettingsTable, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
 
 const router: IRouter = Router();
 
-// GET /app-settings — returns all app settings as key-value record
+async function requireAdminForWrite(req: Request, res: Response, next: NextFunction) {
+  if (req.method === "GET") { next(); return; }
+  if (req.session.userRole === "admin") { next(); return; }
+  if (req.session.userId && !req.session.userRole) {
+    const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
+    if (user) {
+      req.session.userRole = user.role as "admin" | "manager" | "viewer";
+      if (user.role === "admin") { next(); return; }
+    }
+  }
+  res.status(403).json({ error: "Admin access required" });
+}
+
+router.use(requireAdminForWrite);
+
 router.get("/", async (_req, res) => {
   const rows = await db.select().from(appSettingsTable);
   const result: Record<string, string> = {};
@@ -15,7 +29,6 @@ router.get("/", async (_req, res) => {
   res.json(result);
 });
 
-// GET /app-settings/:key — get a single setting value
 router.get("/:key", async (req, res) => {
   const { key } = req.params;
   const [row] = await db.select().from(appSettingsTable).where(eq(appSettingsTable.key, key));
@@ -26,7 +39,6 @@ router.get("/:key", async (req, res) => {
   res.json({ key: row.key, value: row.value });
 });
 
-// PUT /app-settings/:key — upsert a setting value (admin only enforced in router)
 const PutBody = z.object({ value: z.string() });
 
 router.put("/:key", async (req, res) => {
