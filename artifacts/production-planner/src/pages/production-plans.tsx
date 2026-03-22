@@ -1397,6 +1397,42 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
         </div>
       )}
 
+      {/* Batch breakdown */}
+      {(plan.items ?? []).some(it => (it.batchesTarget ?? 0) > 0) && (
+        <div className="bg-card border border-border rounded-xl px-4 py-3">
+          <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">Batches</p>
+          <div className="flex flex-wrap gap-2">
+            {(plan.items ?? [])
+              .filter(it => (it.batchesTarget ?? 0) > 0)
+              .sort((a, b) => (a.orderPosition ?? 0) - (b.orderPosition ?? 0))
+              .map(it => {
+                const done = (it.batchesComplete ?? 0) >= (it.batchesTarget ?? 0) && (it.batchesTarget ?? 0) > 0;
+                return (
+                  <span
+                    key={it.id}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border",
+                      done
+                        ? "bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-700/40 dark:text-emerald-400"
+                        : "bg-secondary/60 border-border text-foreground"
+                    )}
+                  >
+                    <span
+                      className="w-2 h-2 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: it.recipeColor ?? "#94a3b8" }}
+                    />
+                    <span>{it.recipeName ?? `Recipe #${it.recipeId}`}</span>
+                    <span className={cn("font-bold tabular-nums", done ? "text-emerald-600 dark:text-emerald-400" : "text-primary")}>
+                      ×{it.batchesTarget}
+                    </span>
+                    {done && <span className="text-emerald-500">✓</span>}
+                  </span>
+                );
+              })}
+          </div>
+        </div>
+      )}
+
       {/* Station navigation */}
       <div className="bg-card border border-border rounded-xl p-4">
         <h2 className="font-semibold text-sm mb-3 flex items-center gap-2">
