@@ -1791,13 +1791,6 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                 {currentItem.batchesTarget ?? 0}
               </p>
             </div>
-            <div className="text-4xl font-light text-muted-foreground hidden sm:block">·</div>
-            <div className="text-center hidden sm:block">
-              <p className="text-xs font-medium text-blue-600 dark:text-blue-400 uppercase tracking-wide mb-1">Mixed</p>
-              <p className="text-4xl font-bold font-display tabular-nums text-blue-600 dark:text-blue-400">
-                {getPrevStationCount(currentItem, stationType)}
-              </p>
-            </div>
             {currentItem.maxBatchesPerTin && (currentItem.batchesTarget ?? 0) > 0 && (
               <>
                 <div className="text-4xl font-light text-muted-foreground hidden sm:block">·</div>
