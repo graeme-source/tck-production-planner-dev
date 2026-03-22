@@ -653,18 +653,18 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                               />
                             </th>
                             <th className="py-2 px-2 text-left font-medium text-muted-foreground">Recipe</th>
-                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Current packs in the production fridge">Factory Number</th>
-                            <th className="py-2 px-2 text-right font-medium whitespace-nowrap text-red-500" title={deliveryDates[0] ? `Dispatch going out ${format(parseISO(deliveryDates[0]), "EEE d MMM")}` : "Next dispatch"}>
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground min-w-[70px]" title="Current packs in the production fridge">Factory Number</th>
+                            <th className="py-2 px-2 text-right font-medium text-red-500 min-w-[70px]" title={deliveryDates[0] ? `Dispatch going out ${format(parseISO(deliveryDates[0]), "EEE d MMM")}` : "Next dispatch"}>
                               {deliveryDates[0] ? `\u2212 ${format(parseISO(deliveryDates[0]), "EEE")} Dispatch` : "\u2212 Dispatch"}
                             </th>
-                            <th className="py-2 px-2 text-right font-medium whitespace-nowrap text-green-600" title={calcData?.prevProductionDate ? `Production coming in from ${format(parseISO(calcData.prevProductionDate), "EEE d MMM")} plan` : "Previous day's production output"}>
+                            <th className="py-2 px-2 text-right font-medium text-green-600 min-w-[70px]" title={calcData?.prevProductionDate ? `Production coming in from ${format(parseISO(calcData.prevProductionDate), "EEE d MMM")} plan` : "Previous day's production output"}>
                               {calcData?.prevProductionDate ? `+ ${format(parseISO(calcData.prevProductionDate), "EEE")} Production` : "+ Prev Production"}
                             </th>
                             <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Estimated factory number at start of production day">=</th>
-                            <th className="py-2 px-2 text-right font-medium whitespace-nowrap text-red-500" title={deliveryDates[1] ? `Dispatch going out ${format(parseISO(deliveryDates[1]), "EEE d MMM")}` : "Dispatch 2"}>
+                            <th className="py-2 px-2 text-right font-medium text-red-500 min-w-[70px]" title={deliveryDates[1] ? `Dispatch going out ${format(parseISO(deliveryDates[1]), "EEE d MMM")}` : "Dispatch 2"}>
                               {deliveryDates[1] ? `\u2212 ${format(parseISO(deliveryDates[1]), "EEE")} Dispatch` : "\u2212 Dispatch"}
                             </th>
-                            <th className="py-2 px-2 text-right font-medium whitespace-nowrap text-red-500" title={deliveryDates[2] ? `Dispatch going out ${format(parseISO(deliveryDates[2]), "EEE d MMM")}` : "Dispatch 3"}>
+                            <th className="py-2 px-2 text-right font-medium text-red-500 min-w-[70px]" title={deliveryDates[2] ? `Dispatch going out ${format(parseISO(deliveryDates[2]), "EEE d MMM")}` : "Dispatch 3"}>
                               {deliveryDates[2] ? `\u2212 ${format(parseISO(deliveryDates[2]), "EEE")} Dispatch` : "\u2212 Dispatch"}
                             </th>
                             <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Packs short — need to produce at least this many">Deficit</th>
@@ -676,7 +676,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                             </th>
                             <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Suggested batches to produce">Sugg.</th>
                             <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Batches you want to make">Batches</th>
-                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Projected factory number after today's production and all dispatches">Next Factory Number</th>
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground min-w-[70px]" title="Projected factory number after today's production and all dispatches">Next Factory Number</th>
                             <th className="w-7 py-2 px-1.5" />
                           </tr>
                         </thead>
@@ -1089,17 +1089,17 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
                           />
                         </th>
                         <th className="py-2 px-2 text-left font-medium text-muted-foreground">Recipe</th>
-                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Factory Number</th>
-                        <th className="py-2 px-2 text-right font-medium whitespace-nowrap text-red-500">&minus; Dispatch</th>
-                        <th className="py-2 px-2 text-right font-medium whitespace-nowrap text-green-600">+ Production</th>
+                        <th className="py-2 px-2 text-right font-medium text-muted-foreground min-w-[70px]">Factory Number</th>
+                        <th className="py-2 px-2 text-right font-medium text-red-500 min-w-[70px]">&minus; Dispatch</th>
+                        <th className="py-2 px-2 text-right font-medium text-green-600 min-w-[70px]">+ Production</th>
                         <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">=</th>
-                        <th className="py-2 px-2 text-right font-medium whitespace-nowrap text-red-500">&minus; Dispatch</th>
-                        <th className="py-2 px-2 text-right font-medium whitespace-nowrap text-red-500">&minus; Dispatch</th>
+                        <th className="py-2 px-2 text-right font-medium text-red-500 min-w-[70px]">&minus; Dispatch</th>
+                        <th className="py-2 px-2 text-right font-medium text-red-500 min-w-[70px]">&minus; Dispatch</th>
                         <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Deficit</th>
                         <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">DPT%</th>
                         <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Sugg.</th>
                         <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Batches</th>
-                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Next Factory Number</th>
+                        <th className="py-2 px-2 text-right font-medium text-muted-foreground min-w-[70px]">Next Factory Number</th>
                         <th className="w-7 py-2 px-1.5" />
                       </tr>
                     </thead>
