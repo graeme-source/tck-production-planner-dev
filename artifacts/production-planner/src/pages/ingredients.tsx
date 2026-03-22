@@ -435,14 +435,24 @@ export default function Ingredients() {
   const { createIngredient, updateIngredient, deleteIngredient } = useAppMutations();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  const [filterCategory, setFilterCategory] = useState("all");
+  const [filterStockCheck, setFilterStockCheck] = useState("all");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
 
-  const filtered = ingredients?.filter(i =>
-    i.name.toLowerCase().includes(search.toLowerCase()) ||
-    (i.brand ?? "").toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = ingredients?.filter(i => {
+    const matchesSearch =
+      i.name.toLowerCase().includes(search.toLowerCase()) ||
+      (i.brand ?? "").toLowerCase().includes(search.toLowerCase());
+    const matchesCategory =
+      filterCategory === "all" ||
+      (filterCategory === "uncategorised" ? !i.category : i.category === filterCategory);
+    const matchesStockCheck =
+      filterStockCheck === "all" ||
+      (filterStockCheck === "enabled" ? i.stockCheckEnabled : !i.stockCheckEnabled);
+    return matchesSearch && matchesCategory && matchesStockCheck;
+  });
 
   const supplierMap = Object.fromEntries((suppliers ?? []).map(s => [s.id, s.name]));
 
@@ -914,8 +924,8 @@ export default function Ingredients() {
 
       {/* Table */}
       <div className="rounded-2xl border border-border overflow-hidden bg-card">
-        <div className="p-4 border-b border-border flex items-center gap-4 bg-secondary/20">
-          <div className="relative flex-1 max-w-md">
+        <div className="p-4 border-b border-border flex flex-wrap items-center gap-3 bg-secondary/20">
+          <div className="relative flex-1 min-w-48">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <input
               value={search}
@@ -924,7 +934,39 @@ export default function Ingredients() {
               className="w-full pl-9 pr-4 py-2 bg-background border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
           </div>
-          <span className="text-sm text-muted-foreground whitespace-nowrap">{filtered?.length ?? 0} items</span>
+
+          <select
+            value={filterCategory}
+            onChange={e => setFilterCategory(e.target.value)}
+            className="px-3 py-2 bg-background border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 appearance-none pr-8 cursor-pointer"
+          >
+            <option value="all">All Types</option>
+            {INGREDIENT_CATEGORIES.filter(c => c.value !== "").map(c => (
+              <option key={c.value} value={c.value}>{c.label}</option>
+            ))}
+            <option value="uncategorised">Uncategorised</option>
+          </select>
+
+          <select
+            value={filterStockCheck}
+            onChange={e => setFilterStockCheck(e.target.value)}
+            className="px-3 py-2 bg-background border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 appearance-none pr-8 cursor-pointer"
+          >
+            <option value="all">All Stock Check</option>
+            <option value="enabled">Stock Checked ✓</option>
+            <option value="disabled">Not Checked</option>
+          </select>
+
+          {(filterCategory !== "all" || filterStockCheck !== "all" || search) && (
+            <button
+              onClick={() => { setFilterCategory("all"); setFilterStockCheck("all"); setSearch(""); }}
+              className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 whitespace-nowrap"
+            >
+              Clear filters
+            </button>
+          )}
+
+          <span className="text-sm text-muted-foreground whitespace-nowrap ml-auto">{filtered?.length ?? 0} items</span>
         </div>
 
         {isLoading ? (
