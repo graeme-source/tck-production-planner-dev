@@ -922,8 +922,10 @@ router.post("/:id/batch-completions", async (req, res) => {
   }
 
   // Atomic: insert completion and update item status
+  // Only increment batches_complete when wrapping station completes (final production step)
   const completedAtDate = completedAt ? new Date(completedAt) : new Date();
   const startedAtDate = startedAt ? new Date(startedAt) : null;
+  const isWrapping = stationType === "wrapping";
 
   const result = await db.execute(sql`
     WITH station_check AS (
@@ -934,7 +936,7 @@ router.post("/:id/batch-completions", async (req, res) => {
     incremented AS (
       UPDATE production_plan_items
       SET
-        batches_complete = batches_complete + 1,
+        batches_complete = CASE WHEN ${isWrapping}::boolean THEN batches_complete + 1 ELSE batches_complete END,
         status = 'in-progress'
       WHERE id = ${Number(planItemId)}
         AND (${target} = 0 OR (SELECT cnt FROM station_check) < ${target})
@@ -1023,6 +1025,7 @@ router.post("/:id/batch-completions/bulk", async (req, res) => {
   const values = Array.from({ length: n }, () =>
     sql`(${Number(planItemId)}, ${stationType ?? null}, ${sessionUserId}, ${now}::timestamptz)`
   );
+  const isBulkWrapping = stationType === "wrapping";
 
   const result = await db.execute(sql`
     WITH inserted AS (
@@ -1032,7 +1035,7 @@ router.post("/:id/batch-completions/bulk", async (req, res) => {
     )
     UPDATE production_plan_items
     SET
-      batches_complete = batches_complete + (SELECT COUNT(*) FROM inserted)::int,
+      batches_complete = CASE WHEN ${isBulkWrapping}::boolean THEN batches_complete + (SELECT COUNT(*) FROM inserted)::int ELSE batches_complete END,
       status = 'in-progress'
     WHERE id = ${Number(planItemId)}
     RETURNING id
@@ -1067,14 +1070,16 @@ router.delete("/:id/batch-completions/bulk", async (req, res) => {
     return;
   }
 
-  const conditions = [eq(batchCompletionsTable.planItemId, Number(planItemId))];
-  if (stationType) conditions.push(eq(batchCompletionsTable.stationType, stationType));
-  if (!isAdmin && sessionUserId) conditions.push(eq(batchCompletionsTable.userId, sessionUserId));
+  const bulkUndoConditions = [eq(batchCompletionsTable.planItemId, Number(planItemId))];
+  if (stationType) bulkUndoConditions.push(eq(batchCompletionsTable.stationType, stationType));
+  if (!isAdmin && sessionUserId) bulkUndoConditions.push(eq(batchCompletionsTable.userId, sessionUserId));
+
+  const isBulkUndoWrapping = stationType === "wrapping";
 
   const result = await db.execute(sql`
     WITH targets AS (
       SELECT id FROM batch_completions
-      WHERE ${and(...conditions)}
+      WHERE ${and(...bulkUndoConditions)}
       ORDER BY completed_at DESC
       LIMIT ${n}
     ),
@@ -1085,9 +1090,9 @@ router.delete("/:id/batch-completions/bulk", async (req, res) => {
     )
     UPDATE production_plan_items
     SET
-      batches_complete = GREATEST(batches_complete - (SELECT COUNT(*) FROM deleted)::int, 0),
+      batches_complete = CASE WHEN ${isBulkUndoWrapping}::boolean THEN GREATEST(batches_complete - (SELECT COUNT(*) FROM deleted)::int, 0) ELSE batches_complete END,
       status = CASE
-        WHEN GREATEST(batches_complete - (SELECT COUNT(*) FROM deleted)::int, 0) = 0 THEN 'pending'
+        WHEN ${isBulkUndoWrapping}::boolean AND GREATEST(batches_complete - (SELECT COUNT(*) FROM deleted)::int, 0) = 0 THEN 'pending'
         WHEN status = 'complete' THEN 'in-progress'
         ELSE status
       END
@@ -1151,19 +1156,16 @@ router.delete("/:id/batch-completions/last", async (req, res) => {
     res.status(400).json({ error: "planItemId does not belong to this plan" });
     return;
   }
-  if ((planItem.batchesComplete ?? 0) === 0) {
-    res.status(409).json({ error: "No completions to undo" });
-    return;
-  }
-
   // Build ownership filter: non-admins can only undo their own completions
   const conditions = [eq(batchCompletionsTable.planItemId, Number(planItemId))];
   if (stationType) conditions.push(eq(batchCompletionsTable.stationType, stationType));
   if (!isAdmin && sessionUserId) conditions.push(eq(batchCompletionsTable.userId, sessionUserId));
 
-  // Atomic CTE: find the most recent matching completion, delete it, and ONLY THEN decrement the counter.
-  // If no matching row is found the DELETE returns 0 rows, so the UPDATE is skipped entirely,
-  // ensuring batches_complete is never decremented without a corresponding deletion.
+  // Only decrement batches_complete when undoing a wrapping completion
+  const isUndoWrapping = stationType === "wrapping";
+
+  // Atomic CTE: find the most recent matching completion, delete it, and ONLY THEN
+  // decrement the counter (only for wrapping station — other stations don't affect the overall count).
   const result = await db.execute(sql`
     WITH target AS (
       SELECT id FROM batch_completions
@@ -1178,9 +1180,9 @@ router.delete("/:id/batch-completions/last", async (req, res) => {
     )
     UPDATE production_plan_items
     SET
-      batches_complete = GREATEST(batches_complete - 1, 0),
+      batches_complete = CASE WHEN ${isUndoWrapping}::boolean THEN GREATEST(batches_complete - 1, 0) ELSE batches_complete END,
       status = CASE
-        WHEN GREATEST(batches_complete - 1, 0) = 0 THEN 'pending'
+        WHEN ${isUndoWrapping}::boolean AND GREATEST(batches_complete - 1, 0) = 0 THEN 'pending'
         WHEN status = 'complete' THEN 'in-progress'
         ELSE status
       END
