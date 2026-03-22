@@ -807,9 +807,12 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
               className="px-5 py-2 text-sm bg-primary text-primary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center gap-2 transition-opacity shadow-md shadow-primary/20 hover:opacity-90"
             >
               {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-              Activate Plan ({includedCount})
+              Activate & Lock ({includedCount})
             </button>
           </div>
+          <p className="text-[10px] text-muted-foreground text-right mt-1">
+            Activating locks batch numbers — they won't change as new orders come in.
+          </p>
         </div>
       </DialogContent>
     </Dialog>
@@ -1136,9 +1139,12 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
               className="px-5 py-2 text-sm bg-primary text-primary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center gap-2 shadow-md shadow-primary/20 hover:opacity-90 transition-opacity"
             >
               {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-              Activate Plan ({includedCount})
+              Activate & Lock ({includedCount})
             </button>
           </div>
+          <p className="text-[10px] text-muted-foreground text-right mt-1">
+            Activating locks batch numbers — they won't change as new orders come in.
+          </p>
         </div>
       </DialogContent>
     </Dialog>
@@ -1253,7 +1259,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                 onClick={() => handleStatusChange("active")}
                 className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
               >
-                Activate Plan
+                Activate & Lock
               </button>
             </>
           )}
