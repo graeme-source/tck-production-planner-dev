@@ -545,6 +545,7 @@ export const CreateRecipeBody = zod.object({
   baseType: zod.string().nullish(),
   baseWeightGrams: zod.number().nullish(),
   isCoreMenu: zod.boolean().optional(),
+  color: zod.string().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -707,6 +708,7 @@ export const UpdateRecipeBody = zod.object({
   baseType: zod.string().nullish(),
   baseWeightGrams: zod.number().nullish(),
   isCoreMenu: zod.boolean().optional(),
+  color: zod.string().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),

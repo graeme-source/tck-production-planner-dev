@@ -26,6 +26,7 @@ const schema = z.object({
   maxBatchesPerTin: z.preprocess(v => (v === "" || v == null ? null : Number(v)), z.number().int().positive().nullable().optional()),
   sopUrl: z.string().optional(),
   isCoreMenu: z.boolean().optional(),
+  color: z.string().optional(),
   ingredients: z.array(z.object({
     ingredientId: z.coerce.number().min(1, "Select ingredient"),
     quantity: z.coerce.number().min(0.001, "Must be > 0"),
@@ -238,10 +239,19 @@ function RecipeForm({
             <label className="text-sm font-medium mb-1 block">SOP URL</label>
             <input type="url" {...register("sopUrl")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="https://…" />
           </div>
-          <div className="col-span-2 flex items-center gap-2">
-            <input type="checkbox" id="isCoreMenu" {...register("isCoreMenu")} className="rounded border-border" />
-            <label htmlFor="isCoreMenu" className="text-sm font-medium">Core Menu Item</label>
-            <span className="text-xs text-muted-foreground">(always shows in Production Fridge stock &amp; calculator)</span>
+          <div className="col-span-2 flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-2">
+              <input type="checkbox" id="isCoreMenu" {...register("isCoreMenu")} className="rounded border-border" />
+              <label htmlFor="isCoreMenu" className="text-sm font-medium">Core Menu Item</label>
+              <span className="text-xs text-muted-foreground">(always shows in Production Fridge stock &amp; calculator)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <label htmlFor="recipeColor" className="text-sm font-medium">Colour</label>
+              <input type="color" id="recipeColor" {...register("color")} className="w-8 h-8 rounded border border-border cursor-pointer p-0.5" />
+              {watch("color") && (
+                <button type="button" onClick={() => setValue("color", "")} className="text-xs text-muted-foreground hover:text-foreground">Clear</button>
+              )}
+            </div>
           </div>
           <div className="col-span-2">
             <label className="text-sm font-medium mb-1 block">Description (optional)</label>
@@ -470,10 +480,11 @@ function EditRecipeDialog({
         maxBatchesPerTin: detail.maxBatchesPerTin != null ? Number(detail.maxBatchesPerTin) : null,
         sopUrl: detail.sopUrl ?? "",
         isCoreMenu: detail.isCoreMenu ?? false,
+        color: (detail as any).color ?? "",
         ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false })),
         subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false })),
       }
-    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, ingredients: [], subRecipes: [] };
+    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, color: "", ingredients: [], subRecipes: [] };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -727,7 +738,7 @@ function RecipeCard({ recipe, onEdit, onDelete, onBreakdown }: { recipe: RecipeI
       <div className={`bg-gradient-to-br ${topBg} flex flex-col justify-between px-5 pt-4 pb-3 gap-2`}>
         <div className="min-w-0">
           {recipe.category && <p className="text-xs font-semibold text-primary uppercase tracking-wider">{recipe.category}</p>}
-          <p className="font-semibold text-sm leading-tight truncate">{recipe.name}</p>
+          <p className="font-semibold text-sm leading-tight truncate" style={(recipe as any).color ? { color: (recipe as any).color } : undefined}>{recipe.name}</p>
         </div>
         <div className="flex items-center justify-between">
           <MarginBadge margin={margin} />
@@ -821,7 +832,7 @@ export default function Recipes() {
   const addDefaults: FormValues = {
     name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "",
     packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined,
-    tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, ingredients: [], subRecipes: [],
+    tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, color: "", ingredients: [], subRecipes: [],
   };
 
   return (

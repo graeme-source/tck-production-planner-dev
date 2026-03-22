@@ -106,6 +106,7 @@ interface PlanItem {
   id: string;
   recipeId: number;
   recipeName: string;
+  recipeColor: string | null;
   included: boolean;
   suggestedBatches: number;
   batchesTarget: number;
@@ -192,7 +193,7 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
       </td>
       <td className="py-2 px-2">
         <div className="flex items-center gap-1.5">
-          <span className="font-medium text-sm">{item.recipeName}</span>
+          <span className="font-medium text-sm" style={item.recipeColor ? { color: item.recipeColor } : undefined}>{item.recipeName}</span>
           {item.sopUrl && (
             <a href={item.sopUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-primary transition-colors" title="Open SOP">
               <ExternalLink className="w-3 h-3" />
@@ -262,6 +263,7 @@ interface CreatePlanDialogProps {
 interface CalcRecipe {
   recipeId: number;
   recipeName: string;
+  color: string | null;
   portionsPerBatch: number;
   packSize: number;
   packsPerBatch: number;
@@ -392,6 +394,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
         id: `calc-${r.recipeId}`,
         recipeId: r.recipeId,
         recipeName: r.recipeName,
+        recipeColor: r.color ?? null,
         included: alloc[idx].suggestedBatches > 0 || r.deficit > 0,
         suggestedBatches: alloc[idx].suggestedBatches,
         batchesTarget: alloc[idx].suggestedBatches,
@@ -520,6 +523,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
       id: `manual-${recipeId}`,
       recipeId,
       recipeName: recipe.name,
+      recipeColor: (recipe as any).color ?? null,
       included: true,
       suggestedBatches: 0,
       batchesTarget: 0,
@@ -888,6 +892,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
       id: `existing-${it.id}`,
       recipeId: it.recipeId,
       recipeName: it.recipeName ?? `Recipe #${it.recipeId}`,
+      recipeColor: it.recipeColor ?? null,
       included: true,
       suggestedBatches: 0,
       batchesTarget: it.batchesTarget ?? 0,
@@ -1011,6 +1016,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
       id: `add-${recipeId}`,
       recipeId,
       recipeName: recipe.name,
+      recipeColor: (recipe as any).color ?? null,
       included: true,
       suggestedBatches: 0,
       batchesTarget: 0,
@@ -1491,7 +1497,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                   <td className="py-3 px-4 text-muted-foreground text-sm">{item.orderPosition}</td>
                   <td className="py-3 px-4">
                     <div className="flex items-center gap-2">
-                      <span className="font-medium">{item.recipeName ?? `Recipe #${item.recipeId}`}</span>
+                      <span className="font-medium" style={item.recipeColor ? { color: item.recipeColor } : undefined}>{item.recipeName ?? `Recipe #${item.recipeId}`}</span>
                       {item.sopUrl && (
                         <a href={item.sopUrl} target="_blank" rel="noopener noreferrer"
                           className="text-muted-foreground hover:text-primary transition-colors" title="Open SOP">

@@ -96,7 +96,7 @@ export default function Sales() {
             {sales?.map((sale) => (
               <tr key={sale.id} className="hover:bg-secondary/10">
                 <td className="px-6 py-4 text-muted-foreground">{format(new Date(sale.saleDate), 'MMM do, yyyy')}</td>
-                <td className="px-6 py-4 font-bold text-foreground">{sale.recipeName}</td>
+                <td className="px-6 py-4 font-bold" style={(sale as any).recipeColor ? { color: (sale as any).recipeColor } : undefined}>{sale.recipeName}</td>
                 <td className="px-6 py-4">
                   <span className="bg-secondary px-2 py-1 rounded-md text-xs">{sale.channel || 'Direct'}</span>
                 </td>

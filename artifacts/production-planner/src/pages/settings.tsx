@@ -754,7 +754,7 @@ function DptSettingsSection() {
                   const batches = getDefaultBatches(recipe.id);
                   return (
                     <tr key={recipe.id} className="hover:bg-secondary/10 transition-colors">
-                      <td className="px-5 py-3.5 font-medium">{recipe.name}</td>
+                      <td className="px-5 py-3.5 font-medium" style={recipe.color ? { color: recipe.color } : undefined}>{recipe.name}</td>
                       <td className="px-5 py-3.5 text-right">
                         <input
                           type="number"

@@ -356,6 +356,7 @@ router.get("/calculate", async (req, res) => {
       tinSize: recipesTable.tinSize,
       maxBatchesPerTin: recipesTable.maxBatchesPerTin,
       sopUrl: recipesTable.sopUrl,
+      color: recipesTable.color,
     })
     .from(dptSettingsTable)
     .innerJoin(recipesTable, eq(dptSettingsTable.recipeId, recipesTable.id))
@@ -450,6 +451,7 @@ router.get("/calculate", async (req, res) => {
       tinSize: r.tinSize ?? null,
       maxBatchesPerTin: r.maxBatchesPerTin ? Number(r.maxBatchesPerTin) : null,
       sopUrl: r.sopUrl ?? null,
+      color: r.color ?? null,
       fridgeStock: Math.round(fridgeStock),
       prevProduction,
       estimatedFactoryNumber: Math.round(estimatedFactoryNumber),
@@ -643,6 +645,7 @@ router.get("/:id", async (req, res) => {
       fillWeightGrams: recipesTable.fillWeightGrams,
       baseType: recipesTable.baseType,
       baseWeightGrams: recipesTable.baseWeightGrams,
+      recipeColor: recipesTable.color,
     })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))

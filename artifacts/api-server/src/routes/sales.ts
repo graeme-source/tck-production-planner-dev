@@ -17,6 +17,7 @@ router.get("/", async (req, res) => {
       id: salesEntriesTable.id,
       recipeId: salesEntriesTable.recipeId,
       recipeName: recipesTable.name,
+      recipeColor: recipesTable.color,
       saleDate: salesEntriesTable.saleDate,
       quantitySold: salesEntriesTable.quantitySold,
       channel: salesEntriesTable.channel,

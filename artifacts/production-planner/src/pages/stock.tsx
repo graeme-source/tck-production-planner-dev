@@ -108,7 +108,7 @@ export default function Stock() {
   }, [stock]);
 
   const latestByLocation = useMemo(() => {
-    const result: Record<string, Record<string, { quantity: number; unit: string; name: string; itemType: string; checkedAt: string }>> = {};
+    const result: Record<string, Record<string, { quantity: number; unit: string; name: string; itemType: string; checkedAt: string; color?: string | null }>> = {};
     for (const loc of LOCATIONS) {
       result[loc.key] = {};
     }
@@ -124,6 +124,7 @@ export default function Stock() {
           name: name || 'Unknown',
           itemType: entry.itemType,
           checkedAt: entry.checkedAt,
+          color: (entry as any).recipeColor ?? null,
         };
       }
     }
@@ -139,6 +140,7 @@ export default function Stock() {
               name: r.name,
               itemType: "recipe",
               checkedAt: "",
+              color: r.color ?? null,
             };
           }
         }
@@ -264,7 +266,7 @@ export default function Stock() {
                     <tr key={idx} className="hover:bg-secondary/10">
                       <td className="px-6 py-3 font-medium flex items-center gap-2">
                         <PackageSearch className={`w-4 h-4 ${item.itemType === 'recipe' ? 'text-accent' : 'text-primary'}`} />
-                        {item.name}
+                        <span style={item.itemType === 'recipe' && item.color ? { color: item.color } : undefined}>{item.name}</span>
                       </td>
                       <td className="px-6 py-3">
                         <span className={`text-xs px-2 py-1 rounded-md uppercase tracking-wider ${item.itemType === 'recipe' ? 'bg-accent/10 text-accent' : 'bg-primary/10 text-primary'}`}>
@@ -313,7 +315,9 @@ export default function Stock() {
                   {[...selectedItems].reverse().map((entry) => (
                     <tr key={entry.id} className="hover:bg-secondary/10">
                       <td className="px-6 py-2">
-                        {entry.itemType === 'recipe' ? (entry as any).recipeName : (entry as any).ingredientName}
+                        <span style={entry.itemType === 'recipe' && (entry as any).recipeColor ? { color: (entry as any).recipeColor } : undefined}>
+                          {entry.itemType === 'recipe' ? (entry as any).recipeName : (entry as any).ingredientName}
+                        </span>
                       </td>
                       <td className="px-6 py-2 text-right tabular-nums font-medium">
                         {entry.quantity} <span className="font-normal text-muted-foreground">{entry.unit}</span>

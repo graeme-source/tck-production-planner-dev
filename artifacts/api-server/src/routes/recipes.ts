@@ -24,6 +24,7 @@ function mapRecipe(r: typeof recipesTable.$inferSelect) {
     baseType: r.baseType ?? null,
     baseWeightGrams: r.baseWeightGrams ? Number(r.baseWeightGrams) : null,
     isCoreMenu: r.isCoreMenu ?? false,
+    color: r.color ?? null,
     createdAt: r.createdAt.toISOString(),
   };
 }
@@ -135,7 +136,7 @@ function validateMarinades(marinades: MarinadeInput[], recipeIngredientIds: numb
 }
 
 router.post("/", validate(CreateRecipeBody), async (req, res) => {
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, ingredients, subRecipes, marinades } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, color, ingredients, subRecipes, marinades } = req.body;
 
   if (marinades?.length) {
     const recipeIngIds = (ingredients ?? []).map(i => i.ingredientId);
@@ -165,6 +166,7 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
     baseType: baseType ?? null,
     baseWeightGrams: baseWeightGrams != null ? String(baseWeightGrams) : null,
     isCoreMenu: isCoreMenu ?? false,
+    color: color ?? null,
   }).returning();
 
   if (ingredients?.length) {
@@ -346,7 +348,7 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, ingredients, subRecipes, marinades } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, color, ingredients, subRecipes, marinades } = req.body;
 
   if (marinades?.length) {
     const recipeIngIds = (ingredients ?? []).map(i => i.ingredientId);
@@ -377,6 +379,7 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
       baseType: baseType ?? null,
       baseWeightGrams: baseWeightGrams != null ? String(baseWeightGrams) : null,
       isCoreMenu: isCoreMenu ?? false,
+      color: color ?? null,
     })
     .where(eq(recipesTable.id, id))
     .returning();
