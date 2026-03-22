@@ -1176,7 +1176,6 @@ function MixingStation({ plan }: MixingStationProps) {
                         const doneCount = Object.values(ingTrayMap).filter(s => s === 2).length;
                         const inOvenCount = Object.values(ingTrayMap).filter(s => s === 1).length;
                         const allIngDone = doneCount >= ingTrays;
-                        const ingMarinades = marinades.filter(m => m.rawMeatIngredientId === ing.ingredientId);
                         const perTrayKg = ingTrays > 0 ? toKg(ing.rawQty, ing.unit) / ingTrays : null;
                         const hasSettings = ing.minCookingTempC || ing.ovenTempC || ing.estimatedCookTimeMin || ing.steamPct != null;
 
@@ -1229,22 +1228,6 @@ function MixingStation({ plan }: MixingStationProps) {
                                     <p className="font-bold text-sm tabular-nums text-cyan-600 dark:text-cyan-400">{ing.steamPct}%</p>
                                   </div>
                                 )}
-                              </div>
-                            )}
-
-                            {/* Marinade per-tray summary */}
-                            {ingMarinades.length > 0 && (
-                              <div className="space-y-0.5">
-                                {ingMarinades.map((m, mi) => {
-                                  const name = m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown";
-                                  const perTrayG = ingTrays > 0 ? Math.round(m.totalGrams / ingTrays) : null;
-                                  return (
-                                    <div key={mi} className="flex items-center justify-between text-xs text-muted-foreground">
-                                      <span className="flex items-center gap-1.5"><span className="text-rose-400">↳</span>{name}</span>
-                                      <span className="tabular-nums">{perTrayG != null ? `${perTrayG}g / tray` : `${m.totalGrams}g total`}</span>
-                                    </div>
-                                  );
-                                })}
                               </div>
                             )}
 
