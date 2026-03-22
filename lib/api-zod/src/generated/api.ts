@@ -1375,6 +1375,7 @@ export const CreateStockEntryBody = zod.object({
   itemType: zod.enum(["recipe", "ingredient"]),
   quantity: zod.number(),
   unit: zod.string(),
+  location: zod.string().nullish(),
   notes: zod.string().nullish(),
 });
 
@@ -1391,6 +1392,7 @@ export const UpdateStockEntryBody = zod.object({
   itemType: zod.enum(["recipe", "ingredient"]),
   quantity: zod.number(),
   unit: zod.string(),
+  location: zod.string().nullish(),
   notes: zod.string().nullish(),
 });
 

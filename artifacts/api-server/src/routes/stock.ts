@@ -17,6 +17,7 @@ router.get("/", async (_req, res) => {
       itemType: stockEntriesTable.itemType,
       quantity: stockEntriesTable.quantity,
       unit: stockEntriesTable.unit,
+      location: stockEntriesTable.location,
       checkedAt: stockEntriesTable.checkedAt,
       notes: stockEntriesTable.notes,
     })
@@ -28,13 +29,14 @@ router.get("/", async (_req, res) => {
 });
 
 router.post("/", validate(CreateStockEntryBody), async (req, res) => {
-  const { recipeId, ingredientId, itemType, quantity, unit, notes } = req.body;
+  const { recipeId, ingredientId, itemType, quantity, unit, location, notes } = req.body;
   const [row] = await db.insert(stockEntriesTable).values({
     recipeId: recipeId ?? null,
     ingredientId: ingredientId ?? null,
     itemType,
     quantity: String(quantity),
     unit,
+    location: location ?? "production_fridge",
     notes,
   }).returning();
   res.status(201).json({ ...row, quantity: Number(row.quantity), checkedAt: row.checkedAt.toISOString() });
@@ -42,13 +44,14 @@ router.post("/", validate(CreateStockEntryBody), async (req, res) => {
 
 router.put("/:id", validate(UpdateStockEntryBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { recipeId, ingredientId, itemType, quantity, unit, notes } = req.body;
+  const { recipeId, ingredientId, itemType, quantity, unit, location, notes } = req.body;
   const [row] = await db.update(stockEntriesTable).set({
     recipeId: recipeId ?? null,
     ingredientId: ingredientId ?? null,
     itemType,
     quantity: String(quantity),
     unit,
+    location: location ?? "production_fridge",
     notes,
   }).where(eq(stockEntriesTable.id, id)).returning();
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
