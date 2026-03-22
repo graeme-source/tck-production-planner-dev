@@ -192,20 +192,27 @@ router.get("/calculate", async (req, res) => {
     return;
   }
 
-  function getNextWorkingDays(fromDate: string, count: number): string[] {
-    const dates: string[] = [];
+  function getPreviousWorkingDay(fromDate: string): string {
     const d = new Date(`${fromDate}T12:00:00Z`);
-    while (dates.length < count) {
-      d.setUTCDate(d.getUTCDate() + 1);
-      const dow = d.getUTCDay();
-      if (dow !== 0 && dow !== 6) {
-        dates.push(d.toISOString().slice(0, 10));
-      }
-    }
-    return dates;
+    do {
+      d.setUTCDate(d.getUTCDate() - 1);
+    } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
+    return d.toISOString().slice(0, 10);
   }
 
-  const deliveryDates = getNextWorkingDays(planDate, 3);
+  function getNextWorkingDay(fromDate: string): string {
+    const d = new Date(`${fromDate}T12:00:00Z`);
+    do {
+      d.setUTCDate(d.getUTCDate() + 1);
+    } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
+    return d.toISOString().slice(0, 10);
+  }
+
+  const deliveryDates = [
+    getPreviousWorkingDay(planDate),
+    planDate,
+    getNextWorkingDay(planDate),
+  ];
 
   const fridgeRows = await db
     .select({
