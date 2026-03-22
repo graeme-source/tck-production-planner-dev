@@ -11,7 +11,10 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 function getDefaultWeekOffset(): number {
   const now = new Date();
-  if (now.getDay() === 5 && now.getHours() >= 15) return 1;
+  const day = now.getDay(); // 0=Sun, 5=Fri, 6=Sat
+  if (day === 6) return 1;           // Saturday all day
+  if (day === 0) return 1;           // Sunday all day
+  if (day === 5 && now.getHours() >= 15) return 1; // Friday from 3pm
   return 0;
 }
 
