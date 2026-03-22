@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useListRecipes, useListIngredients, useListSubRecipes, useGetRecipe, useListCategoryDefaults } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
 import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2 } from "lucide-react";
-import { useForm, useFieldArray } from "react-hook-form";
+import { useForm, useFieldArray, Controller } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -92,6 +92,75 @@ type SubRecipeOption = {
   yieldUnit: string;
   costPerYieldUnit: number;
 };
+
+function IngredientCombobox({ value, onChange, options }: { value: number; onChange: (id: number) => void; options: IngredientOption[] }) {
+  const [search, setSearch] = useState("");
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const selected = options.find(o => o.id === Number(value));
+  const filtered = options.filter(o => o.name.toLowerCase().includes(search.toLowerCase()));
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setSearch("");
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  useEffect(() => {
+    if (open) setTimeout(() => inputRef.current?.focus(), 0);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative flex-1 min-w-0">
+      {open ? (
+        <input
+          ref={inputRef}
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="w-full px-2 py-1.5 bg-background border border-primary rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
+          placeholder="Type to search…"
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => { setOpen(true); setSearch(""); }}
+          className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs text-left focus:outline-none focus:ring-2 focus:ring-primary/30 truncate"
+        >
+          {selected
+            ? <span>{selected.name} <span className="text-muted-foreground">({selected.unit})</span></span>
+            : <span className="text-muted-foreground">Select…</span>
+          }
+        </button>
+      )}
+
+      {open && (
+        <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-popover border border-border rounded-lg shadow-lg max-h-48 overflow-y-auto">
+          {filtered.length === 0
+            ? <p className="text-xs text-muted-foreground p-2 text-center italic">No ingredients found</p>
+            : filtered.map(o => (
+              <button
+                key={o.id}
+                type="button"
+                onMouseDown={e => { e.preventDefault(); onChange(o.id); setOpen(false); setSearch(""); }}
+                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-accent transition-colors ${Number(value) === o.id ? "bg-accent font-medium" : ""}`}
+              >
+                {o.name} <span className="text-muted-foreground">({o.unit})</span>
+              </button>
+            ))
+          }
+        </div>
+      )}
+    </div>
+  );
+}
 
 function RecipeForm({
   defaultValues,
@@ -336,10 +405,17 @@ function RecipeForm({
                       <div key={field.id} className="space-y-0.5">
                         <div className="grid grid-cols-[1fr_6rem_4.5rem_auto_1.25rem] gap-2 items-center">
                           <div className="flex gap-1 min-w-0">
-                            <select {...register(`ingredients.${index}.ingredientId`)} className="flex-1 min-w-0 px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30">
-                              <option value={0} disabled>Select…</option>
-                              {localIngredients.map(i => <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>)}
-                            </select>
+                            <Controller
+                              control={control}
+                              name={`ingredients.${index}.ingredientId`}
+                              render={({ field }) => (
+                                <IngredientCombobox
+                                  value={Number(field.value)}
+                                  onChange={id => field.onChange(id)}
+                                  options={localIngredients}
+                                />
+                              )}
+                            />
                             <button type="button" title="Create a new ingredient" onClick={() => openQuickAdd(index)} className="flex-shrink-0 px-1.5 py-1.5 rounded-lg border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-colors text-xs font-bold leading-none">+</button>
                           </div>
                           <input type="number" step="0.0001" {...register(`ingredients.${index}.quantity`)} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0.000" />
