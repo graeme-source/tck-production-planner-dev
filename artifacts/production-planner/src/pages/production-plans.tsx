@@ -117,10 +117,11 @@ interface PlanItem {
   packsPerBatch: number;
   sopUrl: string | null;
   isFromDpt: boolean;
-  todayFactoryNumber: number;
-  nextDispatchQty: number;
-  deliveryPlus1Qty: number;
-  deliveryPlus2Qty: number;
+  fridgeStock: number;
+  dispatch1Qty: number;
+  dispatch2Qty: number;
+  dispatch3Qty: number;
+  totalDispatchQty: number;
   deficit: number;
   deficitBatches: number;
   surplusBatches: number;
@@ -128,12 +129,12 @@ interface PlanItem {
 }
 
 function computeNextFactory(item: PlanItem): number {
-  return item.todayFactoryNumber + (item.batchesTarget * item.packsPerBatch) - item.nextDispatchQty;
+  return item.fridgeStock + (item.batchesTarget * item.packsPerBatch) - item.totalDispatchQty;
 }
 
 function computeStockWarning(item: PlanItem): "ok" | "low" | "short" {
-  const afterProduction = item.todayFactoryNumber + (item.batchesTarget * item.packsPerBatch);
-  const surplus = afterProduction - item.nextDispatchQty;
+  const afterProduction = item.fridgeStock + (item.batchesTarget * item.packsPerBatch);
+  const surplus = afterProduction - item.totalDispatchQty;
   if (surplus < 0) return "short";
   if (surplus <= 10) return "low";
   return "ok";
@@ -201,8 +202,11 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onRemove }: Sortab
         </div>
       </td>
       <td className="py-2 px-2 text-right tabular-nums text-sm">
-        {item.todayFactoryNumber}
+        {item.fridgeStock}
       </td>
+      <td className="py-2 px-2 text-right tabular-nums text-xs text-muted-foreground">{item.dispatch1Qty || "—"}</td>
+      <td className="py-2 px-2 text-right tabular-nums text-xs text-muted-foreground">{item.dispatch2Qty || "—"}</td>
+      <td className="py-2 px-2 text-right tabular-nums text-xs text-muted-foreground">{item.dispatch3Qty || "—"}</td>
       <td className="py-2 px-2 text-right tabular-nums text-sm">
         <div className="flex items-center justify-end gap-1">
           {warning === "short" && <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />}
@@ -211,12 +215,10 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onRemove }: Sortab
             warning === "short" && "text-red-600 dark:text-red-400 font-semibold",
             warning === "low" && "text-amber-600 dark:text-amber-400",
           )}>
-            {item.nextDispatchQty}
+            {item.totalDispatchQty}
           </span>
         </div>
       </td>
-      <td className="py-2 px-2 text-right tabular-nums text-xs text-muted-foreground">{item.deliveryPlus1Qty || "—"}</td>
-      <td className="py-2 px-2 text-right tabular-nums text-xs text-muted-foreground">{item.deliveryPlus2Qty || "—"}</td>
       <td className="py-2 px-2 text-right tabular-nums text-xs text-muted-foreground">
         {item.deficit > 0 ? <span className="text-red-600 dark:text-red-400">-{item.deficit}</span> : "0"}
       </td>
@@ -276,13 +278,11 @@ interface CalcRecipe {
   tinSize: string | null;
   maxBatchesPerTin: number | null;
   sopUrl: string | null;
-  currentStock: number;
-  todayDispatch: number;
-  todayProduction: number;
-  todayFactoryNumber: number;
-  nextDispatchQty: number;
-  deliveryPlus1Qty: number;
-  deliveryPlus2Qty: number;
+  fridgeStock: number;
+  dispatch1Qty: number;
+  dispatch2Qty: number;
+  dispatch3Qty: number;
+  totalDispatchQty: number;
   deficit: number;
   deficitBatches: number;
   salesPercent: number;
@@ -299,7 +299,6 @@ interface CalcRecipe {
 
 interface CalcResponse {
   planDate: string;
-  today: string;
   deliveryDates: string[];
   totalDailyBatches: number;
   totalDeficitBatches: number;
@@ -409,10 +408,11 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
         packsPerBatch: r.packsPerBatch,
         sopUrl: r.sopUrl,
         isFromDpt: true,
-        todayFactoryNumber: r.todayFactoryNumber,
-        nextDispatchQty: r.nextDispatchQty,
-        deliveryPlus1Qty: r.deliveryPlus1Qty,
-        deliveryPlus2Qty: r.deliveryPlus2Qty,
+        fridgeStock: r.fridgeStock,
+        dispatch1Qty: r.dispatch1Qty,
+        dispatch2Qty: r.dispatch2Qty,
+        dispatch3Qty: r.dispatch3Qty,
+        totalDispatchQty: r.totalDispatchQty,
         deficit: r.deficit,
         deficitBatches: r.deficitBatches,
         surplusBatches: alloc[idx].surplusBatches,
@@ -496,10 +496,11 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
       packsPerBatch: portionsPerBatch / packSize,
       sopUrl: recipe.sopUrl ?? null,
       isFromDpt: false,
-      todayFactoryNumber: 0,
-      nextDispatchQty: 0,
-      deliveryPlus1Qty: 0,
-      deliveryPlus2Qty: 0,
+      fridgeStock: 0,
+      dispatch1Qty: 0,
+      dispatch2Qty: 0,
+      dispatch3Qty: 0,
+      totalDispatchQty: 0,
       deficit: 0,
       deficitBatches: 0,
       surplusBatches: 0,
@@ -645,17 +646,22 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                               />
                             </th>
                             <th className="py-2 px-2 text-left font-medium text-muted-foreground">Recipe</th>
-                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Current fridge stock position">Factory #</th>
-                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title={deliveryDates[0] ? `Dispatch ${format(parseISO(deliveryDates[0]), "d MMM")}` : "Next dispatch"}>
-                              Dispatch
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Current fridge stock">Fridge</th>
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title={deliveryDates[0] ? `Dispatch ${format(parseISO(deliveryDates[0]), "EEE d MMM")}` : "Dispatch 1"}>
+                              {deliveryDates[0] ? format(parseISO(deliveryDates[0]), "EEE") : "D1"}
                             </th>
-                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title={deliveryDates[1] ? format(parseISO(deliveryDates[1]), "d MMM") : "Del +1"}>
-                              Del+1
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title={deliveryDates[1] ? `Dispatch ${format(parseISO(deliveryDates[1]), "EEE d MMM")}` : "Dispatch 2"}>
+                              {deliveryDates[1] ? format(parseISO(deliveryDates[1]), "EEE") : "D2"}
                             </th>
-                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title={deliveryDates[2] ? format(parseISO(deliveryDates[2]), "d MMM") : "Del +2"}>
-                              Del+2
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title={deliveryDates[2] ? `Dispatch ${format(parseISO(deliveryDates[2]), "EEE d MMM")}` : "Dispatch 3"}>
+                              {deliveryDates[2] ? format(parseISO(deliveryDates[2]), "EEE") : "D3"}
                             </th>
-                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Packs short to cover next dispatch">Deficit</th>
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Total dispatch across 3 days">
+                              <div className="flex items-center justify-end gap-1">
+                                Total
+                              </div>
+                            </th>
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Packs short to cover all 3 dispatches">Deficit</th>
                             <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title={calcData?.salesSource === "shopify" ? "Sales % from Shopify orders" : "Sales % from DPT settings"}>
                               DPT%
                               {calcData?.salesSource === "shopify" && (
@@ -683,10 +689,11 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                         <tfoot>
                           <tr className="bg-secondary/20 border-t border-border font-medium text-xs">
                             <td colSpan={3} className="py-2 px-2 text-right text-muted-foreground">Totals</td>
-                            <td className="py-2 px-2 text-right tabular-nums">{items.reduce((s, i) => s + i.todayFactoryNumber, 0)}</td>
-                            <td className="py-2 px-2 text-right tabular-nums">{items.reduce((s, i) => s + i.nextDispatchQty, 0)}</td>
-                            <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">{items.reduce((s, i) => s + i.deliveryPlus1Qty, 0) || "—"}</td>
-                            <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">{items.reduce((s, i) => s + i.deliveryPlus2Qty, 0) || "—"}</td>
+                            <td className="py-2 px-2 text-right tabular-nums">{items.reduce((s, i) => s + i.fridgeStock, 0)}</td>
+                            <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">{items.reduce((s, i) => s + i.dispatch1Qty, 0) || "—"}</td>
+                            <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">{items.reduce((s, i) => s + i.dispatch2Qty, 0) || "—"}</td>
+                            <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">{items.reduce((s, i) => s + i.dispatch3Qty, 0) || "—"}</td>
+                            <td className="py-2 px-2 text-right tabular-nums">{items.reduce((s, i) => s + i.totalDispatchQty, 0)}</td>
                             <td className="py-2 px-2 text-right tabular-nums">{items.reduce((s, i) => s + i.deficit, 0) || "—"}</td>
                             <td className="py-2 px-2" />
                             <td className="py-2 px-2 text-right tabular-nums">{items.reduce((s, i) => s + i.suggestedBatches, 0)}</td>
@@ -727,13 +734,13 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
               {items.some(i => computeStockWarning(i) === "short") && (
                 <div className="flex items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/40 rounded-xl mb-3 text-sm text-red-700 dark:text-red-300">
                   <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  Stock shortfall detected — some recipes don't have enough to cover the next dispatch even with planned production.
+                  Stock shortfall detected — some recipes don't have enough to cover the next 3 dispatches even with planned production.
                 </div>
               )}
               {items.some(i => computeStockWarning(i) === "low") && !items.some(i => computeStockWarning(i) === "short") && (
                 <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 rounded-xl mb-3 text-sm text-amber-700 dark:text-amber-300">
                   <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-                  Low stock warning — some recipes are within 10 packs of covering the next dispatch.
+                  Low stock warning — some recipes are within 10 packs of covering the next 3 dispatches.
                 </div>
               )}
             </>
@@ -844,10 +851,11 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
       packsPerBatch: (it.portionsPerBatch ?? 10),
       sopUrl: it.sopUrl ?? null,
       isFromDpt: false,
-      todayFactoryNumber: 0,
-      nextDispatchQty: 0,
-      deliveryPlus1Qty: 0,
-      deliveryPlus2Qty: 0,
+      fridgeStock: 0,
+      dispatch1Qty: 0,
+      dispatch2Qty: 0,
+      dispatch3Qty: 0,
+      totalDispatchQty: 0,
       deficit: 0,
       deficitBatches: 0,
       surplusBatches: 0,
@@ -925,10 +933,11 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
       packsPerBatch: ppb / (recipe.packSize ?? 1),
       sopUrl: recipe.sopUrl ?? null,
       isFromDpt: false,
-      todayFactoryNumber: 0,
-      nextDispatchQty: 0,
-      deliveryPlus1Qty: 0,
-      deliveryPlus2Qty: 0,
+      fridgeStock: 0,
+      dispatch1Qty: 0,
+      dispatch2Qty: 0,
+      dispatch3Qty: 0,
+      totalDispatchQty: 0,
       deficit: 0,
       deficitBatches: 0,
       surplusBatches: 0,
@@ -1047,10 +1056,11 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
                           />
                         </th>
                         <th className="py-2 px-2 text-left font-medium text-muted-foreground">Recipe</th>
-                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Factory #</th>
-                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Dispatch</th>
-                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Del+1</th>
-                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Del+2</th>
+                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Fridge</th>
+                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">D1</th>
+                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">D2</th>
+                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">D3</th>
+                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Total</th>
                         <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Deficit</th>
                         <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">DPT%</th>
                         <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Sugg.</th>
