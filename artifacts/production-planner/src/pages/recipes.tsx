@@ -745,7 +745,7 @@ function RecipeCard({ recipe, onEdit, onDelete, onBreakdown }: { recipe: RecipeI
     <div className={`rounded-2xl border-2 ${fallbackBorder} bg-card overflow-hidden flex flex-col group hover:shadow-md transition-all`} style={borderStyle}>
       <div className={`${fallbackBg} flex flex-col justify-between px-5 pt-4 pb-3 gap-2`} style={topStyle}>
         <div className="min-w-0">
-          <p className="font-semibold text-sm leading-tight truncate" style={recipeColor ? { color: recipeColor } : undefined}>{recipe.name}</p>
+          <p className="font-semibold text-base leading-tight truncate" style={recipeColor ? { color: recipeColor } : undefined}>{recipe.name}</p>
           {recipe.category && <p className="text-xs font-semibold uppercase tracking-wider mt-0.5" style={recipeColor ? { color: recipeColor + "cc" } : { color: "var(--muted-foreground)" }}>{recipe.category}</p>}
         </div>
         <div className="flex items-center justify-end">
