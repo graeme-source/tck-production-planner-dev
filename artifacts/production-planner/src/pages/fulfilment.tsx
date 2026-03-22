@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/page-header";
 import { format } from "date-fns";
 import { useLocation } from "wouter";
@@ -300,6 +301,7 @@ export default function Fulfilment() {
   const [barcodeInput, setBarcodeInput] = useState("");
   const [flashItem, setFlashItem] = useState<string | null>(null);
   const [flashWrong, setFlashWrong] = useState(false);
+  const [boxFilter, setBoxFilter] = useState<"small box" | "large box" | "wholesale" | "all">("small box");
   const barcodeRef = useRef<HTMLInputElement>(null);
   const itemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const preQueueRef = useRef<Map<number, Promise<ShipmentResult>>>(new Map());
@@ -332,6 +334,25 @@ export default function Fulfilment() {
 
   const unfulfilledOrders = orders?.filter(o => o.fulfillment_status !== "fulfilled") ?? [];
   const fulfilledOrders = orders?.filter(o => o.fulfillment_status === "fulfilled") ?? [];
+
+  function getOrderCategory(order: ShopifyOrder): "small box" | "large box" | "wholesale" | "other" {
+    const tags = order.tags.split(",").map(t => t.trim().toLowerCase());
+    if (tags.includes("wholesale")) return "wholesale";
+    if (tags.includes("large box")) return "large box";
+    if (tags.includes("small box")) return "small box";
+    return "other";
+  }
+
+  const filteredUnfulfilled = boxFilter === "all"
+    ? unfulfilledOrders
+    : unfulfilledOrders.filter(o => getOrderCategory(o) === boxFilter);
+
+  const boxCounts = {
+    "small box": unfulfilledOrders.filter(o => getOrderCategory(o) === "small box").length,
+    "large box": unfulfilledOrders.filter(o => getOrderCategory(o) === "large box").length,
+    "wholesale": unfulfilledOrders.filter(o => getOrderCategory(o) === "wholesale").length,
+    "other": unfulfilledOrders.filter(o => getOrderCategory(o) === "other").length,
+  };
 
   function preQueueNextOrder(nextOrderId: number) {
     if (preQueueRef.current.has(nextOrderId)) return;
@@ -1119,7 +1140,38 @@ export default function Fulfilment() {
             </div>
           </div>
 
-          {unfulfilledOrders.length === 0 && (
+          <div className="flex gap-2 flex-wrap">
+            {([
+              { key: "small box" as const, label: "Small Box", color: "bg-blue-500" },
+              { key: "large box" as const, label: "Large Box", color: "bg-indigo-500" },
+              { key: "wholesale" as const, label: "Wholesale", color: "bg-amber-500" },
+              { key: "all" as const, label: "All Orders", color: "bg-gray-500" },
+            ] as const).map(tab => {
+              const count = tab.key === "all" ? unfulfilledOrders.length : boxCounts[tab.key];
+              if (tab.key !== "all" && count === 0) return null;
+              const active = boxFilter === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  onClick={() => setBoxFilter(tab.key)}
+                  className={cn(
+                    "px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2",
+                    active
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  )}
+                >
+                  {tab.label}
+                  <span className={cn(
+                    "text-xs px-1.5 py-0.5 rounded-full tabular-nums",
+                    active ? "bg-primary-foreground/20" : "bg-secondary"
+                  )}>{count}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {filteredUnfulfilled.length === 0 && unfulfilledOrders.length === 0 && (
             <div className="glass-panel p-10 rounded-2xl border border-border text-center text-muted-foreground">
               <CheckCircle2 className="w-12 h-12 mx-auto mb-3 text-green-500 opacity-60" />
               <p className="font-medium">All orders fulfilled!</p>
@@ -1127,7 +1179,15 @@ export default function Fulfilment() {
             </div>
           )}
 
-          {unfulfilledOrders.map((order, idx) => {
+          {filteredUnfulfilled.length === 0 && unfulfilledOrders.length > 0 && (
+            <div className="glass-panel p-8 rounded-2xl border border-border text-center text-muted-foreground">
+              <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-green-500 opacity-60" />
+              <p className="font-medium">All {boxFilter} orders done!</p>
+              <p className="text-sm mt-1">Switch to another category to continue packing.</p>
+            </div>
+          )}
+
+          {filteredUnfulfilled.map((order, idx) => {
             const hasUnassigned = order.line_items.some(i => !i.location && i.sku);
             const weightKg = ((order.total_weight ?? 0) / 1000).toFixed(2);
             const tags = order.tags.split(",").map(t => t.trim()).filter(Boolean);

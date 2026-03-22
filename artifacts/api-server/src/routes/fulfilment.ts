@@ -404,7 +404,7 @@ router.get("/desserts-report", requireManagerOrAdmin, async (req: Request, res: 
 
   try {
     const [dessertTitles, orders] = await Promise.all([
-      getProductsByTag("dessert"),
+      getProductsByTag("Desserts"),
       getOrdersByTag(tag),
     ]);
 
