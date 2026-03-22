@@ -301,7 +301,7 @@ router.get("/calculate", async (req, res) => {
         });
         if (twoPackVariant) {
           const key = p.productTitle.toLowerCase().trim();
-          shopifySalesPerDate[date][key] = twoPackVariant.quantity;
+          shopifySalesPerDate[date][key] = (shopifySalesPerDate[date][key] ?? 0) + twoPackVariant.quantity;
           shopifySalesCombined[key] = (shopifySalesCombined[key] ?? 0) + twoPackVariant.quantity;
         }
       }
@@ -345,24 +345,28 @@ router.get("/calculate", async (req, res) => {
   function matchShopifySalesForDate(recipeName: string, date: string): number {
     const recipeNorm = normalizeForMatch(recipeName);
     const salesForDate = shopifySalesPerDate[date] ?? {};
+    let total = 0;
     for (const [productTitle, qty] of Object.entries(salesForDate)) {
       const productNorm = normalizeForMatch(productTitle);
       if (productNorm.includes(recipeNorm) || recipeNorm.includes(productNorm)) {
-        return qty;
+        total += qty;
       }
     }
-    return 0;
+    return total;
   }
 
   function matchShopifySalesCombined(recipeName: string): { qty: number; matchedProduct: string | null } {
     const recipeNorm = normalizeForMatch(recipeName);
+    let total = 0;
+    let firstMatch: string | null = null;
     for (const [productTitle, qty] of Object.entries(shopifySalesCombined)) {
       const productNorm = normalizeForMatch(productTitle);
       if (productNorm.includes(recipeNorm) || recipeNorm.includes(productNorm)) {
-        return { qty, matchedProduct: productTitle };
+        total += qty;
+        if (!firstMatch) firstMatch = productTitle;
       }
     }
-    return { qty: 0, matchedProduct: null };
+    return { qty: total, matchedProduct: firstMatch };
   }
 
   const totalDptPacksSold = dptRows.reduce((s, x) => s + (x.packsSold ?? 0), 0);
