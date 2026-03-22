@@ -1678,6 +1678,10 @@ function fmtQty(q: number, unit: string): string {
   return `${q % 1 === 0 ? q : q.toFixed(2)} ${unit}`;
 }
 
+/** Convert any weight quantity to kg for arithmetic (g → ÷1000, everything else treated as kg) */
+const toKg = (qty: number, unit: string): number =>
+  unit === "g" ? qty / 1000 : unit === "mg" ? qty / 1_000_000 : qty;
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Shared prep ingredient table (overview mode)
 // ──────────────────────────────────────────────────────────────────────────────
@@ -2905,7 +2909,7 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
   const selected = recipes.find(r => r.recipeId === selectedRecipeId) ?? recipes[0];
   const selRawMeat = selected.ingredients.filter(i => i.isRawMeat);
   const selMarinades = selected.marinades ?? [];
-  const selTotalRawKg = selRawMeat.reduce((sum, i) => sum + i.rawQty, 0);
+  const selTotalRawKg = selRawMeat.reduce((sum, i) => sum + toKg(i.rawQty, i.unit), 0);
   const selTotalMarinadeG = selMarinades.reduce((sum, m) => sum + m.totalGrams, 0);
   const selTrays = selected.trayCount;
   const selTrayCapKg = selRawMeat.find(i => i.rawMeatTrayCapacityKg)?.rawMeatTrayCapacityKg ?? null;
@@ -2943,7 +2947,7 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
             <div className="divide-y divide-border/50 max-h-[calc(100vh-320px)] overflow-y-auto">
               {recipes.map(recipe => {
                 const rRawMeat = recipe.ingredients.filter(i => i.isRawMeat);
-                const rTotalKg = rRawMeat.reduce((s, i) => s + i.rawQty, 0);
+                const rTotalKg = rRawMeat.reduce((s, i) => s + toKg(i.rawQty, i.unit), 0);
                 const isSelected = recipe.recipeId === selected.recipeId;
                 return (
                   <button
@@ -3017,7 +3021,7 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Breakdown</p>
               {selRawMeat.map(ing => {
                 const meatMarinades = selMarinades.filter(m => m.rawMeatIngredientId === ing.ingredientId);
-                const perTrayKg = selTrays && selTrays > 0 ? (ing.rawQty / selTrays).toFixed(2) : null;
+                const perTrayKg = selTrays && selTrays > 0 ? (toKg(ing.rawQty, ing.unit) / selTrays).toFixed(2) : null;
                 return (
                   <div key={ing.ingredientId} className="rounded-xl border border-border overflow-hidden">
                     {/* Meat row */}

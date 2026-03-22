@@ -1654,7 +1654,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       const rawMeatIngredients = ingredients.filter(i => i.isRawMeat);
       const trayCapacityKg = rawMeatIngredients.find(i => i.rawMeatTrayCapacityKg)?.rawMeatTrayCapacityKg ?? null;
       if (trayCapacityKg) {
-        const totalRawMeatKg = rawMeatIngredients.reduce((sum, i) => sum + i.rawQty, 0);
+        const totalRawMeatKg = rawMeatIngredients.reduce((sum, i) => sum + (i.unit === "g" ? i.rawQty / 1000 : i.rawQty), 0);
         const totalMarinadeKg = marinades.reduce((sum, m) => sum + m.totalGrams, 0) / 1000;
         const totalCombinedKg = totalRawMeatKg + totalMarinadeKg;
         trayCount = Math.ceil(totalCombinedKg / trayCapacityKg);
