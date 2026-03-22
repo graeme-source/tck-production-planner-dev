@@ -3155,13 +3155,28 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                 </div>
               </div>
             ) : (
-              <div className="flex items-center gap-8 mb-6">
-                <div className="text-center">
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Raw Meat</p>
-                  <p className="text-5xl font-bold font-display tabular-nums text-rose-600 dark:text-rose-400">
-                    {selTotalRawKg.toFixed(2)}
-                    <span className="text-2xl font-normal ml-1 text-muted-foreground">kg</span>
-                  </p>
+              <div className="mb-5 space-y-3">
+                <div className="flex items-center gap-8">
+                  <div className="text-center">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Raw Meat</p>
+                    <p className="text-5xl font-bold font-display tabular-nums text-rose-600 dark:text-rose-400">
+                      {selTotalRawKg.toFixed(2)}
+                      <span className="text-2xl font-normal ml-1 text-muted-foreground">kg</span>
+                    </p>
+                  </div>
+                  {selTotalMarinadeG > 0 && (
+                    <div className="text-center">
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Marinade</p>
+                      <p className="text-3xl font-bold font-display tabular-nums text-orange-500">
+                        {selTotalMarinadeG >= 1000 ? `${(selTotalMarinadeG / 1000).toFixed(2)}` : selTotalMarinadeG}
+                        <span className="text-xl font-normal ml-1 text-muted-foreground">{selTotalMarinadeG >= 1000 ? "kg" : "g"}</span>
+                      </p>
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-start gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800 text-xs text-amber-700 dark:text-amber-400">
+                  <span className="mt-0.5">⚠️</span>
+                  <span>Tray count not set — add a <strong>Tray Capacity (kg)</strong> to this recipe's raw meat ingredients in the Ingredients Library to see per-tray breakdown.</span>
                 </div>
               </div>
             )}
