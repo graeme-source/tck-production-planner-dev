@@ -9,7 +9,6 @@ export const STORAGE_LOCATIONS = [
   "production_freezer",
   "prep_fridge",
   "dry_store",
-  "walk_in_chiller",
 ] as const;
 
 export type StorageLocation = typeof STORAGE_LOCATIONS[number];

@@ -51,16 +51,6 @@ const LOCATIONS = [
     iconColor: "text-amber-500",
     badgeColor: "bg-amber-500/10 text-amber-600",
   },
-  {
-    key: "walk_in_chiller",
-    label: "Walk-in Chiller",
-    subtitle: "Bulk cold storage",
-    icon: Refrigerator,
-    color: "from-violet-500/20 to-violet-600/10",
-    borderColor: "border-violet-500/30",
-    iconColor: "text-violet-500",
-    badgeColor: "bg-violet-500/10 text-violet-600",
-  },
 ] as const;
 
 const schema = z.object({
