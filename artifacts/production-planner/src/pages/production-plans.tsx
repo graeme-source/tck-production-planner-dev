@@ -159,7 +159,6 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onRemove }: Sortab
     opacity: isDragging ? 0.5 : 1,
   };
 
-  const nextFactory = computeNextFactory(item);
   const warning = computeStockWarning(item);
 
   return (
@@ -229,15 +228,6 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onRemove }: Sortab
           disabled={!item.included || saving}
           className="w-16 px-1.5 py-1 bg-background border border-border rounded-lg text-xs text-center focus-ring disabled:opacity-40 tabular-nums"
         />
-      </td>
-      <td className="py-2 px-2 text-center tabular-nums text-sm font-medium">
-        <span className={cn(
-          nextFactory < 0 && "text-red-600 dark:text-red-400",
-          nextFactory >= 0 && nextFactory <= 10 && "text-amber-600 dark:text-amber-400",
-          nextFactory > 10 && "text-emerald-600 dark:text-emerald-400",
-        )}>
-          {Math.round(nextFactory)}
-        </span>
       </td>
       <td className="py-2 px-1.5 text-right">
         <button
@@ -654,7 +644,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                             <th className="py-2 px-2 text-center font-medium text-green-600 min-w-[70px]" title={calcData?.prevProductionDate ? `Production coming in from ${format(parseISO(calcData.prevProductionDate), "EEE d MMM")} plan` : "Previous day's production output"}>
                               {calcData?.prevProductionDate ? `+ ${format(parseISO(calcData.prevProductionDate), "EEE")} Production` : "+ Prev Production"}
                             </th>
-                            <th className="py-2 px-2 text-center font-medium text-muted-foreground whitespace-nowrap" title="Estimated factory number at start of production day">=</th>
+                            <th className="py-2 px-2 text-center font-medium text-muted-foreground min-w-[80px]" title="Next day's factory number: Factory Number − Dispatch + Production">= Next Factory Number</th>
                             <th className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]" title={deliveryDates[1] ? `Dispatch going out ${format(parseISO(deliveryDates[1]), "EEE d MMM")}` : "Dispatch 2"}>
                               {deliveryDates[1] ? `\u2212 ${format(parseISO(deliveryDates[1]), "EEE")} Dispatch` : "\u2212 Dispatch"}
                             </th>
@@ -663,7 +653,6 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                             </th>
                             <th className="py-2 px-2 text-center font-medium text-muted-foreground whitespace-nowrap" title="Packs short — need to produce at least this many">Deficit</th>
                             <th className="py-2 px-2 text-center font-medium text-muted-foreground whitespace-nowrap" title="Batches you want to make">Batches</th>
-                            <th className="py-2 px-2 text-center font-medium text-muted-foreground min-w-[70px]" title="Projected factory number after today's production and all dispatches">Next Factory Number</th>
                             <th className="w-7 py-2 px-1.5" />
                           </tr>
                         </thead>
@@ -690,7 +679,6 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                             <td className="py-2 px-2 text-center tabular-nums text-red-500">{items.reduce((s, i) => s + i.dispatch3Qty, 0) || "—"}</td>
                             <td className="py-2 px-2 text-center tabular-nums">{items.reduce((s, i) => s + i.deficit, 0) || "—"}</td>
                             <td className="py-2 px-2 text-center tabular-nums font-semibold">{items.filter(i => i.included).reduce((s, i) => s + i.batchesTarget, 0)}</td>
-                            <td className="py-2 px-2 text-center tabular-nums">{Math.round(items.filter(i => i.included).reduce((s, i) => s + computeNextFactory(i), 0))}</td>
                             <td className="py-2 px-1.5" />
                           </tr>
                         </tfoot>
@@ -1077,12 +1065,11 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
                         <th className="py-2 px-2 text-center font-medium text-muted-foreground min-w-[70px]">Factory Number</th>
                         <th className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]">&minus; Dispatch</th>
                         <th className="py-2 px-2 text-center font-medium text-green-600 min-w-[70px]">+ Production</th>
-                        <th className="py-2 px-2 text-center font-medium text-muted-foreground whitespace-nowrap">=</th>
+                        <th className="py-2 px-2 text-center font-medium text-muted-foreground min-w-[80px]">= Next Factory Number</th>
                         <th className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]">&minus; Dispatch</th>
                         <th className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]">&minus; Dispatch</th>
                         <th className="py-2 px-2 text-center font-medium text-muted-foreground whitespace-nowrap">Deficit</th>
                         <th className="py-2 px-2 text-center font-medium text-muted-foreground whitespace-nowrap">Batches</th>
-                        <th className="py-2 px-2 text-center font-medium text-muted-foreground min-w-[70px]">Next Factory Number</th>
                         <th className="w-7 py-2 px-1.5" />
                       </tr>
                     </thead>
