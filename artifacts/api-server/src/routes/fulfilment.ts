@@ -48,8 +48,8 @@ function pickServiceCode(
 
   // Use explicit box-size tags when present. Weight is a fallback only when
   // neither tag is found (e.g. no Shopify tagging rule has run yet).
-  const hasLargeTag = tags.includes("large-box");
-  const hasSmallTag = tags.includes("small-box");
+  const hasLargeTag = tags.includes("large box");
+  const hasSmallTag = tags.includes("small box");
   const isLargeBox = hasLargeTag || (!hasSmallTag && weightG >= weightThresholdG);
 
   // Friday if tag present OR the actual dispatch date falls on a Friday (day=5)
@@ -373,10 +373,10 @@ router.get("/dispatch-progress", requireManagerOrAdmin, async (req: Request, res
       if (tags.includes("wholesale")) {
         categories.wholesale.total += 1;
         if (isFulfilled) categories.wholesale.fulfilled += 1;
-      } else if (tags.includes("large-box")) {
+      } else if (tags.includes("large box")) {
         categories.largeBox.total += 1;
         if (isFulfilled) categories.largeBox.fulfilled += 1;
-      } else if (tags.includes("small-box")) {
+      } else if (tags.includes("small box")) {
         categories.smallBox.total += 1;
         if (isFulfilled) categories.smallBox.fulfilled += 1;
       } else {

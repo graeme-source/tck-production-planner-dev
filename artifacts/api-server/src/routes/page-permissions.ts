@@ -13,7 +13,7 @@ const KNOWN_PAGES = [
   { pageKey: "/stock", label: "Stock Inventory" },
   { pageKey: "/sales", label: "Sales Data" },
   { pageKey: "/dispatches", label: "Dispatches" },
-  { pageKey: "/fulfilment", label: "Fulfilment" },
+  { pageKey: "/fulfilment", label: "Order Packing Live" },
   { pageKey: "/locations", label: "Bin Locations" },
   { pageKey: "/reports", label: "Reports" },
 ];

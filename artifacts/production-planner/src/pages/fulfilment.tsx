@@ -554,12 +554,12 @@ export default function Fulfilment() {
   if (!configStatusLoading && (!configStatus?.apcCredentialsConfigured || !configStatus?.serviceCodesConfigured)) {
     return (
       <div className="space-y-6">
-        <PageHeader title="Fulfilment" description="APC order scanning and label printing." />
+        <PageHeader title="Order Packing Live" description="APC order scanning and label printing." />
         <div className="glass-panel p-8 rounded-2xl border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20">
           <div className="flex items-start gap-4">
             <AlertCircle className="w-8 h-8 text-amber-600 flex-shrink-0 mt-0.5" />
             <div className="space-y-3">
-              <h3 className="font-semibold text-lg text-amber-900 dark:text-amber-200">Fulfilment not configured</h3>
+              <h3 className="font-semibold text-lg text-amber-900 dark:text-amber-200">Order Packing not configured</h3>
               {!configStatus?.apcCredentialsConfigured && (
                 <p className="text-sm text-amber-800 dark:text-amber-300">
                   <span className="font-medium">APC credentials missing.</span> Set the{" "}
@@ -677,7 +677,7 @@ export default function Fulfilment() {
     const hasNext = unfulfilledOrders.filter(o => o.id !== activeOrder.id).length > 0;
     return (
       <div className="space-y-6">
-        <PageHeader title="Fulfilment" description="APC order scanning and label printing." />
+        <PageHeader title="Order Packing Live" description="APC order scanning and label printing." />
         <div className="glass-panel p-8 rounded-2xl border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/20 text-center">
           <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto mb-4" />
           <h2 className="text-2xl font-bold text-green-800 dark:text-green-200 mb-1">Order Complete!</h2>
@@ -953,7 +953,7 @@ export default function Fulfilment() {
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
-          <PageHeader title="Fulfilment" description="Select a dispatch date to start picking." />
+          <PageHeader title="Order Packing Live" description="Select a dispatch date to start picking." />
           <button
             onClick={() => refetchTags()}
             disabled={tagsLoading}
@@ -1075,7 +1075,7 @@ export default function Fulfilment() {
         }} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <PageHeader title={`Fulfilment — ${queryTag}`} description="Orders for this dispatch date." />
+        <PageHeader title={`Order Packing Live — ${queryTag}`} description="Orders for this dispatch date." />
         <button
           onClick={() => refetch()}
           disabled={isLoading}
