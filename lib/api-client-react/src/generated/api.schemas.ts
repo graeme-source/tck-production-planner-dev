@@ -48,6 +48,8 @@ export interface Ingredient {
   category?: string | null;
   /** Capacity of a raw meat tray in kg (used for tray count calculation) */
   rawMeatTrayCapacityKg?: number | null;
+  /** Minimum food-safe cooking temperature in °C */
+  minCookingTempC?: number | null;
   stockCheckEnabled: boolean;
   stockCheckFrequency: string;
   stockCheckDay?: string | null;
@@ -68,6 +70,7 @@ export interface CreateIngredient {
   processingRatio?: number | null;
   category?: string | null;
   rawMeatTrayCapacityKg?: number | null;
+  minCookingTempC?: number | null;
   stockCheckEnabled?: boolean;
   stockCheckFrequency?: string;
   stockCheckDay?: string | null;

@@ -200,6 +200,7 @@ export const ListIngredientsResponseItem = zod.object({
     .describe(
       "Capacity of a raw meat tray in kg (used for tray count calculation)",
     ),
+  minCookingTempC: zod.number().nullish().describe("Minimum food-safe cooking temperature in °C"),
   stockCheckEnabled: zod.boolean(),
   stockCheckFrequency: zod.string(),
   stockCheckDay: zod.string().nullish(),
@@ -224,6 +225,7 @@ export const CreateIngredientBody = zod.object({
   processingRatio: zod.number().nullish(),
   category: zod.string().nullish(),
   rawMeatTrayCapacityKg: zod.number().nullish(),
+  minCookingTempC: zod.number().nullish(),
   stockCheckEnabled: zod.boolean().optional(),
   stockCheckFrequency: zod.enum(["daily", "weekly"]).optional(),
   stockCheckDay: zod.string().nullish(),
@@ -261,6 +263,7 @@ export const GetIngredientResponse = zod.object({
     .describe(
       "Capacity of a raw meat tray in kg (used for tray count calculation)",
     ),
+  minCookingTempC: zod.number().nullish().describe("Minimum food-safe cooking temperature in °C"),
   stockCheckEnabled: zod.boolean(),
   stockCheckFrequency: zod.string(),
   stockCheckDay: zod.string().nullish(),
@@ -288,6 +291,7 @@ export const UpdateIngredientBody = zod.object({
   processingRatio: zod.number().nullish(),
   category: zod.string().nullish(),
   rawMeatTrayCapacityKg: zod.number().nullish(),
+  minCookingTempC: zod.number().nullish(),
   stockCheckEnabled: zod.boolean().optional(),
   stockCheckFrequency: zod.enum(["daily", "weekly"]).optional(),
   stockCheckDay: zod.string().nullish(),
@@ -318,6 +322,7 @@ export const UpdateIngredientResponse = zod.object({
     .describe(
       "Capacity of a raw meat tray in kg (used for tray count calculation)",
     ),
+  minCookingTempC: zod.number().nullish().describe("Minimum food-safe cooking temperature in °C"),
   stockCheckEnabled: zod.boolean(),
   stockCheckFrequency: zod.string(),
   stockCheckDay: zod.string().nullish(),

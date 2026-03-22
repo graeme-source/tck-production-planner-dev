@@ -18,6 +18,7 @@ export const ingredientsTable = pgTable("ingredients", {
   category: text("category"),
   processingRatio: numeric("processing_ratio", { precision: 5, scale: 4 }),
   rawMeatTrayCapacityKg: numeric("raw_meat_tray_capacity_kg", { precision: 10, scale: 4 }),
+  minCookingTempC: numeric("min_cooking_temp_c", { precision: 5, scale: 2 }),
   stockCheckEnabled: boolean("stock_check_enabled").notNull().default(false),
   stockCheckFrequency: text("stock_check_frequency").notNull().default("daily"),
   stockCheckDay: text("stock_check_day"),

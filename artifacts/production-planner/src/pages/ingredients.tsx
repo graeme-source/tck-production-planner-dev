@@ -400,6 +400,10 @@ const schema = z.object({
     (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
     z.number().positive().nullable().optional()
   ),
+  minCookingTempC: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().min(0).max(300).nullable().optional()
+  ),
   stockCheckEnabled: z.boolean().optional(),
   stockCheckFrequency: z.enum(["daily", "weekly"]).optional(),
   stockCheckDay: z.string().optional(),
@@ -410,7 +414,7 @@ type FormValues = z.infer<typeof schema>;
 const emptyDefaults: FormValues = {
   name: "", unit: "kg", packWeight: 0, costPerPack: 0,
   brand: "", supplierPartNumber: "", supplierId: 0, secondarySupplierId: 0,
-  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "",
+  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "",
 };
 
 export default function Ingredients() {
@@ -468,6 +472,7 @@ export default function Ingredients() {
         ? parseFloat((item.processingRatio * 100).toFixed(4))
         : null,
       rawMeatTrayCapacityKg: item.rawMeatTrayCapacityKg != null ? Number(item.rawMeatTrayCapacityKg) : null,
+      minCookingTempC: item.minCookingTempC != null ? Number(item.minCookingTempC) : null,
       category: item.category ?? "",
       stockCheckEnabled: item.stockCheckEnabled ?? false,
       stockCheckFrequency: (item.stockCheckFrequency as "daily" | "weekly") ?? "daily",
@@ -490,6 +495,7 @@ export default function Ingredients() {
     category: data.category || null,
     processingRatio: data.processingRatioPct != null ? data.processingRatioPct / 100 : null,
     rawMeatTrayCapacityKg: data.rawMeatTrayCapacityKg ?? null,
+    minCookingTempC: data.minCookingTempC ?? null,
     stockCheckEnabled: data.stockCheckEnabled ?? false,
     stockCheckFrequency: data.stockCheckFrequency ?? "daily",
     stockCheckDay: data.stockCheckFrequency === "weekly" ? (data.stockCheckDay || null) : null,
@@ -655,30 +661,6 @@ export default function Ingredients() {
               {errors.processingRatioPct && <span className="text-destructive text-xs">{String(errors.processingRatioPct.message)}</span>}
             </div>
 
-            {showRawMeatTray && (
-              <div>
-                <label className="text-sm font-medium mb-1 block">
-                  Raw Meat Tray Capacity
-                  <span className="ml-2 text-xs font-normal text-muted-foreground">(kg per tray)</span>
-                </label>
-                <div className="relative max-w-[160px]">
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    {...register("rawMeatTrayCapacityKg")}
-                    className="w-full px-3 pr-10 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                    placeholder="e.g. 10"
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">kg</span>
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Used in the raw meat prep station to calculate tray counts.
-                </p>
-                {errors.rawMeatTrayCapacityKg && <span className="text-destructive text-xs">{String(errors.rawMeatTrayCapacityKg.message)}</span>}
-              </div>
-            )}
-
             <div>
               <label className="text-sm font-medium mb-1 block">Ingredient Category</label>
               <select
@@ -693,6 +675,51 @@ export default function Ingredients() {
                 Used to filter ingredients by prep station (Raw Meat, Vegetables, Bases).
               </p>
             </div>
+
+            {showRawMeatTray && (
+              <div className="pl-4 border-l-2 border-primary/20 flex flex-col gap-3">
+                <div>
+                  <label className="text-sm font-medium mb-1 block">
+                    Tray Capacity
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">(kg per tray)</span>
+                  </label>
+                  <div className="relative max-w-[160px]">
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      {...register("rawMeatTrayCapacityKg")}
+                      className="w-full px-3 pr-10 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      placeholder="e.g. 10"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">kg</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">Used in the raw meat prep station to calculate tray counts.</p>
+                  {errors.rawMeatTrayCapacityKg && <span className="text-destructive text-xs">{String(errors.rawMeatTrayCapacityKg.message)}</span>}
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium mb-1 block">
+                    Min Food-Safe Cooking Temperature
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">(°C)</span>
+                  </label>
+                  <div className="relative max-w-[160px]">
+                    <input
+                      type="number"
+                      step="1"
+                      min="0"
+                      max="300"
+                      {...register("minCookingTempC")}
+                      className="w-full px-3 pr-10 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      placeholder="e.g. 75"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">°C</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">Minimum internal temperature for safe cooking.</p>
+                  {errors.minCookingTempC && <span className="text-destructive text-xs">{String(errors.minCookingTempC.message)}</span>}
+                </div>
+              </div>
+            )}
 
             <div className="flex items-center gap-3 py-1">
               <label className="relative inline-flex items-center cursor-pointer">
