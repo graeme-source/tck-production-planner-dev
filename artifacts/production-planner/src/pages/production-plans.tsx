@@ -118,6 +118,8 @@ interface PlanItem {
   sopUrl: string | null;
   isFromDpt: boolean;
   fridgeStock: number;
+  prevProduction: number;
+  estimatedFactoryNumber: number;
   dispatch1Qty: number;
   dispatch2Qty: number;
   dispatch3Qty: number;
@@ -129,12 +131,12 @@ interface PlanItem {
 }
 
 function computeNextFactory(item: PlanItem): number {
-  return item.fridgeStock + (item.batchesTarget * item.packsPerBatch) - item.totalDispatchQty;
+  return item.estimatedFactoryNumber + (item.batchesTarget * item.packsPerBatch) - (item.dispatch2Qty + item.dispatch3Qty);
 }
 
 function computeStockWarning(item: PlanItem): "ok" | "low" | "short" {
-  const afterProduction = item.fridgeStock + (item.batchesTarget * item.packsPerBatch);
-  const surplus = afterProduction - item.totalDispatchQty;
+  const afterProduction = item.estimatedFactoryNumber + (item.batchesTarget * item.packsPerBatch);
+  const surplus = afterProduction - (item.dispatch2Qty + item.dispatch3Qty);
   if (surplus < 0) return "short";
   if (surplus <= 10) return "low";
   return "ok";
@@ -205,20 +207,16 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onRemove }: Sortab
         {item.fridgeStock}
       </td>
       <td className="py-2 px-2 text-right tabular-nums text-xs text-muted-foreground">{item.dispatch1Qty || "—"}</td>
+      <td className="py-2 px-2 text-right tabular-nums text-xs text-green-600 dark:text-green-400">{item.prevProduction ? `+${item.prevProduction}` : "—"}</td>
+      <td className="py-2 px-2 text-right tabular-nums text-sm font-medium">
+        <span className={cn(
+          item.estimatedFactoryNumber < 0 && "text-red-600 dark:text-red-400",
+        )}>
+          {item.estimatedFactoryNumber}
+        </span>
+      </td>
       <td className="py-2 px-2 text-right tabular-nums text-xs text-muted-foreground">{item.dispatch2Qty || "—"}</td>
       <td className="py-2 px-2 text-right tabular-nums text-xs text-muted-foreground">{item.dispatch3Qty || "—"}</td>
-      <td className="py-2 px-2 text-right tabular-nums text-sm">
-        <div className="flex items-center justify-end gap-1">
-          {warning === "short" && <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />}
-          {warning === "low" && <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
-          <span className={cn(
-            warning === "short" && "text-red-600 dark:text-red-400 font-semibold",
-            warning === "low" && "text-amber-600 dark:text-amber-400",
-          )}>
-            {item.totalDispatchQty}
-          </span>
-        </div>
-      </td>
       <td className="py-2 px-2 text-right tabular-nums text-xs text-muted-foreground">
         {item.deficit > 0 ? <span className="text-red-600 dark:text-red-400">-{item.deficit}</span> : "0"}
       </td>
@@ -279,6 +277,8 @@ interface CalcRecipe {
   maxBatchesPerTin: number | null;
   sopUrl: string | null;
   fridgeStock: number;
+  prevProduction: number;
+  estimatedFactoryNumber: number;
   dispatch1Qty: number;
   dispatch2Qty: number;
   dispatch3Qty: number;
@@ -299,6 +299,7 @@ interface CalcRecipe {
 
 interface CalcResponse {
   planDate: string;
+  prevProductionDate: string;
   deliveryDates: string[];
   totalDailyBatches: number;
   totalDeficitBatches: number;
@@ -411,6 +412,8 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
         sopUrl: r.sopUrl,
         isFromDpt: true,
         fridgeStock: r.fridgeStock,
+        prevProduction: r.prevProduction,
+        estimatedFactoryNumber: r.estimatedFactoryNumber,
         dispatch1Qty: r.dispatch1Qty,
         dispatch2Qty: r.dispatch2Qty,
         dispatch3Qty: r.dispatch3Qty,
@@ -499,6 +502,8 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
       sopUrl: recipe.sopUrl ?? null,
       isFromDpt: false,
       fridgeStock: 0,
+      prevProduction: 0,
+      estimatedFactoryNumber: 0,
       dispatch1Qty: 0,
       dispatch2Qty: 0,
       dispatch3Qty: 0,
@@ -652,18 +657,17 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                             <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title={deliveryDates[0] ? `Dispatch ${format(parseISO(deliveryDates[0]), "EEE d MMM")}` : "Dispatch 1"}>
                               {deliveryDates[0] ? format(parseISO(deliveryDates[0]), "EEE") : "D1"}
                             </th>
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title={calcData?.prevProductionDate ? `Production from ${format(parseISO(calcData.prevProductionDate), "EEE d MMM")}` : "Previous day production"}>
+                              +Prod
+                            </th>
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Estimated factory number going into production day">Est.#</th>
                             <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title={deliveryDates[1] ? `Dispatch ${format(parseISO(deliveryDates[1]), "EEE d MMM")}` : "Dispatch 2"}>
                               {deliveryDates[1] ? format(parseISO(deliveryDates[1]), "EEE") : "D2"}
                             </th>
                             <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title={deliveryDates[2] ? `Dispatch ${format(parseISO(deliveryDates[2]), "EEE d MMM")}` : "Dispatch 3"}>
                               {deliveryDates[2] ? format(parseISO(deliveryDates[2]), "EEE") : "D3"}
                             </th>
-                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Total dispatch across 3 days">
-                              <div className="flex items-center justify-end gap-1">
-                                Total
-                              </div>
-                            </th>
-                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Packs short to cover all 3 dispatches">Deficit</th>
+                            <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title="Packs short to cover dispatches 2 & 3">Deficit</th>
                             <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap" title={calcData?.salesSource === "shopify" ? "Sales % from Shopify orders" : "Sales % from DPT settings"}>
                               DPT%
                               {calcData?.salesSource === "shopify" && (
@@ -693,9 +697,10 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                             <td colSpan={3} className="py-2 px-2 text-right text-muted-foreground">Totals</td>
                             <td className="py-2 px-2 text-right tabular-nums">{items.reduce((s, i) => s + i.fridgeStock, 0)}</td>
                             <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">{items.reduce((s, i) => s + i.dispatch1Qty, 0) || "—"}</td>
+                            <td className="py-2 px-2 text-right tabular-nums text-green-600 dark:text-green-400">{items.reduce((s, i) => s + i.prevProduction, 0) || "—"}</td>
+                            <td className="py-2 px-2 text-right tabular-nums font-medium">{items.reduce((s, i) => s + i.estimatedFactoryNumber, 0)}</td>
                             <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">{items.reduce((s, i) => s + i.dispatch2Qty, 0) || "—"}</td>
                             <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">{items.reduce((s, i) => s + i.dispatch3Qty, 0) || "—"}</td>
-                            <td className="py-2 px-2 text-right tabular-nums">{items.reduce((s, i) => s + i.totalDispatchQty, 0)}</td>
                             <td className="py-2 px-2 text-right tabular-nums">{items.reduce((s, i) => s + i.deficit, 0) || "—"}</td>
                             <td className="py-2 px-2" />
                             <td className="py-2 px-2 text-right tabular-nums">{items.reduce((s, i) => s + i.suggestedBatches, 0)}</td>
@@ -876,6 +881,8 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
       sopUrl: it.sopUrl ?? null,
       isFromDpt: false,
       fridgeStock: 0,
+      prevProduction: 0,
+      estimatedFactoryNumber: 0,
       dispatch1Qty: 0,
       dispatch2Qty: 0,
       dispatch3Qty: 0,
@@ -958,6 +965,8 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
       sopUrl: recipe.sopUrl ?? null,
       isFromDpt: false,
       fridgeStock: 0,
+      prevProduction: 0,
+      estimatedFactoryNumber: 0,
       dispatch1Qty: 0,
       dispatch2Qty: 0,
       dispatch3Qty: 0,
@@ -1082,9 +1091,10 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
                         <th className="py-2 px-2 text-left font-medium text-muted-foreground">Recipe</th>
                         <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Fridge</th>
                         <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">D1</th>
+                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">+Prod</th>
+                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Est.#</th>
                         <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">D2</th>
                         <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">D3</th>
-                        <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Total</th>
                         <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Deficit</th>
                         <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">DPT%</th>
                         <th className="py-2 px-2 text-right font-medium text-muted-foreground whitespace-nowrap">Sugg.</th>

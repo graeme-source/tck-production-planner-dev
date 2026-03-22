@@ -214,6 +214,33 @@ router.get("/calculate", async (req, res) => {
     getNextWorkingDay(planDate),
   ];
 
+  const prevProductionDate = getPreviousWorkingDay(planDate);
+  const prevPlanItems = await db
+    .select({
+      recipeId: productionPlanItemsTable.recipeId,
+      batchesTarget: productionPlanItemsTable.batchesTarget,
+      portionsPerBatch: recipesTable.portionsPerBatch,
+      packSize: recipesTable.packSize,
+    })
+    .from(productionPlanItemsTable)
+    .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
+    .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(and(
+      eq(productionPlansTable.planDate, prevProductionDate),
+      inArray(productionPlansTable.status, ["draft", "active", "prep", "building", "complete"]),
+    ));
+
+  const prevProductionPacks: Record<number, number> = {};
+  for (const row of prevPlanItems) {
+    if (row.recipeId != null) {
+      const portionsPerBatch = Number(row.portionsPerBatch) || 10;
+      const packSize = Number(row.packSize) || 1;
+      const packsPerBatch = portionsPerBatch / packSize;
+      const packs = (row.batchesTarget ?? 0) * packsPerBatch;
+      prevProductionPacks[row.recipeId] = (prevProductionPacks[row.recipeId] ?? 0) + packs;
+    }
+  }
+
   const fridgeRows = await db
     .select({
       recipeId: productionPlanItemsTable.recipeId,
@@ -366,13 +393,17 @@ router.get("/calculate", async (req, res) => {
     const dispatch3Qty = resolveDispatchQty(deliveryDates[2]);
     const totalDispatchQty = dispatch1Qty + dispatch2Qty + dispatch3Qty;
 
+    const prevProduction = Math.round(prevProductionPacks[recipeId] ?? 0);
+    const estimatedFactoryNumber = fridgeStock - dispatch1Qty + prevProduction;
+
     const recipeSource: "shopify" | "dpt" = (hasRecipeMatch && shopifyDatesLoaded.size > 0) ? "shopify" : "dpt";
     const effectivePacksSold = totalDispatchQty;
 
-    const deficit = Math.max(0, totalDispatchQty - fridgeStock);
+    const remainingDispatches = dispatch2Qty + dispatch3Qty;
+    const deficit = Math.max(0, remainingDispatches - estimatedFactoryNumber);
     const deficitBatches = packsPerBatch > 0 ? Math.ceil(deficit / packsPerBatch) : 0;
 
-    const stockAfterDispatches = fridgeStock - totalDispatchQty;
+    const stockAfterDispatches = estimatedFactoryNumber - remainingDispatches;
     let stockWarning: "ok" | "low" | "short" = "ok";
     if (stockAfterDispatches < 0) stockWarning = "short";
     else if (stockAfterDispatches <= 10) stockWarning = "low";
@@ -387,6 +418,8 @@ router.get("/calculate", async (req, res) => {
       maxBatchesPerTin: r.maxBatchesPerTin ? Number(r.maxBatchesPerTin) : null,
       sopUrl: r.sopUrl ?? null,
       fridgeStock: Math.round(fridgeStock),
+      prevProduction,
+      estimatedFactoryNumber: Math.round(estimatedFactoryNumber),
       dispatch1Qty,
       dispatch2Qty,
       dispatch3Qty,
@@ -432,7 +465,7 @@ router.get("/calculate", async (req, res) => {
     const tinCount = maxBatchesPerTin && suggestedBatches > 0
       ? Math.ceil(suggestedBatches / maxBatchesPerTin) : null;
 
-    const nextFactoryNumber = r.fridgeStock + (suggestedBatches * r.packsPerBatch) - r.totalDispatchQty;
+    const nextFactoryNumber = r.estimatedFactoryNumber + (suggestedBatches * r.packsPerBatch) - (r.dispatch2Qty + r.dispatch3Qty);
 
     return {
       ...r,
@@ -451,6 +484,7 @@ router.get("/calculate", async (req, res) => {
 
   res.json({
     planDate,
+    prevProductionDate,
     deliveryDates,
     totalDailyBatches,
     totalDeficitBatches,
