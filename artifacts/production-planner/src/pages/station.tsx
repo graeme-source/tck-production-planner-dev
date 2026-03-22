@@ -733,6 +733,16 @@ function MixingStation({ plan }: MixingStationProps) {
   const [completeFailed, setCompleteFailed] = useState(false);
 
   const [mixingTab, setMixingTab] = useState<"tins" | "cooking">("tins");
+  // key = `${recipeId}-${ingredientId}`, value = set of 0-based tray indices marked done
+  const [cookedTrays, setCookedTrays] = useState<Record<string, Set<number>>>({});
+  const toggleTray = (recipeId: number, ingredientId: number, trayIdx: number) => {
+    const key = `${recipeId}-${ingredientId}`;
+    setCookedTrays(prev => {
+      const set = new Set(prev[key] ?? []);
+      if (set.has(trayIdx)) set.delete(trayIdx); else set.add(trayIdx);
+      return { ...prev, [key]: set };
+    });
+  };
   const [cookingRecipes, setCookingRecipes] = useState<PrepRecipeDetail[]>([]);
   useEffect(() => {
     fetch(`/api/production-plans/${plan.id}/prep-requirements-by-recipe?station=prep_meat`, { credentials: "include" })
@@ -979,30 +989,42 @@ function MixingStation({ plan }: MixingStationProps) {
           />
         </div>
 
-        <div className="mt-3 pt-3 border-t border-border/50 flex items-center justify-between">
+        <div className="mt-3 pt-3 border-t border-border/50">
           <BreakTracker planId={plan.id} stationType="mixing" onBreakActiveChange={setIsOnBreak} />
-          {/* Tab toggle */}
-          <div className="flex rounded-lg border border-border overflow-hidden text-sm">
-            <button
-              onClick={() => setMixingTab("tins")}
-              className={cn("px-3 py-1.5 font-medium transition-colors", mixingTab === "tins" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary")}
-            >
-              Tins
-            </button>
-            <button
-              onClick={() => setMixingTab("cooking")}
-              className={cn("px-3 py-1.5 font-medium transition-colors border-l border-border", mixingTab === "cooking" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary")}
-            >
-              Cooking
-            </button>
-          </div>
         </div>
+      </div>
+
+      {/* ── Big tab switcher ── */}
+      <div className="flex gap-2">
+        <button
+          onClick={() => setMixingTab("tins")}
+          className={cn(
+            "flex-1 flex flex-col items-center justify-center gap-1 py-4 rounded-xl font-semibold text-base transition-all border-2",
+            mixingTab === "tins"
+              ? "bg-primary text-primary-foreground border-primary shadow-sm"
+              : "bg-card text-muted-foreground border-border hover:border-primary/40 hover:text-foreground"
+          )}
+        >
+          <span className="text-xl">🏭</span>
+          <span>Tins</span>
+        </button>
+        <button
+          onClick={() => setMixingTab("cooking")}
+          className={cn(
+            "flex-1 flex flex-col items-center justify-center gap-1 py-4 rounded-xl font-semibold text-base transition-all border-2",
+            mixingTab === "cooking"
+              ? "bg-rose-600 text-white border-rose-600 shadow-sm"
+              : "bg-card text-muted-foreground border-border hover:border-rose-400 hover:text-foreground"
+          )}
+        >
+          <span className="text-xl">🔥</span>
+          <span>Cooking</span>
+        </button>
       </div>
 
       {/* ── Cooking tab ── */}
       {mixingTab === "cooking" && (
-        <div className="space-y-3">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground px-1">Raw Meat Cooking</h3>
+        <div className="space-y-4">
           {cookingRecipes.filter(r => r.trayCount != null && r.trayCount > 0).length === 0 ? (
             <div className="bg-card border border-border rounded-xl p-6 text-center text-muted-foreground text-sm">
               No raw meat trays for this plan — cooking settings not yet configured on ingredients.
@@ -1011,41 +1033,63 @@ function MixingStation({ plan }: MixingStationProps) {
             cookingRecipes
               .filter(r => r.trayCount != null && r.trayCount > 0)
               .map(recipe => {
-                const rawMeatIngs = recipe.ingredients.filter(i => i.isRawMeat);
-                const totalRawKg = rawMeatIngs.reduce((s, i) => s + toKg(i.rawQty, i.unit), 0);
+                const rawMeatIngs = recipe.ingredients.filter(i => i.isRawMeat && i.trayCount != null && i.trayCount > 0);
                 const marinades = recipe.marinades ?? [];
-                const totalMarinadeG = marinades.reduce((s, m) => s + m.totalGrams, 0);
+                const totalDoneForRecipe = rawMeatIngs.reduce((s, ing) => {
+                  const key = `${recipe.recipeId}-${ing.ingredientId}`;
+                  return s + (cookedTrays[key]?.size ?? 0);
+                }, 0);
+                const totalTraysForRecipe = rawMeatIngs.reduce((s, ing) => s + (ing.trayCount ?? 0), 0);
+                const recipeAllDone = totalTraysForRecipe > 0 && totalDoneForRecipe >= totalTraysForRecipe;
                 return (
-                  <div key={recipe.recipeId} className="bg-card border border-border rounded-xl overflow-hidden">
+                  <div key={recipe.recipeId} className={cn("bg-card border-2 rounded-xl overflow-hidden transition-all", recipeAllDone ? "border-green-400 dark:border-green-600" : "border-border")}>
                     {/* Recipe header */}
-                    <div className="flex items-center justify-between px-4 py-3 bg-secondary/30 border-b border-border">
+                    <div className={cn("flex items-center justify-between px-4 py-3 border-b border-border", recipeAllDone ? "bg-green-50 dark:bg-green-900/20" : "bg-secondary/30")}>
                       <div>
                         <p className="font-semibold">{recipe.recipeName}</p>
-                        <p className="text-xs text-muted-foreground">{recipe.batchesTarget} batches · {totalRawKg.toFixed(2)} kg raw meat</p>
+                        <p className="text-xs text-muted-foreground">{recipe.batchesTarget} batches · {totalTraysForRecipe} tray{totalTraysForRecipe !== 1 ? "s" : ""}</p>
                       </div>
-                      <div className="flex items-center gap-2 text-right">
-                        <div className="bg-rose-100 dark:bg-rose-900/30 rounded-lg px-3 py-1.5 text-center">
-                          <p className="text-xl font-bold tabular-nums text-rose-600 dark:text-rose-400 leading-none">{recipe.trayCount}</p>
-                          <p className="text-xs text-rose-700 dark:text-rose-300">tray{recipe.trayCount !== 1 ? "s" : ""}</p>
-                        </div>
+                      <div className="text-right">
+                        {recipeAllDone ? (
+                          <span className="text-green-600 dark:text-green-400 font-bold text-sm">✓ All done</span>
+                        ) : (
+                          <span className="text-sm font-semibold tabular-nums text-muted-foreground">{totalDoneForRecipe}/{totalTraysForRecipe} done</span>
+                        )}
                       </div>
                     </div>
-                    {/* Per-ingredient cooking settings */}
+
+                    {/* Per-meat-ingredient sections */}
                     <div className="divide-y divide-border/50">
                       {rawMeatIngs.map(ing => {
+                        const ingTrays = ing.trayCount ?? 0;
+                        const key = `${recipe.recipeId}-${ing.ingredientId}`;
+                        const doneTraySet = cookedTrays[key] ?? new Set<number>();
+                        const doneCount = doneTraySet.size;
+                        const allIngDone = doneCount >= ingTrays;
                         const ingMarinades = marinades.filter(m => m.rawMeatIngredientId === ing.ingredientId);
-                        const perTrayKg = recipe.trayCount ? toKg(ing.rawQty, ing.unit) / recipe.trayCount : null;
+                        const perTrayKg = ingTrays > 0 ? toKg(ing.rawQty, ing.unit) / ingTrays : null;
                         const hasSettings = ing.minCookingTempC || ing.ovenTempC || ing.estimatedCookTimeMin || ing.steamPct != null;
+
                         return (
-                          <div key={ing.ingredientId} className="px-4 py-3">
-                            <div className="flex items-start justify-between gap-3 mb-2">
+                          <div key={ing.ingredientId} className="px-4 py-4 space-y-3">
+                            {/* Ingredient name + progress */}
+                            <div className="flex items-center justify-between">
                               <div>
-                                <p className="font-medium text-sm">{ing.ingredientName}</p>
-                                {perTrayKg && <p className="text-xs text-muted-foreground">{perTrayKg.toFixed(2)} kg per tray · {toKg(ing.rawQty, ing.unit).toFixed(2)} kg total</p>}
+                                <p className={cn("font-semibold", allIngDone && "line-through text-muted-foreground")}>{ing.ingredientName}</p>
+                                {perTrayKg && (
+                                  <p className="text-xs text-muted-foreground tabular-nums">
+                                    {perTrayKg.toFixed(2)} kg / tray · {toKg(ing.rawQty, ing.unit).toFixed(2)} kg total
+                                  </p>
+                                )}
                               </div>
+                              <span className={cn("text-sm font-bold tabular-nums", allIngDone ? "text-green-600 dark:text-green-400" : "text-muted-foreground")}>
+                                {doneCount}/{ingTrays}
+                              </span>
                             </div>
-                            {hasSettings ? (
-                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
+
+                            {/* Cooking settings tiles */}
+                            {hasSettings && (
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                                 {ing.minCookingTempC && (
                                   <div className="bg-red-50 dark:bg-red-900/20 rounded-lg px-3 py-2 text-center">
                                     <p className="text-xs text-muted-foreground mb-0.5">Core Temp</p>
@@ -1071,16 +1115,16 @@ function MixingStation({ plan }: MixingStationProps) {
                                   </div>
                                 )}
                               </div>
-                            ) : (
-                              <p className="text-xs text-muted-foreground italic mt-1">No oven settings configured — add them in the ingredients library.</p>
                             )}
+
+                            {/* Marinade per-tray summary */}
                             {ingMarinades.length > 0 && (
-                              <div className="mt-2 space-y-1">
+                              <div className="space-y-0.5">
                                 {ingMarinades.map((m, mi) => {
                                   const name = m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown";
-                                  const perTrayG = recipe.trayCount ? Math.round(m.totalGrams / recipe.trayCount) : null;
+                                  const perTrayG = ingTrays > 0 ? Math.round(m.totalGrams / ingTrays) : null;
                                   return (
-                                    <div key={mi} className="flex items-center justify-between text-xs text-muted-foreground px-2">
+                                    <div key={mi} className="flex items-center justify-between text-xs text-muted-foreground">
                                       <span className="flex items-center gap-1.5"><span className="text-rose-400">↳</span>{name}</span>
                                       <span className="tabular-nums">{perTrayG != null ? `${perTrayG}g / tray` : `${m.totalGrams}g total`}</span>
                                     </div>
@@ -1088,15 +1132,31 @@ function MixingStation({ plan }: MixingStationProps) {
                                 })}
                               </div>
                             )}
+
+                            {/* Tray completion buttons */}
+                            <div className="grid grid-cols-4 gap-2">
+                              {Array.from({ length: ingTrays }, (_, idx) => {
+                                const done = doneTraySet.has(idx);
+                                return (
+                                  <button
+                                    key={idx}
+                                    onClick={() => toggleTray(recipe.recipeId, ing.ingredientId, idx)}
+                                    className={cn(
+                                      "flex flex-col items-center justify-center py-3 rounded-xl border-2 font-semibold text-sm transition-all active:scale-95",
+                                      done
+                                        ? "bg-green-500 border-green-500 text-white"
+                                        : "bg-card border-border text-muted-foreground hover:border-rose-400 hover:text-foreground"
+                                    )}
+                                  >
+                                    <span className="text-base">{done ? "✓" : idx + 1}</span>
+                                    <span className="text-xs opacity-70">tray</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </div>
                         );
                       })}
-                      {totalMarinadeG > 0 && (
-                        <div className="px-4 py-2 flex justify-between text-xs text-muted-foreground bg-secondary/20">
-                          <span>Total marinade</span>
-                          <span className="tabular-nums font-medium text-foreground">{totalMarinadeG}g</span>
-                        </div>
-                      )}
                     </div>
                   </div>
                 );
