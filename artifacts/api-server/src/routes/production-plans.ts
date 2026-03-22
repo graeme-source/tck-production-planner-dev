@@ -356,7 +356,7 @@ router.get("/calculate", async (req, res) => {
     const totalDispatchQty = dispatch1Qty + dispatch2Qty + dispatch3Qty;
 
     const recipeSource: "shopify" | "dpt" = (hasRecipeMatch && shopifyDatesLoaded.size > 0) ? "shopify" : "dpt";
-    const effectivePacksSold = recipeSource === "shopify" ? shopifyMatch.qty : (dptPacksSold * 3);
+    const effectivePacksSold = totalDispatchQty;
 
     const deficit = Math.max(0, totalDispatchQty - fridgeStock);
     const deficitBatches = packsPerBatch > 0 ? Math.ceil(deficit / packsPerBatch) : 0;
