@@ -304,6 +304,7 @@ interface CalcResponse {
   totalDeficitBatches: number;
   remainingCapacity: number;
   salesSource: "shopify" | "dpt";
+  shopifyError: string | null;
   recipes: CalcRecipe[];
 }
 
@@ -728,6 +729,13 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                     <Plus className="w-4 h-4" />
                     Add
                   </button>
+                </div>
+              )}
+
+              {calcData?.salesSource === "dpt" && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/40 rounded-xl mb-3 text-sm text-blue-700 dark:text-blue-300">
+                  <Info className="w-4 h-4 flex-shrink-0" />
+                  Dispatch estimates are based on DPT settings (Shopify data unavailable). Actual orders may differ.
                 </div>
               )}
 
