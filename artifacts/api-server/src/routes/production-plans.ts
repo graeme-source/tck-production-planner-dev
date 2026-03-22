@@ -341,15 +341,22 @@ router.get("/calculate", async (req, res) => {
     const fridgeStock = latestStock[recipeId] ?? fridgeStockFromPlans[recipeId] ?? 0;
 
     const dptPacksSold = r.packsSold ?? 0;
-    const dispatch1Qty = shopifyDatesLoaded.has(deliveryDates[0]) ? matchShopifySalesForDate(recipeName, deliveryDates[0]) : dptPacksSold;
-    const dispatch2Qty = shopifyDatesLoaded.has(deliveryDates[1]) ? matchShopifySalesForDate(recipeName, deliveryDates[1]) : dptPacksSold;
-    const dispatch3Qty = shopifyDatesLoaded.has(deliveryDates[2]) ? matchShopifySalesForDate(recipeName, deliveryDates[2]) : dptPacksSold;
+    const shopifyMatch = matchShopifySalesCombined(recipeName);
+    const hasRecipeMatch = shopifyMatch.matchedProduct !== null;
+
+    function resolveDispatchQty(date: string): number {
+      if (!shopifyDatesLoaded.has(date)) return dptPacksSold;
+      if (!hasRecipeMatch) return dptPacksSold;
+      return matchShopifySalesForDate(recipeName, date);
+    }
+
+    const dispatch1Qty = resolveDispatchQty(deliveryDates[0]);
+    const dispatch2Qty = resolveDispatchQty(deliveryDates[1]);
+    const dispatch3Qty = resolveDispatchQty(deliveryDates[2]);
     const totalDispatchQty = dispatch1Qty + dispatch2Qty + dispatch3Qty;
 
-    const shopifyDateCount = [deliveryDates[0], deliveryDates[1], deliveryDates[2]].filter(d => shopifyDatesLoaded.has(d)).length;
-    const dptDateCount = 3 - shopifyDateCount;
-    const shopifyMatch = matchShopifySalesCombined(recipeName);
-    const effectivePacksSold = shopifyMatch.qty + (dptPacksSold * dptDateCount);
+    const recipeSource: "shopify" | "dpt" = (hasRecipeMatch && shopifyDatesLoaded.size > 0) ? "shopify" : "dpt";
+    const effectivePacksSold = recipeSource === "shopify" ? shopifyMatch.qty : (dptPacksSold * 3);
 
     const deficit = Math.max(0, totalDispatchQty - fridgeStock);
     const deficitBatches = packsPerBatch > 0 ? Math.ceil(deficit / packsPerBatch) : 0;
@@ -378,7 +385,7 @@ router.get("/calculate", async (req, res) => {
       salesPercent: 0,
       packsSold: effectivePacksSold,
       stockWarning,
-      salesSource: hasShopifyData ? "shopify" as const : "dpt" as const,
+      salesSource: recipeSource,
       matchedProduct: shopifyMatch.matchedProduct,
     };
   });
