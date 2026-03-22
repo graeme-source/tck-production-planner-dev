@@ -14,6 +14,9 @@ function mapRow(r: typeof ingredientsTable.$inferSelect) {
     processingRatio: r.processingRatio !== null && r.processingRatio !== undefined ? Number(r.processingRatio) : null,
     rawMeatTrayCapacityKg: r.rawMeatTrayCapacityKg !== null && r.rawMeatTrayCapacityKg !== undefined ? Number(r.rawMeatTrayCapacityKg) : null,
     minCookingTempC: r.minCookingTempC !== null && r.minCookingTempC !== undefined ? Number(r.minCookingTempC) : null,
+    estimatedCookTimeMin: r.estimatedCookTimeMin ?? null,
+    ovenTempC: r.ovenTempC ?? null,
+    steamPct: r.steamPct ?? null,
     createdAt: r.createdAt.toISOString(),
   };
 }
@@ -31,7 +34,7 @@ function validateProcessingRatio(value: unknown): string | null {
 }
 
 router.post("/", validate(CreateIngredientBody), async (req, res) => {
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, category, stockCheckEnabled, stockCheckFrequency, stockCheckDay } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, stockCheckEnabled, stockCheckFrequency, stockCheckDay } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const [row] = await db.insert(ingredientsTable).values({
@@ -49,6 +52,9 @@ router.post("/", validate(CreateIngredientBody), async (req, res) => {
     processingRatio: processingRatio !== null && processingRatio !== undefined ? String(processingRatio) : null,
     rawMeatTrayCapacityKg: rawMeatTrayCapacityKg !== null && rawMeatTrayCapacityKg !== undefined ? String(rawMeatTrayCapacityKg) : null,
     minCookingTempC: minCookingTempC !== null && minCookingTempC !== undefined ? String(minCookingTempC) : null,
+    estimatedCookTimeMin: estimatedCookTimeMin != null ? Number(estimatedCookTimeMin) : null,
+    ovenTempC: ovenTempC != null ? Number(ovenTempC) : null,
+    steamPct: steamPct != null ? Number(steamPct) : null,
     stockCheckEnabled: stockCheckEnabled ?? false,
     stockCheckFrequency: stockCheckFrequency ?? "daily",
     stockCheckDay: stockCheckDay || null,
@@ -65,7 +71,7 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, category, stockCheckEnabled, stockCheckFrequency, stockCheckDay } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, stockCheckEnabled, stockCheckFrequency, stockCheckDay } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const [row] = await db.update(ingredientsTable).set({
@@ -83,6 +89,9 @@ router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
     processingRatio: processingRatio !== null && processingRatio !== undefined ? String(processingRatio) : null,
     rawMeatTrayCapacityKg: rawMeatTrayCapacityKg !== null && rawMeatTrayCapacityKg !== undefined ? String(rawMeatTrayCapacityKg) : null,
     minCookingTempC: minCookingTempC !== null && minCookingTempC !== undefined ? String(minCookingTempC) : null,
+    estimatedCookTimeMin: estimatedCookTimeMin != null ? Number(estimatedCookTimeMin) : null,
+    ovenTempC: ovenTempC != null ? Number(ovenTempC) : null,
+    steamPct: steamPct != null ? Number(steamPct) : null,
     ...(stockCheckEnabled !== undefined ? { stockCheckEnabled } : {}),
     ...(stockCheckFrequency !== undefined ? { stockCheckFrequency } : {}),
     stockCheckDay: stockCheckDay || null,

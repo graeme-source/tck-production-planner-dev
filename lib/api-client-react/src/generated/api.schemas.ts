@@ -50,6 +50,12 @@ export interface Ingredient {
   rawMeatTrayCapacityKg?: number | null;
   /** Minimum food-safe cooking temperature in °C */
   minCookingTempC?: number | null;
+  /** Estimated cook time in minutes */
+  estimatedCookTimeMin?: number | null;
+  /** Oven temperature in °C */
+  ovenTempC?: number | null;
+  /** Steam percentage 0-100 */
+  steamPct?: number | null;
   stockCheckEnabled: boolean;
   stockCheckFrequency: string;
   stockCheckDay?: string | null;
@@ -71,6 +77,9 @@ export interface CreateIngredient {
   category?: string | null;
   rawMeatTrayCapacityKg?: number | null;
   minCookingTempC?: number | null;
+  estimatedCookTimeMin?: number | null;
+  ovenTempC?: number | null;
+  steamPct?: number | null;
   stockCheckEnabled?: boolean;
   stockCheckFrequency?: string;
   stockCheckDay?: string | null;

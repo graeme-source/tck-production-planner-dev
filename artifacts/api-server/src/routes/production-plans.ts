@@ -1499,6 +1499,10 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       category: string | null;
       processingRatio: number | null;
       rawMeatTrayCapacityKg: number | null;
+      minCookingTempC: number | null;
+      estimatedCookTimeMin: number | null;
+      ovenTempC: number | null;
+      steamPct: number | null;
       cookedQty: number;
       rawQty: number;
       isRawMeat: boolean;
@@ -1543,6 +1547,10 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
         category,
         processingRatio: ing.processingRatio,
         rawMeatTrayCapacityKg: ing.rawMeatTrayCapacityKg,
+        minCookingTempC: ing.minCookingTempC,
+        estimatedCookTimeMin: ing.estimatedCookTimeMin,
+        ovenTempC: ing.ovenTempC,
+        steamPct: ing.steamPct,
         cookedQty: roundByUnit(cookedQty, ing.unit),
         rawQty: roundByUnit(rawQty, ing.unit),
         isRawMeat: category === "raw_meat",

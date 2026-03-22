@@ -404,6 +404,18 @@ const schema = z.object({
     (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
     z.number().min(0).max(300).nullable().optional()
   ),
+  estimatedCookTimeMin: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().int().min(1).nullable().optional()
+  ),
+  ovenTempC: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().int().min(0).max(500).nullable().optional()
+  ),
+  steamPct: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().int().min(0).max(100).nullable().optional()
+  ),
   stockCheckEnabled: z.boolean().optional(),
   stockCheckFrequency: z.enum(["daily", "weekly"]).optional(),
   stockCheckDay: z.string().optional(),
@@ -414,7 +426,7 @@ type FormValues = z.infer<typeof schema>;
 const emptyDefaults: FormValues = {
   name: "", unit: "kg", packWeight: 0, costPerPack: 0,
   brand: "", supplierPartNumber: "", supplierId: 0, secondarySupplierId: 0,
-  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "",
+  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null, estimatedCookTimeMin: null, ovenTempC: null, steamPct: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "",
 };
 
 export default function Ingredients() {
@@ -473,6 +485,9 @@ export default function Ingredients() {
         : null,
       rawMeatTrayCapacityKg: item.rawMeatTrayCapacityKg != null ? Number(item.rawMeatTrayCapacityKg) : null,
       minCookingTempC: item.minCookingTempC != null ? Number(item.minCookingTempC) : null,
+      estimatedCookTimeMin: item.estimatedCookTimeMin != null ? Number(item.estimatedCookTimeMin) : null,
+      ovenTempC: item.ovenTempC != null ? Number(item.ovenTempC) : null,
+      steamPct: item.steamPct != null ? Number(item.steamPct) : null,
       category: item.category ?? "",
       stockCheckEnabled: item.stockCheckEnabled ?? false,
       stockCheckFrequency: (item.stockCheckFrequency as "daily" | "weekly") ?? "daily",
@@ -496,6 +511,9 @@ export default function Ingredients() {
     processingRatio: data.processingRatioPct != null ? data.processingRatioPct / 100 : null,
     rawMeatTrayCapacityKg: data.rawMeatTrayCapacityKg ?? null,
     minCookingTempC: data.minCookingTempC ?? null,
+    estimatedCookTimeMin: data.estimatedCookTimeMin ?? null,
+    ovenTempC: data.ovenTempC ?? null,
+    steamPct: data.steamPct ?? null,
     stockCheckEnabled: data.stockCheckEnabled ?? false,
     stockCheckFrequency: data.stockCheckFrequency ?? "daily",
     stockCheckDay: data.stockCheckFrequency === "weekly" ? (data.stockCheckDay || null) : null,
@@ -717,6 +735,60 @@ export default function Ingredients() {
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">Minimum internal temperature for safe cooking.</p>
                   {errors.minCookingTempC && <span className="text-destructive text-xs">{String(errors.minCookingTempC.message)}</span>}
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium mb-1 block">
+                    Estimated Cook Time
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">(minutes)</span>
+                  </label>
+                  <div className="relative max-w-[160px]">
+                    <input
+                      type="number"
+                      step="1"
+                      min="1"
+                      {...register("estimatedCookTimeMin")}
+                      className="w-full px-3 pr-12 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      placeholder="e.g. 45"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">min</span>
+                  </div>
+                  {errors.estimatedCookTimeMin && <span className="text-destructive text-xs">{String(errors.estimatedCookTimeMin.message)}</span>}
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium mb-1 block">
+                    Oven Temperature
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">(°C)</span>
+                  </label>
+                  <div className="relative max-w-[160px]">
+                    <input
+                      type="number"
+                      step="1"
+                      min="0"
+                      max="500"
+                      {...register("ovenTempC")}
+                      className="w-full px-3 pr-10 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      placeholder="e.g. 180"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">°C</span>
+                  </div>
+                  {errors.ovenTempC && <span className="text-destructive text-xs">{String(errors.ovenTempC.message)}</span>}
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Steam %</label>
+                  <select
+                    {...register("steamPct")}
+                    className="w-full max-w-[160px] px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  >
+                    <option value="">— not set —</option>
+                    {[0,10,20,30,40,50,60,70,80,90,100].map(v => (
+                      <option key={v} value={v}>{v}%</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-muted-foreground mt-1">Oven steam percentage during cooking.</p>
+                  {errors.steamPct && <span className="text-destructive text-xs">{String(errors.steamPct.message)}</span>}
                 </div>
               </div>
             )}

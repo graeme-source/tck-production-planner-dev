@@ -16,6 +16,10 @@ export interface ResolvedIngredient {
   category: string | null;
   processingRatio: number | null;
   rawMeatTrayCapacityKg: number | null;
+  minCookingTempC: number | null;
+  estimatedCookTimeMin: number | null;
+  ovenTempC: number | null;
+  steamPct: number | null;
   stockCheckEnabled: boolean;
   quantityPerBatch: number;
 }
@@ -47,6 +51,10 @@ async function resolveSubRecipeIngredients(
       category: ingredientsTable.category,
       processingRatio: ingredientsTable.processingRatio,
       rawMeatTrayCapacityKg: ingredientsTable.rawMeatTrayCapacityKg,
+      minCookingTempC: ingredientsTable.minCookingTempC,
+      estimatedCookTimeMin: ingredientsTable.estimatedCookTimeMin,
+      ovenTempC: ingredientsTable.ovenTempC,
+      steamPct: ingredientsTable.steamPct,
       stockCheckEnabled: ingredientsTable.stockCheckEnabled,
     })
     .from(subRecipeIngredientsTable)
@@ -60,6 +68,10 @@ async function resolveSubRecipeIngredients(
     category: row.category ?? null,
     processingRatio: row.processingRatio ? Number(row.processingRatio) : null,
     rawMeatTrayCapacityKg: row.rawMeatTrayCapacityKg ? Number(row.rawMeatTrayCapacityKg) : null,
+    minCookingTempC: row.minCookingTempC ? Number(row.minCookingTempC) : null,
+    estimatedCookTimeMin: row.estimatedCookTimeMin ?? null,
+    ovenTempC: row.ovenTempC ?? null,
+    steamPct: row.steamPct ?? null,
     stockCheckEnabled: row.stockCheckEnabled ?? false,
     quantityPerBatch: Number(row.quantity) * effectiveScale,
   }));
@@ -100,6 +112,10 @@ export async function resolveRecipeIngredients(
       category: ingredientsTable.category,
       processingRatio: ingredientsTable.processingRatio,
       rawMeatTrayCapacityKg: ingredientsTable.rawMeatTrayCapacityKg,
+      minCookingTempC: ingredientsTable.minCookingTempC,
+      estimatedCookTimeMin: ingredientsTable.estimatedCookTimeMin,
+      ovenTempC: ingredientsTable.ovenTempC,
+      steamPct: ingredientsTable.steamPct,
       stockCheckEnabled: ingredientsTable.stockCheckEnabled,
     })
     .from(recipeIngredientsTable)
@@ -113,6 +129,10 @@ export async function resolveRecipeIngredients(
     category: row.category ?? null,
     processingRatio: row.processingRatio ? Number(row.processingRatio) : null,
     rawMeatTrayCapacityKg: row.rawMeatTrayCapacityKg ? Number(row.rawMeatTrayCapacityKg) : null,
+    minCookingTempC: row.minCookingTempC ? Number(row.minCookingTempC) : null,
+    estimatedCookTimeMin: row.estimatedCookTimeMin ?? null,
+    ovenTempC: row.ovenTempC ?? null,
+    steamPct: row.steamPct ?? null,
     stockCheckEnabled: row.stockCheckEnabled ?? false,
     quantityPerBatch: Number(row.quantity) * portionsPerBatch,
   }));

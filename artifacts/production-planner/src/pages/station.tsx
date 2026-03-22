@@ -732,6 +732,22 @@ function MixingStation({ plan }: MixingStationProps) {
   const [completing, setCompleting] = useState(false);
   const [completeFailed, setCompleteFailed] = useState(false);
 
+  const [mixingTab, setMixingTab] = useState<"tins" | "cooking">("tins");
+  const [cookingRecipes, setCookingRecipes] = useState<PrepRecipeDetail[]>([]);
+  useEffect(() => {
+    fetch(`/api/production-plans/${plan.id}/prep-requirements-by-recipe?station=prep_meat`, { credentials: "include" })
+      .then(r => r.json())
+      .then((d: { recipes?: PrepRecipeDetail[] }) => setCookingRecipes(d.recipes ?? []))
+      .catch(() => {});
+    const interval = setInterval(() => {
+      fetch(`/api/production-plans/${plan.id}/prep-requirements-by-recipe?station=prep_meat`, { credentials: "include" })
+        .then(r => r.json())
+        .then((d: { recipes?: PrepRecipeDetail[] }) => setCookingRecipes(d.recipes ?? []))
+        .catch(() => {});
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [plan.id]);
+
   const [fillingData, setFillingData] = useState<FillingMixItem[]>([]);
   useEffect(() => {
     fetch(`/api/production-plans/${plan.id}/filling-mix`, { credentials: "include" })
@@ -965,9 +981,131 @@ function MixingStation({ plan }: MixingStationProps) {
 
         <div className="mt-3 pt-3 border-t border-border/50 flex items-center justify-between">
           <BreakTracker planId={plan.id} stationType="mixing" onBreakActiveChange={setIsOnBreak} />
+          {/* Tab toggle */}
+          <div className="flex rounded-lg border border-border overflow-hidden text-sm">
+            <button
+              onClick={() => setMixingTab("tins")}
+              className={cn("px-3 py-1.5 font-medium transition-colors", mixingTab === "tins" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary")}
+            >
+              Tins
+            </button>
+            <button
+              onClick={() => setMixingTab("cooking")}
+              className={cn("px-3 py-1.5 font-medium transition-colors border-l border-border", mixingTab === "cooking" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary")}
+            >
+              Cooking
+            </button>
+          </div>
         </div>
       </div>
 
+      {/* ── Cooking tab ── */}
+      {mixingTab === "cooking" && (
+        <div className="space-y-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground px-1">Raw Meat Cooking</h3>
+          {cookingRecipes.filter(r => r.trayCount != null && r.trayCount > 0).length === 0 ? (
+            <div className="bg-card border border-border rounded-xl p-6 text-center text-muted-foreground text-sm">
+              No raw meat trays for this plan — cooking settings not yet configured on ingredients.
+            </div>
+          ) : (
+            cookingRecipes
+              .filter(r => r.trayCount != null && r.trayCount > 0)
+              .map(recipe => {
+                const rawMeatIngs = recipe.ingredients.filter(i => i.isRawMeat);
+                const totalRawKg = rawMeatIngs.reduce((s, i) => s + toKg(i.rawQty, i.unit), 0);
+                const marinades = recipe.marinades ?? [];
+                const totalMarinadeG = marinades.reduce((s, m) => s + m.totalGrams, 0);
+                return (
+                  <div key={recipe.recipeId} className="bg-card border border-border rounded-xl overflow-hidden">
+                    {/* Recipe header */}
+                    <div className="flex items-center justify-between px-4 py-3 bg-secondary/30 border-b border-border">
+                      <div>
+                        <p className="font-semibold">{recipe.recipeName}</p>
+                        <p className="text-xs text-muted-foreground">{recipe.batchesTarget} batches · {totalRawKg.toFixed(2)} kg raw meat</p>
+                      </div>
+                      <div className="flex items-center gap-2 text-right">
+                        <div className="bg-rose-100 dark:bg-rose-900/30 rounded-lg px-3 py-1.5 text-center">
+                          <p className="text-xl font-bold tabular-nums text-rose-600 dark:text-rose-400 leading-none">{recipe.trayCount}</p>
+                          <p className="text-xs text-rose-700 dark:text-rose-300">tray{recipe.trayCount !== 1 ? "s" : ""}</p>
+                        </div>
+                      </div>
+                    </div>
+                    {/* Per-ingredient cooking settings */}
+                    <div className="divide-y divide-border/50">
+                      {rawMeatIngs.map(ing => {
+                        const ingMarinades = marinades.filter(m => m.rawMeatIngredientId === ing.ingredientId);
+                        const perTrayKg = recipe.trayCount ? toKg(ing.rawQty, ing.unit) / recipe.trayCount : null;
+                        const hasSettings = ing.minCookingTempC || ing.ovenTempC || ing.estimatedCookTimeMin || ing.steamPct != null;
+                        return (
+                          <div key={ing.ingredientId} className="px-4 py-3">
+                            <div className="flex items-start justify-between gap-3 mb-2">
+                              <div>
+                                <p className="font-medium text-sm">{ing.ingredientName}</p>
+                                {perTrayKg && <p className="text-xs text-muted-foreground">{perTrayKg.toFixed(2)} kg per tray · {toKg(ing.rawQty, ing.unit).toFixed(2)} kg total</p>}
+                              </div>
+                            </div>
+                            {hasSettings ? (
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
+                                {ing.minCookingTempC && (
+                                  <div className="bg-red-50 dark:bg-red-900/20 rounded-lg px-3 py-2 text-center">
+                                    <p className="text-xs text-muted-foreground mb-0.5">Core Temp</p>
+                                    <p className="font-bold text-sm tabular-nums text-red-600 dark:text-red-400">{ing.minCookingTempC}°C</p>
+                                  </div>
+                                )}
+                                {ing.ovenTempC && (
+                                  <div className="bg-orange-50 dark:bg-orange-900/20 rounded-lg px-3 py-2 text-center">
+                                    <p className="text-xs text-muted-foreground mb-0.5">Oven Temp</p>
+                                    <p className="font-bold text-sm tabular-nums text-orange-600 dark:text-orange-400">{ing.ovenTempC}°C</p>
+                                  </div>
+                                )}
+                                {ing.estimatedCookTimeMin && (
+                                  <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg px-3 py-2 text-center">
+                                    <p className="text-xs text-muted-foreground mb-0.5">Cook Time</p>
+                                    <p className="font-bold text-sm tabular-nums text-blue-600 dark:text-blue-400">{ing.estimatedCookTimeMin} min</p>
+                                  </div>
+                                )}
+                                {ing.steamPct != null && (
+                                  <div className="bg-cyan-50 dark:bg-cyan-900/20 rounded-lg px-3 py-2 text-center">
+                                    <p className="text-xs text-muted-foreground mb-0.5">Steam</p>
+                                    <p className="font-bold text-sm tabular-nums text-cyan-600 dark:text-cyan-400">{ing.steamPct}%</p>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <p className="text-xs text-muted-foreground italic mt-1">No oven settings configured — add them in the ingredients library.</p>
+                            )}
+                            {ingMarinades.length > 0 && (
+                              <div className="mt-2 space-y-1">
+                                {ingMarinades.map((m, mi) => {
+                                  const name = m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown";
+                                  const perTrayG = recipe.trayCount ? Math.round(m.totalGrams / recipe.trayCount) : null;
+                                  return (
+                                    <div key={mi} className="flex items-center justify-between text-xs text-muted-foreground px-2">
+                                      <span className="flex items-center gap-1.5"><span className="text-rose-400">↳</span>{name}</span>
+                                      <span className="tabular-nums">{perTrayG != null ? `${perTrayG}g / tray` : `${m.totalGrams}g total`}</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {totalMarinadeG > 0 && (
+                        <div className="px-4 py-2 flex justify-between text-xs text-muted-foreground bg-secondary/20">
+                          <span>Total marinade</span>
+                          <span className="tabular-nums font-medium text-foreground">{totalMarinadeG}g</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+          )}
+        </div>
+      )}
+
+      {mixingTab === "tins" && (
       <div>
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 px-1">
           {activeItemId ? "All Recipes" : "Click a recipe to start mixing"}
@@ -1024,6 +1162,7 @@ function MixingStation({ plan }: MixingStationProps) {
           </SortableContext>
         </DndContext>
       </div>
+      )}
     </div>
   );
 }
@@ -2010,6 +2149,10 @@ interface PrepIngredientDetail {
   category: string | null;
   processingRatio: number | null;
   rawMeatTrayCapacityKg: number | null;
+  minCookingTempC: number | null;
+  estimatedCookTimeMin: number | null;
+  ovenTempC: number | null;
+  steamPct: number | null;
   cookedQty: number;
   rawQty: number;
   isRawMeat: boolean;
@@ -2995,42 +3138,56 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
               <p className="text-sm text-muted-foreground mt-1">{selected.batchesTarget} batch{selected.batchesTarget !== 1 ? "es" : ""}</p>
             </div>
 
-            {/* Key numbers */}
-            <div className="flex items-center gap-8 mb-6">
-              <div className="text-center">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Raw Meat</p>
-                <p className="text-5xl font-bold font-display tabular-nums text-rose-600 dark:text-rose-400">
-                  {selTotalRawKg.toFixed(2)}
-                  <span className="text-2xl font-normal ml-1 text-muted-foreground">kg</span>
-                </p>
+            {/* Tray summary banner */}
+            {selTrays != null && selTrays > 0 ? (
+              <div className="flex items-center gap-5 bg-rose-50 dark:bg-rose-900/20 rounded-xl px-5 py-4 mb-5">
+                <div className="text-center min-w-[60px]">
+                  <p className="text-5xl font-bold font-display tabular-nums text-rose-600 dark:text-rose-400 leading-none">{selTrays}</p>
+                  <p className="text-xs font-medium text-rose-700 dark:text-rose-300 mt-1">tray{selTrays !== 1 ? "s" : ""}</p>
+                </div>
+                <div className="h-10 w-px bg-rose-200 dark:bg-rose-700" />
+                <div>
+                  <p className="text-sm font-semibold tabular-nums">{selTotalRawKg.toFixed(2)} kg raw meat</p>
+                  {selTrayCapKg && <p className="text-xs text-muted-foreground mt-0.5">{selTrayCapKg} kg capacity per tray</p>}
+                  {selTotalMarinadeG > 0 && (
+                    <p className="text-xs text-muted-foreground">+ {selTotalMarinadeG >= 1000 ? `${(selTotalMarinadeG / 1000).toFixed(2)} kg` : `${selTotalMarinadeG}g`} marinade</p>
+                  )}
+                </div>
               </div>
-              {selTrays != null && (
-                <>
-                  <div className="text-4xl font-light text-muted-foreground">·</div>
-                  <div className="text-center">
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Trays</p>
-                    <p className="text-5xl font-bold font-display tabular-nums text-rose-600 dark:text-rose-400">{selTrays}</p>
-                    {selTrayCapKg && <p className="text-xs text-muted-foreground mt-1">{selTrayCapKg} kg each</p>}
-                  </div>
-                </>
-              )}
-            </div>
+            ) : (
+              <div className="flex items-center gap-8 mb-6">
+                <div className="text-center">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Raw Meat</p>
+                  <p className="text-5xl font-bold font-display tabular-nums text-rose-600 dark:text-rose-400">
+                    {selTotalRawKg.toFixed(2)}
+                    <span className="text-2xl font-normal ml-1 text-muted-foreground">kg</span>
+                  </p>
+                </div>
+              </div>
+            )}
 
-            {/* Ingredient breakdown */}
+            {/* Per-tray breakdown */}
             <div className="space-y-1">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Breakdown</p>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+                {selTrays != null && selTrays > 0 ? "Per Tray" : "Breakdown"}
+              </p>
               {selRawMeat.map(ing => {
                 const meatMarinades = selMarinades.filter(m => m.rawMeatIngredientId === ing.ingredientId);
-                const perTrayKg = selTrays && selTrays > 0 ? (toKg(ing.rawQty, ing.unit) / selTrays).toFixed(2) : null;
+                const ingKgTotal = toKg(ing.rawQty, ing.unit);
+                const perTrayKg = selTrays && selTrays > 0 ? ingKgTotal / selTrays : null;
                 return (
                   <div key={ing.ingredientId} className="rounded-xl border border-border overflow-hidden">
                     {/* Meat row */}
                     <div className="flex items-center justify-between px-4 py-3 bg-rose-50/50 dark:bg-rose-900/10">
                       <span className="font-semibold text-sm">{ing.ingredientName}</span>
                       <div className="text-right">
-                        <span className="tabular-nums font-bold text-base">{fmtQty(ing.rawQty, ing.unit)}</span>
-                        {perTrayKg && (
-                          <p className="text-xs text-muted-foreground">{perTrayKg} kg / tray</p>
+                        {perTrayKg != null ? (
+                          <>
+                            <span className="tabular-nums font-bold text-base">{perTrayKg.toFixed(2)} kg</span>
+                            <p className="text-xs text-muted-foreground">{ingKgTotal.toFixed(2)} kg total</p>
+                          </>
+                        ) : (
+                          <span className="tabular-nums font-bold text-base">{fmtQty(ing.rawQty, ing.unit)}</span>
                         )}
                       </div>
                     </div>
@@ -3045,9 +3202,13 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                             <span>{name}</span>
                           </span>
                           <div className="text-right">
-                            <span className="tabular-nums font-medium text-foreground">{m.totalGrams}g</span>
-                            {perTrayG != null && (
-                              <p className="text-xs text-muted-foreground">{perTrayG}g / tray</p>
+                            {perTrayG != null ? (
+                              <>
+                                <span className="tabular-nums font-medium text-foreground">{perTrayG}g</span>
+                                <p className="text-xs text-muted-foreground">{m.totalGrams}g total</p>
+                              </>
+                            ) : (
+                              <span className="tabular-nums font-medium text-foreground">{m.totalGrams}g</span>
                             )}
                           </div>
                         </div>
@@ -3057,11 +3218,16 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                 );
               })}
 
-              {/* Combined total */}
-              {selTotalMarinadeG > 0 && (
+              {/* Combined per-tray total */}
+              {(selTotalMarinadeG > 0 || (selTrays != null && selTrays > 0)) && (
                 <div className="flex justify-between items-center px-4 py-3 rounded-xl bg-secondary/50 text-sm font-semibold mt-2">
-                  <span>Total combined weight</span>
-                  <span className="tabular-nums">{(selTotalRawKg + selTotalMarinadeG / 1000).toFixed(2)} kg</span>
+                  <span>{selTrays != null && selTrays > 0 ? "Combined per tray" : "Total combined weight"}</span>
+                  <span className="tabular-nums">
+                    {selTrays != null && selTrays > 0
+                      ? ((selTotalRawKg + selTotalMarinadeG / 1000) / selTrays).toFixed(2)
+                      : (selTotalRawKg + selTotalMarinadeG / 1000).toFixed(2)
+                    } kg
+                  </span>
                 </div>
               )}
             </div>
