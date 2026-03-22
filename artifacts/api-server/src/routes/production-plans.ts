@@ -304,25 +304,31 @@ router.get("/calculate", async (req, res) => {
     .where(eq(appSettingsTable.key, "total_daily_batches"));
   const totalDailyBatches = totalBatchesSetting ? Number(totalBatchesSetting.value) : 0;
 
+  function normalizeForMatch(s: string): string {
+    return s.toLowerCase().trim().replace(/[''`]/g, "'").replace(/\s+/g, " ");
+  }
+
   function matchShopifySalesForDate(recipeName: string, date: string): number {
-    const recipeNameLower = recipeName.toLowerCase().trim();
+    const recipeNorm = normalizeForMatch(recipeName);
     const salesForDate = shopifySalesPerDate[date] ?? {};
     for (const [productTitle, qty] of Object.entries(salesForDate)) {
-      if (productTitle.includes(recipeNameLower) || recipeNameLower.includes(productTitle)) {
+      const productNorm = normalizeForMatch(productTitle);
+      if (productNorm.includes(recipeNorm) || recipeNorm.includes(productNorm)) {
         return qty;
       }
     }
     return 0;
   }
 
-  function matchShopifySalesCombined(recipeName: string): number {
-    const recipeNameLower = recipeName.toLowerCase().trim();
+  function matchShopifySalesCombined(recipeName: string): { qty: number; matchedProduct: string | null } {
+    const recipeNorm = normalizeForMatch(recipeName);
     for (const [productTitle, qty] of Object.entries(shopifySalesCombined)) {
-      if (productTitle.includes(recipeNameLower) || recipeNameLower.includes(productTitle)) {
-        return qty;
+      const productNorm = normalizeForMatch(productTitle);
+      if (productNorm.includes(recipeNorm) || recipeNorm.includes(productNorm)) {
+        return { qty, matchedProduct: productTitle };
       }
     }
-    return 0;
+    return { qty: 0, matchedProduct: null };
   }
 
   const recipesWithData = dptRows.map(r => {
@@ -332,7 +338,7 @@ router.get("/calculate", async (req, res) => {
     const packSize = Number(r.packSize) || 1;
     const packsPerBatch = portionsPerBatch / packSize;
 
-    const fridgeStock = fridgeStockFromPlans[recipeId] ?? latestStock[recipeId] ?? 0;
+    const fridgeStock = latestStock[recipeId] ?? fridgeStockFromPlans[recipeId] ?? 0;
 
     const dptPacksSold = r.packsSold ?? 0;
     const dispatch1Qty = shopifyDatesLoaded.has(deliveryDates[0]) ? matchShopifySalesForDate(recipeName, deliveryDates[0]) : dptPacksSold;
@@ -342,7 +348,8 @@ router.get("/calculate", async (req, res) => {
 
     const shopifyDateCount = [deliveryDates[0], deliveryDates[1], deliveryDates[2]].filter(d => shopifyDatesLoaded.has(d)).length;
     const dptDateCount = 3 - shopifyDateCount;
-    const effectivePacksSold = matchShopifySalesCombined(recipeName) + (dptPacksSold * dptDateCount);
+    const shopifyMatch = matchShopifySalesCombined(recipeName);
+    const effectivePacksSold = shopifyMatch.qty + (dptPacksSold * dptDateCount);
 
     const deficit = Math.max(0, totalDispatchQty - fridgeStock);
     const deficitBatches = packsPerBatch > 0 ? Math.ceil(deficit / packsPerBatch) : 0;
@@ -372,6 +379,7 @@ router.get("/calculate", async (req, res) => {
       packsSold: effectivePacksSold,
       stockWarning,
       salesSource: hasShopifyData ? "shopify" as const : "dpt" as const,
+      matchedProduct: shopifyMatch.matchedProduct,
     };
   });
 
@@ -419,6 +427,10 @@ router.get("/calculate", async (req, res) => {
     };
   });
 
+  const unmatchedRecipes = hasShopifyData
+    ? result.filter(r => r.matchedProduct === null).map(r => r.recipeName)
+    : [];
+
   res.json({
     planDate,
     deliveryDates,
@@ -427,6 +439,7 @@ router.get("/calculate", async (req, res) => {
     remainingCapacity,
     salesSource: hasShopifyData ? "shopify" : "dpt",
     shopifyError,
+    unmatchedRecipes,
     recipes: result,
   });
 });

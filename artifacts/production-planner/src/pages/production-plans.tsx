@@ -305,6 +305,7 @@ interface CalcResponse {
   remainingCapacity: number;
   salesSource: "shopify" | "dpt";
   shopifyError: string | null;
+  unmatchedRecipes: string[];
   recipes: CalcRecipe[];
 }
 
@@ -742,6 +743,12 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                 <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 rounded-xl mb-3 text-sm text-amber-700 dark:text-amber-300">
                   <AlertCircle className="w-4 h-4 flex-shrink-0" />
                   {calcData.shopifyError}
+                </div>
+              )}
+              {calcData?.unmatchedRecipes && calcData.unmatchedRecipes.length > 0 && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 rounded-xl mb-3 text-sm text-amber-700 dark:text-amber-300">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  No Shopify match found for: {calcData.unmatchedRecipes.join(", ")}. Dispatch quantities for these use DPT estimates.
                 </div>
               )}
 
