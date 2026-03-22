@@ -1,13 +1,26 @@
+import { useState } from "react";
 import { useListProductionPlans, useListStockEntries, useListDispatchOrders, useListSalesEntries } from "@workspace/api-client-react";
 import { PageHeader } from "@/components/page-header";
-import { format, isToday, isFuture } from "date-fns";
-import { ArrowRight, AlertTriangle, ChefHat, Truck, TrendingUp, Package, RefreshCw } from "lucide-react";
+import { format, isToday, isFuture, startOfWeek, addWeeks } from "date-fns";
+import { ArrowRight, AlertTriangle, ChefHat, Truck, TrendingUp, Package, RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
 import { Link } from "wouter";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { useQuery } from "@tanstack/react-query";
 
-async function fetchWeeklyOrders() {
-  const res = await fetch("/api/shopify/weekly-orders", { credentials: "include" });
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+function getDefaultWeekOffset(): number {
+  const now = new Date();
+  if (now.getDay() === 5 && now.getHours() >= 15) return 1;
+  return 0;
+}
+
+function getMonday(date: Date): Date {
+  return startOfWeek(date, { weekStartsOn: 1 });
+}
+
+async function fetchWeeklyOrders(weekStart: string) {
+  const res = await fetch(`${BASE}/api/shopify/weekly-orders?weekStart=${encodeURIComponent(weekStart)}`, { credentials: "include" });
   if (!res.ok) throw new Error("Failed to fetch weekly orders");
   const data = await res.json();
   return (data.days ?? data) as { date: string; deliveryDate: string; day: string; orderCount: number; fulfilledCount: number; unfulfilledCount: number }[];
@@ -19,9 +32,19 @@ export default function Dashboard() {
   const { data: dispatches } = useListDispatchOrders();
   const { data: sales } = useListSalesEntries();
 
+  const [weekOffset, setWeekOffset] = useState<number>(getDefaultWeekOffset);
+  const today = new Date();
+  const currentMonday = getMonday(today);
+  const selectedMonday = addWeeks(currentMonday, weekOffset);
+  const weekStartStr = format(selectedMonday, "yyyy-MM-dd");
+  const weekSunday = new Date(selectedMonday);
+  weekSunday.setDate(weekSunday.getDate() + 6);
+  const weekLabel = `${format(selectedMonday, "d MMM")} – ${format(weekSunday, "d MMM yyyy")}`;
+  const isCurrentWeek = weekOffset === 0;
+
   const { data: weeklyOrders, isLoading: weeklyLoading, error: weeklyError, refetch } = useQuery({
-    queryKey: ["shopify-weekly-orders-dashboard"],
-    queryFn: fetchWeeklyOrders,
+    queryKey: ["shopify-weekly-orders-dashboard", weekStartStr],
+    queryFn: () => fetchWeeklyOrders(weekStartStr),
     staleTime: 5 * 60 * 1000,
   });
 
@@ -29,7 +52,7 @@ export default function Dashboard() {
   const lowStock = stock?.filter(s => s.quantity < 10) || [];
   const upcomingDispatches = dispatches?.filter(d => isFuture(new Date(d.dispatchDate)) && d.status === 'pending') || [];
 
-  const todayTag = format(new Date(), "yyyy-MM-dd");
+  const todayTag = format(today, "yyyy-MM-dd");
   const todayIndex = weeklyOrders?.findIndex(d => d.date === todayTag) ?? -1;
 
   const CustomTooltip = ({ active, payload }: any) => {
@@ -98,13 +121,48 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
         <div className="lg:col-span-2 glass-panel p-6 rounded-2xl">
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center justify-between mb-4">
             <div>
-              <Link href="/dispatches" className="group inline-flex items-center gap-1.5 hover:text-primary transition-colors">
-                <h3 className="font-display font-bold text-lg group-hover:text-primary transition-colors">Dispatch Orders — Next 7 Days</h3>
-                <ArrowRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
-              </Link>
-              <p className="text-sm text-muted-foreground mt-0.5">Shopify orders tagged by delivery date</p>
+              <div className="flex items-center gap-2 mb-1">
+                <Link href="/dispatches" className="group inline-flex items-center gap-1.5 hover:text-primary transition-colors">
+                  <h3 className="font-display font-bold text-lg group-hover:text-primary transition-colors">Dispatch Orders</h3>
+                  <ArrowRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+                </Link>
+                {isCurrentWeek && (
+                  <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary">This Week</span>
+                )}
+                {weekOffset < 0 && (
+                  <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-muted text-muted-foreground">Past</span>
+                )}
+                {weekOffset > 0 && (
+                  <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400">Upcoming</span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setWeekOffset(o => o - 1)}
+                  className="p-1 rounded hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+                  title="Previous week"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <span className="text-sm font-medium min-w-[170px] text-center">{weekLabel}</span>
+                <button
+                  onClick={() => setWeekOffset(o => o + 1)}
+                  className="p-1 rounded hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+                  title="Next week"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+                {!isCurrentWeek && (
+                  <button
+                    onClick={() => setWeekOffset(0)}
+                    className="text-xs text-primary hover:underline ml-1"
+                  >
+                    This week
+                  </button>
+                )}
+              </div>
               <div className="flex items-center gap-4 mt-1.5 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-emerald-500" /> Fulfilled</span>
                 <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm" style={{ background: "hsl(var(--primary) / 0.3)" }} /> Unfulfilled</span>
@@ -165,12 +223,17 @@ export default function Dashboard() {
           </div>
 
           {weeklyOrders && (
-            <div className="flex gap-4 mt-4 pt-4 border-t border-border text-sm text-muted-foreground">
+            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-4 pt-4 border-t border-border text-sm text-muted-foreground">
               <span>
                 <span className="font-semibold text-foreground">
                   {weeklyOrders.reduce((s, d) => s + d.orderCount, 0)}
                 </span>{" "}
-                total orders this week
+                total orders {isCurrentWeek ? "this week" : ""}
+              </span>
+              <span>
+                <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                  {weeklyOrders.reduce((s, d) => s + d.fulfilledCount, 0)}
+                </span>{" "}fulfilled
               </span>
               {todayIndex >= 0 && (
                 <span>

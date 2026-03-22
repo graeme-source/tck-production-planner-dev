@@ -73,6 +73,12 @@ function formatMonday(d: Date): string {
   return format(d, "yyyy-MM-dd");
 }
 
+function getDefaultWeekOffset(): number {
+  const now = new Date();
+  if (now.getDay() === 5 && now.getHours() >= 15) return 1;
+  return 0;
+}
+
 type SortCol = "product" | "orders" | "qty";
 type SortDir = "asc" | "desc";
 
@@ -86,7 +92,7 @@ export default function Dispatches() {
   const today = new Date();
   const currentMonday = getMonday(today);
 
-  const [weekOffset, setWeekOffset] = useState(0);
+  const [weekOffset, setWeekOffset] = useState<number>(getDefaultWeekOffset);
   const selectedMonday = addWeeks(currentMonday, weekOffset);
   const weekStartStr = formatMonday(selectedMonday);
 
