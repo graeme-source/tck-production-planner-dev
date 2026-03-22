@@ -331,6 +331,8 @@ router.get("/calculate", async (req, res) => {
     return { qty: 0, matchedProduct: null };
   }
 
+  const totalDptPacksSold = dptRows.reduce((s, x) => s + (x.packsSold ?? 0), 0);
+
   const recipesWithData = dptRows.map(r => {
     const recipeName = r.recipeName ?? `Recipe #${r.recipeId}`;
     const recipeId = r.recipeId;
@@ -340,13 +342,15 @@ router.get("/calculate", async (req, res) => {
 
     const fridgeStock = latestStock[recipeId] ?? fridgeStockFromPlans[recipeId] ?? 0;
 
-    const dptPacksSold = r.packsSold ?? 0;
+    const recipeDptPercent = totalDptPacksSold > 0 ? ((r.packsSold ?? 0) / totalDptPacksSold) * 100 : 0;
+    const dptDailyPacks = Math.round((recipeDptPercent / 100) * totalDailyBatches * packsPerBatch);
+
     const shopifyMatch = matchShopifySalesCombined(recipeName);
     const hasRecipeMatch = shopifyMatch.matchedProduct !== null;
 
     function resolveDispatchQty(date: string): number {
-      if (!shopifyDatesLoaded.has(date)) return dptPacksSold;
-      if (!hasRecipeMatch) return dptPacksSold;
+      if (!shopifyDatesLoaded.has(date)) return dptDailyPacks;
+      if (!hasRecipeMatch) return dptDailyPacks;
       return matchShopifySalesForDate(recipeName, date);
     }
 
