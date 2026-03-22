@@ -3209,14 +3209,13 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                           <div className="flex-1">
                             <p className="font-semibold">{ing.ingredientName}</p>
                             <p className="text-xs text-muted-foreground tabular-nums">
-                              {perTrayKg!.toFixed(2)} kg / tray · {ingKgTotal.toFixed(2)} kg total
+                              {ingKgTotal.toFixed(2)} kg total
                               {ing.rawMeatTrayCapacityKg && ` · ${ing.rawMeatTrayCapacityKg} kg cap`}
                             </p>
-                            {ingMarinadeG > 0 && (
-                              <p className="text-xs text-muted-foreground">
-                                + {Math.round(ingMarinadeG / ingTrays)}g marinade / tray · {ingMarinadeG}g total
-                              </p>
-                            )}
+                          </div>
+                          <div className="text-right">
+                            <p className="text-xl font-bold tabular-nums text-rose-700 dark:text-rose-300 leading-none">{perTrayKg!.toFixed(2)} kg</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">per tray</p>
                           </div>
                         </>
                       ) : (
