@@ -1512,25 +1512,40 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
 
     let hasRelevantIngredients = false;
 
-    // Build the set of ingredient IDs that are marinades for a raw meat item.
-    // These should only appear under their raw meat ingredient in prep_meat, not in any other station.
-    const marinadeIngredientIds = new Set<number>();
+    // Build per-ingredient marinade quantity (portions-based) so we can subtract it from
+    // the aggregated total. An ingredient may appear both as a regular base ingredient AND
+    // as a marinade (e.g. BBQ Sauce: 45g base + 6g marinade). We only want the non-marinade
+    // quantity at its natural station, and we skip it entirely only if it is a pure marinade.
+    const marinadeQtyPerPortion = new Map<number, number>();
     {
       const marinadeRows = await db
-        .select({ ingredientId: recipeIngredientsTable.ingredientId })
+        .select({
+          ingredientId: recipeIngredientsTable.ingredientId,
+          quantity: recipeIngredientsTable.quantity,
+        })
         .from(recipeIngredientsTable)
         .where(and(
           eq(recipeIngredientsTable.recipeId, planItem.recipeId),
           isNotNull(recipeIngredientsTable.marinadeForIngredientId)
         ));
       for (const r of marinadeRows) {
-        if (r.ingredientId != null) marinadeIngredientIds.add(r.ingredientId);
+        if (r.ingredientId != null) {
+          marinadeQtyPerPortion.set(
+            r.ingredientId,
+            (marinadeQtyPerPortion.get(r.ingredientId) ?? 0) + Number(r.quantity),
+          );
+        }
       }
     }
 
     for (const [, ing] of agg) {
-      // Marinade ingredients belong exclusively in prep_meat (under their raw meat item)
-      if (marinadeIngredientIds.has(ing.ingredientId) && station !== "prep_meat") continue;
+      // Work out how much of this ingredient is marinade-only vs. base usage
+      const marinadeOnlyPerBatch = (marinadeQtyPerPortion.get(ing.ingredientId) ?? 0) * portionsPerBatch;
+      const nonMarinadePerBatch = ing.quantityPerBatch - marinadeOnlyPerBatch;
+
+      // At non-prep_meat stations: skip if the ingredient is used ONLY as a marinade.
+      // If it also has a base quantity, show that base quantity (not the inflated total).
+      if (station !== "prep_meat" && nonMarinadePerBatch <= 0) continue;
 
       const category = ing.category;
       const isMainStation = categoryMatchesStation(category);
@@ -1538,7 +1553,11 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       if (!isMainStation) continue;
 
       hasRelevantIngredients = true;
-      const cookedQty = ing.quantityPerBatch * batchesTarget;
+      // At non-prep_meat stations use only the non-marinade portion of the quantity.
+      // At prep_meat the ingredient won't appear as a direct row anyway (category filter
+      // ensures only raw_meat shows there), so this path is safe either way.
+      const effectiveQtyPerBatch = station === "prep_meat" ? ing.quantityPerBatch : nonMarinadePerBatch;
+      const cookedQty = effectiveQtyPerBatch * batchesTarget;
       const rawQty = ing.processingRatio ? cookedQty / ing.processingRatio : cookedQty;
 
       ingredients.push({
