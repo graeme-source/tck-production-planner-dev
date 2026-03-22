@@ -201,6 +201,8 @@ export const ListIngredientsResponseItem = zod.object({
       "Capacity of a raw meat tray in kg (used for tray count calculation)",
     ),
   stockCheckEnabled: zod.boolean(),
+  stockCheckFrequency: zod.string(),
+  stockCheckDay: zod.string().nullish(),
   createdAt: zod.string(),
 });
 export const ListIngredientsResponse = zod.array(ListIngredientsResponseItem);
@@ -223,6 +225,8 @@ export const CreateIngredientBody = zod.object({
   category: zod.string().nullish(),
   rawMeatTrayCapacityKg: zod.number().nullish(),
   stockCheckEnabled: zod.boolean().optional(),
+  stockCheckFrequency: zod.enum(["daily", "weekly"]).optional(),
+  stockCheckDay: zod.string().nullish(),
 });
 
 /**
@@ -258,6 +262,8 @@ export const GetIngredientResponse = zod.object({
       "Capacity of a raw meat tray in kg (used for tray count calculation)",
     ),
   stockCheckEnabled: zod.boolean(),
+  stockCheckFrequency: zod.string(),
+  stockCheckDay: zod.string().nullish(),
   createdAt: zod.string(),
 });
 
@@ -283,6 +289,8 @@ export const UpdateIngredientBody = zod.object({
   category: zod.string().nullish(),
   rawMeatTrayCapacityKg: zod.number().nullish(),
   stockCheckEnabled: zod.boolean().optional(),
+  stockCheckFrequency: zod.enum(["daily", "weekly"]).optional(),
+  stockCheckDay: zod.string().nullish(),
 });
 
 export const UpdateIngredientResponse = zod.object({
@@ -311,6 +319,8 @@ export const UpdateIngredientResponse = zod.object({
       "Capacity of a raw meat tray in kg (used for tray count calculation)",
     ),
   stockCheckEnabled: zod.boolean(),
+  stockCheckFrequency: zod.string(),
+  stockCheckDay: zod.string().nullish(),
   createdAt: zod.string(),
 });
 

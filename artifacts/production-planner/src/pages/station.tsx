@@ -2124,6 +2124,8 @@ interface MainPrepIngredient {
   unit: string;
   category: string | null;
   stockCheckEnabled: boolean;
+  stockCheckFrequency: string;
+  stockCheckDay: string | null;
   totalQty: number;
   recipes: Array<{
     recipeId: number;
@@ -2251,13 +2253,24 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const getCompletion = (ingredientId: number, recipeId: number, tinNumber: number) =>
     completions.find(c => c.ingredientId === ingredientId && c.recipeId === recipeId && c.tinNumber === tinNumber);
 
+  const todayDayName = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date().getDay()];
+
+  const stockCheckActiveToday = (ing: MainPrepIngredient): boolean => {
+    if (!ing.stockCheckEnabled) return false;
+    if (ing.stockCheckFrequency === "weekly") {
+      return ing.stockCheckDay === todayDayName;
+    }
+    return true;
+  };
+
   const ingredientDoneStatus = (ing: MainPrepIngredient) => {
     const allTinsDone = ing.recipes.every(r =>
       Array.from({ length: r.tinCount }, (_, i) => i + 1).every(tn => isCompleted(ing.ingredientId, r.recipeId, tn))
     );
     const stockSaved = stockValues[ing.ingredientId] !== undefined && stockValues[ing.ingredientId] !== "";
-    const needsStockCheck = ing.stockCheckEnabled && allTinsDone;
-    const isFullyDone = allTinsDone && (!ing.stockCheckEnabled || stockSaved);
+    const activeStockCheck = stockCheckActiveToday(ing);
+    const needsStockCheck = activeStockCheck && allTinsDone;
+    const isFullyDone = allTinsDone && (!activeStockCheck || stockSaved);
     const totalTinsForIng = ing.recipes.reduce((s, r) => s + r.tinCount, 0);
     const completedTinsForIng = ing.recipes.reduce((s, r) =>
       s + Array.from({ length: r.tinCount }, (_, i) => i + 1).filter(tn => isCompleted(ing.ingredientId, r.recipeId, tn)).length, 0);

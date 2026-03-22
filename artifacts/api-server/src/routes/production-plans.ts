@@ -2745,6 +2745,8 @@ router.get("/:id/main-prep", async (req, res) => {
     unit: string;
     category: string | null;
     stockCheckEnabled: boolean;
+    stockCheckFrequency: string;
+    stockCheckDay: string | null;
     totalQty: number;
     recipes: Array<{
       recipeId: number;
@@ -2771,6 +2773,8 @@ router.get("/:id/main-prep", async (req, res) => {
         category: ingredientsTable.category,
         processingRatio: ingredientsTable.processingRatio,
         stockCheckEnabled: ingredientsTable.stockCheckEnabled,
+        stockCheckFrequency: ingredientsTable.stockCheckFrequency,
+        stockCheckDay: ingredientsTable.stockCheckDay,
       })
       .from(recipeIngredientsTable)
       .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -2814,6 +2818,8 @@ router.get("/:id/main-prep", async (req, res) => {
           unit,
           category: row.category ?? null,
           stockCheckEnabled: row.stockCheckEnabled ?? false,
+          stockCheckFrequency: row.stockCheckFrequency ?? "daily",
+          stockCheckDay: row.stockCheckDay ?? null,
           totalQty: roundedQty,
           recipes: [{
             recipeId: planItem.recipeId!,

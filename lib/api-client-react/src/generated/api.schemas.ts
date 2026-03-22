@@ -49,6 +49,8 @@ export interface Ingredient {
   /** Capacity of a raw meat tray in kg (used for tray count calculation) */
   rawMeatTrayCapacityKg?: number | null;
   stockCheckEnabled: boolean;
+  stockCheckFrequency: string;
+  stockCheckDay?: string | null;
   createdAt: string;
 }
 
@@ -67,6 +69,8 @@ export interface CreateIngredient {
   category?: string | null;
   rawMeatTrayCapacityKg?: number | null;
   stockCheckEnabled?: boolean;
+  stockCheckFrequency?: string;
+  stockCheckDay?: string | null;
 }
 
 export interface SubRecipe {

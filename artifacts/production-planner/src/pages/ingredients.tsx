@@ -401,6 +401,8 @@ const schema = z.object({
     z.number().positive().nullable().optional()
   ),
   stockCheckEnabled: z.boolean().optional(),
+  stockCheckFrequency: z.enum(["daily", "weekly"]).optional(),
+  stockCheckDay: z.string().optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -408,7 +410,7 @@ type FormValues = z.infer<typeof schema>;
 const emptyDefaults: FormValues = {
   name: "", unit: "kg", packWeight: 0, costPerPack: 0,
   brand: "", supplierPartNumber: "", supplierId: 0, secondarySupplierId: 0,
-  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, stockCheckEnabled: false,
+  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "",
 };
 
 export default function Ingredients() {
@@ -437,6 +439,8 @@ export default function Ingredients() {
   const watchedPackWeight = watch("packWeight");
   const watchedCostPerPack = watch("costPerPack");
   const watchedProcessingRatioPct = watch("processingRatioPct");
+  const watchedStockCheckEnabled = watch("stockCheckEnabled");
+  const watchedStockCheckFrequency = watch("stockCheckFrequency");
   const liveCostPerUnit = watchedPackWeight > 0 ? watchedCostPerPack / watchedPackWeight : null;
   const showRawMeatTray = watchedProcessingRatioPct != null && Number(watchedProcessingRatioPct) < 100;
 
@@ -465,6 +469,8 @@ export default function Ingredients() {
       rawMeatTrayCapacityKg: item.rawMeatTrayCapacityKg != null ? Number(item.rawMeatTrayCapacityKg) : null,
       category: item.category ?? "",
       stockCheckEnabled: item.stockCheckEnabled ?? false,
+      stockCheckFrequency: (item.stockCheckFrequency as "daily" | "weekly") ?? "daily",
+      stockCheckDay: item.stockCheckDay ?? "",
     });
     setIsDialogOpen(true);
   };
@@ -484,6 +490,8 @@ export default function Ingredients() {
     processingRatio: data.processingRatioPct != null ? data.processingRatioPct / 100 : null,
     rawMeatTrayCapacityKg: data.rawMeatTrayCapacityKg ?? null,
     stockCheckEnabled: data.stockCheckEnabled ?? false,
+    stockCheckFrequency: data.stockCheckFrequency ?? "daily",
+    stockCheckDay: data.stockCheckFrequency === "weekly" ? (data.stockCheckDay || null) : null,
   });
 
   const onSubmit = (data: FormValues) => {
@@ -701,6 +709,39 @@ export default function Ingredients() {
                 </p>
               </div>
             </div>
+
+            {watchedStockCheckEnabled && (
+              <div className="pl-4 border-l-2 border-primary/20 flex flex-col gap-3">
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Check Frequency</label>
+                  <select
+                    {...register("stockCheckFrequency")}
+                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  >
+                    <option value="daily">Daily — check every production day</option>
+                    <option value="weekly">Weekly — check on a specific day only</option>
+                  </select>
+                </div>
+
+                {watchedStockCheckFrequency === "weekly" && (
+                  <div>
+                    <label className="text-sm font-medium mb-1 block">Check Day</label>
+                    <select
+                      {...register("stockCheckDay")}
+                      className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    >
+                      <option value="">— Select a day —</option>
+                      {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map(d => (
+                        <option key={d} value={d}>{d}</option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Stock check prompt will only appear on this day of the week.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Supplier + Secondary Supplier */}
             <div className="grid grid-cols-2 gap-3">
