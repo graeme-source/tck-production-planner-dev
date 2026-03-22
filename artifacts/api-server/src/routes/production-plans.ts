@@ -305,7 +305,7 @@ router.get("/calculate", async (req, res) => {
   const totalDailyBatches = totalBatchesSetting ? Number(totalBatchesSetting.value) : 0;
 
   function normalizeForMatch(s: string): string {
-    return s.toLowerCase().trim().replace(/[''`]/g, "'").replace(/\s+/g, " ");
+    return s.toLowerCase().trim().replace(/[''`]/g, "'").replace(/&/g, "and").replace(/\s+/g, " ");
   }
 
   function matchShopifySalesForDate(recipeName: string, date: string): number {
