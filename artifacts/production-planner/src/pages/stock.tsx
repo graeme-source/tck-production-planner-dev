@@ -127,8 +127,25 @@ export default function Stock() {
         };
       }
     }
+    if (recipes) {
+      const fridgeItems = result["production_fridge"];
+      for (const r of recipes as any[]) {
+        if (r.isCoreMenu) {
+          const key = `r-${r.id}`;
+          if (!fridgeItems[key]) {
+            fridgeItems[key] = {
+              quantity: 0,
+              unit: "packs",
+              name: r.name,
+              itemType: "recipe",
+              checkedAt: "",
+            };
+          }
+        }
+      }
+    }
     return result;
-  }, [stock]);
+  }, [stock, recipes]);
 
   const selectedLocData = LOCATIONS.find(l => l.key === selectedLocation);
   const selectedItems = selectedLocation ? (stockByLocation[selectedLocation] ?? []) : [];
@@ -258,7 +275,7 @@ export default function Stock() {
                         {item.quantity} <span className="font-normal text-muted-foreground">{item.unit}</span>
                       </td>
                       <td className="px-6 py-3 text-muted-foreground text-xs">
-                        {format(new Date(item.checkedAt), 'MMM do, h:mm a')}
+                        {item.checkedAt ? format(new Date(item.checkedAt), 'MMM do, h:mm a') : "—"}
                       </td>
                       {canEdit && (
                         <td className="px-6 py-3 text-right">
@@ -302,7 +319,7 @@ export default function Stock() {
                         {entry.quantity} <span className="font-normal text-muted-foreground">{entry.unit}</span>
                       </td>
                       <td className="px-6 py-2 text-muted-foreground">
-                        {format(new Date(entry.checkedAt), 'MMM do, h:mm a')}
+                        {entry.checkedAt ? format(new Date(entry.checkedAt), 'MMM do, h:mm a') : "—"}
                       </td>
                       <td className="px-6 py-2 text-muted-foreground">{entry.notes || "—"}</td>
                       {canEdit && (

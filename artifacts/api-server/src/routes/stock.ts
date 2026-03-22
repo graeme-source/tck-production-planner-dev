@@ -1,10 +1,63 @@
 import { Router, type IRouter } from "express";
 import { db, stockEntriesTable, recipesTable, ingredientsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { CreateStockEntryBody, UpdateStockEntryBody } from "@workspace/api-zod";
 import { validate } from "../middleware/validate";
 
 const router: IRouter = Router();
+
+router.get("/factory-numbers", async (_req, res) => {
+  const coreRecipes = await db
+    .select({
+      id: recipesTable.id,
+      name: recipesTable.name,
+      isCoreMenu: recipesTable.isCoreMenu,
+      packSize: recipesTable.packSize,
+    })
+    .from(recipesTable)
+    .where(eq(recipesTable.isCoreMenu, true))
+    .orderBy(recipesTable.name);
+
+  const stockRows = await db
+    .select({
+      id: stockEntriesTable.id,
+      recipeId: stockEntriesTable.recipeId,
+      quantity: stockEntriesTable.quantity,
+      checkedAt: stockEntriesTable.checkedAt,
+      notes: stockEntriesTable.notes,
+    })
+    .from(stockEntriesTable)
+    .where(and(
+      eq(stockEntriesTable.itemType, "recipe"),
+      eq(stockEntriesTable.location, "production_fridge"),
+    ))
+    .orderBy(desc(stockEntriesTable.checkedAt));
+
+  const latestByRecipe: Record<number, { id: number; quantity: number; checkedAt: Date; notes: string | null }> = {};
+  for (const row of stockRows) {
+    if (row.recipeId != null && !latestByRecipe[row.recipeId]) {
+      latestByRecipe[row.recipeId] = {
+        id: row.id,
+        quantity: Number(row.quantity),
+        checkedAt: row.checkedAt,
+        notes: row.notes,
+      };
+    }
+  }
+
+  const result = coreRecipes.map(r => {
+    const stock = latestByRecipe[r.id];
+    return {
+      recipeId: r.id,
+      recipeName: r.name,
+      factoryNumber: stock ? stock.quantity : 0,
+      lastChecked: stock ? stock.checkedAt.toISOString() : null,
+      stockEntryId: stock ? stock.id : null,
+    };
+  });
+
+  res.json(result);
+});
 
 router.get("/", async (_req, res) => {
   const rows = await db

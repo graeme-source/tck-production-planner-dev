@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import {
   useListProductionPlans,
   useGetProductionPlan,
@@ -147,10 +147,11 @@ interface SortableRowProps {
   saving: boolean;
   onToggle: (id: string) => void;
   onBatchChange: (id: string, val: number) => void;
+  onFridgeStockChange: (id: string, val: number) => void;
   onRemove: (id: string) => void;
 }
 
-function SortableRow({ item, saving, onToggle, onBatchChange, onRemove }: SortableRowProps) {
+function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChange, onRemove }: SortableRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
 
   const style = {
@@ -202,8 +203,15 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onRemove }: Sortab
           )}
         </div>
       </td>
-      <td className="py-2 px-2 text-center tabular-nums text-sm">
-        {item.fridgeStock}
+      <td className="py-2 px-2 text-center">
+        <input
+          type="number"
+          min={0}
+          value={item.fridgeStock}
+          onChange={e => onFridgeStockChange(item.id, Number(e.target.value))}
+          disabled={saving}
+          className="w-16 px-1.5 py-1 bg-background border border-border rounded-lg text-xs text-center focus-ring disabled:opacity-40 tabular-nums"
+        />
       </td>
       <td className="py-2 px-2 text-center tabular-nums text-xs text-red-500">{item.dispatch1Qty || "—"}</td>
       <td className="py-2 px-2 text-center tabular-nums text-xs text-green-600 dark:text-green-400">{item.prevProduction ? `+${item.prevProduction}` : "—"}</td>
@@ -448,6 +456,44 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
     );
   };
 
+  const fridgeStockTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  const handleFridgeStockOverride = useCallback((id: string, newStock: number) => {
+    setItems(prev =>
+      prev.map(it => {
+        if (it.id !== id) return it;
+        const estimatedFactoryNumber = newStock - it.dispatch1Qty + it.prevProduction;
+        const deficit = Math.max(0, it.dispatch2Qty + it.dispatch3Qty - estimatedFactoryNumber);
+        const deficitBatches = it.packsPerBatch > 0 ? Math.ceil(deficit / it.packsPerBatch) : 0;
+        return { ...it, fridgeStock: newStock, estimatedFactoryNumber, deficit, deficitBatches };
+      })
+    );
+
+    const item = items.find(it => it.id === id);
+    if (!item) return;
+    if (fridgeStockTimers.current[id]) clearTimeout(fridgeStockTimers.current[id]);
+    fridgeStockTimers.current[id] = setTimeout(async () => {
+      try {
+        await fetch(`${BASE}/api/stock-entries`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            recipeId: item.recipeId,
+            ingredientId: null,
+            itemType: "recipe",
+            quantity: newStock,
+            unit: "packs",
+            location: "production_fridge",
+            notes: "Calculator override",
+          }),
+        });
+      } catch (e) {
+        console.error("Failed to save fridge stock override", e);
+      }
+    }, 800);
+  }, [items]);
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
@@ -664,6 +710,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                               saving={isSubmitting}
                               onToggle={(id) => updateItem(id, { included: !it.included })}
                               onBatchChange={(id, val) => updateItem(id, { batchesTarget: val })}
+                              onFridgeStockChange={(id, val) => handleFridgeStockOverride(id, val)}
                               onRemove={(id) => setItems(prev => prev.filter(i => i.id !== id))}
                             />
                           ))}
@@ -915,6 +962,44 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
     );
   };
 
+  const editFridgeStockTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  const handleFridgeStockOverride = useCallback((id: string, newStock: number) => {
+    setItems(prev =>
+      prev.map(it => {
+        if (it.id !== id) return it;
+        const estimatedFactoryNumber = newStock - it.dispatch1Qty + it.prevProduction;
+        const deficit = Math.max(0, it.dispatch2Qty + it.dispatch3Qty - estimatedFactoryNumber);
+        const deficitBatches = it.packsPerBatch > 0 ? Math.ceil(deficit / it.packsPerBatch) : 0;
+        return { ...it, fridgeStock: newStock, estimatedFactoryNumber, deficit, deficitBatches };
+      })
+    );
+
+    const item = items.find(it => it.id === id);
+    if (!item) return;
+    if (editFridgeStockTimers.current[id]) clearTimeout(editFridgeStockTimers.current[id]);
+    editFridgeStockTimers.current[id] = setTimeout(async () => {
+      try {
+        await fetch(`${BASE}/api/stock-entries`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            recipeId: item.recipeId,
+            ingredientId: null,
+            itemType: "recipe",
+            quantity: newStock,
+            unit: "packs",
+            location: "production_fridge",
+            notes: "Calculator override",
+          }),
+        });
+      } catch (e) {
+        console.error("Failed to save fridge stock override", e);
+      }
+    }, 800);
+  }, [items]);
+
   const addRecipeToList = () => {
     const recipeId = Number(addRecipeId);
     if (!recipeId) return;
@@ -1081,6 +1166,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
                           saving={isSubmitting}
                           onToggle={(id) => updateItem(id, { included: !it.included })}
                           onBatchChange={(id, val) => updateItem(id, { batchesTarget: val })}
+                          onFridgeStockChange={(id, val) => handleFridgeStockOverride(id, val)}
                           onRemove={(id) => setItems(prev => prev.filter(i => i.id !== id))}
                         />
                       ))}

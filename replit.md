@@ -56,14 +56,14 @@ artifacts-monorepo/
 - `ingredients` — raw ingredients (name, unit, cost_per_unit, notes)
 - `sub_recipes` — sub-recipes with yield and yield unit
 - `sub_recipe_ingredients` — sub_recipe <-> ingredient junction with quantity
-- `recipes` — final product recipes (name, category, servings, serving_unit)
+- `recipes` — final product recipes (name, category, servings, serving_unit, is_core_menu boolean — always shows in Production Fridge and calculator)
 - `recipe_ingredients` — recipe <-> ingredient junction; has `include_in_filling_mix` boolean for mixing station display
 - `recipe_sub_recipes` — recipe <-> sub_recipe junction; has `include_in_filling_mix` boolean for mixing station display
 - `recipe_meat_marinades` — (legacy) per-meat marinade/seasoning assignments with g/kg rate. Columns: id, recipe_id, raw_meat_ingredient_id, marinade_ingredient_id (nullable), marinade_sub_recipe_id (nullable), grams_per_kg.
 - **New marinade system**: `recipe_ingredients` and `recipe_sub_recipes` both have `marinade_for_ingredient_id` (nullable FK → ingredients). When set, it marks that ingredient/sub-recipe as the marinade/seasoning for the referenced raw meat ingredient. This avoids double-counting costs since the item is already part of the recipe. The prep meat station reads from these columns (and falls back to legacy `recipe_meat_marinades`).
 - `production_plans` — daily plans (plan_date, name, status: draft/active/completed)
 - `production_plan_items` — plan items (recipe, target_qty, actual_qty, status: pending/in_progress/completed)
-- `stock_entries` — stock check entries (item_type: recipe|ingredient, quantity, unit)
+- `stock_entries` — stock check entries (item_type: recipe|ingredient, quantity, unit, location: production_fridge|production_freezer|prep_fridge|dry_store)
 - `sales_entries` — sales records (recipe, sale_date, quantity_sold, channel)
 - `dispatch_orders` — dispatch records (recipe, dispatch_date, quantity, customer, status)
 - `app_settings` — simple key-value store for admin-configurable global settings (e.g., `mixer_capacity_kg=25`)
@@ -83,6 +83,7 @@ All routes under `/api/`:
 - `/recipes` — CRUD with nested ingredients + sub-recipes
 - `/production-plans` — CRUD with nested items
 - `/stock-entries` — CRUD
+- `/stock-entries/factory-numbers` — GET: core menu recipes with latest production fridge stock (factory number)
 - `/sales-entries` — CRUD with date filtering
 - `/dispatch-orders` — CRUD with date filtering
 - `/production-plans/:id/dough-prep` — GET: dough breakdown, mix schedule, ball weights

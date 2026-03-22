@@ -25,6 +25,7 @@ export const recipesTable = pgTable("recipes", {
   fillWeightGrams: numeric("fill_weight_grams", { precision: 10, scale: 2 }),
   baseType: text("base_type"),
   baseWeightGrams: numeric("base_weight_grams", { precision: 10, scale: 2 }),
+  isCoreMenu: boolean("is_core_menu").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

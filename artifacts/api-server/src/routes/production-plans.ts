@@ -9,6 +9,35 @@ import { countProductsByTag } from "../services/shopify";
 
 const router: IRouter = Router();
 
+async function syncRecipeFridgeStock(recipeId: number, deltaQty: number) {
+  const existing = await db
+    .select({ id: stockEntriesTable.id, quantity: stockEntriesTable.quantity })
+    .from(stockEntriesTable)
+    .where(and(
+      eq(stockEntriesTable.recipeId, recipeId),
+      eq(stockEntriesTable.itemType, "recipe"),
+      eq(stockEntriesTable.location, "production_fridge"),
+    ))
+    .orderBy(desc(stockEntriesTable.checkedAt))
+    .limit(1);
+
+  if (existing.length > 0) {
+    const newQty = Math.max(0, Number(existing[0].quantity) + deltaQty);
+    await db.update(stockEntriesTable)
+      .set({ quantity: String(newQty), checkedAt: new Date() })
+      .where(eq(stockEntriesTable.id, existing[0].id));
+  } else {
+    await db.insert(stockEntriesTable).values({
+      recipeId,
+      itemType: "recipe",
+      quantity: String(Math.max(0, deltaQty)),
+      unit: "packs",
+      location: "production_fridge",
+      notes: "Auto-created from wrapping station",
+    });
+  }
+}
+
 function julianBatchNumber(date: Date): number {
   const year = date.getFullYear() % 100;
   const start = new Date(date.getFullYear(), 0, 0);
@@ -2181,6 +2210,7 @@ router.patch("/:id/items/:itemId/wrapping-complete", async (req, res) => {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // POST /:id/items/:itemId/fridge — add wrapped packs to fridge stock (atomic increment)
+// Also upserts the master stock_entries for the production fridge so Factory Number stays in sync.
 // ──────────────────────────────────────────────────────────────────────────────
 router.post("/:id/items/:itemId/fridge", async (req, res) => {
   const planId = Number(req.params.id);
@@ -2191,7 +2221,10 @@ router.post("/:id/items/:itemId/fridge", async (req, res) => {
     return;
   }
 
-  const [item] = await db.select({ id: productionPlanItemsTable.id })
+  const [item] = await db.select({
+    id: productionPlanItemsTable.id,
+    recipeId: productionPlanItemsTable.recipeId,
+  })
     .from(productionPlanItemsTable)
     .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
 
@@ -2202,6 +2235,8 @@ router.post("/:id/items/:itemId/fridge", async (req, res) => {
     .set({ fridgeQty: sql`${productionPlanItemsTable.fridgeQty} + ${qty}` })
     .where(eq(productionPlanItemsTable.id, itemId))
     .returning({ fridgeQty: productionPlanItemsTable.fridgeQty });
+
+  await syncRecipeFridgeStock(item.recipeId, qty);
 
   res.json({ itemId, fridgeQty: updated.fridgeQty });
 });
@@ -2216,7 +2251,10 @@ router.delete("/:id/items/:itemId/fridge", async (req, res) => {
     return;
   }
 
-  const [item] = await db.select({ id: productionPlanItemsTable.id })
+  const [item] = await db.select({
+    id: productionPlanItemsTable.id,
+    recipeId: productionPlanItemsTable.recipeId,
+  })
     .from(productionPlanItemsTable)
     .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
 
@@ -2227,6 +2265,8 @@ router.delete("/:id/items/:itemId/fridge", async (req, res) => {
     .set({ fridgeQty: sql`GREATEST(${productionPlanItemsTable.fridgeQty} - ${qty}, 0)` })
     .where(eq(productionPlanItemsTable.id, itemId))
     .returning({ fridgeQty: productionPlanItemsTable.fridgeQty });
+
+  await syncRecipeFridgeStock(item.recipeId, -qty);
 
   res.json({ itemId, fridgeQty: updated.fridgeQty });
 });
