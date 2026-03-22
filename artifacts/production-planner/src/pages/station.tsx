@@ -1792,14 +1792,7 @@ function PrepDateBanner({
   activityLabel?: string;
 }) {
   if (isLoading) return null;
-  if (!targetPlanDate) {
-    return (
-      <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl px-4 py-3 text-sm text-amber-800 dark:text-amber-200 flex items-center gap-2">
-        <CalendarCheck className="w-4 h-4 flex-shrink-0" />
-        <span>No upcoming production plan found.</span>
-      </div>
-    );
-  }
+  if (!targetPlanDate) return null;
 
   const targetFormatted = format(parseISO(targetPlanDate), "EEEE d MMMM");
   const currentFormatted = currentPlanDate
