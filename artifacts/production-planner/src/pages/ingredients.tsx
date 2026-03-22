@@ -400,6 +400,7 @@ const schema = z.object({
     (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
     z.number().positive().nullable().optional()
   ),
+  stockCheckEnabled: z.boolean().optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -407,7 +408,7 @@ type FormValues = z.infer<typeof schema>;
 const emptyDefaults: FormValues = {
   name: "", unit: "kg", packWeight: 0, costPerPack: 0,
   brand: "", supplierPartNumber: "", supplierId: 0, secondarySupplierId: 0,
-  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null,
+  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, stockCheckEnabled: false,
 };
 
 export default function Ingredients() {
@@ -463,6 +464,7 @@ export default function Ingredients() {
         : null,
       rawMeatTrayCapacityKg: item.rawMeatTrayCapacityKg != null ? Number(item.rawMeatTrayCapacityKg) : null,
       category: item.category ?? "",
+      stockCheckEnabled: item.stockCheckEnabled ?? false,
     });
     setIsDialogOpen(true);
   };
@@ -481,6 +483,7 @@ export default function Ingredients() {
     category: data.category || null,
     processingRatio: data.processingRatioPct != null ? data.processingRatioPct / 100 : null,
     rawMeatTrayCapacityKg: data.rawMeatTrayCapacityKg ?? null,
+    stockCheckEnabled: data.stockCheckEnabled ?? false,
   });
 
   const onSubmit = (data: FormValues) => {
@@ -680,6 +683,23 @@ export default function Ingredients() {
               <p className="text-xs text-muted-foreground mt-1">
                 Used to filter ingredients by prep station (Raw Meat, Vegetables, Bases).
               </p>
+            </div>
+
+            <div className="flex items-center gap-3 py-1">
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  {...register("stockCheckEnabled")}
+                  className="sr-only peer"
+                />
+                <div className="w-9 h-5 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/30 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+              </label>
+              <div>
+                <span className="text-sm font-medium">Requires Stock Check</span>
+                <p className="text-xs text-muted-foreground">
+                  When enabled, operators must record remaining stock during Main Prep before this ingredient is marked complete.
+                </p>
+              </div>
             </div>
 
             {/* Supplier + Secondary Supplier */}
