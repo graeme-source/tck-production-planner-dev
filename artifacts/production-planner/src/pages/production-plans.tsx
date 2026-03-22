@@ -738,6 +738,12 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                   Dispatch estimates are based on DPT settings (Shopify data unavailable). Actual orders may differ.
                 </div>
               )}
+              {calcData?.shopifyError && calcData?.salesSource === "shopify" && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 rounded-xl mb-3 text-sm text-amber-700 dark:text-amber-300">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  {calcData.shopifyError}
+                </div>
+              )}
 
               {items.some(i => computeStockWarning(i) === "short") && (
                 <div className="flex items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/40 rounded-xl mb-3 text-sm text-red-700 dark:text-red-300">

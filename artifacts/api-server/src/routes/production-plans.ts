@@ -242,20 +242,24 @@ router.get("/calculate", async (req, res) => {
 
   const shopifySalesPerDate: Record<string, Record<string, number>> = {};
   const shopifySalesCombined: Record<string, number> = {};
-  let hasShopifyData = false;
+  const shopifyDatesLoaded = new Set<string>();
   let shopifyError: string | null = null;
 
   try {
     const results = await Promise.allSettled(
       deliveryDates.map(date => countProductsByTag(date).then(products => ({ date, products })))
     );
-    for (const result of results) {
+    const failedDates: string[] = [];
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
       if (result.status === "rejected") {
-        console.warn("[calculate] Shopify fetch for one date failed:", result.reason?.message ?? result.reason);
+        failedDates.push(deliveryDates[i]);
+        console.warn(`[calculate] Shopify fetch for ${deliveryDates[i]} failed:`, result.reason?.message ?? result.reason);
         continue;
       }
       const { date, products } = result.value;
       shopifySalesPerDate[date] = {};
+      shopifyDatesLoaded.add(date);
       for (const p of products) {
         const twoPackVariant = p.variants.find(v => {
           const t = v.title.toLowerCase();
@@ -265,14 +269,18 @@ router.get("/calculate", async (req, res) => {
           const key = p.productTitle.toLowerCase().trim();
           shopifySalesPerDate[date][key] = twoPackVariant.quantity;
           shopifySalesCombined[key] = (shopifySalesCombined[key] ?? 0) + twoPackVariant.quantity;
-          hasShopifyData = true;
         }
       }
+    }
+    if (failedDates.length > 0) {
+      shopifyError = `Failed to fetch Shopify data for: ${failedDates.join(", ")}. Using DPT estimates for those dates.`;
     }
   } catch (err: any) {
     shopifyError = err.message ?? "Unknown error";
     console.warn("[calculate] Shopify sales fetch failed:", shopifyError);
   }
+
+  const hasShopifyData = shopifyDatesLoaded.size > 0;
 
   const dptRows = await db
     .select({
@@ -327,12 +335,14 @@ router.get("/calculate", async (req, res) => {
     const fridgeStock = fridgeStockFromPlans[recipeId] ?? latestStock[recipeId] ?? 0;
 
     const dptPacksSold = r.packsSold ?? 0;
-    const dispatch1Qty = hasShopifyData ? matchShopifySalesForDate(recipeName, deliveryDates[0]) : dptPacksSold;
-    const dispatch2Qty = hasShopifyData ? matchShopifySalesForDate(recipeName, deliveryDates[1]) : dptPacksSold;
-    const dispatch3Qty = hasShopifyData ? matchShopifySalesForDate(recipeName, deliveryDates[2]) : dptPacksSold;
+    const dispatch1Qty = shopifyDatesLoaded.has(deliveryDates[0]) ? matchShopifySalesForDate(recipeName, deliveryDates[0]) : dptPacksSold;
+    const dispatch2Qty = shopifyDatesLoaded.has(deliveryDates[1]) ? matchShopifySalesForDate(recipeName, deliveryDates[1]) : dptPacksSold;
+    const dispatch3Qty = shopifyDatesLoaded.has(deliveryDates[2]) ? matchShopifySalesForDate(recipeName, deliveryDates[2]) : dptPacksSold;
     const totalDispatchQty = dispatch1Qty + dispatch2Qty + dispatch3Qty;
 
-    const effectivePacksSold = hasShopifyData ? matchShopifySalesCombined(recipeName) : (dptPacksSold * 3);
+    const shopifyDateCount = [deliveryDates[0], deliveryDates[1], deliveryDates[2]].filter(d => shopifyDatesLoaded.has(d)).length;
+    const dptDateCount = 3 - shopifyDateCount;
+    const effectivePacksSold = matchShopifySalesCombined(recipeName) + (dptPacksSold * dptDateCount);
 
     const deficit = Math.max(0, totalDispatchQty - fridgeStock);
     const deficitBatches = packsPerBatch > 0 ? Math.ceil(deficit / packsPerBatch) : 0;
