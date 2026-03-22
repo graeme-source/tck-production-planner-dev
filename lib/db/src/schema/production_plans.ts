@@ -111,8 +111,25 @@ export const dailyStockChecksTable = pgTable("daily_stock_checks", {
   unique("uq_stock_check_ingredient_date").on(table.ingredientId, table.checkDate),
 ]);
 
+export const temperatureRecordsTable = pgTable("temperature_records", {
+  id: serial("id").primaryKey(),
+  planId: integer("plan_id").notNull().references(() => productionPlansTable.id, { onDelete: "cascade" }),
+  planName: text("plan_name"),
+  recipeId: integer("recipe_id"),
+  recipeName: text("recipe_name"),
+  ingredientId: integer("ingredient_id"),
+  ingredientName: text("ingredient_name"),
+  trayIndex: integer("tray_index").notNull(),
+  temperatureC: numeric("temperature_c", { precision: 5, scale: 1 }).notNull(),
+  recordType: text("record_type").notNull().default("cooked_core"),
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  userName: text("user_name"),
+  recordedAt: timestamp("recorded_at").notNull().defaultNow(),
+});
+
 export const insertPrepCompletionSchema = createInsertSchema(prepCompletionsTable).omit({ id: true });
 export const insertDailyStockCheckSchema = createInsertSchema(dailyStockChecksTable).omit({ id: true, checkedAt: true });
+export type TemperatureRecord = typeof temperatureRecordsTable.$inferSelect;
 
 export type InsertProductionPlan = z.infer<typeof insertProductionPlanSchema>;
 export type ProductionPlan = typeof productionPlansTable.$inferSelect;

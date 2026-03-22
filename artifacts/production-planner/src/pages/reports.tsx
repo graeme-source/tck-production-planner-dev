@@ -5,7 +5,7 @@ import {
   Loader2, Coffee, Utensils, Clock, Users,
   ArrowUp, ArrowDown, Minus as MinusIcon,
   TrendingUp, Activity, Layers, Target, Timer,
-  ChevronDown, ChevronRight,
+  ChevronDown, ChevronRight, Thermometer, ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -110,7 +110,7 @@ const STATION_LABELS: Record<string, string> = {
   prep_meat: "Meat Prep",
 };
 
-type TabId = "kpis" | "breaks";
+type TabId = "kpis" | "breaks" | "temperature";
 
 export default function Reports() {
   const [activeTab, setActiveTab] = useState<TabId>("kpis");
@@ -137,6 +137,9 @@ export default function Reports() {
           <TabButton active={activeTab === "breaks"} onClick={() => setActiveTab("breaks")}>
             <Coffee className="w-4 h-4" /> Breaks & Lunches
           </TabButton>
+          <TabButton active={activeTab === "temperature"} onClick={() => setActiveTab("temperature")}>
+            <Thermometer className="w-4 h-4" /> Temperature Log
+          </TabButton>
         </div>
         <div className="flex items-center gap-2 ml-auto">
           <label className="text-sm font-medium text-muted-foreground">From</label>
@@ -158,11 +161,9 @@ export default function Reports() {
         </div>
       </div>
 
-      {activeTab === "kpis" ? (
-        <ProductionKpisTab fromDate={fromDate} toDate={toDate} />
-      ) : (
-        <BreaksTab fromDate={fromDate} toDate={toDate} />
-      )}
+      {activeTab === "kpis" && <ProductionKpisTab fromDate={fromDate} toDate={toDate} />}
+      {activeTab === "breaks" && <BreaksTab fromDate={fromDate} toDate={toDate} />}
+      {activeTab === "temperature" && <TemperatureRecordsTab fromDate={fromDate} toDate={toDate} />}
     </div>
   );
 }
@@ -670,6 +671,120 @@ function BreaksTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
         )}
       </div>
     </>
+  );
+}
+
+interface TemperatureRecord {
+  id: number;
+  planId: number;
+  recipeId: number;
+  ingredientId: number;
+  trayIndex: number;
+  temperatureC: string;
+  recordType: string;
+  userId: number | null;
+  userName: string | null;
+  recordedAt: string;
+  planName?: string;
+  recipeName?: string;
+  ingredientName?: string;
+}
+
+function TemperatureRecordsTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
+  const [records, setRecords] = useState<TemperatureRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    fetch(`${BASE}/api/temperature-records?from=${fromDate}&to=${toDate}`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : r.json().then((d: { error?: string }) => { throw new Error(d.error || "Failed to load"); }))
+      .then((data: TemperatureRecord[]) => { setRecords(data); setLoading(false); })
+      .catch((err: Error) => { setError(err.message); setLoading(false); });
+  }, [fromDate, toDate]);
+
+  const passed = records.filter(r => parseFloat(r.temperatureC) >= 75);
+  const failed = records.filter(r => parseFloat(r.temperatureC) < 75);
+  const avgTemp = records.length > 0
+    ? (records.reduce((s, r) => s + parseFloat(r.temperatureC), 0) / records.length).toFixed(1)
+    : "—";
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-16 text-muted-foreground gap-2">
+      <Loader2 className="w-5 h-5 animate-spin" /> Loading temperature records…
+    </div>
+  );
+  if (error) return (
+    <div className="rounded-xl border border-red-200 bg-red-50 dark:bg-red-900/20 p-4 text-red-700 dark:text-red-400 text-sm">{error}</div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <SummaryCard icon={<Thermometer className="w-4 h-4 text-blue-500" />} label="Total Readings" value={String(records.length)} />
+        <SummaryCard icon={<ShieldCheck className="w-4 h-4 text-green-600" />} label="Above 75°C" value={String(passed.length)} sub={records.length ? `${Math.round((passed.length / records.length) * 100)}% pass rate` : undefined} highlight="green" />
+        <SummaryCard icon={<Thermometer className="w-4 h-4 text-red-500" />} label="Below 75°C" value={String(failed.length)} sub={failed.length > 0 ? "Requires attention" : "None"} highlight={failed.length > 0 ? "red" : undefined} />
+        <SummaryCard icon={<Activity className="w-4 h-4 text-amber-500" />} label="Average Temp" value={avgTemp === "—" ? "—" : `${avgTemp}°C`} />
+      </div>
+
+      {records.length === 0 ? (
+        <div className="rounded-xl border border-border bg-card p-8 text-center text-muted-foreground text-sm">
+          No temperature records found for this date range.
+        </div>
+      ) : (
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-secondary/20">
+                  <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Recorded At</th>
+                  <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Recipe</th>
+                  <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Ingredient</th>
+                  <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Tray</th>
+                  <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Temp</th>
+                  <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Status</th>
+                  <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Recorded By</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {records.map(rec => {
+                  const temp = parseFloat(rec.temperatureC);
+                  const safe = temp >= 75;
+                  return (
+                    <tr key={rec.id} className={cn("hover:bg-secondary/10 transition-colors", !safe && "bg-red-50/60 dark:bg-red-950/20")}>
+                      <td className="px-4 py-3 tabular-nums text-muted-foreground whitespace-nowrap">
+                        {format(new Date(rec.recordedAt), "dd MMM yyyy, HH:mm")}
+                      </td>
+                      <td className="px-4 py-3 font-medium">{rec.recipeName ?? `Recipe #${rec.recipeId}`}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{rec.ingredientName ?? `Ingredient #${rec.ingredientId}`}</td>
+                      <td className="px-4 py-3 text-center tabular-nums">{rec.trayIndex + 1}</td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={cn("font-bold tabular-nums", safe ? "text-green-700 dark:text-green-400" : "text-red-600")}>
+                          {temp.toFixed(1)}°C
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {safe ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 dark:text-green-400 bg-green-100 dark:bg-green-900/30 rounded-full px-2 py-0.5">
+                            <ShieldCheck className="w-3 h-3" /> Safe
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-100 dark:bg-red-900/30 rounded-full px-2 py-0.5">
+                            <Thermometer className="w-3 h-3" /> Low
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{rec.userName ?? "Unknown"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

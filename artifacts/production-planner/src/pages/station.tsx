@@ -732,16 +732,72 @@ function MixingStation({ plan }: MixingStationProps) {
   const [completing, setCompleting] = useState(false);
   const [completeFailed, setCompleteFailed] = useState(false);
 
+  const authUser = state.status === "authenticated" ? state.user : null;
+
   const [mixingTab, setMixingTab] = useState<"tins" | "cooking">("tins");
-  // key = `${recipeId}-${ingredientId}`, value = set of 0-based tray indices marked done
-  const [cookedTrays, setCookedTrays] = useState<Record<string, Set<number>>>({});
-  const toggleTray = (recipeId: number, ingredientId: number, trayIdx: number) => {
+  // key = `${recipeId}-${ingredientId}`, value = map of trayIdx → 0 (empty), 1 (in oven), 2 (done)
+  const [trayStates, setTrayStates] = useState<Record<string, Record<number, 0 | 1 | 2>>>({});
+  // Pending temperature entry: which tray just moved to "done" and needs a temp recorded
+  const [tempPrompt, setTempPrompt] = useState<{
+    recipeId: number; recipeName: string;
+    ingredientId: number; ingredientName: string;
+    trayIdx: number; planId: number; planName: string;
+  } | null>(null);
+  const [tempValue, setTempValue] = useState("");
+  const [tempSaving, setTempSaving] = useState(false);
+
+  const advanceTray = (
+    recipeId: number, recipeName: string,
+    ingredientId: number, ingredientName: string,
+    trayIdx: number, planId: number, planName: string,
+  ) => {
     const key = `${recipeId}-${ingredientId}`;
-    setCookedTrays(prev => {
-      const set = new Set(prev[key] ?? []);
-      if (set.has(trayIdx)) set.delete(trayIdx); else set.add(trayIdx);
-      return { ...prev, [key]: set };
+    setTrayStates(prev => {
+      const cur = (prev[key]?.[trayIdx] ?? 0) as 0 | 1 | 2;
+      let next: 0 | 1 | 2;
+      if (cur === 0) next = 1;
+      else if (cur === 1) { next = 2; }
+      else next = 0;
+      const updated = { ...prev, [key]: { ...prev[key], [trayIdx]: next } };
+      if (next === 2) {
+        // Prompt for temperature after state update
+        setTimeout(() => setTempPrompt({ recipeId, recipeName, ingredientId, ingredientName, trayIdx, planId, planName }), 0);
+      }
+      return updated;
     });
+  };
+
+  const submitTemp = async () => {
+    if (!tempPrompt) return;
+    const c = parseFloat(tempValue);
+    if (isNaN(c)) return;
+    setTempSaving(true);
+    try {
+      const base = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
+      await fetch(`${base}/api/temperature-records`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          planId: tempPrompt.planId,
+          planName: tempPrompt.planName,
+          recipeId: tempPrompt.recipeId,
+          recipeName: tempPrompt.recipeName,
+          ingredientId: tempPrompt.ingredientId,
+          ingredientName: tempPrompt.ingredientName,
+          trayIndex: tempPrompt.trayIdx,
+          temperatureC: c,
+          recordType: "cooked_core",
+        }),
+      });
+      toast({ title: "Temperature recorded", description: `${c}°C saved for tray ${tempPrompt.trayIdx + 1}` });
+    } catch {
+      toast({ title: "Failed to save temperature", variant: "destructive" });
+    } finally {
+      setTempSaving(false);
+      setTempPrompt(null);
+      setTempValue("");
+    }
   };
   const [cookingRecipes, setCookingRecipes] = useState<PrepRecipeDetail[]>([]);
   useEffect(() => {
@@ -968,6 +1024,59 @@ function MixingStation({ plan }: MixingStationProps) {
   const activeTinInfo = getActiveTinInfo();
 
   return (
+    <>
+    {/* Temperature entry dialog */}
+    {tempPrompt && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+        <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+          <div>
+            <h3 className="font-bold text-lg">Record Core Temperature</h3>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              {tempPrompt.recipeName} — {tempPrompt.ingredientName}, Tray {tempPrompt.trayIdx + 1}
+            </p>
+            {authUser && <p className="text-xs text-muted-foreground">Recorded by: {authUser.name}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Core Temperature (°C)</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                step="0.1"
+                min="0"
+                max="200"
+                placeholder="e.g. 75.5"
+                value={tempValue}
+                onChange={e => setTempValue(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") submitTemp(); }}
+                autoFocus
+                className="flex-1 border border-border rounded-lg px-3 py-2.5 text-lg font-semibold tabular-nums bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+              <span className="text-xl font-bold text-muted-foreground">°C</span>
+            </div>
+            {tempValue && !isNaN(parseFloat(tempValue)) && (
+              <p className={cn("text-sm font-semibold", parseFloat(tempValue) >= 75 ? "text-green-600" : "text-red-600")}>
+                {parseFloat(tempValue) >= 75 ? "✓ Above 75°C — safe" : "⚠️ Below 75°C minimum — check again"}
+              </p>
+            )}
+          </div>
+          <div className="flex gap-3">
+            <button
+              onClick={() => { setTempPrompt(null); setTempValue(""); }}
+              className="flex-1 py-2.5 rounded-xl border border-border font-medium text-sm hover:bg-secondary"
+            >
+              Skip
+            </button>
+            <button
+              onClick={submitTemp}
+              disabled={!tempValue || isNaN(parseFloat(tempValue)) || tempSaving}
+              className="flex-1 py-2.5 rounded-xl bg-green-600 text-white font-semibold text-sm hover:bg-green-700 disabled:opacity-50"
+            >
+              {tempSaving ? "Saving…" : "Save Temperature"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     <div className="space-y-4">
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
@@ -1037,7 +1146,7 @@ function MixingStation({ plan }: MixingStationProps) {
                 const marinades = recipe.marinades ?? [];
                 const totalDoneForRecipe = rawMeatIngs.reduce((s, ing) => {
                   const key = `${recipe.recipeId}-${ing.ingredientId}`;
-                  return s + (cookedTrays[key]?.size ?? 0);
+                  return s + Object.values(trayStates[key] ?? {}).filter(st => st === 2).length;
                 }, 0);
                 const totalTraysForRecipe = rawMeatIngs.reduce((s, ing) => s + (ing.trayCount ?? 0), 0);
                 const recipeAllDone = totalTraysForRecipe > 0 && totalDoneForRecipe >= totalTraysForRecipe;
@@ -1063,8 +1172,9 @@ function MixingStation({ plan }: MixingStationProps) {
                       {rawMeatIngs.map(ing => {
                         const ingTrays = ing.trayCount ?? 0;
                         const key = `${recipe.recipeId}-${ing.ingredientId}`;
-                        const doneTraySet = cookedTrays[key] ?? new Set<number>();
-                        const doneCount = doneTraySet.size;
+                        const ingTrayMap = trayStates[key] ?? {};
+                        const doneCount = Object.values(ingTrayMap).filter(s => s === 2).length;
+                        const inOvenCount = Object.values(ingTrayMap).filter(s => s === 1).length;
                         const allIngDone = doneCount >= ingTrays;
                         const ingMarinades = marinades.filter(m => m.rawMeatIngredientId === ing.ingredientId);
                         const perTrayKg = ingTrays > 0 ? toKg(ing.rawQty, ing.unit) / ingTrays : null;
@@ -1082,9 +1192,14 @@ function MixingStation({ plan }: MixingStationProps) {
                                   </p>
                                 )}
                               </div>
-                              <span className={cn("text-sm font-bold tabular-nums", allIngDone ? "text-green-600 dark:text-green-400" : "text-muted-foreground")}>
-                                {doneCount}/{ingTrays}
-                              </span>
+                              <div className="text-right space-y-0.5">
+                                {inOvenCount > 0 && (
+                                  <p className="text-xs font-semibold text-orange-600 dark:text-orange-400">{inOvenCount} in oven</p>
+                                )}
+                                <span className={cn("text-sm font-bold tabular-nums", allIngDone ? "text-green-600 dark:text-green-400" : "text-muted-foreground")}>
+                                  {doneCount}/{ingTrays} done
+                                </span>
+                              </div>
                             </div>
 
                             {/* Cooking settings tiles */}
@@ -1133,23 +1248,23 @@ function MixingStation({ plan }: MixingStationProps) {
                               </div>
                             )}
 
-                            {/* Tray completion buttons */}
+                            {/* Tray completion buttons — tap to cycle: empty → in oven → done */}
                             <div className="grid grid-cols-4 gap-2">
                               {Array.from({ length: ingTrays }, (_, idx) => {
-                                const done = doneTraySet.has(idx);
+                                const st = ingTrayMap[idx] ?? 0;
                                 return (
                                   <button
                                     key={idx}
-                                    onClick={() => toggleTray(recipe.recipeId, ing.ingredientId, idx)}
+                                    onClick={() => advanceTray(recipe.recipeId, recipe.recipeName, ing.ingredientId, ing.ingredientName, idx, plan.id, plan.name ?? "")}
                                     className={cn(
                                       "flex flex-col items-center justify-center py-3 rounded-xl border-2 font-semibold text-sm transition-all active:scale-95",
-                                      done
-                                        ? "bg-green-500 border-green-500 text-white"
-                                        : "bg-card border-border text-muted-foreground hover:border-rose-400 hover:text-foreground"
+                                      st === 2 ? "bg-green-500 border-green-500 text-white"
+                                      : st === 1 ? "bg-orange-500 border-orange-500 text-white"
+                                      : "bg-card border-border text-muted-foreground hover:border-rose-400 hover:text-foreground"
                                     )}
                                   >
-                                    <span className="text-base">{done ? "✓" : idx + 1}</span>
-                                    <span className="text-xs opacity-70">tray</span>
+                                    <span className="text-base">{st === 2 ? "✓" : st === 1 ? "🔥" : idx + 1}</span>
+                                    <span className="text-xs opacity-80">{st === 2 ? "done" : st === 1 ? "in oven" : "tray"}</span>
                                   </button>
                                 );
                               })}
@@ -1224,6 +1339,7 @@ function MixingStation({ plan }: MixingStationProps) {
       </div>
       )}
     </div>
+    </>
   );
 }
 
