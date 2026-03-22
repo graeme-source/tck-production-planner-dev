@@ -2873,185 +2873,197 @@ function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Raw Meat Prep Station
-// Per-recipe: combined tray count (raw_meat + seasoning), per-tray breakdown
+// Left: recipe list. Right: selected recipe detail with ingredient breakdown.
 // ──────────────────────────────────────────────────────────────────────────────
 function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
-  const [mode, setMode] = useState<"fullscreen" | "overview">("fullscreen");
   const [isOnBreak, setIsOnBreak] = useState(false);
+  const [selectedRecipeId, setSelectedRecipeId] = useState<number | null>(null);
   const { recipes, isLoading, nextPlan } = usePrepByRecipe("prep_meat", plan.id, plan.planDate);
 
   const totalTrays = recipes.reduce((sum, r) => sum + (r.trayCount ?? 0), 0);
 
-  // Build full-screen items — one card per recipe showing combined tray count
-  const fullScreenItems: PrepFullScreenItem[] = recipes.flatMap(recipe => {
-    const rawMeat = recipe.ingredients.filter(i => i.isRawMeat);
-    const marinades = recipe.marinades ?? [];
-    const totalRawMeatKg = rawMeat.reduce((sum, i) => sum + i.rawQty, 0);
-    const totalMarinadeG = marinades.reduce((sum, m) => sum + m.totalGrams, 0);
-    const trayCapacityKg = rawMeat.find(i => i.rawMeatTrayCapacityKg)?.rawMeatTrayCapacityKg ?? null;
-    const trays = recipe.trayCount;
-    const perTrayMeatKg = trays && trays > 0 ? (totalRawMeatKg / trays).toFixed(2) : null;
-
-    const marinadeDetails = marinades.map(m => {
-      const meatName = rawMeat.find(i => i.ingredientId === m.rawMeatIngredientId)?.ingredientName ?? "Meat";
-      const name = m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown";
-      return `${meatName} → ${name} ${m.totalGrams}g${m.gramsPerKg ? ` (${m.gramsPerKg}g/kg)` : ""}`;
-    });
-
-    return [{
-      id: `${recipe.recipeId}`,
-      name: recipe.recipeName,
-      quantity: trays != null ? `${trays} tray${trays !== 1 ? "s" : ""}` : `${totalRawMeatKg.toFixed(2)} kg`,
-      subDetail: [
-        `${totalRawMeatKg.toFixed(2)} kg raw meat`,
-        totalMarinadeG > 0 ? `${totalMarinadeG.toFixed(0)}g marinades` : null,
-        trayCapacityKg ? `${trayCapacityKg} kg/tray capacity` : null,
-        perTrayMeatKg ? `${perTrayMeatKg} kg meat/tray` : null,
-        ...marinadeDetails,
-      ].filter(Boolean).join(" · ") || undefined,
-      badge: trays != null ? { label: "Trays needed", value: trays, color: "rose" as const } : undefined,
-      sopUrl: recipe.sopUrl,
-    }];
-  });
+  // Auto-select first recipe
+  useEffect(() => {
+    if (recipes.length > 0 && (selectedRecipeId === null || !recipes.some(r => r.recipeId === selectedRecipeId))) {
+      setSelectedRecipeId(recipes[0].recipeId);
+    }
+  }, [recipes, selectedRecipeId]);
 
   if (isLoading) {
     return <div className="flex items-center justify-center py-20 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin mr-2" />Loading…</div>;
   }
 
-  if (mode === "fullscreen") {
+  if (recipes.length === 0) {
     return (
-      <PrepFullScreenMode
-        items={fullScreenItems}
-        currentPlanDate={plan.planDate}
-        targetPlanDate={nextPlan?.planDate ?? null}
-        targetPlanName={nextPlan?.planName ?? null}
-        isLoadingPlan={false}
-        stationLabel="Raw Meat Prep"
-        stationColor="text-rose-500"
-        stationIcon={Beef}
-        onOverviewClick={() => setMode("overview")}
-      />
+      <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
+        <p className="font-medium">No raw meat ingredients to prep</p>
+        <p className="text-sm mt-1">Set ingredient category to "raw_meat" in the ingredients library</p>
+      </div>
     );
   }
+
+  const selected = recipes.find(r => r.recipeId === selectedRecipeId) ?? recipes[0];
+  const selRawMeat = selected.ingredients.filter(i => i.isRawMeat);
+  const selMarinades = selected.marinades ?? [];
+  const selTotalRawKg = selRawMeat.reduce((sum, i) => sum + i.rawQty, 0);
+  const selTotalMarinadeG = selMarinades.reduce((sum, m) => sum + m.totalGrams, 0);
+  const selTrays = selected.trayCount;
+  const selTrayCapKg = selRawMeat.find(i => i.rawMeatTrayCapacityKg)?.rawMeatTrayCapacityKg ?? null;
 
   return (
     <div className="space-y-4">
       <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
 
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Beef className="w-5 h-5 text-rose-500" />
-          <h2 className="font-semibold">Raw Meat Prep — Overview</h2>
-        </div>
+      {/* Summary bar */}
+      <div className="bg-card border border-border rounded-xl p-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          {totalTrays > 0 && (
-            <div className="text-right">
-              <p className="text-xs text-muted-foreground">Total Trays</p>
-              <p className="text-2xl font-bold text-rose-600 dark:text-rose-400">{totalTrays}</p>
-            </div>
-          )}
-          <button
-            onClick={() => setMode("fullscreen")}
-            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-1.5 transition-colors"
-          >
-            <LayoutGrid className="w-4 h-4" />
-            Full-screen
-          </button>
+          <Beef className="w-6 h-6 text-rose-500" />
+          <div>
+            <h2 className="font-semibold text-base">Raw Meat Prep</h2>
+            <p className="text-xs text-muted-foreground">{recipes.length} recipe{recipes.length !== 1 ? "s" : ""}</p>
+          </div>
         </div>
+        {totalTrays > 0 && (
+          <div className="text-right">
+            <p className="text-xs text-muted-foreground">Total Trays</p>
+            <p className="text-2xl font-bold text-rose-600 dark:text-rose-400 tabular-nums">{totalTrays}</p>
+          </div>
+        )}
       </div>
 
-      {recipes.length === 0 ? (
-        <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
-          <p className="font-medium">No raw meat ingredients to prep</p>
-          <p className="text-sm mt-1">Set ingredient category to "raw_meat" in the ingredients library</p>
+      {/* Split panel */}
+      <div className="flex flex-col lg:flex-row gap-4">
+
+        {/* Left: recipe list */}
+        <div className="lg:w-72 xl:w-80 flex-shrink-0">
+          <div className="bg-card border border-border rounded-xl overflow-hidden">
+            <div className="px-4 py-2.5 bg-secondary/30 border-b border-border">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Recipes</p>
+            </div>
+            <div className="divide-y divide-border/50 max-h-[calc(100vh-320px)] overflow-y-auto">
+              {recipes.map(recipe => {
+                const rRawMeat = recipe.ingredients.filter(i => i.isRawMeat);
+                const rTotalKg = rRawMeat.reduce((s, i) => s + i.rawQty, 0);
+                const isSelected = recipe.recipeId === selected.recipeId;
+                return (
+                  <button
+                    key={recipe.recipeId}
+                    onClick={() => setSelectedRecipeId(recipe.recipeId)}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-4 py-3 text-left transition-colors",
+                      isSelected
+                        ? "bg-rose-50/80 dark:bg-rose-900/20 border-l-4 border-l-rose-500"
+                        : "hover:bg-secondary/40 border-l-4 border-l-transparent"
+                    )}
+                  >
+                    <Beef className={cn("w-5 h-5 flex-shrink-0", isSelected ? "text-rose-500" : "text-muted-foreground")} />
+                    <div className="min-w-0 flex-1">
+                      <p className={cn("text-sm font-medium truncate", isSelected && "font-semibold")}>{recipe.recipeName}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {rTotalKg.toFixed(2)} kg
+                        {recipe.trayCount != null && ` · ${recipe.trayCount} tray${recipe.trayCount !== 1 ? "s" : ""}`}
+                      </p>
+                    </div>
+                    <span className="text-xs text-muted-foreground flex-shrink-0">{recipe.batchesTarget}×</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
-      ) : (
-        <div className="space-y-4">
-          {recipes.map(recipe => {
-            const rawMeat = recipe.ingredients.filter(i => i.isRawMeat);
-            const marinades = recipe.marinades ?? [];
-            const totalRawMeatKg = rawMeat.reduce((sum, i) => sum + i.rawQty, 0);
-            const totalMarinadeG = marinades.reduce((sum, m) => sum + m.totalGrams, 0);
-            const trays = recipe.trayCount;
-            const trayCapKg = rawMeat.find(i => i.rawMeatTrayCapacityKg)?.rawMeatTrayCapacityKg ?? null;
 
-            return (
-              <div key={recipe.recipeId} className="bg-card border border-border rounded-xl overflow-hidden">
-                {/* Recipe header */}
-                <div className="flex items-center justify-between px-4 py-3 bg-rose-50 dark:bg-rose-900/20 border-b border-border">
-                  <div>
-                    <p className="font-bold text-rose-800 dark:text-rose-200">{recipe.recipeName}</p>
-                    <p className="text-xs text-rose-700 dark:text-rose-300">{recipe.batchesTarget} batch{recipe.batchesTarget !== 1 ? "es" : ""}</p>
+        {/* Right: selected recipe detail */}
+        <div className="flex-1 min-w-0">
+          <div className="bg-card border-2 border-rose-400 dark:border-rose-600 rounded-2xl p-6">
+
+            {/* Header */}
+            <div className="mb-5">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Currently Prepping</p>
+              <div className="flex items-start justify-between gap-3">
+                <h2 className="font-display text-3xl font-bold leading-tight">{selected.recipeName}</h2>
+                {selected.sopUrl && (
+                  <a href={selected.sopUrl} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline flex-shrink-0 mt-1">
+                    SOP <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
+              </div>
+              <p className="text-sm text-muted-foreground mt-1">{selected.batchesTarget} batch{selected.batchesTarget !== 1 ? "es" : ""}</p>
+            </div>
+
+            {/* Key numbers */}
+            <div className="flex items-center gap-8 mb-6">
+              <div className="text-center">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Raw Meat</p>
+                <p className="text-5xl font-bold font-display tabular-nums text-rose-600 dark:text-rose-400">
+                  {selTotalRawKg.toFixed(2)}
+                  <span className="text-2xl font-normal ml-1 text-muted-foreground">kg</span>
+                </p>
+              </div>
+              {selTrays != null && (
+                <>
+                  <div className="text-4xl font-light text-muted-foreground">·</div>
+                  <div className="text-center">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Trays</p>
+                    <p className="text-5xl font-bold font-display tabular-nums text-rose-600 dark:text-rose-400">{selTrays}</p>
+                    {selTrayCapKg && <p className="text-xs text-muted-foreground mt-1">{selTrayCapKg} kg each</p>}
                   </div>
-                  <div className="flex items-center gap-3">
-                    {trays != null && (
+                </>
+              )}
+            </div>
+
+            {/* Ingredient breakdown */}
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Breakdown</p>
+              {selRawMeat.map(ing => {
+                const meatMarinades = selMarinades.filter(m => m.rawMeatIngredientId === ing.ingredientId);
+                const perTrayKg = selTrays && selTrays > 0 ? (ing.rawQty / selTrays).toFixed(2) : null;
+                return (
+                  <div key={ing.ingredientId} className="rounded-xl border border-border overflow-hidden">
+                    {/* Meat row */}
+                    <div className="flex items-center justify-between px-4 py-3 bg-rose-50/50 dark:bg-rose-900/10">
+                      <span className="font-semibold text-sm">{ing.ingredientName}</span>
                       <div className="text-right">
-                        <p className="text-xs text-muted-foreground">Trays</p>
-                        <p className="text-4xl font-bold text-rose-600 dark:text-rose-400 tabular-nums">{trays}</p>
-                        {trayCapKg && <p className="text-xs text-muted-foreground">{trayCapKg} kg each</p>}
+                        <span className="tabular-nums font-bold text-base">{fmtQty(ing.rawQty, ing.unit)}</span>
+                        {perTrayKg && (
+                          <p className="text-xs text-muted-foreground">{perTrayKg} kg / tray</p>
+                        )}
                       </div>
-                    )}
-                    {recipe.sopUrl && (
-                      <a href={recipe.sopUrl} target="_blank" rel="noopener noreferrer"
-                        className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline">
-                        SOP <ExternalLink className="w-3 h-3" />
-                      </a>
-                    )}
-                  </div>
-                </div>
-
-                {/* Ingredients breakdown */}
-                <div className="px-4 py-3 space-y-2">
-                  {/* Raw meat with marinades indented below */}
-                  {rawMeat.map(ing => {
-                    const meatMarinades = marinades.filter(m => m.rawMeatIngredientId === ing.ingredientId);
-                    return (
-                      <div key={ing.ingredientId}>
-                        <div className="flex justify-between items-center text-sm">
-                          <span className="font-medium">{ing.ingredientName}</span>
+                    </div>
+                    {/* Marinade rows */}
+                    {meatMarinades.map((m, mi) => {
+                      const name = m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown";
+                      const perTrayG = selTrays && selTrays > 0 ? Math.round(m.totalGrams / selTrays) : null;
+                      return (
+                        <div key={mi} className="flex items-center justify-between px-4 py-2.5 border-t border-border/50 text-sm text-muted-foreground">
+                          <span className="flex items-center gap-2">
+                            <span className="text-rose-400">↳</span>
+                            <span>{name}</span>
+                          </span>
                           <div className="text-right">
-                            <span className="tabular-nums font-semibold">{fmtQty(ing.rawQty, ing.unit)}</span>
-                            {trays && trays > 0 && (
-                              <span className="text-xs text-muted-foreground ml-2">
-                                ({(ing.rawQty / trays).toFixed(2)} kg/tray)
-                              </span>
+                            <span className="tabular-nums font-medium text-foreground">{m.totalGrams}g</span>
+                            {perTrayG != null && (
+                              <p className="text-xs text-muted-foreground">{perTrayG}g / tray</p>
                             )}
                           </div>
                         </div>
-                        {meatMarinades.map((m, mi) => {
-                          const name = m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown";
-                          const perTray = trays && trays > 0 ? Math.round(m.totalGrams / trays) : null;
-                          return (
-                            <div key={mi} className="flex justify-between items-center text-sm pl-5 text-muted-foreground">
-                              <span className="flex items-center gap-1">
-                                <span className="text-xs">&#9492;</span> {name}
-                              </span>
-                              <div className="text-right">
-                                <span className="tabular-nums">{m.totalGrams}g</span>
-                                {m.gramsPerKg != null && <span className="text-xs ml-1">({m.gramsPerKg}g/kg)</span>}
-                                {perTray != null && (
-                                  <span className="text-xs ml-2">
-                                    {perTray}g/tray
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })}
-                  {/* Combined totals */}
-                  <div className="border-t border-border pt-2 flex justify-between text-sm font-semibold">
-                    <span>Total combined</span>
-                    <span className="tabular-nums">{(totalRawMeatKg + totalMarinadeG / 1000).toFixed(2)} kg</span>
+                      );
+                    })}
                   </div>
+                );
+              })}
+
+              {/* Combined total */}
+              {selTotalMarinadeG > 0 && (
+                <div className="flex justify-between items-center px-4 py-3 rounded-xl bg-secondary/50 text-sm font-semibold mt-2">
+                  <span>Total combined weight</span>
+                  <span className="tabular-nums">{(selTotalRawKg + selTotalMarinadeG / 1000).toFixed(2)} kg</span>
                 </div>
-              </div>
-            );
-          })}
+              )}
+            </div>
+          </div>
         </div>
-      )}
+      </div>
 
       <BreakTracker planId={plan.id} stationType="prep_meat" onBreakActiveChange={setIsOnBreak} />
     </div>
