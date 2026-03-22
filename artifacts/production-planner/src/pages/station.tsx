@@ -31,7 +31,7 @@ import {
   Snowflake, Truck, AlertCircle, Info, Droplets, Timer,
   ClipboardList, Check, Package, RotateCcw, RefreshCw, Scan,
 } from "lucide-react";
-import { format, parseISO, differenceInMinutes, differenceInSeconds } from "date-fns";
+import { format, parseISO, differenceInMinutes, differenceInSeconds, addDays } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -4783,7 +4783,8 @@ interface DessertsReport {
 
 function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
   const [, navigate] = useLocation();
-  const todayTag = format(new Date(), "yyyy-MM-dd");
+  const dispatchTag = format(addDays(parseISO(plan.planDate), 1), "yyyy-MM-dd");
+  const dispatchLabel = format(addDays(parseISO(plan.planDate), 1), "EEEE d MMM");
   const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 
   const [progress, setProgress] = useState<DispatchProgress | null>(null);
@@ -4794,8 +4795,8 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
   const fetchData = useCallback(async () => {
     try {
       const [progressRes, dessertsRes] = await Promise.all([
-        fetch(`${BASE}/api/fulfilment/dispatch-progress?tag=${todayTag}`, { credentials: "include" }),
-        fetch(`${BASE}/api/fulfilment/desserts-report?tag=${todayTag}`, { credentials: "include" }),
+        fetch(`${BASE}/api/fulfilment/dispatch-progress?tag=${dispatchTag}`, { credentials: "include" }),
+        fetch(`${BASE}/api/fulfilment/desserts-report?tag=${dispatchTag}`, { credentials: "include" }),
       ]);
       if (!progressRes.ok && !dessertsRes.ok) {
         setError("Failed to load dispatch data");
@@ -4810,7 +4811,7 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
     } finally {
       setLoading(false);
     }
-  }, [todayTag, BASE]);
+  }, [dispatchTag, BASE]);
 
   useEffect(() => {
     fetchData();
@@ -4853,7 +4854,7 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
             <div>
               <h2 className="font-semibold text-base">Order Packing</h2>
               <p className="text-xs text-muted-foreground">
-                Today's dispatch — {format(new Date(), "EEEE d MMMM")}
+                Dispatch {dispatchLabel}
               </p>
             </div>
           </div>
@@ -4947,11 +4948,11 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
 
       {progress && progress.totalOrders - progress.totalFulfilled > 0 && (
         <button
-          onClick={() => navigate(`/fulfilment?tag=${todayTag}`)}
+          onClick={() => navigate(`/fulfilment?tag=${dispatchTag}`)}
           className="w-full py-4 bg-primary text-primary-foreground rounded-2xl font-semibold text-base flex items-center justify-center gap-3 hover:opacity-90 transition-opacity active:scale-[0.98]"
         >
           <Scan className="w-5 h-5" />
-          Pack Today's Orders
+          Pack Orders for {dispatchLabel}
           <span className="text-sm font-normal opacity-80">
             ({progress.totalOrders - progress.totalFulfilled} remaining)
           </span>
