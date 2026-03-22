@@ -730,20 +730,28 @@ type RecipeItem = {
 
 function RecipeCard({ recipe, onEdit, onDelete, onBreakdown }: { recipe: RecipeItem; onEdit: () => void; onDelete: () => void; onBreakdown: () => void }) {
   const margin = recipe.grossMargin;
-  const borderColor = margin == null ? "border-border" : margin >= 60 ? "border-green-300" : margin >= 50 ? "border-amber-300" : "border-red-300";
-  const topBg = margin == null ? "from-primary/10 to-accent/10" : margin >= 60 ? "from-green-50 to-emerald-100" : margin >= 50 ? "from-amber-50 to-orange-100" : "from-red-50 to-pink-100";
+  const recipeColor = (recipe as any).color as string | null;
+
+  const borderStyle: React.CSSProperties = recipeColor
+    ? { borderColor: recipeColor + "60" }
+    : {};
+  const topStyle: React.CSSProperties = recipeColor
+    ? { backgroundColor: recipeColor + "14" }
+    : {};
+  const fallbackBorder = recipeColor ? "" : "border-border";
+  const fallbackBg = recipeColor ? "" : "bg-secondary/10";
 
   return (
-    <div className={`rounded-2xl border-2 ${borderColor} bg-card overflow-hidden flex flex-col group hover:shadow-md transition-all`}>
-      <div className={`bg-gradient-to-br ${topBg} flex flex-col justify-between px-5 pt-4 pb-3 gap-2`}>
+    <div className={`rounded-2xl border-2 ${fallbackBorder} bg-card overflow-hidden flex flex-col group hover:shadow-md transition-all`} style={borderStyle}>
+      <div className={`${fallbackBg} flex flex-col justify-between px-5 pt-4 pb-3 gap-2`} style={topStyle}>
         <div className="min-w-0">
-          {recipe.category && <p className="text-xs font-semibold text-primary uppercase tracking-wider">{recipe.category}</p>}
-          <p className="font-semibold text-sm leading-tight truncate" style={(recipe as any).color ? { color: (recipe as any).color } : undefined}>{recipe.name}</p>
+          {recipe.category && <p className="text-xs font-semibold uppercase tracking-wider" style={recipeColor ? { color: recipeColor } : undefined}>{recipe.category}</p>}
+          <p className="font-semibold text-sm leading-tight truncate" style={recipeColor ? { color: recipeColor } : undefined}>{recipe.name}</p>
         </div>
         <div className="flex items-center justify-between">
           <MarginBadge margin={margin} />
           <div className="flex items-center gap-1">
-            <button onClick={onBreakdown} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-primary flex items-center justify-center hover:bg-primary hover:text-white transition-colors shadow-sm" title="Cost Breakdown"><BarChart2 className="w-3 h-3" /></button>
+            <button onClick={onBreakdown} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur flex items-center justify-center hover:text-white transition-colors shadow-sm" style={recipeColor ? { color: recipeColor } : undefined} title="Cost Breakdown"><BarChart2 className="w-3 h-3" /></button>
             <button onClick={onEdit} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-foreground transition-colors shadow-sm" title="Edit"><Edit2 className="w-3 h-3" /></button>
             <button onClick={onDelete} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-destructive flex items-center justify-center hover:bg-destructive hover:text-white transition-colors shadow-sm" title="Delete"><Trash2 className="w-3 h-3" /></button>
           </div>
@@ -755,7 +763,6 @@ function RecipeCard({ recipe, onEdit, onDelete, onBreakdown }: { recipe: RecipeI
 
         <MarginBar margin={margin} />
 
-        {/* Cost breakdown */}
         <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
           <div className="text-muted-foreground">Recipe size</div>
           <div className="text-right font-medium">{recipe.servings} {recipe.servingUnit}</div>
@@ -775,8 +782,8 @@ function RecipeCard({ recipe, onEdit, onDelete, onBreakdown }: { recipe: RecipeI
           <div className="text-muted-foreground flex items-center gap-1"><Wrench className="w-3 h-3" /> Labour</div>
           <div className="text-right font-medium">£{fmt(recipe.labourCost)}</div>
 
-          <div className="border-t border-border/60 pt-1 font-semibold">Total pack cost</div>
-          <div className="border-t border-border/60 pt-1 text-right font-bold">£{fmt(recipe.totalPackCost)}</div>
+          <div className="pt-1 font-semibold" style={recipeColor ? { borderTopColor: recipeColor + "40", borderTopWidth: "1px" } : { borderTopColor: "var(--border)", borderTopWidth: "1px" }}>Total pack cost</div>
+          <div className="pt-1 text-right font-bold" style={recipeColor ? { borderTopColor: recipeColor + "40", borderTopWidth: "1px", color: recipeColor } : { borderTopColor: "var(--border)", borderTopWidth: "1px" }}>£{fmt(recipe.totalPackCost)}</div>
 
           {recipe.rrp > 0 && (
             <>
