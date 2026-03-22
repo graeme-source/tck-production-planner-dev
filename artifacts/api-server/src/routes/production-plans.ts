@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, dptSettingsTable } from "@workspace/db";
-import { eq, and, desc, sql, gt, gte, lte, asc, inArray, sum as drizzleSum, ne } from "drizzle-orm";
+import { eq, and, desc, sql, gt, gte, lte, asc, inArray, sum as drizzleSum, ne, isNotNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
 import * as z from "zod";
@@ -1507,7 +1507,26 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
 
     let hasRelevantIngredients = false;
 
+    // Build the set of ingredient IDs that are marinades for a raw meat item.
+    // These should only appear under their raw meat ingredient in prep_meat, not in any other station.
+    const marinadeIngredientIds = new Set<number>();
+    {
+      const marinadeRows = await db
+        .select({ ingredientId: recipeIngredientsTable.ingredientId })
+        .from(recipeIngredientsTable)
+        .where(and(
+          eq(recipeIngredientsTable.recipeId, planItem.recipeId),
+          isNotNull(recipeIngredientsTable.marinadeForIngredientId)
+        ));
+      for (const r of marinadeRows) {
+        if (r.ingredientId != null) marinadeIngredientIds.add(r.ingredientId);
+      }
+    }
+
     for (const [, ing] of agg) {
+      // Marinade ingredients belong exclusively in prep_meat (under their raw meat item)
+      if (marinadeIngredientIds.has(ing.ingredientId) && station !== "prep_meat") continue;
+
       const category = ing.category;
       const isMainStation = categoryMatchesStation(category);
 
