@@ -2157,6 +2157,7 @@ interface PrepIngredientDetail {
   rawQty: number;
   isRawMeat: boolean;
   isSeasoning: boolean;
+  trayCount: number | null;
 }
 
 interface PrepMarinadeDetail {
@@ -3138,23 +3139,26 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
               <p className="text-sm text-muted-foreground mt-1">{selected.batchesTarget} batch{selected.batchesTarget !== 1 ? "es" : ""}</p>
             </div>
 
-            {/* Tray summary banner */}
-            {selTrays != null && selTrays > 0 ? (
-              <div className="flex items-center gap-5 bg-rose-50 dark:bg-rose-900/20 rounded-xl px-5 py-4 mb-5">
-                <div className="text-center min-w-[60px]">
-                  <p className="text-5xl font-bold font-display tabular-nums text-rose-600 dark:text-rose-400 leading-none">{selTrays}</p>
-                  <p className="text-xs font-medium text-rose-700 dark:text-rose-300 mt-1">tray{selTrays !== 1 ? "s" : ""}</p>
+            {/* Summary bar — total trays across all meats */}
+            {selTrays != null && selTrays > 0 && (
+              <div className="flex items-center gap-4 bg-rose-50 dark:bg-rose-900/20 rounded-xl px-5 py-3 mb-5">
+                <div className="text-center min-w-[56px]">
+                  <p className="text-4xl font-bold font-display tabular-nums text-rose-600 dark:text-rose-400 leading-none">{selTrays}</p>
+                  <p className="text-xs font-medium text-rose-700 dark:text-rose-300 mt-0.5">total tray{selTrays !== 1 ? "s" : ""}</p>
                 </div>
-                <div className="h-10 w-px bg-rose-200 dark:bg-rose-700" />
+                <div className="h-8 w-px bg-rose-200 dark:bg-rose-700" />
                 <div>
                   <p className="text-sm font-semibold tabular-nums">{selTotalRawKg.toFixed(2)} kg raw meat</p>
-                  {selTrayCapKg && <p className="text-xs text-muted-foreground mt-0.5">{selTrayCapKg} kg capacity per tray</p>}
                   {selTotalMarinadeG > 0 && (
                     <p className="text-xs text-muted-foreground">+ {selTotalMarinadeG >= 1000 ? `${(selTotalMarinadeG / 1000).toFixed(2)} kg` : `${selTotalMarinadeG}g`} marinade</p>
                   )}
+                  {selRawMeat.length > 1 && <p className="text-xs text-rose-600 dark:text-rose-400 font-medium mt-0.5">across {selRawMeat.length} meat types — see breakdown below</p>}
                 </div>
               </div>
-            ) : (
+            )}
+
+            {/* No tray capacity warning */}
+            {(selTrays == null || selTrays === 0) && (
               <div className="mb-5 space-y-3">
                 <div className="flex items-center gap-8">
                   <div className="text-center">
@@ -3181,37 +3185,53 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
               </div>
             )}
 
-            {/* Per-tray breakdown */}
-            <div className="space-y-1">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-                {selTrays != null && selTrays > 0 ? "Per Tray" : "Breakdown"}
+            {/* Per-ingredient tray cards */}
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                {selTrays != null && selTrays > 0 ? "Per Meat — Tray Breakdown" : "Ingredients"}
               </p>
               {selRawMeat.map(ing => {
                 const meatMarinades = selMarinades.filter(m => m.rawMeatIngredientId === ing.ingredientId);
                 const ingKgTotal = toKg(ing.rawQty, ing.unit);
-                const perTrayKg = selTrays && selTrays > 0 ? ingKgTotal / selTrays : null;
+                const ingTrays = ing.trayCount;
+                const perTrayKg = ingTrays && ingTrays > 0 ? ingKgTotal / ingTrays : null;
+                const ingMarinadeG = meatMarinades.reduce((s, m) => s + m.totalGrams, 0);
                 return (
-                  <div key={ing.ingredientId} className="rounded-xl border border-border overflow-hidden">
-                    {/* Meat row */}
-                    <div className="flex items-center justify-between px-4 py-3 bg-rose-50/50 dark:bg-rose-900/10">
-                      <span className="font-semibold text-sm">{ing.ingredientName}</span>
-                      <div className="text-right">
-                        {perTrayKg != null ? (
-                          <>
-                            <span className="tabular-nums font-bold text-base">{perTrayKg.toFixed(2)} kg</span>
-                            <p className="text-xs text-muted-foreground">{ingKgTotal.toFixed(2)} kg total</p>
-                          </>
-                        ) : (
-                          <span className="tabular-nums font-bold text-base">{fmtQty(ing.rawQty, ing.unit)}</span>
-                        )}
-                      </div>
+                  <div key={ing.ingredientId} className="rounded-xl border-2 border-rose-200 dark:border-rose-800 overflow-hidden">
+                    {/* Meat header with its own tray count */}
+                    <div className="flex items-center gap-3 px-4 py-3 bg-rose-50 dark:bg-rose-900/20">
+                      {ingTrays != null && ingTrays > 0 ? (
+                        <>
+                          <div className="text-center bg-rose-600 text-white rounded-lg px-3 py-1.5 min-w-[52px]">
+                            <p className="text-2xl font-bold font-display tabular-nums leading-none">{ingTrays}</p>
+                            <p className="text-xs opacity-80">tray{ingTrays !== 1 ? "s" : ""}</p>
+                          </div>
+                          <div className="flex-1">
+                            <p className="font-semibold">{ing.ingredientName}</p>
+                            <p className="text-xs text-muted-foreground tabular-nums">
+                              {perTrayKg!.toFixed(2)} kg / tray · {ingKgTotal.toFixed(2)} kg total
+                              {ing.rawMeatTrayCapacityKg && ` · ${ing.rawMeatTrayCapacityKg} kg cap`}
+                            </p>
+                            {ingMarinadeG > 0 && (
+                              <p className="text-xs text-muted-foreground">
+                                + {Math.round(ingMarinadeG / ingTrays)}g marinade / tray · {ingMarinadeG}g total
+                              </p>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="flex-1 flex items-center justify-between">
+                          <p className="font-semibold">{ing.ingredientName}</p>
+                          <p className="tabular-nums font-bold text-base text-rose-600 dark:text-rose-400">{ingKgTotal.toFixed(2)} kg</p>
+                        </div>
+                      )}
                     </div>
-                    {/* Marinade rows */}
+                    {/* Marinade sub-rows */}
                     {meatMarinades.map((m, mi) => {
                       const name = m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown";
-                      const perTrayG = selTrays && selTrays > 0 ? Math.round(m.totalGrams / selTrays) : null;
+                      const perTrayG = ingTrays && ingTrays > 0 ? Math.round(m.totalGrams / ingTrays) : null;
                       return (
-                        <div key={mi} className="flex items-center justify-between px-4 py-2.5 border-t border-border/50 text-sm text-muted-foreground">
+                        <div key={mi} className="flex items-center justify-between px-4 py-2 border-t border-rose-100 dark:border-rose-900/40 text-sm text-muted-foreground bg-white dark:bg-background/50">
                           <span className="flex items-center gap-2">
                             <span className="text-rose-400">↳</span>
                             <span>{name}</span>
@@ -3219,7 +3239,7 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                           <div className="text-right">
                             {perTrayG != null ? (
                               <>
-                                <span className="tabular-nums font-medium text-foreground">{perTrayG}g</span>
+                                <span className="tabular-nums font-semibold text-foreground">{perTrayG}g / tray</span>
                                 <p className="text-xs text-muted-foreground">{m.totalGrams}g total</p>
                               </>
                             ) : (
@@ -3232,19 +3252,6 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                   </div>
                 );
               })}
-
-              {/* Combined per-tray total */}
-              {(selTotalMarinadeG > 0 || (selTrays != null && selTrays > 0)) && (
-                <div className="flex justify-between items-center px-4 py-3 rounded-xl bg-secondary/50 text-sm font-semibold mt-2">
-                  <span>{selTrays != null && selTrays > 0 ? "Combined per tray" : "Total combined weight"}</span>
-                  <span className="tabular-nums">
-                    {selTrays != null && selTrays > 0
-                      ? ((selTotalRawKg + selTotalMarinadeG / 1000) / selTrays).toFixed(2)
-                      : (selTotalRawKg + selTotalMarinadeG / 1000).toFixed(2)
-                    } kg
-                  </span>
-                </div>
-              )}
             </div>
           </div>
         </div>

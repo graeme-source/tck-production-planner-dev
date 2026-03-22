@@ -1507,6 +1507,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       rawQty: number;
       isRawMeat: boolean;
       isSeasoning: boolean;
+      trayCount: number | null;
     }> = [];
 
     let hasRelevantIngredients = false;
@@ -1555,6 +1556,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
         rawQty: roundByUnit(rawQty, ing.unit),
         isRawMeat: category === "raw_meat",
         isSeasoning: false,
+        trayCount: null,
       });
     }
 
@@ -1657,16 +1659,24 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
 
     if (!hasRelevantIngredients) continue;
 
+    // Per-ingredient tray count — each raw meat uses its own capacity + its own marinades
     let trayCount: number | null = null;
     if (station === "prep_meat") {
-      const rawMeatIngredients = ingredients.filter(i => i.isRawMeat);
-      const trayCapacityKg = rawMeatIngredients.find(i => i.rawMeatTrayCapacityKg)?.rawMeatTrayCapacityKg ?? null;
-      if (trayCapacityKg) {
-        const totalRawMeatKg = rawMeatIngredients.reduce((sum, i) => sum + (i.unit === "g" ? i.rawQty / 1000 : i.rawQty), 0);
-        const totalMarinadeKg = marinades.reduce((sum, m) => sum + m.totalGrams, 0) / 1000;
-        const totalCombinedKg = totalRawMeatKg + totalMarinadeKg;
-        trayCount = Math.ceil(totalCombinedKg / trayCapacityKg);
+      let totalTrays = 0;
+      let anyHasCapacity = false;
+      for (const ing of ingredients) {
+        if (!ing.isRawMeat) continue;
+        if (!ing.rawMeatTrayCapacityKg) continue;
+        anyHasCapacity = true;
+        const meatKg = ing.unit === "g" ? ing.rawQty / 1000 : ing.rawQty;
+        const ingMarinadeKg = marinades
+          .filter(m => m.rawMeatIngredientId === ing.ingredientId)
+          .reduce((sum, m) => sum + m.totalGrams, 0) / 1000;
+        const combinedKg = meatKg + ingMarinadeKg;
+        ing.trayCount = Math.ceil(combinedKg / ing.rawMeatTrayCapacityKg);
+        totalTrays += ing.trayCount;
       }
+      if (anyHasCapacity) trayCount = totalTrays;
     }
 
     result.push({
