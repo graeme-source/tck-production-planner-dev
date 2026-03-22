@@ -264,6 +264,7 @@ interface CalcRecipe {
   recipeId: number;
   recipeName: string;
   color: string | null;
+  isCoreMenu: boolean;
   portionsPerBatch: number;
   packSize: number;
   packsPerBatch: number;
@@ -395,7 +396,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
         recipeId: r.recipeId,
         recipeName: r.recipeName,
         recipeColor: r.color ?? null,
-        included: alloc[idx].suggestedBatches > 0 || r.deficit > 0,
+        included: alloc[idx].suggestedBatches > 0 || r.deficit > 0 || r.isCoreMenu,
         suggestedBatches: alloc[idx].suggestedBatches,
         batchesTarget: alloc[idx].suggestedBatches,
         tinCount: r.tinCount,

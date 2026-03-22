@@ -357,10 +357,45 @@ router.get("/calculate", async (req, res) => {
       maxBatchesPerTin: recipesTable.maxBatchesPerTin,
       sopUrl: recipesTable.sopUrl,
       color: recipesTable.color,
+      isCoreMenu: recipesTable.isCoreMenu,
     })
     .from(dptSettingsTable)
     .innerJoin(recipesTable, eq(dptSettingsTable.recipeId, recipesTable.id))
     .where(eq(dptSettingsTable.isActive, true));
+
+  const dptRecipeIds = new Set(dptRows.map(r => r.recipeId));
+  const coreMenuRows = await db
+    .select({
+      id: recipesTable.id,
+      name: recipesTable.name,
+      portionsPerBatch: recipesTable.portionsPerBatch,
+      packSize: recipesTable.packSize,
+      tinSize: recipesTable.tinSize,
+      maxBatchesPerTin: recipesTable.maxBatchesPerTin,
+      sopUrl: recipesTable.sopUrl,
+      color: recipesTable.color,
+      isCoreMenu: recipesTable.isCoreMenu,
+    })
+    .from(recipesTable)
+    .where(eq(recipesTable.isCoreMenu, true));
+
+  for (const cm of coreMenuRows) {
+    if (!dptRecipeIds.has(cm.id)) {
+      dptRows.push({
+        recipeId: cm.id,
+        recipeName: cm.name,
+        packsSold: 0,
+        isActive: true,
+        portionsPerBatch: cm.portionsPerBatch,
+        packSize: cm.packSize,
+        tinSize: cm.tinSize,
+        maxBatchesPerTin: cm.maxBatchesPerTin,
+        sopUrl: cm.sopUrl,
+        color: cm.color,
+        isCoreMenu: cm.isCoreMenu,
+      });
+    }
+  }
 
   const [totalBatchesSetting] = await db
     .select()
@@ -452,6 +487,7 @@ router.get("/calculate", async (req, res) => {
       maxBatchesPerTin: r.maxBatchesPerTin ? Number(r.maxBatchesPerTin) : null,
       sopUrl: r.sopUrl ?? null,
       color: r.color ?? null,
+      isCoreMenu: r.isCoreMenu ?? false,
       fridgeStock: Math.round(fridgeStock),
       prevProduction,
       estimatedFactoryNumber: Math.round(estimatedFactoryNumber),
