@@ -2,7 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { db, skuLocationsTable, appSettingsTable, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
-import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, type ShopifyOrder } from "../services/shopify";
+import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, type ShopifyOrder } from "../services/shopify";
 import { createShipment, isConfigured as isApcConfigured } from "../services/apc";
 
 const router = Router();
@@ -346,6 +346,91 @@ router.delete("/sku-locations/:sku", requireAdmin, async (req: Request, res: Res
     res.json({ ok: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/dispatch-progress", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const { tag } = req.query as { tag?: string };
+  if (!tag) {
+    res.status(400).json({ error: "tag query param required" });
+    return;
+  }
+
+  try {
+    const allOrders = await getOrdersByTag(tag);
+
+    const categories = {
+      smallBox: { total: 0, fulfilled: 0 },
+      largeBox: { total: 0, fulfilled: 0 },
+      wholesale: { total: 0, fulfilled: 0 },
+      other: { total: 0, fulfilled: 0 },
+    };
+
+    for (const order of allOrders) {
+      const tags = order.tags.split(",").map(t => t.trim().toLowerCase());
+      const isFulfilled = order.fulfillment_status === "fulfilled";
+
+      if (tags.includes("wholesale")) {
+        categories.wholesale.total += 1;
+        if (isFulfilled) categories.wholesale.fulfilled += 1;
+      } else if (tags.includes("large-box")) {
+        categories.largeBox.total += 1;
+        if (isFulfilled) categories.largeBox.fulfilled += 1;
+      } else if (tags.includes("small-box")) {
+        categories.smallBox.total += 1;
+        if (isFulfilled) categories.smallBox.fulfilled += 1;
+      } else {
+        categories.other.total += 1;
+        if (isFulfilled) categories.other.fulfilled += 1;
+      }
+    }
+
+    const totalOrders = allOrders.length;
+    const totalFulfilled = allOrders.filter(o => o.fulfillment_status === "fulfilled").length;
+
+    res.json({ tag, totalOrders, totalFulfilled, categories });
+  } catch (err: any) {
+    console.error("[Fulfilment] dispatch-progress error:", err.message);
+    res.status(502).json({ error: err.message });
+  }
+});
+
+router.get("/desserts-report", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const { tag } = req.query as { tag?: string };
+  if (!tag) {
+    res.status(400).json({ error: "tag query param required" });
+    return;
+  }
+
+  try {
+    const [dessertTitles, orders] = await Promise.all([
+      getProductsByTag("dessert"),
+      getOrdersByTag(tag),
+    ]);
+
+    const productTotals = new Map<string, { quantity: number; orderCount: number }>();
+
+    for (const order of orders) {
+      for (const item of order.line_items) {
+        if (dessertTitles.has(item.title)) {
+          const existing = productTotals.get(item.title) ?? { quantity: 0, orderCount: 0 };
+          existing.quantity += item.quantity;
+          existing.orderCount += 1;
+          productTotals.set(item.title, existing);
+        }
+      }
+    }
+
+    const products = [...productTotals.entries()]
+      .map(([title, stats]) => ({ title, ...stats }))
+      .sort((a, b) => a.title.localeCompare(b.title));
+
+    const totalQuantity = products.reduce((s, p) => s + p.quantity, 0);
+
+    res.json({ tag, products, totalQuantity, dessertProductCount: dessertTitles.size });
+  } catch (err: any) {
+    console.error("[Fulfilment] desserts-report error:", err.message);
+    res.status(502).json({ error: err.message });
   }
 });
 

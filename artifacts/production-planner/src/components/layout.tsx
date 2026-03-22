@@ -16,7 +16,6 @@ import {
   BarChart2,
   Settings,
   LogOut,
-  Scan,
   MapPin,
 } from "lucide-react";
 
@@ -30,7 +29,6 @@ const navItems = [
   { name: "Stock Inventory", href: "/stock", icon: PackageSearch },
   { name: "Sales Data", href: "/sales", icon: TrendingUp },
   { name: "Dispatches", href: "/dispatches", icon: Truck },
-  { name: "Fulfilment", href: "/fulfilment", icon: Scan },
   { name: "Reports", href: "/reports", icon: BarChart2 },
 ];
 
@@ -69,7 +67,7 @@ export function Layout({ children }: { children: ReactNode }) {
         <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
           {visibleNavItems.map((item) => {
             const isActive = location === item.href;
-            const isFulfilment = item.href === "/fulfilment";
+            const isDispatches = item.href === "/dispatches";
             return (
               <React.Fragment key={item.name}>
                 <Link 
@@ -91,7 +89,7 @@ export function Layout({ children }: { children: ReactNode }) {
                   <item.icon className={`w-5 h-5 relative z-10 ${isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary"}`} />
                   <span className="relative z-10">{item.name}</span>
                 </Link>
-                {isFulfilment && user?.role === "admin" && (
+                {isDispatches && user?.role === "admin" && (
                   <Link
                     href="/locations"
                     className={`

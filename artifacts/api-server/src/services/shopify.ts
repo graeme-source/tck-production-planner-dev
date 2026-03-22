@@ -221,6 +221,42 @@ export async function getProducts(): Promise<ShopifyProduct[]> {
   return allProducts;
 }
 
+const productsByTagCache = new Map<string, { data: Set<string>; expiry: number }>();
+const PRODUCTS_BY_TAG_TTL_MS = 5 * 60 * 1000;
+
+export async function getProductsByTag(productTag: string): Promise<Set<string>> {
+  const cacheKey = productTag.toLowerCase();
+  const cached = productsByTagCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiry) return cached.data;
+
+  const titleSet = new Set<string>();
+  let pageInfo: string | null = null;
+
+  do {
+    const params: Record<string, string> = { limit: "250" };
+    if (pageInfo) {
+      params.page_info = pageInfo;
+    } else {
+      params.fields = "id,title,tags";
+    }
+
+    const res = await shopifyFetchRaw("/products.json", params);
+    const data = (await res.json()) as { products: Array<{ id: number; title: string; tags: string }> };
+
+    for (const p of data.products) {
+      const tags = p.tags.split(",").map(t => t.trim().toLowerCase());
+      if (tags.includes(cacheKey)) {
+        titleSet.add(p.title);
+      }
+    }
+
+    pageInfo = parseNextPageInfo(res.headers.get("Link"));
+  } while (pageInfo);
+
+  productsByTagCache.set(cacheKey, { data: titleSet, expiry: Date.now() + PRODUCTS_BY_TAG_TTL_MS });
+  return titleSet;
+}
+
 export interface VariantCount {
   title: string;
   quantity: number;

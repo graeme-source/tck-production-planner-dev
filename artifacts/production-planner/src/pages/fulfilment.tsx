@@ -1,11 +1,12 @@
-import { useState, useEffect, useRef, useCallback } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, useEffect, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
 import { format } from "date-fns";
+import { useLocation } from "wouter";
 import {
   Package, Scan, CheckCircle2, AlertCircle, ChevronRight, Printer,
   RefreshCw, MapPin, SkipForward, RotateCcw, XCircle, Loader2,
-  ArrowLeft, Truck, ChevronLeft,
+  ArrowLeft, Truck,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -95,6 +96,24 @@ async function fetchOrders(tag: string, includeAll = false): Promise<ShopifyOrde
 async function fetchConfigStatus(): Promise<ConfigStatus> {
   const res = await fetch(`${BASE}/api/fulfilment/config-status`, { credentials: "include" });
   if (!res.ok) throw new Error("Failed to fetch config status");
+  return res.json();
+}
+
+interface DispatchProgress {
+  tag: string;
+  totalOrders: number;
+  totalFulfilled: number;
+  categories: {
+    smallBox: { total: number; fulfilled: number };
+    largeBox: { total: number; fulfilled: number };
+    wholesale: { total: number; fulfilled: number };
+    other: { total: number; fulfilled: number };
+  };
+}
+
+async function fetchDispatchProgress(tag: string): Promise<DispatchProgress> {
+  const res = await fetch(`${BASE}/api/fulfilment/dispatch-progress?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to fetch dispatch progress");
   return res.json();
 }
 
@@ -206,12 +225,70 @@ type PrintStatus = "idle" | "printing" | "done" | "failed";
 
 type View = "dates" | "list" | "picking" | "pre-confirm" | "confirm";
 
+function ProgressBar({ label, fulfilled, total, color }: { label: string; fulfilled: number; total: number; color: string }) {
+  if (total === 0) return null;
+  const pct = Math.round((fulfilled / total) * 100);
+  return (
+    <div className="flex-1 min-w-[120px]">
+      <div className="flex items-center justify-between text-xs mb-1">
+        <span className="font-medium">{label}</span>
+        <span className="tabular-nums text-muted-foreground">{fulfilled}/{total}</span>
+      </div>
+      <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
+        <div className={`h-full rounded-full transition-all duration-500 ${color}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function DispatchProgressHeader({ progress }: { progress: DispatchProgress }) {
+  const { categories, totalOrders, totalFulfilled } = progress;
+  const remaining = totalOrders - totalFulfilled;
+  const pct = totalOrders > 0 ? Math.round((totalFulfilled / totalOrders) * 100) : 0;
+
+  return (
+    <div className="glass-panel p-4 rounded-2xl border border-border">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Truck className="w-5 h-5 text-primary" />
+          <h3 className="font-semibold text-sm">Dispatch Progress</h3>
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          <span className="font-bold text-primary tabular-nums">{totalFulfilled}/{totalOrders}</span>
+          <span className="text-muted-foreground">({pct}%)</span>
+          {remaining > 0 && (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-medium">
+              {remaining} remaining
+            </span>
+          )}
+          {remaining === 0 && totalOrders > 0 && (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 font-medium">
+              All done!
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="flex gap-4 flex-wrap">
+        <ProgressBar label="Small Box" fulfilled={categories.smallBox.fulfilled} total={categories.smallBox.total} color="bg-blue-500" />
+        <ProgressBar label="Large Box" fulfilled={categories.largeBox.fulfilled} total={categories.largeBox.total} color="bg-indigo-500" />
+        <ProgressBar label="Wholesale" fulfilled={categories.wholesale.fulfilled} total={categories.wholesale.total} color="bg-amber-500" />
+        {categories.other.total > 0 && (
+          <ProgressBar label="Other" fulfilled={categories.other.fulfilled} total={categories.other.total} color="bg-gray-500" />
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Fulfilment() {
   const today = format(new Date(), "yyyy-MM-dd");
-  const [tag, setTag] = useState(today);
-  const [queryTag, setQueryTag] = useState(today);
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlTag = urlParams.get("tag");
+  const [tag, setTag] = useState(urlTag || today);
+  const [queryTag, setQueryTag] = useState(urlTag || today);
   const [includeAll, setIncludeAll] = useState(false);
-  const [view, setView] = useState<View>("dates");
+  const [view, setView] = useState<View>(urlTag ? "list" : "dates");
+  const [, navigate] = useLocation();
   const [activeOrder, setActiveOrder] = useState<ShopifyOrder | null>(null);
   const [shipment, setShipment] = useState<ShipmentResult | null>(null);
   const [printStatus, setPrintStatus] = useState<PrintStatus>("idle");
@@ -245,6 +322,12 @@ export default function Fulfilment() {
     queryKey: ["fulfilment-orders", queryTag, includeAll],
     queryFn: () => fetchOrders(queryTag, includeAll),
     staleTime: 2 * 60 * 1000,
+  });
+
+  const { data: progress, refetch: refetchProgress } = useQuery({
+    queryKey: ["fulfilment-dispatch-progress", queryTag],
+    queryFn: () => fetchDispatchProgress(queryTag),
+    staleTime: 30_000,
   });
 
   const unfulfilledOrders = orders?.filter(o => o.fulfillment_status !== "fulfilled") ?? [];
@@ -412,6 +495,7 @@ export default function Fulfilment() {
       await completeOrder(activeOrder.id, shipment.consignmentNumber, shipment.trackingUrl);
       setView("confirm");
       refetch();
+      refetchProgress();
     } catch (err: any) {
       setCompletionError(err.message ?? "Failed to complete order");
     } finally {
@@ -982,7 +1066,13 @@ export default function Fulfilment() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <button onClick={() => setView("dates")} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
+        <button onClick={() => {
+          if (urlTag) {
+            navigate("/dispatches");
+          } else {
+            setView("dates");
+          }
+        }} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
           <ArrowLeft className="w-5 h-5" />
         </button>
         <PageHeader title={`Fulfilment — ${queryTag}`} description="Orders for this dispatch date." />
@@ -1010,6 +1100,10 @@ export default function Fulfilment() {
           <AlertCircle className="w-5 h-5 flex-shrink-0" />
           <p className="text-sm">{(error as Error).message}</p>
         </div>
+      )}
+
+      {progress && (
+        <DispatchProgressHeader progress={progress} />
       )}
 
       {orders && (

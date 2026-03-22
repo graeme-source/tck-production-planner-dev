@@ -1,9 +1,10 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
-import { ShoppingBag, Package, RefreshCw, AlertCircle, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { ShoppingBag, Package, RefreshCw, AlertCircle, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight, Scan } from "lucide-react";
 import { format, startOfWeek, addWeeks, isSameWeek, parseISO } from "date-fns";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import { useLocation } from "wouter";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -81,6 +82,7 @@ function SortIcon({ col, sortCol, sortDir }: { col: SortCol; sortCol: SortCol; s
 }
 
 export default function Dispatches() {
+  const [, navigate] = useLocation();
   const today = new Date();
   const currentMonday = getMonday(today);
 
@@ -413,12 +415,21 @@ export default function Dispatches() {
                   {excludeTitle ? ` · exclude title "${excludeTitle}"` : ""}
                 </p>
               </div>
-              <button
-                onClick={() => refetch()}
-                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <RefreshCw className="w-4 h-4" /> Refresh
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => navigate(`/fulfilment?tag=${encodeURIComponent(shopifyData.tag)}`)}
+                  className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl font-medium hover:opacity-90 transition-opacity"
+                >
+                  <Scan className="w-4 h-4" />
+                  Start Fulfilment
+                </button>
+                <button
+                  onClick={() => refetch()}
+                  className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <RefreshCw className="w-4 h-4" /> Refresh
+                </button>
+              </div>
             </div>
 
             {shopifyData.products.length === 0 ? (

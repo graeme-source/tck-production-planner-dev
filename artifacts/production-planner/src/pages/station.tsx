@@ -29,7 +29,7 @@ import {
   Beef, TrendingUp, Trophy, ExternalLink, ChevronRight,
   List, LayoutGrid, CalendarCheck,
   Snowflake, Truck, AlertCircle, Info, Droplets, Timer,
-  ClipboardList, Check, Package, RotateCcw,
+  ClipboardList, Check, Package, RotateCcw, RefreshCw, Scan,
 } from "lucide-react";
 import { format, parseISO, differenceInMinutes, differenceInSeconds } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -4756,278 +4756,209 @@ interface PackingData {
   totalWonly: number;
 }
 
-function usePackingData(planId: number, planStatus: string) {
-  const [data, setData] = useState<PackingData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const initialLoadDone = useRef(false);
-  const abortRef = useRef<AbortController | null>(null);
+interface DispatchProgress {
+  tag: string;
+  totalOrders: number;
+  totalFulfilled: number;
+  categories: {
+    smallBox: { total: number; fulfilled: number };
+    largeBox: { total: number; fulfilled: number };
+    wholesale: { total: number; fulfilled: number };
+    other: { total: number; fulfilled: number };
+  };
+}
 
-  const refetch = useCallback(() => {
-    abortRef.current?.abort();
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-    if (!initialLoadDone.current) setLoading(true);
-    fetch(`/api/production-plans/${planId}/packing`, { credentials: "include", signal: ctrl.signal })
-      .then(r => r.json())
-      .then(d => { setData(d); initialLoadDone.current = true; setLoading(false); })
-      .catch((e) => { if (e.name !== "AbortError") { initialLoadDone.current = true; setLoading(false); } });
-  }, [planId]);
+interface DessertItem {
+  title: string;
+  quantity: number;
+  orderCount: number;
+}
 
-  useEffect(() => {
-    initialLoadDone.current = false;
-    refetch();
-    const interval = setInterval(refetch, 5000);
-    return () => { clearInterval(interval); abortRef.current?.abort(); };
-  }, [refetch]);
-
-  return { data, loading, refetch };
+interface DessertsReport {
+  tag: string;
+  products: DessertItem[];
+  totalQuantity: number;
+  dessertProductCount: number;
 }
 
 function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
-  const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
-  const { data: packData, loading: packLoading } = usePackingData(plan.id, plan.status);
-  const [packedItems, setPackedItems] = useState<Set<number>>(new Set());
-  const [packedDispatches, setPackedDispatches] = useState<Set<number>>(new Set());
-  const [isOnBreak, setIsOnBreak] = useState(false);
+  const [, navigate] = useLocation();
+  const todayTag = format(new Date(), "yyyy-MM-dd");
+  const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 
-  const totalCompleteItems = items.filter(it => it.status === "complete").length;
-  const allDone = items.length > 0 && items.every(it => it.status === "complete");
+  const [progress, setProgress] = useState<DispatchProgress | null>(null);
+  const [desserts, setDesserts] = useState<DessertsReport | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const togglePacked = (itemId: number) => {
-    if (isOnBreak) return;
-    setPackedItems(prev => {
-      const next = new Set(prev);
-      if (next.has(itemId)) next.delete(itemId);
-      else next.add(itemId);
-      return next;
-    });
-  };
+  const fetchData = useCallback(async () => {
+    try {
+      const [progressRes, dessertsRes] = await Promise.all([
+        fetch(`${BASE}/api/fulfilment/dispatch-progress?tag=${todayTag}`, { credentials: "include" }),
+        fetch(`${BASE}/api/fulfilment/desserts-report?tag=${todayTag}`, { credentials: "include" }),
+      ]);
+      if (!progressRes.ok && !dessertsRes.ok) {
+        setError("Failed to load dispatch data");
+        return;
+      }
+      if (progressRes.ok) setProgress(await progressRes.json());
+      else setError("Failed to load dispatch progress");
+      if (dessertsRes.ok) setDesserts(await dessertsRes.json());
+      if (progressRes.ok && dessertsRes.ok) setError(null);
+    } catch (err: any) {
+      setError(err.message ?? "Failed to load dispatch data");
+    } finally {
+      setLoading(false);
+    }
+  }, [todayTag, BASE]);
 
-  const toggleDispatchPacked = (dispatchId: number) => {
-    if (isOnBreak) return;
-    setPackedDispatches(prev => {
-      const next = new Set(prev);
-      if (next.has(dispatchId)) next.delete(dispatchId);
-      else next.add(dispatchId);
-      return next;
-    });
-  };
+  useEffect(() => {
+    fetchData();
+    const interval = setInterval(fetchData, 30_000);
+    return () => clearInterval(interval);
+  }, [fetchData]);
+
+  const cats = progress?.categories;
+
+  function CatCard({ label, cat, color }: { label: string; cat: { total: number; fulfilled: number }; color: string }) {
+    if (cat.total === 0) return null;
+    const remaining = cat.total - cat.fulfilled;
+    const pct = Math.round((cat.fulfilled / cat.total) * 100);
+    return (
+      <div className="bg-card border border-border rounded-xl p-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm font-semibold">{label}</span>
+          <span className={cn("text-xs font-medium px-2 py-0.5 rounded-full", remaining === 0 ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300")}>
+            {remaining === 0 ? "Done" : `${remaining} left`}
+          </span>
+        </div>
+        <div className="flex items-baseline gap-1 mb-2">
+          <span className="text-2xl font-bold tabular-nums">{cat.fulfilled}</span>
+          <span className="text-muted-foreground text-sm">/ {cat.total}</span>
+          <span className="text-xs text-muted-foreground ml-auto">{pct}%</span>
+        </div>
+        <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
+          <div className={`h-full rounded-full transition-all duration-500 ${color}`} style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
-      {/* Summary header */}
       <div className="bg-card border border-border rounded-xl p-4">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-3">
             <Box className="w-6 h-6 text-indigo-500" />
             <div>
-              <h2 className="font-semibold text-base">Packing Station</h2>
+              <h2 className="font-semibold text-base">Order Packing</h2>
               <p className="text-xs text-muted-foreground">
-                Final pack counts for {format(parseISO(plan.planDate), "EEEE d MMMM")}
+                Today's dispatch — {format(new Date(), "EEEE d MMMM")}
               </p>
             </div>
           </div>
-          {allDone && (
-            <div className="flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-lg px-3 py-1.5">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-              <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Production Complete!</span>
-            </div>
-          )}
-        </div>
-        {/* Session totals — only wrapping-complete items */}
-        {packData && (
-          <div className="pt-2 border-t border-border/50">
-            <p className="text-xs text-muted-foreground mb-2">Wrapped &amp; ready to pack</p>
-            <div className="grid grid-cols-3 gap-2">
-              <div className="text-center">
-                <p className="text-xs text-muted-foreground">Gross Packs</p>
-                <p className="text-lg font-bold tabular-nums">{packData.totalGrossPacks}</p>
-              </div>
-              <div className="text-center">
-                <p className="text-xs text-red-600 dark:text-red-400">Wonky</p>
-                <p className="text-lg font-bold tabular-nums text-red-600 dark:text-red-400">{packData.totalWonly}</p>
-              </div>
-              <div className="text-center">
-                <p className="text-xs text-emerald-700 dark:text-emerald-300">Net Packs</p>
-                <p className="text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{packData.totalNetPacks}</p>
-              </div>
-            </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={fetchData}
+              className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+            </button>
           </div>
-        )}
+        </div>
       </div>
 
-      {/* Per-recipe pack cards with dispatch cross-reference */}
-      {packLoading ? (
+      {loading && !progress && (
         <div className="flex items-center justify-center py-8 text-muted-foreground">
           <Loader2 className="w-5 h-5 animate-spin mr-2" />
-          Loading pack data…
-        </div>
-      ) : packData ? (
-        <div className="space-y-3">
-          {packData.items.map(packItem => {
-            const isPacked = packedItems.has(packItem.id);
-            const isWrapped = packItem.wrappingComplete;
-            const gap = packItem.netPacks - packItem.totalDispatch;
-            const hasDispatches = packItem.dispatches.length > 0;
-            return (
-              <div
-                key={packItem.id}
-                className={cn(
-                  "bg-card border rounded-xl overflow-hidden transition-all",
-                  isPacked
-                    ? "border-emerald-300 dark:border-emerald-700"
-                    : isWrapped
-                      ? "border-indigo-300 dark:border-indigo-700"
-                      : "border-border/60 opacity-70"
-                )}
-              >
-                {/* Recipe header */}
-                <div className={cn(
-                  "flex items-center justify-between px-4 py-3",
-                  isPacked ? "bg-emerald-50/50 dark:bg-emerald-900/10" : isWrapped ? "bg-indigo-50/30 dark:bg-indigo-900/10" : ""
-                )}>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className={cn("font-semibold", isPacked ? "line-through text-muted-foreground" : "")}>
-                        {packItem.recipeName}
-                      </h3>
-                      {isPacked && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
-                      {isWrapped && !isPacked && (
-                        <span className="text-xs font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 rounded px-1.5 py-0.5">
-                          Wrapped ✓
-                        </span>
-                      )}
-                      {!isWrapped && (
-                        <span className="text-xs font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 rounded px-1.5 py-0.5">
-                          Awaiting wrap
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
-                      <span>{packItem.batchesComplete} batches</span>
-                      {packItem.wonlyCount > 0 && (
-                        <span className="text-red-600 dark:text-red-400">−{packItem.wonlyCount} wonky</span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <div className="text-right">
-                      <p className="text-xs text-muted-foreground">Net Packs</p>
-                      <p className={cn(
-                        "text-2xl font-bold tabular-nums",
-                        isWrapped ? "text-indigo-600 dark:text-indigo-400" : "text-muted-foreground"
-                      )}>
-                        {packItem.netPacks}
-                      </p>
-                    </div>
-                    {isWrapped && (
-                      <button
-                        onClick={() => togglePacked(packItem.id)}
-                        disabled={isOnBreak}
-                        className={cn(
-                          "w-9 h-9 rounded-full flex items-center justify-center transition-colors flex-shrink-0",
-                          isOnBreak
-                            ? "bg-amber-100 border border-amber-300 text-amber-400 opacity-60 cursor-not-allowed"
-                            : isPacked
-                              ? "bg-emerald-500 text-white"
-                              : "bg-secondary border border-border text-muted-foreground hover:bg-secondary/80"
-                        )}
-                      >
-                        <CheckCircle2 className="w-5 h-5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Dispatch cross-reference with per-dispatch packed checkboxes */}
-                {hasDispatches && (
-                  <div className="border-t border-border/50 px-4 py-2 bg-secondary/10">
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <Truck className="w-3.5 h-3.5 text-muted-foreground" />
-                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Dispatch Orders</span>
-                    </div>
-                    <div className="space-y-1">
-                      {packItem.dispatches.map(d => {
-                        const isDispatchPacked = packedDispatches.has(d.id);
-                        return (
-                          <div
-                            key={d.id}
-                            className={cn(
-                              "flex items-center justify-between text-xs rounded px-2 py-1.5 transition-colors",
-                              isDispatchPacked
-                                ? "bg-emerald-50 dark:bg-emerald-900/20"
-                                : "hover:bg-secondary/50"
-                            )}
-                          >
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => isWrapped && toggleDispatchPacked(d.id)}
-                                disabled={!isWrapped || isOnBreak}
-                                aria-label={isDispatchPacked ? "Mark dispatch unpacked" : "Mark dispatch packed"}
-                                className={cn(
-                                  "w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 transition-colors",
-                                  isWrapped
-                                    ? isDispatchPacked
-                                      ? "bg-emerald-500 border-emerald-500 text-white"
-                                      : "border-border bg-background hover:border-emerald-400"
-                                    : "border-border/40 bg-background opacity-40 cursor-not-allowed"
-                                )}
-                              >
-                                {isDispatchPacked && <CheckCircle2 className="w-3 h-3" />}
-                              </button>
-                              <span className={cn(
-                                "text-muted-foreground",
-                                isDispatchPacked && "line-through opacity-60"
-                              )}>
-                                {d.customer ?? "Unknown customer"}
-                              </span>
-                            </div>
-                            <span className={cn(
-                              "font-semibold tabular-nums",
-                              isDispatchPacked && "text-muted-foreground line-through opacity-60"
-                            )}>
-                              {d.quantity} packs
-                            </span>
-                          </div>
-                        );
-                      })}
-                      <div className="flex items-center justify-between text-xs font-semibold pt-1 border-t border-border/40 mt-1">
-                        <span>Total Dispatching</span>
-                        <span>{packItem.totalDispatch} packs</span>
-                      </div>
-                      {gap !== 0 && (
-                        <div className={cn(
-                          "flex items-center gap-1.5 text-xs mt-0.5",
-                          gap > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"
-                        )}>
-                          {gap > 0
-                            ? <><Info className="w-3 h-3" /> {gap} surplus packs</>
-                            : <><AlertCircle className="w-3 h-3" /> {Math.abs(gap)} packs short of dispatch</>
-                          }
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
-
-      <BreakTracker planId={plan.id} stationType="packing" onBreakActiveChange={setIsOnBreak} />
-
-      {allDone && (
-        <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-xl p-4 text-center">
-          <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
-          <p className="font-semibold text-emerald-800 dark:text-emerald-200">
-            Production complete for {format(parseISO(plan.planDate), "EEEE d MMMM")}
-          </p>
-          <p className="text-sm text-emerald-600 dark:text-emerald-400 mt-1">
-            All {items.length} recipes packed — great work!
-          </p>
+          Loading dispatch data…
         </div>
       )}
+
+      {error && (
+        <div className="flex items-center gap-3 p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive">
+          <AlertCircle className="w-5 h-5 flex-shrink-0" />
+          <p className="text-sm">{error}</p>
+        </div>
+      )}
+
+      {progress && (
+        <>
+          <div className="bg-card border border-border rounded-xl p-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="font-semibold text-sm">Overall Progress</span>
+              <div className="flex items-center gap-2 text-sm">
+                <span className="font-bold text-primary tabular-nums">{progress.totalFulfilled}/{progress.totalOrders}</span>
+                {progress.totalOrders - progress.totalFulfilled > 0 ? (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-medium">
+                    {progress.totalOrders - progress.totalFulfilled} remaining
+                  </span>
+                ) : progress.totalOrders > 0 ? (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 font-medium">
+                    All dispatched!
+                  </span>
+                ) : null}
+              </div>
+            </div>
+            {progress.totalOrders > 0 && (
+              <div className="w-full h-3 bg-secondary rounded-full overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-primary transition-all duration-500"
+                  style={{ width: `${Math.round((progress.totalFulfilled / progress.totalOrders) * 100)}%` }}
+                />
+              </div>
+            )}
+          </div>
+
+          {cats && (
+            <div className="grid grid-cols-2 gap-3">
+              <CatCard label="Small Box" cat={cats.smallBox} color="bg-blue-500" />
+              <CatCard label="Large Box" cat={cats.largeBox} color="bg-indigo-500" />
+              <CatCard label="Wholesale" cat={cats.wholesale} color="bg-amber-500" />
+              {cats.other.total > 0 && <CatCard label="Other" cat={cats.other} color="bg-gray-500" />}
+            </div>
+          )}
+        </>
+      )}
+
+      {desserts && desserts.products.length > 0 && (
+        <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-border/50 bg-pink-50/50 dark:bg-pink-900/10">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">🍰</span>
+              <h3 className="font-semibold text-sm">Desserts Report</h3>
+              <span className="text-xs text-muted-foreground ml-auto">{desserts.totalQuantity} units total</span>
+            </div>
+          </div>
+          <div className="divide-y divide-border/50">
+            {desserts.products.map(p => (
+              <div key={p.title} className="flex items-center justify-between px-4 py-2.5">
+                <span className="text-sm">{p.title}</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-muted-foreground">{p.orderCount} orders</span>
+                  <span className="font-bold tabular-nums text-sm bg-pink-100 dark:bg-pink-900/30 px-2.5 py-0.5 rounded-lg text-pink-800 dark:text-pink-200">{p.quantity}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {progress && progress.totalOrders - progress.totalFulfilled > 0 && (
+        <button
+          onClick={() => navigate(`/fulfilment?tag=${todayTag}`)}
+          className="w-full py-4 bg-primary text-primary-foreground rounded-2xl font-semibold text-base flex items-center justify-center gap-3 hover:opacity-90 transition-opacity active:scale-[0.98]"
+        >
+          <Scan className="w-5 h-5" />
+          Pack Today's Orders
+          <span className="text-sm font-normal opacity-80">
+            ({progress.totalOrders - progress.totalFulfilled} remaining)
+          </span>
+        </button>
+      )}
+
+      <BreakTracker planId={plan.id} stationType="packing" onBreakActiveChange={() => {}} />
     </div>
   );
 }
