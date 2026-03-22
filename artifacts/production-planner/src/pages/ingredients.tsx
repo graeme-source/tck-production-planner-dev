@@ -441,8 +441,9 @@ export default function Ingredients() {
   const watchedProcessingRatioPct = watch("processingRatioPct");
   const watchedStockCheckEnabled = watch("stockCheckEnabled");
   const watchedStockCheckFrequency = watch("stockCheckFrequency");
+  const watchedCategory = watch("category");
   const liveCostPerUnit = watchedPackWeight > 0 ? watchedCostPerPack / watchedPackWeight : null;
-  const showRawMeatTray = watchedProcessingRatioPct != null && Number(watchedProcessingRatioPct) < 100;
+  const showRawMeatTray = watchedCategory === "raw_meat";
 
   const openAdd = () => {
     setEditingId(null);
