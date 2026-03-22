@@ -2045,9 +2045,8 @@ interface PrepRecipeDetail {
 // ──────────────────────────────────────────────────────────────────────────────
 // Hook: fetch per-recipe prep requirements for the next active plan
 // ──────────────────────────────────────────────────────────────────────────────
-function usePrepByRecipe(station: string, afterDate?: string) {
+function usePrepByRecipe(station: string, currentPlanId: number, afterDate?: string) {
   const { data: nextPlan, isLoading: isPlanLoading } = useNextActivePlan(afterDate) as { data: NextActivePlan | null; isLoading: boolean };
-  const planId = nextPlan?.planId ?? 0;
   const [recipes, setRecipes] = useState<PrepRecipeDetail[]>([]);
   const [isPrepLoading, setIsPrepLoading] = useState(false);
   const initialLoadDone = useRef(false);
@@ -2055,30 +2054,30 @@ function usePrepByRecipe(station: string, afterDate?: string) {
   const abortRef = useRef<AbortController | null>(null);
 
   const doFetch = useCallback(() => {
-    if (!planId) { setRecipes([]); return; }
+    if (!currentPlanId) { setRecipes([]); return; }
     abortRef.current?.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     if (!initialLoadDone.current) setIsPrepLoading(true);
-    fetch(`/api/production-plans/${planId}/prep-requirements-by-recipe?station=${station}`, { credentials: "include", signal: ctrl.signal })
+    fetch(`/api/production-plans/${currentPlanId}/prep-requirements-by-recipe?station=${station}`, { credentials: "include", signal: ctrl.signal })
       .then(r => r.json())
       .then((json: { recipes?: PrepRecipeDetail[] }) => {
         setRecipes(json.recipes ?? []); initialLoadDone.current = true; setIsPrepLoading(false);
       })
       .catch((e) => { if (e.name !== "AbortError") { initialLoadDone.current = true; setIsPrepLoading(false); } });
-  }, [planId, station]);
+  }, [currentPlanId, station]);
 
   useEffect(() => {
     initialLoadDone.current = false;
     doFetch();
-    if (!planId) return;
+    if (!currentPlanId) return;
     const interval = setInterval(doFetch, 5000);
     return () => { clearInterval(interval); abortRef.current?.abort(); };
-  }, [doFetch, planId]);
+  }, [doFetch, currentPlanId]);
 
   return {
     recipes,
-    isLoading: isPlanLoading || (!!planId && isPrepLoading),
+    isLoading: isPlanLoading || (!!currentPlanId && isPrepLoading),
     nextPlan,
   };
 }
@@ -2669,7 +2668,7 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
 function PrepVegStation({ plan }: { plan: ProductionPlanDetail }) {
   const [mode, setMode] = useState<"fullscreen" | "overview">("fullscreen");
   const [isOnBreak, setIsOnBreak] = useState(false);
-  const { recipes, isLoading, nextPlan } = usePrepByRecipe("prep_veg", plan.planDate);
+  const { recipes, isLoading, nextPlan } = usePrepByRecipe("prep_veg", plan.id, plan.planDate);
 
   // Build full-screen items: recipe header → each veg ingredient for that recipe
   const fullScreenItems: PrepFullScreenItem[] = recipes.flatMap(recipe =>
@@ -2768,7 +2767,7 @@ function PrepVegStation({ plan }: { plan: ProductionPlanDetail }) {
 function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
   const [mode, setMode] = useState<"fullscreen" | "overview">("fullscreen");
   const [isOnBreak, setIsOnBreak] = useState(false);
-  const { recipes, isLoading, nextPlan } = usePrepByRecipe("prep_bases", plan.planDate);
+  const { recipes, isLoading, nextPlan } = usePrepByRecipe("prep_bases", plan.id, plan.planDate);
 
   // Build full-screen items — per recipe → ingredients + tin badge per recipe
   const fullScreenItems: PrepFullScreenItem[] = recipes.flatMap(recipe => {
@@ -2886,7 +2885,7 @@ function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
 function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
   const [mode, setMode] = useState<"fullscreen" | "overview">("fullscreen");
   const [isOnBreak, setIsOnBreak] = useState(false);
-  const { recipes, isLoading, nextPlan } = usePrepByRecipe("prep_meat", plan.planDate);
+  const { recipes, isLoading, nextPlan } = usePrepByRecipe("prep_meat", plan.id, plan.planDate);
 
   const totalTrays = recipes.reduce((sum, r) => sum + (r.trayCount ?? 0), 0);
 
