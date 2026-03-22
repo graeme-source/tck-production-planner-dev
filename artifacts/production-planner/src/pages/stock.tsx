@@ -2,24 +2,27 @@ import { useState, useMemo } from "react";
 import { useListStockEntries, useListIngredients, useListRecipes } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
-import { PackageSearch, Plus, Trash2, Pencil, Refrigerator, Snowflake, ThermometerSun, Warehouse, X, ChevronRight } from "lucide-react";
+import { PackageSearch, Plus, Trash2, Pencil, Refrigerator, Snowflake, ThermometerSun, Warehouse, X, ChevronRight, Check, Save } from "lucide-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { format } from "date-fns";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/auth-context";
+import { cn } from "@/lib/utils";
 
 const LOCATIONS = [
   {
     key: "production_fridge",
     label: "Production Fridge",
-    subtitle: "Factory Number",
+    subtitle: "Finished products only",
     icon: Refrigerator,
     color: "from-blue-500/20 to-blue-600/10",
     borderColor: "border-blue-500/30",
     iconColor: "text-blue-500",
     badgeColor: "bg-blue-500/10 text-blue-600",
+    finishedProductOnly: true,
+    defaultUnit: "2 Packs",
   },
   {
     key: "production_freezer",
@@ -30,6 +33,8 @@ const LOCATIONS = [
     borderColor: "border-cyan-500/30",
     iconColor: "text-cyan-500",
     badgeColor: "bg-cyan-500/10 text-cyan-600",
+    finishedProductOnly: false,
+    defaultUnit: "kg",
   },
   {
     key: "prep_fridge",
@@ -40,6 +45,8 @@ const LOCATIONS = [
     borderColor: "border-green-500/30",
     iconColor: "text-green-500",
     badgeColor: "bg-green-500/10 text-green-600",
+    finishedProductOnly: false,
+    defaultUnit: "kg",
   },
   {
     key: "dry_store",
@@ -50,18 +57,28 @@ const LOCATIONS = [
     borderColor: "border-amber-500/30",
     iconColor: "text-amber-500",
     badgeColor: "bg-amber-500/10 text-amber-600",
+    finishedProductOnly: false,
+    defaultUnit: "kg",
   },
 ] as const;
 
+type LocationKey = typeof LOCATIONS[number]["key"];
+
 const schema = z.object({
-  itemType: z.enum(['recipe', 'ingredient']),
+  itemType: z.enum(["recipe", "ingredient"]),
   ingredientId: z.coerce.number().optional(),
   recipeId: z.coerce.number().optional(),
   quantity: z.coerce.number().min(0),
   unit: z.string().min(1),
   location: z.string().min(1),
-  notes: z.string().optional()
+  notes: z.string().optional(),
 });
+
+interface EditRow {
+  quantity: number;
+  unit: string;
+  dirty: boolean;
+}
 
 export default function Stock() {
   const { data: stock, isLoading } = useListStockEntries();
@@ -73,30 +90,37 @@ export default function Stock() {
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState<string | null>(null);
-  const [dialogLocation, setDialogLocation] = useState<string>("production_fridge");
+  const [dialogLocation, setDialogLocation] = useState<LocationKey>("production_fridge");
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [editRows, setEditRows] = useState<Record<string, EditRow>>({});
+  const [isSaving, setIsSaving] = useState(false);
+
+  const locConfig = useMemo(() => LOCATIONS.find(l => l.key === dialogLocation), [dialogLocation]);
+  const isFinishedProductOnly = locConfig?.finishedProductOnly ?? false;
 
   const { register, watch, handleSubmit, reset, setValue } = useForm({
     resolver: zodResolver(schema),
-    defaultValues: { itemType: 'ingredient' as const, quantity: 0, unit: 'kg', location: 'production_fridge' }
+    defaultValues: { itemType: "recipe" as const, quantity: 0, unit: "2 Packs", location: "production_fridge" },
   });
 
-  const selectedType = watch('itemType');
+  const selectedType = watch("itemType");
+  const watchedLocation = watch("location");
+  const watchedLocConfig = LOCATIONS.find(l => l.key === watchedLocation);
+  const watchedFinishedOnly = watchedLocConfig?.finishedProductOnly ?? false;
 
   const onSubmit = (data: any) => {
     const payload = { ...data };
-    if (payload.itemType === 'ingredient') delete payload.recipeId;
-    if (payload.itemType === 'recipe') delete payload.ingredientId;
-
+    if (payload.itemType === "ingredient") delete payload.recipeId;
+    if (payload.itemType === "recipe") delete payload.ingredientId;
     createStock.mutate({ data: payload }, {
-      onSuccess: () => { setIsDialogOpen(false); reset(); }
+      onSuccess: () => { setIsDialogOpen(false); reset(); },
     });
   };
 
   const stockByLocation = useMemo(() => {
     const map: Record<string, typeof stock> = {};
-    for (const loc of LOCATIONS) {
-      map[loc.key] = [];
-    }
+    for (const loc of LOCATIONS) map[loc.key] = [];
     if (stock) {
       for (const entry of stock) {
         const loc = (entry as any).location || "production_fridge";
@@ -108,23 +132,23 @@ export default function Stock() {
   }, [stock]);
 
   const latestByLocation = useMemo(() => {
-    const result: Record<string, Record<string, { quantity: number; unit: string; name: string; itemType: string; checkedAt: string; color?: string | null }>> = {};
-    for (const loc of LOCATIONS) {
-      result[loc.key] = {};
-    }
+    const result: Record<string, Record<string, { quantity: number; unit: string; name: string; itemType: string; checkedAt: string; color?: string | null; ingredientId?: number; recipeId?: number }>> = {};
+    for (const loc of LOCATIONS) result[loc.key] = {};
     if (stock) {
       for (const entry of stock) {
         const loc = (entry as any).location || "production_fridge";
-        const key = entry.itemType === 'recipe' ? `r-${entry.recipeId}` : `i-${entry.ingredientId}`;
-        const name = entry.itemType === 'recipe' ? (entry as any).recipeName : (entry as any).ingredientName;
+        const key = entry.itemType === "recipe" ? `r-${entry.recipeId}` : `i-${entry.ingredientId}`;
+        const name = entry.itemType === "recipe" ? (entry as any).recipeName : (entry as any).ingredientName;
         if (!result[loc]) result[loc] = {};
         result[loc][key] = {
           quantity: Number(entry.quantity),
           unit: entry.unit,
-          name: name || 'Unknown',
+          name: name || "Unknown",
           itemType: entry.itemType,
           checkedAt: entry.checkedAt,
           color: (entry as any).recipeColor ?? null,
+          ingredientId: entry.ingredientId ?? undefined,
+          recipeId: entry.recipeId ?? undefined,
         };
       }
     }
@@ -136,11 +160,12 @@ export default function Stock() {
           if (!fridgeItems[key]) {
             fridgeItems[key] = {
               quantity: 0,
-              unit: "packs",
+              unit: "2 Packs",
               name: r.name,
               itemType: "recipe",
               checkedAt: "",
               color: r.color ?? null,
+              recipeId: r.id,
             };
           }
         }
@@ -151,12 +176,61 @@ export default function Stock() {
 
   const selectedLocData = LOCATIONS.find(l => l.key === selectedLocation);
   const selectedItems = selectedLocation ? (stockByLocation[selectedLocation] ?? []) : [];
-  const latestItems = selectedLocation ? Object.values(latestByLocation[selectedLocation] ?? {}) : [];
+  const latestItems = selectedLocation
+    ? Object.entries(latestByLocation[selectedLocation] ?? {}).map(([k, v]) => ({ key: k, ...v }))
+    : [];
 
   const openAddDialog = (locationKey: string) => {
-    setDialogLocation(locationKey);
+    const cfg = LOCATIONS.find(l => l.key === locationKey);
+    const defaultType = cfg?.finishedProductOnly ? "recipe" : "ingredient";
+    setDialogLocation(locationKey as LocationKey);
     setValue("location", locationKey);
+    setValue("itemType", defaultType as "recipe" | "ingredient");
+    setValue("unit", cfg?.defaultUnit ?? "kg");
+    setValue("quantity", 0);
     setIsDialogOpen(true);
+  };
+
+  const startEditing = () => {
+    const rows: Record<string, EditRow> = {};
+    for (const item of latestItems) {
+      rows[item.key] = { quantity: item.quantity, unit: item.unit, dirty: false };
+    }
+    setEditRows(rows);
+    setIsEditing(true);
+  };
+
+  const cancelEditing = () => {
+    setIsEditing(false);
+    setEditRows({});
+  };
+
+  const saveAll = async () => {
+    if (!selectedLocation) return;
+    const cfg = LOCATIONS.find(l => l.key === selectedLocation);
+    setIsSaving(true);
+    const dirtyKeys = Object.keys(editRows).filter(k => editRows[k].dirty);
+    await Promise.all(
+      dirtyKeys.map(k => {
+        const item = latestItems.find(i => i.key === k);
+        if (!item) return Promise.resolve();
+        const row = editRows[k];
+        const payload: any = {
+          itemType: item.itemType,
+          quantity: row.quantity,
+          unit: row.unit,
+          location: selectedLocation,
+        };
+        if (item.itemType === "recipe") payload.recipeId = item.recipeId;
+        else payload.ingredientId = item.ingredientId;
+        return new Promise<void>(resolve => {
+          createStock.mutate({ data: payload }, { onSuccess: resolve, onError: resolve });
+        });
+      })
+    );
+    setIsSaving(false);
+    setIsEditing(false);
+    setEditRows({});
   };
 
   return (
@@ -173,11 +247,10 @@ export default function Stock() {
           const totalQty = Object.values(items).reduce((s, i) => s + i.quantity, 0);
           const isSelected = selectedLocation === loc.key;
           const Icon = loc.icon;
-
           return (
             <button
               key={loc.key}
-              onClick={() => setSelectedLocation(isSelected ? null : loc.key)}
+              onClick={() => { setSelectedLocation(isSelected ? null : loc.key); setIsEditing(false); setEditRows({}); }}
               className={`relative group text-left rounded-2xl border-2 p-5 transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5 bg-gradient-to-br ${loc.color} ${
                 isSelected
                   ? `${loc.borderColor} shadow-lg ring-2 ring-offset-2 ring-offset-background ring-current ${loc.iconColor}`
@@ -196,11 +269,7 @@ export default function Stock() {
                 <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${loc.badgeColor}`}>
                   {itemCount} {itemCount === 1 ? "item" : "items"}
                 </span>
-                {totalQty > 0 && (
-                  <span className="text-xs text-muted-foreground">
-                    {Math.round(totalQty)} total
-                  </span>
-                )}
+                {totalQty > 0 && <span className="text-xs text-muted-foreground">{Math.round(totalQty)} total</span>}
               </div>
             </button>
           );
@@ -209,6 +278,7 @@ export default function Stock() {
 
       {selectedLocation && selectedLocData && (
         <div className="glass-panel rounded-2xl overflow-hidden animate-in slide-in-from-top-2 duration-300">
+          {/* Panel header */}
           <div className={`flex items-center justify-between px-6 py-4 border-b border-border bg-gradient-to-r ${selectedLocData.color}`}>
             <div className="flex items-center gap-3">
               <selectedLocData.icon className={`w-5 h-5 ${selectedLocData.iconColor}`} />
@@ -218,7 +288,32 @@ export default function Stock() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {canEdit && (
+              {canEdit && !isEditing && latestItems.length > 0 && (
+                <button
+                  onClick={startEditing}
+                  className="px-3 py-1.5 bg-secondary text-foreground border border-border rounded-lg text-xs font-medium flex items-center gap-1.5 hover:bg-secondary/80 transition-colors"
+                >
+                  <Pencil className="w-3.5 h-3.5" /> Edit Stock
+                </button>
+              )}
+              {canEdit && isEditing && (
+                <>
+                  <button
+                    onClick={saveAll}
+                    disabled={isSaving}
+                    className="px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-medium flex items-center gap-1.5 hover:opacity-90 transition-opacity disabled:opacity-60"
+                  >
+                    <Save className="w-3.5 h-3.5" /> {isSaving ? "Saving…" : "Save All"}
+                  </button>
+                  <button
+                    onClick={cancelEditing}
+                    className="px-3 py-1.5 bg-secondary text-foreground border border-border rounded-lg text-xs font-medium flex items-center gap-1.5 hover:bg-secondary/80 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" /> Cancel
+                  </button>
+                </>
+              )}
+              {canEdit && !isEditing && (
                 <button
                   onClick={(e) => { e.stopPropagation(); openAddDialog(selectedLocation); }}
                   className="px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-medium flex items-center gap-1.5 hover:opacity-90 transition-opacity"
@@ -227,7 +322,7 @@ export default function Stock() {
                 </button>
               )}
               <button
-                onClick={() => setSelectedLocation(null)}
+                onClick={() => { setSelectedLocation(null); setIsEditing(false); setEditRows({}); }}
                 className="p-1.5 rounded-lg hover:bg-secondary/50 text-muted-foreground transition-colors"
               >
                 <X className="w-4 h-4" />
@@ -235,15 +330,20 @@ export default function Stock() {
             </div>
           </div>
 
+          {/* Edit mode hint */}
+          {isEditing && (
+            <div className="px-6 py-2.5 bg-primary/5 border-b border-primary/20 text-xs text-primary flex items-center gap-2">
+              <Pencil className="w-3.5 h-3.5" />
+              Edit quantities below, then hit <strong>Save All</strong> to record a new stock check for all changed items.
+            </div>
+          )}
+
           {latestItems.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground">
               <PackageSearch className="w-10 h-10 mx-auto mb-3 opacity-40" />
               <p className="text-sm">No stock recorded in this location yet.</p>
               {canEdit && (
-                <button
-                  onClick={() => openAddDialog(selectedLocation)}
-                  className="mt-3 text-xs text-primary hover:underline"
-                >
+                <button onClick={() => openAddDialog(selectedLocation)} className="mt-3 text-xs text-primary hover:underline">
                   Log the first stock check
                 </button>
               )}
@@ -254,49 +354,93 @@ export default function Stock() {
                 <tr>
                   <th className="px-6 py-3 font-medium">Item Name</th>
                   <th className="px-6 py-3 font-medium">Type</th>
-                  <th className="px-6 py-3 font-medium text-right">Latest Quantity</th>
-                  <th className="px-6 py-3 font-medium">Last Checked</th>
-                  {canEdit && <th className="px-6 py-3 font-medium text-right">Actions</th>}
+                  <th className={cn("px-6 py-3 font-medium", isEditing ? "text-left" : "text-right")}>
+                    {isEditing ? "Update Quantity" : "Latest Quantity"}
+                  </th>
+                  {!isEditing && <th className="px-6 py-3 font-medium">Last Checked</th>}
+                  {canEdit && !isEditing && <th className="px-6 py-3 font-medium text-right">Actions</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/50">
-                {latestItems
+                {[...latestItems]
                   .sort((a, b) => a.name.localeCompare(b.name))
-                  .map((item, idx) => (
-                    <tr key={idx} className="hover:bg-secondary/10">
-                      <td className="px-6 py-3 font-medium flex items-center gap-2">
-                        <PackageSearch className={`w-4 h-4 ${item.itemType === 'recipe' ? 'text-accent' : 'text-primary'}`} />
-                        <span style={item.itemType === 'recipe' && item.color ? { color: item.color } : undefined}>{item.name}</span>
-                      </td>
-                      <td className="px-6 py-3">
-                        <span className={`text-xs px-2 py-1 rounded-md uppercase tracking-wider ${item.itemType === 'recipe' ? 'bg-accent/10 text-accent' : 'bg-primary/10 text-primary'}`}>
-                          {item.itemType === 'recipe' ? 'product' : 'ingredient'}
-                        </span>
-                      </td>
-                      <td className="px-6 py-3 text-right font-bold tabular-nums">
-                        {item.quantity} <span className="font-normal text-muted-foreground">{item.unit}</span>
-                      </td>
-                      <td className="px-6 py-3 text-muted-foreground text-xs">
-                        {item.checkedAt ? format(new Date(item.checkedAt), 'MMM do, h:mm a') : "—"}
-                      </td>
-                      {canEdit && (
-                        <td className="px-6 py-3 text-right">
-                          <button
-                            onClick={() => openAddDialog(selectedLocation)}
-                            className="text-primary hover:bg-primary/10 p-1.5 rounded-lg transition-colors"
-                            title="Update stock"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
+                  .map((item) => {
+                    const row = editRows[item.key];
+                    const isDirty = row?.dirty ?? false;
+                    return (
+                      <tr key={item.key} className={cn("transition-colors", isEditing && isDirty ? "bg-primary/5" : "hover:bg-secondary/10")}>
+                        <td className="px-6 py-3 font-medium flex items-center gap-2">
+                          <PackageSearch className={`w-4 h-4 ${item.itemType === "recipe" ? "text-accent" : "text-primary"}`} />
+                          <span style={item.itemType === "recipe" && item.color ? { color: item.color } : undefined}>{item.name}</span>
+                          {isEditing && isDirty && <span className="text-xs text-primary font-normal ml-1">•</span>}
                         </td>
-                      )}
-                    </tr>
-                  ))}
+                        <td className="px-6 py-3">
+                          <span className={`text-xs px-2 py-1 rounded-md uppercase tracking-wider ${item.itemType === "recipe" ? "bg-accent/10 text-accent" : "bg-primary/10 text-primary"}`}>
+                            {item.itemType === "recipe" ? "product" : "ingredient"}
+                          </span>
+                        </td>
+                        <td className="px-6 py-3">
+                          {isEditing && row ? (
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={row.quantity}
+                                onChange={e => setEditRows(prev => ({
+                                  ...prev,
+                                  [item.key]: { ...prev[item.key], quantity: Number(e.target.value), dirty: true },
+                                }))}
+                                className="w-24 px-2 py-1 bg-background border border-primary/40 rounded-lg text-sm font-bold tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30"
+                              />
+                              <span className="text-xs text-muted-foreground">{row.unit}</span>
+                            </div>
+                          ) : (
+                            <span className="font-bold tabular-nums float-right">
+                              {item.quantity} <span className="font-normal text-muted-foreground">{item.unit}</span>
+                            </span>
+                          )}
+                        </td>
+                        {!isEditing && (
+                          <td className="px-6 py-3 text-muted-foreground text-xs">
+                            {item.checkedAt ? format(new Date(item.checkedAt), "MMM do, h:mm a") : "—"}
+                          </td>
+                        )}
+                        {canEdit && !isEditing && (
+                          <td className="px-6 py-3 text-right">
+                            <button
+                              onClick={() => openAddDialog(selectedLocation)}
+                              className="text-primary hover:bg-primary/10 p-1.5 rounded-lg transition-colors"
+                              title="Update stock"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
               </tbody>
             </table>
           )}
 
-          {selectedItems.length > 0 && (
+          {/* Save All sticky bar when in edit mode and any row is dirty */}
+          {isEditing && Object.values(editRows).some(r => r.dirty) && (
+            <div className="px-6 py-3 border-t border-primary/20 bg-primary/5 flex items-center justify-between">
+              <span className="text-xs text-primary">
+                {Object.values(editRows).filter(r => r.dirty).length} item{Object.values(editRows).filter(r => r.dirty).length !== 1 ? "s" : ""} changed
+              </span>
+              <button
+                onClick={saveAll}
+                disabled={isSaving}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-semibold flex items-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-60"
+              >
+                <Check className="w-4 h-4" /> {isSaving ? "Saving…" : "Save All Changes"}
+              </button>
+            </div>
+          )}
+
+          {selectedItems.length > 0 && !isEditing && (
             <details className="border-t border-border">
               <summary className="px-6 py-3 text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors">
                 View full history ({selectedItems.length} {selectedItems.length === 1 ? "entry" : "entries"})
@@ -315,21 +459,21 @@ export default function Stock() {
                   {[...selectedItems].reverse().map((entry) => (
                     <tr key={entry.id} className="hover:bg-secondary/10">
                       <td className="px-6 py-2">
-                        <span style={entry.itemType === 'recipe' && (entry as any).recipeColor ? { color: (entry as any).recipeColor } : undefined}>
-                          {entry.itemType === 'recipe' ? (entry as any).recipeName : (entry as any).ingredientName}
+                        <span style={entry.itemType === "recipe" && (entry as any).recipeColor ? { color: (entry as any).recipeColor } : undefined}>
+                          {entry.itemType === "recipe" ? (entry as any).recipeName : (entry as any).ingredientName}
                         </span>
                       </td>
                       <td className="px-6 py-2 text-right tabular-nums font-medium">
                         {entry.quantity} <span className="font-normal text-muted-foreground">{entry.unit}</span>
                       </td>
                       <td className="px-6 py-2 text-muted-foreground">
-                        {entry.checkedAt ? format(new Date(entry.checkedAt), 'MMM do, h:mm a') : "—"}
+                        {entry.checkedAt ? format(new Date(entry.checkedAt), "MMM do, h:mm a") : "—"}
                       </td>
                       <td className="px-6 py-2 text-muted-foreground">{entry.notes || "—"}</td>
                       {canEdit && (
                         <td className="px-6 py-2 text-right">
                           <button
-                            onClick={() => { if(confirm('Delete this entry?')) deleteStock.mutate({ id: entry.id }) }}
+                            onClick={() => { if (confirm("Delete this entry?")) deleteStock.mutate({ id: entry.id }); }}
                             className="text-destructive hover:bg-destructive/10 p-1.5 rounded-lg transition-colors"
                           >
                             <Trash2 className="w-3 h-3" />
@@ -353,36 +497,51 @@ export default function Stock() {
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 mt-4">
             <div>
               <label className="text-sm font-medium mb-1 block">Storage Location</label>
-              <select {...register("location")} className="w-full px-3 py-2 bg-background border border-border rounded-lg focus-ring appearance-none text-sm">
-                {LOCATIONS.map(l => (
-                  <option key={l.key} value={l.key}>{l.label}</option>
-                ))}
+              <select
+                {...register("location")}
+                onChange={e => {
+                  const cfg = LOCATIONS.find(l => l.key === e.target.value);
+                  setValue("location", e.target.value);
+                  setValue("unit", cfg?.defaultUnit ?? "kg");
+                  if (cfg?.finishedProductOnly) setValue("itemType", "recipe");
+                }}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg focus-ring appearance-none text-sm"
+              >
+                {LOCATIONS.map(l => <option key={l.key} value={l.key}>{l.label}</option>)}
               </select>
             </div>
 
-            <div>
-              <label className="text-sm font-medium mb-1 block">Item Type</label>
-              <div className="flex bg-secondary/50 rounded-lg p-1 border border-border">
-                <label className={`flex-1 text-center py-2 rounded-md text-sm font-medium cursor-pointer transition-colors ${selectedType === 'ingredient' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
-                  <input type="radio" value="ingredient" {...register("itemType")} className="hidden" />
-                  Raw Ingredient
-                </label>
-                <label className={`flex-1 text-center py-2 rounded-md text-sm font-medium cursor-pointer transition-colors ${selectedType === 'recipe' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
-                  <input type="radio" value="recipe" {...register("itemType")} className="hidden" />
-                  Finished Product
-                </label>
+            {!watchedFinishedOnly && (
+              <div>
+                <label className="text-sm font-medium mb-1 block">Item Type</label>
+                <div className="flex bg-secondary/50 rounded-lg p-1 border border-border">
+                  <label className={`flex-1 text-center py-2 rounded-md text-sm font-medium cursor-pointer transition-colors ${selectedType === "ingredient" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                    <input type="radio" value="ingredient" {...register("itemType")} className="hidden" />
+                    Raw Ingredient
+                  </label>
+                  <label className={`flex-1 text-center py-2 rounded-md text-sm font-medium cursor-pointer transition-colors ${selectedType === "recipe" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                    <input type="radio" value="recipe" {...register("itemType")} className="hidden" />
+                    Finished Product
+                  </label>
+                </div>
               </div>
-            </div>
+            )}
+
+            {watchedFinishedOnly && (
+              <div className="px-3 py-2 bg-accent/10 text-accent rounded-lg text-xs font-medium flex items-center gap-1.5">
+                <Check className="w-3.5 h-3.5" /> Finished products only for this location
+              </div>
+            )}
 
             <div>
               <label className="text-sm font-medium mb-1 block">Select Item</label>
-              {selectedType === 'ingredient' ? (
-                <select {...register("ingredientId")} className="w-full px-3 py-2 bg-background border border-border rounded-lg focus-ring appearance-none">
-                   {ingredients?.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+              {(watchedFinishedOnly || selectedType === "recipe") ? (
+                <select {...register("recipeId")} className="w-full px-3 py-2 bg-background border border-border rounded-lg focus-ring appearance-none">
+                  {recipes?.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                 </select>
               ) : (
-                <select {...register("recipeId")} className="w-full px-3 py-2 bg-background border border-border rounded-lg focus-ring appearance-none">
-                   {recipes?.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                <select {...register("ingredientId")} className="w-full px-3 py-2 bg-background border border-border rounded-lg focus-ring appearance-none">
+                  {ingredients?.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
                 </select>
               )}
             </div>
