@@ -2898,7 +2898,11 @@ router.get("/:id/main-prep", async (req, res) => {
   }
 
   const ingredients = [...ingredientMap.values()]
-    .sort((a, b) => a.ingredientName.localeCompare(b.ingredientName));
+    .sort((a, b) => a.ingredientName.localeCompare(b.ingredientName))
+    .map(ing => ({
+      ...ing,
+      totalTinCount: ing.recipes.reduce((s, r) => s + r.tinCount, 0),
+    }));
 
   const completions = await db
     .select({
@@ -2917,19 +2921,21 @@ router.get("/:id/main-prep", async (req, res) => {
   res.json({ ingredients, completions });
 });
 
-// POST /:id/prep-completions — mark a prep tin as complete
+// POST /:id/prep-completions — mark a prep tin as complete (ingredient-level, no recipeId needed)
 router.post("/:id/prep-completions", async (req, res) => {
   const planId = Number(req.params.id);
-  const { ingredientId, recipeId, tinNumber } = req.body;
+  const { ingredientId, tinNumber } = req.body;
   const userId = (req.session as any)?.userId ?? null;
 
   const [row] = await db.insert(prepCompletionsTable).values({
     planId,
     ingredientId,
-    recipeId,
+    recipeId: null,
     tinNumber,
     userId,
-  }).returning();
+  }).onConflictDoNothing().returning();
+
+  if (!row) { res.status(409).json({ error: "Already completed" }); return; }
 
   const userName = userId
     ? (await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId)))?.[0]?.name ?? null
@@ -2938,7 +2944,20 @@ router.post("/:id/prep-completions", async (req, res) => {
   res.status(201).json({ ...row, userName });
 });
 
-// DELETE /:id/prep-completions/:completionId — undo a prep tin completion
+// DELETE /:id/prep-completions/by-tin — undo a tin by ingredient+tinNumber
+router.delete("/:id/prep-completions/by-tin", async (req, res) => {
+  const planId = Number(req.params.id);
+  const { ingredientId, tinNumber } = req.body;
+  await db.delete(prepCompletionsTable)
+    .where(and(
+      eq(prepCompletionsTable.planId, planId),
+      eq(prepCompletionsTable.ingredientId, ingredientId),
+      eq(prepCompletionsTable.tinNumber, tinNumber),
+    ));
+  res.json({ ok: true });
+});
+
+// DELETE /:id/prep-completions/:completionId — undo by id (legacy)
 router.delete("/:id/prep-completions/:completionId", async (req, res) => {
   const planId = Number(req.params.id);
   const completionId = Number(req.params.completionId);
@@ -2947,6 +2966,48 @@ router.delete("/:id/prep-completions/:completionId", async (req, res) => {
     .returning();
   if (deleted.length === 0) { res.status(404).json({ error: "Not found" }); return; }
   res.json({ ok: true });
+});
+
+// --- In-memory prep presence (ephemeral, no DB needed) ---
+type PresenceEntry = { userId: number; userName: string; ingredientId: number; updatedAt: number };
+const prepPresenceStore = new Map<string, PresenceEntry>(); // key = `${planId}-${userId}`
+
+function cleanPresence() {
+  const cutoff = Date.now() - 30_000;
+  for (const [k, v] of prepPresenceStore) {
+    if (v.updatedAt < cutoff) prepPresenceStore.delete(k);
+  }
+}
+
+// POST /:id/prep-presence — heartbeat: user is viewing this ingredient
+router.post("/:id/prep-presence", async (req, res) => {
+  const planId = Number(req.params.id);
+  const userId = (req.session as any)?.userId;
+  if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const { ingredientId } = req.body;
+  cleanPresence();
+  const userName = (await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId)))?.[0]?.name ?? "Someone";
+  if (ingredientId == null) {
+    prepPresenceStore.delete(`${planId}-${userId}`);
+  } else {
+    prepPresenceStore.set(`${planId}-${userId}`, { userId, userName, ingredientId, updatedAt: Date.now() });
+  }
+  res.json({ ok: true });
+});
+
+// GET /:id/prep-presence — returns { [ingredientId]: [{userId, userName}] }
+router.get("/:id/prep-presence", async (req, res) => {
+  const planId = Number(req.params.id);
+  const currentUserId = (req.session as any)?.userId ?? null;
+  cleanPresence();
+  const result: Record<number, { userId: number; userName: string }[]> = {};
+  for (const [key, entry] of prepPresenceStore) {
+    if (!key.startsWith(`${planId}-`)) continue;
+    if (entry.userId === currentUserId) continue; // exclude self
+    if (!result[entry.ingredientId]) result[entry.ingredientId] = [];
+    result[entry.ingredientId].push({ userId: entry.userId, userName: entry.userName });
+  }
+  res.json(result);
 });
 
 export default router;
