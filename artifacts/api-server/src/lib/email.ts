@@ -9,35 +9,65 @@ const APP_NAME = "TCK Production Planner";
 const FROM_EMAIL = process.env["FROM_EMAIL"] ?? "noreply@thecalzonekitchen.co.uk";
 
 export async function sendEmail(payload: EmailPayload): Promise<void> {
-  const apiKey = process.env["RESEND_API_KEY"];
+  const klaviyoKey = process.env["KLAVIYO_API_KEY"];
+  const resendKey = process.env["RESEND_API_KEY"];
 
-  if (!apiKey) {
-    console.log("[EMAIL - no RESEND_API_KEY set, logging instead]");
-    console.log(`To: ${payload.to}`);
-    console.log(`Subject: ${payload.subject}`);
-    console.log(payload.text);
+  if (klaviyoKey) {
+    const res = await fetch("https://a.klaviyo.com/api/emails/", {
+      method: "POST",
+      headers: {
+        "Authorization": `Klaviyo-API-Key ${klaviyoKey}`,
+        "Content-Type": "application/json",
+        "revision": "2024-10-15",
+      },
+      body: JSON.stringify({
+        data: {
+          type: "email",
+          attributes: {
+            from: { email: FROM_EMAIL, name: APP_NAME },
+            to: [{ email: payload.to }],
+            subject: payload.subject,
+            html_body: payload.html,
+            text_body: payload.text,
+          },
+        },
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(`Klaviyo email send failed: ${JSON.stringify(err)}`);
+    }
     return;
   }
 
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: `${APP_NAME} <${FROM_EMAIL}>`,
-      to: [payload.to],
-      subject: payload.subject,
-      html: payload.html,
-      text: payload.text,
-    }),
-  });
+  if (resendKey) {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${resendKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: `${APP_NAME} <${FROM_EMAIL}>`,
+        to: [payload.to],
+        subject: payload.subject,
+        html: payload.html,
+        text: payload.text,
+      }),
+    });
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(`Email send failed: ${JSON.stringify(err)}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(`Resend email send failed: ${JSON.stringify(err)}`);
+    }
+    return;
   }
+
+  console.log("[EMAIL - no email provider configured, logging instead]");
+  console.log(`To: ${payload.to}`);
+  console.log(`Subject: ${payload.subject}`);
+  console.log(payload.text);
 }
 
 export function inviteEmailHtml(inviteUrl: string, invitedByName: string): string {
