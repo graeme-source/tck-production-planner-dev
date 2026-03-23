@@ -613,8 +613,8 @@ export default function Fulfilment() {
     setCompletionError(null);
   }
 
-  // When all items are picked and shipment is ready, advance to pre-confirm step.
-  // The operator then explicitly taps "Confirm & Complete" before the APC call is made.
+  // When all items are picked and the APC shipment is ready, advance to pre-confirm step.
+  // The operator then explicitly taps "Confirm & Complete" to finalise on Shopify and trigger the dispatch email.
   useEffect(() => {
     if (view === "picking" && allChecked && expandedItems.length > 0 && shipment && !completing) {
       setView("pre-confirm");
