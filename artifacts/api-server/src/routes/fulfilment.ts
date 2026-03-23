@@ -349,6 +349,9 @@ async function getTestModeApiBase(): Promise<string | undefined> {
 
 router.post("/shipments/:waybill/add-parcel", requireManagerOrAdmin, async (req: Request, res: Response) => {
   const { waybill } = req.params;
+  const { weight, length, width, height } = (req.body ?? {}) as {
+    weight?: number; length?: number; width?: number; height?: number;
+  };
 
   if (!isApcConfigured()) {
     res.status(503).json({ error: "APC credentials not configured." });
@@ -360,12 +363,17 @@ router.post("/shipments/:waybill/add-parcel", requireManagerOrAdmin, async (req:
 
     const result = await addParcel({
       waybill,
-      parcel: { weight: 1.0 },
+      parcel: {
+        weight: typeof weight === "number" && weight > 0 ? weight : 1.0,
+        ...(length ? { length } : {}),
+        ...(width ? { width } : {}),
+        ...(height ? { height } : {}),
+      },
       ...(apiBase ? { apiBase } : {}),
     });
 
     res.json({
-      labelPdfBase64: result.labelPdfBase64,
+      labelPdfs: result.labelPdfs,
       ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
     });
   } catch (err: unknown) {
@@ -387,9 +395,9 @@ router.post("/shipments/:waybill/reprint-label", requireManagerOrAdmin, async (r
     const apiBase = await getTestModeApiBase();
     const base = apiBase ?? (process.env.APC_API_BASE ?? "https://apc.hypaship.com/api/3.0");
 
-    const labelPdfBase64 = await fetchLabel(waybill, base);
+    const labelPdfs = await fetchLabel(waybill, base);
 
-    res.json({ labelPdfBase64 });
+    res.json({ labelPdfs });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[Fulfilment] reprint-label error for ${waybill}:`, msg);

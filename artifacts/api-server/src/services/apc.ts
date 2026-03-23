@@ -272,7 +272,7 @@ async function placeOrder(req: ApcShipmentRequest): Promise<PlaceOrderResult> {
   return { waybill, warnings };
 }
 
-async function fetchLabel(waybill: string, apiBase: string, retries = 4, delayMs = 3000): Promise<string> {
+async function fetchLabel(waybill: string, apiBase: string, retries = 4, delayMs = 3000): Promise<string[]> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) {
       await new Promise(resolve => setTimeout(resolve, delayMs));
@@ -302,11 +302,16 @@ async function fetchLabel(waybill: string, apiBase: string, retries = 4, delayMs
       throw new Error("APC label response was not valid JSON");
     }
 
-    // Label content is nested under Order.ShipmentDetails.Items.Item.Label.Content
     const item = json?.Orders?.Order?.ShipmentDetails?.Items?.Item;
-    const content = item?.Label?.Content ?? (Array.isArray(item) ? item[0]?.Label?.Content : undefined);
 
-    if (content) return content as string;
+    if (Array.isArray(item)) {
+      const labels = item
+        .map((it: any) => it?.Label?.Content as string | undefined)
+        .filter((c: string | undefined): c is string => !!c);
+      if (labels.length > 0) return labels;
+    } else if (item?.Label?.Content) {
+      return [item.Label.Content as string];
+    }
 
     // Label not ready yet — retry
     if (attempt < retries) continue;
@@ -324,13 +329,13 @@ export async function createShipment(req: ApcShipmentRequest): Promise<ApcShipme
 
   const { waybill, warnings } = await placeOrder(req);
 
-  const labelPdfBase64 = await fetchLabel(waybill, apiBase);
+  const labels = await fetchLabel(waybill, apiBase);
 
   const trackingUrl = `https://apc.hypaship.com/tracking?waybill=${waybill}`;
 
   return {
     consignmentNumber: waybill,
-    labelPdfBase64,
+    labelPdfBase64: labels[0],
     trackingUrl,
     ...(warnings.length > 0 ? { warnings } : {}),
   };
@@ -439,7 +444,7 @@ export interface AddParcelRequest {
 }
 
 export interface AddParcelResult {
-  labelPdfBase64: string;
+  labelPdfs: string[];
   warnings: string[];
 }
 
@@ -518,9 +523,9 @@ export async function addParcel(req: AddParcelRequest): Promise<AddParcelResult>
     }
   }
 
-  const labelPdfBase64 = await fetchLabel(req.waybill, apiBase);
+  const labelPdfs = await fetchLabel(req.waybill, apiBase);
 
-  return { labelPdfBase64, warnings };
+  return { labelPdfs, warnings };
 }
 
 export async function cancelShipment(waybill: string, apiBase?: string): Promise<void> {

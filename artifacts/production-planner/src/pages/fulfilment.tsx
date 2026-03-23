@@ -172,7 +172,7 @@ async function recheckPostcode(orderId: number, tag: string): Promise<{ availabl
   return data;
 }
 
-async function addExtraBox(waybill: string): Promise<{ labelPdfBase64: string; warnings?: string[] }> {
+async function addExtraBox(waybill: string): Promise<{ labelPdfs: string[]; warnings?: string[] }> {
   const res = await fetch(`${BASE}/api/fulfilment/shipments/${encodeURIComponent(waybill)}/add-parcel`, {
     method: "POST",
     credentials: "include",
@@ -183,7 +183,7 @@ async function addExtraBox(waybill: string): Promise<{ labelPdfBase64: string; w
   return data;
 }
 
-async function reprintLabel(waybill: string): Promise<{ labelPdfBase64: string }> {
+async function reprintLabel(waybill: string): Promise<{ labelPdfs: string[] }> {
   const res = await fetch(`${BASE}/api/fulfilment/shipments/${encodeURIComponent(waybill)}/reprint-label`, {
     method: "POST",
     credentials: "include",
@@ -732,6 +732,29 @@ export default function Fulfilment() {
   }
 
   const isConsignmentBusy = consignmentAction !== "idle";
+  const [cancelSuccess, setCancelSuccess] = useState(false);
+
+  function printAllLabels(pdfs: string[]) {
+    if (pdfs.length === 0) return;
+    setPrintStatus("printing");
+    let printed = 0;
+    let failed = false;
+    for (const pdf of pdfs) {
+      printLabel(
+        pdf,
+        () => {
+          printed++;
+          if (printed === pdfs.length && !failed) setPrintStatus("done");
+        },
+        () => {
+          if (!failed) {
+            failed = true;
+            setPrintStatus("failed");
+          }
+        },
+      );
+    }
+  }
 
   async function handleAddExtraBox() {
     if (!shipment) return;
@@ -740,12 +763,7 @@ export default function Fulfilment() {
     setConsignmentActionError(null);
     try {
       const result = await addExtraBox(shipment.consignmentNumber);
-      setPrintStatus("printing");
-      printLabel(
-        result.labelPdfBase64,
-        () => setPrintStatus("done"),
-        () => setPrintStatus("failed"),
-      );
+      printAllLabels(result.labelPdfs);
       if (result.warnings && result.warnings.length > 0) {
         setShipment(prev => prev ? { ...prev, warnings: [...(prev.warnings ?? []), ...result.warnings!] } : prev);
       }
@@ -763,12 +781,7 @@ export default function Fulfilment() {
     setConsignmentActionError(null);
     try {
       const result = await reprintLabel(shipment.consignmentNumber);
-      setPrintStatus("printing");
-      printLabel(
-        result.labelPdfBase64,
-        () => setPrintStatus("done"),
-        () => setPrintStatus("failed"),
-      );
+      printAllLabels(result.labelPdfs);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setConsignmentActionError(`Reprint failed: ${msg}`);
@@ -784,12 +797,16 @@ export default function Fulfilment() {
     setConsignmentActionError(null);
     try {
       await cancelConsignment(shipment.consignmentNumber);
-      setShipment(null);
-      setPrintStatus("idle");
-      setActiveOrder(null);
-      setView("list");
-      refetch();
-      refetchProgress();
+      setCancelSuccess(true);
+      setTimeout(() => {
+        setCancelSuccess(false);
+        setShipment(null);
+        setPrintStatus("idle");
+        setActiveOrder(null);
+        setView("list");
+        refetch();
+        refetchProgress();
+      }, 2000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setConsignmentActionError(`Cancel failed: ${msg}`);
@@ -1326,6 +1343,16 @@ export default function Fulfilment() {
                   Cancel Consignment
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {cancelSuccess && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <div className="bg-card border border-green-200 dark:border-green-800 rounded-2xl shadow-2xl w-full max-w-sm p-8 text-center space-y-3">
+              <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto" />
+              <h3 className="font-bold text-lg">Consignment Cancelled</h3>
+              <p className="text-sm text-muted-foreground">The order has been returned to the unpacked queue.</p>
             </div>
           </div>
         )}
