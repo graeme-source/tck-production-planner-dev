@@ -33,3 +33,5 @@ channel = "stable-25_05"
 [userenv.shared]
 SHOPIFY_CLIENT_ID = "e355d017992f9dbfa132ee7d06e61ec6"
 SHOPIFY_STORE_DOMAIN = "the-calzone-kitchen.myshopify.com"
+APC_ACCOUNT_NUMBER = "TCK001"
+APC_API_BASE = "https://apc.hypaship.com/api/3.0"
