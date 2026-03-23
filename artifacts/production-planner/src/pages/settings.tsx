@@ -1122,10 +1122,10 @@ function BreakDefaultsSection() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-base font-semibold flex items-center gap-2">
-            <Coffee className="w-4 h-4 text-primary" /> Break & Lunch Defaults
+            <Coffee className="w-4 h-4 text-primary" /> Break Durations
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Set the default allowed duration for morning breaks and lunch breaks. Actual time is tracked and compared against these values in reports.
+            Set the allowed duration for snack breaks and lunch breaks. These apply to all stations simultaneously — tracked against actual time in reports.
           </p>
         </div>
         {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
@@ -1133,7 +1133,7 @@ function BreakDefaultsSection() {
       <div className="rounded-2xl border border-border bg-card p-5">
         <div className="flex flex-wrap items-center gap-6">
           <div className="flex items-center gap-3">
-            <label className="text-sm font-medium w-36">Morning Break</label>
+            <label className="text-sm font-medium w-36">Snack Break</label>
             <input
               type="number"
               min="1"

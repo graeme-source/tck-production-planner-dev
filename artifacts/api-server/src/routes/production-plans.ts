@@ -1306,14 +1306,12 @@ router.get("/:id/batch-completions/summary", async (req, res) => {
 
 // Station breaks sub-routes
 
-// GET active (open) break for current user + station — used by BreakTracker to hydrate on mount/refresh
+// GET active (open) break for current user — applies to all stations (sync'd globally)
 router.get("/:id/station-breaks/active", async (req, res) => {
   const planId = Number(req.params.id);
-  const { stationType } = req.query;
   const sessionUserId = (req.session as { userId?: number }).userId ?? null;
 
   const conditions = [eq(stationBreaksTable.planId, planId), sql`ended_at IS NULL`];
-  if (stationType) conditions.push(sql`station_type = ${String(stationType)}`);
   if (sessionUserId) conditions.push(eq(stationBreaksTable.userId, sessionUserId));
 
   const [row] = await db.select().from(stationBreaksTable)
@@ -1325,35 +1323,42 @@ router.get("/:id/station-breaks/active", async (req, res) => {
   res.json({ ...row, startedAt: row.startedAt.toISOString(), endedAt: null });
 });
 
+// All station types — breaks are synced globally across all stations
+const ALL_STATION_TYPES = ["mixing", "building_1", "building_2", "ovens", "wrapping", "prep_veg", "prep_bases", "prep_meat"];
+
 router.post("/:id/station-breaks", async (req, res) => {
   const planId = Number(req.params.id);
   const { stationType, breakType, startedAt } = req.body;
   const sessionUserId = (req.session as { userId?: number }).userId ?? null;
 
-  // Enforce single-open-break per user+station: if one already exists, return it instead of creating a duplicate
-  const conditions = [eq(stationBreaksTable.planId, planId), sql`ended_at IS NULL`];
-  if (stationType) conditions.push(sql`station_type = ${String(stationType)}`);
-  if (sessionUserId) conditions.push(eq(stationBreaksTable.userId, sessionUserId));
+  // Idempotency: if any open break exists for this user+plan, return it
+  const existConditions = [eq(stationBreaksTable.planId, planId), sql`ended_at IS NULL`];
+  if (sessionUserId) existConditions.push(eq(stationBreaksTable.userId, sessionUserId));
   const [existing] = await db.select().from(stationBreaksTable)
-    .where(and(...conditions))
+    .where(and(...existConditions))
     .orderBy(desc(stationBreaksTable.startedAt))
     .limit(1);
 
   if (existing) {
-    // Return existing open break — idempotent, client can resume
     res.status(200).json({ ...existing, startedAt: existing.startedAt.toISOString(), endedAt: null });
     return;
   }
 
-  const [row] = await db.insert(stationBreaksTable).values({
-    planId,
-    stationType,
-    userId: sessionUserId,
-    breakType: breakType ?? "morning",
-    startedAt: startedAt ? new Date(startedAt) : new Date(),
-  }).returning();
+  // Create one break record per station type so KPI calculations remain accurate per station
+  const ts = startedAt ? new Date(startedAt) : new Date();
+  const rows = await db.insert(stationBreaksTable).values(
+    ALL_STATION_TYPES.map(st => ({
+      planId,
+      stationType: st,
+      userId: sessionUserId,
+      breakType: breakType ?? "morning",
+      startedAt: ts,
+    }))
+  ).returning();
 
-  res.status(201).json({ ...row, startedAt: row.startedAt.toISOString(), endedAt: null });
+  // Return the row for the calling station (or first row)
+  const primary = rows.find(r => r.stationType === stationType) ?? rows[0];
+  res.status(201).json({ ...primary, startedAt: primary.startedAt.toISOString(), endedAt: null });
 });
 
 router.patch("/:id/station-breaks/:breakId", async (req, res) => {
@@ -1380,11 +1385,20 @@ router.patch("/:id/station-breaks/:breakId", async (req, res) => {
     return;
   }
 
-  const [updated] = await db.update(stationBreaksTable)
-    .set({ endedAt: endedAt ? new Date(endedAt) : new Date() })
-    .where(eq(stationBreaksTable.id, breakId))
-    .returning();
+  const endTs = endedAt ? new Date(endedAt) : new Date();
 
+  // End ALL open breaks for this user/plan (syncs across all station types)
+  const endAllConditions = [
+    eq(stationBreaksTable.planId, planId),
+    sql`ended_at IS NULL`,
+    ...(sessionUserId != null ? [eq(stationBreaksTable.userId, sessionUserId)] : []),
+  ];
+  await db.update(stationBreaksTable)
+    .set({ endedAt: endTs })
+    .where(and(...endAllConditions));
+
+  // Return the originally-requested break row
+  const [updated] = await db.select().from(stationBreaksTable).where(eq(stationBreaksTable.id, breakId));
   if (!updated) { res.status(404).json({ error: "Not found" }); return; }
   res.json({ ...updated, startedAt: updated.startedAt.toISOString(), endedAt: updated.endedAt ? updated.endedAt.toISOString() : null });
 });

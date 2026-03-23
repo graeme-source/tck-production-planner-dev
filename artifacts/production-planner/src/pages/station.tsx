@@ -212,11 +212,15 @@ function BreakTracker({ planId, stationType, onBreakChange, onBreakActiveChange 
   const [defaults, setDefaults] = useState<{ breakMins: number; lunchMins: number }>({ breakMins: 15, lunchMins: 45 });
   const createBreak = useCreateStationBreak();
   const endBreak = useEndStationBreak();
+  // Ref used by the polling effect so it always sees the latest activeBreak without re-creating the interval
+  const activeBreakRef = useRef<ActiveBreak | null>(null);
+  activeBreakRef.current = activeBreak;
 
   useEffect(() => {
     let cancelled = false;
     Promise.all([
-      fetch(`/api/production-plans/${planId}/station-breaks/active?stationType=${encodeURIComponent(stationType)}`, { credentials: "include" })
+      // No stationType filter — breaks are synced globally across all stations
+      fetch(`/api/production-plans/${planId}/station-breaks/active`, { credentials: "include" })
         .then(r => r.ok ? r.json() : null),
       fetch("/api/app-settings", { credentials: "include" })
         .then(r => r.ok ? r.json() : {})
@@ -235,6 +239,31 @@ function BreakTracker({ planId, stationType, onBreakChange, onBreakActiveChange 
     }).catch(() => setHydrated(true));
     return () => { cancelled = true; };
   }, [planId, stationType]);
+
+  // Poll every 10 s so breaks started on other stations/devices appear automatically
+  useEffect(() => {
+    if (!hydrated) return;
+    const poll = () => {
+      fetch(`/api/production-plans/${planId}/station-breaks/active`, { credentials: "include" })
+        .then(r => r.ok ? r.json() : null)
+        .then((breakData: { id: number; breakType: string; startedAt: string } | null) => {
+          const curr = activeBreakRef.current;
+          if (breakData?.id) {
+            if (!curr || curr.id !== breakData.id) {
+              setActiveBreak({ id: breakData.id, type: (breakData.breakType as "morning" | "lunch") ?? "morning", startedAt: breakData.startedAt });
+              onBreakActiveChange?.(true);
+            }
+          } else if (curr) {
+            setActiveBreak(null);
+            onBreakChange?.(null);
+            onBreakActiveChange?.(false);
+          }
+        })
+        .catch(() => {});
+    };
+    const interval = setInterval(poll, 10000);
+    return () => clearInterval(interval);
+  }, [planId, hydrated]);
 
   useEffect(() => {
     if (!activeBreak) {
@@ -334,7 +363,7 @@ function BreakTracker({ planId, stationType, onBreakChange, onBreakActiveChange 
       : "bg-white/10 hover:bg-white/20 text-white border border-white/20";
 
     const BreakIcon = activeBreak.type === "lunch" ? Utensils : Coffee;
-    const breakLabel = activeBreak.type === "lunch" ? "Lunch Break" : "Morning Break";
+    const breakLabel = activeBreak.type === "lunch" ? "Lunch Break" : "Snack Break";
     const allowedMins = activeBreak.type === "lunch" ? defaults.lunchMins : defaults.breakMins;
 
     return createPortal(
@@ -390,7 +419,7 @@ function BreakTracker({ planId, stationType, onBreakChange, onBreakActiveChange 
                 <Loader2 className="w-4 h-4 animate-spin" /> Ending…
               </span>
             ) : (
-              `End ${activeBreak.type === "lunch" ? "Lunch" : "Break"}`
+              `End ${activeBreak.type === "lunch" ? "Lunch" : "Snack"} Break`
             )}
           </button>
         </div>
@@ -410,7 +439,7 @@ function BreakTracker({ planId, stationType, onBreakChange, onBreakActiveChange 
             className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs border border-border rounded-lg hover:bg-secondary/60 transition-colors"
           >
             <Coffee className="w-3.5 h-3.5" />
-            Morning ({defaults.breakMins}m)
+            Snack ({defaults.breakMins}m)
           </button>
           <button
             onClick={() => startBreak("lunch")}
