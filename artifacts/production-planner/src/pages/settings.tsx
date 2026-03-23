@@ -1187,6 +1187,7 @@ function ApcServiceCodesSection() {
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
   const [testMode, setTestMode] = useState(false);
   const [testModeToggling, setTestModeToggling] = useState(false);
+  const [testModeError, setTestModeError] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -1213,6 +1214,7 @@ function ApcServiceCodesSection() {
   const handleTestModeToggle = async () => {
     const newValue = !testMode;
     setTestModeToggling(true);
+    setTestModeError(false);
     try {
       const r = await fetch(`${BASE}/api/app-settings/apc_test_mode`, {
         method: "PUT",
@@ -1223,7 +1225,8 @@ function ApcServiceCodesSection() {
       if (!r.ok) throw new Error("Failed to save test mode");
       setTestMode(newValue);
     } catch {
-      // revert on failure
+      setTestModeError(true);
+      setTimeout(() => setTestModeError(false), 3000);
     } finally {
       setTestModeToggling(false);
     }
@@ -1301,6 +1304,9 @@ function ApcServiceCodesSection() {
                 ? "ON — all APC calls go to the Hypaship training environment. No real consignments are booked."
                 : "OFF — live APC API is used. Real consignments and charges apply."}
             </p>
+            {testModeError && (
+              <p className="text-xs text-destructive mt-1 font-medium">Failed to save — please try again.</p>
+            )}
           </div>
           <button
             onClick={handleTestModeToggle}

@@ -639,6 +639,7 @@ export default function Fulfilment() {
   if (!configStatusLoading && (!configStatus?.apcCredentialsConfigured || !configStatus?.serviceCodesConfigured)) {
     return (
       <div className="space-y-6">
+        {configStatus?.testMode && <TestModeBanner />}
         <PageHeader title="Order Packing Live" description="APC order scanning and label printing." />
         <div className="glass-panel p-8 rounded-2xl border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20">
           <div className="flex items-start gap-4">
