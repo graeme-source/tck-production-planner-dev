@@ -12,6 +12,7 @@ export const dispatchOrdersTable = pgTable("dispatch_orders", {
   status: text("status").notNull().default("pending"),
   notes: text("notes"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  fulfilledAt: timestamp("fulfilled_at"),
 });
 
 export const insertDispatchOrderSchema = createInsertSchema(dispatchOrdersTable).omit({ id: true, createdAt: true });

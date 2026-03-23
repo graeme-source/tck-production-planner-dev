@@ -41,6 +41,14 @@ async function runStartupMigrations() {
         used_at TIMESTAMP
       )
     `);
+    // Add fulfilled_at to dispatch_orders if missing (added in v1.1)
+    await db.execute(sql`
+      ALTER TABLE dispatch_orders ADD COLUMN IF NOT EXISTS fulfilled_at TIMESTAMP
+    `);
+    // Backfill fulfilled_at for already-fulfilled rows
+    await db.execute(sql`
+      UPDATE dispatch_orders SET fulfilled_at = created_at WHERE status = 'fulfilled' AND fulfilled_at IS NULL
+    `);
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

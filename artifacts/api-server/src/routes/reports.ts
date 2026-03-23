@@ -9,6 +9,7 @@ import {
   productionPlanItemsTable,
   recipesTable,
   timingStandardsTable,
+  dispatchOrdersTable,
 } from "@workspace/db";
 import { eq, and, gte, lte, sql, isNotNull, inArray } from "drizzle-orm";
 
@@ -380,6 +381,72 @@ router.get("/production-kpis", async (req, res) => {
     stationSummaries,
     userSummaries,
     dailySessions,
+  });
+});
+
+// ── Packing Speed ──────────────────────────────────────────────────────────
+// GET /reports/packing-speed?from=YYYY-MM-DD&to=YYYY-MM-DD
+// Returns daily fulfilled order counts + overall orders-per-hour rate.
+router.get("/packing-speed", async (req, res) => {
+  const { from, to } = req.query;
+
+  const conditions = [isNotNull(dispatchOrdersTable.fulfilledAt)];
+  if (from) {
+    const fromDate = new Date(String(from));
+    fromDate.setHours(0, 0, 0, 0);
+    conditions.push(gte(dispatchOrdersTable.fulfilledAt, fromDate));
+  }
+  if (to) {
+    const toDate = new Date(String(to));
+    toDate.setHours(23, 59, 59, 999);
+    conditions.push(lte(dispatchOrdersTable.fulfilledAt, toDate));
+  }
+
+  const rows = await db
+    .select({
+      id: dispatchOrdersTable.id,
+      dispatchDate: dispatchOrdersTable.dispatchDate,
+      fulfilledAt: dispatchOrdersTable.fulfilledAt,
+      status: dispatchOrdersTable.status,
+      quantity: dispatchOrdersTable.quantity,
+      customer: dispatchOrdersTable.customer,
+    })
+    .from(dispatchOrdersTable)
+    .where(and(...conditions))
+    .orderBy(dispatchOrdersTable.fulfilledAt);
+
+  // Group by calendar day of fulfilledAt
+  const byDay: Record<string, { date: string; count: number; totalQty: number }> = {};
+  for (const row of rows) {
+    if (!row.fulfilledAt) continue;
+    const day = row.fulfilledAt.toISOString().slice(0, 10);
+    if (!byDay[day]) byDay[day] = { date: day, count: 0, totalQty: 0 };
+    byDay[day].count += 1;
+    byDay[day].totalQty += Number(row.quantity);
+  }
+
+  const dailyRows = Object.values(byDay).sort((a, b) => a.date.localeCompare(b.date));
+  const totalOrders = rows.length;
+  const totalDays = dailyRows.length;
+
+  // Orders per hour assuming an 8-hour packing shift
+  const SHIFT_HOURS = 8;
+  const totalShiftHours = totalDays * SHIFT_HOURS;
+  const ordersPerHour = totalShiftHours > 0 ? Math.round((totalOrders / totalShiftHours) * 10) / 10 : 0;
+
+  const avgPerDay = totalDays > 0 ? Math.round(totalOrders / totalDays) : 0;
+  const bestDay = dailyRows.reduce<{ date: string; count: number } | null>(
+    (best, d) => (!best || d.count > best.count ? d : best),
+    null,
+  );
+
+  res.json({
+    totalOrders,
+    totalDays,
+    ordersPerHour,
+    avgPerDay,
+    bestDay,
+    dailyRows,
   });
 });
 

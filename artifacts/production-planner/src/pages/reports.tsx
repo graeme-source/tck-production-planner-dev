@@ -1,11 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { PageHeader } from "@/components/page-header";
-import { format } from "date-fns";
+import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, subWeeks, subMonths } from "date-fns";
 import {
   Loader2, Coffee, Utensils, Clock, Users,
   ArrowUp, ArrowDown, Minus as MinusIcon,
   TrendingUp, Activity, Layers, Target, Timer,
   ChevronDown, ChevronRight, Thermometer, ShieldCheck,
+  Package, Zap, CalendarDays,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -110,7 +111,72 @@ const STATION_LABELS: Record<string, string> = {
   prep_meat: "Meat Prep",
 };
 
-type TabId = "kpis" | "breaks" | "temperature";
+interface PackingDayRow {
+  date: string;
+  count: number;
+  totalQty: number;
+}
+
+interface PackingSpeedData {
+  totalOrders: number;
+  totalDays: number;
+  ordersPerHour: number;
+  avgPerDay: number;
+  bestDay: { date: string; count: number } | null;
+  dailyRows: PackingDayRow[];
+}
+
+type TabId = "kpis" | "breaks" | "temperature" | "packing-speed";
+
+// ── Date shortcut presets ──────────────────────────────────────────────────
+const DATE_PRESETS = [
+  { label: "Today", getRange: () => { const d = new Date(); return [format(d, "yyyy-MM-dd"), format(d, "yyyy-MM-dd")]; } },
+  { label: "Yesterday", getRange: () => { const d = subDays(new Date(), 1); return [format(d, "yyyy-MM-dd"), format(d, "yyyy-MM-dd")]; } },
+  { label: "This Week", getRange: () => { const now = new Date(); return [format(startOfWeek(now, { weekStartsOn: 1 }), "yyyy-MM-dd"), format(endOfWeek(now, { weekStartsOn: 1 }), "yyyy-MM-dd")]; } },
+  { label: "Last Week", getRange: () => { const lw = subWeeks(new Date(), 1); return [format(startOfWeek(lw, { weekStartsOn: 1 }), "yyyy-MM-dd"), format(endOfWeek(lw, { weekStartsOn: 1 }), "yyyy-MM-dd")]; } },
+  { label: "This Month", getRange: () => { const now = new Date(); return [format(startOfMonth(now), "yyyy-MM-dd"), format(endOfMonth(now), "yyyy-MM-dd")]; } },
+  { label: "Last Month", getRange: () => { const lm = subMonths(new Date(), 1); return [format(startOfMonth(lm), "yyyy-MM-dd"), format(endOfMonth(lm), "yyyy-MM-dd")]; } },
+] as const;
+
+function DateShortcutsDropdown({ onSelect }: { onSelect: (from: string, to: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1.5 px-3 py-2 border border-border rounded-lg text-sm bg-background hover:bg-secondary/50 transition-colors"
+      >
+        <CalendarDays className="w-4 h-4 text-muted-foreground" />
+        <span className="text-muted-foreground">Quick Select</span>
+        <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 bg-card border border-border rounded-xl shadow-lg py-1 min-w-[150px]">
+          {DATE_PRESETS.map(p => (
+            <button
+              key={p.label}
+              onClick={() => { const [f, t] = p.getRange(); onSelect(f, t); setOpen(false); }}
+              className="w-full text-left px-4 py-2 text-sm hover:bg-secondary/50 transition-colors"
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function Reports() {
   const [activeTab, setActiveTab] = useState<TabId>("kpis");
@@ -130,7 +196,7 @@ export default function Reports() {
       />
 
       <div className="flex items-center gap-4 flex-wrap">
-        <div className="flex items-center gap-1 bg-secondary/30 rounded-xl p-1">
+        <div className="flex items-center gap-1 bg-secondary/30 rounded-xl p-1 flex-wrap">
           <TabButton active={activeTab === "kpis"} onClick={() => setActiveTab("kpis")}>
             <TrendingUp className="w-4 h-4" /> Production KPIs
           </TabButton>
@@ -140,30 +206,37 @@ export default function Reports() {
           <TabButton active={activeTab === "temperature"} onClick={() => setActiveTab("temperature")}>
             <Thermometer className="w-4 h-4" /> Temperature Log
           </TabButton>
+          <TabButton active={activeTab === "packing-speed"} onClick={() => setActiveTab("packing-speed")}>
+            <Zap className="w-4 h-4" /> Packing Speed
+          </TabButton>
         </div>
-        <div className="flex items-center gap-2 ml-auto">
-          <label className="text-sm font-medium text-muted-foreground">From</label>
-          <input
-            type="date"
-            value={fromDate}
-            onChange={e => setFromDate(e.target.value)}
-            className="px-3 py-2 border border-border rounded-lg text-sm bg-background"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="text-sm font-medium text-muted-foreground">To</label>
-          <input
-            type="date"
-            value={toDate}
-            onChange={e => setToDate(e.target.value)}
-            className="px-3 py-2 border border-border rounded-lg text-sm bg-background"
-          />
+        <div className="flex items-center gap-2 ml-auto flex-wrap">
+          <DateShortcutsDropdown onSelect={(f, t) => { setFromDate(f); setToDate(t); }} />
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-muted-foreground">From</label>
+            <input
+              type="date"
+              value={fromDate}
+              onChange={e => setFromDate(e.target.value)}
+              className="px-3 py-2 border border-border rounded-lg text-sm bg-background"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-muted-foreground">To</label>
+            <input
+              type="date"
+              value={toDate}
+              onChange={e => setToDate(e.target.value)}
+              className="px-3 py-2 border border-border rounded-lg text-sm bg-background"
+            />
+          </div>
         </div>
       </div>
 
       {activeTab === "kpis" && <ProductionKpisTab fromDate={fromDate} toDate={toDate} />}
       {activeTab === "breaks" && <BreaksTab fromDate={fromDate} toDate={toDate} />}
       {activeTab === "temperature" && <TemperatureRecordsTab fromDate={fromDate} toDate={toDate} />}
+      {activeTab === "packing-speed" && <PackingSpeedTab fromDate={fromDate} toDate={toDate} />}
     </div>
   );
 }
@@ -784,6 +857,126 @@ function TemperatureRecordsTab({ fromDate, toDate }: { fromDate: string; toDate:
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Packing Speed Tab ──────────────────────────────────────────────────────
+function PackingSpeedTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
+  const [data, setData] = useState<PackingSpeedData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    const params = new URLSearchParams();
+    if (fromDate) params.set("from", fromDate);
+    if (toDate) params.set("to", toDate);
+    fetch(`${BASE}/api/reports/packing-speed?${params.toString()}`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : r.json().then((d: { error?: string }) => { throw new Error(d.error || "Failed"); }))
+      .then((d: PackingSpeedData) => { setData(d); setLoading(false); })
+      .catch((err: Error) => { setError(err.message); setLoading(false); });
+  }, [fromDate, toDate]);
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-16 text-muted-foreground gap-2">
+      <Loader2 className="w-5 h-5 animate-spin" /> Loading packing speed data…
+    </div>
+  );
+  if (error) return (
+    <div className="rounded-xl border border-red-200 bg-red-50 dark:bg-red-900/20 p-4 text-red-700 dark:text-red-400 text-sm">{error}</div>
+  );
+  if (!data) return null;
+
+  return (
+    <div className="space-y-6">
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <SummaryCard
+          icon={<Package className="w-4 h-4 text-blue-500" />}
+          label="Total Orders Packed"
+          value={String(data.totalOrders)}
+          sub={`across ${data.totalDays} day${data.totalDays !== 1 ? "s" : ""}`}
+        />
+        <SummaryCard
+          icon={<Zap className="w-4 h-4 text-amber-500" />}
+          label="Orders Per Hour"
+          value={data.ordersPerHour > 0 ? String(data.ordersPerHour) : "—"}
+          sub="based on 8-hr shift"
+        />
+        <SummaryCard
+          icon={<Activity className="w-4 h-4 text-emerald-500" />}
+          label="Avg Orders / Day"
+          value={data.avgPerDay > 0 ? String(data.avgPerDay) : "—"}
+        />
+        <SummaryCard
+          icon={<TrendingUp className="w-4 h-4 text-violet-500" />}
+          label="Best Day"
+          value={data.bestDay ? String(data.bestDay.count) : "—"}
+          sub={data.bestDay ? format(new Date(data.bestDay.date + "T00:00:00"), "dd MMM yyyy") : undefined}
+          highlight="green"
+        />
+      </div>
+
+      {data.totalOrders === 0 ? (
+        <div className="rounded-xl border border-border bg-card p-8 text-center text-muted-foreground text-sm">
+          No fulfilled orders found for this date range. Orders are counted when their status is set to "fulfilled".
+        </div>
+      ) : (
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          <div className="px-4 py-3 border-b border-border bg-secondary/10">
+            <h3 className="text-sm font-semibold text-foreground">Daily Breakdown</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">Orders fulfilled per day (by date order was packed)</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-secondary/20">
+                  <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Date</th>
+                  <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Orders Packed</th>
+                  <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Est. Rate (per hr)</th>
+                  <th className="px-4 py-3">
+                    <span className="sr-only">Bar</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {data.dailyRows.map(row => {
+                  const ratePerHour = Math.round((row.count / 8) * 10) / 10;
+                  const maxCount = Math.max(...data.dailyRows.map(r => r.count), 1);
+                  const pct = Math.round((row.count / maxCount) * 100);
+                  return (
+                    <tr key={row.date} className="hover:bg-secondary/10 transition-colors">
+                      <td className="px-4 py-3 font-medium">
+                        {format(new Date(row.date + "T00:00:00"), "EEE dd MMM yyyy")}
+                      </td>
+                      <td className="px-4 py-3 text-center tabular-nums font-semibold">
+                        {row.count}
+                      </td>
+                      <td className="px-4 py-3 text-center tabular-nums text-muted-foreground">
+                        {ratePerHour}/hr
+                      </td>
+                      <td className="px-4 py-3 w-48">
+                        <div className="w-full bg-secondary/40 rounded-full h-2">
+                          <div
+                            className="bg-blue-500 h-2 rounded-full transition-all"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <p className="text-xs text-muted-foreground">
+        * Orders per hour is estimated using an 8-hour packing shift. The "Date" reflects when the order was marked as fulfilled in the system.
+      </p>
     </div>
   );
 }
