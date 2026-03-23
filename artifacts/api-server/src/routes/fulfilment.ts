@@ -3,7 +3,7 @@ import { db, skuLocationsTable, appSettingsTable, usersTable } from "@workspace/
 import { eq } from "drizzle-orm";
 import * as z from "zod";
 import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, findOrderByName, addTagToOrder, type ShopifyOrder } from "../services/shopify";
-import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, APC_TRAINING_BASE, checkPostcodeService } from "../services/apc";
+import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService } from "../services/apc";
 import { sql } from "drizzle-orm";
 
 const router = Router();
@@ -830,10 +830,12 @@ router.get("/config-status", requireManagerOrAdmin, async (_req: Request, res: R
       getAppSetting("apc_test_mode"),
     ]);
 
+    const isTestMode = testModeSetting === "true";
     res.json({
       apcCredentialsConfigured: isApcConfigured(),
       serviceCodesConfigured: !!(smallWeekday && largeWeekday && smallFriday && largeFriday),
-      testMode: testModeSetting === "true",
+      testMode: isTestMode,
+      trainingCredentialsMissing: isTestMode && !trainingCredentialsConfigured(),
       serviceCodes: {
         smallWeekday: smallWeekday ?? "",
         largeWeekday: largeWeekday ?? "",

@@ -1,20 +1,37 @@
 // Hypaship APC API v3 integration.
 // Auth: Basic auth via `remote-user` header — base64(email:password).
 // No token refresh needed — credentials are sent on every request.
+//
+// Training environment uses separate credentials: APC_TRAINING_USERNAME / APC_TRAINING_PASSWORD.
+// If those are not set, production credentials are attempted but will likely fail on the
+// training server (which rejects production accounts with a 419 Authentication Error).
 
 const APC_API_BASE = process.env.APC_API_BASE ?? "https://apc.hypaship.com/api/3.0";
 const APC_TRAINING_BASE = "https://apc-training.hypaship.com/api/3.0";
 const APC_ACCOUNT_NUMBER = process.env.APC_ACCOUNT_NUMBER ?? "";
 const APC_USERNAME = process.env.APC_USERNAME ?? "";
 const APC_PASSWORD = process.env.APC_PASSWORD ?? "";
+const APC_TRAINING_USERNAME = process.env.APC_TRAINING_USERNAME ?? "";
+const APC_TRAINING_PASSWORD = process.env.APC_TRAINING_PASSWORD ?? "";
 
 function isConfigured(): boolean {
   return !!(APC_USERNAME && APC_PASSWORD && APC_ACCOUNT_NUMBER);
 }
 
-function basicAuthHeader(): string {
-  const encoded = Buffer.from(`${APC_USERNAME}:${APC_PASSWORD}`).toString("base64");
+function isTrainingConfigured(): boolean {
+  return !!(APC_TRAINING_USERNAME && APC_TRAINING_PASSWORD && APC_ACCOUNT_NUMBER);
+}
+
+function basicAuthHeader(apiBase?: string): string {
+  const isTraining = apiBase?.startsWith(APC_TRAINING_BASE);
+  const user = isTraining && APC_TRAINING_USERNAME ? APC_TRAINING_USERNAME : APC_USERNAME;
+  const pass = isTraining && APC_TRAINING_PASSWORD ? APC_TRAINING_PASSWORD : APC_PASSWORD;
+  const encoded = Buffer.from(`${user}:${pass}`).toString("base64");
   return `Basic ${encoded}`;
+}
+
+export function trainingCredentialsConfigured(): boolean {
+  return isTrainingConfigured();
 }
 
 function todayDDMMYYYY(date?: Date): string {
@@ -212,7 +229,7 @@ async function placeOrder(req: ApcShipmentRequest): Promise<PlaceOrderResult> {
   const res = await fetch(`${apiBase}/Orders.json`, {
     method: "POST",
     headers: {
-      "remote-user": basicAuthHeader(),
+      "remote-user": basicAuthHeader(apiBase),
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
@@ -224,10 +241,13 @@ async function placeOrder(req: ApcShipmentRequest): Promise<PlaceOrderResult> {
     let errMsg = `APC order creation failed (${res.status})`;
     try {
       const json = JSON.parse(text);
-      const desc = json?.Orders?.Messages?.Description ?? json?.Orders?.Order?.Messages?.Description;
+      // APC auth errors come back as top-level {"Messages": ...} without the "Orders" wrapper
+      const desc = json?.Orders?.Messages?.Description
+        ?? json?.Orders?.Order?.Messages?.Description
+        ?? json?.Messages?.Description;
       if (desc && desc !== "SUCCESS") errMsg = desc;
     } catch {
-      errMsg = text || errMsg;
+      if (text && !text.trim().startsWith("<")) errMsg = text.slice(0, 300);
     }
     throw new Error(errMsg);
   }
@@ -283,7 +303,7 @@ async function fetchLabel(waybill: string, apiBase: string, retries = 4, delayMs
     const res = await fetch(url, {
       method: "GET",
       headers: {
-        "remote-user": basicAuthHeader(),
+        "remote-user": basicAuthHeader(apiBase),
         "Content-Type": "application/json",
       },
     });
@@ -381,7 +401,7 @@ export async function checkPostcodeService(
   const res = await fetch(url, {
     method: "GET",
     headers: {
-      "remote-user": basicAuthHeader(),
+      "remote-user": basicAuthHeader(base),
       "Content-Type": "application/json",
     },
   });
@@ -391,14 +411,21 @@ export async function checkPostcodeService(
     if (res.status === 404) {
       return { available: false, reason: `Postcode ${postcode} not found in APC system` };
     }
-    throw new Error(`APC postcode check failed (${res.status}): ${text.slice(0, 200)}`);
+    // Try to surface APC's own error message (e.g. auth failures)
+    let detail = `(${res.status})`;
+    try {
+      const errJson = JSON.parse(text);
+      const desc = errJson?.Messages?.Description ?? errJson?.Orders?.Messages?.Description;
+      if (desc) detail = desc;
+    } catch { /* fall through */ }
+    throw new Error(`APC postcode check failed ${detail}`);
   }
 
   let json: any;
   try {
     json = await res.json();
   } catch {
-    throw new Error("APC postcode check returned invalid JSON");
+    throw new Error("APC postcode check returned invalid JSON — the server may have returned an HTML error page (check APC credentials)");
   }
 
   const msgCode = json?.PostcodeServiceCheck?.Messages?.Code
@@ -477,7 +504,7 @@ export async function addParcel(req: AddParcelRequest): Promise<AddParcelResult>
   const res = await fetch(`${apiBase}/Orders.json`, {
     method: "PUT",
     headers: {
-      "remote-user": basicAuthHeader(),
+      "remote-user": basicAuthHeader(apiBase),
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
@@ -539,7 +566,7 @@ export async function cancelShipment(waybill: string, apiBase?: string): Promise
   const res = await fetch(url, {
     method: "DELETE",
     headers: {
-      "remote-user": basicAuthHeader(),
+      "remote-user": basicAuthHeader(base),
       "Content-Type": "application/json",
     },
   });

@@ -215,11 +215,25 @@ async function completeOrder(orderId: number, consignmentNumber: string, trackin
   if (!res.ok) throw new Error(data.error ?? "Failed to complete order");
 }
 
-function TestModeBanner() {
+function TestModeBanner({ trainingCredentialsMissing }: { trainingCredentialsMissing?: boolean }) {
   return (
-    <div className="w-full rounded-xl border border-amber-400 bg-amber-100 dark:bg-amber-900/40 px-4 py-2.5 flex items-center gap-2 text-amber-900 dark:text-amber-200 text-sm font-medium">
-      <AlertCircle className="w-4 h-4 flex-shrink-0 text-amber-600" />
-      <span>TEST MODE — APC consignments are not real. No real charges or bookings are made.</span>
+    <div className="space-y-2">
+      <div className="w-full rounded-xl border border-amber-400 bg-amber-100 dark:bg-amber-900/40 px-4 py-2.5 flex items-center gap-2 text-amber-900 dark:text-amber-200 text-sm font-medium">
+        <AlertCircle className="w-4 h-4 flex-shrink-0 text-amber-600" />
+        <span>TEST MODE — APC consignments are not real. No real charges or bookings are made.</span>
+      </div>
+      {trainingCredentialsMissing && (
+        <div className="w-full rounded-xl border border-red-400 bg-red-50 dark:bg-red-900/30 px-4 py-2.5 flex items-start gap-2 text-red-900 dark:text-red-200 text-sm">
+          <AlertCircle className="w-4 h-4 flex-shrink-0 text-red-600 mt-0.5" />
+          <span>
+            <span className="font-semibold">Training credentials not configured.</span>{" "}
+            The APC training server requires a separate login from production. Set the{" "}
+            <code className="bg-red-100 dark:bg-red-900 px-1 rounded font-mono text-xs">APC_TRAINING_USERNAME</code> and{" "}
+            <code className="bg-red-100 dark:bg-red-900 px-1 rounded font-mono text-xs">APC_TRAINING_PASSWORD</code>{" "}
+            environment variables (contact APC/Hypaship support to request training access).
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -838,7 +852,7 @@ export default function Fulfilment() {
   if (!configStatusLoading && (!configStatus?.apcCredentialsConfigured || !configStatus?.serviceCodesConfigured)) {
     return (
       <div className="space-y-6">
-        {configStatus?.testMode && <TestModeBanner />}
+        {configStatus?.testMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
         <PageHeader title="Order Packing Live" description="APC order scanning and label printing." />
         <div className="glass-panel p-8 rounded-2xl border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20">
           <div className="flex items-start gap-4">
@@ -892,7 +906,7 @@ export default function Fulfilment() {
     const customerName = activeOrder.shipping_address?.name ?? `${activeOrder.customer?.first_name} ${activeOrder.customer?.last_name}`;
     return (
       <div className="space-y-4">
-        {isTestMode && <TestModeBanner />}
+        {isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
 
         <div className="flex items-center gap-3">
           <button onClick={() => setView("picking")} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
@@ -1102,7 +1116,7 @@ export default function Fulfilment() {
             onCancel={() => setPendingPickOrder(null)}
           />
         )}
-        {isTestMode && <TestModeBanner />}
+        {isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
         <PageHeader title="Order Packing Live" description="APC order scanning and label printing." />
         <div className="glass-panel p-8 rounded-2xl border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/20 text-center">
           <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto mb-4" />
@@ -1154,7 +1168,7 @@ export default function Fulfilment() {
             onCancel={() => setPendingPickOrder(null)}
           />
         )}
-        {isTestMode && <TestModeBanner />}
+        {isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
         <div className="flex items-center gap-3">
           <button onClick={goBack} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
             <ArrowLeft className="w-5 h-5" />
@@ -1496,7 +1510,7 @@ export default function Fulfilment() {
     const isTestMode = configStatus?.testMode ?? false;
     return (
       <div className="space-y-6">
-        {isTestMode && <TestModeBanner />}
+        {isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
         <div className="flex items-center justify-between">
           <PageHeader title="Order Packing Live" description="Select a dispatch date to start picking." />
           <button
@@ -1618,7 +1632,7 @@ export default function Fulfilment() {
 
   return (
     <div className="space-y-6">
-      {isTestMode && <TestModeBanner />}
+      {isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
 
       {/* Live-mode confirmation dialog — appears when operator selects an order */}
       {pendingPickOrder && (
