@@ -545,6 +545,9 @@ export const ListRecipesResponseItem = zod.object({
     .number()
     .nullish()
     .describe("Weight of base per builder in grams"),
+  isCoreMenu: zod.boolean().optional(),
+  isCurrentSpecial: zod.boolean().optional(),
+  color: zod.string().nullish(),
   rawMaterialCostPerBatch: zod.number(),
   costPerPortion: zod.number(),
   packIngredientCost: zod.number(),

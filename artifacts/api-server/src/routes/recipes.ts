@@ -362,40 +362,39 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
     if (nonMeat) { res.status(400).json({ error: `Ingredient ${nonMeat.id} is not in the raw_meat category` }); return; }
   }
 
-  if (isCurrentSpecial === true) {
-    await db.transaction(async (tx) => {
+  const recipeFields = {
+    name, description,
+    servings: String(servings),
+    servingUnit, category, notes,
+    packSize: String(packSize ?? 1),
+    rrp: String(rrp ?? 0),
+    packagingCost: String(packagingCost ?? 0),
+    labourCost: String(labourCost ?? 0),
+    portionsPerBatch: portionsPerBatch ?? 10,
+    shelfLifeDays: shelfLifeDays ?? null,
+    tinSize: tinSize ?? null,
+    maxBatchesPerTin: maxBatchesPerTin ?? null,
+    sopUrl: sopUrl ?? null,
+    fillWeightGrams: fillWeightGrams != null ? String(fillWeightGrams) : null,
+    baseType: baseType ?? null,
+    baseWeightGrams: baseWeightGrams != null ? String(baseWeightGrams) : null,
+    isCoreMenu: isCoreMenu ?? false,
+    color: color ?? null,
+    ...(isCurrentSpecial !== undefined ? { isCurrentSpecial } : {}),
+  };
+
+  const [updated] = await db.transaction(async (tx) => {
+    const [row] = await tx.update(recipesTable)
+      .set(recipeFields)
+      .where(eq(recipesTable.id, id))
+      .returning();
+    if (row && isCurrentSpecial === true) {
       await tx.update(recipesTable)
         .set({ isCurrentSpecial: false })
         .where(ne(recipesTable.id, id));
-      await tx.update(recipesTable)
-        .set({ isCurrentSpecial: true })
-        .where(eq(recipesTable.id, id));
-    });
-  }
-
-  const [updated] = await db.update(recipesTable)
-    .set({
-      name, description,
-      servings: String(servings),
-      servingUnit, category, notes,
-      packSize: String(packSize ?? 1),
-      rrp: String(rrp ?? 0),
-      packagingCost: String(packagingCost ?? 0),
-      labourCost: String(labourCost ?? 0),
-      portionsPerBatch: portionsPerBatch ?? 10,
-      shelfLifeDays: shelfLifeDays ?? null,
-      tinSize: tinSize ?? null,
-      maxBatchesPerTin: maxBatchesPerTin ?? null,
-      sopUrl: sopUrl ?? null,
-      fillWeightGrams: fillWeightGrams != null ? String(fillWeightGrams) : null,
-      baseType: baseType ?? null,
-      baseWeightGrams: baseWeightGrams != null ? String(baseWeightGrams) : null,
-      isCoreMenu: isCoreMenu ?? false,
-      isCurrentSpecial: isCurrentSpecial ?? false,
-      color: color ?? null,
-    })
-    .where(eq(recipesTable.id, id))
-    .returning();
+    }
+    return [row];
+  });
 
   if (!updated) { res.status(404).json({ error: "Not found" }); return; }
 

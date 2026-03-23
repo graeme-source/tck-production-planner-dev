@@ -558,7 +558,7 @@ function EditRecipeDialog({
   const { data: allRecipes } = useListRecipes({ query: { enabled: open } });
   const { updateRecipe } = useAppMutations();
 
-  const specialRecipe = allRecipes?.find((r: any) => r.isCurrentSpecial);
+  const specialRecipe = allRecipes?.find((r) => r.isCurrentSpecial);
   const currentSpecialName = specialRecipe ? specialRecipe.name : null;
   const thisRecipeIsSpecial = detail?.isCurrentSpecial ?? false;
 

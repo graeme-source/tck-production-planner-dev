@@ -19,12 +19,14 @@ interface ShopifyProduct {
   variants: VariantCount[];
   totalQuantity: number;
   orderCount: number;
+  specialCount?: number;
 }
 
 interface ShopifyOrderSummary {
   tag: string;
   orderCount: number;
   products: ShopifyProduct[];
+  currentSpecialRecipeName?: string | null;
 }
 
 interface FilteredProduct {
@@ -32,6 +34,7 @@ interface FilteredProduct {
   variants: VariantCount[];
   totalQuantity: number;
   orderCount: number;
+  specialCount?: number;
 }
 
 async function fetchShopifyOrderSummary(tag: string): Promise<ShopifyOrderSummary> {
@@ -213,7 +216,7 @@ export default function Dispatches() {
       const totalQuantity = remainingVariants.reduce((s, v) => s + v.quantity, 0);
       const orderCount = remainingVariants.reduce((s, v) => s + v.orderCount, 0);
 
-      filtered.push({ productTitle: p.productTitle, variants: remainingVariants, totalQuantity, orderCount });
+      filtered.push({ productTitle: p.productTitle, variants: remainingVariants, totalQuantity, orderCount, specialCount: p.specialCount });
     }
 
     return filtered.sort((a, b) => {
@@ -634,7 +637,12 @@ export default function Dispatches() {
                   <tbody>
                     {sortedProducts.map((p, i) => (
                       <tr key={i} className="border-b border-border last:border-0 hover:bg-secondary/20 transition-colors">
-                        <td className="px-5 py-3.5 font-medium">{p.productTitle}</td>
+                        <td className="px-5 py-3.5 font-medium">
+                          {p.productTitle}
+                          {(p.specialCount ?? 0) > 0 && (
+                            <span className="ml-2 text-xs text-muted-foreground font-normal">(incl. {p.specialCount} Calzone Club Special{(p.specialCount ?? 0) !== 1 ? "s" : ""})</span>
+                          )}
+                        </td>
                         <td className="px-5 py-3.5 text-muted-foreground text-sm">
                           {p.variants.length === 0 ? "—" : p.variants.length === 1
                             ? p.variants[0].title
