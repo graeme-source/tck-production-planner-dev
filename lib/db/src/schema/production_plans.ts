@@ -127,9 +127,24 @@ export const temperatureRecordsTable = pgTable("temperature_records", {
   recordedAt: timestamp("recorded_at").notNull().defaultNow(),
 });
 
+export const ovenEventsTable = pgTable("oven_events", {
+  id: serial("id").primaryKey(),
+  planId: integer("plan_id").notNull().references(() => productionPlansTable.id, { onDelete: "cascade" }),
+  recipeId: integer("recipe_id"),
+  recipeName: text("recipe_name"),
+  ingredientId: integer("ingredient_id"),
+  ingredientName: text("ingredient_name"),
+  trayIndex: integer("tray_index").notNull(),
+  ovenInAt: timestamp("oven_in_at").notNull().defaultNow(),
+  ovenOutAt: timestamp("oven_out_at"),
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  userName: text("user_name"),
+});
+
 export const insertPrepCompletionSchema = createInsertSchema(prepCompletionsTable).omit({ id: true });
 export const insertDailyStockCheckSchema = createInsertSchema(dailyStockChecksTable).omit({ id: true, checkedAt: true });
 export type TemperatureRecord = typeof temperatureRecordsTable.$inferSelect;
+export type OvenEvent = typeof ovenEventsTable.$inferSelect;
 
 export type InsertProductionPlan = z.infer<typeof insertProductionPlanSchema>;
 export type ProductionPlan = typeof productionPlansTable.$inferSelect;

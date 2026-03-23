@@ -743,6 +743,12 @@ function MixingStation({ plan }: MixingStationProps) {
   const [mixingTab, setMixingTab] = useState<"tins" | "cooking">("cooking");
   // key = `${recipeId}-${ingredientId}`, value = map of trayIdx → 0 (empty), 1 (in oven), 2 (done)
   const [trayStates, setTrayStates] = useState<Record<string, Record<number, 0 | 1 | 2>>>({});
+  interface OvenEventRow {
+    id: number; planId: number; recipeId: number | null; recipeName: string | null;
+    ingredientId: number | null; ingredientName: string | null; trayIndex: number;
+    ovenInAt: string; ovenOutAt: string | null; userId: number | null; userName: string | null;
+  }
+  const [ovenEvents, setOvenEvents] = useState<OvenEventRow[]>([]);
   // Pending temperature entry: which tray just moved to "done" and needs a temp recorded
   const [tempPrompt, setTempPrompt] = useState<{
     recipeId: number; recipeName: string;
@@ -752,25 +758,76 @@ function MixingStation({ plan }: MixingStationProps) {
   const [tempValue, setTempValue] = useState("");
   const [tempSaving, setTempSaving] = useState(false);
 
-  const advanceTray = (
+  useEffect(() => {
+    const base = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
+    fetch(`${base}/api/oven-events?planId=${plan.id}`, { credentials: "include" })
+      .then(r => r.json())
+      .then((rows: OvenEventRow[]) => {
+        setOvenEvents(rows);
+        const restored: Record<string, Record<number, 0 | 1 | 2>> = {};
+        for (const ev of rows) {
+          const key = `${ev.recipeId}-${ev.ingredientId}`;
+          if (!restored[key]) restored[key] = {};
+          restored[key][ev.trayIndex] = ev.ovenOutAt ? 2 : 1;
+        }
+        setTrayStates(prev => {
+          const merged = { ...prev };
+          for (const [k, v] of Object.entries(restored)) {
+            merged[k] = { ...(merged[k] ?? {}), ...v };
+          }
+          return merged;
+        });
+      })
+      .catch(() => {});
+  }, [plan.id]);
+
+  const advanceTray = async (
     recipeId: number, recipeName: string,
     ingredientId: number, ingredientName: string,
     trayIdx: number, planId: number, planName: string,
   ) => {
     const key = `${recipeId}-${ingredientId}`;
-    setTrayStates(prev => {
-      const cur = (prev[key]?.[trayIdx] ?? 0) as 0 | 1 | 2;
-      let next: 0 | 1 | 2;
-      if (cur === 0) next = 1;
-      else if (cur === 1) { next = 2; }
-      else next = 0;
-      const updated = { ...prev, [key]: { ...prev[key], [trayIdx]: next } };
-      if (next === 2) {
-        // Prompt for temperature after state update
+    const cur = (trayStates[key]?.[trayIdx] ?? 0) as 0 | 1 | 2;
+    let next: 0 | 1 | 2;
+    if (cur === 0) next = 1;
+    else if (cur === 1) next = 2;
+    else next = 0;
+
+    setTrayStates(prev => ({ ...prev, [key]: { ...prev[key], [trayIdx]: next } }));
+
+    const base = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
+    try {
+      if (next === 1) {
+        const res = await fetch(`${base}/api/oven-events/oven-in`, {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ planId, recipeId, recipeName, ingredientId, ingredientName, trayIndex: trayIdx }),
+        });
+        if (res.ok) {
+          const ev: OvenEventRow = await res.json();
+          setOvenEvents(prev => [ev, ...prev]);
+        }
+      } else if (next === 2) {
+        const res = await fetch(`${base}/api/oven-events/oven-out`, {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ planId, recipeId, ingredientId, trayIndex: trayIdx }),
+        });
+        if (res.ok) {
+          const ev: OvenEventRow = await res.json();
+          setOvenEvents(prev => prev.map(e => e.id === ev.id ? ev : e));
+        }
         setTimeout(() => setTempPrompt({ recipeId, recipeName, ingredientId, ingredientName, trayIdx, planId, planName }), 0);
+      } else {
+        await fetch(`${base}/api/oven-events?planId=${planId}&recipeId=${recipeId}&ingredientId=${ingredientId}&trayIndex=${trayIdx}`, {
+          method: "DELETE", credentials: "include",
+        });
+        setOvenEvents(prev => prev.filter(e => !(e.recipeId === recipeId && e.ingredientId === ingredientId && e.trayIndex === trayIdx)));
       }
-      return updated;
-    });
+    } catch {
+      // Revert on error
+      setTrayStates(prev => ({ ...prev, [key]: { ...prev[key], [trayIdx]: cur } }));
+    }
   };
 
   const submitTemp = async () => {
@@ -1264,6 +1321,46 @@ function MixingStation({ plan }: MixingStationProps) {
                 );
               })
           )}
+
+          {(() => {
+            const completed = ovenEvents.filter(e => e.ovenOutAt);
+            if (completed.length === 0) return null;
+            return (
+              <div className="bg-card border border-border rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-border bg-secondary/30">
+                  <p className="font-semibold">Cooking Times</p>
+                  <p className="text-xs text-muted-foreground">Actual oven times recorded today</p>
+                </div>
+                <div className="divide-y divide-border/50">
+                  {completed.map(ev => {
+                    const inTime = new Date(ev.ovenInAt);
+                    const outTime = new Date(ev.ovenOutAt!);
+                    const durationMin = Math.round((outTime.getTime() - inTime.getTime()) / 60000);
+                    const hours = Math.floor(durationMin / 60);
+                    const mins = durationMin % 60;
+                    const durationStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+                    const formatTime = (d: Date) => d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+                    return (
+                      <div key={ev.id} className="px-4 py-3 flex items-center justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-sm truncate">{ev.recipeName}</p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {ev.ingredientName} — Tray {ev.trayIndex + 1}
+                          </p>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <p className="font-bold text-sm tabular-nums">{durationStr}</p>
+                          <p className="text-xs text-muted-foreground tabular-nums">
+                            {formatTime(inTime)} → {formatTime(outTime)}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 

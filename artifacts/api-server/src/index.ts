@@ -72,6 +72,21 @@ async function runStartupMigrations() {
       ALTER TABLE recipes ADD COLUMN IF NOT EXISTS is_current_special BOOLEAN NOT NULL DEFAULT FALSE
     `);
     await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS oven_events (
+        id SERIAL PRIMARY KEY,
+        plan_id INTEGER NOT NULL REFERENCES production_plans(id) ON DELETE CASCADE,
+        recipe_id INTEGER,
+        recipe_name TEXT,
+        ingredient_id INTEGER,
+        ingredient_name TEXT,
+        tray_index INTEGER NOT NULL,
+        oven_in_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        oven_out_at TIMESTAMP,
+        user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        user_name TEXT
+      )
+    `);
+    await db.execute(sql`
       CREATE UNIQUE INDEX IF NOT EXISTS recipes_one_current_special
       ON recipes (is_current_special)
       WHERE is_current_special = TRUE
