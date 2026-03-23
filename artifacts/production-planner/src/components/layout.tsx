@@ -50,7 +50,7 @@ const bottomNavItems: NavItem[] = [
 ];
 
 const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/ingredients"];
-const DISPATCH_PATHS = ["/dispatches", "/locations", "/dispatch-tag"];
+const DISPATCH_PATHS = ["/dispatches", "/locations"];
 
 function NavLinks({
   visibleNavItems,
@@ -81,7 +81,6 @@ function NavLinks({
   const dispatchSubItems = [
     { name: "Dispatches", href: "/dispatches", icon: Truck },
     { name: "Bin Locations", href: "/locations", icon: MapPin },
-    { name: "Dispatch Tagging", href: "/dispatch-tag", icon: Tag },
   ];
 
   function renderNavItem(item: NavItem) {
@@ -303,9 +302,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const allNavItems = [...navItems, ...productNavItems, ...bottomNavItems];
   const currentPageName = location === "/locations"
     ? "Bin Locations"
-    : location === "/dispatch-tag"
-      ? "Dispatch Tagging"
-      : (allNavItems.find(n => n.href === location)?.name || "Dashboard");
+    : (allNavItems.find(n => n.href === location)?.name || "Dashboard");
 
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">

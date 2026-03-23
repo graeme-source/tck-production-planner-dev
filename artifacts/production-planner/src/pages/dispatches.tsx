@@ -1,7 +1,7 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
-import { ShoppingBag, Package, RefreshCw, AlertCircle, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight, Scan } from "lucide-react";
+import { ShoppingBag, Package, RefreshCw, AlertCircle, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight, Scan, Tag, CheckCircle2, XCircle, RotateCcw, Loader2 } from "lucide-react";
 import { format, startOfWeek, addWeeks, isSameWeek, parseISO } from "date-fns";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { useLocation } from "wouter";
@@ -90,14 +90,64 @@ function SortIcon({ col, sortCol, sortDir }: { col: SortCol; sortCol: SortCol; s
   return sortDir === "asc" ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />;
 }
 
+interface TagResult {
+  orderName: string;
+  customerName: string | null;
+  alreadyTagged: boolean;
+  success: boolean;
+  error?: string;
+}
+
 export default function Dispatches() {
   const [, navigate] = useLocation();
   const today = new Date();
   const currentMonday = getMonday(today);
 
+  const [activeTab, setActiveTab] = useState<"schedule" | "tag">("schedule");
+
   const [weekOffset, setWeekOffset] = useState<number>(getDefaultWeekOffset);
   const selectedMonday = addWeeks(currentMonday, weekOffset);
   const weekStartStr = formatMonday(selectedMonday);
+
+  const [tagInput, setTagInput] = useState("");
+  const [tagLoading, setTagLoading] = useState(false);
+  const [tagHistory, setTagHistory] = useState<TagResult[]>([]);
+  const tagInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (activeTab === "tag") {
+      setTimeout(() => tagInputRef.current?.focus(), 50);
+    }
+  }, [activeTab]);
+
+  async function handleTagSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const orderName = tagInput.trim();
+    if (!orderName) return;
+    setTagLoading(true);
+    setTagInput("");
+    try {
+      const res = await fetch(`${BASE}/api/fulfilment/tag-dispatch`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderName }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setTagHistory(prev => [{ orderName, customerName: null, alreadyTagged: false, success: false, error: data.error ?? "Unknown error" }, ...prev]);
+      } else {
+        const customer = data.order?.customer;
+        const customerName = customer ? `${customer.first_name ?? ""} ${customer.last_name ?? ""}`.trim() || null : null;
+        setTagHistory(prev => [{ orderName: data.order?.name ?? orderName, customerName, alreadyTagged: data.alreadyTagged, success: true }, ...prev]);
+      }
+    } catch {
+      setTagHistory(prev => [{ orderName, customerName: null, alreadyTagged: false, success: false, error: "Network error — check connection" }, ...prev]);
+    } finally {
+      setTagLoading(false);
+      setTimeout(() => tagInputRef.current?.focus(), 50);
+    }
+  }
 
   const isCurrentWeek = weekOffset === 0;
   const todayStr = format(today, "yyyy-MM-dd");
@@ -187,9 +237,121 @@ export default function Dispatches() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Dispatch Schedule"
-        description="Manage wholesale orders and outgoing deliveries."
+        title="Dispatches"
+        description="Manage wholesale orders, outgoing deliveries, and dispatch tagging."
       />
+
+      <div className="flex gap-1 bg-secondary/50 p-1 rounded-xl w-fit">
+        <button
+          onClick={() => setActiveTab("schedule")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            activeTab === "schedule"
+              ? "bg-card text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <ShoppingBag className="w-4 h-4" />
+          Schedule
+        </button>
+        <button
+          onClick={() => setActiveTab("tag")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            activeTab === "tag"
+              ? "bg-card text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Tag className="w-4 h-4" />
+          Tag Orders
+        </button>
+      </div>
+
+      {activeTab === "tag" && (
+        <div className="max-w-lg space-y-4">
+          <form onSubmit={handleTagSubmit} className="glass-panel rounded-2xl border border-border p-6 space-y-4">
+            <label className="block text-sm font-medium text-muted-foreground">
+              Order number (e.g. #1234)
+            </label>
+            <div className="flex gap-3">
+              <input
+                ref={tagInputRef}
+                type="text"
+                value={tagInput}
+                onChange={e => setTagInput(e.target.value)}
+                placeholder="#1234"
+                disabled={tagLoading}
+                className="flex-1 bg-background border border-border rounded-xl px-4 py-3 text-lg font-mono tracking-wider focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
+                autoComplete="off"
+                autoCorrect="off"
+                spellCheck={false}
+              />
+              <button
+                type="submit"
+                disabled={tagLoading || !tagInput.trim()}
+                className="flex items-center gap-2 px-5 py-3 bg-primary text-primary-foreground rounded-xl font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50"
+              >
+                {tagLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Tag className="w-5 h-5" />}
+                Tag
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Tagged orders will appear in the Order Packing queue. Orders without this tag cannot be packed.
+            </p>
+          </form>
+
+          {tagHistory.length > 0 ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Session history</h2>
+                <button
+                  onClick={() => setTagHistory([])}
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <RotateCcw className="w-3 h-3" /> Clear
+                </button>
+              </div>
+              <div className="space-y-2">
+                {tagHistory.map((r, i) => (
+                  <div
+                    key={i}
+                    className={`flex items-start gap-3 p-4 rounded-xl border transition-all ${
+                      r.success
+                        ? r.alreadyTagged
+                          ? "border-border bg-secondary/30"
+                          : "border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20"
+                        : "border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-950/20"
+                    }`}
+                  >
+                    {r.success
+                      ? <CheckCircle2 className={`w-5 h-5 flex-shrink-0 mt-0.5 ${r.alreadyTagged ? "text-muted-foreground" : "text-emerald-500"}`} />
+                      : <XCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-red-500" />}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline gap-2">
+                        <span className="font-mono font-bold text-sm">{r.orderName}</span>
+                        {r.customerName && <span className="text-xs text-muted-foreground truncate">— {r.customerName}</span>}
+                      </div>
+                      <p className={`text-xs mt-0.5 ${r.success ? (r.alreadyTagged ? "text-muted-foreground" : "text-emerald-700 dark:text-emerald-300") : "text-red-700 dark:text-red-300"}`}>
+                        {r.success
+                          ? r.alreadyTagged ? "Already tagged — no change needed" : "Dispatch tag added — ready to pack"
+                          : r.error}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-12 text-muted-foreground">
+              <Tag className="w-10 h-10 mx-auto mb-3 opacity-30" />
+              <p className="text-sm">No orders tagged this session yet.</p>
+              <p className="text-xs mt-1">Scan or type an order number above to get started.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "schedule" && (
+      <div className="space-y-6">
 
       <div className="glass-panel p-6 rounded-2xl border border-border">
         <div className="flex items-center justify-between mb-1">
@@ -504,6 +666,7 @@ export default function Dispatches() {
           </div>
         )}
       </div>
+      </div>)}
     </div>
   );
 }
