@@ -55,6 +55,7 @@ interface ShipmentResult {
   serviceCode: string;
   orderId: number;
   orderName: string;
+  warnings?: string[];
 }
 
 interface ConfigStatus {
@@ -946,6 +947,18 @@ export default function Fulfilment() {
             <span className="text-muted-foreground">Consignment:</span>
             <span className="font-mono font-semibold">{shipment.consignmentNumber}</span>
             <span className="text-xs text-muted-foreground ml-auto">Service: {shipment.serviceCode}</span>
+          </div>
+        )}
+
+        {shipment?.warnings && shipment.warnings.length > 0 && (
+          <div className="p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl text-sm flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-medium text-amber-800 dark:text-amber-300 text-xs mb-1">APC Warnings</p>
+              {shipment.warnings.map((w, i) => (
+                <p key={i} className="text-amber-700 dark:text-amber-400 text-xs">{w}</p>
+              ))}
+            </div>
           </div>
         )}
 

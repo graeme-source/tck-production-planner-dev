@@ -48,7 +48,7 @@ function pickServiceCode(
 
   // Use explicit box-size tags when present. Weight is a fallback only when
   // neither tag is found (e.g. no Shopify tagging rule has run yet).
-  const hasLargeTag = tags.includes("large box");
+  const hasLargeTag = tags.includes("large box") || tags.includes("wholesale");
   const hasSmallTag = tags.includes("small box");
   const isLargeBox = hasLargeTag || (!hasSmallTag && weightG >= weightThresholdG);
 
@@ -198,8 +198,17 @@ router.post("/shipments", requireManagerOrAdmin, async (req: Request, res: Respo
     const customerName = order.shipping_address.name ||
       `${order.customer?.first_name ?? ""} ${order.customer?.last_name ?? ""}`.trim();
 
+    const companyName = order.shipping_address.company?.trim() || "Home Delivery";
+
+    let specialInstructions = "X227 - PERISHABLE";
+    if (order.note?.trim()) {
+      const combined = `${specialInstructions} ${order.note.trim()}`;
+      specialInstructions = combined.slice(0, 50);
+    }
+
     const result = await createShipment({
       serviceCode,
+      companyName,
       recipient: {
         name: customerName,
         address1: order.shipping_address.address1,
@@ -212,6 +221,7 @@ router.post("/shipments", requireManagerOrAdmin, async (req: Request, res: Respo
       },
       parcels: [{ weight: Math.max(0.1, weightKg) }],
       reference: order.name,
+      specialInstructions,
       ...(apiBase ? { apiBase } : {}),
     });
 
@@ -222,6 +232,7 @@ router.post("/shipments", requireManagerOrAdmin, async (req: Request, res: Respo
       serviceCode,
       orderId,
       orderName: order.name,
+      ...(result.warnings?.length ? { warnings: result.warnings } : {}),
     });
   } catch (err: any) {
     console.error("[Fulfilment] createShipment error:", err.message);

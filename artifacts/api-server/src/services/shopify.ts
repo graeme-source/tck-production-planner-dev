@@ -154,6 +154,7 @@ export interface ShopifyOrder {
   } | null;
   shipping_address: {
     name: string;
+    company?: string;
     address1: string;
     address2?: string;
     city: string;

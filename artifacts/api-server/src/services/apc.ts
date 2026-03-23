@@ -27,6 +27,7 @@ function todayDDMMYYYY(date?: Date): string {
 
 export interface ApcShipmentRequest {
   serviceCode: string;
+  companyName?: string;
   recipient: {
     name: string;
     address1: string;
@@ -53,9 +54,63 @@ export interface ApcShipmentResult {
   consignmentNumber: string;
   labelPdfBase64: string;
   trackingUrl?: string;
+  warnings?: string[];
 }
 
-async function placeOrder(req: ApcShipmentRequest): Promise<string> {
+interface PlaceOrderResult {
+  waybill: string;
+  warnings: string[];
+}
+
+function normaliseAddress(
+  address1: string,
+  address2: string | undefined,
+  city: string,
+): { address1: string; address2?: string; city: string } {
+  const MAX = 35;
+  const originalA1 = (address1 ?? "").replace(/\s+/g, " ").trim();
+  let a1 = originalA1;
+  let a2 = (address2 ?? "").replace(/\s+/g, " ").trim();
+  const c = (city ?? "").replace(/\s+/g, " ").trim().slice(0, MAX);
+
+  if (c && a1.toLowerCase().endsWith(c.toLowerCase())) {
+    const stripped = a1.slice(0, a1.length - c.length).replace(/[,\s]+$/, "").trim();
+    if (stripped) a1 = stripped;
+  }
+  if (c && a2.toLowerCase().endsWith(c.toLowerCase())) {
+    a2 = a2.slice(0, a2.length - c.length).replace(/[,\s]+$/, "").trim();
+  }
+
+  if (a1.length > MAX) {
+    const cutPoint = a1.lastIndexOf(" ", MAX);
+    const overflow = cutPoint > 0
+      ? a1.slice(cutPoint + 1).trim()
+      : a1.slice(MAX).trim();
+    a1 = cutPoint > 0
+      ? a1.slice(0, cutPoint).trim()
+      : a1.slice(0, MAX).trim();
+
+    if (overflow) {
+      a2 = a2 ? `${overflow}, ${a2}` : overflow;
+    }
+  }
+
+  if (a2 && a2.length > MAX) {
+    a2 = a2.slice(0, MAX);
+  }
+
+  if (!a1) {
+    a1 = originalA1.slice(0, MAX);
+  }
+
+  return {
+    address1: a1.slice(0, MAX),
+    ...(a2 ? { address2: a2.slice(0, MAX) } : {}),
+    city: c,
+  };
+}
+
+async function placeOrder(req: ApcShipmentRequest): Promise<PlaceOrderResult> {
   if (!APC_USERNAME || !APC_PASSWORD || !APC_ACCOUNT_NUMBER) {
     throw new Error("APC credentials not configured.");
   }
@@ -63,6 +118,14 @@ async function placeOrder(req: ApcShipmentRequest): Promise<string> {
   const apiBase = req.apiBase ?? APC_API_BASE;
   const totalWeightKg = req.parcels.reduce((sum, p) => sum + p.weight, 0);
   const firstParcel = req.parcels[0] ?? { weight: totalWeightKg };
+
+  const addr = normaliseAddress(
+    req.recipient.address1,
+    req.recipient.address2,
+    req.recipient.city,
+  );
+
+  const companyName = (req.companyName ?? req.recipient.name).slice(0, 35);
 
   const payload = {
     Orders: {
@@ -72,13 +135,12 @@ async function placeOrder(req: ApcShipmentRequest): Promise<string> {
         ClosedAt: "17:00",
         ProductCode: req.serviceCode,
         Reference: (req.reference ?? "").replace(/[^a-zA-Z0-9\-\.]/g, "-").slice(0, 25),
-        // Omitting Collection forces Hypaship to use TCK's operational address
         Delivery: {
-          CompanyName: req.recipient.name.slice(0, 35),
-          AddressLine1: req.recipient.address1.slice(0, 35),
-          ...(req.recipient.address2 ? { AddressLine2: req.recipient.address2.slice(0, 35) } : {}),
+          CompanyName: companyName,
+          AddressLine1: addr.address1,
+          ...(addr.address2 ? { AddressLine2: addr.address2 } : {}),
           PostalCode: req.recipient.postcode,
-          City: req.recipient.city.slice(0, 35),
+          City: addr.city,
           CountryCode: req.recipient.country ?? "GB",
           Contact: {
             PersonName: req.recipient.name.slice(0, 35),
@@ -159,7 +221,25 @@ async function placeOrder(req: ApcShipmentRequest): Promise<string> {
     throw new Error("APC returned no WayBill number in order response");
   }
 
-  return waybill;
+  const warnings: string[] = [];
+  const orderWarnings = json?.Orders?.Order?.Warnings;
+  if (orderWarnings) {
+    const warnList = Array.isArray(orderWarnings) ? orderWarnings : [orderWarnings];
+    for (const w of warnList) {
+      const msg = typeof w === "string" ? w : w?.Description ?? w?.Message ?? JSON.stringify(w);
+      if (msg) warnings.push(msg);
+    }
+  }
+  const topWarnings = json?.Orders?.Warnings;
+  if (topWarnings) {
+    const warnList = Array.isArray(topWarnings) ? topWarnings : [topWarnings];
+    for (const w of warnList) {
+      const msg = typeof w === "string" ? w : w?.Description ?? w?.Message ?? JSON.stringify(w);
+      if (msg) warnings.push(msg);
+    }
+  }
+
+  return { waybill, warnings };
 }
 
 async function fetchLabel(waybill: string, apiBase: string, retries = 4, delayMs = 3000): Promise<string> {
@@ -212,10 +292,8 @@ export async function createShipment(req: ApcShipmentRequest): Promise<ApcShipme
 
   const apiBase = req.apiBase ?? APC_API_BASE;
 
-  // Step 1: Place the order and get WayBill
-  const waybill = await placeOrder(req);
+  const { waybill, warnings } = await placeOrder(req);
 
-  // Step 2: Wait briefly then retrieve the label (guide recommends 3-5 seconds)
   const labelPdfBase64 = await fetchLabel(waybill, apiBase);
 
   const trackingUrl = `https://apc.hypaship.com/tracking?waybill=${waybill}`;
@@ -224,6 +302,7 @@ export async function createShipment(req: ApcShipmentRequest): Promise<ApcShipme
     consignmentNumber: waybill,
     labelPdfBase64,
     trackingUrl,
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
 
