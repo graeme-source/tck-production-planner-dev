@@ -62,16 +62,30 @@ interface PlaceOrderResult {
   warnings: string[];
 }
 
+interface NormalisedAddress {
+  address1: string;
+  address2?: string;
+  city: string;
+  warnings: string[];
+}
+
 function normaliseAddress(
   address1: string,
   address2: string | undefined,
   city: string,
-): { address1: string; address2?: string; city: string } {
+): NormalisedAddress {
   const MAX = 35;
+  const warnings: string[] = [];
   const originalA1 = (address1 ?? "").replace(/\s+/g, " ").trim();
   let a1 = originalA1;
   let a2 = (address2 ?? "").replace(/\s+/g, " ").trim();
-  const c = (city ?? "").replace(/\s+/g, " ").trim().slice(0, MAX);
+  const rawCity = (city ?? "").replace(/\s+/g, " ").trim();
+
+  let c = rawCity;
+  if (c.length > MAX) {
+    c = c.slice(0, MAX);
+    warnings.push(`City truncated from "${rawCity}" to "${c}"`);
+  }
 
   if (c && a1.toLowerCase().endsWith(c.toLowerCase())) {
     const stripped = a1.slice(0, a1.length - c.length).replace(/[,\s]+$/, "").trim();
@@ -95,18 +109,30 @@ function normaliseAddress(
     }
   }
 
-  if (a2 && a2.length > MAX) {
-    a2 = a2.slice(0, MAX);
-  }
-
   if (!a1) {
     a1 = originalA1.slice(0, MAX);
+    if (originalA1.length > MAX) {
+      warnings.push(`Address line 1 truncated from "${originalA1}" to "${a1}"`);
+    }
+  }
+
+  if (a1.length > MAX) {
+    const full = a1;
+    a1 = a1.slice(0, MAX);
+    warnings.push(`Address line 1 truncated from "${full}" to "${a1}"`);
+  }
+
+  if (a2 && a2.length > MAX) {
+    const full = a2;
+    a2 = a2.slice(0, MAX);
+    warnings.push(`Address line 2 truncated from "${full}" to "${a2}"`);
   }
 
   return {
-    address1: a1.slice(0, MAX),
-    ...(a2 ? { address2: a2.slice(0, MAX) } : {}),
+    address1: a1,
+    ...(a2 ? { address2: a2 } : {}),
     city: c,
+    warnings,
   };
 }
 
@@ -221,7 +247,7 @@ async function placeOrder(req: ApcShipmentRequest): Promise<PlaceOrderResult> {
     throw new Error("APC returned no WayBill number in order response");
   }
 
-  const warnings: string[] = [];
+  const warnings: string[] = [...addr.warnings];
   const orderWarnings = json?.Orders?.Order?.Warnings;
   if (orderWarnings) {
     const warnList = Array.isArray(orderWarnings) ? orderWarnings : [orderWarnings];
