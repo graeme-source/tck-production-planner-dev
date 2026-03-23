@@ -1481,65 +1481,45 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
             </p>
           </div>
           <div className="px-4 pb-3 space-y-0.5">
-            {filling.fillingIngredients.map((fi, idx) => {
-              const key = `ing-${idx}`;
-              const checked = !!checkedIngredients[`${item.id}-${key}`];
-              return (
-                <label
-                  key={key}
-                  className={cn(
-                    "flex items-center gap-3 py-2 px-3 rounded-lg cursor-pointer transition-colors",
-                    checked ? "bg-emerald-50 dark:bg-emerald-900/20" : "hover:bg-muted/40"
-                  )}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => onToggleIngredient(key)}
-                    className="rounded border-border text-emerald-600 focus:ring-emerald-500/30 w-5 h-5"
-                  />
-                  <span className={cn("flex-1 text-base", checked && "line-through text-muted-foreground")}>
-                    {fi.name ?? `Ingredient #${fi.ingredientId}`}
+            {filling.fillingIngredients.map((fi, idx) => (
+              <div key={`ing-${idx}`} className="flex items-center gap-3 py-2 px-3 rounded-lg">
+                <span className="flex-1 text-base">
+                  {fi.name ?? `Ingredient #${fi.ingredientId}`}
+                </span>
+                <div className="flex flex-col items-end">
+                  <span className="text-base font-mono tabular-nums font-medium text-foreground">
+                    {formatMixQty(fi.qtyPerBatch * currentTinBatches, fi.unit)}
                   </span>
-                  <div className="flex flex-col items-end">
-                    <span className={cn("text-base font-mono tabular-nums font-medium", checked ? "text-muted-foreground" : "text-foreground")}>
-                      {formatMixQty(fi.qtyPerBatch * currentTinBatches, fi.unit)}
-                    </span>
-                    <span className="text-xs text-muted-foreground leading-none mt-0.5">per tin</span>
-                  </div>
-                </label>
-              );
-            })}
-            {filling.fillingSubRecipes.map((fs, idx) => {
-              const key = `sub-${idx}`;
-              const checked = !!checkedIngredients[`${item.id}-${key}`];
-              return (
-                <label
-                  key={key}
-                  className={cn(
-                    "flex items-center gap-3 py-2 px-3 rounded-lg cursor-pointer transition-colors",
-                    checked ? "bg-emerald-50 dark:bg-emerald-900/20" : "hover:bg-muted/40"
-                  )}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => onToggleIngredient(key)}
-                    className="rounded border-border text-emerald-600 focus:ring-emerald-500/30 w-5 h-5"
-                  />
-                  <span className={cn("flex-1 text-base", checked && "line-through text-muted-foreground")}>
-                    {fs.name ?? `Sub-recipe #${fs.subRecipeId}`}
+                  <span className="text-xs text-muted-foreground leading-none mt-0.5">per tin</span>
+                </div>
+              </div>
+            ))}
+            {filling.fillingSubRecipes.map((fs, idx) => (
+              <div key={`sub-${idx}`} className="flex items-center gap-3 py-2 px-3 rounded-lg">
+                <span className="flex-1 text-base">
+                  {fs.name ?? `Sub-recipe #${fs.subRecipeId}`}
+                </span>
+                <div className="flex flex-col items-end">
+                  <span className="text-base font-mono tabular-nums font-medium text-foreground">
+                    {formatMixQty(fs.qtyPerBatch * currentTinBatches, fs.unit)}
                   </span>
-                  <div className="flex flex-col items-end">
-                    <span className={cn("text-base font-mono tabular-nums font-medium", checked ? "text-muted-foreground" : "text-foreground")}>
-                      {formatMixQty(fs.qtyPerBatch * currentTinBatches, fs.unit)}
-                    </span>
-                    <span className="text-xs text-muted-foreground leading-none mt-0.5">per tin</span>
-                  </div>
-                </label>
-              );
-            })}
+                  <span className="text-xs text-muted-foreground leading-none mt-0.5">per tin</span>
+                </div>
+              </div>
+            ))}
           </div>
+
+          {!completing && !completeFailed && (
+            <div className="px-4 pb-3">
+              <button
+                onClick={onAutoComplete}
+                className="w-full py-2.5 rounded-lg bg-emerald-600 text-white font-semibold text-sm hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2"
+              >
+                <Check className="w-4 h-4" />
+                Complete Tin {tinsComplete + 1}
+              </button>
+            </div>
+          )}
 
           {completing && (
             <div className="px-4 pb-3">
