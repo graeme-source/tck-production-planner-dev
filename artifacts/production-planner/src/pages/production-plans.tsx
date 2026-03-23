@@ -18,8 +18,9 @@ import {
   BarChart2, CheckCircle2,
   Loader2, RefreshCw, Info, Package, ClipboardList, ExternalLink,
   Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef,
-  ArrowRight, GripVertical, AlertTriangle, AlertCircle,
+  ArrowRight, GripVertical, AlertTriangle, AlertCircle, BookmarkCheck,
 } from "lucide-react";
+import { toast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { format, addDays, parseISO, isWeekend, isToday } from "date-fns";
 import {
@@ -340,6 +341,44 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   const [addRecipeId, setAddRecipeId] = useState<string>("");
   const [dateWarning, setDateWarning] = useState<string | null>(null);
   const [totalBatchesOverride, setTotalBatchesOverride] = useState<number | null>(null);
+  const [savedOrder, setSavedOrder] = useState<number[]>([]);
+  const [savingOrder, setSavingOrder] = useState(false);
+  const [orderSaved, setOrderSaved] = useState(false);
+
+  // Fetch stored production order on open
+  useEffect(() => {
+    if (!open) return;
+    fetch("/api/app-settings/production_order_recipe_ids", { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.value) {
+          try { setSavedOrder(JSON.parse(d.value)); } catch { /* ignore malformed */ }
+        }
+      })
+      .catch(() => {});
+  }, [open]);
+
+  const handleSaveOrder = async () => {
+    setSavingOrder(true);
+    try {
+      const orderIds = items.map(it => it.recipeId);
+      const res = await fetch("/api/app-settings/production_order_recipe_ids", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: JSON.stringify(orderIds) }),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      setSavedOrder(orderIds);
+      setOrderSaved(true);
+      setTimeout(() => setOrderSaved(false), 2500);
+      toast({ title: "Default order saved", description: "New production plans will start in this recipe order." });
+    } catch {
+      toast({ title: "Failed to save order", variant: "destructive" });
+    } finally {
+      setSavingOrder(false);
+    }
+  };
 
   const { data: calcData, isLoading: loadingCalc, refetch: refetchCalc } = useQuery({
     queryKey: ["production-plan-calculate", planDate],
@@ -407,41 +446,51 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
     setTotalBatchesOverride(null);
     const capacity = calcData.totalDailyBatches;
     const alloc = allocateBatches(calcData.recipes, capacity);
-    setItems(
-      calcData.recipes.map((r: CalcRecipe, idx: number) => ({
-        id: `calc-${r.recipeId}`,
-        recipeId: r.recipeId,
-        recipeName: r.recipeName,
-        recipeColor: r.color ?? null,
-        included: alloc[idx].suggestedBatches > 0 || r.deficit > 0 || r.isCoreMenu,
-        suggestedBatches: alloc[idx].suggestedBatches,
-        batchesTarget: alloc[idx].suggestedBatches,
-        tinCount: r.tinCount,
-        maxBatchesPerTin: r.maxBatchesPerTin,
-        tinSize: r.tinSize,
-        salesPercent: r.salesPercent,
-        portionsPerBatch: r.portionsPerBatch,
-        packsPerBatch: r.packsPerBatch,
-        sopUrl: r.sopUrl,
-        isFromDpt: true,
-        fridgeStock: r.fridgeStock,
-        prevProduction: r.prevProduction,
-        estimatedFactoryNumber: r.estimatedFactoryNumber,
-        dispatch1Qty: r.dispatch1Qty,
-        dispatch2Qty: r.dispatch2Qty,
-        dispatch3Qty: r.dispatch3Qty,
-        totalDispatchQty: r.totalDispatchQty,
-        deficit: r.deficit,
-        deficitBatches: r.deficitBatches,
-        surplusBatches: alloc[idx].surplusBatches,
-        stockWarning: r.stockWarning,
-        special1Count: r.special1Count ?? 0,
-        special2Count: r.special2Count ?? 0,
-        special3Count: r.special3Count ?? 0,
-        totalSpecialCount: r.totalSpecialCount ?? 0,
-      }))
-    );
-  }, [calcData, allocateBatches]);
+    const newItems: PlanItem[] = calcData.recipes.map((r: CalcRecipe, idx: number) => ({
+      id: `calc-${r.recipeId}`,
+      recipeId: r.recipeId,
+      recipeName: r.recipeName,
+      recipeColor: r.color ?? null,
+      included: alloc[idx].suggestedBatches > 0 || r.deficit > 0 || r.isCoreMenu,
+      suggestedBatches: alloc[idx].suggestedBatches,
+      batchesTarget: alloc[idx].suggestedBatches,
+      tinCount: r.tinCount,
+      maxBatchesPerTin: r.maxBatchesPerTin,
+      tinSize: r.tinSize,
+      salesPercent: r.salesPercent,
+      portionsPerBatch: r.portionsPerBatch,
+      packsPerBatch: r.packsPerBatch,
+      sopUrl: r.sopUrl,
+      isFromDpt: true,
+      fridgeStock: r.fridgeStock,
+      prevProduction: r.prevProduction,
+      estimatedFactoryNumber: r.estimatedFactoryNumber,
+      dispatch1Qty: r.dispatch1Qty,
+      dispatch2Qty: r.dispatch2Qty,
+      dispatch3Qty: r.dispatch3Qty,
+      totalDispatchQty: r.totalDispatchQty,
+      deficit: r.deficit,
+      deficitBatches: r.deficitBatches,
+      surplusBatches: alloc[idx].surplusBatches,
+      stockWarning: r.stockWarning,
+      special1Count: r.special1Count ?? 0,
+      special2Count: r.special2Count ?? 0,
+      special3Count: r.special3Count ?? 0,
+      totalSpecialCount: r.totalSpecialCount ?? 0,
+    }));
+    // Apply saved default order: known recipes sorted first, unknowns appended at the end
+    if (savedOrder.length > 0) {
+      newItems.sort((a, b) => {
+        const ai = savedOrder.indexOf(a.recipeId);
+        const bi = savedOrder.indexOf(b.recipeId);
+        if (ai === -1 && bi === -1) return 0;
+        if (ai === -1) return 1;
+        if (bi === -1) return -1;
+        return ai - bi;
+      });
+    }
+    setItems(newItems);
+  }, [calcData, allocateBatches, savedOrder]);
 
   const handleTotalBatchesChange = useCallback((newTotal: number) => {
     setTotalBatchesOverride(newTotal);
@@ -674,13 +723,33 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                 ({includedCount} of {items.length} included · drag to reorder)
               </span>
             </h3>
-            <button
-              onClick={() => refetchCalc()}
-              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
-            >
-              <RefreshCw className="w-3 h-3" />
-              Recalculate
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleSaveOrder}
+                disabled={savingOrder || items.length === 0}
+                className={cn(
+                  "text-xs flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-colors disabled:opacity-50",
+                  orderSaved
+                    ? "bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-700 dark:text-emerald-400"
+                    : "border-primary/40 text-primary hover:bg-primary/5"
+                )}
+                title="Save the current recipe order as the default for new production plans"
+              >
+                {savingOrder ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <BookmarkCheck className="w-3 h-3" />
+                )}
+                {orderSaved ? "Order saved!" : "Save as default order"}
+              </button>
+              <button
+                onClick={() => refetchCalc()}
+                className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
+              >
+                <RefreshCw className="w-3 h-3" />
+                Recalculate
+              </button>
+            </div>
           </div>
 
           {loadingCalc ? (
