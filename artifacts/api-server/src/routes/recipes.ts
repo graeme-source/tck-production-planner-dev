@@ -137,7 +137,7 @@ function validateMarinades(marinades: MarinadeInput[], recipeIngredientIds: numb
 }
 
 router.post("/", validate(CreateRecipeBody), async (req, res) => {
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, color, ingredients, subRecipes, marinades } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, ingredients, subRecipes, marinades } = req.body;
 
   if (marinades?.length) {
     const recipeIngIds = (ingredients ?? []).map(i => i.ingredientId);
@@ -150,7 +150,7 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
     if (nonMeat) { res.status(400).json({ error: `Ingredient ${nonMeat.id} is not in the raw_meat category` }); return; }
   }
 
-  const [recipe] = await db.insert(recipesTable).values({
+  const insertValues = {
     name, description,
     servings: String(servings),
     servingUnit, category, notes,
@@ -167,8 +167,16 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
     baseType: baseType ?? null,
     baseWeightGrams: baseWeightGrams != null ? String(baseWeightGrams) : null,
     isCoreMenu: isCoreMenu ?? false,
+    isCurrentSpecial: isCurrentSpecial ?? false,
     color: color ?? null,
-  }).returning();
+  };
+
+  const [recipe] = await db.transaction(async (tx) => {
+    if (isCurrentSpecial === true) {
+      await tx.update(recipesTable).set({ isCurrentSpecial: false });
+    }
+    return tx.insert(recipesTable).values(insertValues).returning();
+  });
 
   if (ingredients?.length) {
     await db.insert(recipeIngredientsTable).values(
@@ -384,15 +392,15 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
   };
 
   const [updated] = await db.transaction(async (tx) => {
-    const [row] = await tx.update(recipesTable)
-      .set(recipeFields)
-      .where(eq(recipesTable.id, id))
-      .returning();
-    if (row && isCurrentSpecial === true) {
+    if (isCurrentSpecial === true) {
       await tx.update(recipesTable)
         .set({ isCurrentSpecial: false })
         .where(ne(recipesTable.id, id));
     }
+    const [row] = await tx.update(recipesTable)
+      .set(recipeFields)
+      .where(eq(recipesTable.id, id))
+      .returning();
     return [row];
   });
 

@@ -69,6 +69,9 @@ async function runStartupMigrations() {
       )
     `);
     await db.execute(sql`
+      ALTER TABLE recipes ADD COLUMN IF NOT EXISTS is_current_special BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+    await db.execute(sql`
       CREATE UNIQUE INDEX IF NOT EXISTS recipes_one_current_special
       ON recipes (is_current_special)
       WHERE is_current_special = TRUE
