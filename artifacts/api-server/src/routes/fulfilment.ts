@@ -2,7 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { db, skuLocationsTable, appSettingsTable, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
-import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, type ShopifyOrder } from "../services/shopify";
+import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, findOrderByName, addTagToOrder, type ShopifyOrder } from "../services/shopify";
 import { createShipment, isConfigured as isApcConfigured, APC_TRAINING_BASE } from "../services/apc";
 
 const router = Router();
@@ -228,6 +228,41 @@ router.post("/shipments", requireManagerOrAdmin, async (req: Request, res: Respo
     const status = err.message?.includes("not configured") ? 503 :
       err.message?.includes("not found") ? 404 : 502;
     res.status(status).json({ error: err.message });
+  }
+});
+
+// POST /tag-dispatch — find an order by name and add the "dispatch" tag.
+// Used by the Dispatch Tagging page to gate which orders appear in the packing queue.
+router.post("/tag-dispatch", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const { orderName } = req.body as { orderName?: string };
+  if (!orderName || typeof orderName !== "string" || !orderName.trim()) {
+    res.status(400).json({ error: "orderName is required" });
+    return;
+  }
+  try {
+    const order = await findOrderByName(orderName.trim());
+    if (!order) {
+      res.status(404).json({ error: `Order ${orderName.trim()} not found` });
+      return;
+    }
+    const alreadyTagged = order.tags.split(",").map(t => t.trim()).includes("dispatch");
+    if (!alreadyTagged) {
+      await addTagToOrder(order.id, order.tags, "dispatch");
+    }
+    res.json({
+      ok: true,
+      alreadyTagged,
+      order: {
+        id: order.id,
+        name: order.name,
+        customer: order.customer,
+        fulfillment_status: order.fulfillment_status,
+        tags: alreadyTagged ? order.tags : [order.tags, "dispatch"].filter(Boolean).join(", "),
+      },
+    });
+  } catch (err: any) {
+    console.error("[Fulfilment] tag-dispatch error:", err.message);
+    res.status(502).json({ error: err.message });
   }
 });
 

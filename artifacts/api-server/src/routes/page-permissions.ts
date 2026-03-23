@@ -15,6 +15,7 @@ const KNOWN_PAGES = [
   { pageKey: "/dispatches", label: "Dispatches" },
   { pageKey: "/fulfilment", label: "Order Packing Live" },
   { pageKey: "/locations", label: "Bin Locations" },
+  { pageKey: "/dispatch-tag", label: "Dispatch Tagging" },
   { pageKey: "/reports", label: "Reports" },
 ];
 
@@ -23,6 +24,7 @@ const DEFAULT_PERMISSIONS: Record<string, string> = {
   "/reports": "manager",
   "/fulfilment": "manager",
   "/locations": "admin",
+  "/dispatch-tag": "manager",
 };
 
 // GET /api/page-permissions

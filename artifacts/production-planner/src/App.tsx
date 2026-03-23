@@ -15,6 +15,7 @@ import StationPage from "@/pages/station";
 import Stock from "@/pages/stock";
 import Sales from "@/pages/sales";
 import Dispatches from "@/pages/dispatches";
+import DispatchTag from "@/pages/dispatch-tag";
 import Suppliers from "@/pages/suppliers";
 import Settings from "@/pages/settings";
 import Reports from "@/pages/reports";
@@ -58,6 +59,7 @@ function Router() {
               <Route path="/stock" component={Stock} />
               <Route path="/sales">{() => <ProtectedRoute component={Sales} pageKey="/sales" />}</Route>
               <Route path="/dispatches" component={Dispatches} />
+              <Route path="/dispatch-tag">{() => <ProtectedRoute component={DispatchTag} pageKey="/dispatch-tag" />}</Route>
               <Route path="/suppliers" component={Suppliers} />
               <Route path="/fulfilment">{() => <ProtectedRoute component={Fulfilment} pageKey="/fulfilment" />}</Route>
               <Route path="/locations">{() => <ProtectedRoute component={Locations} pageKey="/locations" />}</Route>

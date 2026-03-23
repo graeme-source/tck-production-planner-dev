@@ -7,7 +7,7 @@ import { useLocation } from "wouter";
 import {
   Package, Scan, CheckCircle2, AlertCircle, ChevronRight, Printer,
   RefreshCw, MapPin, SkipForward, RotateCcw, XCircle, Loader2,
-  ArrowLeft, Truck,
+  ArrowLeft, Truck, Tag,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -382,8 +382,14 @@ export default function Fulfilment() {
     staleTime: 30_000,
   });
 
-  const unfulfilledOrders = orders?.filter(o => o.fulfillment_status !== "fulfilled") ?? [];
+  const allUnfulfilledOrders = orders?.filter(o => o.fulfillment_status !== "fulfilled") ?? [];
   const fulfilledOrders = orders?.filter(o => o.fulfillment_status === "fulfilled") ?? [];
+
+  // Only orders tagged "dispatch" may be packed. Others are awaiting approval.
+  const unfulfilledOrders = allUnfulfilledOrders.filter(o =>
+    o.tags.split(",").map(t => t.trim()).includes("dispatch")
+  );
+  const awaitingDispatchCount = allUnfulfilledOrders.length - unfulfilledOrders.length;
 
   function getOrderCategory(order: ShopifyOrder): "small box" | "large box" | "wholesale" | "other" {
     const tags = order.tags.split(",").map(t => t.trim().toLowerCase());
@@ -1259,10 +1265,23 @@ export default function Fulfilment() {
                 Orders tagged <span className="text-primary">{queryTag}</span>
               </h3>
               <p className="text-sm text-muted-foreground">
-                {unfulfilledOrders.length} unfulfilled &middot; {fulfilledOrders.length} fulfilled
+                {unfulfilledOrders.length} ready to pack &middot; {fulfilledOrders.length} fulfilled
+                {awaitingDispatchCount > 0 && (
+                  <span className="text-amber-600 dark:text-amber-400 font-medium"> &middot; {awaitingDispatchCount} awaiting dispatch tag</span>
+                )}
               </p>
             </div>
           </div>
+
+          {awaitingDispatchCount > 0 && (
+            <div className="flex items-start gap-3 p-4 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20">
+              <Tag className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div className="text-sm">
+                <span className="font-semibold text-amber-900 dark:text-amber-200">{awaitingDispatchCount} {awaitingDispatchCount === 1 ? "order" : "orders"} not yet approved for packing.</span>
+                {" "}Use <strong>Dispatch Tagging</strong> to tag them with the dispatch tag before they can be packed.
+              </div>
+            </div>
+          )}
 
           <div className="flex gap-2 flex-wrap">
             {([

@@ -17,6 +17,7 @@ import {
   Settings,
   LogOut,
   MapPin,
+  Tag,
   Menu,
   X,
 } from "lucide-react";
@@ -78,26 +79,48 @@ function NavLinks({
                 <span className="relative z-10">{item.name}</span>
               </Link>
               {isDispatches && user?.role === "admin" && (
-                <Link
-                  href="/locations"
-                  onClick={onNavigate}
-                  className={`
-                    flex items-center gap-3 pl-9 pr-4 py-2 rounded-xl transition-all duration-200 group relative text-sm
-                    ${location === "/locations"
-                      ? "text-primary font-semibold"
-                      : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}
-                  `}
-                >
-                  {location === "/locations" && (
-                    <motion.div
-                      layoutId="activeNav"
-                      className="absolute inset-0 bg-primary/10 rounded-xl"
-                      transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                    />
-                  )}
-                  <MapPin className={`w-4 h-4 relative z-10 ${location === "/locations" ? "text-primary" : "text-muted-foreground group-hover:text-primary"}`} />
-                  <span className="relative z-10">Bin Locations</span>
-                </Link>
+                <>
+                  <Link
+                    href="/locations"
+                    onClick={onNavigate}
+                    className={`
+                      flex items-center gap-3 pl-9 pr-4 py-2 rounded-xl transition-all duration-200 group relative text-sm
+                      ${location === "/locations"
+                        ? "text-primary font-semibold"
+                        : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}
+                    `}
+                  >
+                    {location === "/locations" && (
+                      <motion.div
+                        layoutId="activeNav"
+                        className="absolute inset-0 bg-primary/10 rounded-xl"
+                        transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                      />
+                    )}
+                    <MapPin className={`w-4 h-4 relative z-10 ${location === "/locations" ? "text-primary" : "text-muted-foreground group-hover:text-primary"}`} />
+                    <span className="relative z-10">Bin Locations</span>
+                  </Link>
+                  <Link
+                    href="/dispatch-tag"
+                    onClick={onNavigate}
+                    className={`
+                      flex items-center gap-3 pl-9 pr-4 py-2 rounded-xl transition-all duration-200 group relative text-sm
+                      ${location === "/dispatch-tag"
+                        ? "text-primary font-semibold"
+                        : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}
+                    `}
+                  >
+                    {location === "/dispatch-tag" && (
+                      <motion.div
+                        layoutId="activeNav"
+                        className="absolute inset-0 bg-primary/10 rounded-xl"
+                        transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                      />
+                    )}
+                    <Tag className={`w-4 h-4 relative z-10 ${location === "/dispatch-tag" ? "text-primary" : "text-muted-foreground group-hover:text-primary"}`} />
+                    <span className="relative z-10">Dispatch Tagging</span>
+                  </Link>
+                </>
               )}
             </React.Fragment>
           );

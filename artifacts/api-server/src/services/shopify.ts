@@ -37,6 +37,23 @@ async function getAccessToken(): Promise<string> {
   return cachedToken;
 }
 
+async function shopifyPut(path: string, body: unknown) {
+  const token = await getAccessToken();
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "PUT",
+    headers: {
+      "X-Shopify-Access-Token": token,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Shopify API error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
 async function shopifyPost(path: string, body: unknown) {
   const token = await getAccessToken();
   const res = await fetch(`${API_BASE}${path}`, {
@@ -413,4 +430,23 @@ export async function getRecentUnfulfilledOrders(daysBack = 30): Promise<Shopify
   } while (pageInfo);
 
   return allOrders.filter(o => o.fulfillment_status !== "fulfilled");
+}
+
+// Find a single order by its Shopify order name (e.g. "#1234" or "1234").
+export async function findOrderByName(name: string): Promise<ShopifyOrder | null> {
+  const searchName = name.startsWith("#") ? name : `#${name}`;
+  const data = (await shopifyFetch("/orders.json", {
+    name: searchName,
+    status: "any",
+    fields: "id,name,tags,created_at,financial_status,fulfillment_status,total_price,customer,shipping_address,line_items,note",
+  })) as { orders: ShopifyOrder[] };
+  return data.orders[0] ?? null;
+}
+
+// Add a tag to a Shopify order. No-op if the tag is already present.
+export async function addTagToOrder(orderId: number, currentTags: string, newTag: string): Promise<void> {
+  const existing = currentTags.split(",").map(t => t.trim()).filter(Boolean);
+  if (existing.includes(newTag)) return;
+  const updated = [...existing, newTag].join(", ");
+  await shopifyPut(`/orders/${orderId}.json`, { order: { id: orderId, tags: updated } });
 }
