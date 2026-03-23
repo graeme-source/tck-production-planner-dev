@@ -1501,9 +1501,12 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
                   <span className={cn("flex-1 text-base", checked && "line-through text-muted-foreground")}>
                     {fi.name ?? `Ingredient #${fi.ingredientId}`}
                   </span>
-                  <span className={cn("text-base font-mono tabular-nums font-medium", checked ? "text-muted-foreground" : "text-foreground")}>
-                    {formatMixQty(fi.qtyPerBatch * currentTinBatches, fi.unit)}
-                  </span>
+                  <div className="flex flex-col items-end">
+                    <span className={cn("text-base font-mono tabular-nums font-medium", checked ? "text-muted-foreground" : "text-foreground")}>
+                      {formatMixQty(fi.qtyPerBatch * currentTinBatches, fi.unit)}
+                    </span>
+                    <span className="text-xs text-muted-foreground leading-none mt-0.5">per tin</span>
+                  </div>
                 </label>
               );
             })}
@@ -1527,9 +1530,12 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
                   <span className={cn("flex-1 text-base", checked && "line-through text-muted-foreground")}>
                     {fs.name ?? `Sub-recipe #${fs.subRecipeId}`}
                   </span>
-                  <span className={cn("text-base font-mono tabular-nums font-medium", checked ? "text-muted-foreground" : "text-foreground")}>
-                    {formatMixQty(fs.qtyPerBatch * currentTinBatches, fs.unit)}
-                  </span>
+                  <div className="flex flex-col items-end">
+                    <span className={cn("text-base font-mono tabular-nums font-medium", checked ? "text-muted-foreground" : "text-foreground")}>
+                      {formatMixQty(fs.qtyPerBatch * currentTinBatches, fs.unit)}
+                    </span>
+                    <span className="text-xs text-muted-foreground leading-none mt-0.5">per tin</span>
+                  </div>
                 </label>
               );
             })}
