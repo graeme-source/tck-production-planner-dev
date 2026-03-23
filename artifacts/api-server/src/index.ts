@@ -49,6 +49,12 @@ async function runStartupMigrations() {
     await db.execute(sql`
       UPDATE dispatch_orders SET fulfilled_at = created_at WHERE status = 'fulfilled' AND fulfilled_at IS NULL
     `);
+    // Seed apc_test_mode default if not already present
+    await db.execute(sql`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES ('apc_test_mode', 'false', NOW())
+      ON CONFLICT (key) DO NOTHING
+    `);
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

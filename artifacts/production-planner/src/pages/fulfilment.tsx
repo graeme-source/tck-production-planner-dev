@@ -151,6 +151,45 @@ function TestModeBanner() {
   );
 }
 
+function PickConfirmDialog({ order, onConfirm, onCancel }: { order: ShopifyOrder; onConfirm: () => void; onCancel: () => void }) {
+  const customerName = order.shipping_address?.name ?? `${order.customer?.first_name} ${order.customer?.last_name}`;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+        <div className="flex items-start gap-3">
+          <AlertCircle className="w-6 h-6 text-amber-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <h3 className="font-bold text-lg">Create real APC consignment?</h3>
+            <p className="text-sm text-muted-foreground mt-1">
+              This will create a real APC consignment for <strong>{customerName}</strong>. A label will be generated and a collection booked. <strong>This cannot be undone.</strong>
+            </p>
+          </div>
+        </div>
+        <div className="text-sm text-muted-foreground bg-secondary/30 rounded-xl px-4 py-3">
+          <span className="font-mono font-semibold text-foreground">{order.name}</span>
+          {order.shipping_address && (
+            <span> — {order.shipping_address.address1}, {order.shipping_address.city}</span>
+          )}
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={onCancel}
+            className="flex-1 py-2.5 border border-border rounded-xl text-sm font-medium hover:bg-secondary/50 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:bg-primary/90 transition-colors"
+          >
+            Start Packing
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const ZONE_STYLES: Record<string, { bg: string; border: string; text: string; badge: string }> = {
   fridge: {
     bg: "bg-blue-50 dark:bg-blue-950/30",
@@ -438,10 +477,14 @@ export default function Fulfilment() {
         );
       }
 
-      // Pre-queue AND background-print the next unfulfilled order's label
-      const currentPos = unfulfilledOrders.findIndex(o => o.id === order.id);
-      const nextOrder = unfulfilledOrders[currentPos + 1];
-      if (nextOrder) preQueueNextOrder(nextOrder.id);
+      // Pre-queue AND background-print the next unfulfilled order's label.
+      // Only in test mode — in live mode we must not create a real APC consignment
+      // without the operator explicitly confirming the next order first.
+      if (configStatus?.testMode) {
+        const currentPos = unfulfilledOrders.findIndex(o => o.id === order.id);
+        const nextOrder = unfulfilledOrders[currentPos + 1];
+        if (nextOrder) preQueueNextOrder(nextOrder.id);
+      }
     } catch (err: any) {
       setShipmentError(err.message ?? "Failed to create APC shipment");
       setPrintStatus("failed");
@@ -547,12 +590,13 @@ export default function Fulfilment() {
   function advanceToNext() {
     // Find next unfulfilled order that isn't the one just completed.
     // After refetch, the completed order is removed from the list, so we
-    // pick the first remaining order. Pre-queued shipments are keyed by
-    // order ID, so they still resolve correctly regardless of list position.
+    // pick the first remaining order.
     const remaining = unfulfilledOrders.filter(o => o.id !== activeOrder?.id);
     const nextOrder = remaining[0];
     if (nextOrder) {
-      startPicking(nextOrder);
+      // Route through handleOrderSelect so that live-mode confirmation dialog
+      // is shown before any real APC consignment is created.
+      handleOrderSelect(nextOrder);
     } else {
       setView("list");
       setActiveOrder(null);
@@ -745,6 +789,13 @@ export default function Fulfilment() {
     const isTestMode = configStatus?.testMode ?? false;
     return (
       <div className="space-y-6">
+        {pendingPickOrder && (
+          <PickConfirmDialog
+            order={pendingPickOrder}
+            onConfirm={() => { const o = pendingPickOrder; setPendingPickOrder(null); startPicking(o); }}
+            onCancel={() => setPendingPickOrder(null)}
+          />
+        )}
         {isTestMode && <TestModeBanner />}
         <PageHeader title="Order Packing Live" description="APC order scanning and label printing." />
         <div className="glass-panel p-8 rounded-2xl border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/20 text-center">
@@ -790,6 +841,13 @@ export default function Fulfilment() {
     const isTestMode = configStatus?.testMode ?? false;
     return (
       <div className="space-y-4">
+        {pendingPickOrder && (
+          <PickConfirmDialog
+            order={pendingPickOrder}
+            onConfirm={() => { const o = pendingPickOrder; setPendingPickOrder(null); startPicking(o); }}
+            onCancel={() => setPendingPickOrder(null)}
+          />
+        )}
         {isTestMode && <TestModeBanner />}
         <div className="flex items-center gap-3">
           <button onClick={goBack} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
@@ -1144,41 +1202,11 @@ export default function Fulfilment() {
 
       {/* Live-mode confirmation dialog — appears when operator selects an order */}
       {pendingPickOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
-            <div className="flex items-start gap-3">
-              <AlertCircle className="w-6 h-6 text-amber-500 flex-shrink-0 mt-0.5" />
-              <div>
-                <h3 className="font-bold text-lg">Create real APC consignment?</h3>
-                <p className="text-sm text-muted-foreground mt-1">
-                  This will create a real APC consignment for{" "}
-                  <strong>{pendingPickOrder.shipping_address?.name ?? `${pendingPickOrder.customer?.first_name} ${pendingPickOrder.customer?.last_name}`}</strong>.
-                  A label will be generated and a collection booked. <strong>This cannot be undone.</strong>
-                </p>
-              </div>
-            </div>
-            <div className="text-sm text-muted-foreground bg-secondary/30 rounded-xl px-4 py-3">
-              <span className="font-mono font-semibold text-foreground">{pendingPickOrder.name}</span>
-              {pendingPickOrder.shipping_address && (
-                <span> — {pendingPickOrder.shipping_address.address1}, {pendingPickOrder.shipping_address.city}</span>
-              )}
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setPendingPickOrder(null)}
-                className="flex-1 py-2.5 border border-border rounded-xl text-sm font-medium hover:bg-secondary/50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => { const o = pendingPickOrder; setPendingPickOrder(null); startPicking(o); }}
-                className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:bg-primary/90 transition-colors"
-              >
-                Start Packing
-              </button>
-            </div>
-          </div>
-        </div>
+        <PickConfirmDialog
+          order={pendingPickOrder}
+          onConfirm={() => { const o = pendingPickOrder; setPendingPickOrder(null); startPicking(o); }}
+          onCancel={() => setPendingPickOrder(null)}
+        />
       )}
 
       <div className="flex items-center gap-3">
