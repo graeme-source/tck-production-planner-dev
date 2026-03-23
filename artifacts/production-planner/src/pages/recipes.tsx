@@ -26,6 +26,7 @@ const schema = z.object({
   maxBatchesPerTin: z.preprocess(v => (v === "" || v == null ? null : Number(v)), z.number().int().positive().nullable().optional()),
   sopUrl: z.string().optional(),
   isCoreMenu: z.boolean().optional(),
+  isCurrentSpecial: z.boolean().optional(),
   color: z.string().optional(),
   ingredients: z.array(z.object({
     ingredientId: z.coerce.number().min(1, "Select ingredient"),
@@ -315,6 +316,11 @@ function RecipeForm({
               <span className="text-xs text-muted-foreground">(always shows in Production Fridge stock &amp; calculator)</span>
             </div>
             <div className="flex items-center gap-2">
+              <input type="checkbox" id="isCurrentSpecial" {...register("isCurrentSpecial")} className="rounded border-border" />
+              <label htmlFor="isCurrentSpecial" className="text-sm font-medium">Calzone Club Special</label>
+              <span className="text-xs text-muted-foreground">("Calzone Club Special" orders on Shopify count towards this recipe)</span>
+            </div>
+            <div className="flex items-center gap-2">
               <label htmlFor="recipeColor" className="text-sm font-medium">Colour</label>
               <input type="color" id="recipeColor" {...register("color")} className="w-8 h-8 rounded border border-border cursor-pointer p-0.5" />
               {watch("color") && (
@@ -556,11 +562,12 @@ function EditRecipeDialog({
         maxBatchesPerTin: detail.maxBatchesPerTin != null ? Number(detail.maxBatchesPerTin) : null,
         sopUrl: detail.sopUrl ?? "",
         isCoreMenu: detail.isCoreMenu ?? false,
+        isCurrentSpecial: detail.isCurrentSpecial ?? false,
         color: (detail as any).color ?? "",
         ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false })),
         subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false })),
       }
-    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, color: "", ingredients: [], subRecipes: [] };
+    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", ingredients: [], subRecipes: [] };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -916,7 +923,7 @@ export default function Recipes() {
   const addDefaults: FormValues = {
     name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "",
     packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined,
-    tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, color: "", ingredients: [], subRecipes: [],
+    tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", ingredients: [], subRecipes: [],
   };
 
   return (

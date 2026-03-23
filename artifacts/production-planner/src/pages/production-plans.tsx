@@ -129,6 +129,10 @@ interface PlanItem {
   deficitBatches: number;
   surplusBatches: number;
   stockWarning: "ok" | "low" | "short";
+  special1Count: number;
+  special2Count: number;
+  special3Count: number;
+  totalSpecialCount: number;
 }
 
 function computeNextFactory(item: PlanItem): number {
@@ -214,7 +218,10 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
           className="w-16 px-1.5 py-1 bg-background border border-border rounded-lg text-xs text-center focus-ring disabled:opacity-40 tabular-nums"
         />
       </td>
-      <td className="py-2 px-2 text-center tabular-nums text-xs text-red-500">{item.dispatch1Qty || "—"}</td>
+      <td className="py-2 px-2 text-center tabular-nums text-xs text-red-500">
+        <div>{item.dispatch1Qty || "—"}</div>
+        {item.special1Count > 0 && <div className="text-[9px] text-muted-foreground leading-tight">incl. {item.special1Count} club special</div>}
+      </td>
       <td className="py-2 px-2 text-center tabular-nums text-xs text-green-600 dark:text-green-400">{item.prevProduction ? `+${item.prevProduction}` : "—"}</td>
       <td className="py-2 px-2 text-center tabular-nums text-sm font-medium">
         <span className={cn(
@@ -223,8 +230,14 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
           {item.estimatedFactoryNumber}
         </span>
       </td>
-      <td className="py-2 px-2 text-center tabular-nums text-xs text-red-500">{item.dispatch2Qty || "—"}</td>
-      <td className="py-2 px-2 text-center tabular-nums text-xs text-red-500">{item.dispatch3Qty || "—"}</td>
+      <td className="py-2 px-2 text-center tabular-nums text-xs text-red-500">
+        <div>{item.dispatch2Qty || "—"}</div>
+        {item.special2Count > 0 && <div className="text-[9px] text-muted-foreground leading-tight">incl. {item.special2Count} club special</div>}
+      </td>
+      <td className="py-2 px-2 text-center tabular-nums text-xs text-red-500">
+        <div>{item.dispatch3Qty || "—"}</div>
+        {item.special3Count > 0 && <div className="text-[9px] text-muted-foreground leading-tight">incl. {item.special3Count} club special</div>}
+      </td>
       <td className="py-2 px-2 text-center tabular-nums text-xs">
         {item.deficit > 0 ? <span className="text-red-600 dark:text-red-400 font-semibold">-{item.deficit}</span> : "0"}
       </td>
@@ -290,6 +303,10 @@ interface CalcRecipe {
   nextFactoryNumber: number;
   totalDailyBatches: number;
   totalPacksSold: number;
+  special1Count: number;
+  special2Count: number;
+  special3Count: number;
+  totalSpecialCount: number;
 }
 
 interface CalcResponse {
@@ -418,6 +435,10 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
         deficitBatches: r.deficitBatches,
         surplusBatches: alloc[idx].surplusBatches,
         stockWarning: r.stockWarning,
+        special1Count: r.special1Count ?? 0,
+        special2Count: r.special2Count ?? 0,
+        special3Count: r.special3Count ?? 0,
+        totalSpecialCount: r.totalSpecialCount ?? 0,
       }))
     );
   }, [calcData, allocateBatches]);
@@ -547,6 +568,10 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
       deficitBatches: 0,
       surplusBatches: 0,
       stockWarning: "ok",
+      special1Count: 0,
+      special2Count: 0,
+      special3Count: 0,
+      totalSpecialCount: 0,
     };
     setItems(prev => [...prev, newItem]);
     setAddRecipeId("");
@@ -917,6 +942,10 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
       deficitBatches: 0,
       surplusBatches: 0,
       stockWarning: "ok" as const,
+      special1Count: 0,
+      special2Count: 0,
+      special3Count: 0,
+      totalSpecialCount: 0,
     }))
   );
 
@@ -1040,6 +1069,10 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
       deficitBatches: 0,
       surplusBatches: 0,
       stockWarning: "ok" as const,
+      special1Count: 0,
+      special2Count: 0,
+      special3Count: 0,
+      totalSpecialCount: 0,
     }]);
     setAddRecipeId("");
   };

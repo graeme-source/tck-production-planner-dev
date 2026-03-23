@@ -26,6 +26,7 @@ export const recipesTable = pgTable("recipes", {
   baseType: text("base_type"),
   baseWeightGrams: numeric("base_weight_grams", { precision: 10, scale: 2 }),
   isCoreMenu: boolean("is_core_menu").notNull().default(false),
+  isCurrentSpecial: boolean("is_current_special").notNull().default(false),
   color: text("color"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

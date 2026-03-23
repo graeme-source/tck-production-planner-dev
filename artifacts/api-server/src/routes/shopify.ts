@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { getOrdersByTag, getProducts, countProductsByTag } from "../services/shopify";
+import { db, recipesTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -44,18 +46,50 @@ router.get("/order-summary", async (req, res) => {
     return;
   }
   try {
-    const [counts, orders] = await Promise.all([
-      countProductsByTag(tag),
-      getOrdersByTag(tag),
+    const [[counts, orders], specialRows] = await Promise.all([
+      Promise.all([countProductsByTag(tag), getOrdersByTag(tag)]),
+      db.select({ id: recipesTable.id, name: recipesTable.name })
+        .from(recipesTable)
+        .where(eq(recipesTable.isCurrentSpecial, true))
+        .limit(1),
     ]);
+
+    const specialRecipe = specialRows[0] ?? null;
+    const SPECIAL_KEY = "calzone club special";
+
+    let products = counts;
+    if (specialRecipe) {
+      const specialEntry = counts.find(p => p.productTitle.toLowerCase().trim() === SPECIAL_KEY);
+      if (specialEntry) {
+        const specialCount = specialEntry.totalQuantity;
+        const existingIdx = products.findIndex(p =>
+          p.productTitle.toLowerCase().includes(specialRecipe.name.toLowerCase()) ||
+          specialRecipe.name.toLowerCase().includes(p.productTitle.toLowerCase())
+        );
+        if (existingIdx !== -1) {
+          products = products.map((p, i) => i === existingIdx
+            ? {
+                ...p,
+                totalQuantity: p.totalQuantity + specialCount,
+                orderCount: p.orderCount + specialEntry.orderCount,
+                specialCount,
+              }
+            : p
+          ).filter(p => p.productTitle.toLowerCase().trim() !== SPECIAL_KEY);
+        }
+      }
+    }
+
     res.json({
       tag,
       orderCount: orders.length,
-      products: counts,
+      products,
+      currentSpecialRecipeName: specialRecipe?.name ?? null,
     });
-  } catch (err: any) {
-    console.error("[Shopify] order-summary error:", err.message);
-    res.status(502).json({ error: err.message });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Shopify] order-summary error:", msg);
+    res.status(502).json({ error: msg });
   }
 });
 

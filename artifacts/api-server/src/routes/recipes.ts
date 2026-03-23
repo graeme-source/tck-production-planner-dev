@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { db, recipesTable, recipeIngredientsTable, recipeSubRecipesTable, recipeMeatMarinadesTable, ingredientsTable, subRecipesTable, subRecipeIngredientsTable } from "@workspace/db";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { CreateRecipeBody, UpdateRecipeBody } from "@workspace/api-zod";
 import { validate } from "../middleware/validate";
@@ -24,6 +24,7 @@ function mapRecipe(r: typeof recipesTable.$inferSelect) {
     baseType: r.baseType ?? null,
     baseWeightGrams: r.baseWeightGrams ? Number(r.baseWeightGrams) : null,
     isCoreMenu: r.isCoreMenu ?? false,
+    isCurrentSpecial: r.isCurrentSpecial ?? false,
     color: r.color ?? null,
     createdAt: r.createdAt.toISOString(),
   };
@@ -348,7 +349,7 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, color, ingredients, subRecipes, marinades } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, ingredients, subRecipes, marinades } = req.body;
 
   if (marinades?.length) {
     const recipeIngIds = (ingredients ?? []).map(i => i.ingredientId);
@@ -359,6 +360,12 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
       .from(ingredientsTable).where(inArray(ingredientsTable.id, meatIds));
     const nonMeat = meatRows.find(r => r.category !== "raw_meat");
     if (nonMeat) { res.status(400).json({ error: `Ingredient ${nonMeat.id} is not in the raw_meat category` }); return; }
+  }
+
+  if (isCurrentSpecial === true) {
+    await db.update(recipesTable)
+      .set({ isCurrentSpecial: false })
+      .where(ne(recipesTable.id, id));
   }
 
   const [updated] = await db.update(recipesTable)
@@ -379,6 +386,7 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
       baseType: baseType ?? null,
       baseWeightGrams: baseWeightGrams != null ? String(baseWeightGrams) : null,
       isCoreMenu: isCoreMenu ?? false,
+      isCurrentSpecial: isCurrentSpecial ?? false,
       color: color ?? null,
     })
     .where(eq(recipesTable.id, id))
@@ -428,6 +436,27 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
   const mapped = mapRecipe(updated);
   const rawCosts = await computeCosts([id]);
   res.json(enrichWithCosts(mapped, rawCosts[id] ?? 0));
+});
+
+router.patch("/:id/special", async (req, res) => {
+  const id = Number(req.params.id);
+  const { isCurrentSpecial } = req.body as { isCurrentSpecial: boolean };
+  if (typeof isCurrentSpecial !== "boolean") {
+    res.status(400).json({ error: "isCurrentSpecial must be a boolean" });
+    return;
+  }
+
+  if (isCurrentSpecial) {
+    await db.update(recipesTable).set({ isCurrentSpecial: false }).where(ne(recipesTable.id, id));
+  }
+
+  const [updated] = await db.update(recipesTable)
+    .set({ isCurrentSpecial })
+    .where(eq(recipesTable.id, id))
+    .returning();
+
+  if (!updated) { res.status(404).json({ error: "Not found" }); return; }
+  res.json({ id: updated.id, isCurrentSpecial: updated.isCurrentSpecial });
 });
 
 router.delete("/:id", async (req, res) => {

@@ -345,6 +345,36 @@ router.get("/calculate", async (req, res) => {
 
   const hasShopifyData = shopifyDatesLoaded.size > 0;
 
+  const CALZONE_CLUB_SPECIAL_KEY = "calzone club special";
+
+  const specialRecipeRows = await db
+    .select({ id: recipesTable.id, name: recipesTable.name })
+    .from(recipesTable)
+    .where(eq(recipesTable.isCurrentSpecial, true))
+    .limit(1);
+  const specialRecipe = specialRecipeRows[0] ?? null;
+
+  const specialCountPerDate: Record<string, number> = {};
+
+  if (specialRecipe && hasShopifyData) {
+    const specialQtyCombined = shopifySalesCombined[CALZONE_CLUB_SPECIAL_KEY] ?? 0;
+    if (specialQtyCombined > 0) {
+      const specialNorm = normalizeForMatch(specialRecipe.name);
+      shopifySalesCombined[specialNorm] = (shopifySalesCombined[specialNorm] ?? 0) + specialQtyCombined;
+    }
+
+    for (const date of deliveryDates) {
+      const salesForDate = shopifySalesPerDate[date];
+      if (!salesForDate) continue;
+      const specialQty = salesForDate[CALZONE_CLUB_SPECIAL_KEY] ?? 0;
+      if (specialQty > 0) {
+        const specialNorm = normalizeForMatch(specialRecipe.name);
+        salesForDate[specialNorm] = (salesForDate[specialNorm] ?? 0) + specialQty;
+        specialCountPerDate[date] = specialQty;
+      }
+    }
+  }
+
   const dptRows = await db
     .select({
       recipeId: dptSettingsTable.recipeId,
@@ -477,6 +507,12 @@ router.get("/calculate", async (req, res) => {
     if (stockAfterDispatches < 0) stockWarning = "short";
     else if (stockAfterDispatches <= 10) stockWarning = "low";
 
+    const isThisRecipeSpecial = specialRecipe !== null && specialRecipe.id === recipeId;
+    const special1Count = isThisRecipeSpecial ? (specialCountPerDate[deliveryDates[0]] ?? 0) : 0;
+    const special2Count = isThisRecipeSpecial ? (specialCountPerDate[deliveryDates[1]] ?? 0) : 0;
+    const special3Count = isThisRecipeSpecial ? (specialCountPerDate[deliveryDates[2]] ?? 0) : 0;
+    const totalSpecialCount = special1Count + special2Count + special3Count;
+
     return {
       recipeId,
       recipeName,
@@ -502,6 +538,10 @@ router.get("/calculate", async (req, res) => {
       stockWarning,
       salesSource: recipeSource,
       matchedProduct: shopifyMatch.matchedProduct,
+      special1Count,
+      special2Count,
+      special3Count,
+      totalSpecialCount,
     };
   });
 
