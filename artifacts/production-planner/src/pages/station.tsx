@@ -1120,7 +1120,7 @@ function MixingStation({ plan }: MixingStationProps) {
               : "border-border text-muted-foreground hover:border-rose-400/60 hover:text-foreground"
           )}
         >
-          The Cooking
+          Meat Cooking
         </button>
         <button
           onClick={() => setMixingTab("tins")}
