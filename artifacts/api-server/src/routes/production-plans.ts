@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, dptSettingsTable } from "@workspace/db";
-import { eq, and, desc, sql, gt, gte, lte, asc, inArray, sum as drizzleSum, ne, isNotNull } from "drizzle-orm";
+import { eq, and, desc, sql, gt, gte, lte, asc, inArray, sum as drizzleSum, ne, isNotNull, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
 import * as z from "zod";
@@ -2834,7 +2834,12 @@ router.get("/:id/main-prep", async (req, res) => {
       })
       .from(recipeIngredientsTable)
       .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
-      .where(eq(recipeIngredientsTable.recipeId, planItem.recipeId));
+      .where(and(
+        eq(recipeIngredientsTable.recipeId, planItem.recipeId),
+        // Exclude marinade rows — ingredients used purely as a marinade for another
+        // ingredient should not appear as standalone items in Main Prep.
+        isNull(recipeIngredientsTable.marinadeForIngredientId),
+      ));
 
     const tinCount = planItem.maxBatchesPerTin && batchesTarget > 0
       ? Math.ceil(batchesTarget / planItem.maxBatchesPerTin)
