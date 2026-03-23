@@ -688,25 +688,26 @@ export default function Fulfilment() {
             </div>
           </div>
 
-          {/* Consequence warning — shown in live mode */}
-          {!isTestMode && (
-            <div className="rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 p-4 text-sm space-y-1.5">
-              <p className="font-semibold text-amber-900 dark:text-amber-200 flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-                Confirming will:
-              </p>
-              <ul className="text-amber-800 dark:text-amber-300 space-y-1 pl-6 list-disc">
-                <li>Mark order <strong>{activeOrder.name}</strong> as fulfilled on Shopify</li>
-                <li>
-                  Send a dispatch notification email to{" "}
-                  {customerEmail
-                    ? <strong className="font-mono">{customerEmail}</strong>
-                    : <span className="italic text-amber-600">no email on file</span>
-                  }
-                </li>
-              </ul>
-            </div>
-          )}
+          {/* Consequence warning — always shown, because Shopify fulfillment and email are always real */}
+          <div className="rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 p-4 text-sm space-y-1.5">
+            <p className="font-semibold text-amber-900 dark:text-amber-200 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+              Confirming will:
+            </p>
+            <ul className="text-amber-800 dark:text-amber-300 space-y-1 pl-6 list-disc">
+              <li>Mark order <strong>{activeOrder.name}</strong> as fulfilled on Shopify</li>
+              <li>
+                Send a dispatch notification email to{" "}
+                {customerEmail
+                  ? <strong className="font-mono">{customerEmail}</strong>
+                  : <span className="italic text-amber-600">no email on file</span>
+                }
+              </li>
+              {isTestMode && (
+                <li className="text-amber-600 dark:text-amber-400 italic">APC consignment is test-only — not real</li>
+              )}
+            </ul>
+          </div>
 
           {completionError && (
             <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/10 rounded-xl px-4 py-3">
@@ -718,11 +719,7 @@ export default function Fulfilment() {
           <button
             onClick={handleComplete}
             disabled={completing}
-            className={`w-full py-4 rounded-xl font-bold text-xl transition-colors disabled:opacity-50 flex items-center justify-center gap-3 ${
-              isTestMode
-                ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                : "bg-red-600 text-white hover:bg-red-700"
-            }`}
+            className="w-full py-4 bg-red-600 text-white rounded-xl font-bold text-xl hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-3"
           >
             {completing ? (
               <><Loader2 className="w-6 h-6 animate-spin" /> Completing…</>
