@@ -439,7 +439,8 @@ router.get("/packing-speed", async (req, res) => {
     }
   }
 
-  // Build daily rows with actual packing window
+  const IDLE_THRESHOLD_MS = 5 * 60 * 1000;
+
   const dailyRows = Object.values(byDay)
     .sort((a, b) => a.date.localeCompare(b.date))
     .map(day => {
@@ -447,10 +448,21 @@ router.get("/packing-speed", async (req, res) => {
       const firstTs = sortedTs[0];
       const lastTs = sortedTs[sortedTs.length - 1];
       const windowMs = lastTs - firstTs;
-      // Minimum 1-minute window to avoid division by zero; cap denominator at 8 hrs
-      const windowHours = windowMs > 60_000 ? windowMs / 3_600_000 : null;
-      const ordersPerHour = windowHours != null
-        ? Math.round((day.count / windowHours) * 10) / 10
+
+      let idleMs = 0;
+      let idleBreaks = 0;
+      for (let i = 1; i < sortedTs.length; i++) {
+        const gap = sortedTs[i] - sortedTs[i - 1];
+        if (gap > IDLE_THRESHOLD_MS) {
+          idleMs += gap;
+          idleBreaks++;
+        }
+      }
+
+      const activeMs = Math.max(0, windowMs - idleMs);
+      const activeHours = activeMs > 60_000 ? activeMs / 3_600_000 : null;
+      const ordersPerHour = activeHours != null
+        ? Math.round((day.count / activeHours) * 10) / 10
         : null;
 
       return {
@@ -459,6 +471,9 @@ router.get("/packing-speed", async (req, res) => {
         firstFulfilledAt: firstTs ? new Date(firstTs).toISOString() : null,
         lastFulfilledAt: lastTs ? new Date(lastTs).toISOString() : null,
         windowMinutes: windowMs > 0 ? Math.round(windowMs / 60_000) : null,
+        activeMinutes: activeMs > 0 ? Math.round(activeMs / 60_000) : null,
+        idleMinutes: idleMs > 0 ? Math.round(idleMs / 60_000) : null,
+        idleBreaks,
         ordersPerHour,
       };
     });
@@ -467,14 +482,14 @@ router.get("/packing-speed", async (req, res) => {
   const totalDays = dailyRows.length;
   const avgPerDay = totalDays > 0 ? Math.round(totalOrders / totalDays) : 0;
 
-  // Overall orders/hr: total orders divided by total packing time across all days
-  const totalWindowHours = dailyRows.reduce((s, d) => {
-    if (d.windowMinutes && d.windowMinutes > 1) return s + d.windowMinutes / 60;
+  const totalActiveHours = dailyRows.reduce((s, d) => {
+    if (d.activeMinutes && d.activeMinutes > 1) return s + d.activeMinutes / 60;
     return s;
   }, 0);
-  const overallOrdersPerHour = totalWindowHours > 0
-    ? Math.round((totalOrders / totalWindowHours) * 10) / 10
+  const overallOrdersPerHour = totalActiveHours > 0
+    ? Math.round((totalOrders / totalActiveHours) * 10) / 10
     : 0;
+  const totalIdleMinutes = dailyRows.reduce((s, d) => s + (d.idleMinutes ?? 0), 0);
 
   const bestDay = dailyRows.reduce<{ date: string; count: number } | null>(
     (best, d) => (!best || d.count > best.count ? d : best),
@@ -487,6 +502,7 @@ router.get("/packing-speed", async (req, res) => {
     ordersPerHour: overallOrdersPerHour,
     avgPerDay,
     bestDay,
+    totalIdleMinutes,
     dailyRows,
     source: "shopify",
   });

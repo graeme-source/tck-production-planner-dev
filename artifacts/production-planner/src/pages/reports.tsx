@@ -117,6 +117,9 @@ interface PackingDayRow {
   firstFulfilledAt: string | null;
   lastFulfilledAt: string | null;
   windowMinutes: number | null;
+  activeMinutes: number | null;
+  idleMinutes: number | null;
+  idleBreaks: number;
   ordersPerHour: number | null;
 }
 
@@ -126,6 +129,7 @@ interface PackingSpeedData {
   ordersPerHour: number;
   avgPerDay: number;
   bestDay: { date: string; count: number } | null;
+  totalIdleMinutes: number;
   dailyRows: PackingDayRow[];
   source?: string;
 }
@@ -904,7 +908,7 @@ function PackingSpeedTab({ fromDate, toDate }: { fromDate: string; toDate: strin
           icon={<Zap className="w-4 h-4 text-amber-500" />}
           label="Orders Per Hour"
           value={data.ordersPerHour > 0 ? String(data.ordersPerHour) : "—"}
-          sub="based on 8-hr shift"
+          sub="active time (idle deducted)"
         />
         <SummaryCard
           icon={<Activity className="w-4 h-4 text-emerald-500" />}
@@ -935,10 +939,12 @@ function PackingSpeedTab({ fromDate, toDate }: { fromDate: string; toDate: strin
               <thead>
                 <tr className="border-b border-border bg-secondary/20">
                   <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Date</th>
-                  <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Orders Packed</th>
-                  <th className="text-center px-4 py-3 font-semibold text-muted-foreground">First Order</th>
-                  <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Last Order</th>
+                  <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Orders</th>
+                  <th className="text-center px-4 py-3 font-semibold text-muted-foreground">First</th>
+                  <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Last</th>
                   <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Window</th>
+                  <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Active</th>
+                  <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Idle</th>
                   <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Rate</th>
                   <th className="px-4 py-3 w-32"><span className="sr-only">Bar</span></th>
                 </tr>
@@ -947,11 +953,10 @@ function PackingSpeedTab({ fromDate, toDate }: { fromDate: string; toDate: strin
                 {data.dailyRows.map(row => {
                   const maxCount = Math.max(...data.dailyRows.map(r => r.count), 1);
                   const pct = Math.round((row.count / maxCount) * 100);
-                  const windowStr = row.windowMinutes != null
-                    ? row.windowMinutes >= 60
-                      ? `${Math.floor(row.windowMinutes / 60)}h ${row.windowMinutes % 60}m`
-                      : `${row.windowMinutes}m`
-                    : "—";
+                  const fmtMins = (m: number | null) => {
+                    if (m == null) return "—";
+                    return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
+                  };
                   return (
                     <tr key={row.date} className="hover:bg-secondary/10 transition-colors">
                       <td className="px-4 py-3 font-medium whitespace-nowrap">
@@ -967,7 +972,18 @@ function PackingSpeedTab({ fromDate, toDate }: { fromDate: string; toDate: strin
                         {row.lastFulfilledAt ? format(new Date(row.lastFulfilledAt), "HH:mm") : "—"}
                       </td>
                       <td className="px-4 py-3 text-center tabular-nums text-muted-foreground">
-                        {windowStr}
+                        {fmtMins(row.windowMinutes)}
+                      </td>
+                      <td className="px-4 py-3 text-center tabular-nums font-medium text-emerald-600 dark:text-emerald-400">
+                        {fmtMins(row.activeMinutes)}
+                      </td>
+                      <td className="px-4 py-3 text-center tabular-nums text-muted-foreground">
+                        {row.idleMinutes && row.idleMinutes > 0 ? (
+                          <span className="text-amber-600 dark:text-amber-400" title={`${row.idleBreaks} break${row.idleBreaks !== 1 ? "s" : ""} detected`}>
+                            {fmtMins(row.idleMinutes)}
+                            <span className="text-xs ml-1 opacity-70">({row.idleBreaks})</span>
+                          </span>
+                        ) : "—"}
                       </td>
                       <td className="px-4 py-3 text-center tabular-nums font-medium">
                         {row.ordersPerHour != null ? `${row.ordersPerHour}/hr` : "—"}
@@ -990,7 +1006,7 @@ function PackingSpeedTab({ fromDate, toDate }: { fromDate: string; toDate: strin
       )}
 
       <p className="text-xs text-muted-foreground">
-        * Data sourced from Shopify fulfilled orders. "First Order" and "Last Order" times are from Shopify fulfillment timestamps. Rate is calculated using the actual packing window (last − first fulfillment), not an assumed shift length. Days with only one fulfillment show "—" for rate.
+        * Data sourced from Shopify fulfilled orders. Rate is based on active packing time — gaps longer than 5 minutes between fulfillments are automatically detected and deducted as idle time. The "Idle" column shows total idle time with the number of breaks in brackets. Days with only one fulfillment show "—" for rate.
       </p>
     </div>
   );
