@@ -10,7 +10,7 @@ const router: IRouter = Router();
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: 30,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many login attempts, please try again in 15 minutes." },
