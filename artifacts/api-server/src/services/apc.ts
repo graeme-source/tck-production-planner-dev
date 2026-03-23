@@ -3,6 +3,7 @@
 // No token refresh needed — credentials are sent on every request.
 
 const APC_API_BASE = process.env.APC_API_BASE ?? "https://apc.hypaship.com/api/3.0";
+const APC_TRAINING_BASE = "https://apc-training.hypaship.com/api/3.0";
 const APC_ACCOUNT_NUMBER = process.env.APC_ACCOUNT_NUMBER ?? "";
 const APC_USERNAME = process.env.APC_USERNAME ?? "";
 const APC_PASSWORD = process.env.APC_PASSWORD ?? "";
@@ -45,6 +46,7 @@ export interface ApcShipmentRequest {
   reference?: string;
   specialInstructions?: string;
   collectionDate?: Date;
+  apiBase?: string;
 }
 
 export interface ApcShipmentResult {
@@ -58,6 +60,7 @@ async function placeOrder(req: ApcShipmentRequest): Promise<string> {
     throw new Error("APC credentials not configured.");
   }
 
+  const apiBase = req.apiBase ?? APC_API_BASE;
   const totalWeightKg = req.parcels.reduce((sum, p) => sum + p.weight, 0);
   const firstParcel = req.parcels[0] ?? { weight: totalWeightKg };
 
@@ -114,7 +117,7 @@ async function placeOrder(req: ApcShipmentRequest): Promise<string> {
     },
   };
 
-  const res = await fetch(`${APC_API_BASE}/Orders.json`, {
+  const res = await fetch(`${apiBase}/Orders.json`, {
     method: "POST",
     headers: {
       "remote-user": basicAuthHeader(),
@@ -159,13 +162,13 @@ async function placeOrder(req: ApcShipmentRequest): Promise<string> {
   return waybill;
 }
 
-async function fetchLabel(waybill: string, retries = 4, delayMs = 3000): Promise<string> {
+async function fetchLabel(waybill: string, apiBase: string, retries = 4, delayMs = 3000): Promise<string> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) {
       await new Promise(resolve => setTimeout(resolve, delayMs));
     }
 
-    const url = `${APC_API_BASE}/Orders/${waybill}.json?searchtype=CarrierWaybill&labelformat=PDF&labels=True&markprinted=True`;
+    const url = `${apiBase}/Orders/${waybill}.json?searchtype=CarrierWaybill&labelformat=PDF&labels=True&markprinted=True`;
 
     const res = await fetch(url, {
       method: "GET",
@@ -207,11 +210,13 @@ export async function createShipment(req: ApcShipmentRequest): Promise<ApcShipme
     throw new Error("APC credentials not configured. Set APC_USERNAME, APC_PASSWORD and APC_ACCOUNT_NUMBER environment variables.");
   }
 
+  const apiBase = req.apiBase ?? APC_API_BASE;
+
   // Step 1: Place the order and get WayBill
   const waybill = await placeOrder(req);
 
   // Step 2: Wait briefly then retrieve the label (guide recommends 3-5 seconds)
-  const labelPdfBase64 = await fetchLabel(waybill);
+  const labelPdfBase64 = await fetchLabel(waybill, apiBase);
 
   const trackingUrl = `https://apc.hypaship.com/tracking?waybill=${waybill}`;
 
@@ -240,4 +245,4 @@ function getDefaultServiceCodes(): ApcServiceCodes {
   };
 }
 
-export { isConfigured, getDefaultServiceCodes };
+export { isConfigured, getDefaultServiceCodes, APC_TRAINING_BASE };

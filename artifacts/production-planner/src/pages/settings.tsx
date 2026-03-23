@@ -1185,6 +1185,8 @@ function ApcServiceCodesSection() {
   const [fetching, setFetching] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  const [testMode, setTestMode] = useState(false);
+  const [testModeToggling, setTestModeToggling] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -1193,7 +1195,8 @@ function ApcServiceCodesSection() {
       fetch(`${BASE}/api/app-settings/apc_service_code_small_friday`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
       fetch(`${BASE}/api/app-settings/apc_service_code_large_friday`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
       fetch(`${BASE}/api/app-settings/apc_weight_threshold_grams`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
-    ]).then(([sw, lw, sf, lf, wt]) => {
+      fetch(`${BASE}/api/app-settings/apc_test_mode`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
+    ]).then(([sw, lw, sf, lf, wt, tm]) => {
       setCodes({
         smallWeekday: sw?.value ?? "",
         largeWeekday: lw?.value ?? "",
@@ -1201,10 +1204,30 @@ function ApcServiceCodesSection() {
         largeFriday: lf?.value ?? "",
         weightThreshold: wt?.value ?? "1000",
       });
+      setTestMode(tm?.value === "true");
     }).catch(() => {
       // Leave defaults if fetch fails
     }).finally(() => setFetching(false));
   }, []);
+
+  const handleTestModeToggle = async () => {
+    const newValue = !testMode;
+    setTestModeToggling(true);
+    try {
+      const r = await fetch(`${BASE}/api/app-settings/apc_test_mode`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: String(newValue) }),
+      });
+      if (!r.ok) throw new Error("Failed to save test mode");
+      setTestMode(newValue);
+    } catch {
+      // revert on failure
+    } finally {
+      setTestModeToggling(false);
+    }
+  };
 
   const handleSave = async () => {
     // Client-side validation before saving
@@ -1265,6 +1288,33 @@ function ApcServiceCodesSection() {
 
       <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
         {fetching && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3 h-3 animate-spin" /> Loading saved values…</div>}
+
+        {/* APC Test Mode toggle */}
+        <div className={`flex items-center justify-between p-4 rounded-xl border-2 transition-colors ${testMode ? "border-amber-400 bg-amber-50 dark:bg-amber-950/30" : "border-border bg-secondary/20"}`}>
+          <div>
+            <p className="font-semibold text-sm flex items-center gap-2">
+              {testMode && <span className="text-amber-600">⚠</span>}
+              APC Test Mode
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {testMode
+                ? "ON — all APC calls go to the Hypaship training environment. No real consignments are booked."
+                : "OFF — live APC API is used. Real consignments and charges apply."}
+            </p>
+          </div>
+          <button
+            onClick={handleTestModeToggle}
+            disabled={testModeToggling}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none disabled:opacity-50 ${testMode ? "bg-amber-500" : "bg-secondary border border-border"}`}
+            role="switch"
+            aria-checked={testMode}
+            title={testMode ? "Click to disable test mode" : "Click to enable test mode"}
+          >
+            {testModeToggling && <Loader2 className="absolute inset-0 m-auto w-3.5 h-3.5 animate-spin text-white" />}
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${testMode ? "translate-x-6" : "translate-x-1"}`} />
+          </button>
+        </div>
+
         <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-xs font-medium mb-1 block text-muted-foreground">Small Box — Weekday</label>

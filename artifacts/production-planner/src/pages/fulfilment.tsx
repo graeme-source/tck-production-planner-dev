@@ -60,6 +60,7 @@ interface ShipmentResult {
 interface ConfigStatus {
   apcCredentialsConfigured: boolean;
   serviceCodesConfigured: boolean;
+  testMode: boolean;
   serviceCodes: {
     smallWeekday: string;
     largeWeekday: string;
@@ -139,6 +140,15 @@ async function completeOrder(orderId: number, consignmentNumber: string, trackin
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Failed to complete order");
+}
+
+function TestModeBanner() {
+  return (
+    <div className="w-full rounded-xl border border-amber-400 bg-amber-100 dark:bg-amber-900/40 px-4 py-2.5 flex items-center gap-2 text-amber-900 dark:text-amber-200 text-sm font-medium">
+      <AlertCircle className="w-4 h-4 flex-shrink-0 text-amber-600" />
+      <span>TEST MODE — APC consignments are not real. No real charges or bookings are made.</span>
+    </div>
+  );
 }
 
 const ZONE_STYLES: Record<string, { bg: string; border: string; text: string; badge: string }> = {
@@ -302,6 +312,7 @@ export default function Fulfilment() {
   const [flashItem, setFlashItem] = useState<string | null>(null);
   const [flashWrong, setFlashWrong] = useState(false);
   const [boxFilter, setBoxFilter] = useState<"small box" | "large box" | "wholesale" | "all">("small box");
+  const [pendingPickOrder, setPendingPickOrder] = useState<ShopifyOrder | null>(null);
   const barcodeRef = useRef<HTMLInputElement>(null);
   const itemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const preQueueRef = useRef<Map<number, Promise<ShipmentResult>>>(new Map());
@@ -378,6 +389,15 @@ export default function Fulfilment() {
   function clearPreQueue() {
     preQueueRef.current.clear();
     prePrintRef.current.clear();
+  }
+
+  function handleOrderSelect(order: ShopifyOrder) {
+    clearPreQueue();
+    if (configStatus?.testMode) {
+      startPicking(order);
+    } else {
+      setPendingPickOrder(order);
+    }
   }
 
   async function startPicking(order: ShopifyOrder) {
@@ -611,15 +631,20 @@ export default function Fulfilment() {
   }
 
   if (view === "pre-confirm" && activeOrder && shipment) {
+    const isTestMode = configStatus?.testMode ?? false;
+    const customerEmail = activeOrder.customer?.email;
+    const customerName = activeOrder.shipping_address?.name ?? `${activeOrder.customer?.first_name} ${activeOrder.customer?.last_name}`;
     return (
       <div className="space-y-4">
+        {isTestMode && <TestModeBanner />}
+
         <div className="flex items-center gap-3">
           <button onClick={() => setView("picking")} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div className="flex-1">
             <h1 className="font-display font-bold text-xl">{activeOrder.name}</h1>
-            <p className="text-sm text-muted-foreground">{activeOrder.shipping_address?.name ?? `${activeOrder.customer?.first_name} ${activeOrder.customer?.last_name}`}</p>
+            <p className="text-sm text-muted-foreground">{customerName}</p>
           </div>
           <button onClick={goBack} className="text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg border border-border hover:bg-secondary/50 transition-colors">
             Back to list
@@ -631,7 +656,7 @@ export default function Fulfilment() {
             <CheckCircle2 className="w-8 h-8 text-green-500 flex-shrink-0" />
             <div>
               <h2 className="font-bold text-lg">All items picked!</h2>
-              <p className="text-sm text-muted-foreground">Review the shipment details then confirm to complete.</p>
+              <p className="text-sm text-muted-foreground">Review the details below, then confirm to complete the order.</p>
             </div>
           </div>
 
@@ -642,7 +667,7 @@ export default function Fulfilment() {
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Customer</span>
-              <span className="font-semibold">{activeOrder.shipping_address?.name ?? `${activeOrder.customer?.first_name} ${activeOrder.customer?.last_name}`}</span>
+              <span className="font-semibold">{customerName}</span>
             </div>
             {activeOrder.shipping_address && (
               <div className="flex justify-between">
@@ -663,6 +688,26 @@ export default function Fulfilment() {
             </div>
           </div>
 
+          {/* Consequence warning — shown in live mode */}
+          {!isTestMode && (
+            <div className="rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 p-4 text-sm space-y-1.5">
+              <p className="font-semibold text-amber-900 dark:text-amber-200 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                Confirming will:
+              </p>
+              <ul className="text-amber-800 dark:text-amber-300 space-y-1 pl-6 list-disc">
+                <li>Mark order <strong>{activeOrder.name}</strong> as fulfilled on Shopify</li>
+                <li>
+                  Send a dispatch notification email to{" "}
+                  {customerEmail
+                    ? <strong className="font-mono">{customerEmail}</strong>
+                    : <span className="italic text-amber-600">no email on file</span>
+                  }
+                </li>
+              </ul>
+            </div>
+          )}
+
           {completionError && (
             <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/10 rounded-xl px-4 py-3">
               <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
@@ -673,7 +718,11 @@ export default function Fulfilment() {
           <button
             onClick={handleComplete}
             disabled={completing}
-            className="w-full py-4 bg-primary text-primary-foreground rounded-xl font-bold text-xl hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-3"
+            className={`w-full py-4 rounded-xl font-bold text-xl transition-colors disabled:opacity-50 flex items-center justify-center gap-3 ${
+              isTestMode
+                ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                : "bg-red-600 text-white hover:bg-red-700"
+            }`}
           >
             {completing ? (
               <><Loader2 className="w-6 h-6 animate-spin" /> Completing…</>
@@ -696,8 +745,10 @@ export default function Fulfilment() {
 
   if (view === "confirm" && activeOrder && shipment) {
     const hasNext = unfulfilledOrders.filter(o => o.id !== activeOrder.id).length > 0;
+    const isTestMode = configStatus?.testMode ?? false;
     return (
       <div className="space-y-6">
+        {isTestMode && <TestModeBanner />}
         <PageHeader title="Order Packing Live" description="APC order scanning and label printing." />
         <div className="glass-panel p-8 rounded-2xl border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/20 text-center">
           <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto mb-4" />
@@ -739,8 +790,10 @@ export default function Fulfilment() {
   }
 
   if (view === "picking" && activeOrder) {
+    const isTestMode = configStatus?.testMode ?? false;
     return (
       <div className="space-y-4">
+        {isTestMode && <TestModeBanner />}
         <div className="flex items-center gap-3">
           <button onClick={goBack} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
             <ArrowLeft className="w-5 h-5" />
@@ -971,8 +1024,10 @@ export default function Fulfilment() {
 
   // DATES VIEW: landing page showing all dispatch dates with unfulfilled order groups
   if (view === "dates") {
+    const isTestMode = configStatus?.testMode ?? false;
     return (
       <div className="space-y-6">
+        {isTestMode && <TestModeBanner />}
         <div className="flex items-center justify-between">
           <PageHeader title="Order Packing Live" description="Select a dispatch date to start picking." />
           <button
@@ -1084,8 +1139,51 @@ export default function Fulfilment() {
     );
   }
 
+  const isTestMode = configStatus?.testMode ?? false;
+
   return (
     <div className="space-y-6">
+      {isTestMode && <TestModeBanner />}
+
+      {/* Live-mode confirmation dialog — appears when operator selects an order */}
+      {pendingPickOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-6 h-6 text-amber-500 flex-shrink-0 mt-0.5" />
+              <div>
+                <h3 className="font-bold text-lg">Create real APC consignment?</h3>
+                <p className="text-sm text-muted-foreground mt-1">
+                  This will create a real APC consignment for{" "}
+                  <strong>{pendingPickOrder.shipping_address?.name ?? `${pendingPickOrder.customer?.first_name} ${pendingPickOrder.customer?.last_name}`}</strong>.
+                  A label will be generated and a collection booked. <strong>This cannot be undone.</strong>
+                </p>
+              </div>
+            </div>
+            <div className="text-sm text-muted-foreground bg-secondary/30 rounded-xl px-4 py-3">
+              <span className="font-mono font-semibold text-foreground">{pendingPickOrder.name}</span>
+              {pendingPickOrder.shipping_address && (
+                <span> — {pendingPickOrder.shipping_address.address1}, {pendingPickOrder.shipping_address.city}</span>
+              )}
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setPendingPickOrder(null)}
+                className="flex-1 py-2.5 border border-border rounded-xl text-sm font-medium hover:bg-secondary/50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => { const o = pendingPickOrder; setPendingPickOrder(null); startPicking(o); }}
+                className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:bg-primary/90 transition-colors"
+              >
+                Start Packing
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center gap-3">
         <button onClick={() => {
           if (urlTag) {
@@ -1222,7 +1320,7 @@ export default function Fulfilment() {
                   </div>
                 </div>
                 <button
-                  onClick={() => { clearPreQueue(); startPicking(order); }}
+                  onClick={() => handleOrderSelect(order)}
                   className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground rounded-xl font-semibold hover:bg-primary/90 transition-colors flex-shrink-0"
                 >
                   <Scan className="w-4 h-4" /> Start Picking

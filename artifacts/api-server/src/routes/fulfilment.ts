@@ -3,7 +3,7 @@ import { db, skuLocationsTable, appSettingsTable, usersTable } from "@workspace/
 import { eq } from "drizzle-orm";
 import * as z from "zod";
 import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, type ShopifyOrder } from "../services/shopify";
-import { createShipment, isConfigured as isApcConfigured } from "../services/apc";
+import { createShipment, isConfigured as isApcConfigured, APC_TRAINING_BASE } from "../services/apc";
 
 const router = Router();
 
@@ -148,13 +148,17 @@ router.post("/shipments", requireManagerOrAdmin, async (req: Request, res: Respo
   const dispatchDate = dispatchDateStr ? new Date(dispatchDateStr) : new Date();
 
   try {
-    const [smallWeekday, largeWeekday, smallFriday, largeFriday, weightThreshStr] = await Promise.all([
+    const [smallWeekday, largeWeekday, smallFriday, largeFriday, weightThreshStr, testModeSetting] = await Promise.all([
       getAppSetting("apc_service_code_small_weekday"),
       getAppSetting("apc_service_code_large_weekday"),
       getAppSetting("apc_service_code_small_friday"),
       getAppSetting("apc_service_code_large_friday"),
       getAppSetting("apc_weight_threshold_grams"),
+      getAppSetting("apc_test_mode"),
     ]);
+
+    const isTestMode = testModeSetting === "true";
+    const apiBase = isTestMode ? APC_TRAINING_BASE : undefined;
 
     if (!smallWeekday || !largeWeekday || !smallFriday || !largeFriday) {
       res.status(400).json({
@@ -208,6 +212,7 @@ router.post("/shipments", requireManagerOrAdmin, async (req: Request, res: Respo
       },
       parcels: [{ weight: Math.max(0.1, weightKg) }],
       reference: order.name,
+      ...(apiBase ? { apiBase } : {}),
     });
 
     res.json({
@@ -436,16 +441,18 @@ router.get("/desserts-report", requireManagerOrAdmin, async (req: Request, res: 
 
 router.get("/config-status", requireManagerOrAdmin, async (_req: Request, res: Response) => {
   try {
-    const [smallWeekday, largeWeekday, smallFriday, largeFriday] = await Promise.all([
+    const [smallWeekday, largeWeekday, smallFriday, largeFriday, testModeSetting] = await Promise.all([
       getAppSetting("apc_service_code_small_weekday"),
       getAppSetting("apc_service_code_large_weekday"),
       getAppSetting("apc_service_code_small_friday"),
       getAppSetting("apc_service_code_large_friday"),
+      getAppSetting("apc_test_mode"),
     ]);
 
     res.json({
       apcCredentialsConfigured: isApcConfigured(),
       serviceCodesConfigured: !!(smallWeekday && largeWeekday && smallFriday && largeFriday),
+      testMode: testModeSetting === "true",
       serviceCodes: {
         smallWeekday: smallWeekday ?? "",
         largeWeekday: largeWeekday ?? "",
