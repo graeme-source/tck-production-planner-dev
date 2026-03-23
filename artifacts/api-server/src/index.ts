@@ -52,7 +52,7 @@ async function seedAdminIfNeeded() {
     const [{ value }] = await db.select({ value: count() }).from(usersTable);
     console.log(`Seed check: ${value} user(s) in database`);
     if (Number(value) === 0) {
-      const tempPassword = "TCKadmin" + Math.random().toString(36).slice(2, 8).toUpperCase() + "!";
+      const tempPassword = "TCKAdmin2024!";
       const passwordHash = await bcrypt.hash(tempPassword, 10);
       await db.insert(usersTable).values({
         name: "Admin",
