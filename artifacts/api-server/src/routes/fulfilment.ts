@@ -114,8 +114,9 @@ async function validateOrderPostcode(
     `);
 
     return { ...result, serviceCode };
-  } catch (err: any) {
-    console.error(`[Fulfilment] postcode check failed for order ${order.name}:`, err.message);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Fulfilment] postcode check failed for order ${order.name}:`, msg);
     return { available: true, serviceCode };
   }
 }
@@ -155,8 +156,10 @@ router.get("/dispatch-tags", requireManagerOrAdmin, async (_req: Request, res: R
           ) latest WHERE available = false
           GROUP BY dispatch_tag
         `);
-        for (const row of issueRows.rows as any[]) {
-          postcodeIssuesByTag.set(row.dispatch_tag, row.issue_count);
+        interface TagIssueRow { dispatch_tag: string; issue_count: number }
+        for (const row of issueRows.rows) {
+          const r: TagIssueRow = row as TagIssueRow;
+          postcodeIssuesByTag.set(r.dispatch_tag, r.issue_count);
         }
       } catch {
       }
@@ -281,8 +284,9 @@ router.post("/shipments", requireManagerOrAdmin, async (req: Request, res: Respo
       WHERE shopify_order_id = ${orderId} AND dispatch_tag = ${tag} AND service_code = ${serviceCode} AND available = false
       ORDER BY checked_at DESC LIMIT 1
     `);
+    interface ValidationRow { available: boolean; reason: string | null; service_code: string }
     if (existingValidation.rows.length > 0) {
-      const v = existingValidation.rows[0] as any;
+      const v: ValidationRow = existingValidation.rows[0] as ValidationRow;
       res.status(422).json({
         error: `Postcode issue: ${v.reason || "Service not available for this postcode"} (Service: ${v.service_code}). Re-check the postcode before packing.`,
         postcodeBlocked: true,
@@ -426,9 +430,10 @@ router.post("/tag-dispatch-bulk", requireManagerOrAdmin, async (req: Request, re
     }
 
     res.json({ ok: true, tagged, total: toTag.length, postcodeIssues });
-  } catch (err: any) {
-    console.error("[Fulfilment] tag-dispatch-bulk error:", err.message);
-    res.status(502).json({ error: err.message });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Fulfilment] tag-dispatch-bulk error:", msg);
+    res.status(502).json({ error: msg });
   }
 });
 
@@ -446,9 +451,10 @@ router.get("/postcode-validations", requireManagerOrAdmin, async (req: Request, 
       ORDER BY shopify_order_id, checked_at DESC
     `);
     res.json(rows.rows);
-  } catch (err: any) {
-    console.error("[Fulfilment] postcode-validations error:", err.message);
-    res.status(500).json({ error: err.message });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Fulfilment] postcode-validations error:", msg);
+    res.status(500).json({ error: msg });
   }
 });
 
@@ -475,9 +481,10 @@ router.post("/postcode-recheck", requireManagerOrAdmin, async (req: Request, res
       available: result.available,
       reason: result.reason,
     });
-  } catch (err: any) {
-    console.error("[Fulfilment] postcode-recheck error:", err.message);
-    res.status(502).json({ error: err.message });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Fulfilment] postcode-recheck error:", msg);
+    res.status(502).json({ error: msg });
   }
 });
 
@@ -507,9 +514,10 @@ router.post("/postcode-validate-tag", requireManagerOrAdmin, async (req: Request
     }
 
     res.json({ ok: true, checked, issues });
-  } catch (err: any) {
-    console.error("[Fulfilment] postcode-validate-tag error:", err.message);
-    res.status(502).json({ error: err.message });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Fulfilment] postcode-validate-tag error:", msg);
+    res.status(502).json({ error: msg });
   }
 });
 
