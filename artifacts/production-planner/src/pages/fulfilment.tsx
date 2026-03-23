@@ -737,23 +737,20 @@ export default function Fulfilment() {
   function printAllLabels(pdfs: string[]) {
     if (pdfs.length === 0) return;
     setPrintStatus("printing");
-    let printed = 0;
-    let failed = false;
-    for (const pdf of pdfs) {
+
+    function printNext(index: number) {
+      if (index >= pdfs.length) {
+        setPrintStatus("done");
+        return;
+      }
       printLabel(
-        pdf,
-        () => {
-          printed++;
-          if (printed === pdfs.length && !failed) setPrintStatus("done");
-        },
-        () => {
-          if (!failed) {
-            failed = true;
-            setPrintStatus("failed");
-          }
-        },
+        pdfs[index],
+        () => printNext(index + 1),
+        () => setPrintStatus("failed"),
       );
     }
+
+    printNext(0);
   }
 
   async function handleAddExtraBox() {
@@ -872,6 +869,18 @@ export default function Fulfilment() {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (cancelSuccess) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div className="bg-card border border-green-200 dark:border-green-800 rounded-2xl shadow-2xl w-full max-w-sm p-8 text-center space-y-3">
+          <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto" />
+          <h3 className="font-bold text-lg">Consignment Cancelled</h3>
+          <p className="text-sm text-muted-foreground">The order has been returned to the unpacked queue.</p>
         </div>
       </div>
     );
@@ -1343,16 +1352,6 @@ export default function Fulfilment() {
                   Cancel Consignment
                 </button>
               </div>
-            </div>
-          </div>
-        )}
-
-        {cancelSuccess && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <div className="bg-card border border-green-200 dark:border-green-800 rounded-2xl shadow-2xl w-full max-w-sm p-8 text-center space-y-3">
-              <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto" />
-              <h3 className="font-bold text-lg">Consignment Cancelled</h3>
-              <p className="text-sm text-muted-foreground">The order has been returned to the unpacked queue.</p>
             </div>
           </div>
         )}

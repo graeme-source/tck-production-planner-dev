@@ -405,6 +405,11 @@ router.post("/shipments/:waybill/reprint-label", requireManagerOrAdmin, async (r
   }
 });
 
+// Cancel is called BEFORE "Confirm & Complete" — the order has not been fulfilled
+// on Shopify yet, so there is no Shopify fulfillment to undo. The only server-side
+// state to reset is the APC consignment itself. The frontend removes the local
+// shipment reference and returns the operator to the order list, where the order
+// remains in the unfulfilled queue ready to be re-packed.
 router.post("/shipments/:waybill/cancel", requireManagerOrAdmin, async (req: Request, res: Response) => {
   const { waybill } = req.params;
 
