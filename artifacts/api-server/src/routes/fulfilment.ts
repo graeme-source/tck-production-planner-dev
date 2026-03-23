@@ -277,6 +277,48 @@ router.post("/tag-dispatch", requireManagerOrAdmin, async (req: Request, res: Re
   }
 });
 
+router.post("/tag-dispatch-bulk", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const { tag, category } = req.body as { tag?: string; category?: string };
+  if (!tag || !category) {
+    res.status(400).json({ error: "tag and category are required" });
+    return;
+  }
+  const validCategories = ["small box", "large box", "wholesale", "other", "all"];
+  if (!validCategories.includes(category)) {
+    res.status(400).json({ error: `Invalid category. Must be one of: ${validCategories.join(", ")}` });
+    return;
+  }
+
+  try {
+    const orders = await getOrdersByTag(tag);
+    const unfulfilled = orders.filter(o => o.fulfillment_status !== "fulfilled");
+    const untagged = unfulfilled.filter(o =>
+      !o.tags.split(",").map(t => t.trim()).includes("dispatch")
+    );
+
+    const toTag = category === "all"
+      ? untagged
+      : untagged.filter(o => {
+          const tags = o.tags.split(",").map(t => t.trim().toLowerCase());
+          if (category === "wholesale") return tags.includes("wholesale");
+          if (category === "large box") return tags.includes("large box");
+          if (category === "small box") return tags.includes("small box");
+          return !tags.includes("wholesale") && !tags.includes("large box") && !tags.includes("small box");
+        });
+
+    let tagged = 0;
+    for (const order of toTag) {
+      await addTagToOrder(order.id, order.tags, "dispatch");
+      tagged++;
+    }
+
+    res.json({ ok: true, tagged, total: toTag.length });
+  } catch (err: any) {
+    console.error("[Fulfilment] tag-dispatch-bulk error:", err.message);
+    res.status(502).json({ error: err.message });
+  }
+});
+
 const CompleteOrderBody = z.object({
   consignmentNumber: z.string().min(1),
   trackingUrl: z.string().optional(),

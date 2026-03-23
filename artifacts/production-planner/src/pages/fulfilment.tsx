@@ -132,6 +132,18 @@ async function createShipment(orderId: number, tag: string, dispatchDate?: strin
   return data;
 }
 
+async function bulkTagDispatch(tag: string, category: string): Promise<{ tagged: number; total: number }> {
+  const res = await fetch(`${BASE}/api/fulfilment/tag-dispatch-bulk`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tag, category }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? "Failed to tag orders");
+  return data;
+}
+
 async function completeOrder(orderId: number, consignmentNumber: string, trackingUrl?: string): Promise<void> {
   const res = await fetch(`${BASE}/api/fulfilment/orders/${orderId}/complete`, {
     method: "POST",
@@ -386,11 +398,12 @@ export default function Fulfilment() {
   const allUnfulfilledOrders = orders?.filter(o => o.fulfillment_status !== "fulfilled") ?? [];
   const fulfilledOrders = orders?.filter(o => o.fulfillment_status === "fulfilled") ?? [];
 
-  // Only orders tagged "dispatch" may be packed. Others are awaiting approval.
   const unfulfilledOrders = allUnfulfilledOrders.filter(o =>
     o.tags.split(",").map(t => t.trim()).includes("dispatch")
   );
-  const awaitingDispatchCount = allUnfulfilledOrders.length - unfulfilledOrders.length;
+  const untaggedOrders = allUnfulfilledOrders.filter(o =>
+    !o.tags.split(",").map(t => t.trim()).includes("dispatch")
+  );
 
   function getOrderCategory(order: ShopifyOrder): "small box" | "large box" | "wholesale" | "other" {
     const tags = order.tags.split(",").map(t => t.trim().toLowerCase());
@@ -404,12 +417,25 @@ export default function Fulfilment() {
     ? unfulfilledOrders
     : unfulfilledOrders.filter(o => getOrderCategory(o) === boxFilter);
 
+  const filteredUntagged = boxFilter === "all"
+    ? untaggedOrders
+    : untaggedOrders.filter(o => getOrderCategory(o) === boxFilter);
+
   const boxCounts = {
+    "small box": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "small box").length,
+    "large box": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "large box").length,
+    "wholesale": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "wholesale").length,
+    "other": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "other").length,
+  };
+
+  const taggedCounts = {
     "small box": unfulfilledOrders.filter(o => getOrderCategory(o) === "small box").length,
     "large box": unfulfilledOrders.filter(o => getOrderCategory(o) === "large box").length,
     "wholesale": unfulfilledOrders.filter(o => getOrderCategory(o) === "wholesale").length,
     "other": unfulfilledOrders.filter(o => getOrderCategory(o) === "other").length,
   };
+
+  const [bulkTagging, setBulkTagging] = useState(false);
 
   function preQueueNextOrder(nextOrderId: number) {
     if (preQueueRef.current.has(nextOrderId)) return;
@@ -1278,23 +1304,10 @@ export default function Fulfilment() {
                 Orders tagged <span className="text-primary">{queryTag}</span>
               </h3>
               <p className="text-sm text-muted-foreground">
-                {unfulfilledOrders.length} ready to pack &middot; {fulfilledOrders.length} fulfilled
-                {awaitingDispatchCount > 0 && (
-                  <span className="text-amber-600 dark:text-amber-400 font-medium"> &middot; {awaitingDispatchCount} awaiting dispatch tag</span>
-                )}
+                {unfulfilledOrders.length} ready to pack &middot; {untaggedOrders.length} awaiting approval &middot; {fulfilledOrders.length} fulfilled
               </p>
             </div>
           </div>
-
-          {awaitingDispatchCount > 0 && (
-            <div className="flex items-start gap-3 p-4 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20">
-              <Tag className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
-              <div className="text-sm">
-                <span className="font-semibold text-amber-900 dark:text-amber-200">{awaitingDispatchCount} {awaitingDispatchCount === 1 ? "order" : "orders"} not yet approved for packing.</span>
-                {" "}Use <strong>Dispatch Tagging</strong> to tag them with the dispatch tag before they can be packed.
-              </div>
-            </div>
-          )}
 
           <div className="flex gap-2 flex-wrap">
             {([
@@ -1303,9 +1316,10 @@ export default function Fulfilment() {
               { key: "wholesale" as const, label: "Wholesale", color: "bg-amber-500" },
               { key: "all" as const, label: "All Orders", color: "bg-gray-500" },
             ] as const).map(tab => {
-              const count = tab.key === "all" ? unfulfilledOrders.length : boxCounts[tab.key];
+              const count = tab.key === "all" ? allUnfulfilledOrders.length : boxCounts[tab.key];
               if (tab.key !== "all" && count === 0) return null;
               const active = boxFilter === tab.key;
+              const tagged = tab.key === "all" ? unfulfilledOrders.length : taggedCounts[tab.key];
               return (
                 <button
                   key={tab.key}
@@ -1321,13 +1335,59 @@ export default function Fulfilment() {
                   <span className={cn(
                     "text-xs px-1.5 py-0.5 rounded-full tabular-nums",
                     active ? "bg-primary-foreground/20" : "bg-secondary"
-                  )}>{count}</span>
+                  )}>{tagged}/{count}</span>
                 </button>
               );
             })}
           </div>
 
-          {filteredUnfulfilled.length === 0 && unfulfilledOrders.length === 0 && (
+          {filteredUntagged.length > 0 && (
+            <div className="glass-panel p-4 rounded-2xl border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Tag className="w-4 h-4 text-amber-600" />
+                  <span className="font-semibold text-sm text-amber-900 dark:text-amber-200">
+                    {filteredUntagged.length} {boxFilter === "all" ? "" : boxFilter + " "}{filteredUntagged.length === 1 ? "order" : "orders"} awaiting approval
+                  </span>
+                </div>
+                <button
+                  onClick={async () => {
+                    setBulkTagging(true);
+                    try {
+                      await bulkTagDispatch(queryTag, boxFilter);
+                      refetch();
+                      refetchProgress();
+                      refetchTags();
+                    } catch {
+                    } finally {
+                      setBulkTagging(false);
+                    }
+                  }}
+                  disabled={bulkTagging}
+                  className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-xl text-sm font-semibold hover:bg-amber-700 transition-colors disabled:opacity-50"
+                >
+                  {bulkTagging ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Tagging…</>
+                  ) : (
+                    <><Tag className="w-4 h-4" /> Tag {boxFilter === "all" ? "All" : boxFilter === "small box" ? "Small Box" : boxFilter === "large box" ? "Large Box" : boxFilter === "wholesale" ? "Wholesale" : "Other"} Orders for Dispatch</>
+                  )}
+                </button>
+              </div>
+              <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                {filteredUntagged.map(order => (
+                  <div key={order.id} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-amber-100/50 dark:bg-amber-900/20 text-sm">
+                    <span className="font-mono font-bold text-amber-900 dark:text-amber-200">{order.name}</span>
+                    <span className="text-amber-700 dark:text-amber-400 truncate flex-1">
+                      {order.shipping_address?.name ?? `${order.customer?.first_name} ${order.customer?.last_name}`}
+                    </span>
+                    <span className="text-xs text-amber-600 dark:text-amber-500">{order.line_items.reduce((s, i) => s + i.quantity, 0)} items</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {filteredUnfulfilled.length === 0 && filteredUntagged.length === 0 && allUnfulfilledOrders.length === 0 && (
             <div className="glass-panel p-10 rounded-2xl border border-border text-center text-muted-foreground">
               <CheckCircle2 className="w-12 h-12 mx-auto mb-3 text-green-500 opacity-60" />
               <p className="font-medium">All orders fulfilled!</p>
@@ -1335,11 +1395,17 @@ export default function Fulfilment() {
             </div>
           )}
 
-          {filteredUnfulfilled.length === 0 && unfulfilledOrders.length > 0 && (
+          {filteredUnfulfilled.length === 0 && filteredUntagged.length === 0 && allUnfulfilledOrders.length > 0 && (
             <div className="glass-panel p-8 rounded-2xl border border-border text-center text-muted-foreground">
               <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-green-500 opacity-60" />
               <p className="font-medium">All {boxFilter} orders done!</p>
               <p className="text-sm mt-1">Switch to another category to continue packing.</p>
+            </div>
+          )}
+
+          {filteredUnfulfilled.length > 0 && (
+            <div className="space-y-1 mb-2">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-1">Ready to Pack</p>
             </div>
           )}
 
