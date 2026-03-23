@@ -348,11 +348,11 @@ type PrintStatus = "idle" | "printing" | "done" | "failed";
 
 type View = "dates" | "list" | "picking" | "pre-confirm" | "confirm";
 
-function ProgressBar({ label, fulfilled, total, color }: { label: string; fulfilled: number; total: number; color: string }) {
+function ProgressBar({ label, fulfilled, total, color, weight }: { label: string; fulfilled: number; total: number; color: string; weight: number }) {
   if (total === 0) return null;
   const pct = Math.round((fulfilled / total) * 100);
   return (
-    <div className="flex-1 min-w-[120px]">
+    <div className="min-w-[80px]" style={{ flex: weight }}>
       <div className="flex items-center justify-between text-xs mb-1">
         <span className="font-medium">{label}</span>
         <span className="tabular-nums text-muted-foreground">{fulfilled}/{total}</span>
@@ -392,11 +392,11 @@ function DispatchProgressHeader({ progress }: { progress: DispatchProgress }) {
         </div>
       </div>
       <div className="flex gap-4 flex-wrap">
-        <ProgressBar label="Small Box" fulfilled={categories.smallBox.fulfilled} total={categories.smallBox.total} color="bg-blue-500" />
-        <ProgressBar label="Large Box" fulfilled={categories.largeBox.fulfilled} total={categories.largeBox.total} color="bg-indigo-500" />
-        <ProgressBar label="Wholesale" fulfilled={categories.wholesale.fulfilled} total={categories.wholesale.total} color="bg-amber-500" />
+        <ProgressBar label="Small Box" fulfilled={categories.smallBox.fulfilled} total={categories.smallBox.total} color="bg-blue-500" weight={categories.smallBox.total} />
+        <ProgressBar label="Large Box" fulfilled={categories.largeBox.fulfilled} total={categories.largeBox.total} color="bg-indigo-500" weight={categories.largeBox.total} />
+        <ProgressBar label="Wholesale" fulfilled={categories.wholesale.fulfilled} total={categories.wholesale.total} color="bg-amber-500" weight={categories.wholesale.total} />
         {categories.other.total > 0 && (
-          <ProgressBar label="Other" fulfilled={categories.other.fulfilled} total={categories.other.total} color="bg-gray-500" />
+          <ProgressBar label="Other" fulfilled={categories.other.fulfilled} total={categories.other.total} color="bg-gray-500" weight={categories.other.total} />
         )}
       </div>
     </div>
