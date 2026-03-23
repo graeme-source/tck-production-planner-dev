@@ -194,6 +194,9 @@ function RecipeForm({
   const [localIngredients, setLocalIngredients] = useState(initialIngredients);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickAddTargetIndex, setQuickAddTargetIndex] = useState<number | null>(null);
+  // Per-row display unit for kg ingredients: "g" (default) or "kg"
+  const [ingDisplayUnits, setIngDisplayUnits] = useState<Record<number, "g" | "kg">>({});
+  const [subDisplayUnits, setSubDisplayUnits] = useState<Record<number, "g" | "kg">>({});
 
   const watchedCategory = watch("category");
   const watchedRrp = watch("rrp");
@@ -439,7 +442,34 @@ function RecipeForm({
                             />
                             <button type="button" title="Create a new ingredient" onClick={() => openQuickAdd(index)} className="flex-shrink-0 px-1.5 py-1.5 rounded-lg border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-colors text-xs font-bold leading-none">+</button>
                           </div>
-                          <input type="number" step="0.0001" {...register(`ingredients.${index}.quantity`)} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0.000" />
+                          {(() => {
+                            const isKg = thisIng?.unit === "kg";
+                            const displayUnit = isKg ? (ingDisplayUnits[index] ?? "g") : null;
+                            const storedKg = Number(watchedIngredients?.[index]?.quantity) || 0;
+                            if (!isKg) {
+                              return <input type="number" step="0.0001" {...register(`ingredients.${index}.quantity`)} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0.000" />;
+                            }
+                            return (
+                              <div className="flex gap-0.5 items-stretch">
+                                <input
+                                  type="number"
+                                  step={displayUnit === "g" ? "1" : "0.001"}
+                                  min="0"
+                                  value={storedKg === 0 ? "" : displayUnit === "g" ? Math.round(storedKg * 10000) / 10 : storedKg}
+                                  onChange={e => {
+                                    const v = e.target.value === "" ? 0 : Number(e.target.value);
+                                    setValue(`ingredients.${index}.quantity`, displayUnit === "g" ? v / 1000 : v, { shouldValidate: true });
+                                  }}
+                                  className="min-w-0 flex-1 w-0 px-2 py-1.5 bg-background border border-border rounded-l-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
+                                  placeholder={displayUnit === "g" ? "e.g. 250" : "0.000"}
+                                />
+                                <div className="flex flex-col shrink-0 text-[9px] font-semibold overflow-hidden border border-l-0 border-border rounded-r-lg">
+                                  <button type="button" onClick={() => setIngDisplayUnits(u => ({ ...u, [index]: "g" }))} className={cn("px-1 flex-1 transition-colors", displayUnit === "g" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary/60")}>g</button>
+                                  <button type="button" onClick={() => setIngDisplayUnits(u => ({ ...u, [index]: "kg" }))} className={cn("px-1 flex-1 border-t border-border transition-colors", displayUnit === "kg" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary/60")}>kg</button>
+                                </div>
+                              </div>
+                            );
+                          })()}
                           <span className="text-xs tabular-nums text-right text-muted-foreground">
                             {cost !== null ? `£${(Math.ceil(cost * 100) / 100).toFixed(2)}` : "—"}
                           </span>
@@ -495,7 +525,35 @@ function RecipeForm({
                             <option value={0} disabled>Select…</option>
                             {subRecipes.map(s => <option key={s.id} value={s.id}>{s.name} ({s.yieldUnit})</option>)}
                           </select>
-                          <input type="number" step="0.0001" {...register(`subRecipes.${index}.quantity`)} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0.000" />
+                          {(() => {
+                            const thisSub = subRecipes.find(s => s.id === Number(watchedSubRecipes?.[index]?.subRecipeId));
+                            const isKg = thisSub?.yieldUnit === "kg";
+                            const displayUnit = isKg ? (subDisplayUnits[index] ?? "g") : null;
+                            const storedKg = Number(watchedSubRecipes?.[index]?.quantity) || 0;
+                            if (!isKg) {
+                              return <input type="number" step="0.0001" {...register(`subRecipes.${index}.quantity`)} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0.000" />;
+                            }
+                            return (
+                              <div className="flex gap-0.5 items-stretch">
+                                <input
+                                  type="number"
+                                  step={displayUnit === "g" ? "1" : "0.001"}
+                                  min="0"
+                                  value={storedKg === 0 ? "" : displayUnit === "g" ? Math.round(storedKg * 10000) / 10 : storedKg}
+                                  onChange={e => {
+                                    const v = e.target.value === "" ? 0 : Number(e.target.value);
+                                    setValue(`subRecipes.${index}.quantity`, displayUnit === "g" ? v / 1000 : v, { shouldValidate: true });
+                                  }}
+                                  className="min-w-0 flex-1 w-0 px-2 py-1.5 bg-background border border-border rounded-l-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
+                                  placeholder={displayUnit === "g" ? "e.g. 250" : "0.000"}
+                                />
+                                <div className="flex flex-col shrink-0 text-[9px] font-semibold overflow-hidden border border-l-0 border-border rounded-r-lg">
+                                  <button type="button" onClick={() => setSubDisplayUnits(u => ({ ...u, [index]: "g" }))} className={cn("px-1 flex-1 transition-colors", displayUnit === "g" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary/60")}>g</button>
+                                  <button type="button" onClick={() => setSubDisplayUnits(u => ({ ...u, [index]: "kg" }))} className={cn("px-1 flex-1 border-t border-border transition-colors", displayUnit === "kg" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary/60")}>kg</button>
+                                </div>
+                              </div>
+                            );
+                          })()}
                           <span className="text-xs tabular-nums text-right text-muted-foreground">
                             {cost !== null ? `£${(Math.ceil(cost * 100) / 100).toFixed(2)}` : "—"}
                           </span>
