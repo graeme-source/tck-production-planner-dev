@@ -373,7 +373,9 @@ router.post("/shipments/:waybill/add-parcel", requireManagerOrAdmin, async (req:
     });
 
     res.json({
+      waybill,
       labelPdfs: result.labelPdfs,
+      pieceCount: result.labelPdfs.length,
       ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
     });
   } catch (err: unknown) {
