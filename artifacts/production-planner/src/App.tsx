@@ -18,6 +18,7 @@ import Dispatches from "@/pages/dispatches";
 import DispatchTag from "@/pages/dispatch-tag";
 import Suppliers from "@/pages/suppliers";
 import Settings from "@/pages/settings";
+import LeanCave from "@/pages/lean-cave";
 import Reports from "@/pages/reports";
 import Fulfilment from "@/pages/fulfilment";
 import Locations from "@/pages/locations";
@@ -64,6 +65,7 @@ function Router() {
               <Route path="/fulfilment">{() => <ProtectedRoute component={Fulfilment} pageKey="/fulfilment" />}</Route>
               <Route path="/locations">{() => <ProtectedRoute component={Locations} pageKey="/locations" />}</Route>
               <Route path="/reports">{() => <ProtectedRoute component={Reports} pageKey="/reports" />}</Route>
+              <Route path="/lean-cave" component={LeanCave} />
               <Route path="/settings" component={Settings} />
               <Route component={NotFound} />
             </Switch>

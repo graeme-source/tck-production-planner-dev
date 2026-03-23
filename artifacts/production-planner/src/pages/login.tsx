@@ -1,6 +1,7 @@
-import { useState, type FormEvent } from "react";
+import { useState, useMemo, type FormEvent } from "react";
 import { useAuth } from "@/contexts/auth-context";
 import { Loader2 } from "lucide-react";
+import { leanQuotes } from "@/data/lean-quotes";
 
 export default function Login() {
   const { login } = useAuth();
@@ -8,6 +9,7 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const quote = useMemo(() => leanQuotes[Math.floor(Math.random() * leanQuotes.length)], []);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -29,6 +31,10 @@ export default function Login() {
             className="h-20 w-auto object-contain"
           />
           <span className="text-xs text-muted-foreground tracking-widest uppercase font-medium">Production Planner</span>
+          <p className="text-sm italic text-muted-foreground/70 text-center mt-3 max-w-xs leading-relaxed">
+            "{quote.text}"
+            <span className="block text-xs mt-1 not-italic">— {quote.author}</span>
+          </p>
         </div>
 
         {/* Card */}

@@ -20,6 +20,7 @@ import {
   Tag,
   Menu,
   X,
+  Lightbulb,
 } from "lucide-react";
 
 const navItems = [
@@ -36,6 +37,7 @@ const navItems = [
 ];
 
 const bottomNavItems = [
+  { name: "Lean Cave", href: "/lean-cave", icon: Lightbulb },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 

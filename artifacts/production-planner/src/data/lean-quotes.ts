@@ -1,0 +1,17 @@
+export const leanQuotes = [
+  { text: "The only way to do great work is to continuously improve the way you do it.", author: "Taiichi Ohno" },
+  { text: "Where there is no standard, there can be no kaizen.", author: "Taiichi Ohno" },
+  { text: "All we are doing is looking at the time line, from the moment the customer gives us an order to the point when we collect the cash. And we are reducing the time line by reducing the non-value adding wastes.", author: "Taiichi Ohno" },
+  { text: "The most dangerous kind of waste is the waste we do not recognize.", author: "Shigeo Shingo" },
+  { text: "Improvement usually means doing something that we have never done before.", author: "Shigeo Shingo" },
+  { text: "Having no problems is the biggest problem of all.", author: "Taiichi Ohno" },
+  { text: "Start by doing what is necessary, then do what is possible, and suddenly you are doing the impossible.", author: "Francis of Assisi" },
+  { text: "Lean is a way of thinking, not a list of things to do.", author: "Shigeo Shingo" },
+  { text: "Get the right process and you will get the right results.", author: "Jeffrey Liker" },
+  { text: "Go see, ask why, show respect.", author: "Fujio Cho" },
+  { text: "One piece at a time, one day at a time — small steps lead to big results.", author: "Paul Akers" },
+  { text: "The key to the Toyota Way is not any of the individual elements — it is all the elements together as a system.", author: "Jeffrey Liker" },
+  { text: "Without standards there can be no improvement.", author: "Masaaki Imai" },
+  { text: "Kaizen is everyday improvement, everybody improvement, and everywhere improvement.", author: "Masaaki Imai" },
+  { text: "Fix what bugs you. If something annoys you, fix it right now.", author: "Paul Akers" },
+];
