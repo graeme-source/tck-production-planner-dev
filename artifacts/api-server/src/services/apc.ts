@@ -354,4 +354,77 @@ function getDefaultServiceCodes(): ApcServiceCodes {
   };
 }
 
+export interface PostcodeCheckResult {
+  available: boolean;
+  reason?: string;
+}
+
+export async function checkPostcodeService(
+  postcode: string,
+  serviceCode: string,
+  apiBase?: string,
+): Promise<PostcodeCheckResult> {
+  if (!isConfigured()) {
+    throw new Error("APC credentials not configured.");
+  }
+
+  const base = apiBase ?? APC_API_BASE;
+  const cleanPostcode = postcode.replace(/\s+/g, "").toUpperCase();
+
+  const url = `${base}/PostcodeServiceCheck/${encodeURIComponent(cleanPostcode)}/${encodeURIComponent(serviceCode)}.json`;
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      "remote-user": basicAuthHeader(),
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    if (res.status === 404) {
+      return { available: false, reason: `Postcode ${postcode} not found in APC system` };
+    }
+    throw new Error(`APC postcode check failed (${res.status}): ${text.slice(0, 200)}`);
+  }
+
+  let json: any;
+  try {
+    json = await res.json();
+  } catch {
+    throw new Error("APC postcode check returned invalid JSON");
+  }
+
+  const msgCode = json?.PostcodeServiceCheck?.Messages?.Code
+    ?? json?.Messages?.Code;
+  const msgDesc = json?.PostcodeServiceCheck?.Messages?.Description
+    ?? json?.Messages?.Description;
+
+  if (msgCode === "SUCCESS" || msgCode === "AVAILABLE") {
+    return { available: true };
+  }
+
+  if (msgCode === "NOT_AVAILABLE" || msgCode === "UNAVAILABLE" || msgCode === "ERROR") {
+    return {
+      available: false,
+      reason: msgDesc ?? `Service ${serviceCode} not available for postcode ${postcode}`,
+    };
+  }
+
+  const isAvailable = json?.PostcodeServiceCheck?.Available === true
+    || json?.PostcodeServiceCheck?.Available === "true"
+    || json?.Available === true
+    || json?.Available === "true";
+
+  if (isAvailable) {
+    return { available: true };
+  }
+
+  return {
+    available: false,
+    reason: msgDesc ?? `Service ${serviceCode} may not be available for postcode ${postcode}`,
+  };
+}
+
 export { isConfigured, getDefaultServiceCodes, APC_TRAINING_BASE };

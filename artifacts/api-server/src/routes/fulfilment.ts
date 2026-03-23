@@ -3,7 +3,8 @@ import { db, skuLocationsTable, appSettingsTable, usersTable } from "@workspace/
 import { eq } from "drizzle-orm";
 import * as z from "zod";
 import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, findOrderByName, addTagToOrder, type ShopifyOrder } from "../services/shopify";
-import { createShipment, isConfigured as isApcConfigured, APC_TRAINING_BASE } from "../services/apc";
+import { createShipment, isConfigured as isApcConfigured, APC_TRAINING_BASE, checkPostcodeService } from "../services/apc";
+import { sql } from "drizzle-orm";
 
 const router = Router();
 
@@ -62,6 +63,63 @@ function pickServiceCode(
   return codes.smallWeekday;
 }
 
+async function validateOrderPostcode(
+  order: ShopifyOrder,
+  dispatchTag: string,
+): Promise<{ available: boolean; reason?: string; serviceCode: string }> {
+  if (!order.shipping_address?.zip) {
+    const reason = "Order has no postcode";
+    await db.execute(sql`
+      INSERT INTO postcode_validations (shopify_order_id, postcode, service_code, available, reason, checked_at, dispatch_tag)
+      VALUES (${order.id}, ${"MISSING"}, ${"N/A"}, ${false}, ${reason}, NOW(), ${dispatchTag})
+      ON CONFLICT (shopify_order_id, service_code)
+      DO UPDATE SET available = ${false}, reason = ${reason}, checked_at = NOW(), dispatch_tag = ${dispatchTag}
+    `);
+    return { available: false, reason, serviceCode: "N/A" };
+  }
+
+  const [smallWeekday, largeWeekday, smallFriday, largeFriday, weightThreshStr, testModeSetting] = await Promise.all([
+    getAppSetting("apc_service_code_small_weekday"),
+    getAppSetting("apc_service_code_large_weekday"),
+    getAppSetting("apc_service_code_small_friday"),
+    getAppSetting("apc_service_code_large_friday"),
+    getAppSetting("apc_weight_threshold_grams"),
+    getAppSetting("apc_test_mode"),
+  ]);
+
+  if (!smallWeekday || !largeWeekday || !smallFriday || !largeFriday) {
+    return { available: true, serviceCode: "" };
+  }
+
+  const isTestMode = testModeSetting === "true";
+  const apiBase = isTestMode ? APC_TRAINING_BASE : undefined;
+  const dispatchDate = dispatchTag.match(/^\d{4}-\d{2}-\d{2}$/) ? new Date(dispatchTag) : new Date();
+  const weightThresholdG = Number(weightThreshStr) || 1000;
+
+  const serviceCode = pickServiceCode(
+    order,
+    { smallWeekday, largeWeekday, smallFriday, largeFriday },
+    weightThresholdG,
+    dispatchDate,
+  );
+
+  try {
+    const result = await checkPostcodeService(order.shipping_address.zip, serviceCode, apiBase);
+
+    await db.execute(sql`
+      INSERT INTO postcode_validations (shopify_order_id, postcode, service_code, available, reason, checked_at, dispatch_tag)
+      VALUES (${order.id}, ${order.shipping_address.zip}, ${serviceCode}, ${result.available}, ${result.reason ?? null}, NOW(), ${dispatchTag})
+      ON CONFLICT (shopify_order_id, service_code)
+      DO UPDATE SET available = ${result.available}, reason = ${result.reason ?? null}, checked_at = NOW(), dispatch_tag = ${dispatchTag}
+    `);
+
+    return { ...result, serviceCode };
+  } catch (err: any) {
+    console.error(`[Fulfilment] postcode check failed for order ${order.name}:`, err.message);
+    return { available: true, serviceCode };
+  }
+}
+
 // GET /dispatch-tags — returns all active dispatch dates with unfulfilled order counts/weights.
 // Used by the fulfilment landing page to show operators what needs to be done each day.
 const DATE_TAG_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -75,7 +133,7 @@ router.get("/dispatch-tags", requireManagerOrAdmin, async (_req: Request, res: R
     for (const order of orders) {
       const tags = order.tags.split(",").map(t => t.trim());
       const dateTag = tags.find(t => DATE_TAG_RE.test(t));
-      if (!dateTag) continue; // skip orders without a dispatch date tag
+      if (!dateTag) continue;
 
       const existing = groups.get(dateTag) ?? { orderCount: 0, totalItems: 0, totalWeightG: 0 };
       existing.orderCount += 1;
@@ -84,9 +142,30 @@ router.get("/dispatch-tags", requireManagerOrAdmin, async (_req: Request, res: R
       groups.set(dateTag, existing);
     }
 
+    const dateTags = [...groups.keys()];
+    let postcodeIssuesByTag = new Map<string, number>();
+    if (dateTags.length > 0) {
+      try {
+        const issueRows = await db.execute(sql`
+          SELECT dispatch_tag, COUNT(*)::int as issue_count
+          FROM postcode_validations
+          WHERE dispatch_tag = ANY(${dateTags}) AND available = false
+          GROUP BY dispatch_tag
+        `);
+        for (const row of issueRows.rows as any[]) {
+          postcodeIssuesByTag.set(row.dispatch_tag, row.issue_count);
+        }
+      } catch {
+      }
+    }
+
     const result = [...groups.entries()]
-      .map(([tag, stats]) => ({ tag, ...stats }))
-      .sort((a, b) => a.tag.localeCompare(b.tag)); // ascending by date
+      .map(([tag, stats]) => ({
+        tag,
+        ...stats,
+        postcodeIssues: postcodeIssuesByTag.get(tag) ?? 0,
+      }))
+      .sort((a, b) => a.tag.localeCompare(b.tag));
 
     res.json(result);
   } catch (err: any) {
@@ -184,6 +263,20 @@ router.post("/shipments", requireManagerOrAdmin, async (req: Request, res: Respo
 
     if (!order.shipping_address) {
       res.status(422).json({ error: "Order has no shipping address — cannot create shipment." });
+      return;
+    }
+
+    const existingValidation = await db.execute(sql`
+      SELECT available, reason, service_code FROM postcode_validations
+      WHERE shopify_order_id = ${orderId} AND available = false
+      ORDER BY checked_at DESC LIMIT 1
+    `);
+    if (existingValidation.rows.length > 0) {
+      const v = existingValidation.rows[0] as any;
+      res.status(422).json({
+        error: `Postcode issue: ${v.reason || "Service not available for this postcode"} (Service: ${v.service_code}). Re-check the postcode before packing.`,
+        postcodeBlocked: true,
+      });
       return;
     }
 
@@ -307,14 +400,102 @@ router.post("/tag-dispatch-bulk", requireManagerOrAdmin, async (req: Request, re
         });
 
     let tagged = 0;
+    const postcodeIssues: Array<{ orderName: string; reason: string }> = [];
     for (const order of toTag) {
       await addTagToOrder(order.id, order.tags, "dispatch");
       tagged++;
+
+      if (isApcConfigured()) {
+        const check = await validateOrderPostcode(order, tag);
+        if (!check.available) {
+          postcodeIssues.push({ orderName: order.name, reason: check.reason ?? "Service not available" });
+        }
+      }
     }
 
-    res.json({ ok: true, tagged, total: toTag.length });
+    res.json({ ok: true, tagged, total: toTag.length, postcodeIssues });
   } catch (err: any) {
     console.error("[Fulfilment] tag-dispatch-bulk error:", err.message);
+    res.status(502).json({ error: err.message });
+  }
+});
+
+router.get("/postcode-validations", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const { tag } = req.query as { tag?: string };
+  if (!tag) {
+    res.status(400).json({ error: "tag query param required" });
+    return;
+  }
+  try {
+    const rows = await db.execute(sql`
+      SELECT shopify_order_id, postcode, service_code, available, reason, checked_at
+      FROM postcode_validations
+      WHERE dispatch_tag = ${tag}
+    `);
+    res.json(rows.rows);
+  } catch (err: any) {
+    console.error("[Fulfilment] postcode-validations error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/postcode-recheck", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const { orderId, tag } = req.body as { orderId?: number; tag?: string };
+  if (!orderId || !tag) {
+    res.status(400).json({ error: "orderId and tag are required" });
+    return;
+  }
+
+  try {
+    const orders = await getOrdersByTag(tag);
+    const order = orders.find(o => o.id === orderId);
+    if (!order) {
+      res.status(404).json({ error: `Order #${orderId} not found in tag "${tag}"` });
+      return;
+    }
+
+    const result = await validateOrderPostcode(order, tag);
+    res.json({
+      orderId,
+      postcode: order.shipping_address?.zip ?? "",
+      serviceCode: result.serviceCode,
+      available: result.available,
+      reason: result.reason,
+    });
+  } catch (err: any) {
+    console.error("[Fulfilment] postcode-recheck error:", err.message);
+    res.status(502).json({ error: err.message });
+  }
+});
+
+router.post("/postcode-validate-tag", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const { tag } = req.body as { tag?: string };
+  if (!tag) {
+    res.status(400).json({ error: "tag is required" });
+    return;
+  }
+
+  try {
+    const orders = await getOrdersByTag(tag);
+    const unfulfilled = orders.filter(o => o.fulfillment_status !== "fulfilled");
+    const dispatched = unfulfilled.filter(o =>
+      o.tags.split(",").map(t => t.trim()).includes("dispatch")
+    );
+
+    let checked = 0;
+    const issues: Array<{ orderName: string; orderId: number; reason: string }> = [];
+
+    for (const order of dispatched) {
+      const result = await validateOrderPostcode(order, tag);
+      checked++;
+      if (!result.available) {
+        issues.push({ orderName: order.name, orderId: order.id, reason: result.reason ?? "Service not available" });
+      }
+    }
+
+    res.json({ ok: true, checked, issues });
+  } catch (err: any) {
+    console.error("[Fulfilment] postcode-validate-tag error:", err.message);
     res.status(502).json({ error: err.message });
   }
 });

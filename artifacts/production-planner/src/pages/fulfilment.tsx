@@ -7,7 +7,7 @@ import { useLocation } from "wouter";
 import {
   Package, Scan, CheckCircle2, AlertCircle, ChevronRight, Printer,
   RefreshCw, MapPin, SkipForward, RotateCcw, XCircle, Loader2,
-  ArrowLeft, Truck, Tag,
+  ArrowLeft, Truck, Tag, ShieldAlert,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -75,6 +75,16 @@ interface DispatchTagGroup {
   orderCount: number;
   totalItems: number;
   totalWeightG: number;
+  postcodeIssues: number;
+}
+
+interface PostcodeValidation {
+  shopify_order_id: number;
+  postcode: string;
+  service_code: string;
+  available: boolean;
+  reason: string | null;
+  checked_at: string;
 }
 
 async function fetchDispatchTags(): Promise<DispatchTagGroup[]> {
@@ -141,6 +151,24 @@ async function bulkTagDispatch(tag: string, category: string): Promise<{ tagged:
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Failed to tag orders");
+  return data;
+}
+
+async function fetchPostcodeValidations(tag: string): Promise<PostcodeValidation[]> {
+  const res = await fetch(`${BASE}/api/fulfilment/postcode-validations?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
+  if (!res.ok) return [];
+  return res.json();
+}
+
+async function recheckPostcode(orderId: number, tag: string): Promise<{ available: boolean; reason?: string }> {
+  const res = await fetch(`${BASE}/api/fulfilment/postcode-recheck`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ orderId, tag }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? "Re-check failed");
   return data;
 }
 
@@ -394,6 +422,23 @@ export default function Fulfilment() {
     queryFn: () => fetchDispatchProgress(queryTag),
     staleTime: 30_000,
   });
+
+  const { data: postcodeValidations, refetch: refetchPostcodes } = useQuery({
+    queryKey: ["fulfilment-postcode-validations", queryTag],
+    queryFn: () => fetchPostcodeValidations(queryTag),
+    staleTime: 60_000,
+  });
+
+  const postcodeIssueMap = new Map<number, PostcodeValidation>();
+  if (postcodeValidations) {
+    for (const pv of postcodeValidations) {
+      if (!pv.available) {
+        postcodeIssueMap.set(Number(pv.shopify_order_id), pv);
+      }
+    }
+  }
+
+  const [recheckingId, setRecheckingId] = useState<number | null>(null);
 
   const allUnfulfilledOrders = orders?.filter(o => o.fulfillment_status !== "fulfilled") ?? [];
   const fulfilledOrders = orders?.filter(o => o.fulfillment_status === "fulfilled") ?? [];
@@ -1195,6 +1240,12 @@ export default function Fulfilment() {
                       <span className="flex items-center gap-1"><Package className="w-3.5 h-3.5" /> {group.orderCount} orders</span>
                       <span>{group.totalItems} items</span>
                       <span>{weightKg} kg</span>
+                      {group.postcodeIssues > 0 && (
+                        <span className="flex items-center gap-1 text-red-600 dark:text-red-400 font-medium">
+                          <ShieldAlert className="w-3.5 h-3.5" />
+                          {group.postcodeIssues} postcode {group.postcodeIssues === 1 ? "issue" : "issues"}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <button
@@ -1358,6 +1409,7 @@ export default function Fulfilment() {
                       refetch();
                       refetchProgress();
                       refetchTags();
+                      refetchPostcodes();
                     } catch {
                     } finally {
                       setBulkTagging(false);
@@ -1413,14 +1465,24 @@ export default function Fulfilment() {
             const hasUnassigned = order.line_items.some(i => !i.location && i.sku);
             const weightKg = ((order.total_weight ?? 0) / 1000).toFixed(2);
             const tags = order.tags.split(",").map(t => t.trim()).filter(Boolean);
+            const postcodeIssue = postcodeIssueMap.get(order.id);
+            const isBlocked = !!postcodeIssue;
 
             return (
               <div
                 key={order.id}
-                className="glass-panel p-5 rounded-2xl border border-border flex items-center gap-4 hover:border-primary/30 transition-colors group"
+                className={cn(
+                  "glass-panel p-5 rounded-2xl border flex items-center gap-4 transition-colors group",
+                  isBlocked
+                    ? "border-red-200 dark:border-red-800 bg-red-50/30 dark:bg-red-950/10"
+                    : "border-border hover:border-primary/30"
+                )}
               >
-                <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-sm font-bold text-muted-foreground flex-shrink-0">
-                  {idx + 1}
+                <div className={cn(
+                  "w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0",
+                  isBlocked ? "bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400" : "bg-secondary text-muted-foreground"
+                )}>
+                  {isBlocked ? <ShieldAlert className="w-4 h-4" /> : idx + 1}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
@@ -1430,11 +1492,22 @@ export default function Fulfilment() {
                         Unassigned SKUs
                       </span>
                     )}
+                    {isBlocked && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 font-medium">
+                        Postcode Issue
+                      </span>
+                    )}
                   </div>
                   <p className="text-sm text-muted-foreground truncate">
                     {order.shipping_address?.name ?? `${order.customer?.first_name} ${order.customer?.last_name}`}
                     {order.shipping_address && ` — ${order.shipping_address.city}, ${order.shipping_address.zip}`}
                   </p>
+                  {isBlocked && (
+                    <p className="text-xs text-red-600 dark:text-red-400 mt-1 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
+                      {postcodeIssue.reason ?? "Service not available for this postcode"} (Service: {postcodeIssue.service_code})
+                    </p>
+                  )}
                   <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground">
                     <span>{order.line_items.reduce((s, i) => s + i.quantity, 0)} items</span>
                     <span>{weightKg} kg</span>
@@ -1443,13 +1516,36 @@ export default function Fulfilment() {
                     ))}
                   </div>
                 </div>
-                <button
-                  onClick={() => handleOrderSelect(order)}
-                  className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground rounded-xl font-semibold hover:bg-primary/90 transition-colors flex-shrink-0"
-                >
-                  <Scan className="w-4 h-4" /> Start Picking
-                  <ChevronRight className="w-4 h-4" />
-                </button>
+                {isBlocked ? (
+                  <button
+                    onClick={async () => {
+                      setRecheckingId(order.id);
+                      try {
+                        await recheckPostcode(order.id, queryTag);
+                        refetchPostcodes();
+                      } catch {
+                      } finally {
+                        setRecheckingId(null);
+                      }
+                    }}
+                    disabled={recheckingId === order.id}
+                    className="flex items-center gap-2 px-4 py-2.5 border border-red-200 dark:border-red-700 text-red-700 dark:text-red-300 rounded-xl text-sm font-semibold hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors flex-shrink-0 disabled:opacity-50"
+                  >
+                    {recheckingId === order.id ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" /> Checking…</>
+                    ) : (
+                      <><RefreshCw className="w-4 h-4" /> Re-check</>
+                    )}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleOrderSelect(order)}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground rounded-xl font-semibold hover:bg-primary/90 transition-colors flex-shrink-0"
+                  >
+                    <Scan className="w-4 h-4" /> Start Picking
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             );
           })}

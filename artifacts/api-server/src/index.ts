@@ -55,6 +55,19 @@ async function runStartupMigrations() {
       VALUES ('apc_test_mode', 'false', NOW())
       ON CONFLICT (key) DO NOTHING
     `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS postcode_validations (
+        id SERIAL PRIMARY KEY,
+        shopify_order_id BIGINT NOT NULL,
+        postcode TEXT NOT NULL,
+        service_code TEXT NOT NULL,
+        available BOOLEAN NOT NULL,
+        reason TEXT,
+        checked_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        dispatch_tag TEXT,
+        UNIQUE(shopify_order_id, service_code)
+      )
+    `);
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);
