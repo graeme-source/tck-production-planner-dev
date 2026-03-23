@@ -109,7 +109,7 @@ function StationLayout({ planId, stationType, plan, children }: StationLayoutPro
   const resolveStationMeta = (key: StationType): { label: string; icon: React.ComponentType<{ className?: string }>; color: string } => {
     if (key === "main_prep") return { label: "Main Prep", icon: ClipboardList, color: "text-emerald-600" };
     if (key === "prep_veg") return { label: "Veg Prep", icon: Salad, color: "text-green-500" };
-    if (key === "prep_bases") return { label: "Bases & Mozzarella", icon: Layers, color: "text-yellow-500" };
+    if (key === "prep_bases") return { label: "Bases & Sauces", icon: Layers, color: "text-yellow-500" };
     if (key === "prep_meat") return { label: "Raw Meat Prep", icon: Beef, color: "text-rose-500" };
     return station ?? { label: key, icon: BarChart2, color: "" };
   };
@@ -3054,7 +3054,7 @@ function PrepVegStation({ plan }: { plan: ProductionPlanDetail }) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Bases & Mozzarella Prep Station
+// Bases & Sauces Prep Station
 // Per-recipe base/sauce/cheese ingredients with tin split
 // ──────────────────────────────────────────────────────────────────────────────
 function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
@@ -3105,7 +3105,7 @@ function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
         targetPlanDate={nextPlan?.planDate ?? null}
         targetPlanName={nextPlan?.planName ?? null}
         isLoadingPlan={false}
-        stationLabel="Bases & Mozzarella"
+        stationLabel="Bases & Sauces"
         stationColor="text-yellow-500"
         stationIcon={Layers}
         onOverviewClick={() => setMode("overview")}
@@ -3116,7 +3116,7 @@ function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
   return (
     <div className="space-y-4">
       <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
-      <PrepModeToggle mode={mode} onToggle={() => setMode("fullscreen")} label="Bases & Mozzarella" icon={Layers} iconColor="text-yellow-500" />
+      <PrepModeToggle mode={mode} onToggle={() => setMode("fullscreen")} label="Bases & Sauces" icon={Layers} iconColor="text-yellow-500" />
 
       {recipes.length === 0 ? (
         <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
@@ -5347,7 +5347,7 @@ function PrepHub({ planId, planDate }: { planId: number; planDate?: string }) {
     },
     {
       key: "prep_bases",
-      label: "Bases & Mozzarella",
+      label: "Bases & Sauces",
       icon: Layers,
       color: "text-yellow-500",
       borderColor: "border-yellow-200 dark:border-yellow-800",

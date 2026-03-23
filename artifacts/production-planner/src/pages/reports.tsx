@@ -107,7 +107,7 @@ const STATION_LABELS: Record<string, string> = {
   packing: "Packing",
   main_prep: "Main Prep",
   prep_veg: "Veg Prep",
-  prep_bases: "Bases Prep",
+  prep_bases: "Bases & Sauces",
   prep_meat: "Meat Prep",
 };
 
