@@ -61,21 +61,22 @@ router.get("/order-summary", async (req, res) => {
     if (specialRecipe) {
       const specialEntry = counts.find(p => p.productTitle.toLowerCase().trim() === SPECIAL_KEY);
       if (specialEntry) {
-        const specialCount = specialEntry.totalQuantity;
-        const existingIdx = products.findIndex(p =>
+        const specialQty = specialEntry.totalQuantity;
+        const withoutSpecialEntry = products.filter(p => p.productTitle.toLowerCase().trim() !== SPECIAL_KEY);
+        const existingIdx = withoutSpecialEntry.findIndex(p =>
           p.productTitle.toLowerCase().includes(specialRecipe.name.toLowerCase()) ||
           specialRecipe.name.toLowerCase().includes(p.productTitle.toLowerCase())
         );
         if (existingIdx !== -1) {
-          products = products.map((p, i) => i === existingIdx
-            ? {
-                ...p,
-                totalQuantity: p.totalQuantity + specialCount,
-                orderCount: p.orderCount + specialEntry.orderCount,
-                specialCount,
-              }
+          products = withoutSpecialEntry.map((p, i) => i === existingIdx
+            ? { ...p, totalQuantity: p.totalQuantity + specialQty, orderCount: p.orderCount + specialEntry.orderCount, specialCount: specialQty }
             : p
-          ).filter(p => p.productTitle.toLowerCase().trim() !== SPECIAL_KEY);
+          );
+        } else {
+          products = [
+            ...withoutSpecialEntry,
+            { ...specialEntry, productTitle: specialRecipe.name, specialCount: specialQty },
+          ];
         }
       }
     }

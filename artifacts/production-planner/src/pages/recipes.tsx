@@ -171,6 +171,8 @@ function RecipeForm({
   ingredients: initialIngredients,
   subRecipes,
   categoryDefaults,
+  currentSpecialName,
+  thisRecipeIsSpecial,
 }: {
   defaultValues: FormValues;
   onSubmit: (data: FormValues) => void;
@@ -179,6 +181,8 @@ function RecipeForm({
   ingredients: IngredientOption[];
   subRecipes: SubRecipeOption[];
   categoryDefaults: { category: string; defaultPackagingCost: number; defaultLabourCost: number }[];
+  currentSpecialName?: string | null;
+  thisRecipeIsSpecial?: boolean;
 }) {
   const { register, control, handleSubmit, setValue, watch, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -315,10 +319,21 @@ function RecipeForm({
               <label htmlFor="isCoreMenu" className="text-sm font-medium">Core Menu Item</label>
               <span className="text-xs text-muted-foreground">(always shows in Production Fridge stock &amp; calculator)</span>
             </div>
-            <div className="flex items-center gap-2">
-              <input type="checkbox" id="isCurrentSpecial" {...register("isCurrentSpecial")} className="rounded border-border" />
-              <label htmlFor="isCurrentSpecial" className="text-sm font-medium">Calzone Club Special</label>
-              <span className="text-xs text-muted-foreground">("Calzone Club Special" orders on Shopify count towards this recipe)</span>
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="isCurrentSpecial" {...register("isCurrentSpecial")} className="rounded border-border" />
+                <label htmlFor="isCurrentSpecial" className="text-sm font-medium">Calzone Club Special</label>
+              </div>
+              <span className="text-xs text-muted-foreground pl-5">"Calzone Club Special" Shopify orders count towards this recipe's sales total.</span>
+              {thisRecipeIsSpecial && (
+                <span className="text-xs text-primary font-medium pl-5">This recipe is currently the Calzone Club Special.</span>
+              )}
+              {!thisRecipeIsSpecial && currentSpecialName && (
+                <span className="text-xs text-amber-600 dark:text-amber-400 pl-5">Currently set to: <strong>{currentSpecialName}</strong>. Enabling this will replace it.</span>
+              )}
+              {!thisRecipeIsSpecial && !currentSpecialName && (
+                <span className="text-xs text-muted-foreground pl-5">No Calzone Club Special is currently set.</span>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <label htmlFor="recipeColor" className="text-sm font-medium">Colour</label>
@@ -540,7 +555,12 @@ function EditRecipeDialog({
   categoryDefaults: { category: string; defaultPackagingCost: number; defaultLabourCost: number }[];
 }) {
   const { data: detail, isLoading } = useGetRecipe(id, { query: { enabled: open } });
+  const { data: allRecipes } = useListRecipes({ query: { enabled: open } });
   const { updateRecipe } = useAppMutations();
+
+  const specialRecipe = allRecipes?.find((r: any) => r.isCurrentSpecial);
+  const currentSpecialName = specialRecipe ? specialRecipe.name : null;
+  const thisRecipeIsSpecial = detail?.isCurrentSpecial ?? false;
 
   if (!open) return null;
 
@@ -584,6 +604,8 @@ function EditRecipeDialog({
             ingredients={ingredients}
             subRecipes={subRecipes}
             categoryDefaults={categoryDefaults}
+            currentSpecialName={currentSpecialName}
+            thisRecipeIsSpecial={thisRecipeIsSpecial}
             onSubmit={(data) => updateRecipe.mutate({ id, data }, { onSuccess: () => onOpenChange(false) })}
           />
         )}

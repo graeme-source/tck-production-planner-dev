@@ -363,9 +363,14 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
   }
 
   if (isCurrentSpecial === true) {
-    await db.update(recipesTable)
-      .set({ isCurrentSpecial: false })
-      .where(ne(recipesTable.id, id));
+    await db.transaction(async (tx) => {
+      await tx.update(recipesTable)
+        .set({ isCurrentSpecial: false })
+        .where(ne(recipesTable.id, id));
+      await tx.update(recipesTable)
+        .set({ isCurrentSpecial: true })
+        .where(eq(recipesTable.id, id));
+    });
   }
 
   const [updated] = await db.update(recipesTable)
@@ -446,17 +451,27 @@ router.patch("/:id/special", async (req, res) => {
     return;
   }
 
+  let updatedRow: typeof recipesTable.$inferSelect | undefined;
+
   if (isCurrentSpecial) {
-    await db.update(recipesTable).set({ isCurrentSpecial: false }).where(ne(recipesTable.id, id));
+    await db.transaction(async (tx) => {
+      await tx.update(recipesTable).set({ isCurrentSpecial: false }).where(ne(recipesTable.id, id));
+      const [row] = await tx.update(recipesTable)
+        .set({ isCurrentSpecial: true })
+        .where(eq(recipesTable.id, id))
+        .returning();
+      updatedRow = row;
+    });
+  } else {
+    const [row] = await db.update(recipesTable)
+      .set({ isCurrentSpecial: false })
+      .where(eq(recipesTable.id, id))
+      .returning();
+    updatedRow = row;
   }
 
-  const [updated] = await db.update(recipesTable)
-    .set({ isCurrentSpecial })
-    .where(eq(recipesTable.id, id))
-    .returning();
-
-  if (!updated) { res.status(404).json({ error: "Not found" }); return; }
-  res.json({ id: updated.id, isCurrentSpecial: updated.isCurrentSpecial });
+  if (!updatedRow) { res.status(404).json({ error: "Not found" }); return; }
+  res.json({ id: updatedRow.id, isCurrentSpecial: updatedRow.isCurrentSpecial });
 });
 
 router.delete("/:id", async (req, res) => {
