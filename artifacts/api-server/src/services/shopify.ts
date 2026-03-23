@@ -110,6 +110,14 @@ export interface ShopifyLineItem {
   price: string;
 }
 
+export interface ShopifyFulfillment {
+  id: number;
+  created_at: string;
+  updated_at: string;
+  status: string;
+  tracking_number: string | null;
+}
+
 export interface ShopifyOrder {
   id: number;
   name: string;
@@ -138,6 +146,7 @@ export interface ShopifyOrder {
   } | null;
   line_items: ShopifyLineItem[];
   note: string | null;
+  fulfillments?: ShopifyFulfillment[];
 }
 
 export interface ShopifyProduct {
@@ -342,6 +351,41 @@ export async function fulfillOrder(
 export async function getUnfulfilledOrdersByTag(tag: string): Promise<ShopifyOrder[]> {
   const orders = await getOrdersByTag(tag);
   return orders.filter(o => o.fulfillment_status !== "fulfilled");
+}
+
+// Returns fulfilled orders within a date range (UTC), including their fulfillment timestamps.
+// Uses updated_at_min/max because the fulfillment event updates the order's updated_at.
+export async function getFulfilledOrdersForDateRange(
+  fromDate: string, // YYYY-MM-DD
+  toDate: string,   // YYYY-MM-DD
+): Promise<ShopifyOrder[]> {
+  // Convert YYYY-MM-DD to ISO8601 with UTC day boundaries
+  const min = `${fromDate}T00:00:00Z`;
+  const max = `${toDate}T23:59:59Z`;
+
+  const allOrders: ShopifyOrder[] = [];
+  let pageInfo: string | null = null;
+
+  do {
+    const params: Record<string, string> = {
+      limit: "250",
+      status: "any",
+      fulfillment_status: "shipped",
+      updated_at_min: min,
+      updated_at_max: max,
+      fields:
+        "id,name,tags,created_at,financial_status,fulfillment_status,total_price,customer,fulfillments",
+    };
+    if (pageInfo) params.page_info = pageInfo;
+
+    const res = await shopifyFetchRaw("/orders.json", params);
+    const data = (await res.json()) as { orders: ShopifyOrder[] };
+    allOrders.push(...data.orders);
+    pageInfo = parseNextPageInfo(res.headers.get("Link"));
+  } while (pageInfo);
+
+  // Only return orders that are definitively fulfilled
+  return allOrders.filter(o => o.fulfillment_status === "fulfilled" || o.fulfillment_status === "shipped");
 }
 
 // Returns recent unfulfilled orders (last N days) to derive all active dispatch tags.

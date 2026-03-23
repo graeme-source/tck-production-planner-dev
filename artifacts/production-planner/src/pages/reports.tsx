@@ -114,7 +114,10 @@ const STATION_LABELS: Record<string, string> = {
 interface PackingDayRow {
   date: string;
   count: number;
-  totalQty: number;
+  firstFulfilledAt: string | null;
+  lastFulfilledAt: string | null;
+  windowMinutes: number | null;
+  ordersPerHour: number | null;
 }
 
 interface PackingSpeedData {
@@ -124,6 +127,7 @@ interface PackingSpeedData {
   avgPerDay: number;
   bestDay: { date: string; count: number } | null;
   dailyRows: PackingDayRow[];
+  source?: string;
 }
 
 type TabId = "kpis" | "breaks" | "temperature" | "packing-speed";
@@ -181,12 +185,9 @@ function DateShortcutsDropdown({ onSelect }: { onSelect: (from: string, to: stri
 export default function Reports() {
   const [activeTab, setActiveTab] = useState<TabId>("kpis");
 
-  const today = new Date();
-  const thirtyDaysAgo = new Date(today);
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-  const [fromDate, setFromDate] = useState(format(thirtyDaysAgo, "yyyy-MM-dd"));
-  const [toDate, setToDate] = useState(format(today, "yyyy-MM-dd"));
+  const todayStr = format(new Date(), "yyyy-MM-dd");
+  const [fromDate, setFromDate] = useState(todayStr);
+  const [toDate, setToDate] = useState(todayStr);
 
   return (
     <div className="space-y-6">
@@ -927,7 +928,7 @@ function PackingSpeedTab({ fromDate, toDate }: { fromDate: string; toDate: strin
         <div className="rounded-xl border border-border bg-card overflow-hidden">
           <div className="px-4 py-3 border-b border-border bg-secondary/10">
             <h3 className="text-sm font-semibold text-foreground">Daily Breakdown</h3>
-            <p className="text-xs text-muted-foreground mt-0.5">Orders fulfilled per day (by date order was packed)</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Based on Shopify fulfilled orders — start/end times are from the first and last fulfillment of the day</p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -935,29 +936,43 @@ function PackingSpeedTab({ fromDate, toDate }: { fromDate: string; toDate: strin
                 <tr className="border-b border-border bg-secondary/20">
                   <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Date</th>
                   <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Orders Packed</th>
-                  <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Est. Rate (per hr)</th>
-                  <th className="px-4 py-3">
-                    <span className="sr-only">Bar</span>
-                  </th>
+                  <th className="text-center px-4 py-3 font-semibold text-muted-foreground">First Order</th>
+                  <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Last Order</th>
+                  <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Window</th>
+                  <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Rate</th>
+                  <th className="px-4 py-3 w-32"><span className="sr-only">Bar</span></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {data.dailyRows.map(row => {
-                  const ratePerHour = Math.round((row.count / 8) * 10) / 10;
                   const maxCount = Math.max(...data.dailyRows.map(r => r.count), 1);
                   const pct = Math.round((row.count / maxCount) * 100);
+                  const windowStr = row.windowMinutes != null
+                    ? row.windowMinutes >= 60
+                      ? `${Math.floor(row.windowMinutes / 60)}h ${row.windowMinutes % 60}m`
+                      : `${row.windowMinutes}m`
+                    : "—";
                   return (
                     <tr key={row.date} className="hover:bg-secondary/10 transition-colors">
-                      <td className="px-4 py-3 font-medium">
+                      <td className="px-4 py-3 font-medium whitespace-nowrap">
                         {format(new Date(row.date + "T00:00:00"), "EEE dd MMM yyyy")}
                       </td>
                       <td className="px-4 py-3 text-center tabular-nums font-semibold">
                         {row.count}
                       </td>
-                      <td className="px-4 py-3 text-center tabular-nums text-muted-foreground">
-                        {ratePerHour}/hr
+                      <td className="px-4 py-3 text-center tabular-nums text-muted-foreground whitespace-nowrap">
+                        {row.firstFulfilledAt ? format(new Date(row.firstFulfilledAt), "HH:mm") : "—"}
                       </td>
-                      <td className="px-4 py-3 w-48">
+                      <td className="px-4 py-3 text-center tabular-nums text-muted-foreground whitespace-nowrap">
+                        {row.lastFulfilledAt ? format(new Date(row.lastFulfilledAt), "HH:mm") : "—"}
+                      </td>
+                      <td className="px-4 py-3 text-center tabular-nums text-muted-foreground">
+                        {windowStr}
+                      </td>
+                      <td className="px-4 py-3 text-center tabular-nums font-medium">
+                        {row.ordersPerHour != null ? `${row.ordersPerHour}/hr` : "—"}
+                      </td>
+                      <td className="px-4 py-3">
                         <div className="w-full bg-secondary/40 rounded-full h-2">
                           <div
                             className="bg-blue-500 h-2 rounded-full transition-all"
@@ -975,7 +990,7 @@ function PackingSpeedTab({ fromDate, toDate }: { fromDate: string; toDate: strin
       )}
 
       <p className="text-xs text-muted-foreground">
-        * Orders per hour is estimated using an 8-hour packing shift. The "Date" reflects when the order was marked as fulfilled in the system.
+        * Data sourced from Shopify fulfilled orders. "First Order" and "Last Order" times are from Shopify fulfillment timestamps. Rate is calculated using the actual packing window (last − first fulfillment), not an assumed shift length. Days with only one fulfillment show "—" for rate.
       </p>
     </div>
   );
