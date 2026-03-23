@@ -740,7 +740,7 @@ function MixingStation({ plan }: MixingStationProps) {
 
   const authUser = state.status === "authenticated" ? state.user : null;
 
-  const [mixingTab, setMixingTab] = useState<"tins" | "cooking">("tins");
+  const [mixingTab, setMixingTab] = useState<"tins" | "cooking">("cooking");
   // key = `${recipeId}-${ingredientId}`, value = map of trayIdx → 0 (empty), 1 (in oven), 2 (done)
   const [trayStates, setTrayStates] = useState<Record<string, Record<number, 0 | 1 | 2>>>({});
   // Pending temperature entry: which tray just moved to "done" and needs a temp recorded
@@ -1112,28 +1112,26 @@ function MixingStation({ plan }: MixingStationProps) {
       {/* ── Big tab switcher ── */}
       <div className="flex gap-2">
         <button
-          onClick={() => setMixingTab("tins")}
-          className={cn(
-            "flex-1 flex flex-col items-center justify-center gap-1 py-4 rounded-xl font-semibold text-base transition-all border-2",
-            mixingTab === "tins"
-              ? "bg-primary text-primary-foreground border-primary shadow-sm"
-              : "bg-card text-muted-foreground border-border hover:border-primary/40 hover:text-foreground"
-          )}
-        >
-          <span className="text-xl">🏭</span>
-          <span>Tins</span>
-        </button>
-        <button
           onClick={() => setMixingTab("cooking")}
           className={cn(
-            "flex-1 flex flex-col items-center justify-center gap-1 py-4 rounded-xl font-semibold text-base transition-all border-2",
+            "flex-1 py-4 rounded-xl font-bold text-xl transition-all border-2 bg-card",
             mixingTab === "cooking"
-              ? "bg-rose-600 text-white border-rose-600 shadow-sm"
-              : "bg-card text-muted-foreground border-border hover:border-rose-400 hover:text-foreground"
+              ? "border-rose-500 text-rose-600 dark:text-rose-400"
+              : "border-border text-muted-foreground hover:border-rose-400/60 hover:text-foreground"
           )}
         >
-          <span className="text-xl">🔥</span>
-          <span>Cooking</span>
+          The Cooking
+        </button>
+        <button
+          onClick={() => setMixingTab("tins")}
+          className={cn(
+            "flex-1 py-4 rounded-xl font-bold text-xl transition-all border-2 bg-card",
+            mixingTab === "tins"
+              ? "border-primary text-primary"
+              : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"
+          )}
+        >
+          Mixing Tins
         </button>
       </div>
 
