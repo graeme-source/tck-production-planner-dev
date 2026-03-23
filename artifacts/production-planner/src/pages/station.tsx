@@ -3055,116 +3055,170 @@ function PrepVegStation({ plan }: { plan: ProductionPlanDetail }) {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Bases & Sauces Prep Station
-// Per-recipe base/sauce/cheese ingredients with tin split
+// Left: recipe list overview. Right: focused ingredient detail for selected recipe.
 // ──────────────────────────────────────────────────────────────────────────────
 function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
-  const [mode, setMode] = useState<"fullscreen" | "overview">("fullscreen");
   const [isOnBreak, setIsOnBreak] = useState(false);
+  const [selectedRecipeId, setSelectedRecipeId] = useState<number | null>(null);
   const { recipes, isLoading, nextPlan } = usePrepByRecipe("prep_bases", plan.id, plan.planDate);
 
-  // Build full-screen items — per recipe → ingredients + tin badge per recipe
-  const fullScreenItems: PrepFullScreenItem[] = recipes.flatMap(recipe => {
-    const items: PrepFullScreenItem[] = [];
-    // Recipe header card: show tin count as first item if applicable
-    if (recipe.tinCount != null) {
-      items.push({
-        id: `${recipe.recipeId}-tins`,
-        name: `${recipe.recipeName} — Tins`,
-        quantity: `${recipe.tinCount} tin${recipe.tinCount !== 1 ? "s" : ""}`,
-        subDetail: [
-          recipe.tinSize ? recipe.tinSize : null,
-          recipe.maxBatchesPerTin ? `${recipe.maxBatchesPerTin} batches/tin` : null,
-          `${recipe.batchesTarget} batches total`,
-        ].filter(Boolean).join(" · ") || undefined,
-        badge: { label: "Tins needed", value: recipe.tinCount, color: "green" },
-        sopUrl: recipe.sopUrl,
-      });
+  // Auto-select first recipe
+  useEffect(() => {
+    if (recipes.length > 0 && (selectedRecipeId === null || !recipes.some(r => r.recipeId === selectedRecipeId))) {
+      setSelectedRecipeId(recipes[0].recipeId);
     }
-    // Then each ingredient
-    recipe.ingredients.forEach(ing => {
-      items.push({
-        id: `${recipe.recipeId}-${ing.ingredientId}`,
-        name: ing.ingredientName,
-        quantity: fmtQty(ing.cookedQty, ing.unit),
-        subDetail: `Recipe: ${recipe.recipeName} (${recipe.batchesTarget} batch${recipe.batchesTarget !== 1 ? "es" : ""})`,
-        sopUrl: recipe.sopUrl,
-      });
-    });
-    return items;
-  });
+  }, [recipes, selectedRecipeId]);
 
   if (isLoading) {
     return <div className="flex items-center justify-center py-20 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin mr-2" />Loading…</div>;
   }
 
-  if (mode === "fullscreen") {
+  if (recipes.length === 0) {
     return (
-      <PrepFullScreenMode
-        items={fullScreenItems}
-        currentPlanDate={plan.planDate}
-        targetPlanDate={nextPlan?.planDate ?? null}
-        targetPlanName={nextPlan?.planName ?? null}
-        isLoadingPlan={false}
-        stationLabel="Bases & Sauces"
-        stationColor="text-yellow-500"
-        stationIcon={Layers}
-        onOverviewClick={() => setMode("overview")}
-      />
-    );
-  }
-
-  return (
-    <div className="space-y-4">
-      <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
-      <PrepModeToggle mode={mode} onToggle={() => setMode("fullscreen")} label="Bases & Sauces" icon={Layers} iconColor="text-yellow-500" />
-
-      {recipes.length === 0 ? (
+      <div className="space-y-4">
+        <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
         <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
           <p className="font-medium">No base/sauce/cheese ingredients to prep</p>
           <p className="text-sm mt-1">Assign ingredient categories: "base", "sauce", or "cheese"</p>
         </div>
-      ) : (
-        <div className="space-y-4">
-          {recipes.map(recipe => (
-            <div key={recipe.recipeId} className="bg-card border border-border rounded-xl overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-2.5 bg-yellow-50 dark:bg-yellow-900/20 border-b border-border">
-                <div>
-                  <p className="font-semibold text-sm text-yellow-800 dark:text-yellow-200">{recipe.recipeName}</p>
-                  <p className="text-xs text-yellow-700 dark:text-yellow-300">
-                    {recipe.batchesTarget} batch{recipe.batchesTarget !== 1 ? "es" : ""}
-                    {recipe.tinSize ? ` · ${recipe.tinSize}` : ""}
-                    {recipe.maxBatchesPerTin ? ` · ${recipe.maxBatchesPerTin}/tin` : ""}
-                  </p>
-                </div>
-                <div className="flex items-center gap-3">
-                  {recipe.tinCount != null && (
-                    <div className="text-right">
-                      <p className="text-xs text-muted-foreground">Tins</p>
-                      <p className="text-3xl font-bold text-green-600 dark:text-green-400 tabular-nums">{recipe.tinCount}</p>
-                    </div>
-                  )}
-                  {recipe.sopUrl && (
-                    <a href={recipe.sopUrl} target="_blank" rel="noopener noreferrer"
-                      className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline">
-                      SOP <ExternalLink className="w-3 h-3" />
-                    </a>
-                  )}
-                </div>
-              </div>
-              <table className="w-full text-sm">
-                <tbody>
-                  {recipe.ingredients.map(ing => (
-                    <tr key={ing.ingredientId} className="border-b border-border/50 last:border-0">
-                      <td className="py-2.5 px-4 font-medium">{ing.ingredientName}</td>
-                      <td className="py-2.5 px-4 text-right tabular-nums font-semibold">{fmtQty(ing.cookedQty, ing.unit)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      </div>
+    );
+  }
+
+  const selected = recipes.find(r => r.recipeId === selectedRecipeId) ?? recipes[0];
+  const totalIngCount = recipes.reduce((s, r) => s + r.ingredients.length, 0);
+
+  return (
+    <div className="space-y-4">
+      <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
+
+      {/* Summary bar */}
+      <div className="bg-card border border-border rounded-xl p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Layers className="w-6 h-6 text-yellow-500" />
+            <div>
+              <h2 className="font-semibold text-base">Bases & Sauces</h2>
+              <p className="text-xs text-muted-foreground">
+                {recipes.length} recipe{recipes.length !== 1 ? "s" : ""} · {totalIngCount} ingredient{totalIngCount !== 1 ? "s" : ""}
+              </p>
             </div>
-          ))}
+          </div>
         </div>
-      )}
+      </div>
+
+      {/* Split panel */}
+      <div className="flex flex-col lg:flex-row gap-4">
+
+        {/* Left: recipe list */}
+        <div className="lg:w-72 xl:w-80 flex-shrink-0">
+          <div className="bg-card border border-border rounded-xl overflow-hidden">
+            <div className="px-4 py-2.5 bg-secondary/30 border-b border-border">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Recipes</p>
+            </div>
+            <div className="divide-y divide-border/50 max-h-[calc(100vh-320px)] overflow-y-auto">
+              {recipes.map(recipe => {
+                const isSelected = recipe.recipeId === selected.recipeId;
+                return (
+                  <button
+                    key={recipe.recipeId}
+                    onClick={() => setSelectedRecipeId(recipe.recipeId)}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-4 py-3 text-left transition-colors",
+                      isSelected
+                        ? "bg-yellow-50/80 dark:bg-yellow-900/20 border-l-4 border-l-yellow-500"
+                        : "hover:bg-secondary/40 border-l-4 border-l-transparent"
+                    )}
+                  >
+                    <Layers className={cn("w-5 h-5 flex-shrink-0", isSelected ? "text-yellow-500" : "text-muted-foreground")} />
+                    <div className="min-w-0 flex-1">
+                      <p className={cn("text-sm font-medium truncate", isSelected && "font-semibold")}>{recipe.recipeName}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {recipe.ingredients.length} ingredient{recipe.ingredients.length !== 1 ? "s" : ""}
+                        {recipe.tinCount != null && ` · ${recipe.tinCount} tin${recipe.tinCount !== 1 ? "s" : ""}`}
+                      </p>
+                    </div>
+                    <span className="text-xs text-muted-foreground flex-shrink-0">{recipe.batchesTarget}×</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Right: selected recipe detail */}
+        <div className="flex-1 min-w-0">
+          <div className="bg-card border-2 border-yellow-400 dark:border-yellow-600 rounded-2xl p-6">
+
+            {/* Header */}
+            <div className="mb-5">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Currently Prepping</p>
+              <div className="flex items-start justify-between gap-3">
+                <h2 className="font-display text-3xl font-bold leading-tight">{selected.recipeName}</h2>
+                {selected.sopUrl && (
+                  <a href={selected.sopUrl} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline flex-shrink-0 mt-1">
+                    SOP <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
+              </div>
+              <div className="flex items-center gap-3 mt-2 flex-wrap">
+                <p className="text-sm text-muted-foreground">{selected.batchesTarget} batch{selected.batchesTarget !== 1 ? "es" : ""}</p>
+                {selected.tinCount != null && (
+                  <span className="bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 rounded-full px-3 py-0.5 text-sm font-semibold">
+                    {selected.tinCount} tin{selected.tinCount !== 1 ? "s" : ""}
+                  </span>
+                )}
+                {selected.tinSize && (
+                  <span className="text-sm text-muted-foreground">{selected.tinSize}</span>
+                )}
+                {selected.maxBatchesPerTin && (
+                  <span className="text-sm text-muted-foreground">{selected.maxBatchesPerTin} batches/tin</span>
+                )}
+              </div>
+            </div>
+
+            {/* Ingredient rows */}
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Ingredients</p>
+              <div className="space-y-2">
+                {selected.ingredients.map((ing, idx) => (
+                  <div
+                    key={ing.ingredientId}
+                    className={cn(
+                      "flex items-center justify-between px-5 py-4 rounded-xl border",
+                      idx === 0
+                        ? "border-yellow-300 dark:border-yellow-700 bg-yellow-50/50 dark:bg-yellow-900/10"
+                        : "border-border bg-background"
+                    )}
+                  >
+                    <p className="font-medium text-base">{ing.ingredientName}</p>
+                    <p className="text-2xl font-bold tabular-nums text-yellow-700 dark:text-yellow-300">
+                      {fmtQty(ing.cookedQty, ing.unit)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Navigate to next recipe */}
+            {recipes.length > 1 && (() => {
+              const currentIdx = recipes.findIndex(r => r.recipeId === selected.recipeId);
+              const nextRecipe = recipes[(currentIdx + 1) % recipes.length];
+              return (
+                <div className="mt-6 flex justify-end">
+                  <button
+                    onClick={() => setSelectedRecipeId(nextRecipe.recipeId)}
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-yellow-500/10 text-yellow-700 dark:text-yellow-300 hover:bg-yellow-500/20 font-medium text-sm transition-colors"
+                  >
+                    Next: {nextRecipe.recipeName} →
+                  </button>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      </div>
 
       <BreakTracker planId={plan.id} stationType="prep_bases" onBreakActiveChange={setIsOnBreak} />
     </div>
