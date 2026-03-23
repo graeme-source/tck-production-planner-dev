@@ -162,13 +162,19 @@ function StationLayout({ planId, stationType, plan, children }: StationLayoutPro
                 })}
               </div>
 
-              <button
-                onClick={() => navigate(`/plans`)}
-                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors border border-border rounded-lg px-3 py-1.5"
-              >
-                <ChevronLeft className="w-4 h-4" />
-                Exit Station
-              </button>
+              {(() => {
+                const prepSubKeys = ["main_prep", "prep_veg", "prep_bases", "prep_meat"] as const;
+                const isInPrepSub = (prepSubKeys as readonly string[]).includes(stationType);
+                return (
+                  <button
+                    onClick={() => navigate(isInPrepSub ? `/plans/${planId}/station/prep` : `/plans`)}
+                    className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors border border-border rounded-lg px-3 py-1.5"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                    {isInPrepSub ? "Prep Sections" : "Exit Station"}
+                  </button>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -2662,6 +2668,8 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
         isLoading={false}
       />
 
+      <PrepSubNav planId={plan.id} current="main_prep" />
+
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3">
@@ -3003,6 +3011,7 @@ function PrepVegStation({ plan }: { plan: ProductionPlanDetail }) {
   return (
     <div className="space-y-4">
       <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
+      <PrepSubNav planId={plan.id} current="prep_veg" />
       <PrepModeToggle mode={mode} onToggle={() => setMode("fullscreen")} label="Veg Prep" icon={Salad} iconColor="text-green-500" />
 
       {recipes.length === 0 ? (
@@ -3091,6 +3100,8 @@ function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
   return (
     <div className="space-y-4">
       <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
+
+      <PrepSubNav planId={plan.id} current="prep_bases" />
 
       {/* Summary bar */}
       <div className="bg-card border border-border rounded-xl p-4">
@@ -3267,6 +3278,8 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
   return (
     <div className="space-y-4">
       <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
+
+      <PrepSubNav planId={plan.id} current="prep_meat" />
 
       {/* Summary bar */}
       <div className="bg-card border border-border rounded-xl p-4 flex items-center justify-between">
@@ -5378,6 +5391,42 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
       )}
 
       <BreakTracker planId={plan.id} stationType="packing" onBreakActiveChange={() => {}} />
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Prep Sub-Station Tab Bar
+// ──────────────────────────────────────────────────────────────────────────────
+const PREP_SUB_STATIONS = [
+  { key: "main_prep",  label: "Main Prep",      short: "Main",   icon: ClipboardList, activeClass: "bg-emerald-500 dark:bg-emerald-600 text-white", inactiveClass: "text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40" },
+  { key: "prep_veg",   label: "Veg Prep",        short: "Veg",    icon: Salad,         activeClass: "bg-green-500 dark:bg-green-600 text-white",    inactiveClass: "text-green-700 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-950/40" },
+  { key: "prep_bases", label: "Bases & Sauces",  short: "Bases",  icon: Layers,        activeClass: "bg-yellow-500 dark:bg-yellow-600 text-white",  inactiveClass: "text-yellow-700 dark:text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-950/40" },
+  { key: "prep_meat",  label: "Raw Meat",        short: "Meat",   icon: Beef,          activeClass: "bg-rose-500 dark:bg-rose-600 text-white",      inactiveClass: "text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40" },
+] as const;
+
+function PrepSubNav({ planId, current }: { planId: number; current: string }) {
+  const [, navigate] = useLocation();
+  return (
+    <div className="flex items-center gap-1 bg-card border border-border rounded-xl p-1.5">
+      {PREP_SUB_STATIONS.map(s => {
+        const Icon = s.icon;
+        const isActive = s.key === current;
+        return (
+          <button
+            key={s.key}
+            onClick={() => navigate(`/plans/${planId}/station/${s.key}`)}
+            className={cn(
+              "flex flex-1 items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all",
+              isActive ? s.activeClass : s.inactiveClass
+            )}
+          >
+            <Icon className="w-4 h-4 flex-shrink-0" />
+            <span className="hidden lg:inline truncate">{s.label}</span>
+            <span className="hidden sm:inline lg:hidden truncate">{s.short}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
