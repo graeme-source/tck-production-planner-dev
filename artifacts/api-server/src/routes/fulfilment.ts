@@ -147,9 +147,12 @@ router.get("/dispatch-tags", requireManagerOrAdmin, async (_req: Request, res: R
     if (dateTags.length > 0) {
       try {
         const issueRows = await db.execute(sql`
-          SELECT dispatch_tag, COUNT(*)::int as issue_count
-          FROM postcode_validations
-          WHERE dispatch_tag = ANY(${dateTags}) AND available = false
+          SELECT dispatch_tag, COUNT(*)::int as issue_count FROM (
+            SELECT DISTINCT ON (shopify_order_id, dispatch_tag) shopify_order_id, dispatch_tag, available
+            FROM postcode_validations
+            WHERE dispatch_tag = ANY(${dateTags})
+            ORDER BY shopify_order_id, dispatch_tag, checked_at DESC
+          ) latest WHERE available = false
           GROUP BY dispatch_tag
         `);
         for (const row of issueRows.rows as any[]) {
@@ -266,9 +269,16 @@ router.post("/shipments", requireManagerOrAdmin, async (req: Request, res: Respo
       return;
     }
 
+    const serviceCode = pickServiceCode(
+      order,
+      { smallWeekday, largeWeekday, smallFriday, largeFriday },
+      weightThresholdG,
+      dispatchDate,
+    );
+
     const existingValidation = await db.execute(sql`
       SELECT available, reason, service_code FROM postcode_validations
-      WHERE shopify_order_id = ${orderId} AND available = false
+      WHERE shopify_order_id = ${orderId} AND dispatch_tag = ${tag} AND service_code = ${serviceCode} AND available = false
       ORDER BY checked_at DESC LIMIT 1
     `);
     if (existingValidation.rows.length > 0) {
@@ -279,13 +289,6 @@ router.post("/shipments", requireManagerOrAdmin, async (req: Request, res: Respo
       });
       return;
     }
-
-    const serviceCode = pickServiceCode(
-      order,
-      { smallWeekday, largeWeekday, smallFriday, largeFriday },
-      weightThresholdG,
-      dispatchDate,
-    );
 
     const weightKg = (order.total_weight ?? 500) / 1000;
     const customerName = order.shipping_address.name ||
@@ -353,9 +356,18 @@ router.post("/tag-dispatch", requireManagerOrAdmin, async (req: Request, res: Re
     if (!alreadyTagged) {
       await addTagToOrder(order.id, order.tags, "dispatch");
     }
+
+    let postcodeCheck: { available: boolean; reason?: string; serviceCode: string } | undefined;
+    const tags = order.tags.split(",").map(t => t.trim());
+    const dateTag = tags.find(t => DATE_TAG_RE.test(t));
+    if (isApcConfigured() && dateTag) {
+      postcodeCheck = await validateOrderPostcode(order, dateTag);
+    }
+
     res.json({
       ok: true,
       alreadyTagged,
+      postcodeCheck: postcodeCheck ? { available: postcodeCheck.available, reason: postcodeCheck.reason } : undefined,
       order: {
         id: order.id,
         name: order.name,
@@ -428,9 +440,10 @@ router.get("/postcode-validations", requireManagerOrAdmin, async (req: Request, 
   }
   try {
     const rows = await db.execute(sql`
-      SELECT shopify_order_id, postcode, service_code, available, reason, checked_at
+      SELECT DISTINCT ON (shopify_order_id) shopify_order_id, postcode, service_code, available, reason, checked_at
       FROM postcode_validations
       WHERE dispatch_tag = ${tag}
+      ORDER BY shopify_order_id, checked_at DESC
     `);
     res.json(rows.rows);
   } catch (err: any) {
