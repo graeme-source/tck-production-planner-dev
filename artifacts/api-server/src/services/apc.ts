@@ -427,4 +427,143 @@ export async function checkPostcodeService(
   };
 }
 
-export { isConfigured, getDefaultServiceCodes, APC_TRAINING_BASE };
+export interface AddParcelRequest {
+  waybill: string;
+  parcel: {
+    weight: number;
+    length?: number;
+    width?: number;
+    height?: number;
+  };
+  apiBase?: string;
+}
+
+export interface AddParcelResult {
+  labelPdfBase64: string;
+  warnings: string[];
+}
+
+export async function addParcel(req: AddParcelRequest): Promise<AddParcelResult> {
+  if (!isConfigured()) {
+    throw new Error("APC credentials not configured.");
+  }
+
+  const apiBase = req.apiBase ?? APC_API_BASE;
+
+  const payload = {
+    Orders: {
+      Order: {
+        WayBill: req.waybill,
+        ShipmentDetails: {
+          Items: {
+            Item: {
+              Type: "PARCEL",
+              Weight: String(Math.max(0.01, req.parcel.weight).toFixed(3)),
+              Length: String(req.parcel.length ?? 0),
+              Width: String(req.parcel.width ?? 0),
+              Height: String(req.parcel.height ?? 0),
+            },
+          },
+        },
+      },
+    },
+  };
+
+  const res = await fetch(`${apiBase}/Orders.json`, {
+    method: "PUT",
+    headers: {
+      "remote-user": basicAuthHeader(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const text = await res.text();
+
+  if (!res.ok) {
+    let errMsg = `APC add parcel failed (${res.status})`;
+    try {
+      const json = JSON.parse(text);
+      const desc = json?.Orders?.Messages?.Description ?? json?.Orders?.Order?.Messages?.Description;
+      if (desc && desc !== "SUCCESS") errMsg = desc;
+    } catch {
+      errMsg = text || errMsg;
+    }
+    throw new Error(errMsg);
+  }
+
+  let json: Record<string, unknown>;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`APC returned invalid JSON: ${text.slice(0, 200)}`);
+  }
+
+  const body = json as Record<string, any>;
+  const topCode = body?.Orders?.Messages?.Code;
+  const orderCode = body?.Orders?.Order?.Messages?.Code;
+  if (topCode !== "SUCCESS" || (orderCode && orderCode !== "SUCCESS")) {
+    const desc = body?.Orders?.Order?.Messages?.Description
+      ?? body?.Orders?.Messages?.Description ?? "Unknown error";
+    throw new Error(`APC add parcel failed: ${desc}`);
+  }
+
+  const warnings: string[] = [];
+  const orderWarnings = body?.Orders?.Order?.Warnings;
+  if (orderWarnings) {
+    const warnList = Array.isArray(orderWarnings) ? orderWarnings : [orderWarnings];
+    for (const w of warnList) {
+      const msg = typeof w === "string" ? w : w?.Description ?? w?.Message ?? JSON.stringify(w);
+      if (msg) warnings.push(msg);
+    }
+  }
+
+  const labelPdfBase64 = await fetchLabel(req.waybill, apiBase);
+
+  return { labelPdfBase64, warnings };
+}
+
+export async function cancelShipment(waybill: string, apiBase?: string): Promise<void> {
+  if (!isConfigured()) {
+    throw new Error("APC credentials not configured.");
+  }
+
+  const base = apiBase ?? APC_API_BASE;
+  const url = `${base}/Orders/${encodeURIComponent(waybill)}.json`;
+
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: {
+      "remote-user": basicAuthHeader(),
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    let errMsg = `APC cancel failed (${res.status})`;
+    try {
+      const json = JSON.parse(text);
+      const desc = json?.Orders?.Messages?.Description ?? json?.Orders?.Order?.Messages?.Description;
+      if (desc && desc !== "SUCCESS") errMsg = desc;
+    } catch {
+      errMsg = text || errMsg;
+    }
+    throw new Error(errMsg);
+  }
+
+  let body: Record<string, any> | undefined;
+  try {
+    body = (await res.json()) as Record<string, any>;
+  } catch {
+    return;
+  }
+
+  const topCode: string | undefined = body?.Orders?.Messages?.Code;
+  if (topCode && topCode !== "SUCCESS" && topCode !== "CANCELLED") {
+    const desc: string = body?.Orders?.Messages?.Description ?? "Unknown error";
+    throw new Error(`APC cancel failed: ${desc}`);
+  }
+}
+
+export { isConfigured, getDefaultServiceCodes, APC_TRAINING_BASE, fetchLabel };

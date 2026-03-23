@@ -3,7 +3,7 @@ import { db, skuLocationsTable, appSettingsTable, usersTable } from "@workspace/
 import { eq } from "drizzle-orm";
 import * as z from "zod";
 import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, findOrderByName, addTagToOrder, type ShopifyOrder } from "../services/shopify";
-import { createShipment, isConfigured as isApcConfigured, APC_TRAINING_BASE, checkPostcodeService } from "../services/apc";
+import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, APC_TRAINING_BASE, checkPostcodeService } from "../services/apc";
 import { sql } from "drizzle-orm";
 
 const router = Router();
@@ -339,6 +339,82 @@ router.post("/shipments", requireManagerOrAdmin, async (req: Request, res: Respo
     const status = err.message?.includes("not configured") ? 503 :
       err.message?.includes("not found") ? 404 : 502;
     res.status(status).json({ error: err.message });
+  }
+});
+
+async function getTestModeApiBase(): Promise<string | undefined> {
+  const testModeSetting = await getAppSetting("apc_test_mode");
+  return testModeSetting === "true" ? APC_TRAINING_BASE : undefined;
+}
+
+router.post("/shipments/:waybill/add-parcel", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const { waybill } = req.params;
+
+  if (!isApcConfigured()) {
+    res.status(503).json({ error: "APC credentials not configured." });
+    return;
+  }
+
+  try {
+    const apiBase = await getTestModeApiBase();
+
+    const result = await addParcel({
+      waybill,
+      parcel: { weight: 1.0 },
+      ...(apiBase ? { apiBase } : {}),
+    });
+
+    res.json({
+      labelPdfBase64: result.labelPdfBase64,
+      ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Fulfilment] add-parcel error for ${waybill}:`, msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
+router.post("/shipments/:waybill/reprint-label", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const { waybill } = req.params;
+
+  if (!isApcConfigured()) {
+    res.status(503).json({ error: "APC credentials not configured." });
+    return;
+  }
+
+  try {
+    const apiBase = await getTestModeApiBase();
+    const base = apiBase ?? (process.env.APC_API_BASE ?? "https://apc.hypaship.com/api/3.0");
+
+    const labelPdfBase64 = await fetchLabel(waybill, base);
+
+    res.json({ labelPdfBase64 });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Fulfilment] reprint-label error for ${waybill}:`, msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
+router.post("/shipments/:waybill/cancel", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const { waybill } = req.params;
+
+  if (!isApcConfigured()) {
+    res.status(503).json({ error: "APC credentials not configured." });
+    return;
+  }
+
+  try {
+    const apiBase = await getTestModeApiBase();
+
+    await cancelShipment(waybill, apiBase);
+
+    res.json({ ok: true });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Fulfilment] cancel error for ${waybill}:`, msg);
+    res.status(502).json({ error: msg });
   }
 });
 

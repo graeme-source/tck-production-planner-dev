@@ -7,7 +7,7 @@ import { useLocation } from "wouter";
 import {
   Package, Scan, CheckCircle2, AlertCircle, ChevronRight, Printer,
   RefreshCw, MapPin, SkipForward, RotateCcw, XCircle, Loader2,
-  ArrowLeft, Truck, Tag, ShieldAlert,
+  ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -170,6 +170,38 @@ async function recheckPostcode(orderId: number, tag: string): Promise<{ availabl
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Re-check failed");
   return data;
+}
+
+async function addExtraBox(waybill: string): Promise<{ labelPdfBase64: string; warnings?: string[] }> {
+  const res = await fetch(`${BASE}/api/fulfilment/shipments/${encodeURIComponent(waybill)}/add-parcel`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? "Failed to add extra box");
+  return data;
+}
+
+async function reprintLabel(waybill: string): Promise<{ labelPdfBase64: string }> {
+  const res = await fetch(`${BASE}/api/fulfilment/shipments/${encodeURIComponent(waybill)}/reprint-label`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? "Failed to reprint label");
+  return data;
+}
+
+async function cancelConsignment(waybill: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/fulfilment/shipments/${encodeURIComponent(waybill)}/cancel`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? "Failed to cancel consignment");
 }
 
 async function completeOrder(orderId: number, consignmentNumber: string, trackingUrl?: string): Promise<void> {
@@ -481,6 +513,10 @@ export default function Fulfilment() {
   };
 
   const [bulkTagging, setBulkTagging] = useState(false);
+  const [consignmentAction, setConsignmentAction] = useState<"idle" | "adding-box" | "reprinting" | "cancelling">("idle");
+  const [consignmentActionError, setConsignmentActionError] = useState<string | null>(null);
+  const [showAddBoxConfirm, setShowAddBoxConfirm] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
   function preQueueNextOrder(nextOrderId: number) {
     if (preQueueRef.current.has(nextOrderId)) return;
@@ -525,6 +561,10 @@ export default function Fulfilment() {
     setShipmentError(null);
     setPrintStatus("idle");
     setCompletionError(null);
+    setConsignmentAction("idle");
+    setConsignmentActionError(null);
+    setShowAddBoxConfirm(false);
+    setShowCancelConfirm(false);
     setView("picking");
     setCreatingShipment(true);
 
@@ -691,6 +731,73 @@ export default function Fulfilment() {
     setCompletionError(null);
   }
 
+  const isConsignmentBusy = consignmentAction !== "idle";
+
+  async function handleAddExtraBox() {
+    if (!shipment) return;
+    setShowAddBoxConfirm(false);
+    setConsignmentAction("adding-box");
+    setConsignmentActionError(null);
+    try {
+      const result = await addExtraBox(shipment.consignmentNumber);
+      setPrintStatus("printing");
+      printLabel(
+        result.labelPdfBase64,
+        () => setPrintStatus("done"),
+        () => setPrintStatus("failed"),
+      );
+      if (result.warnings && result.warnings.length > 0) {
+        setShipment(prev => prev ? { ...prev, warnings: [...(prev.warnings ?? []), ...result.warnings!] } : prev);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setConsignmentActionError(`Add box failed: ${msg}`);
+    } finally {
+      setConsignmentAction("idle");
+    }
+  }
+
+  async function handleReprintLabel() {
+    if (!shipment) return;
+    setConsignmentAction("reprinting");
+    setConsignmentActionError(null);
+    try {
+      const result = await reprintLabel(shipment.consignmentNumber);
+      setPrintStatus("printing");
+      printLabel(
+        result.labelPdfBase64,
+        () => setPrintStatus("done"),
+        () => setPrintStatus("failed"),
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setConsignmentActionError(`Reprint failed: ${msg}`);
+    } finally {
+      setConsignmentAction("idle");
+    }
+  }
+
+  async function handleCancelConsignment() {
+    if (!shipment) return;
+    setShowCancelConfirm(false);
+    setConsignmentAction("cancelling");
+    setConsignmentActionError(null);
+    try {
+      await cancelConsignment(shipment.consignmentNumber);
+      setShipment(null);
+      setPrintStatus("idle");
+      setActiveOrder(null);
+      setView("list");
+      refetch();
+      refetchProgress();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setConsignmentActionError(`Cancel failed: ${msg}`);
+    } finally {
+      setConsignmentAction("idle");
+    }
+  }
+
   // When all items are picked and the APC shipment is ready, advance to pre-confirm step.
   // The operator then explicitly taps "Confirm & Complete" to finalise on Shopify and trigger the dispatch email.
   useEffect(() => {
@@ -832,6 +939,40 @@ export default function Fulfilment() {
             </ul>
           </div>
 
+          <div className="flex items-center gap-2 flex-wrap border-t border-border pt-3">
+            <button
+              onClick={() => setShowAddBoxConfirm(true)}
+              disabled={isConsignmentBusy || completing}
+              className="flex items-center gap-1.5 text-xs px-3 py-2 border border-border rounded-lg hover:bg-secondary/50 transition-colors font-medium disabled:opacity-40"
+            >
+              {consignmentAction === "adding-box" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlusCircle className="w-3.5 h-3.5" />}
+              Add Extra Box
+            </button>
+            <button
+              onClick={handleReprintLabel}
+              disabled={isConsignmentBusy || completing}
+              className="flex items-center gap-1.5 text-xs px-3 py-2 border border-border rounded-lg hover:bg-secondary/50 transition-colors font-medium disabled:opacity-40"
+            >
+              {consignmentAction === "reprinting" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />}
+              Reprint Label
+            </button>
+            <button
+              onClick={() => setShowCancelConfirm(true)}
+              disabled={isConsignmentBusy || completing}
+              className="flex items-center gap-1.5 text-xs px-3 py-2 border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors font-medium disabled:opacity-40"
+            >
+              {consignmentAction === "cancelling" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
+              Cancel Consignment
+            </button>
+          </div>
+
+          {consignmentActionError && (
+            <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/10 rounded-xl px-4 py-3">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>{consignmentActionError}</span>
+            </div>
+          )}
+
           {completionError && (
             <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/10 rounded-xl px-4 py-3">
               <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
@@ -841,7 +982,7 @@ export default function Fulfilment() {
 
           <button
             onClick={handleComplete}
-            disabled={completing}
+            disabled={completing || isConsignmentBusy}
             className="w-full py-4 bg-red-600 text-white rounded-xl font-bold text-xl hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-3"
           >
             {completing ? (
@@ -859,6 +1000,66 @@ export default function Fulfilment() {
             ← Back to picking
           </button>
         </div>
+
+        {showAddBoxConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+              <div className="flex items-start gap-3">
+                <PlusCircle className="w-6 h-6 text-primary flex-shrink-0 mt-0.5" />
+                <div>
+                  <h3 className="font-bold text-lg">Add an extra box?</h3>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    This will add a second parcel to consignment <strong className="font-mono">{shipment.consignmentNumber}</strong> and reprint updated labels showing "1 of 2" and "2 of 2".
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowAddBoxConfirm(false)}
+                  className="flex-1 py-2.5 border border-border rounded-xl text-sm font-medium hover:bg-secondary/50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAddExtraBox}
+                  className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:bg-primary/90 transition-colors"
+                >
+                  Confirm
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showCancelConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+              <div className="flex items-start gap-3">
+                <Ban className="w-6 h-6 text-red-500 flex-shrink-0 mt-0.5" />
+                <div>
+                  <h3 className="font-bold text-lg text-red-600 dark:text-red-400">Cancel this consignment?</h3>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    This will cancel APC consignment <strong className="font-mono">{shipment.consignmentNumber}</strong>. The order will return to the unpacked queue.
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowCancelConfirm(false)}
+                  className="flex-1 py-2.5 border border-border rounded-xl text-sm font-medium hover:bg-secondary/50 transition-colors"
+                >
+                  Keep it
+                </button>
+                <button
+                  onClick={handleCancelConsignment}
+                  className="flex-1 py-2.5 bg-red-600 text-white rounded-xl text-sm font-semibold hover:bg-red-700 transition-colors"
+                >
+                  Cancel Consignment
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1029,6 +1230,102 @@ export default function Fulfilment() {
               {shipment.warnings.map((w, i) => (
                 <p key={i} className="text-amber-700 dark:text-amber-400 text-xs">{w}</p>
               ))}
+            </div>
+          </div>
+        )}
+
+        {shipment && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => setShowAddBoxConfirm(true)}
+              disabled={isConsignmentBusy}
+              className="flex items-center gap-1.5 text-xs px-3 py-2 border border-border rounded-lg hover:bg-secondary/50 transition-colors font-medium disabled:opacity-40"
+            >
+              {consignmentAction === "adding-box" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlusCircle className="w-3.5 h-3.5" />}
+              Add Extra Box
+            </button>
+            <button
+              onClick={handleReprintLabel}
+              disabled={isConsignmentBusy}
+              className="flex items-center gap-1.5 text-xs px-3 py-2 border border-border rounded-lg hover:bg-secondary/50 transition-colors font-medium disabled:opacity-40"
+            >
+              {consignmentAction === "reprinting" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />}
+              Reprint Label
+            </button>
+            <button
+              onClick={() => setShowCancelConfirm(true)}
+              disabled={isConsignmentBusy}
+              className="flex items-center gap-1.5 text-xs px-3 py-2 border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors font-medium disabled:opacity-40"
+            >
+              {consignmentAction === "cancelling" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
+              Cancel Consignment
+            </button>
+          </div>
+        )}
+
+        {consignmentActionError && (
+          <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/10 rounded-xl px-4 py-3">
+            <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <span>{consignmentActionError}</span>
+          </div>
+        )}
+
+        {showAddBoxConfirm && shipment && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+              <div className="flex items-start gap-3">
+                <PlusCircle className="w-6 h-6 text-primary flex-shrink-0 mt-0.5" />
+                <div>
+                  <h3 className="font-bold text-lg">Add an extra box?</h3>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    This will add a second parcel to consignment <strong className="font-mono">{shipment.consignmentNumber}</strong> and reprint updated labels showing "1 of 2" and "2 of 2".
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowAddBoxConfirm(false)}
+                  className="flex-1 py-2.5 border border-border rounded-xl text-sm font-medium hover:bg-secondary/50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAddExtraBox}
+                  className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:bg-primary/90 transition-colors"
+                >
+                  Confirm
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showCancelConfirm && shipment && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+              <div className="flex items-start gap-3">
+                <Ban className="w-6 h-6 text-red-500 flex-shrink-0 mt-0.5" />
+                <div>
+                  <h3 className="font-bold text-lg text-red-600 dark:text-red-400">Cancel this consignment?</h3>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    This will cancel APC consignment <strong className="font-mono">{shipment.consignmentNumber}</strong>. The order will return to the unpacked queue.
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowCancelConfirm(false)}
+                  className="flex-1 py-2.5 border border-border rounded-xl text-sm font-medium hover:bg-secondary/50 transition-colors"
+                >
+                  Keep it
+                </button>
+                <button
+                  onClick={handleCancelConsignment}
+                  className="flex-1 py-2.5 bg-red-600 text-white rounded-xl text-sm font-semibold hover:bg-red-700 transition-colors"
+                >
+                  Cancel Consignment
+                </button>
+              </div>
             </div>
           </div>
         )}
