@@ -3746,12 +3746,12 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                 ? "border-border/50 bg-secondary/20 opacity-50"
                 : allBallingDone
                   ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/10"
-                  : "border-amber-200 dark:border-amber-800 bg-amber-50/30 dark:bg-amber-950/10 hover:border-amber-400 dark:hover:border-amber-600"
+                  : "border-green-200 dark:border-green-800 bg-green-50/30 dark:bg-green-950/10 hover:border-green-400 dark:hover:border-green-600"
             )}
           >
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
-                <Layers className="w-5 h-5 text-amber-600" />
+                <Layers className="w-5 h-5 text-green-600" />
                 <span className="font-semibold text-sm">Balling</span>
                 {allBallingDone && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
               </div>
@@ -3764,7 +3764,7 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
             </div>
             <div className="w-full h-2 bg-secondary rounded-full overflow-hidden mb-3">
               <div
-                className={cn("h-full rounded-full transition-all", allBallingDone ? "bg-emerald-500" : "bg-amber-500")}
+                className={cn("h-full rounded-full transition-all", allBallingDone ? "bg-emerald-500" : "bg-green-500")}
                 style={{ width: `${Math.min(ballPct, 100)}%` }}
               />
             </div>
@@ -3784,7 +3784,7 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                     "h-10 px-5 rounded-xl text-sm font-bold transition-all",
                     isOnBreak
                       ? "bg-secondary text-muted-foreground"
-                      : "bg-amber-500 text-white hover:bg-amber-600 active:scale-95"
+                      : "bg-green-500 text-white hover:bg-green-600 active:scale-95"
                   )}
                 >
                   + 1 Ball
@@ -3796,7 +3796,7 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                     "h-10 px-5 rounded-xl text-sm font-bold transition-all",
                     isOnBreak
                       ? "bg-secondary text-muted-foreground"
-                      : "bg-amber-600 text-white hover:bg-amber-700 active:scale-95"
+                      : "bg-green-600 text-white hover:bg-green-700 active:scale-95"
                   )}
                 >
                   + 1 Tray
@@ -3854,6 +3854,21 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   );
 }
 
+function fmtDoughQty(qty: number, unit: string, name: string): string {
+  const isYeast = name.toLowerCase().includes("yeast");
+  if (unit === "kg") {
+    if (qty < 1) {
+      const g = qty * 1000;
+      return isYeast ? `${g.toFixed(1)}g` : `${Math.round(g)}g`;
+    }
+    return `${qty.toFixed(2)} kg`;
+  }
+  if (unit === "g") {
+    return isYeast ? `${qty.toFixed(1)}g` : `${Math.round(qty)}g`;
+  }
+  return `${qty.toFixed(2)} ${unit}`;
+}
+
 function DoughMixingView({
   doughData, mixCount, activeMix, setActiveMix,
   checkedForMix, toggleIngredient, completedMixes, completeMix,
@@ -3902,7 +3917,7 @@ function DoughMixingView({
                   activeMix === n
                     ? done
                       ? "bg-emerald-500 text-white ring-2 ring-emerald-300"
-                      : "bg-amber-500 text-white ring-2 ring-amber-300"
+                      : "bg-green-500 text-white ring-2 ring-green-300"
                     : done
                       ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
                       : "bg-secondary text-muted-foreground hover:bg-secondary/80"
@@ -3927,13 +3942,13 @@ function DoughMixingView({
         "border-2 rounded-2xl overflow-hidden transition-all",
         isMixComplete
           ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-950/10"
-          : "border-amber-300 dark:border-amber-700 bg-card"
+          : "border-green-300 dark:border-green-700 bg-card"
       )}>
         <div className={cn(
           "px-5 py-4 flex items-center justify-between",
           isMixComplete
             ? "bg-emerald-100/50 dark:bg-emerald-900/20"
-            : "bg-amber-50 dark:bg-amber-950/20"
+            : "bg-green-50 dark:bg-green-950/20"
         )}>
           <div>
             <h2 className="font-display text-xl font-bold">Mix {activeMix}</h2>
@@ -3985,14 +4000,10 @@ function DoughMixingView({
                     "text-xl font-bold tabular-nums",
                     isChecked ? "text-emerald-700 dark:text-emerald-300" : "text-foreground"
                   )}>
-                    {ing.unit === "g"
-                      ? `${(ing.qtyPerMix).toFixed(0)}g`
-                      : `${ing.qtyPerMix.toFixed(2)} ${ing.unit}`}
+                    {fmtDoughQty(ing.qtyPerMix, ing.unit, ing.ingredientName)}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    Day total: {ing.unit === "g"
-                      ? `${ing.totalQty.toFixed(0)}g`
-                      : `${ing.totalQty.toFixed(2)} ${ing.unit}`}
+                    Day total: {fmtDoughQty(ing.totalQty, ing.unit, ing.ingredientName)}
                   </p>
                 </div>
               </button>
@@ -4052,7 +4063,7 @@ function DoughBallingView({
         "border-2 rounded-2xl p-6 text-center transition-all",
         allBallingDone
           ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/20"
-          : "border-amber-300 dark:border-amber-700 bg-card"
+          : "border-green-300 dark:border-green-700 bg-card"
       )}>
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
@@ -4083,7 +4094,7 @@ function DoughBallingView({
 
         <div className="w-full h-3 bg-secondary rounded-full overflow-hidden mb-6">
           <div
-            className={cn("h-full rounded-full transition-all", allBallingDone ? "bg-emerald-500" : "bg-amber-500")}
+            className={cn("h-full rounded-full transition-all", allBallingDone ? "bg-emerald-500" : "bg-green-500")}
             style={{ width: `${Math.min(ballPct, 100)}%` }}
           />
         </div>
@@ -4104,7 +4115,7 @@ function DoughBallingView({
                 "h-16 px-8 rounded-2xl text-lg font-bold transition-all shadow-lg",
                 isOnBreak
                   ? "bg-secondary text-muted-foreground"
-                  : "bg-amber-500 text-white hover:bg-amber-600 shadow-amber-500/20 active:scale-95"
+                  : "bg-green-500 text-white hover:bg-green-600 shadow-green-500/20 active:scale-95"
               )}
             >
               + 1 Ball
@@ -4116,7 +4127,7 @@ function DoughBallingView({
                 "h-16 px-8 rounded-2xl text-lg font-bold transition-all shadow-lg",
                 isOnBreak
                   ? "bg-secondary text-muted-foreground"
-                  : "bg-amber-600 text-white hover:bg-amber-700 shadow-amber-600/20 active:scale-95"
+                  : "bg-green-600 text-white hover:bg-green-700 shadow-green-600/20 active:scale-95"
               )}
             >
               + 1 Tray
@@ -4144,7 +4155,7 @@ function DoughBallingView({
                 done
                   ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-900/10"
                   : r.ballsDone > 0
-                    ? "border-amber-200 dark:border-amber-800"
+                    ? "border-green-200 dark:border-green-800"
                     : "border-border"
               )}
             >
@@ -4165,14 +4176,14 @@ function DoughBallingView({
               <div className="flex items-center gap-2 mb-1">
                 <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
                   <div
-                    className={cn("h-full rounded-full transition-all", done ? "bg-emerald-500" : "bg-amber-500")}
+                    className={cn("h-full rounded-full transition-all", done ? "bg-emerald-500" : "bg-green-500")}
                     style={{ width: `${Math.min(pct, 100)}%` }}
                   />
                 </div>
               </div>
               <div className="flex items-center justify-between text-xs text-muted-foreground">
                 <span>{r.ballWeightG}g per ball</span>
-                <span className="font-medium text-amber-700 dark:text-amber-400">
+                <span className="font-medium text-green-700 dark:text-green-400">
                   {fmtTrays(recipeTraysDone)} / {fmtTrays(recipeTrays)} trays
                 </span>
               </div>

@@ -1,4 +1,4 @@
-import React, { ReactNode, useState } from "react";
+import React, { ReactNode, useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/contexts/auth-context";
@@ -21,14 +21,16 @@ import {
   Menu,
   X,
   Lightbulb,
+  ShoppingBag,
+  ChevronDown,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
-const navItems = [
+type NavItem = { name: string; href: string; icon: React.ComponentType<{ className?: string }> };
+
+const navItems: NavItem[] = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Production Plans", href: "/plans", icon: CalendarDays },
-  { name: "Recipes", href: "/recipes", icon: ChefHat },
-  { name: "Sub-Recipes", href: "/sub-recipes", icon: ClipboardList },
-  { name: "Ingredients", href: "/ingredients", icon: Carrot },
   { name: "Suppliers", href: "/suppliers", icon: Building2 },
   { name: "Stock Inventory", href: "/stock", icon: PackageSearch },
   { name: "Sales Data", href: "/sales", icon: TrendingUp },
@@ -36,97 +38,185 @@ const navItems = [
   { name: "Reports", href: "/reports", icon: BarChart2 },
 ];
 
-const bottomNavItems = [
+const productNavItems: NavItem[] = [
+  { name: "Recipes", href: "/recipes", icon: ChefHat },
+  { name: "Sub-Recipes", href: "/sub-recipes", icon: ClipboardList },
+  { name: "Ingredients", href: "/ingredients", icon: Carrot },
+];
+
+const bottomNavItems: NavItem[] = [
   { name: "Lean Cave", href: "/lean-cave", icon: Lightbulb },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
+const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/ingredients"];
+
 function NavLinks({
   visibleNavItems,
+  visibleProductItems,
   location,
   user,
   onNavigate,
 }: {
-  visibleNavItems: typeof navItems;
+  visibleNavItems: NavItem[];
+  visibleProductItems: NavItem[];
   location: string;
   user: { name?: string; role?: string } | null;
   onNavigate?: () => void;
 }) {
+  const isOnProductPage = PRODUCT_PATHS.includes(location);
+  const [productOpen, setProductOpen] = useState(isOnProductPage);
+
+  useEffect(() => {
+    if (isOnProductPage) setProductOpen(true);
+  }, [isOnProductPage]);
+
+  function renderNavItem(item: NavItem) {
+    const isActive = location === item.href;
+    const isDispatches = item.href === "/dispatches";
+    return (
+      <React.Fragment key={item.name}>
+        <Link
+          href={item.href}
+          onClick={onNavigate}
+          className={cn(
+            "flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group relative",
+            isActive
+              ? "text-primary font-semibold"
+              : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+          )}
+        >
+          {isActive && (
+            <motion.div
+              layoutId="activeNav"
+              className="absolute inset-0 bg-primary/10 rounded-xl"
+              transition={{ type: "spring", stiffness: 300, damping: 30 }}
+            />
+          )}
+          <item.icon className={cn("w-5 h-5 relative z-10", isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+          <span className="relative z-10">{item.name}</span>
+        </Link>
+        {isDispatches && user?.role === "admin" && (
+          <>
+            <Link
+              href="/locations"
+              onClick={onNavigate}
+              className={cn(
+                "flex items-center gap-3 pl-9 pr-4 py-2 rounded-xl transition-all duration-200 group relative text-sm",
+                location === "/locations"
+                  ? "text-primary font-semibold"
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+              )}
+            >
+              {location === "/locations" && (
+                <motion.div
+                  layoutId="activeNav"
+                  className="absolute inset-0 bg-primary/10 rounded-xl"
+                  transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                />
+              )}
+              <MapPin className={cn("w-4 h-4 relative z-10", location === "/locations" ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+              <span className="relative z-10">Bin Locations</span>
+            </Link>
+            <Link
+              href="/dispatch-tag"
+              onClick={onNavigate}
+              className={cn(
+                "flex items-center gap-3 pl-9 pr-4 py-2 rounded-xl transition-all duration-200 group relative text-sm",
+                location === "/dispatch-tag"
+                  ? "text-primary font-semibold"
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+              )}
+            >
+              {location === "/dispatch-tag" && (
+                <motion.div
+                  layoutId="activeNav"
+                  className="absolute inset-0 bg-primary/10 rounded-xl"
+                  transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                />
+              )}
+              <Tag className={cn("w-4 h-4 relative z-10", location === "/dispatch-tag" ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+              <span className="relative z-10">Dispatch Tagging</span>
+            </Link>
+          </>
+        )}
+      </React.Fragment>
+    );
+  }
+
+  const beforeProduct = visibleNavItems.filter(i => i.href === "/" || i.href === "/plans");
+  const afterProduct = visibleNavItems.filter(i => i.href !== "/" && i.href !== "/plans");
+
   return (
     <>
       <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
-        {visibleNavItems.map((item) => {
-          const isActive = location === item.href;
-          const isDispatches = item.href === "/dispatches";
-          return (
-            <React.Fragment key={item.name}>
-              <Link
-                href={item.href}
-                onClick={onNavigate}
-                className={`
-                  flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group relative
-                  ${isActive
-                    ? "text-primary font-semibold"
-                    : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}
-                `}
-              >
-                {isActive && (
-                  <motion.div
-                    layoutId="activeNav"
-                    className="absolute inset-0 bg-primary/10 rounded-xl"
-                    transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                  />
-                )}
-                <item.icon className={`w-5 h-5 relative z-10 ${isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary"}`} />
-                <span className="relative z-10">{item.name}</span>
-              </Link>
-              {isDispatches && user?.role === "admin" && (
-                <>
-                  <Link
-                    href="/locations"
-                    onClick={onNavigate}
-                    className={`
-                      flex items-center gap-3 pl-9 pr-4 py-2 rounded-xl transition-all duration-200 group relative text-sm
-                      ${location === "/locations"
-                        ? "text-primary font-semibold"
-                        : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}
-                    `}
-                  >
-                    {location === "/locations" && (
-                      <motion.div
-                        layoutId="activeNav"
-                        className="absolute inset-0 bg-primary/10 rounded-xl"
-                        transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                      />
-                    )}
-                    <MapPin className={`w-4 h-4 relative z-10 ${location === "/locations" ? "text-primary" : "text-muted-foreground group-hover:text-primary"}`} />
-                    <span className="relative z-10">Bin Locations</span>
-                  </Link>
-                  <Link
-                    href="/dispatch-tag"
-                    onClick={onNavigate}
-                    className={`
-                      flex items-center gap-3 pl-9 pr-4 py-2 rounded-xl transition-all duration-200 group relative text-sm
-                      ${location === "/dispatch-tag"
-                        ? "text-primary font-semibold"
-                        : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}
-                    `}
-                  >
-                    {location === "/dispatch-tag" && (
-                      <motion.div
-                        layoutId="activeNav"
-                        className="absolute inset-0 bg-primary/10 rounded-xl"
-                        transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                      />
-                    )}
-                    <Tag className={`w-4 h-4 relative z-10 ${location === "/dispatch-tag" ? "text-primary" : "text-muted-foreground group-hover:text-primary"}`} />
-                    <span className="relative z-10">Dispatch Tagging</span>
-                  </Link>
-                </>
+        {beforeProduct.map(renderNavItem)}
+
+        {visibleProductItems.length > 0 && (
+          <div>
+            <button
+              onClick={() => setProductOpen(o => !o)}
+              className={cn(
+                "w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group",
+                isOnProductPage
+                  ? "text-primary font-semibold"
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
               )}
-            </React.Fragment>
-          );
-        })}
+            >
+              <ShoppingBag className={cn("w-5 h-5", isOnProductPage ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+              <span className="flex-1 text-left">Product</span>
+              <ChevronDown className={cn(
+                "w-4 h-4 transition-transform duration-200",
+                productOpen ? "rotate-180" : "",
+                isOnProductPage ? "text-primary" : "text-muted-foreground"
+              )} />
+            </button>
+
+            <AnimatePresence initial={false}>
+              {productOpen && (
+                <motion.div
+                  key="product-group"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="overflow-hidden"
+                >
+                  <div className="ml-4 pl-3 border-l border-border/60 space-y-0.5 py-1">
+                    {visibleProductItems.map(item => {
+                      const isActive = location === item.href;
+                      return (
+                        <Link
+                          key={item.name}
+                          href={item.href}
+                          onClick={onNavigate}
+                          className={cn(
+                            "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative text-sm",
+                            isActive
+                              ? "text-primary font-semibold"
+                              : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+                          )}
+                        >
+                          {isActive && (
+                            <motion.div
+                              layoutId="activeNav"
+                              className="absolute inset-0 bg-primary/10 rounded-lg"
+                              transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                            />
+                          )}
+                          <item.icon className={cn("w-4 h-4 relative z-10", isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+                          <span className="relative z-10">{item.name}</span>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
+
+        {afterProduct.map(renderNavItem)}
       </nav>
 
       <div className="px-4 pb-2">
@@ -137,12 +227,12 @@ function NavLinks({
               key={item.name}
               href={item.href}
               onClick={onNavigate}
-              className={`
-                flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group relative
-                ${isActive
+              className={cn(
+                "flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group relative",
+                isActive
                   ? "text-primary font-semibold"
-                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}
-              `}
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+              )}
             >
               {isActive && (
                 <motion.div
@@ -151,7 +241,7 @@ function NavLinks({
                   transition={{ type: "spring", stiffness: 300, damping: 30 }}
                 />
               )}
-              <item.icon className={`w-5 h-5 relative z-10 ${isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary"}`} />
+              <item.icon className={cn("w-5 h-5 relative z-10", isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
               <span className="relative z-10">{item.name}</span>
             </Link>
           );
@@ -172,9 +262,16 @@ export function Layout({ children }: { children: ReactNode }) {
     canAccess(user?.role ?? "viewer", item.href)
   );
 
+  const visibleProductItems = productNavItems.filter(item =>
+    canAccess(user?.role ?? "viewer", item.href)
+  );
+
+  const allNavItems = [...navItems, ...productNavItems, ...bottomNavItems];
   const currentPageName = location === "/locations"
     ? "Bin Locations"
-    : ([...navItems, ...bottomNavItems].find(n => n.href === location)?.name || "Dashboard");
+    : location === "/dispatch-tag"
+      ? "Dispatch Tagging"
+      : (allNavItems.find(n => n.href === location)?.name || "Dashboard");
 
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
@@ -195,7 +292,12 @@ export function Layout({ children }: { children: ReactNode }) {
           </div>
         </div>
 
-        <NavLinks visibleNavItems={visibleNavItems} location={location} user={user} />
+        <NavLinks
+          visibleNavItems={visibleNavItems}
+          visibleProductItems={visibleProductItems}
+          location={location}
+          user={user}
+        />
 
         <div className="p-4 border-t border-border">
           <div className="flex items-center gap-3 p-3 rounded-xl bg-secondary/30">
@@ -221,7 +323,6 @@ export function Layout({ children }: { children: ReactNode }) {
       <AnimatePresence>
         {mobileOpen && (
           <>
-            {/* Backdrop */}
             <motion.div
               key="backdrop"
               initial={{ opacity: 0 }}
@@ -232,7 +333,6 @@ export function Layout({ children }: { children: ReactNode }) {
               onClick={() => setMobileOpen(false)}
             />
 
-            {/* Drawer */}
             <motion.div
               key="drawer"
               initial={{ x: "-100%" }}
@@ -241,7 +341,6 @@ export function Layout({ children }: { children: ReactNode }) {
               transition={{ type: "spring", stiffness: 300, damping: 30 }}
               className="fixed inset-y-0 left-0 z-50 w-72 bg-card border-r border-border flex flex-col md:hidden"
             >
-              {/* Drawer header */}
               <div className="px-5 py-4 flex items-center justify-between border-b border-border">
                 <div className="flex items-center gap-3">
                   <div className="flex-shrink-0 w-9 h-9 rounded-xl bg-primary flex items-center justify-center p-1.5">
@@ -266,12 +365,12 @@ export function Layout({ children }: { children: ReactNode }) {
 
               <NavLinks
                 visibleNavItems={visibleNavItems}
+                visibleProductItems={visibleProductItems}
                 location={location}
                 user={user}
                 onNavigate={() => setMobileOpen(false)}
               />
 
-              {/* User footer */}
               <div className="p-4 border-t border-border">
                 <div className="flex items-center gap-3 p-3 rounded-xl bg-secondary/30">
                   <div className="w-9 h-9 rounded-full bg-primary/20 text-primary flex items-center justify-center font-semibold text-sm flex-shrink-0">
@@ -298,7 +397,6 @@ export function Layout({ children }: { children: ReactNode }) {
       {/* ── Main content ────────────────────────────────────────────────── */}
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">
         <header className="h-16 border-b border-border bg-background/80 backdrop-blur-md flex items-center px-4 md:px-8 gap-3 z-10">
-          {/* Hamburger — mobile only */}
           <button
             onClick={() => setMobileOpen(true)}
             className="md:hidden p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors flex-shrink-0"
