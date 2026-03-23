@@ -50,6 +50,7 @@ const bottomNavItems: NavItem[] = [
 ];
 
 const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/ingredients"];
+const DISPATCH_PATHS = ["/dispatches", "/locations", "/dispatch-tag"];
 
 function NavLinks({
   visibleNavItems,
@@ -65,82 +66,115 @@ function NavLinks({
   onNavigate?: () => void;
 }) {
   const isOnProductPage = PRODUCT_PATHS.includes(location);
+  const isOnDispatchPage = DISPATCH_PATHS.includes(location);
   const [productOpen, setProductOpen] = useState(isOnProductPage);
+  const [dispatchOpen, setDispatchOpen] = useState(isOnDispatchPage);
 
   useEffect(() => {
     if (isOnProductPage) setProductOpen(true);
   }, [isOnProductPage]);
 
+  useEffect(() => {
+    if (isOnDispatchPage) setDispatchOpen(true);
+  }, [isOnDispatchPage]);
+
+  const dispatchSubItems = [
+    { name: "Dispatches", href: "/dispatches", icon: Truck },
+    { name: "Bin Locations", href: "/locations", icon: MapPin },
+    { name: "Dispatch Tagging", href: "/dispatch-tag", icon: Tag },
+  ];
+
   function renderNavItem(item: NavItem) {
     const isActive = location === item.href;
     const isDispatches = item.href === "/dispatches";
+
+    if (isDispatches && user?.role === "admin") {
+      return (
+        <div key={item.name}>
+          <button
+            onClick={() => setDispatchOpen(o => !o)}
+            className={cn(
+              "w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group",
+              isOnDispatchPage
+                ? "text-primary font-semibold"
+                : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+            )}
+          >
+            <Truck className={cn("w-5 h-5", isOnDispatchPage ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+            <span className="flex-1 text-left">Dispatches</span>
+            <ChevronDown className={cn(
+              "w-4 h-4 transition-transform duration-200",
+              dispatchOpen ? "rotate-180" : "",
+              isOnDispatchPage ? "text-primary" : "text-muted-foreground"
+            )} />
+          </button>
+          <AnimatePresence initial={false}>
+            {dispatchOpen && (
+              <motion.div
+                key="dispatch-group"
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="overflow-hidden"
+              >
+                <div className="ml-4 pl-3 border-l border-border/60 space-y-0.5 py-1">
+                  {dispatchSubItems.map(sub => {
+                    const subActive = location === sub.href;
+                    return (
+                      <Link
+                        key={sub.name}
+                        href={sub.href}
+                        onClick={onNavigate}
+                        className={cn(
+                          "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative text-sm",
+                          subActive
+                            ? "text-primary font-semibold"
+                            : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+                        )}
+                      >
+                        {subActive && (
+                          <motion.div
+                            layoutId="activeNav"
+                            className="absolute inset-0 bg-primary/10 rounded-lg"
+                            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                          />
+                        )}
+                        <sub.icon className={cn("w-4 h-4 relative z-10", subActive ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+                        <span className="relative z-10">{sub.name}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      );
+    }
+
     return (
-      <React.Fragment key={item.name}>
-        <Link
-          href={item.href}
-          onClick={onNavigate}
-          className={cn(
-            "flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group relative",
-            isActive
-              ? "text-primary font-semibold"
-              : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-          )}
-        >
-          {isActive && (
-            <motion.div
-              layoutId="activeNav"
-              className="absolute inset-0 bg-primary/10 rounded-xl"
-              transition={{ type: "spring", stiffness: 300, damping: 30 }}
-            />
-          )}
-          <item.icon className={cn("w-5 h-5 relative z-10", isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
-          <span className="relative z-10">{item.name}</span>
-        </Link>
-        {isDispatches && user?.role === "admin" && (
-          <>
-            <Link
-              href="/locations"
-              onClick={onNavigate}
-              className={cn(
-                "flex items-center gap-3 pl-9 pr-4 py-2 rounded-xl transition-all duration-200 group relative text-sm",
-                location === "/locations"
-                  ? "text-primary font-semibold"
-                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-              )}
-            >
-              {location === "/locations" && (
-                <motion.div
-                  layoutId="activeNav"
-                  className="absolute inset-0 bg-primary/10 rounded-xl"
-                  transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                />
-              )}
-              <MapPin className={cn("w-4 h-4 relative z-10", location === "/locations" ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
-              <span className="relative z-10">Bin Locations</span>
-            </Link>
-            <Link
-              href="/dispatch-tag"
-              onClick={onNavigate}
-              className={cn(
-                "flex items-center gap-3 pl-9 pr-4 py-2 rounded-xl transition-all duration-200 group relative text-sm",
-                location === "/dispatch-tag"
-                  ? "text-primary font-semibold"
-                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-              )}
-            >
-              {location === "/dispatch-tag" && (
-                <motion.div
-                  layoutId="activeNav"
-                  className="absolute inset-0 bg-primary/10 rounded-xl"
-                  transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                />
-              )}
-              <Tag className={cn("w-4 h-4 relative z-10", location === "/dispatch-tag" ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
-              <span className="relative z-10">Dispatch Tagging</span>
-            </Link>
-          </>
+      <Link
+        key={item.name}
+        href={item.href}
+        onClick={onNavigate}
+        className={cn(
+          "flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group relative",
+          isActive
+            ? "text-primary font-semibold"
+            : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
         )}
-      </React.Fragment>
+      >
+        {isActive && (
+          <motion.div
+            layoutId="activeNav"
+            className="absolute inset-0 bg-primary/10 rounded-xl"
+            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+          />
+        )}
+        <item.icon className={cn("w-5 h-5 relative z-10", isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+        <span className="relative z-10">{item.name}</span>
+      </Link>
     );
   }
 
