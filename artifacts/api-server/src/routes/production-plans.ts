@@ -589,9 +589,15 @@ router.get("/calculate", async (req, res) => {
     };
   });
 
-  const unmatchedRecipes = hasShopifyData
+  const unmatchedRecipeNames = hasShopifyData
     ? result.filter(r => r.matchedProduct === null).map(r => r.recipeName)
     : [];
+
+  const clubSpecialSales = shopifySalesCombined[CALZONE_CLUB_SPECIAL_KEY] ?? 0;
+  const clubSpecialUnmatched = !specialRecipe && hasShopifyData && clubSpecialSales > 0;
+  const unmatchedRecipes = clubSpecialUnmatched
+    ? [...unmatchedRecipeNames, `Calzone Club Special (${clubSpecialSales} units — no special recipe is configured)`]
+    : unmatchedRecipeNames;
 
   res.json({
     planDate,

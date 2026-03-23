@@ -69,7 +69,13 @@ router.get("/order-summary", async (req, res) => {
         );
         if (existingIdx !== -1) {
           products = withoutSpecialEntry.map((p, i) => i === existingIdx
-            ? { ...p, totalQuantity: p.totalQuantity + specialQty, orderCount: p.orderCount + specialEntry.orderCount, specialCount: specialQty }
+            ? {
+                ...p,
+                totalQuantity: p.totalQuantity + specialQty,
+                orderCount: p.orderCount + specialEntry.orderCount,
+                specialCount: specialQty,
+                variants: [...p.variants, ...specialEntry.variants],
+              }
             : p
           );
         } else {

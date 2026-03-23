@@ -68,6 +68,11 @@ async function runStartupMigrations() {
         UNIQUE(shopify_order_id, service_code)
       )
     `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS recipes_one_current_special
+      ON recipes (is_current_special)
+      WHERE is_current_special = TRUE
+    `);
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);
