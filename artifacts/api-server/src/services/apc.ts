@@ -151,7 +151,11 @@ async function placeOrder(req: ApcShipmentRequest): Promise<PlaceOrderResult> {
     req.recipient.city,
   );
 
-  const companyName = (req.companyName ?? req.recipient.name).slice(0, 35);
+  const rawCompanyName = (req.companyName ?? req.recipient.name);
+  const companyName = rawCompanyName.slice(0, 35);
+  if (rawCompanyName.length > 35) {
+    addr.warnings.push(`Company name truncated from "${rawCompanyName}" to "${companyName}"`);
+  }
 
   const payload = {
     Orders: {
