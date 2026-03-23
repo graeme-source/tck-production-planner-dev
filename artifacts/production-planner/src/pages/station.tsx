@@ -565,8 +565,13 @@ function EodSummary({ planId, items, stationType, sessionBatches, totalBreakMinu
   const localActiveHours = localActiveMinutes / 60;
   const localBph = localActiveHours > 0 ? sessionBatches / localActiveHours : 0;
   const localMinsPerBatch = sessionBatches > 0 && localActiveMinutes > 0 ? localActiveMinutes / sessionBatches : null;
+  const isBuildingStation = stationType === "building_1" || stationType === "building_2";
   const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
-  const totalBatchesComplete = items.reduce((s, it) => s + getStationCount(it, stationType), 0);
+  const totalBatchesComplete = items.reduce((s, it) => s + (
+    isBuildingStation
+      ? getStationCount(it, "building_1") + getStationCount(it, "building_2")
+      : getStationCount(it, stationType)
+  ), 0);
   const localCompletionRate = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
 
   const displayBatches = serverData?.totalBatches ?? sessionBatches;
@@ -1716,13 +1721,20 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     return () => clearInterval(interval);
   }, [plan.id, stationType, sessionBatches]);
 
+  function getCombinedBuildCount(it: ProductionPlanItem) {
+    return getStationCount(it, "building_1") + getStationCount(it, "building_2");
+  }
+
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
-  const currentItem = items.find(it => {
-    const sc = getStationCount(it, stationType);
-    return sc < (it.batchesTarget ?? 0);
-  });
-  const buildingCount = currentItem ? getStationCount(currentItem, stationType) : 0;
-  const available = currentItem ? getAvailableFromPrev(currentItem, stationType) : 0;
+  const currentItem = items.find(it => getCombinedBuildCount(it) < (it.batchesTarget ?? 0));
+
+  // Combined count from both lines — used for display and progress
+  const buildingCount = currentItem ? getCombinedBuildCount(currentItem) : 0;
+  // This builder's own contribution — used for undo guard and KPI
+  const myCount = currentItem ? getStationCount(currentItem, stationType) : 0;
+  // Available = how many more batches can be built before outpacing mixing
+  const mixingCount = currentItem ? getStationCount(currentItem, "mixing") : 0;
+  const available = currentItem ? Math.max(0, mixingCount - buildingCount) : 0;
   const remaining = currentItem ? Math.max(0, (currentItem.batchesTarget ?? 0) - buildingCount) : 0;
   const allDone = items.length > 0 && !currentItem;
 
@@ -1743,7 +1755,7 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   // Undo last batch — deletes the most recent batch_completion row for this user/station
   // and decrements batches_complete atomically, keeping KPI metrics consistent.
   const handleUndo = async () => {
-    if (!currentItem || buildingCount === 0 || isOnBreak) return;
+    if (!currentItem || myCount === 0 || isOnBreak) return;
     try {
       const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
         method: "DELETE",
@@ -1868,10 +1880,13 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
           {/* Large batch counter */}
           <div className="flex items-center justify-center gap-8 my-6">
             <div className="text-center">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Built</p>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Both Lines</p>
               <p className="text-6xl font-bold font-display tabular-nums text-primary">
                 {buildingCount}
               </p>
+              {myCount > 0 && (
+                <p className="text-xs text-muted-foreground mt-1">My batches: {myCount}</p>
+              )}
             </div>
             <div className="text-4xl font-light text-muted-foreground">/</div>
             <div className="text-center">
@@ -2006,7 +2021,7 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
           </thead>
           <tbody>
             {items.map(item => {
-              const stCount = getStationCount(item, stationType);
+              const stCount = getCombinedBuildCount(item);
               const rem = Math.max(0, (item.batchesTarget ?? 0) - stCount);
               const isCurrent = item.id === currentItem?.id;
               const isDone = stCount >= (item.batchesTarget ?? 0);
