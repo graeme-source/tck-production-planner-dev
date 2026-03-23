@@ -8,6 +8,7 @@ import { useForm, useFieldArray, Controller } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
 
 const schema = z.object({
   name: z.string().min(1, "Name is required"),
