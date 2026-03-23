@@ -117,7 +117,7 @@ async function validateOrderPostcode(
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[Fulfilment] postcode check failed for order ${order.name}:`, msg);
-    return { available: true, serviceCode };
+    return { available: true, reason: `Validation skipped: ${msg}`, serviceCode };
   }
 }
 
