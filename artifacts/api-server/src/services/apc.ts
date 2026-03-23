@@ -1,49 +1,27 @@
-const APC_API_BASE = process.env.APC_API_BASE ?? "https://apc.co.uk/api/2.0";
+// Hypaship APC API v3 integration.
+// Auth: Basic auth via `remote-user` header — base64(email:password).
+// No token refresh needed — credentials are sent on every request.
+
+const APC_API_BASE = process.env.APC_API_BASE ?? "https://apc.hypaship.com/api/3.0";
 const APC_ACCOUNT_NUMBER = process.env.APC_ACCOUNT_NUMBER ?? "";
 const APC_USERNAME = process.env.APC_USERNAME ?? "";
 const APC_PASSWORD = process.env.APC_PASSWORD ?? "";
 
-interface ApcToken {
-  token: string;
-  expiresAt: number;
-}
-
-let cachedApcToken: ApcToken | null = null;
-
-async function getApcToken(): Promise<string> {
-  const now = Date.now();
-  if (cachedApcToken && now < cachedApcToken.expiresAt - 60_000) {
-    return cachedApcToken.token;
-  }
-
-  if (!APC_USERNAME || !APC_PASSWORD || !APC_ACCOUNT_NUMBER) {
-    throw new Error("APC credentials not configured. Set APC_USERNAME, APC_PASSWORD and APC_ACCOUNT_NUMBER environment variables.");
-  }
-
-  const res = await fetch(`${APC_API_BASE}/users/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      username: APC_USERNAME,
-      password: APC_PASSWORD,
-    }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`APC authentication failed (${res.status}): ${text}`);
-  }
-
-  const data = (await res.json()) as { token: string; expires_in?: number };
-  cachedApcToken = {
-    token: data.token,
-    expiresAt: now + (data.expires_in ?? 3600) * 1000,
-  };
-  return cachedApcToken.token;
-}
-
 function isConfigured(): boolean {
   return !!(APC_USERNAME && APC_PASSWORD && APC_ACCOUNT_NUMBER);
+}
+
+function basicAuthHeader(): string {
+  const encoded = Buffer.from(`${APC_USERNAME}:${APC_PASSWORD}`).toString("base64");
+  return `Basic ${encoded}`;
+}
+
+function todayDDMMYYYY(date?: Date): string {
+  const d = date ?? new Date();
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
 }
 
 export interface ApcShipmentRequest {
@@ -66,6 +44,7 @@ export interface ApcShipmentRequest {
   }>;
   reference?: string;
   specialInstructions?: string;
+  collectionDate?: Date;
 }
 
 export interface ApcShipmentResult {
@@ -74,101 +53,173 @@ export interface ApcShipmentResult {
   trackingUrl?: string;
 }
 
-async function createShipmentOnce(req: ApcShipmentRequest, token: string): Promise<ApcShipmentResult> {
+async function placeOrder(req: ApcShipmentRequest): Promise<string> {
+  if (!APC_USERNAME || !APC_PASSWORD || !APC_ACCOUNT_NUMBER) {
+    throw new Error("APC credentials not configured.");
+  }
+
+  const totalWeightKg = req.parcels.reduce((sum, p) => sum + p.weight, 0);
+  const firstParcel = req.parcels[0] ?? { weight: totalWeightKg };
+
   const payload = {
-    account_number: APC_ACCOUNT_NUMBER,
-    service_code: req.serviceCode,
-    reference: req.reference ?? "",
-    special_instructions: req.specialInstructions ?? "",
-    recipient: {
-      name: req.recipient.name,
-      address_line1: req.recipient.address1,
-      address_line2: req.recipient.address2 ?? "",
-      town: req.recipient.city,
-      postcode: req.recipient.postcode,
-      country_code: req.recipient.country ?? "GB",
-      telephone: req.recipient.phone ?? "",
-      email: req.recipient.email ?? "",
+    Orders: {
+      Order: {
+        CollectionDate: todayDDMMYYYY(req.collectionDate),
+        ReadyAt: "09:00",
+        ClosedAt: "17:00",
+        ProductCode: req.serviceCode,
+        Reference: (req.reference ?? "").replace(/[^a-zA-Z0-9\-\.]/g, "-").slice(0, 25),
+        // Omitting Collection forces Hypaship to use TCK's operational address
+        Delivery: {
+          CompanyName: req.recipient.name.slice(0, 35),
+          AddressLine1: req.recipient.address1.slice(0, 35),
+          ...(req.recipient.address2 ? { AddressLine2: req.recipient.address2.slice(0, 35) } : {}),
+          PostalCode: req.recipient.postcode,
+          City: req.recipient.city.slice(0, 35),
+          CountryCode: req.recipient.country ?? "GB",
+          Contact: {
+            PersonName: req.recipient.name.slice(0, 35),
+            ...(req.recipient.phone ? { PhoneNumber: req.recipient.phone } : {}),
+            ...(req.recipient.email ? { Email: req.recipient.email } : {}),
+          },
+          ...(req.specialInstructions ? { Instructions: req.specialInstructions.slice(0, 50) } : {}),
+          Safeplace: "Allowed",
+        },
+        GoodsInfo: {
+          GoodsValue: "1",
+          GoodsDescription: "food",
+          Fragile: "false",
+        },
+        ShipmentDetails: {
+          NumberOfPieces: String(req.parcels.length),
+          Items: {
+            Item: req.parcels.length === 1
+              ? {
+                  Type: "PARCEL",
+                  Weight: String(Math.max(0.01, firstParcel.weight).toFixed(3)),
+                  Length: String(firstParcel.length ?? 0),
+                  Width: String(firstParcel.width ?? 0),
+                  Height: String(firstParcel.height ?? 0),
+                }
+              : req.parcels.map(p => ({
+                  Type: "PARCEL",
+                  Weight: String(Math.max(0.01, p.weight).toFixed(3)),
+                  Length: String(p.length ?? 0),
+                  Width: String(p.width ?? 0),
+                  Height: String(p.height ?? 0),
+                })),
+          },
+        },
+      },
     },
-    parcels: req.parcels.map(p => ({
-      weight: p.weight,
-      length: p.length ?? 0,
-      width: p.width ?? 0,
-      height: p.height ?? 0,
-    })),
-    label_format: "PDF",
   };
 
-  const res = await fetch(`${APC_API_BASE}/shipments`, {
+  const res = await fetch(`${APC_API_BASE}/Orders.json`, {
     method: "POST",
     headers: {
+      "remote-user": basicAuthHeader(),
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${token}`,
     },
     body: JSON.stringify(payload),
   });
 
+  const text = await res.text();
+
   if (!res.ok) {
-    const text = await res.text();
-    let errMsg = `APC shipment creation failed (${res.status})`;
+    let errMsg = `APC order creation failed (${res.status})`;
     try {
       const json = JSON.parse(text);
-      errMsg = json.message ?? json.error ?? text;
-      if (res.status === 422 && json.errors) {
-        const fieldErrors = Object.entries(json.errors as Record<string, string[]>)
-          .map(([k, v]) => `${k}: ${(v as string[]).join(", ")}`)
-          .join("; ");
-        errMsg = fieldErrors || errMsg;
-      }
+      const desc = json?.Orders?.Messages?.Description ?? json?.Orders?.Order?.Messages?.Description;
+      if (desc && desc !== "SUCCESS") errMsg = desc;
     } catch {
       errMsg = text || errMsg;
-    }
-    if (res.status === 401) {
-      cachedApcToken = null;
     }
     throw new Error(errMsg);
   }
 
-  const data = (await res.json()) as {
-    consignment_number?: string;
-    tracking_number?: string;
-    label?: string;
-    label_pdf?: string;
-    tracking_url?: string;
-  };
-
-  const consignmentNumber = data.consignment_number ?? data.tracking_number ?? "";
-  const labelPdfBase64 = data.label ?? data.label_pdf ?? "";
-
-  if (!consignmentNumber) {
-    throw new Error("APC returned no consignment number");
-  }
-  if (!labelPdfBase64) {
-    throw new Error("APC returned no label PDF");
+  let json: any;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`APC returned invalid JSON: ${text.slice(0, 200)}`);
   }
 
-  return {
-    consignmentNumber,
-    labelPdfBase64,
-    trackingUrl: data.tracking_url,
-  };
+  const topCode = json?.Orders?.Messages?.Code;
+  const orderCode = json?.Orders?.Order?.Messages?.Code;
+  if (topCode !== "SUCCESS" || orderCode !== "SUCCESS") {
+    const desc = json?.Orders?.Order?.Messages?.Description ?? json?.Orders?.Messages?.Description ?? "Unknown error";
+    throw new Error(`APC order failed: ${desc}`);
+  }
+
+  const waybill: string = json?.Orders?.Order?.WayBill;
+  if (!waybill) {
+    throw new Error("APC returned no WayBill number in order response");
+  }
+
+  return waybill;
 }
 
-// Public entrypoint — retries once with a fresh token if APC returns 401.
-// This handles token expiry windows without requiring callers to retry.
-export async function createShipment(req: ApcShipmentRequest): Promise<ApcShipmentResult> {
-  const token = await getApcToken();
-  try {
-    return await createShipmentOnce(req, token);
-  } catch (err: any) {
-    // If the 401 path inside createShipmentOnce already cleared the cached token,
-    // get a fresh one and retry exactly once before propagating the error.
-    if (err.message?.includes("401") || err.message?.toLowerCase().includes("unauthorized")) {
-      const freshToken = await getApcToken();
-      return await createShipmentOnce(req, freshToken);
+async function fetchLabel(waybill: string, retries = 4, delayMs = 3000): Promise<string> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt > 0) {
+      await new Promise(resolve => setTimeout(resolve, delayMs));
     }
-    throw err;
+
+    const url = `${APC_API_BASE}/Orders/${waybill}.json?searchtype=CarrierWaybill&labelformat=PDF&labels=True&markprinted=True`;
+
+    const res = await fetch(url, {
+      method: "GET",
+      headers: {
+        "remote-user": basicAuthHeader(),
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!res.ok) {
+      if (attempt < retries) continue;
+      const text = await res.text();
+      throw new Error(`APC label fetch failed (${res.status}): ${text.slice(0, 200)}`);
+    }
+
+    let json: any;
+    try {
+      json = await res.json();
+    } catch {
+      if (attempt < retries) continue;
+      throw new Error("APC label response was not valid JSON");
+    }
+
+    // Label content is nested under Order.ShipmentDetails.Items.Item.Label.Content
+    const item = json?.Orders?.Order?.ShipmentDetails?.Items?.Item;
+    const content = item?.Label?.Content ?? (Array.isArray(item) ? item[0]?.Label?.Content : undefined);
+
+    if (content) return content as string;
+
+    // Label not ready yet — retry
+    if (attempt < retries) continue;
   }
+
+  throw new Error("APC label was not available after multiple retries");
+}
+
+export async function createShipment(req: ApcShipmentRequest): Promise<ApcShipmentResult> {
+  if (!isConfigured()) {
+    throw new Error("APC credentials not configured. Set APC_USERNAME, APC_PASSWORD and APC_ACCOUNT_NUMBER environment variables.");
+  }
+
+  // Step 1: Place the order and get WayBill
+  const waybill = await placeOrder(req);
+
+  // Step 2: Wait briefly then retrieve the label (guide recommends 3-5 seconds)
+  const labelPdfBase64 = await fetchLabel(waybill);
+
+  const trackingUrl = `https://apc.hypaship.com/tracking?waybill=${waybill}`;
+
+  return {
+    consignmentNumber: waybill,
+    labelPdfBase64,
+    trackingUrl,
+  };
 }
 
 export interface ApcServiceCodes {
@@ -179,9 +230,6 @@ export interface ApcServiceCodes {
   weightThresholdGrams: number;
 }
 
-// Reads current APC service codes from env/config. Callers that need the live
-// DB-backed codes should call the fulfilment route instead; this is a
-// lightweight helper for code that only needs env-level defaults.
 function getDefaultServiceCodes(): ApcServiceCodes {
   return {
     smallWeekday: process.env.APC_SERVICE_CODE_SMALL_WEEKDAY ?? "",
