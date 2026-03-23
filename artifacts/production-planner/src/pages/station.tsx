@@ -1376,6 +1376,8 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
     return batchesAfterNextTin - mixingCount;
   })();
 
+  const batchesPerTinEqual = tinsTarget > 0 ? target / tinsTarget : currentTinBatches;
+
   const statusColors = {
     pending: "border-border",
     "in-progress": "border-blue-300 dark:border-blue-700 bg-blue-50/30 dark:bg-blue-900/10",
@@ -1488,7 +1490,7 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
                 </span>
                 <div className="flex flex-col items-end">
                   <span className="text-base font-mono tabular-nums font-medium text-foreground">
-                    {formatMixQty(fi.qtyPerBatch * currentTinBatches, fi.unit)}
+                    {formatMixQty(fi.qtyPerBatch * batchesPerTinEqual, fi.unit)}
                   </span>
                   <span className="text-xs text-muted-foreground leading-none mt-0.5">per tin</span>
                 </div>
@@ -1501,7 +1503,7 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
                 </span>
                 <div className="flex flex-col items-end">
                   <span className="text-base font-mono tabular-nums font-medium text-foreground">
-                    {formatMixQty(fs.qtyPerBatch * currentTinBatches, fs.unit)}
+                    {formatMixQty(fs.qtyPerBatch * batchesPerTinEqual, fs.unit)}
                   </span>
                   <span className="text-xs text-muted-foreground leading-none mt-0.5">per tin</span>
                 </div>
