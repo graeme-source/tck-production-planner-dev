@@ -27,11 +27,18 @@ app.use(cors({
       return;
     }
     const devDomain = process.env["REPLIT_DEV_DOMAIN"];
+    const extraOrigins = (process.env["ALLOWED_ORIGIN"] ?? "")
+      .split(",")
+      .map(s => s.trim())
+      .filter(Boolean);
     const allowed = [
       allowedOrigin,
       ...(devDomain ? [`https://${devDomain}`] : []),
+      ...extraOrigins,
     ];
-    if (allowed.includes(origin)) {
+    // Also allow any *.replit.app domain (all Replit-hosted deployments)
+    const isReplitApp = /^https:\/\/[a-z0-9-]+\.replit\.app$/.test(origin);
+    if (allowed.includes(origin) || isReplitApp) {
       callback(null, true);
     } else {
       callback(new Error(`CORS: origin '${origin}' not allowed`));
