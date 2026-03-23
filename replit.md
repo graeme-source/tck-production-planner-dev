@@ -137,6 +137,15 @@ Stations enforce a cascade: downstream stations can only complete as many batche
 - **After every `cd lib/api-spec && npm run codegen`**: rewrite `lib/api-zod/src/index.ts` to ONLY `export * from "./generated/api";` (codegen always adds extra lines causing TS2308 duplicate export errors), then rebuild declarations with `cd lib/api-client-react && npx tsc -p tsconfig.json`
 - Orval config (`lib/api-spec/orval.config.ts`) has no `schemas` option to avoid generating a `types/` directory
 
+## TCK Brand Colours
+
+- **Yellow**: `#ffbe23`
+- **Light Cream**: `#fffdf0`
+- **Green (Primary)**: `#919b5f` — mapped to `--primary` CSS var (`hsl(68 24% 49%)`); use `bg-primary`, `text-primary`, `border-primary` in Tailwind
+- **Black**: `#231f20`
+- **Rosemary**: `#3b4317`
+- **Champagne Gold**: `#d6c38c`
+
 ## Key Commands
 
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API client from OpenAPI spec
