@@ -9,7 +9,7 @@ import { sendEmail, inviteEmailHtml, inviteEmailText, resetEmailHtml, resetEmail
 
 const router: IRouter = Router();
 
-const APP_URL = process.env["APP_URL"] ?? `https://${process.env["REPLIT_DEV_DOMAIN"]}/production-planner`;
+const APP_URL = process.env["APP_URL"] ?? `https://${process.env["REPLIT_DEV_DOMAIN"]}`;
 
 function generateToken(): string {
   return crypto.randomBytes(32).toString("hex");
