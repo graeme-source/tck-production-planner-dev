@@ -1,5 +1,5 @@
 import React from "react";
-import { Switch, Route, Router as WouterRouter, Redirect } from "wouter";
+import { Switch, Route, Router as WouterRouter, Redirect, useLocation } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -22,9 +22,14 @@ import Fulfilment from "@/pages/fulfilment";
 import Locations from "@/pages/locations";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
+import AcceptInvite from "@/pages/accept-invite";
+import ForgotPassword from "@/pages/forgot-password";
+import ResetPassword from "@/pages/reset-password";
 import { Loader2 } from "lucide-react";
 
 const queryClient = new QueryClient();
+
+const PUBLIC_PATHS = ["/accept-invite", "/forgot-password", "/reset-password"];
 
 function ProtectedRoute({ component: Component, pageKey }: { component: React.ComponentType; pageKey: string }) {
   const { state } = useAuth();
@@ -69,6 +74,19 @@ function Router() {
 
 function AuthGate() {
   const { state } = useAuth();
+  const [location] = useLocation();
+
+  const isPublicPath = PUBLIC_PATHS.some(p => location.startsWith(p));
+
+  if (isPublicPath) {
+    return (
+      <Switch>
+        <Route path="/accept-invite" component={AcceptInvite} />
+        <Route path="/forgot-password" component={ForgotPassword} />
+        <Route path="/reset-password" component={ResetPassword} />
+      </Switch>
+    );
+  }
 
   if (state.status === "loading") {
     return (

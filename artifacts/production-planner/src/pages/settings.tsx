@@ -9,7 +9,7 @@ import { PageHeader } from "@/components/page-header";
 import {
   Plus, Trash2, Edit2, Loader2, Users, ShieldCheck, Eye, Wrench,
   CheckCircle2, XCircle, KeyRound, Package, ChevronDown, ChevronUp,
-  Lock, Timer, BarChart2, Coffee, Truck,
+  Lock, Timer, BarChart2, Coffee, Truck, Mail,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { upsertDptSettingByRecipe, updateTimingStandard, getListDptSettingsQueryKey, getListTimingStandardsQueryKey } from "@workspace/api-client-react";
@@ -221,6 +221,33 @@ export default function Settings() {
     name: "", email: "", password: "", role: "viewer", isActive: true,
   };
 
+  const [isInviteOpen, setIsInviteOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<"admin" | "manager" | "viewer">("viewer");
+  const [inviteSending, setInviteSending] = useState(false);
+  const [inviteResult, setInviteResult] = useState<{ url: string; email: string } | null>(null);
+
+  const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+  const sendInvite = async () => {
+    setInviteSending(true);
+    setInviteResult(null);
+    try {
+      const res = await fetch(`${BASE}/api/auth/invites`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
+      });
+      const data = await res.json();
+      if (!res.ok) { toast({ title: "Invite failed", description: data.error, variant: "destructive" }); }
+      else { setInviteResult({ url: data.inviteUrl, email: data.email }); }
+    } catch {
+      toast({ title: "Invite failed", description: "Something went wrong", variant: "destructive" });
+    }
+    setInviteSending(false);
+  };
+
   return (
     <div className="space-y-8">
       <PageHeader
@@ -262,13 +289,86 @@ export default function Settings() {
               </span>
             )}
           </h2>
-          <button
-            onClick={() => setIsAddOpen(true)}
-            className="px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium shadow-sm shadow-primary/20 flex items-center gap-2 hover:bg-primary/90 transition-colors"
-          >
-            <Plus className="w-4 h-4" /> Add User
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { setIsInviteOpen(true); setInviteResult(null); setInviteEmail(""); setInviteRole("viewer"); }}
+              className="px-4 py-2 bg-secondary text-foreground rounded-xl text-sm font-medium flex items-center gap-2 hover:bg-secondary/70 transition-colors border border-border"
+            >
+              <Mail className="w-4 h-4" /> Invite
+            </button>
+            <button
+              onClick={() => setIsAddOpen(true)}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium shadow-sm shadow-primary/20 flex items-center gap-2 hover:bg-primary/90 transition-colors"
+            >
+              <Plus className="w-4 h-4" /> Add User
+            </button>
+          </div>
         </div>
+
+        {/* Invite dialog */}
+        <Dialog open={isInviteOpen} onOpenChange={(v) => { setIsInviteOpen(v); if (!v) setInviteResult(null); }}>
+          <DialogContent className="sm:max-w-[440px] bg-card border-border rounded-2xl">
+            <DialogHeader>
+              <DialogTitle className="font-display text-xl">Invite Team Member</DialogTitle>
+            </DialogHeader>
+            {inviteResult ? (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-green-700 dark:text-green-400">
+                  <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+                  <p className="text-sm font-medium">Invite created for {inviteResult.email}</p>
+                </div>
+                {!import.meta.env.VITE_EMAIL_ENABLED && (
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">Email not yet connected — share this link manually:</p>
+                    <div className="bg-secondary/50 rounded-lg p-3 break-all text-xs font-mono select-all border border-border">
+                      {inviteResult.url}
+                    </div>
+                    <button
+                      onClick={() => { navigator.clipboard.writeText(inviteResult.url); toast({ title: "Link copied!" }); }}
+                      className="text-xs text-primary hover:underline mt-1"
+                    >
+                      Copy link
+                    </button>
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">The link expires in 48 hours.</p>
+                <button onClick={() => { setIsInviteOpen(false); setInviteResult(null); }}
+                  className="w-full py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90">
+                  Done
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium mb-1.5 block">Email address</label>
+                  <input type="email" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)}
+                    placeholder="colleague@example.com"
+                    className="w-full px-3 py-2.5 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1.5 block">Role</label>
+                  <select value={inviteRole} onChange={e => setInviteRole(e.target.value as "admin" | "manager" | "viewer")}
+                    className="w-full px-3 py-2.5 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
+                    <option value="viewer">Viewer — station work only</option>
+                    <option value="manager">Manager — plans &amp; reports</option>
+                    <option value="admin">Admin — full access</option>
+                  </select>
+                </div>
+                <div className="flex gap-3 pt-1">
+                  <button onClick={() => setIsInviteOpen(false)}
+                    className="flex-1 py-2.5 border border-border rounded-xl text-sm font-medium hover:bg-secondary/50">
+                    Cancel
+                  </button>
+                  <button onClick={sendInvite} disabled={!inviteEmail || inviteSending}
+                    className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2">
+                    {inviteSending && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {inviteSending ? "Sending…" : "Send invite"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
 
         {/* Add dialog */}
         <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>

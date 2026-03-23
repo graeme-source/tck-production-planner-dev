@@ -22,12 +22,14 @@ import appSettingsRouter from "./app-settings";
 import reportsRouter from "./reports";
 import fulfilmentRouter from "./fulfilment";
 import temperatureRecordsRouter from "./temperature-records";
+import invitesRouter from "./invites";
 
 const router: IRouter = Router();
 
 // Public routes — no auth required
 router.use(healthRouter);
 router.use("/auth", authRouter);
+router.use("/auth", invitesRouter);
 
 // Auth guard for all routes below
 router.use((req: Request, res: Response, next: NextFunction) => {

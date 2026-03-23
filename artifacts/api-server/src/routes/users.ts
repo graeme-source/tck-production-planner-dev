@@ -25,8 +25,8 @@ router.get("/", async (_req, res) => {
 
 router.post("/", validate(CreateUserBody), async (req, res) => {
   const { name, email, password, role, isActive } = req.body;
-  if (!password || password.length < 6) {
-    res.status(400).json({ error: "Password must be at least 6 characters" });
+  if (!password || password.length < 8) {
+    res.status(400).json({ error: "Password must be at least 8 characters" });
     return;
   }
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
@@ -66,8 +66,8 @@ router.put("/:id", validate(UpdateUserBody), async (req, res) => {
     updatedAt: new Date(),
   };
   if (password) {
-    if (password.length < 6) {
-      res.status(400).json({ error: "Password must be at least 6 characters" });
+    if (password.length < 8) {
+      res.status(400).json({ error: "Password must be at least 8 characters" });
       return;
     }
     updates.passwordHash = await bcrypt.hash(password, SALT_ROUNDS);

@@ -76,6 +76,15 @@ export default function Login() {
               {loading ? "Signing in…" : "Sign in"}
             </button>
           </form>
+
+          <div className="mt-4 text-center">
+            <a
+              href={`${import.meta.env.BASE_URL.replace(/\/$/, "")}/forgot-password`}
+              className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Forgot your password?
+            </a>
+          </div>
         </div>
       </div>
     </div>
