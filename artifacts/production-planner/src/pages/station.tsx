@@ -2911,6 +2911,22 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     return { allTinsDone, needsStockCheck, stockSaved, isFullyDone, totalTinCount, completedTinCount };
   };
 
+  // Returns deduplicated initials for every user who has completed at least one tin for this ingredient
+  const getPreppedByInitials = (ingredientId: number): { initials: string; fullName: string }[] => {
+    const seen = new Set<string>();
+    const result: { initials: string; fullName: string }[] = [];
+    for (const c of completions) {
+      if (c.ingredientId !== ingredientId || !c.userName) continue;
+      if (seen.has(c.userName)) continue;
+      seen.add(c.userName);
+      result.push({
+        initials: c.userName.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2),
+        fullName: c.userName,
+      });
+    }
+    return result;
+  };
+
   // Build left-panel groups: recipe → list of {ingredient, qty for that recipe}
   // An ingredient may appear in multiple recipe groups if shared across recipes.
   const leftGroups = useMemo(() => {
@@ -3102,15 +3118,26 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                               {ing.recipes.length > 1 && <span className="ml-1 text-amber-500">shared</span>}
                             </p>
                           </div>
-                          {/* Tins fraction */}
-                          {status.totalTinCount > 0 && (
-                            <span className={cn(
-                              "text-xs tabular-nums flex-shrink-0",
-                              status.isFullyDone ? "text-emerald-600 font-semibold" : "text-muted-foreground"
-                            )}>
-                              {status.completedTinCount}/{status.totalTinCount}
-                            </span>
-                          )}
+                          {/* Tins fraction + who-prepped initials */}
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            {status.completedTinCount > 0 && getPreppedByInitials(ing.ingredientId).map(({ initials, fullName }) => (
+                              <span
+                                key={fullName}
+                                title={fullName}
+                                className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500 text-white text-[9px] font-bold leading-none"
+                              >
+                                {initials}
+                              </span>
+                            ))}
+                            {status.totalTinCount > 0 && (
+                              <span className={cn(
+                                "text-xs tabular-nums",
+                                status.isFullyDone ? "text-emerald-600 font-semibold" : "text-muted-foreground"
+                              )}>
+                                {status.completedTinCount}/{status.totalTinCount}
+                              </span>
+                            )}
+                          </div>
                         </button>
                       );
                     })}
