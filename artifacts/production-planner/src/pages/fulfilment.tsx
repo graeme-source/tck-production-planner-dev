@@ -1659,7 +1659,7 @@ export default function Fulfilment() {
             try {
               const packingDay = format(addDays(parseISO(queryTag), -1), "EEEE d MMM");
               const deliveryDay = format(parseISO(queryTag), "EEEE d MMM");
-              return `Packing ${packingDay} · For delivery ${deliveryDay}`;
+              return <strong className="font-semibold text-foreground">Packing {packingDay} · For delivery {deliveryDay}</strong>;
             } catch {
               return `Orders tagged ${queryTag}`;
             }
@@ -1697,19 +1697,9 @@ export default function Fulfilment() {
 
       {orders && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="font-display font-bold text-lg">
-                {(() => {
-                  try { return `Orders for delivery ${format(parseISO(queryTag), "EEEE d MMM")}`; }
-                  catch { return `Orders tagged ${queryTag}`; }
-                })()}
-              </h3>
-              <p className="text-sm text-muted-foreground">
-                {unfulfilledOrders.length} ready to pack &middot; {untaggedOrders.length} awaiting approval &middot; {fulfilledOrders.length} fulfilled
-              </p>
-            </div>
-          </div>
+          <p className="text-sm text-muted-foreground">
+            {unfulfilledOrders.length} ready to pack &middot; {untaggedOrders.length} awaiting approval &middot; {fulfilledOrders.length} fulfilled
+          </p>
 
           <div className="flex gap-2 flex-wrap">
             {([
