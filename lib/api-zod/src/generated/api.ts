@@ -222,7 +222,7 @@ export const ListIngredientsResponseItem = zod.object({
     ),
   kanbanEnabled: zod.boolean().optional(),
   kanbanQuantity: zod.number().optional(),
-  kanbanUnit: zod.enum(["weight", "pack"]).optional(),
+  kanbanUnit: zod.enum(["weight", "pack", "bottle"]).optional(),
   kanbanOrderAmount: zod.number().nullish(),
   createdAt: zod.string(),
 });
@@ -247,7 +247,7 @@ export const CreateIngredientBody = zod.object({
   rawMeatTrayCapacityKg: zod.number().nullish(),
   kanbanEnabled: zod.boolean().optional(),
   kanbanQuantity: zod.number().optional(),
-  kanbanUnit: zod.enum(["weight", "pack"]).optional(),
+  kanbanUnit: zod.enum(["weight", "pack", "bottle"]).optional(),
   kanbanOrderAmount: zod.number().nullish(),
 });
 
@@ -285,7 +285,7 @@ export const GetIngredientResponse = zod.object({
     ),
   kanbanEnabled: zod.boolean().optional(),
   kanbanQuantity: zod.number().optional(),
-  kanbanUnit: zod.enum(["weight", "pack"]).optional(),
+  kanbanUnit: zod.enum(["weight", "pack", "bottle"]).optional(),
   kanbanOrderAmount: zod.number().nullish(),
   createdAt: zod.string(),
 });
@@ -313,7 +313,7 @@ export const UpdateIngredientBody = zod.object({
   rawMeatTrayCapacityKg: zod.number().nullish(),
   kanbanEnabled: zod.boolean().optional(),
   kanbanQuantity: zod.number().optional(),
-  kanbanUnit: zod.enum(["weight", "pack"]).optional(),
+  kanbanUnit: zod.enum(["weight", "pack", "bottle"]).optional(),
   kanbanOrderAmount: zod.number().nullish(),
 });
 
@@ -344,7 +344,7 @@ export const UpdateIngredientResponse = zod.object({
     ),
   kanbanEnabled: zod.boolean().optional(),
   kanbanQuantity: zod.number().optional(),
-  kanbanUnit: zod.enum(["weight", "pack"]).optional(),
+  kanbanUnit: zod.enum(["weight", "pack", "bottle"]).optional(),
   createdAt: zod.string(),
 });
 
@@ -1729,7 +1729,7 @@ export const ListKanbansResponseItem = zod.object({
   ingredientName: zod.string().nullish(),
   ingredientUnit: zod.string().nullish(),
   kanbanQuantity: zod.number().nullish(),
-  kanbanUnit: zod.enum(["weight", "pack"]).optional(),
+  kanbanUnit: zod.enum(["weight", "pack", "bottle"]).optional(),
   supplierId: zod.number().nullish(),
   supplierName: zod.string().nullish(),
   orderFrequency: zod.string().optional(),
@@ -1768,7 +1768,7 @@ export const PullKanbanResponse = zod.object({
   ingredientName: zod.string().nullish(),
   ingredientUnit: zod.string().nullish(),
   kanbanQuantity: zod.number().nullish(),
-  kanbanUnit: zod.enum(["weight", "pack"]).optional(),
+  kanbanUnit: zod.enum(["weight", "pack", "bottle"]).optional(),
   supplierId: zod.number().nullish(),
   supplierName: zod.string().nullish(),
   orderFrequency: zod.string().optional(),
@@ -1797,7 +1797,7 @@ export const OrderKanbanResponse = zod.object({
   ingredientName: zod.string().nullish(),
   ingredientUnit: zod.string().nullish(),
   kanbanQuantity: zod.number().nullish(),
-  kanbanUnit: zod.enum(["weight", "pack"]).optional(),
+  kanbanUnit: zod.enum(["weight", "pack", "bottle"]).optional(),
   supplierId: zod.number().nullish(),
   supplierName: zod.string().nullish(),
   orderFrequency: zod.string().optional(),

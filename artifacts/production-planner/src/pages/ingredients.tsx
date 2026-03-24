@@ -427,7 +427,7 @@ const schema = z.object({
   ),
   kanbanEnabled: z.boolean().optional(),
   kanbanQuantity: z.coerce.number().min(0).optional(),
-  kanbanUnit: z.enum(["weight", "pack"]).optional(),
+  kanbanUnit: z.enum(["weight", "pack", "bottle"]).optional(),
   kanbanOrderAmount: z.preprocess(
     (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
     z.number().min(0).nullable().optional()
@@ -525,7 +525,7 @@ export default function Ingredients() {
       shelfLifeDays: (item as Record<string, unknown>).shelfLifeDays != null ? Number((item as Record<string, unknown>).shelfLifeDays) : null,
       kanbanEnabled: (item as Record<string, unknown>).kanbanEnabled as boolean ?? false,
       kanbanQuantity: (item as Record<string, unknown>).kanbanQuantity != null ? Number((item as Record<string, unknown>).kanbanQuantity) : 0,
-      kanbanUnit: ((item as Record<string, unknown>).kanbanUnit as "weight" | "pack") ?? "weight",
+      kanbanUnit: ((item as Record<string, unknown>).kanbanUnit as "weight" | "pack" | "bottle") ?? "weight",
       kanbanOrderAmount: (item as Record<string, unknown>).kanbanOrderAmount != null ? Number((item as Record<string, unknown>).kanbanOrderAmount) : null,
     });
     setIsDialogOpen(true);
@@ -953,10 +953,24 @@ export default function Ingredients() {
                     >
                       Pack
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setValue("kanbanUnit", "bottle")}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors",
+                        watchedKanbanUnit === "bottle"
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-background border-border text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      Bottle
+                    </button>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
                     {watchedKanbanUnit === "pack"
-                      ? "Each kanban card will order a set number of packs (bottles, bags, etc.)."
+                      ? "Each kanban card will order a set number of packs (bags, etc.)."
+                      : watchedKanbanUnit === "bottle"
+                      ? "Each kanban card will order a set number of bottles."
                       : `Each kanban card will order a set weight in ${watchedUnit || "kg"}.`}
                   </p>
                 </div>
@@ -968,19 +982,21 @@ export default function Ingredients() {
                   <div className="relative max-w-[200px]">
                     <input
                       type="number"
-                      step={watchedKanbanUnit === "pack" ? "1" : "0.01"}
+                      step={watchedKanbanUnit === "weight" ? "0.01" : "1"}
                       min="0"
                       {...register("kanbanQuantity")}
                       className="w-full px-3 pr-16 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                      placeholder={watchedKanbanUnit === "pack" ? "e.g. 2" : "e.g. 10"}
+                      placeholder={watchedKanbanUnit === "weight" ? "e.g. 10" : "e.g. 2"}
                     />
                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">
-                      {watchedKanbanUnit === "pack" ? "packs" : (watchedUnit || "unit")}
+                      {watchedKanbanUnit === "pack" ? "packs" : watchedKanbanUnit === "bottle" ? "bottles" : (watchedUnit || "unit")}
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
                     {watchedKanbanUnit === "pack"
                       ? "Number of packs to order per kanban card."
+                      : watchedKanbanUnit === "bottle"
+                      ? "Number of bottles to order per kanban card."
                       : "Standard order quantity per kanban card."}
                   </p>
                 </div>
@@ -992,14 +1008,14 @@ export default function Ingredients() {
                   <div className="relative max-w-[200px]">
                     <input
                       type="number"
-                      step={watchedKanbanUnit === "pack" ? "1" : "0.01"}
+                      step={watchedKanbanUnit === "weight" ? "0.01" : "1"}
                       min="0"
                       {...register("kanbanOrderAmount")}
                       className="w-full px-3 pr-16 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                       placeholder="e.g. 13"
                     />
                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">
-                      {watchedKanbanUnit === "pack" ? "packs" : (watchedUnit || "unit")}
+                      {watchedKanbanUnit === "pack" ? "packs" : watchedKanbanUnit === "bottle" ? "bottles" : (watchedUnit || "unit")}
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
