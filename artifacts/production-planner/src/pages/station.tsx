@@ -3792,6 +3792,32 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const [checkedIngredients, setCheckedIngredients] = useState<Record<number, Set<string>>>({});
   const [completedMixes, setCompletedMixes] = useState<Set<number>>(new Set());
 
+  // Extra ball tick state — lifted here so compact panel + full balling view share the same data
+  const extraTicksKey = `extra_balls_balled_${plan.id}`;
+  const [extraTicks, setExtraTicks] = useState<Record<string, boolean>>({});
+  const [extraTicksLoaded, setExtraTicksLoaded] = useState(false);
+  useEffect(() => {
+    fetch(`/api/app-settings/${extraTicksKey}`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.value) { try { setExtraTicks(JSON.parse(d.value)); } catch { /* ignore */ } }
+        setExtraTicksLoaded(true);
+      })
+      .catch(() => setExtraTicksLoaded(true));
+  }, [extraTicksKey]);
+  const saveExtraTicks = (updated: Record<string, boolean>) => {
+    fetch(`/api/app-settings/${extraTicksKey}`, {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: JSON.stringify(updated) }),
+    }).catch(() => {});
+  };
+  const toggleExtraTick = (key: string) => {
+    const updated = { ...extraTicks, [key]: !extraTicks[key] };
+    setExtraTicks(updated);
+    saveExtraTicks(updated);
+  };
+
   const createBatch = useCreateBatchCompletion({
     mutation: {
       onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
@@ -3857,6 +3883,31 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const allBallingDone = ballCount >= totalBallsNeeded;
   const totalTraysNeeded = totalBallsNeeded / BALLS_PER_TRAY;
   const traysDone = ballCount / BALLS_PER_TRAY;
+
+  // Extra ball derived data (used in both compact panel and full balling view)
+  type ExtraItem = { key: string; label: string; weightG: number; type: "extraPack" | "snack" };
+  const extraBallsData = doughData?.extraBalls;
+  const extraItems: ExtraItem[] = [];
+  if (extraBallsData) {
+    for (let i = 0; i < extraBallsData.extraPack.count; i++) {
+      extraItems.push({ key: `extraPack_${i}`, label: `Extra Pack Ball ${extraBallsData.extraPack.count > 1 ? i + 1 : ""}`.trim(), weightG: extraBallsData.extraPack.weightG, type: "extraPack" });
+    }
+    for (let i = 0; i < extraBallsData.snack.count; i++) {
+      extraItems.push({ key: `snack_${i}`, label: `Snack Ball ${extraBallsData.snack.count > 1 ? i + 1 : ""}`.trim(), weightG: extraBallsData.snack.weightG, type: "snack" });
+    }
+  }
+  const extraPackItems = extraItems.filter(e => e.type === "extraPack");
+  const snackItems = extraItems.filter(e => e.type === "snack");
+  const extraPackDone = extraPackItems.filter(e => extraTicks[e.key]).length;
+  const snackDone = snackItems.filter(e => extraTicks[e.key]).length;
+  const addExtraType = (group: ExtraItem[]) => {
+    const next = group.find(e => !extraTicks[e.key]);
+    if (next) toggleExtraTick(next.key);
+  };
+  const removeExtraType = (group: ExtraItem[]) => {
+    const last = [...group].reverse().find(e => extraTicks[e.key]);
+    if (last) toggleExtraTick(last.key);
+  };
 
   const addBalls = (count: number) => {
     if (isOnBreak || !doughData) return;
@@ -4025,45 +4076,115 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
               />
             </div>
             {hasAnyMixDone && !allBallingDone && (
-              <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-                <button
-                  onClick={(e) => { e.stopPropagation(); undoBall(); }}
-                  disabled={ballCount === 0 || isOnBreak}
-                  className="h-10 w-10 flex items-center justify-center rounded-xl border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
-                >
-                  <Minus className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); addBalls(1); }}
-                  disabled={isOnBreak}
-                  className={cn(
-                    "h-10 px-5 rounded-xl text-sm font-bold transition-all",
-                    isOnBreak
-                      ? "bg-secondary text-muted-foreground"
-                      : "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95"
-                  )}
-                >
-                  + 1 Ball
-                </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); removeBalls(BALLS_PER_TRAY); }}
-                  disabled={ballCount < BALLS_PER_TRAY || isOnBreak}
-                  className="h-10 px-4 rounded-xl text-sm font-bold transition-all border border-border bg-background hover:bg-secondary/60 disabled:opacity-30"
-                >
-                  − 1 Tray
-                </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); addBalls(4); }}
-                  disabled={isOnBreak}
-                  className={cn(
-                    "h-10 px-5 rounded-xl text-sm font-bold transition-all",
-                    isOnBreak
-                      ? "bg-secondary text-muted-foreground"
-                      : "bg-primary/90 text-primary-foreground hover:bg-primary/80 active:scale-95"
-                  )}
-                >
-                  + 1 Tray
-                </button>
+              <div className="flex flex-wrap items-stretch gap-2" onClick={e => e.stopPropagation()}>
+
+                {/* PRIMARY — Tray controls */}
+                <div className="flex gap-1.5 items-stretch">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); removeBalls(BALLS_PER_TRAY); }}
+                    disabled={ballCount < BALLS_PER_TRAY || isOnBreak}
+                    className="h-10 px-4 rounded-xl text-sm font-bold transition-all border border-border bg-background hover:bg-secondary/60 disabled:opacity-30"
+                  >
+                    − 1 Tray
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); addBalls(BALLS_PER_TRAY); }}
+                    disabled={isOnBreak}
+                    className={cn(
+                      "h-10 px-5 rounded-xl text-sm font-bold transition-all",
+                      isOnBreak
+                        ? "bg-secondary text-muted-foreground"
+                        : "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95"
+                    )}
+                  >
+                    + 1 Tray
+                  </button>
+                </div>
+
+                {/* Divider */}
+                <div className="w-px bg-border/50 self-stretch" />
+
+                {/* SECONDARY — Single ball */}
+                <div className="flex flex-col items-center justify-center gap-0.5">
+                  <div className="flex gap-1">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); undoBall(); }}
+                      disabled={ballCount === 0 || isOnBreak}
+                      className="h-8 w-8 flex items-center justify-center rounded-lg border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
+                    >
+                      <Minus className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); addBalls(1); }}
+                      disabled={isOnBreak}
+                      className="h-8 px-3 rounded-lg text-xs font-semibold border border-border bg-background hover:bg-secondary/60 disabled:opacity-50 transition-all"
+                    >
+                      + 1 Ball
+                    </button>
+                  </div>
+                  <span className="text-[9px] text-muted-foreground">single</span>
+                </div>
+
+                {/* Extra ball types */}
+                {(extraPackItems.length > 0 || snackItems.length > 0) && (
+                  <>
+                    <div className="w-px bg-border/50 self-stretch" />
+
+                    {extraPackItems.length > 0 && (
+                      <div className="flex flex-col items-center justify-center gap-0.5">
+                        <div className="flex gap-1 items-center">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); addExtraType(extraPackItems); }}
+                            disabled={isOnBreak || extraPackDone >= extraPackItems.length}
+                            className={cn(
+                              "h-8 px-2.5 rounded-lg text-xs font-semibold border transition-all",
+                              extraPackDone >= extraPackItems.length
+                                ? "border-emerald-300 bg-emerald-50/50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400"
+                                : "border-border bg-background hover:bg-secondary/60 active:scale-95 disabled:opacity-50"
+                            )}
+                          >
+                            Add {extraPackItems[0]?.weightG}g ball
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); removeExtraType(extraPackItems); }}
+                            disabled={extraPackDone === 0 || isOnBreak}
+                            className="h-7 w-7 flex items-center justify-center rounded-md border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
+                          >
+                            <Minus className="w-3 h-3" />
+                          </button>
+                        </div>
+                        <span className="text-[9px] text-muted-foreground">{extraPackDone} of {extraPackItems.length}</span>
+                      </div>
+                    )}
+
+                    {snackItems.length > 0 && (
+                      <div className="flex flex-col items-center justify-center gap-0.5">
+                        <div className="flex gap-1 items-center">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); addExtraType(snackItems); }}
+                            disabled={isOnBreak || snackDone >= snackItems.length}
+                            className={cn(
+                              "h-8 px-2.5 rounded-lg text-xs font-semibold border transition-all",
+                              snackDone >= snackItems.length
+                                ? "border-emerald-300 bg-emerald-50/50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400"
+                                : "border-border bg-background hover:bg-secondary/60 active:scale-95 disabled:opacity-50"
+                            )}
+                          >
+                            Add {snackItems[0]?.weightG}g Snack
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); removeExtraType(snackItems); }}
+                            disabled={snackDone === 0 || isOnBreak}
+                            className="h-7 w-7 flex items-center justify-center rounded-md border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
+                          >
+                            <Minus className="w-3 h-3" />
+                          </button>
+                        </div>
+                        <span className="text-[9px] text-muted-foreground">{snackDone} of {snackItems.length}</span>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             )}
           </button>
@@ -4071,7 +4192,6 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
       ) : (
         <>
           <DoughBallingView
-            planId={plan.id}
             doughData={doughData}
             ballCount={ballCount}
             totalBallsNeeded={totalBallsNeeded}
@@ -4084,6 +4204,9 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
             traysDone={traysDone}
             totalTraysNeeded={totalTraysNeeded}
             ballsPerTray={BALLS_PER_TRAY}
+            extraTicks={extraTicks}
+            ticksLoaded={extraTicksLoaded}
+            toggleTick={toggleExtraTick}
           />
 
           <button
@@ -4298,11 +4421,11 @@ function DoughMixingView({
 }
 
 function DoughBallingView({
-  planId, doughData, ballCount, totalBallsNeeded, allBallingDone,
+  doughData, ballCount, totalBallsNeeded, allBallingDone,
   addBalls, undoBall, removeBalls, getBallAllocation, isOnBreak,
   traysDone, totalTraysNeeded, ballsPerTray,
+  extraTicks, ticksLoaded, toggleTick,
 }: {
-  planId: number;
   doughData: DoughPrepData;
   ballCount: number;
   totalBallsNeeded: number;
@@ -4315,39 +4438,10 @@ function DoughBallingView({
   traysDone: number;
   totalTraysNeeded: number;
   ballsPerTray: number;
+  extraTicks: Record<string, boolean>;
+  ticksLoaded: boolean;
+  toggleTick: (key: string) => void;
 }) {
-  // Extra ball tick state — stored in app_settings as JSON
-  const settingsKey = `extra_balls_balled_${planId}`;
-  const [extraTicks, setExtraTicks] = useState<Record<string, boolean>>({});
-  const [ticksLoaded, setTicksLoaded] = useState(false);
-
-  useEffect(() => {
-    fetch(`/api/app-settings/${settingsKey}`, { credentials: "include" })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => {
-        if (d?.value) {
-          try { setExtraTicks(JSON.parse(d.value)); } catch { /* ignore */ }
-        }
-        setTicksLoaded(true);
-      })
-      .catch(() => setTicksLoaded(true));
-  }, [settingsKey]);
-
-  const saveTicks = (updated: Record<string, boolean>) => {
-    fetch(`/api/app-settings/${settingsKey}`, {
-      method: "PUT",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: JSON.stringify(updated) }),
-    }).catch(() => {});
-  };
-
-  const toggleTick = (key: string) => {
-    const updated = { ...extraTicks, [key]: !extraTicks[key] };
-    setExtraTicks(updated);
-    saveTicks(updated);
-  };
-
   const extraBalls = doughData.extraBalls;
   const extraItems: Array<{ key: string; label: string; weightG: number; type: "extraPack" | "snack" }> = [];
   if (extraBalls) {
