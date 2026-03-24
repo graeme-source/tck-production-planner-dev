@@ -1,11 +1,34 @@
 import { useState } from "react";
-import { useListProductionPlans, useListStockEntries, useListDispatchOrders, useListSalesEntries } from "@workspace/api-client-react";
+import { useListProductionPlans, useListStockEntries, useListDispatchOrders, useListSalesEntries, useGetProductionPlan } from "@workspace/api-client-react";
 import { PageHeader } from "@/components/page-header";
 import { format, isToday, isFuture, startOfWeek, addWeeks } from "date-fns";
 import { ArrowRight, AlertTriangle, ChefHat, Truck, TrendingUp, Package, RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
 import { Link } from "wouter";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { useQuery } from "@tanstack/react-query";
+
+function TodayPlanRecipes({ planId }: { planId: number }) {
+  const { data: plan, isLoading } = useGetProductionPlan(planId) as { data: any; isLoading: boolean };
+  if (isLoading) return <p className="text-xs text-muted-foreground px-1">Loading…</p>;
+  const items = (plan?.items ?? [])
+    .filter((it: any) => (it.batchesTarget ?? 0) > 0)
+    .sort((a: any, b: any) => a.orderPosition - b.orderPosition);
+  if (items.length === 0) return <p className="text-xs text-muted-foreground px-1">No recipes with batches.</p>;
+  return (
+    <div className="space-y-1.5">
+      {items.map((it: any) => (
+        <div key={it.id} className="flex items-center justify-between py-1.5 px-3 rounded-lg hover:bg-secondary/50 transition-colors">
+          <span className="text-sm font-medium truncate pr-2" style={it.color ? { color: it.color } : undefined}>
+            {it.recipeName ?? "Unknown"}
+          </span>
+          <span className="text-sm font-bold tabular-nums text-primary shrink-0">
+            {it.batchesTarget} <span className="text-xs font-normal text-muted-foreground">batch{it.batchesTarget !== 1 ? "es" : ""}</span>
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -123,6 +146,34 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
+        <div className="glass-panel rounded-2xl flex flex-col">
+          <div className="p-6 border-b border-border">
+            <h3 className="font-display font-bold text-lg">Today's Production</h3>
+          </div>
+          <div className="p-4 flex-1 overflow-y-auto">
+            {todayPlans.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
+                <Package className="w-10 h-10 mb-2 opacity-20" />
+                <p className="text-sm">No plans for today.</p>
+              </div>
+            ) : (
+              <div className="space-y-5">
+                {todayPlans.map(plan => (
+                  <div key={plan.id}>
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide px-3 mb-1">{plan.name}</p>
+                    <TodayPlanRecipes planId={plan.id} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="p-4 border-t border-border">
+            <Link href="/plans" className="text-sm font-medium text-primary flex items-center justify-center gap-1 hover:underline">
+              View all plans <ArrowRight className="w-4 h-4" />
+            </Link>
+          </div>
+        </div>
+
         <div className="lg:col-span-2 glass-panel p-6 rounded-2xl">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -250,36 +301,6 @@ export default function Dashboard() {
           )}
         </div>
 
-        <div className="glass-panel rounded-2xl flex flex-col">
-          <div className="p-6 border-b border-border">
-            <h3 className="font-display font-bold text-lg">Today's Production</h3>
-          </div>
-          <div className="p-4 flex-1 overflow-y-auto space-y-3">
-            {todayPlans.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-muted-foreground py-8">
-                <Package className="w-12 h-12 mb-2 opacity-20" />
-                <p>No plans for today.</p>
-              </div>
-            ) : (
-              todayPlans.map(plan => (
-                <div key={plan.id} className="p-4 rounded-xl bg-secondary/50 border border-border/50 hover-lift">
-                  <div className="flex justify-between items-start mb-2">
-                    <h4 className="font-semibold">{plan.name}</h4>
-                    <span className={`text-xs px-2 py-1 rounded-full font-medium ${plan.status === 'completed' ? 'bg-primary/20 text-primary' : 'bg-accent/20 text-accent'}`}>
-                      {plan.status}
-                    </span>
-                  </div>
-                  <p className="text-sm text-muted-foreground line-clamp-1">{plan.notes || "No notes"}</p>
-                </div>
-              ))
-            )}
-          </div>
-          <div className="p-4 border-t border-border">
-            <Link href="/plans" className="text-sm font-medium text-primary flex items-center justify-center gap-1 hover:underline">
-              View all plans <ArrowRight className="w-4 h-4" />
-            </Link>
-          </div>
-        </div>
       </div>
     </div>
   );
