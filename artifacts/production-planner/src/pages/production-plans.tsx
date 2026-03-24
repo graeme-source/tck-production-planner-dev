@@ -342,7 +342,6 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   const [dateWarning, setDateWarning] = useState<string | null>(null);
   const [totalBatchesOverride, setTotalBatchesOverride] = useState<number | null>(null);
   const [savedOrder, setSavedOrder] = useState<number[]>([]);
-  const [savingOrder, setSavingOrder] = useState(false);
   const [orderSaved, setOrderSaved] = useState(false);
 
   // Fetch stored production order on open
@@ -357,28 +356,6 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
       })
       .catch(() => {});
   }, [open]);
-
-  const handleSaveOrder = async () => {
-    setSavingOrder(true);
-    try {
-      const orderIds = items.map(it => it.recipeId);
-      const res = await fetch("/api/app-settings/production_order_recipe_ids", {
-        method: "PUT",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ value: JSON.stringify(orderIds) }),
-      });
-      if (!res.ok) throw new Error("Save failed");
-      setSavedOrder(orderIds);
-      setOrderSaved(true);
-      setTimeout(() => setOrderSaved(false), 2500);
-      toast({ title: "Default order saved", description: "New production plans will start in this recipe order." });
-    } catch {
-      toast({ title: "Failed to save order", variant: "destructive" });
-    } finally {
-      setSavingOrder(false);
-    }
-  };
 
   const { data: calcData, isLoading: loadingCalc, refetch: refetchCalc } = useQuery({
     queryKey: ["production-plan-calculate", planDate],
@@ -574,7 +551,18 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
       setItems(prev => {
         const oldIdx = prev.findIndex(it => it.id === active.id);
         const newIdx = prev.findIndex(it => it.id === over.id);
-        return arrayMove(prev, oldIdx, newIdx);
+        const next = arrayMove(prev, oldIdx, newIdx);
+        const orderIds = next.map(it => it.recipeId);
+        setSavedOrder(orderIds);
+        setOrderSaved(true);
+        setTimeout(() => setOrderSaved(false), 2000);
+        fetch("/api/app-settings/production_order_recipe_ids", {
+          method: "PUT",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ value: JSON.stringify(orderIds) }),
+        }).catch(() => {});
+        return next;
       });
     }
   };
@@ -724,24 +712,11 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
               </span>
             </h3>
             <div className="flex items-center gap-3">
-              <button
-                onClick={handleSaveOrder}
-                disabled={savingOrder || items.length === 0}
-                className={cn(
-                  "text-xs flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-colors disabled:opacity-50",
-                  orderSaved
-                    ? "bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-700 dark:text-emerald-400"
-                    : "border-primary/40 text-primary hover:bg-primary/5"
-                )}
-                title="Save the current recipe order as the default for new production plans"
-              >
-                {savingOrder ? (
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                ) : (
-                  <BookmarkCheck className="w-3 h-3" />
-                )}
-                {orderSaved ? "Order saved!" : "Save as default order"}
-              </button>
+              {orderSaved && (
+                <span className="text-xs flex items-center gap-1 text-emerald-600 dark:text-emerald-400 animate-in fade-in duration-200">
+                  <BookmarkCheck className="w-3 h-3" /> Order auto-saved
+                </span>
+              )}
               <button
                 onClick={() => refetchCalc()}
                 className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
