@@ -25,6 +25,7 @@ import {
   ChevronDown,
   Box,
   ArrowDownCircle,
+  ShoppingCart,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -37,6 +38,7 @@ const navItems: NavItem[] = [
   { name: "Stock Inventory", href: "/stock", icon: PackageSearch },
   { name: "Supplies", href: "/supplies", icon: Box },
   { name: "Kanbans", href: "/kanbans", icon: ArrowDownCircle },
+  { name: "Orders", href: "/orders", icon: ShoppingCart },
   { name: "Sales Data", href: "/sales", icon: TrendingUp },
   { name: "Dispatches", href: "/dispatches", icon: Truck },
   { name: "Reports", href: "/reports", icon: BarChart2 },

@@ -23,6 +23,7 @@ import Reports from "@/pages/reports";
 import Fulfilment from "@/pages/fulfilment";
 import Locations from "@/pages/locations";
 import Kanbans from "@/pages/kanbans";
+import Orders from "@/pages/orders";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import AcceptInvite from "@/pages/accept-invite";
@@ -63,6 +64,7 @@ function Router() {
               <Route path="/dispatches" component={Dispatches} />
               <Route path="/suppliers" component={Suppliers} />
               <Route path="/supplies" component={Supplies} />
+              <Route path="/orders" component={Orders} />
               <Route path="/fulfilment">{() => <ProtectedRoute component={Fulfilment} pageKey="/fulfilment" />}</Route>
               <Route path="/locations">{() => <ProtectedRoute component={Locations} pageKey="/locations" />}</Route>
               <Route path="/kanbans">{() => <ProtectedRoute component={Kanbans} pageKey="/kanbans" />}</Route>

@@ -29,6 +29,7 @@ import storageLocationsRouter from "./storage-locations";
 import stockTransfersRouter from "./stock-transfers";
 import dptIngredientRequirementsRouter from "./dpt-ingredient-requirements";
 import kanbansRouter from "./kanbans";
+import ordersRouter from "./orders";
 
 const router: IRouter = Router();
 
@@ -88,5 +89,6 @@ router.use("/storage-locations", storageLocationsRouter);
 router.use("/stock-transfers", stockTransfersRouter);
 router.use("/dpt-ingredient-requirements", dptIngredientRequirementsRouter);
 router.use("/kanbans", kanbansRouter);
+router.use("/orders", ordersRouter);
 
 export default router;
