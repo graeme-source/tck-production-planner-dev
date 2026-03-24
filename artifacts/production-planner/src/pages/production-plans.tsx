@@ -14,7 +14,7 @@ type PlanStatus = "draft" | "active" | "prep" | "building" | "complete";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import {
-  CalendarDays, Plus, Trash2, ChevronLeft,
+  CalendarDays, Calendar, Plus, Trash2, ChevronLeft, ChevronRight,
   BarChart2, CheckCircle2,
   Loader2, RefreshCw, Info, Package, ClipboardList, ExternalLink,
   Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef,
@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
-import { format, addDays, parseISO, isWeekend, isToday } from "date-fns";
+import { format, addDays, parseISO, isWeekend, isToday, startOfWeek, isSameDay } from "date-fns";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -1704,23 +1704,49 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
 interface PlansListProps {
   onViewPlan: (planId: number) => void;
   onCreatePlan: () => void;
+  onGoToday: () => void;
+  currentDate: Date;
+  setCurrentDate: (d: Date) => void;
+  selectedDate: Date;
+  setSelectedDate: (d: Date) => void;
 }
 
-function PlansList({ onViewPlan, onCreatePlan }: PlansListProps) {
+function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurrentDate, selectedDate, setSelectedDate }: PlansListProps) {
   const { data: plans, isLoading } = useListProductionPlans();
   const { deletePlan } = useAppMutations();
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [sortNewest, setSortNewest] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
 
-  const filtered = useMemo(() => {
-    let list = plans ?? [];
-    if (statusFilter !== "all") list = list.filter(p => p.status === statusFilter);
-    return [...list].sort((a, b) => {
-      const diff = new Date(b.planDate).getTime() - new Date(a.planDate).getTime();
-      return sortNewest ? diff : -diff;
-    });
-  }, [plans, statusFilter, sortNewest]);
+  const weekStart = useMemo(() => startOfWeek(currentDate, { weekStartsOn: 1 }), [currentDate]);
+  const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
+
+  const plansByDate = useMemo(() => {
+    const map: Record<string, typeof plans> = {};
+    for (const plan of plans ?? []) {
+      const key = plan.planDate;
+      if (!map[key]) map[key] = [];
+      map[key]!.push(plan);
+    }
+    return map;
+  }, [plans]);
+
+  const selectedDateKey = format(selectedDate, "yyyy-MM-dd");
+  const selectedDayPlans = plansByDate[selectedDateKey] ?? [];
+
+  const prevWeek = () => setCurrentDate(addDays(currentDate, -7));
+  const nextWeek = () => setCurrentDate(addDays(currentDate, 7));
+
+  const selectDay = (day: Date) => {
+    setSelectedDate(day);
+    const dayWeekStart = startOfWeek(day, { weekStartsOn: 1 });
+    if (format(dayWeekStart, "yyyy-MM-dd") !== format(weekStart, "yyyy-MM-dd")) {
+      setCurrentDate(day);
+    }
+  };
+
+  const handleDatePicker = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.value) return;
+    selectDay(parseISO(e.target.value));
+  };
 
   if (isLoading) {
     return (
@@ -1733,126 +1759,183 @@ function PlansList({ onViewPlan, onCreatePlan }: PlansListProps) {
 
   return (
     <div className="space-y-4">
-      {/* Filters */}
-      <div className="flex items-center gap-2 flex-wrap">
-        {(["all", "draft", "active", "prep", "building", "complete"] as const).map(s => (
-          <button
-            key={s}
-            onClick={() => setStatusFilter(s)}
-            className={cn(
-              "px-3 py-1 rounded-lg text-sm transition-colors capitalize",
-              statusFilter === s
-                ? "bg-primary text-primary-foreground"
-                : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-            )}
-          >
-            {s === "all" ? "All Plans" : s.charAt(0).toUpperCase() + s.slice(1)}
+      {/* Weekly calendar */}
+      <div className="glass-panel rounded-2xl p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <button onClick={prevWeek} className="p-2 rounded-lg hover:bg-secondary/50 transition-colors">
+            <ChevronLeft className="w-5 h-5" />
           </button>
-        ))}
-        <div className="ml-auto">
-          <button
-            onClick={() => setSortNewest(p => !p)}
-            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 px-2 py-1 border border-border rounded-lg transition-colors"
-          >
-            {sortNewest ? "Newest first" : "Oldest first"}
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-semibold text-muted-foreground">
+              {format(weekStart, "d MMM")} — {format(addDays(weekStart, 6), "d MMM yyyy")}
+            </span>
+            <label className="relative cursor-pointer flex items-center" title="Jump to date">
+              <Calendar className="w-4 h-4 text-muted-foreground hover:text-foreground transition-colors" />
+              <input
+                type="date"
+                value={selectedDateKey}
+                onChange={handleDatePicker}
+                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+              />
+            </label>
+          </div>
+          <button onClick={nextWeek} className="p-2 rounded-lg hover:bg-secondary/50 transition-colors">
+            <ChevronRight className="w-5 h-5" />
           </button>
         </div>
-      </div>
 
-      {filtered.length === 0 ? (
-        <div className="text-center py-16 bg-secondary/20 rounded-xl border border-dashed border-border">
-          <CalendarDays className="w-10 h-10 mx-auto mb-3 text-muted-foreground opacity-40" />
-          <p className="font-medium text-muted-foreground">No plans found</p>
-          <p className="text-sm text-muted-foreground mt-1">
-            {statusFilter !== "all" ? "Try removing filters or" : ""} Create your first production plan
-          </p>
-          <button
-            onClick={onCreatePlan}
-            className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover-lift"
-          >
-            <Plus className="w-4 h-4 inline mr-1" />
-            Create Plan
-          </button>
-        </div>
-      ) : (
-        <div className="grid gap-3">
-          {filtered.map(plan => {
-            const statusConfig = STATUS_CONFIG[plan.status as keyof typeof STATUS_CONFIG] ?? STATUS_CONFIG.draft;
-            const StatusIcon = statusConfig.icon;
-            const planIsToday = isToday(parseISO(plan.planDate));
+        <div className="grid grid-cols-7 gap-2">
+          {weekDays.map(day => {
+            const dateKey = format(day, "yyyy-MM-dd");
+            const dayPlans = plansByDate[dateKey] ?? [];
+            const today = isToday(day);
+            const selected = isSameDay(day, selectedDate);
+            const isComplete = dayPlans.length > 0 && dayPlans.every(p => p.status === "complete" || p.status === "completed");
+            const hasPlan = dayPlans.length > 0;
+            const isInProgress = hasPlan && !isComplete;
 
             return (
-              <div
-                key={plan.id}
+              <button
+                key={dateKey}
+                onClick={() => selectDay(day)}
                 className={cn(
-                  "rounded-xl p-4 transition-all cursor-pointer group relative",
-                  planIsToday
-                    ? "bg-primary/[0.06] border-2 border-primary shadow-md ring-1 ring-primary/20"
-                    : "bg-card border border-border hover:border-primary/30"
+                  "flex flex-col items-center gap-1 rounded-xl py-3 px-1 transition-all border",
+                  selected
+                    ? "bg-primary text-primary-foreground border-primary shadow-md"
+                    : today
+                    ? "border-primary/40 bg-primary/5 hover:bg-primary/10"
+                    : "border-border hover:bg-secondary/50"
                 )}
-                onClick={() => onViewPlan(plan.id)}
               >
-                {planIsToday && (
-                  <span className="absolute -top-2.5 left-4 bg-primary text-primary-foreground text-[11px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full shadow-sm">
-                    Today
-                  </span>
+                <span className={cn(
+                  "text-xs font-medium uppercase tracking-wide",
+                  selected ? "text-primary-foreground/70" : today ? "text-primary" : "text-muted-foreground"
+                )}>
+                  {format(day, "EEE")}
+                </span>
+                <span className={cn(
+                  "text-lg font-bold leading-none",
+                  selected ? "text-primary-foreground" : today ? "text-primary" : "text-foreground"
+                )}>
+                  {format(day, "d")}
+                </span>
+                {hasPlan ? (
+                  <span className={cn(
+                    "w-2 h-2 rounded-full",
+                    selected
+                      ? "bg-white/70"
+                      : isComplete
+                      ? "bg-emerald-500"
+                      : isInProgress
+                      ? "bg-amber-500"
+                      : "bg-primary"
+                  )} />
+                ) : (
+                  <span className="h-2" />
                 )}
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <h3 className={cn(
-                        "font-semibold truncate transition-colors",
-                        planIsToday ? "text-primary text-base" : "group-hover:text-primary"
-                      )}>
-                        {plan.name}
-                      </h3>
-                      <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium flex items-center gap-1 flex-shrink-0", statusConfig.color)}>
-                        <StatusIcon className="w-3 h-3" />
-                        {statusConfig.label}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <CalendarDays className="w-3.5 h-3.5" />
-                        {format(parseISO(plan.planDate), "EEEE d MMM yyyy")}
-                      </span>
-                      <span className="font-mono text-xs">
-                        #{plan.batchNumber ?? julianBatchNumber(plan.planDate)}
-                      </span>
-                      {plan.itemCount > 0 && (
-                        <span className="text-xs">
-                          {plan.itemCount} recipe{plan.itemCount !== 1 ? "s" : ""}
-                          {plan.totalBatchesTarget > 0 && ` · ${plan.totalBatchesTarget} batches`}
-                        </span>
-                      )}
-                      {plan.notes && (
-                        <span className="text-xs truncate max-w-48">{plan.notes}</span>
-                      )}
-                    </div>
-                    {planIsToday && (
-                      <div className="mt-2 flex items-center gap-1.5 text-xs font-medium text-primary">
-                        <ArrowRight className="w-3.5 h-3.5" />
-                        Tap to open today's production plan
-                      </div>
-                    )}
-                  </div>
-
-                  <button
-                    onClick={e => {
-                      e.stopPropagation();
-                      setDeleteTarget({ id: plan.id, name: plan.name });
-                    }}
-                    className="opacity-0 group-hover:opacity-100 p-2 text-muted-foreground hover:text-destructive transition-all rounded-lg hover:bg-destructive/10"
-                    title="Delete plan"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
+              </button>
             );
           })}
         </div>
-      )}
+
+        {/* Legend */}
+        <div className="flex items-center gap-4 pt-1 border-t border-border/50">
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="w-2 h-2 rounded-full bg-emerald-500" /> Complete
+          </span>
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="w-2 h-2 rounded-full bg-amber-500" /> In progress
+          </span>
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="w-2 h-2 rounded-full bg-border border border-border" /> No plan
+          </span>
+        </div>
+      </div>
+
+      {/* Selected day plans */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold text-lg">
+            {isToday(selectedDate) ? "Today" : format(selectedDate, "EEEE, d MMMM")}
+            {selectedDayPlans.length > 0 && (
+              <span className="ml-2 text-sm font-normal text-muted-foreground">
+                {selectedDayPlans.length} plan{selectedDayPlans.length !== 1 ? "s" : ""}
+              </span>
+            )}
+          </h2>
+        </div>
+
+        {selectedDayPlans.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-border bg-card flex flex-col items-center justify-center py-14 text-muted-foreground">
+            <CalendarDays className="w-10 h-10 mb-3 opacity-20" />
+            <p className="text-sm font-medium">No production plan for this day</p>
+            <p className="text-xs mt-1 opacity-70">Select another day or create a new plan</p>
+            <button
+              onClick={onCreatePlan}
+              className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover-lift flex items-center gap-1.5"
+            >
+              <Plus className="w-4 h-4" />
+              Create Plan
+            </button>
+          </div>
+        ) : (
+          <div className="grid gap-3">
+            {selectedDayPlans.map(plan => {
+              const statusConfig = STATUS_CONFIG[plan.status as keyof typeof STATUS_CONFIG] ?? STATUS_CONFIG.draft;
+              const StatusIcon = statusConfig.icon;
+
+              return (
+                <div
+                  key={plan.id}
+                  className="rounded-xl p-4 transition-all cursor-pointer group relative bg-card border border-border hover:border-primary/30 hover:shadow-sm"
+                  onClick={() => onViewPlan(plan.id)}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="font-semibold truncate transition-colors group-hover:text-primary">
+                          {plan.name}
+                        </h3>
+                        <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium flex items-center gap-1 flex-shrink-0", statusConfig.color)}>
+                          <StatusIcon className="w-3 h-3" />
+                          {statusConfig.label}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3 text-sm text-muted-foreground flex-wrap">
+                        <span className="font-mono text-xs">
+                          Batch #{plan.batchNumber ?? julianBatchNumber(plan.planDate)}
+                        </span>
+                        {plan.itemCount > 0 && (
+                          <span className="text-xs">
+                            {plan.itemCount} recipe{plan.itemCount !== 1 ? "s" : ""}
+                            {plan.totalBatchesTarget > 0 && ` · ${plan.totalBatchesTarget} batches`}
+                          </span>
+                        )}
+                        {plan.notes && (
+                          <span className="text-xs truncate max-w-48 italic">{plan.notes}</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <ArrowRight className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
+                      <button
+                        onClick={e => {
+                          e.stopPropagation();
+                          setDeleteTarget({ id: plan.id, name: plan.name });
+                        }}
+                        className="opacity-0 group-hover:opacity-100 p-2 text-muted-foreground hover:text-destructive transition-all rounded-lg hover:bg-destructive/10"
+                        title="Delete plan"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setDeleteTarget(null)}>
@@ -1894,6 +1977,10 @@ export default function ProductionPlans() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [, navigate] = useLocation();
 
+  const todayDate = useMemo(() => new Date(), []);
+  const [currentDate, setCurrentDate] = useState<Date>(todayDate);
+  const [selectedDate, setSelectedDate] = useState<Date>(todayDate);
+
   const handleViewPlan = (planId: number) => {
     setSelectedPlanId(planId);
     setView("detail");
@@ -1909,6 +1996,11 @@ export default function ProductionPlans() {
     navigate(`/orders?planId=${planId}`);
   };
 
+  const handleGoToday = () => {
+    setCurrentDate(todayDate);
+    setSelectedDate(todayDate);
+  };
+
   return (
     <div className="space-y-6">
       {view === "list" && (
@@ -1917,16 +2009,32 @@ export default function ProductionPlans() {
             title="Production Plans"
             description="Schedule daily production runs with DPT-calculated batch targets."
             action={
-              <button
-                onClick={() => setIsCreateOpen(true)}
-                className="px-5 py-2.5 bg-primary text-primary-foreground rounded-xl font-medium shadow-md shadow-primary/20 hover-lift flex items-center gap-2"
-              >
-                <Plus className="w-5 h-5" />
-                Create Plan
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleGoToday}
+                  className="px-4 py-2.5 border border-border rounded-xl font-medium flex items-center gap-2 hover:bg-secondary/50 transition-colors text-sm"
+                >
+                  <Calendar className="w-4 h-4" /> Today
+                </button>
+                <button
+                  onClick={() => setIsCreateOpen(true)}
+                  className="px-5 py-2.5 bg-primary text-primary-foreground rounded-xl font-medium shadow-md shadow-primary/20 hover-lift flex items-center gap-2"
+                >
+                  <Plus className="w-5 h-5" />
+                  Create Plan
+                </button>
+              </div>
             }
           />
-          <PlansList onViewPlan={handleViewPlan} onCreatePlan={() => setIsCreateOpen(true)} />
+          <PlansList
+            onViewPlan={handleViewPlan}
+            onCreatePlan={() => setIsCreateOpen(true)}
+            onGoToday={handleGoToday}
+            currentDate={currentDate}
+            setCurrentDate={setCurrentDate}
+            selectedDate={selectedDate}
+            setSelectedDate={setSelectedDate}
+          />
         </>
       )}
 
