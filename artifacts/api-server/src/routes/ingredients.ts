@@ -100,7 +100,7 @@ router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
     ...(stockCheckFrequency !== undefined ? { stockCheckFrequency } : {}),
     stockCheckDay: stockCheckDay || null,
     ...(surplusPercent !== undefined ? { surplusPercent: String(surplusPercent) } : {}),
-    shelfLifeDays: shelfLifeDays != null ? Number(shelfLifeDays) : null,
+    ...(shelfLifeDays !== undefined ? { shelfLifeDays: shelfLifeDays != null ? Number(shelfLifeDays) : null } : {}),
   }).where(eq(ingredientsTable.id, id)).returning();
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   res.json(mapRow(row));
