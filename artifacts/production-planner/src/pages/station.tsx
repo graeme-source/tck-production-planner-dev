@@ -4996,24 +4996,63 @@ interface ChillerRackItem {
   colour: string;
 }
 
-function ChillerRackVisual({ rackItems }: { rackItems: ChillerRackItem[] }) {
-  const TRAYS_PER_RACK = 28;
+interface WonkyColour {
+  colour: string;
+  recipeName: string;
+}
 
-  const allTrays: Array<{ colour: string; recipeName: string }> = [];
+function ChillerRackVisual({
+  rackItems,
+  wonkyItems = [],
+}: {
+  rackItems: ChillerRackItem[];
+  wonkyItems?: WonkyColour[];
+}) {
+  const TRAYS_PER_RACK = 28;
+  const hasWonky = wonkyItems.length > 0;
+
+  // Build regular trays in production order
+  const allRegularTrays: Array<{ colour: string; recipeName: string }> = [];
   for (const r of rackItems) {
-    for (let i = 0; i < r.trayCount; i++) {
-      allTrays.push({ colour: r.colour, recipeName: r.recipeName });
+    for (let t = 0; t < r.trayCount; t++) {
+      allRegularTrays.push({ colour: r.colour, recipeName: r.recipeName });
     }
   }
 
-  if (allTrays.length === 0) return null;
+  if (allRegularTrays.length === 0 && !hasWonky) return null;
 
-  const racks: Array<typeof allTrays> = [];
-  for (let i = 0; i < allTrays.length; i += TRAYS_PER_RACK) {
-    racks.push(allTrays.slice(i, i + TRAYS_PER_RACK));
+  // Wonky tray sits at position 28 (the bottom) of rack 1.
+  // Reserve that slot — regular trays only fill positions 1-27 of rack 1.
+  const RACK0_REGULAR = hasWonky ? TRAYS_PER_RACK - 1 : TRAYS_PER_RACK;
+
+  // Build wonky gradient background
+  const wonkyBackground =
+    wonkyItems.length === 1
+      ? wonkyItems[0].colour
+      : `linear-gradient(90deg, ${wonkyItems
+          .map((w, i, arr) => {
+            const step = 100 / arr.length;
+            return `${w.colour} ${i * step}%, ${w.colour} ${(i + 1) * step}%`;
+          })
+          .join(", ")})`;
+
+  type Slot = { colour: string; recipeName: string; isWonky?: boolean } | null;
+
+  // Rack 0: regular trays fill slots 0..(RACK0_REGULAR-1), wonky tray at slot 27
+  const rack0Regular = allRegularTrays.slice(0, RACK0_REGULAR);
+  const restRegular = allRegularTrays.slice(RACK0_REGULAR);
+
+  const racks: Slot[][] = [];
+  const rack0: Slot[] = [...rack0Regular];
+  while (rack0.length < RACK0_REGULAR) rack0.push(null);
+  if (hasWonky) rack0.push({ colour: "wonky", recipeName: "Wonky", isWonky: true });
+  racks.push(rack0);
+
+  for (let i = 0; i < restRegular.length; i += TRAYS_PER_RACK) {
+    racks.push(restRegular.slice(i, i + TRAYS_PER_RACK));
   }
 
-  const totalTrays = allTrays.length;
+  const totalTrays = allRegularTrays.length + (hasWonky ? 1 : 0);
 
   return (
     <div className="bg-card border border-border rounded-xl p-4">
@@ -5023,7 +5062,7 @@ function ChillerRackVisual({ rackItems }: { rackItems: ChillerRackItem[] }) {
           <div>
             <h3 className="font-semibold text-sm">Chiller Rack</h3>
             <p className="text-xs text-muted-foreground">
-              {totalTrays} tray{totalTrays !== 1 ? "s" : ""} · {racks.length} rack{racks.length !== 1 ? "s" : ""} · never mixed
+              {totalTrays} tray{totalTrays !== 1 ? "s" : ""} · {racks.length} rack{racks.length !== 1 ? "s" : ""} · fills top to bottom
             </p>
           </div>
         </div>
@@ -5040,16 +5079,27 @@ function ChillerRackVisual({ rackItems }: { rackItems: ChillerRackItem[] }) {
               </span>
             </div>
           ))}
+          {hasWonky && (
+            <div className="flex items-center gap-1.5">
+              <div
+                className="w-3.5 h-3.5 rounded-[3px] flex-shrink-0 border border-black/10"
+                style={{ background: wonkyBackground }}
+              />
+              <span className="text-xs text-muted-foreground">
+                Wonky
+                <span className="font-semibold text-foreground ml-1">×1 tray</span>
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Racks — scrollable row */}
       <div className="flex gap-6 overflow-x-auto pb-1">
-        {racks.map((rackTrays, rackIdx) => {
-          // 28-slot array: slot 0 = tray position 1 (bottom of rack)
-          const slots: Array<{ colour: string; recipeName: string } | null> = Array(TRAYS_PER_RACK).fill(null).map((_, i) =>
-            i < rackTrays.length ? rackTrays[i] : null
-          );
+        {racks.map((rackSlots, rackIdx) => {
+          // Pad to full 28 slots so the rack body always has a fixed height
+          const slots: Slot[] = [...rackSlots];
+          while (slots.length < TRAYS_PER_RACK) slots.push(null);
 
           return (
             <div key={rackIdx} className="flex-shrink-0">
@@ -5059,8 +5109,8 @@ function ChillerRackVisual({ rackItems }: { rackItems: ChillerRackItem[] }) {
                 </p>
               )}
               <div className="flex items-stretch gap-2">
-                {/* Left slot numbers */}
-                <div className="flex flex-col-reverse justify-between py-[6px]" style={{ height: 28 * 15 + 27 * 2 + 12 }}>
+                {/* Left: top/bottom labels */}
+                <div className="flex flex-col justify-between py-[6px]" style={{ height: 28 * 15 + 27 * 2 + 12 }}>
                   <span className="text-[9px] text-muted-foreground leading-none">1</span>
                   <span className="text-[9px] text-muted-foreground leading-none">28</span>
                 </div>
@@ -5070,40 +5120,60 @@ function ChillerRackVisual({ rackItems }: { rackItems: ChillerRackItem[] }) {
                   className="relative border-[3px] border-border rounded-md bg-secondary/10 px-1.5 py-[6px]"
                   style={{ minWidth: 140 }}
                 >
-                  {/* Rack rails — decorative vertical lines */}
+                  {/* Rack rails */}
                   <div className="absolute inset-y-2 left-[7px] w-[2px] bg-border/40 rounded-full pointer-events-none" />
                   <div className="absolute inset-y-2 right-[7px] w-[2px] bg-border/40 rounded-full pointer-events-none" />
 
-                  {/* Trays — rendered bottom-to-top via flex-col-reverse */}
-                  <div className="flex flex-col-reverse gap-[2px] relative z-10">
-                    {slots.map((slot, i) =>
-                      slot ? (
-                        <div
-                          key={i}
-                          className="h-[15px] rounded-[2px] flex items-center px-1.5 overflow-hidden shadow-sm"
-                          style={{ backgroundColor: slot.colour }}
-                          title={`${slot.recipeName} — tray ${i + 1}`}
-                        >
-                          <span
-                            className="text-white text-[8px] font-semibold leading-none truncate"
-                            style={{ textShadow: "0 0 4px rgba(0,0,0,0.7)" }}
+                  {/* Trays — slot 0 at top (position 1), slot 27 at bottom (position 28) */}
+                  <div className="flex flex-col gap-[2px] relative z-10">
+                    {slots.map((slot, i) => {
+                      if (slot?.isWonky) {
+                        return (
+                          <div
+                            key={i}
+                            className="h-[15px] rounded-[2px] flex items-center px-1.5 overflow-hidden shadow-sm"
+                            style={{ background: wonkyBackground }}
+                            title={`Wonky packs — ${wonkyItems.map(w => w.recipeName).join(", ")}`}
                           >
-                            {slot.recipeName}
-                          </span>
-                        </div>
-                      ) : (
+                            <span
+                              className="text-white text-[8px] font-semibold leading-none truncate"
+                              style={{ textShadow: "0 0 4px rgba(0,0,0,0.8)" }}
+                            >
+                              Wonky
+                            </span>
+                          </div>
+                        );
+                      }
+                      if (slot) {
+                        return (
+                          <div
+                            key={i}
+                            className="h-[15px] rounded-[2px] flex items-center px-1.5 overflow-hidden shadow-sm"
+                            style={{ backgroundColor: slot.colour }}
+                            title={`${slot.recipeName} — position ${i + 1}`}
+                          >
+                            <span
+                              className="text-white text-[8px] font-semibold leading-none truncate"
+                              style={{ textShadow: "0 0 4px rgba(0,0,0,0.7)" }}
+                            >
+                              {slot.recipeName}
+                            </span>
+                          </div>
+                        );
+                      }
+                      return (
                         <div
                           key={i}
                           className="h-[15px] rounded-[2px] border border-dashed border-border/30"
                         />
-                      )
-                    )}
+                      );
+                    })}
                   </div>
                 </div>
 
-                {/* Right: milestone slot numbers */}
-                <div className="flex flex-col-reverse gap-[2px] py-[6px]">
-                  {Array.from({ length: TRAYS_PER_RACK }).map((_, i) => (
+                {/* Right: milestone position numbers */}
+                <div className="flex flex-col gap-[2px] py-[6px]">
+                  {Array.from({ length: TRAYS_PER_RACK }).map((_, i) =>
                     [0, 6, 13, 20, 27].includes(i) ? (
                       <div key={i} className="h-[15px] flex items-center">
                         <span className="text-[9px] text-muted-foreground/70 leading-none">{i + 1}</span>
@@ -5111,7 +5181,7 @@ function ChillerRackVisual({ rackItems }: { rackItems: ChillerRackItem[] }) {
                     ) : (
                       <div key={i} className="h-[15px]" />
                     )
-                  ))}
+                  )}
                 </div>
               </div>
             </div>
@@ -5229,6 +5299,17 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
       colour: item.recipeColor ?? RECIPE_RACK_COLOURS[idx % RECIPE_RACK_COLOURS.length],
     }))
     .filter(r => r.trayCount > 0);
+
+  // Wonky items — recipes that have at least one wonky pack get a shared tray at the bottom of rack 1
+  const wonkyItems: WonkyColour[] = items
+    .filter(item => (item.wonlyCount ?? 0) > 0)
+    .map(item => {
+      const idx = items.indexOf(item);
+      return {
+        colour: item.recipeColor ?? RECIPE_RACK_COLOURS[idx % RECIPE_RACK_COLOURS.length],
+        recipeName: item.recipeName ?? `Recipe #${item.recipeId}`,
+      };
+    });
 
   return (
     <div className="space-y-4">
@@ -5398,7 +5479,7 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
       </div>
 
       {/* Chiller Rack Visual */}
-      <ChillerRackVisual rackItems={rackItems} />
+      <ChillerRackVisual rackItems={rackItems} wonkyItems={wonkyItems} />
 
       {/* Per-recipe summary table */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
