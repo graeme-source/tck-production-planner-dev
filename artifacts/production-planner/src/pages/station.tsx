@@ -5882,22 +5882,47 @@ interface DessertsReport {
   dessertProductCount: number;
 }
 
+interface PackingShortfallItem {
+  recipeId: number | null;
+  recipeName: string;
+  fridgeQty: number;
+  plannedPacks: number;
+  totalDispatch: number;
+  shortfall: number;
+  level: "yellow" | "red";
+}
+
 function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
   const [, navigate] = useLocation();
-  const dispatchTag = format(addDays(parseISO(plan.planDate), 1), "yyyy-MM-dd");
-  const dispatchLabel = format(addDays(parseISO(plan.planDate), 1), "EEEE d MMM");
+
+  // Dates: production happens today (plan.planDate); orders are tagged with delivery date (tomorrow)
+  const packingDate = parseISO(plan.planDate);
+  const packingLabel = format(packingDate, "EEEE d MMM");
+  const deliveryDate = addDays(packingDate, 1);
+  const deliveryLabel = format(deliveryDate, "EEEE d MMM");
+  const dispatchTag = format(deliveryDate, "yyyy-MM-dd"); // Shopify order tag = delivery date
+
   const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 
   const [progress, setProgress] = useState<DispatchProgress | null>(null);
   const [desserts, setDesserts] = useState<DessertsReport | null>(null);
+  const [packingItems, setPackingItems] = useState<Array<{
+    recipeId: number | null;
+    recipeName: string;
+    batchesTarget: number;
+    portionsPerBatch: number;
+    fridgeQty: number;
+    totalDispatch: number;
+  }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
-      const [progressRes, dessertsRes] = await Promise.all([
+      const [progressRes, dessertsRes, packingRes] = await Promise.all([
         fetch(`${BASE}/api/fulfilment/dispatch-progress?tag=${dispatchTag}`, { credentials: "include" }),
         fetch(`${BASE}/api/fulfilment/desserts-report?tag=${dispatchTag}`, { credentials: "include" }),
+        fetch(`${BASE}/api/production-plans/${plan.id}/packing`, { credentials: "include" }),
       ]);
       if (!progressRes.ok && !dessertsRes.ok) {
         setError("Failed to load dispatch data");
@@ -5906,19 +5931,48 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
       if (progressRes.ok) setProgress(await progressRes.json());
       else setError("Failed to load dispatch progress");
       if (dessertsRes.ok) setDesserts(await dessertsRes.json());
+      if (packingRes.ok) {
+        const data = await packingRes.json();
+        setPackingItems(data.items ?? []);
+      }
       if (progressRes.ok && dessertsRes.ok) setError(null);
-    } catch (err: any) {
-      setError(err.message ?? "Failed to load dispatch data");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to load dispatch data");
     } finally {
       setLoading(false);
     }
-  }, [dispatchTag, BASE]);
+  }, [dispatchTag, plan.id, BASE]);
 
   useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, 30_000);
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  // Stock shortfall analysis: compare live fridge stock against today's dispatch quantities.
+  // Yellow = need today's production to fulfil; Red = can't fulfil even after production.
+  const shortfalls: PackingShortfallItem[] = packingItems
+    .filter(item => item.totalDispatch > 0)
+    .flatMap(item => {
+      const fridgeQty = item.fridgeQty ?? 0;
+      const plannedPacks = Math.floor((item.batchesTarget ?? 0) * (item.portionsPerBatch ?? 10) / 2);
+      const totalDispatch = item.totalDispatch ?? 0;
+      if (fridgeQty >= totalDispatch) return [];
+      const shortfall = totalDispatch - (fridgeQty + plannedPacks);
+      const level: "yellow" | "red" = shortfall > 0 ? "red" : "yellow";
+      return [{
+        recipeId: item.recipeId,
+        recipeName: item.recipeName,
+        fridgeQty,
+        plannedPacks,
+        totalDispatch,
+        shortfall,
+        level,
+      }];
+    });
+
+  const redShortfalls = shortfalls.filter(s => s.level === "red");
+  const yellowShortfalls = shortfalls.filter(s => s.level === "yellow");
 
   const cats = progress?.categories;
 
@@ -5948,26 +6002,28 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
 
   return (
     <div className="space-y-4">
+      {/* Header — single source of date truth */}
       <div className="bg-card border border-border rounded-xl p-4">
-        <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Box className="w-6 h-6 text-indigo-500" />
             <div>
-              <h2 className="font-semibold text-base">Order Packing</h2>
+              <h2 className="font-semibold text-base">Packing on {packingLabel}</h2>
               <p className="text-xs text-muted-foreground">
-                Dispatch {dispatchLabel}
+                Dispatch {packingLabel}
+                <span className="mx-1.5 text-border">·</span>
+                <Truck className="w-3 h-3 inline mb-0.5 mr-0.5 text-muted-foreground/70" />
+                For delivery {deliveryLabel}
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={fetchData}
-              className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
-              title="Refresh"
-            >
-              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-            </button>
-          </div>
+          <button
+            onClick={fetchData}
+            className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
+            title="Refresh"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+          </button>
         </div>
       </div>
 
@@ -5982,6 +6038,51 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
         <div className="flex items-center gap-3 p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive">
           <AlertCircle className="w-5 h-5 flex-shrink-0" />
           <p className="text-sm">{error}</p>
+        </div>
+      )}
+
+      {/* Stock shortfall check — red first, then yellow */}
+      {redShortfalls.length > 0 && (
+        <div className="bg-red-50 dark:bg-red-950/20 border border-red-300 dark:border-red-700 rounded-xl overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-3 bg-red-100 dark:bg-red-900/30 border-b border-red-300 dark:border-red-700">
+            <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 flex-shrink-0" />
+            <p className="text-sm font-semibold text-red-700 dark:text-red-300">Hard Shortfall — not enough even after production</p>
+          </div>
+          <div className="divide-y divide-red-200 dark:divide-red-800">
+            {redShortfalls.map(s => (
+              <div key={s.recipeId ?? s.recipeName} className="px-4 py-3">
+                <p className="text-sm font-semibold text-red-800 dark:text-red-200 mb-1">{s.recipeName}</p>
+                <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-red-700 dark:text-red-300">
+                  <span>{s.fridgeQty} in fridge</span>
+                  <span>dispatching {s.totalDispatch}</span>
+                  <span>making {s.plannedPacks} today</span>
+                  <span className="font-bold">{s.shortfall} pack{s.shortfall !== 1 ? "s" : ""} short</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {yellowShortfalls.length > 0 && (
+        <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-300 dark:border-amber-700 rounded-xl overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-3 bg-amber-100 dark:bg-amber-900/30 border-b border-amber-300 dark:border-amber-700">
+            <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+            <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">Stock Warning — ok after today's production completes</p>
+          </div>
+          <div className="divide-y divide-amber-200 dark:divide-amber-800">
+            {yellowShortfalls.map(s => (
+              <div key={s.recipeId ?? s.recipeName} className="px-4 py-3">
+                <p className="text-sm font-semibold text-amber-800 dark:text-amber-200 mb-1">{s.recipeName}</p>
+                <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-amber-700 dark:text-amber-300">
+                  <span>{s.fridgeQty} in fridge</span>
+                  <span>dispatching {s.totalDispatch}</span>
+                  <span>making {s.plannedPacks} today</span>
+                  <span className="font-medium">{Math.abs(s.shortfall)} surplus after production</span>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -6053,7 +6154,7 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
           className="w-full py-4 bg-primary text-primary-foreground rounded-2xl font-semibold text-base flex items-center justify-center gap-3 hover:opacity-90 transition-opacity active:scale-[0.98]"
         >
           <Scan className="w-5 h-5" />
-          Pack Orders for {dispatchLabel}
+          Pack &amp; Dispatch Orders
           <span className="text-sm font-normal opacity-80">
             ({progress.totalOrders - progress.totalFulfilled} remaining)
           </span>

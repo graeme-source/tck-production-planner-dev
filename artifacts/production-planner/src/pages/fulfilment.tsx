@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/page-header";
-import { format } from "date-fns";
+import { format, addDays, parseISO } from "date-fns";
 import { useLocation } from "wouter";
 import {
   Package, Scan, CheckCircle2, AlertCircle, ChevronRight, Printer,
@@ -1653,7 +1653,18 @@ export default function Fulfilment() {
         }} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <PageHeader title={`Order Packing Live — ${queryTag}`} description="Orders for this dispatch date." />
+        <PageHeader
+          title="Order Packing Live"
+          description={(() => {
+            try {
+              const packingDay = format(addDays(parseISO(queryTag), -1), "EEEE d MMM");
+              const deliveryDay = format(parseISO(queryTag), "EEEE d MMM");
+              return `Packing ${packingDay} · For delivery ${deliveryDay}`;
+            } catch {
+              return `Orders tagged ${queryTag}`;
+            }
+          })()}
+        />
         <button
           onClick={() => refetch()}
           disabled={isLoading}
@@ -1689,7 +1700,10 @@ export default function Fulfilment() {
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-display font-bold text-lg">
-                Orders tagged <span className="text-primary">{queryTag}</span>
+                {(() => {
+                  try { return `Orders for delivery ${format(parseISO(queryTag), "EEEE d MMM")}`; }
+                  catch { return `Orders tagged ${queryTag}`; }
+                })()}
               </h3>
               <p className="text-sm text-muted-foreground">
                 {unfulfilledOrders.length} ready to pack &middot; {untaggedOrders.length} awaiting approval &middot; {fulfilledOrders.length} fulfilled

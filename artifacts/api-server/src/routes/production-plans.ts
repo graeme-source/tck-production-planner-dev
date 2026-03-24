@@ -2852,6 +2852,8 @@ router.get("/:id/packing", async (req, res) => {
       recipeName: item.recipeName ?? `Recipe #${item.recipeId}`,
       batchesTarget: Number(item.batchesTarget) || 0,
       batchesComplete,
+      portionsPerBatch: Number(item.portionsPerBatch) || 10,
+      fridgeQty: Number(item.fridgeQty) || 0,
       wonlyCount,
       grossPacks,
       netPacks,
