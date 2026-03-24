@@ -36,7 +36,6 @@ const navItems: NavItem[] = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Production Plans", href: "/plans", icon: CalendarDays },
   { name: "Suppliers", href: "/suppliers", icon: Building2 },
-  { name: "Sales Data", href: "/sales", icon: TrendingUp },
   { name: "Dispatches", href: "/dispatches", icon: Truck },
   { name: "Reports", href: "/reports", icon: BarChart2 },
 ];
