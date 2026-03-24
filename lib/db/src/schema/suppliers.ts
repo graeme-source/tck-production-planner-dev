@@ -1,4 +1,4 @@
-import { pgTable, serial, text, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, timestamp, integer } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -13,6 +13,8 @@ export const suppliersTable = pgTable("suppliers", {
   notes: text("notes"),
   orderFrequency: text("order_frequency").notNull().default("daily"),
   orderDays: text("order_days"),
+  leadTimeDays: integer("lead_time_days").notNull().default(1),
+  cutoffTime: text("cutoff_time").notNull().default("17:00"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

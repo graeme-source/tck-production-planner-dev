@@ -3,7 +3,7 @@ import { useListSuppliers } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
-import { Plus, Trash2, Edit2, Loader2, Building2, Mail, Phone, Globe, MapPin, Search, ClipboardCheck, GripVertical } from "lucide-react";
+import { Plus, Trash2, Edit2, Loader2, Building2, Mail, Phone, Globe, MapPin, Search, ClipboardCheck, GripVertical, Truck, Clock } from "lucide-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -24,6 +24,8 @@ const schema = z.object({
   notes: z.string().optional(),
   orderFrequency: z.enum(["daily", "weekly"]).optional(),
   orderDays: z.string().optional(),
+  leadTimeDays: z.coerce.number().int().min(0).optional(),
+  cutoffTime: z.string().optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -39,11 +41,13 @@ type SupplierItem = {
   notes?: string | null;
   orderFrequency?: string;
   orderDays?: string | null;
+  leadTimeDays?: number;
+  cutoffTime?: string;
   createdAt: string;
 };
 
 const defaultValues: FormValues = {
-  name: "", contactName: "", email: "", phone: "", website: "", address: "", notes: "", orderFrequency: "daily", orderDays: "",
+  name: "", contactName: "", email: "", phone: "", website: "", address: "", notes: "", orderFrequency: "daily", orderDays: "", leadTimeDays: 1, cutoffTime: "17:00",
 };
 
 function SupplierForm({
@@ -168,12 +172,35 @@ function SupplierForm({
         </div>
       )}
 
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="text-sm font-medium mb-1 block">Delivery Lead Time (days)</label>
+          <input
+            type="number"
+            min={0}
+            {...register("leadTimeDays")}
+            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            placeholder="1"
+          />
+          <p className="text-xs text-muted-foreground mt-1">Days after ordering until delivery arrives.</p>
+        </div>
+        <div>
+          <label className="text-sm font-medium mb-1 block">Order Cut-off Time</label>
+          <input
+            type="time"
+            {...register("cutoffTime")}
+            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+          <p className="text-xs text-muted-foreground mt-1">Orders placed after this time add an extra day.</p>
+        </div>
+      </div>
+
       <div>
         <label className="text-sm font-medium mb-1 block">Notes</label>
         <textarea
           {...register("notes")}
           className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[60px] resize-none"
-          placeholder="Lead times, payment terms, order minimums..."
+          placeholder="Payment terms, order minimums..."
         />
       </div>
 
@@ -395,7 +422,7 @@ export default function Suppliers() {
             isPending={createSupplier.isPending}
             onSubmit={(data) =>
               createSupplier.mutate(
-                { data: { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null } },
+                { data: { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00" } },
                 { onSuccess: () => setIsAddOpen(false) }
               )
             }
@@ -421,12 +448,14 @@ export default function Suppliers() {
                 notes: editingItem.notes ?? "",
                 orderFrequency: (editingItem.orderFrequency as "daily" | "weekly") ?? "daily",
                 orderDays: editingItem.orderDays ?? "",
+                leadTimeDays: editingItem.leadTimeDays ?? 1,
+                cutoffTime: editingItem.cutoffTime ?? "17:00",
               }}
               isEdit
               isPending={updateSupplier.isPending}
               onSubmit={(data) =>
                 updateSupplier.mutate(
-                  { id: editingItem.id, data: { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null } },
+                  { id: editingItem.id, data: { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00" } },
                   { onSuccess: () => setEditingItem(null) }
                 )
               }
@@ -534,8 +563,19 @@ export default function Suppliers() {
               )}
             </div>
 
+            <div className="flex flex-wrap gap-1.5 mt-auto">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium">
+                <Truck className="w-3 h-3" />
+                {(supplier as SupplierItem).leadTimeDays ?? 1} day{((supplier as SupplierItem).leadTimeDays ?? 1) !== 1 ? "s" : ""} lead
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs bg-secondary text-muted-foreground font-medium">
+                <Clock className="w-3 h-3" />
+                Cut-off {(supplier as SupplierItem).cutoffTime ?? "17:00"}
+              </span>
+            </div>
+
             {supplier.notes && (
-              <p className="text-xs text-muted-foreground bg-secondary/40 rounded-lg px-3 py-2 line-clamp-2 mt-auto">
+              <p className="text-xs text-muted-foreground bg-secondary/40 rounded-lg px-3 py-2 line-clamp-2">
                 {supplier.notes}
               </p>
             )}

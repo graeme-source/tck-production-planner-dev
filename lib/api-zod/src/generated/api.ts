@@ -93,6 +93,10 @@ export const ListSuppliersResponseItem = zod.object({
   website: zod.string().nullish(),
   address: zod.string().nullish(),
   notes: zod.string().nullish(),
+  orderFrequency: zod.string().nullish(),
+  orderDays: zod.string().nullish(),
+  leadTimeDays: zod.number().int().nullish(),
+  cutoffTime: zod.string().nullish(),
   createdAt: zod.string(),
 });
 export const ListSuppliersResponse = zod.array(ListSuppliersResponseItem);
@@ -108,6 +112,10 @@ export const CreateSupplierBody = zod.object({
   website: zod.string().nullish(),
   address: zod.string().nullish(),
   notes: zod.string().nullish(),
+  orderFrequency: zod.string().nullish(),
+  orderDays: zod.string().nullish(),
+  leadTimeDays: zod.number().int().nullish(),
+  cutoffTime: zod.string().nullish(),
 });
 
 /**
@@ -126,6 +134,10 @@ export const GetSupplierResponse = zod.object({
   website: zod.string().nullish(),
   address: zod.string().nullish(),
   notes: zod.string().nullish(),
+  orderFrequency: zod.string().nullish(),
+  orderDays: zod.string().nullish(),
+  leadTimeDays: zod.number().int().nullish(),
+  cutoffTime: zod.string().nullish(),
   createdAt: zod.string(),
 });
 
@@ -144,6 +156,10 @@ export const UpdateSupplierBody = zod.object({
   website: zod.string().nullish(),
   address: zod.string().nullish(),
   notes: zod.string().nullish(),
+  orderFrequency: zod.string().nullish(),
+  orderDays: zod.string().nullish(),
+  leadTimeDays: zod.number().int().nullish(),
+  cutoffTime: zod.string().nullish(),
 });
 
 export const UpdateSupplierResponse = zod.object({
@@ -155,6 +171,10 @@ export const UpdateSupplierResponse = zod.object({
   website: zod.string().nullish(),
   address: zod.string().nullish(),
   notes: zod.string().nullish(),
+  orderFrequency: zod.string().nullish(),
+  orderDays: zod.string().nullish(),
+  leadTimeDays: zod.number().int().nullish(),
+  cutoffTime: zod.string().nullish(),
   createdAt: zod.string(),
 });
 

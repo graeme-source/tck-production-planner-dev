@@ -496,12 +496,33 @@ router.patch("/purchase-orders/:id/place", async (req, res) => {
     return;
   }
 
+  const [supplier] = await db
+    .select({
+      leadTimeDays: suppliersTable.leadTimeDays,
+      cutoffTime: suppliersTable.cutoffTime,
+    })
+    .from(suppliersTable)
+    .where(eq(suppliersTable.id, existing.supplierId));
+
+  const leadTimeDays = supplier?.leadTimeDays ?? 1;
+  const cutoffTime = supplier?.cutoffTime ?? "17:00";
+
+  const now = new Date();
+  const [cutH, cutM] = cutoffTime.split(":").map(Number);
+  const isBeforeCutoff = now.getHours() < cutH || (now.getHours() === cutH && now.getMinutes() < cutM);
+  const baseDays = isBeforeCutoff ? leadTimeDays : leadTimeDays + 1;
+
+  const deliveryDate = new Date(now);
+  deliveryDate.setDate(deliveryDate.getDate() + baseDays);
+  const expectedDeliveryDate = deliveryDate.toISOString().split("T")[0];
+
   const [updated] = await db
     .update(purchaseOrdersTable)
     .set({
       status: "placed",
       placedAt: new Date(),
       placedByUserId: userId,
+      expectedDeliveryDate,
     })
     .where(eq(purchaseOrdersTable.id, orderId))
     .returning();
