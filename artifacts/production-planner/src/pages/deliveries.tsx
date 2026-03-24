@@ -3,8 +3,8 @@ import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
 import {
   Truck, ChevronLeft, ChevronRight, Calendar, Package, Thermometer,
-  Check, AlertTriangle, Loader2, ClipboardCheck, X, Clock,
-  CheckCircle2, AlertCircle,
+  Check, AlertTriangle, Loader2, ClipboardCheck, X,
+  CheckCircle2, AlertCircle, PackageCheck,
 } from "lucide-react";
 import { format, startOfWeek, addDays, isSameDay, parseISO, isToday } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -48,17 +48,18 @@ interface CheckConfig {
   sortOrder: number;
 }
 
-const STATUS_COLORS: Record<string, { bg: string; text: string; label: string }> = {
-  draft: { bg: "bg-gray-100 dark:bg-gray-800", text: "text-gray-600 dark:text-gray-400", label: "Draft" },
-  placed: { bg: "bg-blue-100 dark:bg-blue-900/30", text: "text-blue-700 dark:text-blue-300", label: "Expected" },
-  partially_received: { bg: "bg-amber-100 dark:bg-amber-900/30", text: "text-amber-700 dark:text-amber-300", label: "Partial" },
-  received: { bg: "bg-green-100 dark:bg-green-900/30", text: "text-green-700 dark:text-green-300", label: "Received" },
+const STATUS_COLORS: Record<string, { bg: string; text: string; label: string; dot: string }> = {
+  draft:              { bg: "bg-gray-100 dark:bg-gray-800",           text: "text-gray-600 dark:text-gray-400",   label: "Draft",    dot: "bg-gray-400" },
+  placed:             { bg: "bg-blue-100 dark:bg-blue-900/30",         text: "text-blue-700 dark:text-blue-300",   label: "Expected", dot: "bg-blue-500" },
+  partially_received: { bg: "bg-amber-100 dark:bg-amber-900/30",       text: "text-amber-700 dark:text-amber-300", label: "Partial",  dot: "bg-amber-500" },
+  received:           { bg: "bg-green-100 dark:bg-green-900/30",       text: "text-green-700 dark:text-green-300", label: "Received", dot: "bg-green-500" },
 };
 
 function StatusBadge({ status }: { status: string }) {
   const s = STATUS_COLORS[status] || STATUS_COLORS.draft;
   return (
-    <span className={cn("text-xs font-medium px-2 py-0.5 rounded-full", s.bg, s.text)}>
+    <span className={cn("text-xs font-medium px-2 py-0.5 rounded-full inline-flex items-center gap-1.5", s.bg, s.text)}>
+      <span className={cn("w-1.5 h-1.5 rounded-full", s.dot)} />
       {s.label}
     </span>
   );
@@ -338,9 +339,7 @@ function ReceivingDialog({
                       <div
                         className={cn(
                           "w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all flex-shrink-0",
-                          result?.passed
-                            ? "bg-green-500 border-green-500"
-                            : "border-border"
+                          result?.passed ? "bg-green-500 border-green-500" : "border-border"
                         )}
                       >
                         {result?.passed && <Check className="w-3.5 h-3.5 text-white" />}
@@ -377,19 +376,19 @@ function ReceivingDialog({
             )}
           >
             {receiveMutation.isPending ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" /> Processing...
-              </>
+              <><Loader2 className="w-4 h-4 animate-spin" /> Processing...</>
             ) : !canReceive ? (
-              <>
-                <AlertCircle className="w-4 h-4" /> Complete all required checks first
-              </>
+              <><AlertCircle className="w-4 h-4" /> Complete all required checks first</>
             ) : (
-              <>
-                <CheckCircle2 className="w-4 h-4" /> Mark as Received
-              </>
+              <><CheckCircle2 className="w-4 h-4" /> Mark as Received</>
             )}
           </button>
+
+          {receiveMutation.isError && (
+            <p className="text-sm text-destructive text-center">
+              {receiveMutation.error instanceof Error ? receiveMutation.error.message : "Failed to receive delivery"}
+            </p>
+          )}
         </div>
       </DialogContent>
     </Dialog>
@@ -401,11 +400,14 @@ export default function Deliveries() {
   const canEdit = state.status === "authenticated" && (state.user.role === "admin" || state.user.role === "manager");
 
   const [currentDate, setCurrentDate] = useState(() => new Date());
+  const [selectedDate, setSelectedDate] = useState(() => new Date());
+
   const weekStart = useMemo(() => startOfWeek(currentDate, { weekStartsOn: 1 }), [currentDate]);
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
   const weekOfStr = format(weekStart, "yyyy-MM-dd");
+  const selectedDateStr = format(selectedDate, "yyyy-MM-dd");
 
-  const { data, isLoading } = useWeeklyDeliveries(weekOfStr);
+  const { data, isLoading, error } = useWeeklyDeliveries(weekOfStr);
 
   const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null);
   const { data: orderDetail } = useDeliveryDetail(selectedOrderId);
@@ -419,7 +421,7 @@ export default function Deliveries() {
     if (data?.orders) {
       for (const order of data.orders) {
         const dateKey = order.expectedDeliveryDate;
-        if (dateKey && map[dateKey]) {
+        if (dateKey && map[dateKey] !== undefined) {
           map[dateKey].push(order);
         }
       }
@@ -427,9 +429,27 @@ export default function Deliveries() {
     return map;
   }, [data, weekDays]);
 
-  const prevWeek = () => setCurrentDate((d) => addDays(d, -7));
-  const nextWeek = () => setCurrentDate((d) => addDays(d, 7));
-  const goToday = () => setCurrentDate(new Date());
+  const selectedDayOrders = ordersByDay[selectedDateStr] || [];
+
+  const prevWeek = () => {
+    setCurrentDate((d) => addDays(d, -7));
+  };
+  const nextWeek = () => {
+    setCurrentDate((d) => addDays(d, 7));
+  };
+  const goToday = () => {
+    const now = new Date();
+    setCurrentDate(now);
+    setSelectedDate(now);
+  };
+
+  const selectDay = (day: Date) => {
+    setSelectedDate(day);
+    const dayWeekStart = startOfWeek(day, { weekStartsOn: 1 });
+    if (format(dayWeekStart, "yyyy-MM-dd") !== weekOfStr) {
+      setCurrentDate(day);
+    }
+  };
 
   const openReceiving = (orderId: number) => {
     setSelectedOrderId(orderId);
@@ -440,7 +460,7 @@ export default function Deliveries() {
     <div className="space-y-6">
       <PageHeader
         title="Deliveries & Goods In"
-        description="Track expected deliveries, receive goods, and record temperatures and checks."
+        description="Track expected deliveries and receive goods into storage."
         action={
           <button
             onClick={goToday}
@@ -451,143 +471,178 @@ export default function Deliveries() {
         }
       />
 
-      <div className="flex items-center justify-between">
-        <button
-          onClick={prevWeek}
-          className="p-2 rounded-lg hover:bg-secondary/50 transition-colors"
-        >
-          <ChevronLeft className="w-5 h-5" />
-        </button>
-        <h2 className="text-lg font-semibold">
-          {format(weekStart, "d MMM")} — {format(addDays(weekStart, 6), "d MMM yyyy")}
-        </h2>
-        <button
-          onClick={nextWeek}
-          className="p-2 rounded-lg hover:bg-secondary/50 transition-colors"
-        >
-          <ChevronRight className="w-5 h-5" />
-        </button>
-      </div>
-
-      {isLoading ? (
-        <div className="flex justify-center py-12">
-          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      <div className="glass-panel rounded-2xl p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <button onClick={prevWeek} className="p-2 rounded-lg hover:bg-secondary/50 transition-colors">
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <span className="text-sm font-semibold text-muted-foreground">
+            {format(weekStart, "d MMM")} — {format(addDays(weekStart, 6), "d MMM yyyy")}
+          </span>
+          <button onClick={nextWeek} className="p-2 rounded-lg hover:bg-secondary/50 transition-colors">
+            <ChevronRight className="w-5 h-5" />
+          </button>
         </div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-7 gap-3">
+
+        <div className="grid grid-cols-7 gap-2">
           {weekDays.map((day) => {
             const dateKey = format(day, "yyyy-MM-dd");
-            const orders = ordersByDay[dateKey] || [];
+            const ordersCount = (ordersByDay[dateKey] || []).length;
             const today = isToday(day);
+            const selected = isSameDay(day, selectedDate);
 
             return (
-              <div
+              <button
                 key={dateKey}
+                onClick={() => selectDay(day)}
                 className={cn(
-                  "rounded-2xl border p-4 min-h-[160px] transition-all",
-                  today
-                    ? "border-primary/50 bg-primary/5 ring-2 ring-primary/20"
-                    : "border-border bg-card"
+                  "flex flex-col items-center gap-1 rounded-xl py-3 px-1 transition-all border",
+                  selected
+                    ? "bg-primary text-primary-foreground border-primary shadow-md"
+                    : today
+                    ? "border-primary/40 bg-primary/5 hover:bg-primary/10"
+                    : "border-border hover:bg-secondary/50"
                 )}
               >
-                <div className="flex items-center justify-between mb-3">
-                  <div>
-                    <p className={cn("text-xs font-medium uppercase tracking-wide", today ? "text-primary" : "text-muted-foreground")}>
-                      {format(day, "EEE")}
-                    </p>
-                    <p className={cn("text-lg font-bold", today ? "text-primary" : "text-foreground")}>
-                      {format(day, "d")}
-                    </p>
-                  </div>
-                  {today && (
-                    <span className="text-xs font-medium bg-primary text-primary-foreground px-2 py-0.5 rounded-full">
-                      Today
-                    </span>
-                  )}
-                </div>
-
-                {orders.length === 0 ? (
-                  <p className="text-xs text-muted-foreground italic">No deliveries</p>
+                <span className={cn("text-xs font-medium uppercase tracking-wide", selected ? "text-primary-foreground/70" : today ? "text-primary" : "text-muted-foreground")}>
+                  {format(day, "EEE")}
+                </span>
+                <span className={cn("text-lg font-bold leading-none", selected ? "text-primary-foreground" : today ? "text-primary" : "text-foreground")}>
+                  {format(day, "d")}
+                </span>
+                {ordersCount > 0 ? (
+                  <span className={cn(
+                    "text-xs font-semibold px-1.5 py-0.5 rounded-full min-w-[20px] text-center",
+                    selected ? "bg-white/20 text-primary-foreground" : "bg-primary/10 text-primary"
+                  )}>
+                    {ordersCount}
+                  </span>
                 ) : (
-                  <div className="space-y-2">
-                    {orders.map((order) => (
-                      <button
-                        key={order.id}
-                        onClick={() => canEdit && order.status !== "received" ? openReceiving(order.id) : undefined}
-                        className={cn(
-                          "w-full text-left rounded-xl border p-3 transition-all",
-                          order.status === "received"
-                            ? "border-green-200 bg-green-50/50 dark:bg-green-900/10 dark:border-green-800"
-                            : "border-border hover:border-primary/30 hover:shadow-sm cursor-pointer"
-                        )}
-                      >
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-sm font-medium truncate">{order.supplierName}</span>
-                          <StatusBadge status={order.status} />
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {order.lines.length} {order.lines.length === 1 ? "item" : "items"}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
+                  <span className="h-5" />
                 )}
-              </div>
+              </button>
             );
           })}
         </div>
-      )}
+      </div>
 
-      {data?.orders && data.orders.length > 0 && (
-        <div className="glass-panel rounded-2xl overflow-hidden">
-          <div className="px-6 py-4 border-b border-border flex items-center gap-2">
-            <Clock className="w-4 h-4 text-muted-foreground" />
-            <h3 className="font-semibold text-sm">Delivery History This Week</h3>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold text-lg">
+            {isToday(selectedDate) ? "Today" : format(selectedDate, "EEEE, d MMMM")}
+            {selectedDayOrders.length > 0 && (
+              <span className="ml-2 text-sm font-normal text-muted-foreground">
+                {selectedDayOrders.length} delivery{selectedDayOrders.length !== 1 ? " orders" : " order"}
+              </span>
+            )}
+          </h2>
+        </div>
+
+        {isLoading ? (
+          <div className="flex justify-center py-12">
+            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
           </div>
-          <table className="w-full text-left text-sm">
-            <thead className="bg-secondary/30 text-muted-foreground">
-              <tr>
-                <th className="px-6 py-3 font-medium">Supplier</th>
-                <th className="px-6 py-3 font-medium">Expected</th>
-                <th className="px-6 py-3 font-medium">Items</th>
-                <th className="px-6 py-3 font-medium">Status</th>
-                <th className="px-6 py-3 font-medium text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/50">
-              {data.orders.map((order) => (
-                <tr key={order.id} className="hover:bg-secondary/10 transition-colors">
-                  <td className="px-6 py-3 font-medium">{order.supplierName}</td>
-                  <td className="px-6 py-3 text-muted-foreground">
-                    {order.expectedDeliveryDate ? format(parseISO(order.expectedDeliveryDate), "EEE d MMM") : "—"}
-                  </td>
-                  <td className="px-6 py-3 text-muted-foreground">
-                    {order.lines.length} {order.lines.length === 1 ? "item" : "items"}
-                  </td>
-                  <td className="px-6 py-3">
-                    <StatusBadge status={order.status} />
-                  </td>
-                  <td className="px-6 py-3 text-right">
-                    {canEdit && order.status !== "received" && (
+        ) : error ? (
+          <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-destructive text-sm">
+            Failed to load deliveries. Please refresh.
+          </div>
+        ) : selectedDayOrders.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-border bg-card flex flex-col items-center justify-center py-14 text-muted-foreground">
+            <Truck className="w-10 h-10 mb-3 opacity-20" />
+            <p className="text-sm font-medium">No deliveries expected for this day</p>
+            <p className="text-xs mt-1 opacity-70">Select another day or place an order from the Orders page</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {selectedDayOrders.map((order) => {
+              const isReceived = order.status === "received";
+              return (
+                <div
+                  key={order.id}
+                  className={cn(
+                    "rounded-2xl border bg-card overflow-hidden transition-all",
+                    isReceived
+                      ? "border-green-200 dark:border-green-800 opacity-75"
+                      : "border-border hover:border-primary/30 hover:shadow-sm"
+                  )}
+                >
+                  <div className="p-4 flex items-center gap-4">
+                    <div className={cn(
+                      "w-12 h-12 rounded-xl flex items-center justify-center shrink-0",
+                      isReceived ? "bg-green-100 dark:bg-green-900/30" : "bg-primary/10"
+                    )}>
+                      {isReceived
+                        ? <PackageCheck className="w-6 h-6 text-green-600 dark:text-green-400" />
+                        : <Truck className="w-6 h-6 text-primary" />
+                      }
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="font-semibold text-base truncate">{order.supplierName}</h3>
+                        <StatusBadge status={order.status} />
+                      </div>
+                      <p className="text-sm text-muted-foreground mt-0.5">
+                        PO #{order.id} &middot; {order.lines.length} {order.lines.length === 1 ? "item" : "items"}
+                        {order.lines.length > 0 && (
+                          <span className="ml-1">
+                            ({order.lines.map(l => l.ingredientName).slice(0, 3).join(", ")}
+                            {order.lines.length > 3 ? ` +${order.lines.length - 3} more` : ""})
+                          </span>
+                        )}
+                      </p>
+                    </div>
+
+                    {canEdit && !isReceived && (
                       <button
                         onClick={() => openReceiving(order.id)}
-                        className="text-xs text-primary hover:underline"
+                        className="shrink-0 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors flex items-center gap-2"
                       >
-                        Receive
+                        <PackageCheck className="w-4 h-4" />
+                        Receive Goods
                       </button>
                     )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+                    {isReceived && (
+                      <span className="shrink-0 flex items-center gap-1.5 text-sm text-green-600 dark:text-green-400 font-medium">
+                        <CheckCircle2 className="w-4 h-4" />
+                        Received
+                      </span>
+                    )}
+                  </div>
 
-      {receivingOpen && orderDetail && (
+                  {order.lines.length > 0 && (
+                    <div className="border-t border-border/50 px-4 py-3 bg-secondary/20">
+                      <div className="flex flex-wrap gap-2">
+                        {order.lines.map((line) => (
+                          <span
+                            key={line.id}
+                            className="text-xs bg-background border border-border rounded-full px-3 py-1 flex items-center gap-1.5"
+                          >
+                            <span className="font-medium">{line.ingredientName}</span>
+                            <span className="text-muted-foreground">
+                              {line.quantityOrdered} {line.unit}
+                            </span>
+                            {line.quantityReceived > 0 && (
+                              <span className="text-green-600 dark:text-green-400">
+                                ✓ {line.quantityReceived} received
+                              </span>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {orderDetail && (
         <ReceivingDialog
           order={orderDetail}
-          checks={(orderDetail as any).checks || []}
+          checks={orderDetail.checks || []}
           open={receivingOpen}
           onClose={() => {
             setReceivingOpen(false);
