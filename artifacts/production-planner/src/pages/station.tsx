@@ -3403,16 +3403,20 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                         </div>
                       )}
 
-                      {status.allTinsDone && (
-                        <button
-                          onClick={() => transferToFreezer(ing.ingredientId, ing.ingredientName, ing.totalQty, ing.unit)}
-                          disabled={transferringId === ing.ingredientId}
-                          className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-300 dark:border-indigo-700 text-indigo-800 dark:text-indigo-300 rounded-xl text-sm font-semibold hover:bg-indigo-100 dark:hover:bg-indigo-950/50 transition-colors"
-                        >
-                          {transferringId === ing.ingredientId ? <Loader2 className="w-4 h-4 animate-spin" /> : <Snowflake className="w-4 h-4" />}
-                          Transfer Remaining to Freezer
-                        </button>
-                      )}
+                      {status.allTinsDone && status.stockSaved && (() => {
+                        const remaining = Number(stockValues[ing.ingredientId] || 0);
+                        if (remaining <= 0) return null;
+                        return (
+                          <button
+                            onClick={() => transferToFreezer(ing.ingredientId, ing.ingredientName, remaining, ing.unit)}
+                            disabled={transferringId === ing.ingredientId}
+                            className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-300 dark:border-indigo-700 text-indigo-800 dark:text-indigo-300 rounded-xl text-sm font-semibold hover:bg-indigo-100 dark:hover:bg-indigo-950/50 transition-colors"
+                          >
+                            {transferringId === ing.ingredientId ? <Loader2 className="w-4 h-4 animate-spin" /> : <Snowflake className="w-4 h-4" />}
+                            Transfer {remaining} {ing.unit} to Freezer
+                          </button>
+                        );
+                      })()}
               </div>
               );
             })() : (
