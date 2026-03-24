@@ -14,6 +14,10 @@ import {
   ExternalLink,
   Truck,
   Filter,
+  Search,
+  X,
+  LayoutGrid,
+  Plus,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -87,6 +91,19 @@ type EditableLine = OrderLine & {
   editedPacks: number;
 };
 
+type KanbanItem = {
+  id: number;
+  ingredientId: number;
+  ingredientName: string | null;
+  ingredientUnit: string | null;
+  kanbanQuantity: number | null;
+  supplierId: number | null;
+  supplierName: string | null;
+  status: string;
+  orderDayLabel: string | null;
+  isDueToday: boolean;
+};
+
 export default function Orders() {
   const queryClient = useQueryClient();
   const urlPlanId = useRef<number | null>(
@@ -100,6 +117,11 @@ export default function Orders() {
   const [expandedSuppliers, setExpandedSuppliers] = useState<Set<number>>(new Set());
   const [editableLines, setEditableLines] = useState<Record<number, EditableLine[]>>({});
   const [confirmDialog, setConfirmDialog] = useState<{ supplierId: number; supplierName: string } | null>(null);
+
+  const [kanbanSearchOpen, setKanbanSearchOpen] = useState(false);
+  const [kanbanSearch, setKanbanSearch] = useState("");
+  const [addedKanbanIds, setAddedKanbanIds] = useState<Set<number>>(new Set());
+  const [kanbanOnlySupplierInfo, setKanbanOnlySupplierInfo] = useState<Record<number, { id: number; name: string }>>({});
 
   const { data: plans } = useQuery<Plan[]>({
     queryKey: ["production-plans-list"],
@@ -150,6 +172,75 @@ export default function Orders() {
       setExpandedSuppliers(new Set(calculated.suppliers.map(s => s.supplier.id)));
     }
   }, [calculated]);
+
+  const { data: kanbans = [] } = useQuery<KanbanItem[]>({
+    queryKey: ["kanbans-for-orders"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/kanbans`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load kanbans");
+      return res.json();
+    },
+    enabled: kanbanSearchOpen,
+  });
+
+  const activeKanbans = kanbans.filter(k => k.status === "active");
+  const filteredKanbans = kanbanSearch.trim()
+    ? activeKanbans.filter(k =>
+        (k.ingredientName ?? "").toLowerCase().includes(kanbanSearch.toLowerCase()) ||
+        (k.supplierName ?? "").toLowerCase().includes(kanbanSearch.toLowerCase())
+      )
+    : activeKanbans;
+
+  const handleAddKanban = async (kanban: KanbanItem) => {
+    if (addedKanbanIds.has(kanban.id) || !kanban.supplierId) return;
+    try {
+      const res = await fetch(`${BASE}/api/kanbans/${kanban.id}/pull`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to pull kanban");
+
+      const qty = kanban.kanbanQuantity ?? 1;
+      const unit = kanban.ingredientUnit ?? "kg";
+      const newLine: EditableLine = {
+        ingredientId: kanban.ingredientId,
+        ingredientName: kanban.ingredientName ?? "Unknown",
+        unit,
+        totalRequired: qty,
+        stockOnHand: 0,
+        surplusTarget: 0,
+        packWeight: 1,
+        costPerPack: 0,
+        supplierPartNumber: null,
+        orderQty: qty,
+        packsToOrder: qty,
+        isKanban: true,
+        checked: true,
+        editedPacks: qty,
+      };
+
+      const supplierId = kanban.supplierId;
+      setEditableLines(prev => {
+        const existing = prev[supplierId] ?? [];
+        const alreadyHas = existing.some(l => l.ingredientId === kanban.ingredientId);
+        if (alreadyHas) return prev;
+        return { ...prev, [supplierId]: [...existing, newLine] };
+      });
+
+      const dptSupplierIds = new Set((calculated?.suppliers ?? []).map(s => s.supplier.id));
+      if (!dptSupplierIds.has(supplierId)) {
+        setKanbanOnlySupplierInfo(prev => ({
+          ...prev,
+          [supplierId]: { id: supplierId, name: kanban.supplierName ?? `Supplier #${supplierId}` },
+        }));
+      }
+
+      setExpandedSuppliers(prev => new Set([...prev, supplierId]));
+      setAddedKanbanIds(prev => new Set([...prev, kanban.id]));
+    } catch {
+      /* ignore */
+    }
+  };
 
   const placeMutation = useMutation({
     mutationFn: async ({ supplierId, lines }: { supplierId: number; lines: EditableLine[] }) => {
@@ -228,8 +319,12 @@ export default function Orders() {
 
   const suppliers = calculated?.suppliers ?? [];
   const placedSupplierIds = new Set(placedOrders.filter(o => o.status === "placed").map(o => o.supplierId));
-  const pendingSuppliers = suppliers.filter(s => !placedSupplierIds.has(s.supplier.id));
-  const totalPendingItems = pendingSuppliers.reduce((sum, s) => sum + s.lines.length, 0);
+  const dptPendingSuppliers = suppliers.filter(s => !placedSupplierIds.has(s.supplier.id));
+  const kanbanOnlyPending = Object.values(kanbanOnlySupplierInfo)
+    .filter(s => !placedSupplierIds.has(s.id) && !suppliers.some(ds => ds.supplier.id === s.id))
+    .map(s => ({ supplier: { id: s.id, name: s.name, contactName: null, email: null, phone: null, website: null }, lines: [] as OrderLine[] }));
+  const pendingSuppliers = [...dptPendingSuppliers, ...kanbanOnlyPending];
+  const totalPendingItems = pendingSuppliers.reduce((sum, s) => sum + (editableLines[s.supplier.id]?.length ?? 0), 0);
   const totalPlacedToday = placedOrders.filter(o => o.status === "placed").length;
 
   const estimatedCost = (supplierLines: EditableLine[]) =>
@@ -308,7 +403,7 @@ export default function Orders() {
         </div>
       )}
 
-      <div className="flex gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <button
           onClick={() => setViewFilter("pending")}
           className={cn(
@@ -332,6 +427,18 @@ export default function Orders() {
         >
           <CheckCircle2 className="w-4 h-4 inline mr-1.5" />
           Placed Today ({totalPlacedToday})
+        </button>
+        <button
+          onClick={() => { setKanbanSearchOpen(true); setKanbanSearch(""); }}
+          className="ml-auto px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 border border-amber-500/30 flex items-center gap-1.5"
+        >
+          <LayoutGrid className="w-4 h-4" />
+          Add Kanbans
+          {addedKanbanIds.size > 0 && (
+            <span className="ml-1 bg-amber-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
+              {addedKanbanIds.size}
+            </span>
+          )}
         </button>
       </div>
 
@@ -570,6 +677,100 @@ export default function Orders() {
           ))}
         </div>
       )}
+
+      <Dialog open={kanbanSearchOpen} onOpenChange={open => { setKanbanSearchOpen(open); if (!open) setKanbanSearch(""); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <LayoutGrid className="w-5 h-5 text-amber-500" />
+              Add Pulled Kanbans
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <input
+                type="text"
+                value={kanbanSearch}
+                onChange={e => setKanbanSearch(e.target.value)}
+                placeholder="Search by ingredient or supplier…"
+                autoFocus
+                className="w-full pl-9 pr-4 py-2.5 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+              {kanbanSearch && (
+                <button onClick={() => setKanbanSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {addedKanbanIds.size > 0 && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1">
+                <Check className="w-3.5 h-3.5" />
+                {addedKanbanIds.size} kanban{addedKanbanIds.size !== 1 ? "s" : ""} added to order
+              </p>
+            )}
+
+            <div className="max-h-80 overflow-y-auto space-y-1 -mx-1 px-1">
+              {filteredKanbans.length === 0 && (
+                <p className="text-center py-8 text-sm text-muted-foreground">
+                  {activeKanbans.length === 0 ? "No active kanbans found." : "No kanbans match your search."}
+                </p>
+              )}
+              {filteredKanbans.map(kanban => {
+                const isAdded = addedKanbanIds.has(kanban.id);
+                const noSupplier = !kanban.supplierId;
+                return (
+                  <button
+                    key={kanban.id}
+                    onClick={() => handleAddKanban(kanban)}
+                    disabled={isAdded || noSupplier}
+                    className={cn(
+                      "w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm text-left transition-colors",
+                      isAdded
+                        ? "bg-emerald-500/10 border border-emerald-500/30 cursor-default"
+                        : noSupplier
+                        ? "opacity-50 cursor-not-allowed bg-secondary/30"
+                        : "hover:bg-secondary/60 border border-transparent hover:border-border"
+                    )}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate">{kanban.ingredientName ?? "Unknown"}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {kanban.supplierName ?? "No supplier"} &middot; {kanban.kanbanQuantity ?? "?"}{kanban.ingredientUnit ?? ""}
+                      </p>
+                    </div>
+                    <div className="shrink-0 ml-3">
+                      {isAdded ? (
+                        <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 text-xs font-medium">
+                          <Check className="w-3.5 h-3.5" />
+                          Added
+                        </span>
+                      ) : noSupplier ? (
+                        <span className="text-xs text-muted-foreground">No supplier</span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-primary text-xs font-medium">
+                          <Plus className="w-3.5 h-3.5" />
+                          Add
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="pt-2 border-t border-border flex justify-end">
+              <button
+                onClick={() => { setKanbanSearchOpen(false); setKanbanSearch(""); }}
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!confirmDialog} onOpenChange={() => setConfirmDialog(null)}>
         <DialogContent>
