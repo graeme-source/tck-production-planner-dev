@@ -1149,7 +1149,14 @@ export default function Ingredients() {
                   const costPerUnit = packWeight > 0 ? costPerPack / packWeight : 0;
                   return (
                     <tr key={item.id} className="hover:bg-secondary/10 transition-colors">
-                      <td className="px-5 py-3 font-medium whitespace-nowrap">{item.name}</td>
+                      <td className="px-5 py-3 font-medium whitespace-nowrap">
+                        <button
+                          onClick={() => openEdit(item)}
+                          className="hover:text-primary hover:underline underline-offset-2 transition-colors text-left"
+                        >
+                          {item.name}
+                        </button>
+                      </td>
                       <td className="px-5 py-3 text-muted-foreground">{item.brand || <span className="text-border">—</span>}</td>
                       <td className="px-5 py-3 text-muted-foreground font-mono text-xs">{item.supplierPartNumber || <span className="text-border">—</span>}</td>
                       <td className="px-5 py-3 text-muted-foreground">{item.unit}</td>
