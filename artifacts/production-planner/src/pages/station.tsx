@@ -59,8 +59,8 @@ const STATIONS = [
   { key: "dough_sheeting", label: "Dough Sheeting", short: "Sheeting", icon: Layers, color: "text-amber-500" },
   { key: "prep", label: "Prep", short: "Prep", icon: Salad, color: "text-green-500" },
   { key: "mixing", label: "Mixing & Cooking", short: "Mixing", icon: Waves, color: "text-blue-500" },
-  { key: "building_1", label: "Building Line 1", short: "Build 1", icon: Construction, color: "text-orange-500" },
-  { key: "building_2", label: "Building Line 2", short: "Build 2", icon: Construction, color: "text-orange-400" },
+  { key: "building_1", label: "Building Table 1", short: "Build 1", icon: Construction, color: "text-orange-500" },
+  { key: "building_2", label: "Building Table 2", short: "Build 2", icon: Construction, color: "text-orange-400" },
   { key: "ovens", label: "Ovens", short: "Ovens", icon: Flame, color: "text-red-500" },
   { key: "wrapping", label: "Wrapping", short: "Wrapping", icon: Gift, color: "text-purple-500" },
   { key: "packing", label: "Packing", short: "Packing", icon: Box, color: "text-indigo-500" },
@@ -610,8 +610,8 @@ function EodSummary({ planId, items, stationType, sessionBatches, totalBreakMinu
   const displayMinsPerBatch = serverData?.minsPerBatch ?? localMinsPerBatch;
   const displayCompletionRate = serverData?.planCompletionRate ?? localCompletionRate;
 
-  const stationLabel = stationType === "building_1" ? "Building Line 1"
-    : stationType === "building_2" ? "Building Line 2"
+  const stationLabel = stationType === "building_1" ? "Building Table 1"
+    : stationType === "building_2" ? "Building Table 2"
     : stationType.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 
   return (
@@ -2211,7 +2211,7 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
         <div className="bg-card border border-border rounded-2xl p-10 text-center">
           <CheckCircle2 className="w-16 h-16 text-emerald-500 mx-auto mb-4" />
           <h2 className="font-display text-2xl font-bold mb-2">All Done! 🎉</h2>
-          <p className="text-muted-foreground">Building Line {lineNumber} — all recipes complete for today.</p>
+          <p className="text-muted-foreground">Building Table {lineNumber} — all recipes complete for today.</p>
           <button
             onClick={() => setShowEod(true)}
             className="mt-4 px-5 py-2.5 bg-secondary text-foreground rounded-xl hover:bg-secondary/80 transition-colors font-medium"

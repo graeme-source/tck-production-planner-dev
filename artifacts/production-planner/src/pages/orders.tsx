@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import {
@@ -89,7 +89,13 @@ type EditableLine = OrderLine & {
 
 export default function Orders() {
   const queryClient = useQueryClient();
-  const [selectedPlanId, setSelectedPlanId] = useState<number | null>(null);
+  const urlPlanId = useRef<number | null>(
+    (() => {
+      const p = new URLSearchParams(window.location.search).get("planId");
+      return p ? Number(p) : null;
+    })()
+  );
+  const [selectedPlanId, setSelectedPlanId] = useState<number | null>(urlPlanId.current);
   const [viewFilter, setViewFilter] = useState<"pending" | "placed">("pending");
   const [expandedSuppliers, setExpandedSuppliers] = useState<Set<number>>(new Set());
   const [editableLines, setEditableLines] = useState<Record<number, EditableLine[]>>({});

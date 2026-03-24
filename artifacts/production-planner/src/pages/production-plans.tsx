@@ -18,7 +18,7 @@ import {
   BarChart2, CheckCircle2,
   Loader2, RefreshCw, Info, Package, ClipboardList, ExternalLink,
   Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef,
-  ArrowRight, GripVertical, AlertTriangle, AlertCircle, BookmarkCheck,
+  ArrowRight, GripVertical, AlertTriangle, AlertCircle, BookmarkCheck, ShoppingCart,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
@@ -1330,8 +1330,8 @@ const STATION_BUTTONS = [
   { key: "dough_sheeting", label: "Sheeting", icon: Layers, color: "text-amber-500 bg-amber-50 dark:bg-amber-900/20" },
   { key: "prep", label: "Prep", icon: Salad, color: "text-green-500 bg-green-50 dark:bg-green-900/20" },
   { key: "mixing", label: "Mixing & Cooking", icon: Waves, color: "text-blue-500 bg-blue-50 dark:bg-blue-900/20" },
-  { key: "building_1", label: "Building Line 1", icon: Construction, color: "text-orange-500 bg-orange-50 dark:bg-orange-900/20" },
-  { key: "building_2", label: "Building Line 2", icon: Construction, color: "text-orange-400 bg-orange-50 dark:bg-orange-900/20" },
+  { key: "building_1", label: "Building Table 1", icon: Construction, color: "text-orange-500 bg-orange-50 dark:bg-orange-900/20" },
+  { key: "building_2", label: "Building Table 2", icon: Construction, color: "text-orange-400 bg-orange-50 dark:bg-orange-900/20" },
   { key: "ovens", label: "Ovens", icon: Flame, color: "text-red-500 bg-red-50 dark:bg-red-900/20" },
   { key: "wrapping", label: "Wrapping", icon: Gift, color: "text-purple-500 bg-purple-50 dark:bg-purple-900/20" },
   { key: "packing", label: "Packing", icon: Box, color: "text-indigo-500 bg-indigo-50 dark:bg-indigo-900/20" },
@@ -1442,6 +1442,13 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
               Mark Complete
             </button>
           )}
+          <button
+            onClick={() => navigate(`/orders?planId=${planId}`)}
+            className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors font-medium flex items-center gap-1"
+          >
+            <ShoppingCart className="w-3.5 h-3.5" />
+            Create Orders
+          </button>
           {plan.status !== "complete" && (
             <button
               onClick={() => setConfirmDelete(true)}
@@ -1470,42 +1477,6 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
               )}
               style={{ width: `${Math.min(progress, 100)}%` }}
             />
-          </div>
-        </div>
-      )}
-
-      {/* Batch breakdown */}
-      {(plan.items ?? []).some(it => (it.batchesTarget ?? 0) > 0) && (
-        <div className="bg-card border border-border rounded-xl px-4 py-3">
-          <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">Batches</p>
-          <div className="flex flex-wrap gap-2">
-            {(plan.items ?? [])
-              .filter(it => (it.batchesTarget ?? 0) > 0)
-              .sort((a, b) => (a.orderPosition ?? 0) - (b.orderPosition ?? 0))
-              .map(it => {
-                const done = (it.batchesComplete ?? 0) >= (it.batchesTarget ?? 0) && (it.batchesTarget ?? 0) > 0;
-                return (
-                  <span
-                    key={it.id}
-                    className={cn(
-                      "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border",
-                      done
-                        ? "bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-700/40 dark:text-emerald-400"
-                        : "bg-secondary/60 border-border text-foreground"
-                    )}
-                  >
-                    <span
-                      className="w-2 h-2 rounded-full flex-shrink-0"
-                      style={{ backgroundColor: it.recipeColor ?? "#94a3b8" }}
-                    />
-                    <span>{it.recipeName ?? `Recipe #${it.recipeId}`}</span>
-                    <span className={cn("font-bold tabular-nums", done ? "text-emerald-600 dark:text-emerald-400" : "text-primary")}>
-                      ×{it.batchesTarget}
-                    </span>
-                    {done && <span className="text-emerald-500">✓</span>}
-                  </span>
-                );
-              })}
           </div>
         </div>
       )}
@@ -1581,7 +1552,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
             <tr className="bg-secondary/20 border-b border-border">
               <th className="py-2.5 px-4 text-left font-medium text-muted-foreground">#</th>
               <th className="py-2.5 px-4 text-left font-medium text-muted-foreground">Recipe</th>
-              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Target</th>
+              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Batches</th>
               <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Packs</th>
               <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Done</th>
               <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Wonky</th>
@@ -1921,6 +1892,7 @@ export default function ProductionPlans() {
   const [view, setView] = useState<PlanView>("list");
   const [selectedPlanId, setSelectedPlanId] = useState<number | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [, navigate] = useLocation();
 
   const handleViewPlan = (planId: number) => {
     setSelectedPlanId(planId);
@@ -1934,7 +1906,7 @@ export default function ProductionPlans() {
 
   const handlePlanCreated = (planId: number) => {
     setIsCreateOpen(false);
-    handleViewPlan(planId);
+    navigate(`/orders?planId=${planId}`);
   };
 
   return (
