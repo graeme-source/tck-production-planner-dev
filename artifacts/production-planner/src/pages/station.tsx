@@ -1854,10 +1854,12 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     return () => clearInterval(interval);
   }, [plan.id, stationType, sessionBatches]);
 
-  // Mozzarella closing check — total to load to building fridges
-  type MozzarellaLoad = { name: string; unit: string; totalQty: number; packWeight: number; roundedQty: number; packs: number | null };
+  // Mozzarella closing check — total to load to building fridges (in 2kg bags)
+  type MozzarellaLoad = { name: string; unit: string; totalQty: number; bagWeight: number; bags: number };
   const [mozzLoad, setMozzLoad] = useState<MozzarellaLoad | null>(null);
   const [mozzConfirmed, setMozzConfirmed] = useState(false);
+  const [showMozzPopup, setShowMozzPopup] = useState(false);
+  const mozzPopupShownRef = useRef(false);
   const MOZZ_KEY = `mozz_load_confirmed_${plan.id}`;
   useEffect(() => {
     fetch(`/api/production-plans/${plan.id}/mozzarella-load`, { credentials: "include" })
@@ -1902,6 +1904,14 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   const available = currentItem ? Math.max(0, mixingCount - buildingCount) : 0;
   const remaining = currentItem ? Math.max(0, (currentItem.batchesTarget ?? 0) - buildingCount) : 0;
   const allDone = items.length > 0 && !currentItem;
+
+  // Auto-show mozzarella popup once when production completes
+  useEffect(() => {
+    if (allDone && mozzLoad && !mozzPopupShownRef.current) {
+      mozzPopupShownRef.current = true;
+      setShowMozzPopup(true);
+    }
+  }, [allDone, mozzLoad]);
 
   // Large "BATCH COMPLETE" tap — single write via createBatchCompletion only
   const handleBatchComplete = () => {
@@ -1961,6 +1971,44 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
           sessionStartedAt={sessionStartedAt}
           onClose={() => setShowEod(false)}
         />
+      )}
+
+      {/* Mozzarella load popup — fires once when all production is complete */}
+      {showMozzPopup && mozzLoad && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-card border-2 border-amber-400 dark:border-amber-600 rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/40 flex items-center justify-center flex-shrink-0">
+                <Package className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+              </div>
+              <div>
+                <h2 className="font-bold text-lg leading-tight">Closing Check</h2>
+                <p className="text-xs text-muted-foreground">Production complete — load mozzarella to fridges</p>
+              </div>
+            </div>
+            <div className="bg-amber-50 dark:bg-amber-950/30 rounded-xl p-4 text-center">
+              <p className="text-4xl font-display font-bold text-amber-700 dark:text-amber-300">{mozzLoad.bags}</p>
+              <p className="text-sm font-semibold text-amber-600 dark:text-amber-400">× 2kg bags</p>
+              <p className="text-xs text-muted-foreground mt-1">{fmtQty(mozzLoad.totalQty, mozzLoad.unit)} {mozzLoad.name} total</p>
+            </div>
+            <p className="text-sm text-center text-muted-foreground">Load these to the building fridges before closing</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => { confirmMozz(); setShowMozzPopup(false); }}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-semibold transition-colors"
+              >
+                <Check className="w-4 h-4" />
+                Confirmed — loaded
+              </button>
+              <button
+                onClick={() => setShowMozzPopup(false)}
+                className="px-4 py-3 rounded-xl border border-border hover:bg-secondary/60 text-sm font-medium transition-colors"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Current recipe — full-screen focus card */}
@@ -2152,46 +2200,6 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
         </div>
       )}
 
-      {/* Mozzarella closing check — load total to building fridges */}
-      {mozzLoad && (
-        <div className={cn(
-          "border-2 rounded-2xl p-4 flex items-center gap-4 transition-all",
-          mozzConfirmed
-            ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-950/20"
-            : "border-amber-300 dark:border-amber-700 bg-amber-50/40 dark:bg-amber-950/20"
-        )}>
-          <button
-            onClick={mozzConfirmed ? unconfirmMozz : confirmMozz}
-            className={cn(
-              "flex-shrink-0 w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all",
-              mozzConfirmed
-                ? "bg-emerald-500 border-emerald-500 text-white"
-                : "border-amber-400 bg-background hover:border-amber-500"
-            )}
-          >
-            {mozzConfirmed && <Check className="w-4 h-4" />}
-          </button>
-          <div className="flex-1 min-w-0">
-            <p className={cn(
-              "font-bold text-base",
-              mozzConfirmed && "line-through text-muted-foreground"
-            )}>
-              {mozzLoad.packs != null
-                ? `Load ${mozzLoad.packs} × ${fmtQty(mozzLoad.packWeight, mozzLoad.unit)} ${mozzLoad.name} to the building fridges`
-                : `Load ${fmtQty(mozzLoad.roundedQty, mozzLoad.unit)} ${mozzLoad.name} to the building fridges`
-              }
-            </p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Closing check · {fmtQty(mozzLoad.totalQty, mozzLoad.unit)} needed
-              {mozzLoad.packWeight > 0 && ` · rounded to ${fmtQty(mozzLoad.packWeight, mozzLoad.unit)} pack`}
-            </p>
-          </div>
-          {mozzConfirmed && (
-            <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
-          )}
-        </div>
-      )}
-
       {/* KPI bar — uses server-side KPI from DB when available, falls back to local session state */}
       <KpiBar
         sessionBatches={sessionBatches}
@@ -2274,6 +2282,51 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
           </tbody>
         </table>
       </div>
+
+      {/* Mozzarella closing check — permanent card at bottom of page */}
+      {mozzLoad && (
+        <div className={cn(
+          "border-2 rounded-2xl p-4 flex items-center gap-4 transition-all",
+          mozzConfirmed
+            ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-950/20"
+            : "border-amber-300 dark:border-amber-700 bg-amber-50/40 dark:bg-amber-950/20"
+        )}>
+          <button
+            onClick={mozzConfirmed ? unconfirmMozz : confirmMozz}
+            className={cn(
+              "flex-shrink-0 w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all",
+              mozzConfirmed
+                ? "bg-emerald-500 border-emerald-500 text-white"
+                : "border-amber-400 bg-background hover:border-amber-500"
+            )}
+          >
+            {mozzConfirmed && <Check className="w-4 h-4" />}
+          </button>
+          <div className="flex-1 min-w-0">
+            <p className={cn(
+              "font-bold text-base",
+              mozzConfirmed && "line-through text-muted-foreground"
+            )}>
+              Load {mozzLoad.bags} × 2kg bags {mozzLoad.name} to the building fridges
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Closing check · {fmtQty(mozzLoad.totalQty, mozzLoad.unit)} needed · 2kg per bag
+            </p>
+          </div>
+          {mozzConfirmed && (
+            <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
+          )}
+          {!mozzConfirmed && (
+            <button
+              onClick={() => setShowMozzPopup(true)}
+              className="flex-shrink-0 p-1.5 rounded-lg hover:bg-amber-100 dark:hover:bg-amber-900/40 text-amber-500 transition-colors"
+              title="View details"
+            >
+              <Package className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

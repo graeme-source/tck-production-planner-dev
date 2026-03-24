@@ -3133,8 +3133,8 @@ router.get("/:id/prep-presence", async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Mozzarella load — total mozzarella needed for the plan, rounded to pack size
-// This drives the "Load Xkg Mozzarella to the building fridges" closing check.
+// Mozzarella load — total mozzarella needed for the plan, rounded to 2kg bag size.
+// Builders take mozzarella from the fridge in 2kg bags, so we report bag count.
 // ──────────────────────────────────────────────────────────────────────────────
 router.get("/:id/mozzarella-load", async (req, res) => {
   const planId = Number(req.params.id);
@@ -3150,7 +3150,7 @@ router.get("/:id/mozzarella-load", async (req, res) => {
     .where(eq(productionPlanItemsTable.planId, planId));
 
   let totalQty = 0;
-  let mozzarellaMeta: { id: number; name: string; unit: string; packWeight: number } | null = null;
+  let mozzarellaMeta: { id: number; name: string; unit: string } | null = null;
 
   for (const planItem of planItems) {
     const batchesTarget = Number(planItem.batchesTarget) || 0;
@@ -3164,7 +3164,6 @@ router.get("/:id/mozzarella-load", async (req, res) => {
         quantity: recipeIngredientsTable.quantity,
         ingredientName: ingredientsTable.name,
         unit: ingredientsTable.unit,
-        packWeight: ingredientsTable.packWeight,
       })
       .from(recipeIngredientsTable)
       .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -3182,7 +3181,6 @@ router.get("/:id/mozzarella-load", async (req, res) => {
           id: row.ingredientId,
           name: row.ingredientName ?? "Mozzarella",
           unit: row.unit ?? "g",
-          packWeight: Number(row.packWeight) || 0,
         };
       }
     }
@@ -3193,18 +3191,18 @@ router.get("/:id/mozzarella-load", async (req, res) => {
     return;
   }
 
-  const packWeight = mozzarellaMeta.packWeight;
-  const roundedQty = packWeight > 0 ? Math.ceil(totalQty / packWeight) * packWeight : totalQty;
-  const packs = packWeight > 0 ? Math.ceil(totalQty / packWeight) : null;
+  // Bag size: 2kg. Convert to the same unit the ingredient is stored in.
+  const unit = mozzarellaMeta.unit;
+  const bagWeight = unit === "kg" ? 2 : 2000; // 2kg bag expressed in ingredient's unit
+  const bags = Math.ceil(totalQty / bagWeight);
 
   res.json({
     ingredientId: mozzarellaMeta.id,
     name: mozzarellaMeta.name,
-    unit: mozzarellaMeta.unit,
+    unit,
     totalQty,
-    packWeight,
-    roundedQty,
-    packs,
+    bagWeight,
+    bags,
   });
 });
 
