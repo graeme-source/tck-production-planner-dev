@@ -354,6 +354,8 @@ router.post("/:id/receive", async (req, res) => {
       quantityReceived: purchaseOrderLinesTable.quantityReceived,
       unit: purchaseOrderLinesTable.unit,
       ingredientCategory: ingredientsTable.category,
+      ingredientUnit: ingredientsTable.unit,
+      packWeight: ingredientsTable.packWeight,
     })
     .from(purchaseOrderLinesTable)
     .innerJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
@@ -392,10 +394,14 @@ router.post("/:id/receive", async (req, res) => {
 
     if (delta > 0) {
       const location = resolveStorageLocation(existing.ingredientCategory, existing.ingredientName);
+      const isCountUnit = existing.unit === "packs" || existing.unit === "bottles";
+      const pw = Number(existing.packWeight) || 1;
+      const stockQty = isCountUnit ? delta * pw : delta;
+      const stockUnit = isCountUnit ? (existing.ingredientUnit ?? "kg") : existing.unit;
       stockInserts.push({
         ingredientId: existing.ingredientId,
-        quantity: String(delta),
-        unit: existing.unit,
+        quantity: String(stockQty),
+        unit: stockUnit,
         location,
         useByDate: line.useByDate || null,
       });

@@ -298,8 +298,11 @@ router.get("/calculate", async (req, res) => {
 
       const packWeight = Number(d.packWeight) || 1;
       const packsToOrder = Number(d.kanbanOrderAmount ?? d.kanbanQuantity) || 1;
-      const orderQty = packsToOrder * packWeight;
-      const displayUnit = d.unit ?? "kg";
+      const kanbanUnitVal = d.kanbanUnit ?? "weight";
+      const displayUnit = kanbanUnitVal === "pack" ? "packs"
+        : kanbanUnitVal === "bottle" ? "bottles"
+        : (d.unit ?? "kg");
+      const orderQty = packsToOrder;
 
       if (!supplierOrderMap[suppId]) {
         const supplier = supplierLookup[suppId] ??
