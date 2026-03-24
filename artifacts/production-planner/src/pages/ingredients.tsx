@@ -428,6 +428,10 @@ const schema = z.object({
   kanbanEnabled: z.boolean().optional(),
   kanbanQuantity: z.coerce.number().min(0).optional(),
   kanbanUnit: z.enum(["weight", "pack"]).optional(),
+  kanbanOrderAmount: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().min(0).nullable().optional()
+  ),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -435,7 +439,7 @@ type FormValues = z.infer<typeof schema>;
 const emptyDefaults: FormValues = {
   name: "", unit: "kg", packWeight: 0, costPerPack: 0,
   brand: "", supplierPartNumber: "", supplierId: 0, secondarySupplierId: 0,
-  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null, estimatedCookTimeMin: null, ovenTempC: null, steamPct: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "", surplusPercent: 10, shelfLifeDays: null, kanbanEnabled: false, kanbanQuantity: 0, kanbanUnit: "weight" as const,
+  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null, estimatedCookTimeMin: null, ovenTempC: null, steamPct: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "", surplusPercent: 10, shelfLifeDays: null, kanbanEnabled: false, kanbanQuantity: 0, kanbanUnit: "weight" as const, kanbanOrderAmount: null,
 };
 
 export default function Ingredients() {
@@ -522,6 +526,7 @@ export default function Ingredients() {
       kanbanEnabled: (item as Record<string, unknown>).kanbanEnabled as boolean ?? false,
       kanbanQuantity: (item as Record<string, unknown>).kanbanQuantity != null ? Number((item as Record<string, unknown>).kanbanQuantity) : 0,
       kanbanUnit: ((item as Record<string, unknown>).kanbanUnit as "weight" | "pack") ?? "weight",
+      kanbanOrderAmount: (item as Record<string, unknown>).kanbanOrderAmount != null ? Number((item as Record<string, unknown>).kanbanOrderAmount) : null,
     });
     setIsDialogOpen(true);
   };
@@ -552,6 +557,7 @@ export default function Ingredients() {
     kanbanEnabled: data.kanbanEnabled ?? false,
     kanbanQuantity: data.kanbanQuantity ?? 0,
     kanbanUnit: data.kanbanUnit ?? "weight",
+    kanbanOrderAmount: data.kanbanOrderAmount ?? null,
   });
 
   const onSubmit = (data: FormValues) => {
@@ -875,6 +881,26 @@ export default function Ingredients() {
                     </p>
                   </div>
                 )}
+
+                <div>
+                  <label className="text-sm font-medium mb-1 block">
+                    Surplus %
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">(ordering buffer)</span>
+                  </label>
+                  <div className="relative max-w-[160px]">
+                    <input
+                      type="number"
+                      step="1"
+                      min="0"
+                      {...register("surplusPercent")}
+                      className="w-full px-3 pr-10 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      placeholder="10"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">%</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">Extra % added when calculating order quantities.</p>
+                  {errors.surplusPercent && <span className="text-destructive text-xs">{String(errors.surplusPercent.message)}</span>}
+                </div>
               </div>
             )}
 
@@ -958,48 +984,49 @@ export default function Ingredients() {
                       : "Standard order quantity per kanban card."}
                   </p>
                 </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">
+                    Order amount
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">(added to supplier order when pulled)</span>
+                  </label>
+                  <div className="relative max-w-[200px]">
+                    <input
+                      type="number"
+                      step={watchedKanbanUnit === "pack" ? "1" : "0.01"}
+                      min="0"
+                      {...register("kanbanOrderAmount")}
+                      className="w-full px-3 pr-16 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      placeholder="e.g. 13"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">
+                      {watchedKanbanUnit === "pack" ? "packs" : (watchedUnit || "unit")}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Quantity added to the supplier order line when this kanban card is pulled.
+                  </p>
+                </div>
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-sm font-medium mb-1 block">
-                  Surplus %
-                  <span className="ml-2 text-xs font-normal text-muted-foreground">(ordering buffer)</span>
-                </label>
-                <div className="relative max-w-[160px]">
-                  <input
-                    type="number"
-                    step="1"
-                    min="0"
-                    {...register("surplusPercent")}
-                    className="w-full px-3 pr-10 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                    placeholder="10"
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">%</span>
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">Extra % added when calculating order quantities.</p>
-                {errors.surplusPercent && <span className="text-destructive text-xs">{String(errors.surplusPercent.message)}</span>}
+            <div>
+              <label className="text-sm font-medium mb-1 block">
+                Shelf Life
+                <span className="ml-2 text-xs font-normal text-muted-foreground">(days)</span>
+              </label>
+              <div className="relative max-w-[160px]">
+                <input
+                  type="number"
+                  step="1"
+                  min="1"
+                  {...register("shelfLifeDays")}
+                  className="w-full px-3 pr-14 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  placeholder="e.g. 5"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">days</span>
               </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block">
-                  Shelf Life
-                  <span className="ml-2 text-xs font-normal text-muted-foreground">(days)</span>
-                </label>
-                <div className="relative max-w-[160px]">
-                  <input
-                    type="number"
-                    step="1"
-                    min="1"
-                    {...register("shelfLifeDays")}
-                    className="w-full px-3 pr-14 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                    placeholder="e.g. 5"
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">days</span>
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">Used for use-by date calculation on deliveries.</p>
-                {errors.shelfLifeDays && <span className="text-destructive text-xs">{String(errors.shelfLifeDays.message)}</span>}
-              </div>
+              <p className="text-xs text-muted-foreground mt-1">Used for use-by date calculation on deliveries.</p>
+              {errors.shelfLifeDays && <span className="text-destructive text-xs">{String(errors.shelfLifeDays.message)}</span>}
             </div>
 
             <div className="grid grid-cols-2 gap-3">
