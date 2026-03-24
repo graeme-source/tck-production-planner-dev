@@ -1681,6 +1681,96 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Extra Pack Control — secondary control on Building station
+// ──────────────────────────────────────────────────────────────────────────────
+function ExtraPackControl({ planId, item, isOnBreak }: { planId: number; item: ProductionPlanItem; isOnBreak: boolean }) {
+  const queryClient = useQueryClient();
+  const [expanded, setExpanded] = useState(false);
+  const [pending, setPending] = useState(false);
+  const extraPacks = item.extraPacksBuilt ?? 0;
+  const portionsPerBatch = item.portionsPerBatch ?? 0;
+
+  const adjustExtraPacks = async (delta: 1 | -1) => {
+    if (pending || isOnBreak) return;
+    if (delta === -1 && extraPacks <= 0) return;
+    setPending(true);
+    try {
+      const res = await fetch(`/api/production-plans/${planId}/items/${item.id}/extra-packs-built`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ delta }),
+      });
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(planId) });
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Could not update extra packs.", variant: "destructive" });
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const totalBatchEquiv = portionsPerBatch > 0
+    ? ((item.batchesTarget ?? 0) + extraPacks / portionsPerBatch).toFixed(1)
+    : null;
+
+  return (
+    <div className="mt-3 border border-dashed border-border rounded-xl overflow-hidden">
+      <button
+        onClick={() => setExpanded(v => !v)}
+        className="w-full flex items-center justify-between px-4 py-2.5 text-left text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/30 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <Package className="w-4 h-4" />
+          <span>Extra Single Packs</span>
+          {extraPacks > 0 && (
+            <span className="bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 text-xs font-semibold px-2 py-0.5 rounded-full">
+              +{extraPacks} pack{extraPacks !== 1 ? "s" : ""}
+            </span>
+          )}
+        </div>
+        <ChevronRight className={cn("w-4 h-4 transition-transform", expanded && "rotate-90")} />
+      </button>
+      {expanded && (
+        <div className="px-4 pb-4 pt-1 border-t border-dashed border-border bg-secondary/10">
+          <p className="text-xs text-muted-foreground mb-3">
+            Record individual packs built from extra sheeted balls — filling that doesn't make a full batch.
+          </p>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => adjustExtraPacks(-1)}
+              disabled={pending || isOnBreak || extraPacks <= 0}
+              className="w-10 h-10 flex items-center justify-center rounded-xl border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
+            >
+              <Minus className="w-4 h-4" />
+            </button>
+            <div className="flex-1 text-center">
+              <p className="text-2xl font-bold tabular-nums">{extraPacks}</p>
+              <p className="text-xs text-muted-foreground">extra packs</p>
+              {totalBatchEquiv && extraPacks > 0 && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 font-medium mt-0.5">≈ {totalBatchEquiv} batches total</p>
+              )}
+            </div>
+            <button
+              onClick={() => adjustExtraPacks(1)}
+              disabled={pending || isOnBreak}
+              className={cn(
+                "h-10 px-4 rounded-xl text-sm font-bold transition-all",
+                isOnBreak
+                  ? "bg-secondary text-muted-foreground"
+                  : "bg-amber-500 text-white hover:bg-amber-600 active:scale-95"
+              )}
+            >
+              + 1 Pack
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Building Station (shared for building_1 and building_2)
 // Full-screen recipe display, large BATCH COMPLETE button, KPI bar, auto-advance
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1990,6 +2080,15 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
             >
               Undo last batch
             </button>
+          )}
+
+          {/* Extra Pack secondary control */}
+          {currentItem && (
+            <ExtraPackControl
+              planId={plan.id}
+              item={currentItem}
+              isOnBreak={isOnBreak}
+            />
           )}
         </div>
       ) : (
@@ -3630,6 +3729,11 @@ interface DoughPrepData {
     doughSubRecipeName: string;
   }>;
   nextPlan: { id: number; planDate: string; name: string } | null;
+  extraBalls?: {
+    extraPack: { count: number; weightG: number };
+    snack: { count: number; weightG: number };
+    totalKg: number;
+  };
 }
 
 function useDoughPrepData(planId: number, mode?: "current") {
@@ -3953,6 +4057,7 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
       ) : (
         <>
           <DoughBallingView
+            planId={plan.id}
             doughData={doughData}
             ballCount={ballCount}
             totalBallsNeeded={totalBallsNeeded}
@@ -4179,10 +4284,11 @@ function DoughMixingView({
 }
 
 function DoughBallingView({
-  doughData, ballCount, totalBallsNeeded, allBallingDone,
+  planId, doughData, ballCount, totalBallsNeeded, allBallingDone,
   addBalls, undoBall, removeBalls, getBallAllocation, isOnBreak,
   traysDone, totalTraysNeeded, ballsPerTray,
 }: {
+  planId: number;
   doughData: DoughPrepData;
   ballCount: number;
   totalBallsNeeded: number;
@@ -4196,6 +4302,50 @@ function DoughBallingView({
   totalTraysNeeded: number;
   ballsPerTray: number;
 }) {
+  // Extra ball tick state — stored in app_settings as JSON
+  const settingsKey = `extra_balls_balled_${planId}`;
+  const [extraTicks, setExtraTicks] = useState<Record<string, boolean>>({});
+  const [ticksLoaded, setTicksLoaded] = useState(false);
+
+  useEffect(() => {
+    fetch(`/api/app-settings/${settingsKey}`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.value) {
+          try { setExtraTicks(JSON.parse(d.value)); } catch { /* ignore */ }
+        }
+        setTicksLoaded(true);
+      })
+      .catch(() => setTicksLoaded(true));
+  }, [settingsKey]);
+
+  const saveTicks = (updated: Record<string, boolean>) => {
+    fetch(`/api/app-settings/${settingsKey}`, {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: JSON.stringify(updated) }),
+    }).catch(() => {});
+  };
+
+  const toggleTick = (key: string) => {
+    const updated = { ...extraTicks, [key]: !extraTicks[key] };
+    setExtraTicks(updated);
+    saveTicks(updated);
+  };
+
+  const extraBalls = doughData.extraBalls;
+  const extraItems: Array<{ key: string; label: string; weightG: number }> = [];
+  if (extraBalls) {
+    for (let i = 0; i < extraBalls.extraPack.count; i++) {
+      extraItems.push({ key: `extraPack_${i}`, label: `Extra Pack Ball ${extraBalls.extraPack.count > 1 ? i + 1 : ""}`.trim(), weightG: extraBalls.extraPack.weightG });
+    }
+    for (let i = 0; i < extraBalls.snack.count; i++) {
+      extraItems.push({ key: `snack_${i}`, label: `Snack Ball ${extraBalls.snack.count > 1 ? i + 1 : ""}`.trim(), weightG: extraBalls.snack.weightG });
+    }
+  }
+  const allExtraTicked = extraItems.length > 0 && extraItems.every(e => extraTicks[e.key]);
+
   const allocation = getBallAllocation();
   const ballPct = totalBallsNeeded > 0 ? Math.round((ballCount / totalBallsNeeded) * 100) : 0;
 
@@ -4345,6 +4495,47 @@ function DoughBallingView({
           );
         })}
       </div>
+
+      {/* Daily Extras tick-off */}
+      {ticksLoaded && extraItems.length > 0 && (
+        <div className={cn(
+          "bg-card border rounded-xl px-4 py-3 space-y-2",
+          allExtraTicked ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-900/10" : "border-border/60"
+        )}>
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-2">
+              <Package className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm font-semibold text-muted-foreground">Daily Extras</span>
+            </div>
+            {allExtraTicked && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+          </div>
+          {extraItems.map(item => (
+            <button
+              key={item.key}
+              onClick={() => toggleTick(item.key)}
+              className={cn(
+                "w-full flex items-center gap-3 px-3 py-2 rounded-lg border text-left transition-all",
+                extraTicks[item.key]
+                  ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-900/10"
+                  : "border-border bg-secondary/20 hover:bg-secondary/40"
+              )}
+            >
+              <div className={cn(
+                "w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all",
+                extraTicks[item.key]
+                  ? "bg-emerald-500 border-emerald-500"
+                  : "border-border bg-background"
+              )}>
+                {extraTicks[item.key] && <Check className="w-3 h-3 text-white" />}
+              </div>
+              <span className={cn("text-sm font-medium flex-1", extraTicks[item.key] && "line-through text-muted-foreground")}>
+                {item.label}
+              </span>
+              <span className="text-xs text-muted-foreground">{item.weightG}g</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -4506,6 +4697,52 @@ function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
   const { data: doughData } = useDoughPrepData(plan.id, "current");
   const [isOnBreak, setIsOnBreak] = useState(false);
 
+  // Extra ball sheeting state — per-ball ticks in app_settings
+  const extraSheetKey = `extra_balls_sheeted_${plan.id}`;
+  const [extraSheetTicks, setExtraSheetTicks] = useState<Record<string, boolean>>({});
+  const [extraSheetLoaded, setExtraSheetLoaded] = useState(false);
+  const [showExtraSection, setShowExtraSection] = useState(false);
+
+  useEffect(() => {
+    fetch(`/api/app-settings/${extraSheetKey}`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.value) {
+          try { setExtraSheetTicks(JSON.parse(d.value)); } catch { /* ignore */ }
+        }
+        setExtraSheetLoaded(true);
+      })
+      .catch(() => setExtraSheetLoaded(true));
+  }, [extraSheetKey]);
+
+  const saveSheetTicks = (updated: Record<string, boolean>) => {
+    fetch(`/api/app-settings/${extraSheetKey}`, {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: JSON.stringify(updated) }),
+    }).catch(() => {});
+  };
+
+  const toggleSheetTick = (key: string) => {
+    const updated = { ...extraSheetTicks, [key]: !extraSheetTicks[key] };
+    setExtraSheetTicks(updated);
+    saveSheetTicks(updated);
+  };
+
+  const extraBalls = doughData?.extraBalls;
+  const extraSheetItems: Array<{ key: string; label: string; weightG: number }> = [];
+  if (extraBalls) {
+    for (let i = 0; i < extraBalls.extraPack.count; i++) {
+      extraSheetItems.push({ key: `extraPack_${i}`, label: `Extra Pack Ball ${extraBalls.extraPack.count > 1 ? i + 1 : ""}`.trim(), weightG: extraBalls.extraPack.weightG });
+    }
+    for (let i = 0; i < extraBalls.snack.count; i++) {
+      extraSheetItems.push({ key: `snack_${i}`, label: `Snack Ball ${extraBalls.snack.count > 1 ? i + 1 : ""}`.trim(), weightG: extraBalls.snack.weightG });
+    }
+  }
+  const allExtrasSheeted = extraSheetItems.length > 0 && extraSheetItems.every(e => extraSheetTicks[e.key]);
+  const someExtrasSheeted = extraSheetItems.some(e => extraSheetTicks[e.key]);
+
   const createBatch = useCreateBatchCompletion({
     mutation: {
       onSuccess: () => {
@@ -4614,6 +4851,60 @@ function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
       )}
 
       <BreakTracker planId={plan.id} stationType="dough_sheeting" onBreakActiveChange={setIsOnBreak} />
+
+      {/* Sheet Extra Balls — secondary collapsible */}
+      {extraSheetLoaded && extraSheetItems.length > 0 && (
+        <div className={cn(
+          "bg-card border rounded-xl overflow-hidden transition-all",
+          allExtrasSheeted ? "border-emerald-300 dark:border-emerald-700" : someExtrasSheeted ? "border-primary/30" : "border-border/60"
+        )}>
+          <button
+            onClick={() => setShowExtraSection(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 text-left"
+          >
+            <div className="flex items-center gap-2">
+              <Package className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm font-medium text-muted-foreground">Sheet Daily Extras</span>
+              {(someExtrasSheeted || allExtrasSheeted) && (
+                <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">
+                  {extraSheetItems.filter(e => extraSheetTicks[e.key]).length}/{extraSheetItems.length}
+                </span>
+              )}
+              {allExtrasSheeted && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+            </div>
+            <ChevronRight className={cn("w-4 h-4 text-muted-foreground transition-transform", showExtraSection && "rotate-90")} />
+          </button>
+          {showExtraSection && (
+            <div className="px-4 pb-4 space-y-2 border-t border-border/50">
+              <p className="text-xs text-muted-foreground pt-3">Tick each extra ball as it's sheeted and passed to building.</p>
+              {extraSheetItems.map(item => (
+                <button
+                  key={item.key}
+                  onClick={() => toggleSheetTick(item.key)}
+                  disabled={isOnBreak}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all",
+                    extraSheetTicks[item.key]
+                      ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-900/10"
+                      : "border-border bg-secondary/20 hover:bg-secondary/40 disabled:opacity-50"
+                  )}
+                >
+                  <div className={cn(
+                    "w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all",
+                    extraSheetTicks[item.key] ? "bg-emerald-500 border-emerald-500" : "border-border bg-background"
+                  )}>
+                    {extraSheetTicks[item.key] && <Check className="w-3 h-3 text-white" />}
+                  </div>
+                  <span className={cn("text-sm font-medium flex-1", extraSheetTicks[item.key] && "line-through text-muted-foreground")}>
+                    {item.label}
+                  </span>
+                  <span className="text-xs text-muted-foreground">{item.weightG}g</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
@@ -4764,13 +5055,14 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
   const grossPacks = (item: ProductionPlanItem) =>
     Math.floor((getStationCount(item, "ovens") * (item.portionsPerBatch ?? 10)) / 2);
   const netPacks = (item: ProductionPlanItem) =>
-    Math.max(0, grossPacks(item) - (item.wonlyCount ?? 0));
+    Math.max(0, grossPacks(item) - (item.wonlyCount ?? 0)) + (item.extraPacksBuilt ?? 0);
   const chillerTrays = (item: ProductionPlanItem) =>
     Math.ceil(netPacks(item) / 10);
 
   const sessionGrossPacks = items.reduce((s, it) => s + grossPacks(it), 0);
   const sessionWonly = items.reduce((s, it) => s + (it.wonlyCount ?? 0), 0);
   const sessionNetPacks = items.reduce((s, it) => s + netPacks(it), 0);
+  const sessionExtraPacks = items.reduce((s, it) => s + (it.extraPacksBuilt ?? 0), 0);
 
   return (
     <div className="space-y-4">
@@ -4889,6 +5181,9 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
         <div className="bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3 text-center">
           <p className="text-xs text-emerald-700 dark:text-emerald-300 mb-1">Net Packs</p>
           <p className="text-2xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{sessionNetPacks}</p>
+          {sessionExtraPacks > 0 && (
+            <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">incl. {sessionExtraPacks} extra</p>
+          )}
         </div>
       </div>
 
@@ -4961,7 +5256,12 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
                       )}
                     </div>
                   </td>
-                  <td className="py-2 px-3 text-center tabular-nums text-xs font-semibold text-indigo-600 dark:text-indigo-400">{nPacks}</td>
+                  <td className="py-2 px-3 text-center tabular-nums text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+                    {nPacks}
+                    {(item.extraPacksBuilt ?? 0) > 0 && (
+                      <span className="ml-1 text-amber-500" title={`Includes ${item.extraPacksBuilt} extra pack(s)`}>●</span>
+                    )}
+                  </td>
                   <td className="py-2 px-3 text-center tabular-nums text-xs font-semibold text-cyan-600 dark:text-cyan-400">{trays > 0 ? trays : "—"}</td>
                 </tr>
               );
@@ -4993,11 +5293,12 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const grossPacks = (item: ProductionPlanItem) =>
     Math.floor((getStationCount(item, "ovens") * (item.portionsPerBatch ?? 10)) / 2);
   const netPacks = (item: ProductionPlanItem) =>
-    Math.max(0, grossPacks(item) - (item.wonlyCount ?? 0));
+    Math.max(0, grossPacks(item) - (item.wonlyCount ?? 0)) + (item.extraPacksBuilt ?? 0);
 
   const totalGross = items.reduce((s, it) => s + grossPacks(it), 0);
   const totalWonly = items.reduce((s, it) => s + (it.wonlyCount ?? 0), 0);
   const totalNet = items.reduce((s, it) => s + netPacks(it), 0);
+  const totalExtraPacks = items.reduce((s, it) => s + (it.extraPacksBuilt ?? 0), 0);
   const totalFridge = items.reduce((s, it) => s + ((it as any).fridgeQty ?? 0), 0);
   const wrappedCount = items.filter(it => it.wrappingComplete).length;
   const allWrapped = items.length > 0 && items.every(it => it.wrappingComplete);
@@ -5127,6 +5428,9 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
           <div className="text-center bg-purple-50 dark:bg-purple-950/20 rounded-lg py-2">
             <p className="text-xs text-purple-700 dark:text-purple-300">Net Packs</p>
             <p className="text-lg font-bold tabular-nums text-purple-700 dark:text-purple-300">{totalNet}</p>
+            {totalExtraPacks > 0 && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">+{totalExtraPacks} extra</p>
+            )}
           </div>
         </div>
         <div className="grid grid-cols-3 gap-2 mb-3">

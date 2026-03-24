@@ -91,6 +91,9 @@ async function runStartupMigrations() {
       ON recipes (is_current_special)
       WHERE is_current_special = TRUE
     `);
+    await db.execute(sql`
+      ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS extra_packs_built INTEGER NOT NULL DEFAULT 0
+    `);
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

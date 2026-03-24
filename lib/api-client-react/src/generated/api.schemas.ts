@@ -307,6 +307,7 @@ export interface ProductionPlanItem {
   batchesTarget: number;
   batchesComplete: number;
   wonlyCount: number;
+  extraPacksBuilt: number;
   wrappingComplete: boolean;
   fridgeQty: number;
   tinSize?: string | null;

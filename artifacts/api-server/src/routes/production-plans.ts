@@ -724,6 +724,7 @@ router.get("/:id", async (req, res) => {
       tinSize: productionPlanItemsTable.tinSize,
       maxBatchesPerTin: productionPlanItemsTable.maxBatchesPerTin,
       sopUrl: productionPlanItemsTable.sopUrl,
+      extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
       fillWeightGrams: recipesTable.fillWeightGrams,
       baseType: recipesTable.baseType,
       baseWeightGrams: recipesTable.baseWeightGrams,
@@ -2366,6 +2367,40 @@ router.patch("/:id/items/:itemId/wrapping-complete", async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
+// PATCH /:id/items/:itemId/extra-packs-built — set extra individual packs built
+// Used by building station to record partial last-batch packs or extra-ball packs
+// ──────────────────────────────────────────────────────────────────────────────
+router.patch("/:id/items/:itemId/extra-packs-built", async (req, res) => {
+  const planId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+  const { delta } = req.body; // +1 or -1
+  if (typeof delta !== "number" || (delta !== 1 && delta !== -1)) {
+    res.status(400).json({ error: "Body must contain { delta: 1 | -1 }" });
+    return;
+  }
+
+  const [item] = await db.select({ id: productionPlanItemsTable.id, extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
+
+  if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
+  if (delta === -1 && (item.extraPacksBuilt ?? 0) <= 0) {
+    res.status(409).json({ error: "Extra packs count is already 0" });
+    return;
+  }
+
+  const [updated] = await db
+    .update(productionPlanItemsTable)
+    .set({ extraPacksBuilt: delta === 1
+      ? sql`${productionPlanItemsTable.extraPacksBuilt} + 1`
+      : sql`GREATEST(${productionPlanItemsTable.extraPacksBuilt} - 1, 0)` })
+    .where(eq(productionPlanItemsTable.id, itemId))
+    .returning({ extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt });
+
+  res.json({ itemId, extraPacksBuilt: updated.extraPacksBuilt });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
 // POST /:id/items/:itemId/fridge — add wrapped packs to fridge stock (atomic increment)
 // Also upserts the master stock_entries for the production fridge so Factory Number stays in sync.
 // ──────────────────────────────────────────────────────────────────────────────
@@ -2530,9 +2565,18 @@ router.get("/:id/dough-prep", async (req, res) => {
     targetPlanId = nextPlan?.id ?? planId;
   }
 
-  // ── 2. Get mixer capacity ──
-  const [mixerSetting] = await db.select().from(appSettingsTable).where(eq(appSettingsTable.key, "mixer_capacity_kg"));
-  const mixerCapacityKg = mixerSetting ? Number(mixerSetting.value) : 25;
+  // ── 2. Get mixer capacity + daily extra ball settings ──
+  const allSettings = await db.select().from(appSettingsTable);
+  const getSetting = (key: string, def: number) => {
+    const row = allSettings.find(r => r.key === key);
+    return row ? Number(row.value) : def;
+  };
+  const mixerCapacityKg = getSetting("mixer_capacity_kg", 25);
+  const extraPackBallCount  = getSetting("daily_extra_pack_ball_count", 2);
+  const extraPackBallWeightG = getSetting("daily_extra_pack_ball_weight_g", 230);
+  const snackBallCount      = getSetting("daily_snack_ball_count", 1);
+  const snackBallWeightG    = getSetting("daily_snack_ball_weight_g", 200);
+  const extraBallsKg = (extraPackBallCount * extraPackBallWeightG + snackBallCount * snackBallWeightG) / 1000;
 
   // ── 3. Get plan items for the target plan ──
   const planItems = await db
@@ -2646,7 +2690,8 @@ router.get("/:id/dough-prep", async (req, res) => {
     });
   }
 
-  const totalDoughKg = recipeResults.reduce((sum, r) => sum + r.doughKgTotal, 0);
+  const recipeDoughKg = recipeResults.reduce((sum, r) => sum + r.doughKgTotal, 0);
+  const totalDoughKg = recipeDoughKg + extraBallsKg;
 
   // ── 7. Compute flour-based mixing ──
   // The mixer capacity setting is for FLOUR weight, not total dough.
@@ -2676,6 +2721,11 @@ router.get("/:id/dough-prep", async (req, res) => {
     const recipesUsingSr = recipeResults.filter(r => r.subRecipeId === srId);
     const totalDoughForSr = recipesUsingSr.reduce((sum, r) => sum + r.doughKgTotal, 0);
     totalFlourKg += totalDoughForSr * srFlourRatio;
+  }
+
+  // Scale flour for extra balls using the same flour/dough ratio
+  if (recipeDoughKg > 0 && totalFlourKg > 0) {
+    totalFlourKg += extraBallsKg * (totalFlourKg / recipeDoughKg);
   }
 
   const mixCount = mixerCapacityKg > 0 ? Math.ceil(totalFlourKg / mixerCapacityKg) : 0;
@@ -2735,6 +2785,11 @@ router.get("/:id/dough-prep", async (req, res) => {
     ingredients,
     recipes: recipeResults,
     nextPlan,
+    extraBalls: {
+      extraPack: { count: extraPackBallCount, weightG: extraPackBallWeightG },
+      snack: { count: snackBallCount, weightG: snackBallWeightG },
+      totalKg: Math.round(extraBallsKg * 1000) / 1000,
+    },
   });
 });
 
