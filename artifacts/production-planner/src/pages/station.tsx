@@ -1303,11 +1303,10 @@ function MixingStation({ plan }: MixingStationProps) {
                         const inOvenCount = Object.values(ingTrayMap).filter(s => s === 1).length;
                         const allIngDone = doneCount >= ingTrays;
                         const perTrayKg = ingTrays > 0 ? toKg(ing.rawQty, ing.unit) / ingTrays : null;
-                        const hasSettings = ing.minCookingTempC || ing.ovenTempC || ing.estimatedCookTimeMin || ing.steamPct != null;
 
                         return (
                           <div key={ing.ingredientId} className="px-4 py-4 space-y-3">
-                            {/* Ingredient name + progress */}
+                            {/* Ingredient name + weight info */}
                             <div className="flex items-center justify-between">
                               <div>
                                 <p className={cn("font-semibold", allIngDone && "line-through text-muted-foreground")}>{ing.ingredientName}</p>
@@ -1317,100 +1316,69 @@ function MixingStation({ plan }: MixingStationProps) {
                                   </p>
                                 )}
                               </div>
-                              <div className="text-right space-y-0.5">
-                                {inOvenCount > 0 && (
-                                  <p className="text-xs font-semibold text-orange-600 dark:text-orange-400">{inOvenCount} in oven</p>
-                                )}
-                                <span className={cn("text-sm font-bold tabular-nums", allIngDone ? "text-green-600 dark:text-green-400" : "text-muted-foreground")}>
-                                  {doneCount}/{ingTrays} done
-                                </span>
-                              </div>
+                              {inOvenCount > 0 && (
+                                <p className="text-xs font-semibold text-orange-600 dark:text-orange-400">{inOvenCount} in oven</p>
+                              )}
                             </div>
 
-                            {/* Cooking settings tiles */}
-                            {hasSettings && (
-                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                                {ing.minCookingTempC && (
-                                  <div className="bg-red-50 dark:bg-red-900/20 rounded-lg px-3 py-2 text-center">
-                                    <p className="text-xs text-muted-foreground mb-0.5">Core Temp</p>
-                                    <p className="font-bold text-sm tabular-nums text-red-600 dark:text-red-400">{ing.minCookingTempC}°C</p>
-                                  </div>
-                                )}
-                                {ing.ovenTempC && (
-                                  <div className="bg-orange-50 dark:bg-orange-900/20 rounded-lg px-3 py-2 text-center">
-                                    <p className="text-xs text-muted-foreground mb-0.5">Oven Temp</p>
-                                    <p className="font-bold text-sm tabular-nums text-orange-600 dark:text-orange-400">{ing.ovenTempC}°C</p>
-                                  </div>
-                                )}
-                                {ing.estimatedCookTimeMin && (
-                                  <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg px-3 py-2 text-center">
-                                    <p className="text-xs text-muted-foreground mb-0.5">Cook Time</p>
-                                    <p className="font-bold text-sm tabular-nums text-blue-600 dark:text-blue-400">{ing.estimatedCookTimeMin} min</p>
-                                  </div>
-                                )}
-                                {ing.steamPct != null && (
-                                  <div className="bg-cyan-50 dark:bg-cyan-900/20 rounded-lg px-3 py-2 text-center">
-                                    <p className="text-xs text-muted-foreground mb-0.5">Steam</p>
-                                    <p className="font-bold text-sm tabular-nums text-cyan-600 dark:text-cyan-400">{ing.steamPct}%</p>
-                                  </div>
-                                )}
+                            {/* Tray grid with inline tray count label */}
+                            <div className="flex items-center gap-3">
+                              {/* Tray count label */}
+                              <div className="flex-shrink-0 flex flex-col items-center justify-center w-10">
+                                <span className={cn(
+                                  "text-2xl font-extrabold tabular-nums leading-none",
+                                  allIngDone ? "text-green-600 dark:text-green-400" : "text-foreground"
+                                )}>{ingTrays}</span>
+                                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide leading-tight mt-0.5">
+                                  {ingTrays === 1 ? "tray" : "trays"}
+                                </span>
                               </div>
-                            )}
-
-                            {/* Tray completion buttons — tap to cycle: empty → in oven → done
-                                Pack badge (×1/×2) in corner shows how many packs are on the tray. */}
-                            <div className="grid grid-cols-4 gap-2">
-                              {Array.from({ length: ingTrays }, (_, idx) => {
-                                const st = ingTrayMap[idx] ?? 0;
-                                const packs = trayPacks[key]?.[idx] ?? 2;
-                                const isFull = packs === 2;
-                                return (
-                                  <div key={idx} className="relative">
-                                    <button
-                                      onClick={() => advanceTray(recipe.recipeId, recipe.recipeName, ing.ingredientId, ing.ingredientName, idx, plan.id, plan.name ?? "")}
-                                      className={cn(
-                                        "w-full flex flex-col items-center justify-center py-3 rounded-xl border-2 font-semibold text-sm transition-all active:scale-95 overflow-hidden relative",
-                                        st === 2
-                                          ? isFull
-                                            ? "bg-green-500 border-green-500 text-white"
-                                            : "border-green-500 text-green-700 dark:text-green-400 bg-card"
-                                          : st === 1
-                                            ? isFull
-                                              ? "bg-orange-500 border-orange-500 text-white"
-                                              : "border-orange-500 text-orange-700 dark:text-orange-400 bg-card"
-                                            : isFull
-                                              ? "bg-card border-border text-muted-foreground hover:border-rose-400 hover:text-foreground"
-                                              : "bg-card border-amber-300 dark:border-amber-700 text-muted-foreground hover:border-amber-400"
-                                      )}
+                              {/* Tray buttons */}
+                              <div className="flex-1 grid grid-cols-4 gap-2">
+                                {Array.from({ length: ingTrays }, (_, idx) => {
+                                  const st = ingTrayMap[idx] ?? 0;
+                                  const packs = trayPacks[key]?.[idx] ?? 2;
+                                  const isFull = packs === 2;
+                                  return (
+                                    <div key={idx} className="flex flex-col rounded-xl overflow-hidden border-2 transition-all active:scale-95"
+                                      style={{
+                                        borderColor: st === 2 ? (isFull ? "#22c55e" : "#22c55e")
+                                          : st === 1 ? "#f97316"
+                                          : isFull ? "var(--border)" : "#fcd34d",
+                                      }}
                                     >
-                                      {/* Half-fill overlay for 1-pack trays */}
-                                      {!isFull && (
-                                        <div className={cn(
-                                          "absolute bottom-0 left-0 right-0 h-1/2",
-                                          st === 2 ? "bg-green-500"
-                                          : st === 1 ? "bg-orange-500"
-                                          : "bg-amber-100 dark:bg-amber-900/40"
-                                        )} />
-                                      )}
-                                      <span className="relative z-10 text-base">{st === 2 ? "✓" : st === 1 ? "🔥" : idx + 1}</span>
-                                      <span className="relative z-10 text-xs opacity-80">{st === 2 ? "done" : st === 1 ? "in oven" : "tray"}</span>
-                                    </button>
-                                    {/* Pack count badge — tap to toggle 1 ↔ 2 packs */}
-                                    <button
-                                      onClick={(e) => { e.stopPropagation(); togglePacks(key, idx); }}
-                                      className={cn(
-                                        "absolute top-1 right-1 z-20 h-5 min-w-[20px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center shadow-sm transition-colors",
-                                        packs === 1
-                                          ? "bg-amber-500 text-white"
-                                          : "bg-white/80 dark:bg-black/50 border border-border/60 text-muted-foreground"
-                                      )}
-                                      title="Tap to toggle: 1 or 2 packs on this tray"
-                                    >
-                                      ×{packs}
-                                    </button>
-                                  </div>
-                                );
-                              })}
+                                      {/* Top — state: tap to advance empty → in oven → done */}
+                                      <button
+                                        onClick={() => advanceTray(recipe.recipeId, recipe.recipeName, ing.ingredientId, ing.ingredientName, idx, plan.id, plan.name ?? "")}
+                                        className={cn(
+                                          "flex flex-col items-center justify-center py-2.5 font-semibold text-sm w-full",
+                                          st === 2 ? "bg-green-500 text-white"
+                                          : st === 1 ? "bg-orange-500 text-white"
+                                          : "bg-card text-muted-foreground hover:text-foreground"
+                                        )}
+                                      >
+                                        <span className="text-base leading-none">{st === 2 ? "✓" : st === 1 ? "🔥" : idx + 1}</span>
+                                        <span className="text-[10px] opacity-80 mt-0.5">{st === 2 ? "done" : st === 1 ? "in oven" : "tray"}</span>
+                                      </button>
+                                      {/* Bottom — pack count: tap to toggle 1 ↔ 2 */}
+                                      <button
+                                        onClick={() => togglePacks(key, idx)}
+                                        className={cn(
+                                          "w-full flex items-center justify-center py-1.5 text-xs font-bold border-t transition-colors",
+                                          packs === 1
+                                            ? st === 2 ? "bg-green-400/50 border-green-400 text-green-900 dark:text-green-100"
+                                              : st === 1 ? "bg-orange-400/40 border-orange-300 text-orange-900 dark:text-orange-100"
+                                              : "bg-amber-100 dark:bg-amber-900/40 border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300"
+                                            : "bg-secondary/40 border-border/40 text-muted-foreground"
+                                        )}
+                                        title="Tap to toggle pack count"
+                                      >
+                                        ×{packs}
+                                      </button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             </div>
                           </div>
                         );
