@@ -4349,16 +4349,30 @@ function DoughBallingView({
   };
 
   const extraBalls = doughData.extraBalls;
-  const extraItems: Array<{ key: string; label: string; weightG: number }> = [];
+  const extraItems: Array<{ key: string; label: string; weightG: number; type: "extraPack" | "snack" }> = [];
   if (extraBalls) {
     for (let i = 0; i < extraBalls.extraPack.count; i++) {
-      extraItems.push({ key: `extraPack_${i}`, label: `Extra Pack Ball ${extraBalls.extraPack.count > 1 ? i + 1 : ""}`.trim(), weightG: extraBalls.extraPack.weightG });
+      extraItems.push({ key: `extraPack_${i}`, label: `Extra Pack Ball ${extraBalls.extraPack.count > 1 ? i + 1 : ""}`.trim(), weightG: extraBalls.extraPack.weightG, type: "extraPack" });
     }
     for (let i = 0; i < extraBalls.snack.count; i++) {
-      extraItems.push({ key: `snack_${i}`, label: `Snack Ball ${extraBalls.snack.count > 1 ? i + 1 : ""}`.trim(), weightG: extraBalls.snack.weightG });
+      extraItems.push({ key: `snack_${i}`, label: `Snack Ball ${extraBalls.snack.count > 1 ? i + 1 : ""}`.trim(), weightG: extraBalls.snack.weightG, type: "snack" });
     }
   }
   const allExtraTicked = extraItems.length > 0 && extraItems.every(e => extraTicks[e.key]);
+
+  const extraPackItems = extraItems.filter(e => e.type === "extraPack");
+  const snackItems = extraItems.filter(e => e.type === "snack");
+  const extraPackDone = extraPackItems.filter(e => extraTicks[e.key]).length;
+  const snackDone = snackItems.filter(e => extraTicks[e.key]).length;
+
+  const addExtraType = (group: typeof extraItems) => {
+    const next = group.find(e => !extraTicks[e.key]);
+    if (next) toggleTick(next.key);
+  };
+  const removeExtraType = (group: typeof extraItems) => {
+    const last = [...group].reverse().find(e => extraTicks[e.key]);
+    if (last) toggleTick(last.key);
+  };
 
   const allocation = getBallAllocation();
   const ballPct = totalBallsNeeded > 0 ? Math.round((ballCount / totalBallsNeeded) * 100) : 0;
@@ -4411,45 +4425,128 @@ function DoughBallingView({
         </div>
 
         {!allBallingDone ? (
-          <div className="flex items-center justify-center gap-3">
-            <button
-              onClick={undoBall}
-              disabled={ballCount === 0 || isOnBreak}
-              className="w-14 h-14 flex items-center justify-center rounded-2xl border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
-            >
-              <Minus className="w-6 h-6" />
-            </button>
-            <button
-              onClick={() => addBalls(1)}
-              disabled={isOnBreak}
-              className={cn(
-                "h-16 px-8 rounded-2xl text-lg font-bold transition-all shadow-lg",
-                isOnBreak
-                  ? "bg-secondary text-muted-foreground"
-                  : "bg-primary text-primary-foreground hover:bg-primary/90 shadow-primary/20 active:scale-95"
-              )}
-            >
-              + 1 Ball
-            </button>
-            <button
-              onClick={() => removeBalls(ballsPerTray)}
-              disabled={ballCount < ballsPerTray || isOnBreak}
-              className="h-16 px-6 rounded-2xl text-lg font-bold transition-all border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30"
-            >
-              − 1 Tray
-            </button>
-            <button
-              onClick={() => addBalls(4)}
-              disabled={isOnBreak}
-              className={cn(
-                "h-16 px-8 rounded-2xl text-lg font-bold transition-all shadow-lg",
-                isOnBreak
-                  ? "bg-secondary text-muted-foreground"
-                  : "bg-primary/90 text-primary-foreground hover:bg-primary/80 shadow-primary/20 active:scale-95"
-              )}
-            >
-              + 1 Tray
-            </button>
+          <div className="flex flex-wrap items-stretch justify-center gap-3">
+
+            {/* PRIMARY — Tray controls (left) */}
+            <div className="flex gap-2 items-stretch">
+              <button
+                onClick={() => removeBalls(ballsPerTray)}
+                disabled={ballCount < ballsPerTray || isOnBreak}
+                className="h-16 px-5 rounded-2xl text-base font-bold transition-all border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30"
+              >
+                − 1 Tray
+              </button>
+              <button
+                onClick={() => addBalls(ballsPerTray)}
+                disabled={isOnBreak}
+                className={cn(
+                  "h-16 px-8 rounded-2xl text-lg font-bold transition-all shadow-lg",
+                  isOnBreak
+                    ? "bg-secondary text-muted-foreground"
+                    : "bg-primary text-primary-foreground hover:bg-primary/90 shadow-primary/20 active:scale-95"
+                )}
+              >
+                + 1 Tray
+              </button>
+            </div>
+
+            {/* Divider */}
+            <div className="w-px bg-border/50 self-stretch mx-0.5" />
+
+            {/* SECONDARY — Single ball controls */}
+            <div className="flex flex-col items-center justify-center gap-1">
+              <div className="flex gap-1.5">
+                <button
+                  onClick={undoBall}
+                  disabled={ballCount === 0 || isOnBreak}
+                  className="w-10 h-10 flex items-center justify-center rounded-xl border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
+                >
+                  <Minus className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => addBalls(1)}
+                  disabled={isOnBreak}
+                  className={cn(
+                    "h-10 px-4 rounded-xl text-sm font-semibold border transition-all",
+                    isOnBreak
+                      ? "border-border bg-background text-muted-foreground opacity-50"
+                      : "border-border bg-background hover:bg-secondary/60 active:scale-95"
+                  )}
+                >
+                  + 1 Ball
+                </button>
+              </div>
+              <span className="text-[10px] text-muted-foreground">single ball</span>
+            </div>
+
+            {/* Extra ball type controls */}
+            {(extraPackItems.length > 0 || snackItems.length > 0) && (
+              <>
+                <div className="w-px bg-border/50 self-stretch mx-0.5" />
+
+                {extraPackItems.length > 0 && (
+                  <div className="flex flex-col items-center justify-center gap-1">
+                    <div className="flex gap-1.5 items-center">
+                      <button
+                        onClick={() => addExtraType(extraPackItems)}
+                        disabled={isOnBreak || extraPackDone >= extraPackItems.length}
+                        className={cn(
+                          "h-10 px-3 rounded-xl text-xs font-semibold border transition-all",
+                          extraPackDone >= extraPackItems.length
+                            ? "border-emerald-300 bg-emerald-50/50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400"
+                            : isOnBreak
+                            ? "border-border bg-background text-muted-foreground opacity-50"
+                            : "border-border bg-background hover:bg-secondary/60 active:scale-95"
+                        )}
+                      >
+                        Add {extraPackItems[0]?.weightG}g ball
+                      </button>
+                      <button
+                        onClick={() => removeExtraType(extraPackItems)}
+                        disabled={extraPackDone === 0 || isOnBreak}
+                        className="w-8 h-8 flex items-center justify-center rounded-lg border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
+                      >
+                        <Minus className="w-3 h-3" />
+                      </button>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground">
+                      {extraPackDone} of {extraPackItems.length}
+                    </span>
+                  </div>
+                )}
+
+                {snackItems.length > 0 && (
+                  <div className="flex flex-col items-center justify-center gap-1">
+                    <div className="flex gap-1.5 items-center">
+                      <button
+                        onClick={() => addExtraType(snackItems)}
+                        disabled={isOnBreak || snackDone >= snackItems.length}
+                        className={cn(
+                          "h-10 px-3 rounded-xl text-xs font-semibold border transition-all",
+                          snackDone >= snackItems.length
+                            ? "border-emerald-300 bg-emerald-50/50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400"
+                            : isOnBreak
+                            ? "border-border bg-background text-muted-foreground opacity-50"
+                            : "border-border bg-background hover:bg-secondary/60 active:scale-95"
+                        )}
+                      >
+                        Add {snackItems[0]?.weightG}g Snack
+                      </button>
+                      <button
+                        onClick={() => removeExtraType(snackItems)}
+                        disabled={snackDone === 0 || isOnBreak}
+                        className="w-8 h-8 flex items-center justify-center rounded-lg border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
+                      >
+                        <Minus className="w-3 h-3" />
+                      </button>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground">
+                      {snackDone} of {snackItems.length}
+                    </span>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         ) : (
           <div className="flex items-center justify-center gap-2 text-emerald-600">
