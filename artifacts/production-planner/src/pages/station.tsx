@@ -4967,6 +4967,148 @@ function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Chiller Rack Visual — rolling bakery rack with tray-level recipe colour coding
+// ──────────────────────────────────────────────────────────────────────────────
+const RECIPE_RACK_COLOURS = [
+  '#7a8a48', '#d4883a', '#4a7fa8', '#8a4fa8', '#b04a4a',
+  '#3a9470', '#c4b030', '#a07040', '#4a5ea8', '#a84a7a',
+  '#2e8f8f', '#7a944a', '#6a6aa8', '#a86a3a', '#3a7a60',
+];
+
+interface ChillerRackItem {
+  recipeId: number;
+  recipeName: string;
+  trayCount: number;
+  colour: string;
+}
+
+function ChillerRackVisual({ rackItems }: { rackItems: ChillerRackItem[] }) {
+  const TRAYS_PER_RACK = 28;
+
+  const allTrays: Array<{ colour: string; recipeName: string }> = [];
+  for (const r of rackItems) {
+    for (let i = 0; i < r.trayCount; i++) {
+      allTrays.push({ colour: r.colour, recipeName: r.recipeName });
+    }
+  }
+
+  if (allTrays.length === 0) return null;
+
+  const racks: Array<typeof allTrays> = [];
+  for (let i = 0; i < allTrays.length; i += TRAYS_PER_RACK) {
+    racks.push(allTrays.slice(i, i + TRAYS_PER_RACK));
+  }
+
+  const totalTrays = allTrays.length;
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-4">
+      {/* Header + legend */}
+      <div className="mb-4">
+        <div className="flex items-center justify-between mb-2.5">
+          <div>
+            <h3 className="font-semibold text-sm">Chiller Rack</h3>
+            <p className="text-xs text-muted-foreground">
+              {totalTrays} tray{totalTrays !== 1 ? "s" : ""} · {racks.length} rack{racks.length !== 1 ? "s" : ""} · never mixed
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+          {rackItems.map(r => (
+            <div key={r.recipeId} className="flex items-center gap-1.5">
+              <div
+                className="w-3.5 h-3.5 rounded-[3px] flex-shrink-0 border border-black/10"
+                style={{ backgroundColor: r.colour }}
+              />
+              <span className="text-xs text-muted-foreground">
+                {r.recipeName.length > 18 ? r.recipeName.slice(0, 18) + "…" : r.recipeName}
+                <span className="font-semibold text-foreground ml-1">×{r.trayCount}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Racks — scrollable row */}
+      <div className="flex gap-6 overflow-x-auto pb-1">
+        {racks.map((rackTrays, rackIdx) => {
+          // 28-slot array: slot 0 = tray position 1 (bottom of rack)
+          const slots: Array<{ colour: string; recipeName: string } | null> = Array(TRAYS_PER_RACK).fill(null).map((_, i) =>
+            i < rackTrays.length ? rackTrays[i] : null
+          );
+
+          return (
+            <div key={rackIdx} className="flex-shrink-0">
+              {racks.length > 1 && (
+                <p className="text-xs text-center text-muted-foreground mb-2 font-medium">
+                  Rack {rackIdx + 1}
+                </p>
+              )}
+              <div className="flex items-stretch gap-2">
+                {/* Left slot numbers */}
+                <div className="flex flex-col-reverse justify-between py-[6px]" style={{ height: 28 * 15 + 27 * 2 + 12 }}>
+                  <span className="text-[9px] text-muted-foreground leading-none">1</span>
+                  <span className="text-[9px] text-muted-foreground leading-none">28</span>
+                </div>
+
+                {/* Rack body */}
+                <div
+                  className="relative border-[3px] border-border rounded-md bg-secondary/10 px-1.5 py-[6px]"
+                  style={{ minWidth: 140 }}
+                >
+                  {/* Rack rails — decorative vertical lines */}
+                  <div className="absolute inset-y-2 left-[7px] w-[2px] bg-border/40 rounded-full pointer-events-none" />
+                  <div className="absolute inset-y-2 right-[7px] w-[2px] bg-border/40 rounded-full pointer-events-none" />
+
+                  {/* Trays — rendered bottom-to-top via flex-col-reverse */}
+                  <div className="flex flex-col-reverse gap-[2px] relative z-10">
+                    {slots.map((slot, i) =>
+                      slot ? (
+                        <div
+                          key={i}
+                          className="h-[15px] rounded-[2px] flex items-center px-1.5 overflow-hidden shadow-sm"
+                          style={{ backgroundColor: slot.colour }}
+                          title={`${slot.recipeName} — tray ${i + 1}`}
+                        >
+                          <span
+                            className="text-white text-[8px] font-semibold leading-none truncate"
+                            style={{ textShadow: "0 0 4px rgba(0,0,0,0.7)" }}
+                          >
+                            {slot.recipeName}
+                          </span>
+                        </div>
+                      ) : (
+                        <div
+                          key={i}
+                          className="h-[15px] rounded-[2px] border border-dashed border-border/30"
+                        />
+                      )
+                    )}
+                  </div>
+                </div>
+
+                {/* Right: milestone slot numbers */}
+                <div className="flex flex-col-reverse gap-[2px] py-[6px]">
+                  {Array.from({ length: TRAYS_PER_RACK }).map((_, i) => (
+                    [0, 6, 13, 20, 27].includes(i) ? (
+                      <div key={i} className="h-[15px] flex items-center">
+                        <span className="text-[9px] text-muted-foreground/70 leading-none">{i + 1}</span>
+                      </div>
+                    ) : (
+                      <div key={i} className="h-[15px]" />
+                    )
+                  ))}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Ovens Station
 // ──────────────────────────────────────────────────────────────────────────────
 function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
@@ -4983,10 +5125,7 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
   });
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
-  const currentItem = items.find(it => {
-    const ovenCount = getStationCount(it, "ovens");
-    return ovenCount < (it.batchesTarget ?? 0);
-  });
+  const currentItem = items.find(it => getStationCount(it, "ovens") < (it.batchesTarget ?? 0));
 
   const addBatch = (item: ProductionPlanItem) => {
     if (isOnBreak) return;
@@ -5052,111 +5191,147 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
   const totalTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
   const overallPct = totalTarget > 0 ? Math.round((totalOvenComplete / totalTarget) * 100) : 0;
 
+  // Packs: half of (oven batches × portionsPerBatch) since each batch produces 2 packs per portion pair
   const grossPacks = (item: ProductionPlanItem) =>
     Math.floor((getStationCount(item, "ovens") * (item.portionsPerBatch ?? 10)) / 2);
   const netPacks = (item: ProductionPlanItem) =>
     Math.max(0, grossPacks(item) - (item.wonlyCount ?? 0)) + (item.extraPacksBuilt ?? 0);
+  // Chiller trays: never combine two recipes on one tray — each recipe's packs fill independently
   const chillerTrays = (item: ProductionPlanItem) =>
-    Math.ceil(netPacks(item) / 10);
+    netPacks(item) > 0 ? Math.ceil(netPacks(item) / 10) : 0;
 
   const sessionGrossPacks = items.reduce((s, it) => s + grossPacks(it), 0);
   const sessionWonly = items.reduce((s, it) => s + (it.wonlyCount ?? 0), 0);
   const sessionNetPacks = items.reduce((s, it) => s + netPacks(it), 0);
   const sessionExtraPacks = items.reduce((s, it) => s + (it.extraPacksBuilt ?? 0), 0);
+  const sessionTotalTrays = items.reduce((s, it) => s + chillerTrays(it), 0);
+
+  // Build rack data in production order for ChillerRackVisual
+  const rackItems: ChillerRackItem[] = items
+    .map((item, idx) => ({
+      recipeId: item.recipeId,
+      recipeName: item.recipeName ?? `Recipe #${item.recipeId}`,
+      trayCount: chillerTrays(item),
+      colour: RECIPE_RACK_COLOURS[idx % RECIPE_RACK_COLOURS.length],
+    }))
+    .filter(r => r.trayCount > 0);
 
   return (
     <div className="space-y-4">
-      {/* Current recipe */}
+      {/* Current recipe — batches as focus */}
       {currentItem ? (
         <div className="bg-card border-2 border-red-400 dark:border-red-600 rounded-xl p-5">
-          <p className="text-xs font-semibold uppercase tracking-wider text-red-600 dark:text-red-400 mb-1">
-            In Ovens Now
-          </p>
-          <h2 className="font-display text-2xl font-bold mb-3">
-            {currentItem.recipeName ?? `Recipe #${currentItem.recipeId}`}
-          </h2>
+          <div className="flex items-start gap-3 mb-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-wider text-red-600 dark:text-red-400 mb-1">
+                In Ovens Now
+              </p>
+              <h2 className="font-display text-2xl font-bold leading-tight">
+                {currentItem.recipeName ?? `Recipe #${currentItem.recipeId}`}
+              </h2>
+            </div>
+            {/* Built from building station — context only */}
+            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg px-3 py-1.5 text-center flex-shrink-0">
+              <p className="text-xs text-blue-600 dark:text-blue-400 font-medium">Built</p>
+              <p className="text-2xl font-bold text-blue-600 dark:text-blue-400 tabular-nums">
+                {getPrevStationCount(currentItem, "ovens")}
+              </p>
+            </div>
+          </div>
+
           {getAvailableFromPrev(currentItem, "ovens") <= 0 && (
             <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg mb-3">
               <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
               <p className="text-sm text-amber-700 dark:text-amber-300">Waiting for Building to complete more batches</p>
             </div>
           )}
-          <div className="flex flex-wrap items-center gap-3 mb-4">
-            <div className="bg-secondary/50 rounded-lg px-4 py-2 text-center min-w-[80px]">
-              <p className="text-xs text-muted-foreground">Oven Loads</p>
-              <p className="text-3xl font-bold">{getStationCount(currentItem, "ovens")}</p>
-            </div>
-            <div className="bg-secondary/50 rounded-lg px-4 py-2 text-center min-w-[80px]">
-              <p className="text-xs text-muted-foreground">Target</p>
-              <p className="text-3xl font-bold">{currentItem.batchesTarget ?? 0}</p>
-            </div>
-            <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg px-4 py-2 text-center min-w-[80px]">
-              <p className="text-xs text-blue-600 dark:text-blue-400">Built</p>
-              <p className="text-3xl font-bold text-blue-600 dark:text-blue-400">{getPrevStationCount(currentItem, "ovens")}</p>
-            </div>
-            <div className="bg-indigo-50 dark:bg-indigo-900/20 rounded-lg px-4 py-2 text-center min-w-[80px]">
-              <p className="text-xs text-muted-foreground">Net Packs</p>
-              <p className="text-3xl font-bold text-indigo-600 dark:text-indigo-400">{netPacks(currentItem)}</p>
-            </div>
-            <div className="bg-cyan-50 dark:bg-cyan-900/20 rounded-lg px-4 py-2 text-center min-w-[80px]">
-              <p className="text-xs text-muted-foreground">Chiller Trays</p>
-              <p className="text-3xl font-bold text-cyan-600 dark:text-cyan-400">{chillerTrays(currentItem)}</p>
-            </div>
-            {(currentItem.wonlyCount ?? 0) > 0 && (
-              <div className="bg-red-50 dark:bg-red-900/20 rounded-lg px-4 py-2 text-center min-w-[80px]">
-                <p className="text-xs text-muted-foreground">Wonky</p>
-                <p className="text-3xl font-bold text-red-600 dark:text-red-400">{currentItem.wonlyCount ?? 0}</p>
-              </div>
-            )}
-          </div>
-          <div className="flex items-center justify-center gap-4 mb-4">
+
+          {/* Primary: batch counter */}
+          <div className="flex items-center justify-center gap-6 my-5">
             <button
               onClick={() => removeBatch(currentItem)}
               disabled={getStationCount(currentItem, "ovens") === 0 || isOnBreak}
-              className="w-12 h-12 flex items-center justify-center rounded-full border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
+              className="w-14 h-14 flex items-center justify-center rounded-full border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
             >
               <Minus className="w-5 h-5" />
             </button>
-            <div className="text-5xl font-bold font-display tabular-nums w-20 text-center">
-              {getStationCount(currentItem, "ovens")}
+            <div className="text-center">
+              <div className="flex items-baseline gap-2 justify-center">
+                <span className="font-display text-6xl font-bold tabular-nums text-foreground leading-none">
+                  {getStationCount(currentItem, "ovens")}
+                </span>
+                <span className="text-2xl text-muted-foreground font-light tabular-nums">
+                  / {currentItem.batchesTarget ?? 0}
+                </span>
+              </div>
+              <p className="text-sm text-muted-foreground mt-1.5 font-medium">batches</p>
             </div>
             <button
               onClick={() => addBatch(currentItem)}
-              disabled={(getStationCount(currentItem, "ovens") >= (currentItem.batchesTarget ?? 0) && !isAdmin) || getAvailableFromPrev(currentItem, "ovens") <= 0 || isOnBreak}
+              disabled={
+                (getStationCount(currentItem, "ovens") >= (currentItem.batchesTarget ?? 0) && !isAdmin) ||
+                getAvailableFromPrev(currentItem, "ovens") <= 0 ||
+                isOnBreak
+              }
               className={cn(
-                "w-12 h-12 flex items-center justify-center rounded-full transition-colors disabled:opacity-50",
+                "w-14 h-14 flex items-center justify-center rounded-full transition-colors disabled:opacity-50",
                 isOnBreak ? "bg-amber-300 text-amber-700" : "bg-red-500 text-white hover:bg-red-600"
               )}
             >
               <Plus className="w-5 h-5" />
             </button>
           </div>
-          {/* Wonly section */}
-          <div className="border-t border-border/50 pt-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground">QUALITY REJECTS (Wonky)</p>
-                <p className="text-xs text-muted-foreground">Substandard packs not counted in output</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => undoWonly(currentItem)}
-                  disabled={(currentItem.wonlyCount ?? 0) === 0 || wonlyLoading === currentItem.id || isOnBreak}
-                  className="w-8 h-8 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
-                >
-                  <Minus className="w-3.5 h-3.5" />
-                </button>
-                <span className="text-xl font-bold tabular-nums w-8 text-center text-red-600 dark:text-red-400">
-                  {wonlyLoading === currentItem.id ? "…" : (currentItem.wonlyCount ?? 0)}
-                </span>
-                <button
-                  onClick={() => addWonly(currentItem)}
-                  disabled={wonlyLoading === currentItem.id || isOnBreak}
-                  className="w-8 h-8 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                </button>
-              </div>
+
+          {/* Secondary: net packs + chiller trays */}
+          <div className="flex items-center justify-center gap-6 pb-4 border-b border-border/50 mb-3">
+            <div className="text-center">
+              <p className="text-xs text-muted-foreground font-medium mb-0.5">Net Packs</p>
+              <p className="text-2xl font-bold tabular-nums text-indigo-600 dark:text-indigo-400">
+                {netPacks(currentItem)}
+              </p>
+            </div>
+            <div className="w-px h-8 bg-border/60" />
+            <div className="text-center">
+              <p className="text-xs text-muted-foreground font-medium mb-0.5">Chiller Trays</p>
+              <p className="text-2xl font-bold tabular-nums text-cyan-600 dark:text-cyan-400">
+                {chillerTrays(currentItem)}
+              </p>
+            </div>
+            {(currentItem.wonlyCount ?? 0) > 0 && (
+              <>
+                <div className="w-px h-8 bg-border/60" />
+                <div className="text-center">
+                  <p className="text-xs text-muted-foreground font-medium mb-0.5">Wonky</p>
+                  <p className="text-2xl font-bold tabular-nums text-red-500">{currentItem.wonlyCount}</p>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Wonky quality rejects */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground">Quality Rejects (Wonky)</p>
+              <p className="text-xs text-muted-foreground">Not counted in output</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => undoWonly(currentItem)}
+                disabled={(currentItem.wonlyCount ?? 0) === 0 || wonlyLoading === currentItem.id || isOnBreak}
+                className="w-8 h-8 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
+              >
+                <Minus className="w-3.5 h-3.5" />
+              </button>
+              <span className="text-xl font-bold tabular-nums w-8 text-center text-red-600 dark:text-red-400">
+                {wonlyLoading === currentItem.id ? "…" : (currentItem.wonlyCount ?? 0)}
+              </span>
+              <button
+                onClick={() => addWonly(currentItem)}
+                disabled={wonlyLoading === currentItem.id || isOnBreak}
+                className="w-8 h-8 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
         </div>
@@ -5169,28 +5344,32 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
       )}
 
       {/* Session totals */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-4 gap-2">
         <div className="bg-card border border-border rounded-xl p-3 text-center">
           <p className="text-xs text-muted-foreground mb-1">Gross Packs</p>
-          <p className="text-2xl font-bold tabular-nums">{sessionGrossPacks}</p>
+          <p className="text-xl font-bold tabular-nums">{sessionGrossPacks}</p>
         </div>
         <div className="bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-xl p-3 text-center">
-          <p className="text-xs text-red-700 dark:text-red-300 mb-1">Total Wonky</p>
-          <p className="text-2xl font-bold tabular-nums text-red-600 dark:text-red-400">{sessionWonly}</p>
+          <p className="text-xs text-red-700 dark:text-red-300 mb-1">Wonky</p>
+          <p className="text-xl font-bold tabular-nums text-red-600 dark:text-red-400">{sessionWonly}</p>
         </div>
         <div className="bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3 text-center">
           <p className="text-xs text-emerald-700 dark:text-emerald-300 mb-1">Net Packs</p>
-          <p className="text-2xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{sessionNetPacks}</p>
+          <p className="text-xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{sessionNetPacks}</p>
           {sessionExtraPacks > 0 && (
-            <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">incl. {sessionExtraPacks} extra</p>
+            <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">+{sessionExtraPacks} extra</p>
           )}
+        </div>
+        <div className="bg-cyan-50 dark:bg-cyan-950/20 border border-cyan-200 dark:border-cyan-800 rounded-xl p-3 text-center">
+          <p className="text-xs text-cyan-700 dark:text-cyan-300 mb-1">Trays</p>
+          <p className="text-xl font-bold tabular-nums text-cyan-600 dark:text-cyan-400">{sessionTotalTrays}</p>
         </div>
       </div>
 
       {/* Overall progress + breaks */}
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
-          <p className="text-sm font-medium">Daily Progress</p>
+          <p className="text-sm font-medium">Daily Progress — {totalOvenComplete} / {totalTarget} batches</p>
           <span className="text-lg font-bold">{overallPct}%</span>
         </div>
         <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
@@ -5204,6 +5383,9 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
         </div>
       </div>
 
+      {/* Chiller Rack Visual */}
+      <ChillerRackVisual rackItems={rackItems} />
+
       {/* Per-recipe summary table */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
@@ -5213,7 +5395,7 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
           <thead>
             <tr className="bg-secondary/20 border-b border-border text-xs text-muted-foreground">
               <th className="py-2 px-3 text-left font-medium">Recipe</th>
-              <th className="py-2 px-3 text-center font-medium">Done</th>
+              <th className="py-2 px-3 text-center font-medium">Batches</th>
               <th className="py-2 px-3 text-center font-medium">Packs</th>
               <th className="py-2 px-3 text-center font-medium">Wonky</th>
               <th className="py-2 px-3 text-center font-medium">Net</th>
@@ -5223,12 +5405,13 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
             </tr>
           </thead>
           <tbody>
-            {items.map(item => {
+            {items.map((item, idx) => {
               const isCurrentRow = item.id === currentItem?.id;
               const gPacks = grossPacks(item);
               const nPacks = netPacks(item);
               const trays = chillerTrays(item);
               const wonlys = item.wonlyCount ?? 0;
+              const recipeColour = RECIPE_RACK_COLOURS[idx % RECIPE_RACK_COLOURS.length];
               return (
                 <tr key={item.id} className={cn(
                   "border-b border-border/50 last:border-0",
@@ -5236,10 +5419,17 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
                   item.status === "complete" ? "bg-emerald-50/30 dark:bg-emerald-900/10" : ""
                 )}>
                   <td className={cn("py-2 px-3 font-medium text-xs", item.status === "complete" ? "line-through text-muted-foreground" : "")}>
-                    {item.recipeName ?? `Recipe #${item.recipeId}`}
+                    <div className="flex items-center gap-1.5">
+                      {trays > 0 && (
+                        <div className="w-2.5 h-2.5 rounded-[2px] flex-shrink-0" style={{ backgroundColor: recipeColour }} />
+                      )}
+                      {item.recipeName ?? `Recipe #${item.recipeId}`}
+                    </div>
                   </td>
-                  <td className="py-2 px-3 text-center tabular-nums text-xs">{getStationCount(item, "ovens")}</td>
-                  <td className="py-2 px-3 text-center tabular-nums text-xs">{gPacks}</td>
+                  <td className="py-2 px-3 text-center tabular-nums text-xs font-medium">
+                    {getStationCount(item, "ovens")}/{item.batchesTarget ?? 0}
+                  </td>
+                  <td className="py-2 px-3 text-center tabular-nums text-xs">{gPacks > 0 ? gPacks : "—"}</td>
                   <td className="py-2 px-3 text-center tabular-nums text-xs">
                     <div className="flex items-center justify-center gap-1">
                       <span className={cn(wonlys > 0 ? "text-red-600 dark:text-red-400 font-semibold" : "text-muted-foreground")}>
@@ -5257,12 +5447,14 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
                     </div>
                   </td>
                   <td className="py-2 px-3 text-center tabular-nums text-xs font-semibold text-indigo-600 dark:text-indigo-400">
-                    {nPacks}
+                    {nPacks > 0 ? nPacks : "—"}
                     {(item.extraPacksBuilt ?? 0) > 0 && (
-                      <span className="ml-1 text-amber-500" title={`Includes ${item.extraPacksBuilt} extra pack(s)`}>●</span>
+                      <span className="ml-1 text-amber-500" title={`Includes ${item.extraPacksBuilt} extra`}>●</span>
                     )}
                   </td>
-                  <td className="py-2 px-3 text-center tabular-nums text-xs font-semibold text-cyan-600 dark:text-cyan-400">{trays > 0 ? trays : "—"}</td>
+                  <td className="py-2 px-3 text-center tabular-nums text-xs font-semibold text-cyan-600 dark:text-cyan-400">
+                    {trays > 0 ? trays : "—"}
+                  </td>
                 </tr>
               );
             })}
