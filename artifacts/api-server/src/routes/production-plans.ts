@@ -1613,6 +1613,9 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
 
       if (!isMainStation) continue;
 
+      // Mozzarella is loaded directly to the building fridges — exclude from all prep stations
+      if ((ing.ingredientName ?? "").toLowerCase().includes("mozzarella")) continue;
+
       hasRelevantIngredients = true;
       // At non-prep_meat stations use only the non-marinade portion of the quantity.
       // At prep_meat the ingredient won't appear as a direct row anyway (category filter
@@ -2965,6 +2968,8 @@ router.get("/:id/main-prep", async (req, res) => {
     for (const row of directIngredients) {
       const cat = row.category ?? "";
       if (EXCLUDED_CATEGORIES.includes(cat)) continue;
+      // Mozzarella is loaded directly to the building fridges — exclude from main prep
+      if ((row.ingredientName ?? "").toLowerCase().includes("mozzarella")) continue;
 
       const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
       const qtyPerPortion = Number(row.quantity) || 0;
@@ -3125,6 +3130,82 @@ router.get("/:id/prep-presence", async (req, res) => {
     result[entry.ingredientId].push({ userId: entry.userId, userName: entry.userName });
   }
   res.json(result);
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Mozzarella load — total mozzarella needed for the plan, rounded to pack size
+// This drives the "Load Xkg Mozzarella to the building fridges" closing check.
+// ──────────────────────────────────────────────────────────────────────────────
+router.get("/:id/mozzarella-load", async (req, res) => {
+  const planId = Number(req.params.id);
+
+  const planItems = await db
+    .select({
+      recipeId: productionPlanItemsTable.recipeId,
+      batchesTarget: productionPlanItemsTable.batchesTarget,
+      portionsPerBatch: recipesTable.portionsPerBatch,
+    })
+    .from(productionPlanItemsTable)
+    .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(eq(productionPlanItemsTable.planId, planId));
+
+  let totalQty = 0;
+  let mozzarellaMeta: { id: number; name: string; unit: string; packWeight: number } | null = null;
+
+  for (const planItem of planItems) {
+    const batchesTarget = Number(planItem.batchesTarget) || 0;
+    if (!planItem.recipeId || batchesTarget === 0) continue;
+
+    const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
+
+    const directIngredients = await db
+      .select({
+        ingredientId: recipeIngredientsTable.ingredientId,
+        quantity: recipeIngredientsTable.quantity,
+        ingredientName: ingredientsTable.name,
+        unit: ingredientsTable.unit,
+        packWeight: ingredientsTable.packWeight,
+      })
+      .from(recipeIngredientsTable)
+      .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
+      .where(and(
+        eq(recipeIngredientsTable.recipeId, planItem.recipeId),
+        isNull(recipeIngredientsTable.marinadeForIngredientId),
+      ));
+
+    for (const row of directIngredients) {
+      if (!(row.ingredientName ?? "").toLowerCase().includes("mozzarella")) continue;
+      const qty = Number(row.quantity) || 0;
+      totalQty += qty * portionsPerBatch * batchesTarget;
+      if (!mozzarellaMeta && row.ingredientId) {
+        mozzarellaMeta = {
+          id: row.ingredientId,
+          name: row.ingredientName ?? "Mozzarella",
+          unit: row.unit ?? "g",
+          packWeight: Number(row.packWeight) || 0,
+        };
+      }
+    }
+  }
+
+  if (totalQty === 0 || !mozzarellaMeta) {
+    res.json(null);
+    return;
+  }
+
+  const packWeight = mozzarellaMeta.packWeight;
+  const roundedQty = packWeight > 0 ? Math.ceil(totalQty / packWeight) * packWeight : totalQty;
+  const packs = packWeight > 0 ? Math.ceil(totalQty / packWeight) : null;
+
+  res.json({
+    ingredientId: mozzarellaMeta.id,
+    name: mozzarellaMeta.name,
+    unit: mozzarellaMeta.unit,
+    totalQty,
+    packWeight,
+    roundedQty,
+    packs,
+  });
 });
 
 export default router;

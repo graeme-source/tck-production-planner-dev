@@ -66,7 +66,7 @@ const STATIONS = [
   { key: "packing", label: "Packing", short: "Packing", icon: Box, color: "text-indigo-500" },
 ] as const;
 
-type StationType = typeof STATIONS[number]["key"] | "main_prep" | "prep_veg" | "prep_bases" | "prep_meat";
+type StationType = typeof STATIONS[number]["key"] | "main_prep" | "prep_bases" | "prep_meat";
 
 function getStationCount(item: ProductionPlanItem, stationType: string): number {
   const sc = (item as any).stationCompletions;
@@ -108,7 +108,7 @@ function StationLayout({ planId, stationType, plan, children }: StationLayoutPro
   // Resolve station label for sub-stations
   const resolveStationMeta = (key: StationType): { label: string; icon: React.ComponentType<{ className?: string }>; color: string } => {
     if (key === "main_prep") return { label: "Main Prep", icon: ClipboardList, color: "text-emerald-600" };
-    if (key === "prep_veg") return { label: "Veg Prep", icon: Salad, color: "text-green-500" };
+
     if (key === "prep_bases") return { label: "Bases & Sauces", icon: Layers, color: "text-yellow-500" };
     if (key === "prep_meat") return { label: "Raw Meat Prep", icon: Beef, color: "text-rose-500" };
     return station ?? { label: key, icon: BarChart2, color: "" };
@@ -141,7 +141,7 @@ function StationLayout({ planId, stationType, plan, children }: StationLayoutPro
               <div className="hidden md:flex items-center gap-1 overflow-x-auto">
                 {STATIONS.map(s => {
                   const Icon = s.icon;
-                  const prepSubStations = ["main_prep", "prep_veg", "prep_bases", "prep_meat"] as const;
+                  const prepSubStations = ["main_prep", "prep_bases", "prep_meat"] as const;
                   const isActive = s.key === stationType || (s.key === "prep" && prepSubStations.includes(stationType as typeof prepSubStations[number]));
                   return (
                     <button
@@ -163,7 +163,7 @@ function StationLayout({ planId, stationType, plan, children }: StationLayoutPro
               </div>
 
               {(() => {
-                const prepSubKeys = ["main_prep", "prep_veg", "prep_bases", "prep_meat"] as const;
+                const prepSubKeys = ["main_prep", "prep_bases", "prep_meat"] as const;
                 const isInPrepSub = (prepSubKeys as readonly string[]).includes(stationType);
                 return (
                   <button
@@ -1854,6 +1854,38 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     return () => clearInterval(interval);
   }, [plan.id, stationType, sessionBatches]);
 
+  // Mozzarella closing check — total to load to building fridges
+  type MozzarellaLoad = { name: string; unit: string; totalQty: number; packWeight: number; roundedQty: number; packs: number | null };
+  const [mozzLoad, setMozzLoad] = useState<MozzarellaLoad | null>(null);
+  const [mozzConfirmed, setMozzConfirmed] = useState(false);
+  const MOZZ_KEY = `mozz_load_confirmed_${plan.id}`;
+  useEffect(() => {
+    fetch(`/api/production-plans/${plan.id}/mozzarella-load`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setMozzLoad(d); })
+      .catch(() => {});
+    fetch(`/api/app-settings/${MOZZ_KEY}`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.value === "true") setMozzConfirmed(true); })
+      .catch(() => {});
+  }, [plan.id]);
+  const confirmMozz = async () => {
+    setMozzConfirmed(true);
+    await fetch("/api/app-settings", {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: MOZZ_KEY, value: "true" }),
+    }).catch(() => {});
+  };
+  const unconfirmMozz = async () => {
+    setMozzConfirmed(false);
+    await fetch("/api/app-settings", {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: MOZZ_KEY, value: "false" }),
+    }).catch(() => {});
+  };
+
   function getCombinedBuildCount(it: ProductionPlanItem) {
     return getStationCount(it, "building_1") + getStationCount(it, "building_2");
   }
@@ -2117,6 +2149,46 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
             <Trophy className="w-4 h-4 inline mr-2" />
             View Summary
           </button>
+        </div>
+      )}
+
+      {/* Mozzarella closing check — load total to building fridges */}
+      {mozzLoad && (
+        <div className={cn(
+          "border-2 rounded-2xl p-4 flex items-center gap-4 transition-all",
+          mozzConfirmed
+            ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-950/20"
+            : "border-amber-300 dark:border-amber-700 bg-amber-50/40 dark:bg-amber-950/20"
+        )}>
+          <button
+            onClick={mozzConfirmed ? unconfirmMozz : confirmMozz}
+            className={cn(
+              "flex-shrink-0 w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all",
+              mozzConfirmed
+                ? "bg-emerald-500 border-emerald-500 text-white"
+                : "border-amber-400 bg-background hover:border-amber-500"
+            )}
+          >
+            {mozzConfirmed && <Check className="w-4 h-4" />}
+          </button>
+          <div className="flex-1 min-w-0">
+            <p className={cn(
+              "font-bold text-base",
+              mozzConfirmed && "line-through text-muted-foreground"
+            )}>
+              {mozzLoad.packs != null
+                ? `Load ${mozzLoad.packs} × ${fmtQty(mozzLoad.packWeight, mozzLoad.unit)} ${mozzLoad.name} to the building fridges`
+                : `Load ${fmtQty(mozzLoad.roundedQty, mozzLoad.unit)} ${mozzLoad.name} to the building fridges`
+              }
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Closing check · {fmtQty(mozzLoad.totalQty, mozzLoad.unit)} needed
+              {mozzLoad.packWeight > 0 && ` · rounded to ${fmtQty(mozzLoad.packWeight, mozzLoad.unit)} pack`}
+            </p>
+          </div>
+          {mozzConfirmed && (
+            <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
+          )}
         </div>
       )}
 
@@ -2740,7 +2812,7 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const [stockValues, setStockValues] = useState<Record<number, string>>({});
   const [savingStock, setSavingStock] = useState<Record<number, boolean>>({});
   const dirtyStockIds = useRef<Set<number>>(new Set());
-  const [selectedRecipeId, setSelectedRecipeId] = useState<number | null>(null);
+  const [selectedIngredientId, setSelectedIngredientId] = useState<number | null>(null);
   const [isOnBreak, setIsOnBreak] = useState(false);
   const [presenceData, setPresenceData] = useState<PrepPresenceData>({});
   const activeIngIdRef = useRef<number | null>(null);
@@ -2748,7 +2820,7 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const checkDate = nextPlan?.planDate ?? plan.planDate;
 
   useEffect(() => {
-    setSelectedRecipeId(null);
+    setSelectedIngredientId(null);
     setStockValues({});
     dirtyStockIds.current.clear();
   }, [targetPlanId]);
@@ -2839,27 +2911,35 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     return { allTinsDone, needsStockCheck, stockSaved, isFullyDone, totalTinCount, completedTinCount };
   };
 
-  // Build recipe groups from ingredient data
-  const recipeGroups = useMemo(() => {
-    const map = new Map<number, { recipeId: number; recipeName: string; ingredients: MainPrepIngredient[] }>();
+  // Build left-panel groups: recipe → list of {ingredient, qty for that recipe}
+  // An ingredient may appear in multiple recipe groups if shared across recipes.
+  const leftGroups = useMemo(() => {
+    const map = new Map<number, {
+      recipeId: number;
+      recipeName: string;
+      batchesTarget: number;
+      items: Array<{ ing: MainPrepIngredient; qtyForRecipe: number }>;
+    }>();
     for (const ing of ingredients) {
       for (const r of ing.recipes) {
-        if (!map.has(r.recipeId)) map.set(r.recipeId, { recipeId: r.recipeId, recipeName: r.recipeName, ingredients: [] });
-        map.get(r.recipeId)!.ingredients.push(ing);
+        if (!map.has(r.recipeId)) {
+          map.set(r.recipeId, { recipeId: r.recipeId, recipeName: r.recipeName, batchesTarget: r.batchesTarget, items: [] });
+        }
+        map.get(r.recipeId)!.items.push({ ing, qtyForRecipe: r.qtyForRecipe });
       }
     }
     return [...map.values()];
   }, [ingredients]);
 
-  // Auto-select first recipe with incomplete ingredients
+  // Auto-select first incomplete ingredient
   useEffect(() => {
-    if (recipeGroups.length === 0) return;
-    if (selectedRecipeId && recipeGroups.find(r => r.recipeId === selectedRecipeId)) return;
-    const firstIncomplete = recipeGroups.find(rg => rg.ingredients.some(ing => !ingredientDoneStatus(ing).isFullyDone));
-    setSelectedRecipeId((firstIncomplete ?? recipeGroups[0]).recipeId);
-  }, [recipeGroups]);
+    if (ingredients.length === 0) return;
+    if (selectedIngredientId && ingredients.find(i => i.ingredientId === selectedIngredientId)) return;
+    const firstIncomplete = ingredients.find(ing => !ingredientDoneStatus(ing).isFullyDone);
+    setSelectedIngredientId((firstIncomplete ?? ingredients[0]).ingredientId);
+  }, [ingredients]);
 
-  const selectedRecipe = recipeGroups.find(r => r.recipeId === selectedRecipeId) ?? null;
+  const selectedIngredient = ingredients.find(i => i.ingredientId === selectedIngredientId) ?? null;
 
   const toggleTin = async (ingredientId: number, tinNumber: number) => {
     if (isOnBreak) return;
@@ -2948,101 +3028,118 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
         </div>
       ) : (
         <div className="flex flex-col lg:flex-row gap-4">
-          {/* LEFT — Recipe list */}
-          <div className="lg:w-72 xl:w-80 flex-shrink-0">
+          {/* LEFT — Ingredients grouped by recipe (menu + sub-items layout) */}
+          <div className="lg:w-80 xl:w-96 flex-shrink-0">
             <div className="bg-card border border-border rounded-xl overflow-hidden">
               <div className="px-4 py-2.5 bg-secondary/30 border-b border-border">
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Recipes</p>
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Ingredients by Recipe</p>
               </div>
-              <div className="divide-y divide-border/50 max-h-[calc(100vh-280px)] overflow-y-auto">
-                {recipeGroups.map(rg => {
-                  const rgTotalTins = rg.ingredients.reduce((s, ing) => s + ing.totalTinCount, 0);
-                  const rgDoneTins = rg.ingredients.reduce((s, ing) =>
-                    s + Array.from({ length: ing.totalTinCount }, (_, i) => i + 1).filter(tn => isCompleted(ing.ingredientId, tn)).length, 0);
-                  const rgPct = rgTotalTins > 0 ? Math.round((rgDoneTins / rgTotalTins) * 100) : 0;
-                  const allDone = rgTotalTins > 0 && rgDoneTins >= rgTotalTins;
-                  const isSelected = rg.recipeId === selectedRecipeId;
-                  const hasPresence = rg.ingredients.some(ing => (presenceData[ing.ingredientId] ?? []).length > 0);
-                  return (
-                    <button
-                      key={rg.recipeId}
-                      onClick={() => setSelectedRecipeId(rg.recipeId)}
-                      className={cn(
-                        "w-full flex items-center gap-3 px-4 py-3 text-left transition-colors",
-                        isSelected
-                          ? "bg-emerald-500/10 border-l-4 border-l-emerald-500"
-                          : "hover:bg-secondary/40 border-l-4 border-l-transparent",
-                        allDone && !isSelected && "opacity-60"
-                      )}
-                    >
-                      {allDone ? (
-                        <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
-                      ) : (
-                        <div className="relative w-5 h-5 flex-shrink-0">
-                          <svg className="w-5 h-5 -rotate-90" viewBox="0 0 20 20">
-                            <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" strokeWidth="2" className="text-border" />
-                            {rgTotalTins > 0 && (
-                              <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" strokeWidth="2"
-                                className="text-emerald-500"
-                                strokeDasharray={`${(rgDoneTins / rgTotalTins) * 50.26} 50.26`}
-                              />
+              <div className="max-h-[calc(100vh-280px)] overflow-y-auto">
+                {leftGroups.map((group, gi) => (
+                  <div key={group.recipeId} className={cn(gi > 0 && "border-t border-border")}>
+                    {/* Recipe section header */}
+                    <div className="px-4 py-2 bg-emerald-50/60 dark:bg-emerald-950/20 flex items-center justify-between">
+                      <p className="text-xs font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300 truncate">
+                        {group.recipeName}
+                      </p>
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 ml-2 whitespace-nowrap">
+                        {group.batchesTarget} batch{group.batchesTarget !== 1 ? "es" : ""}
+                      </span>
+                    </div>
+                    {/* Ingredient rows for this recipe */}
+                    {group.items.map(({ ing, qtyForRecipe }) => {
+                      const status = ingredientDoneStatus(ing);
+                      const isSelected = ing.ingredientId === selectedIngredientId;
+                      const presence = presenceData[ing.ingredientId] ?? [];
+                      return (
+                        <button
+                          key={`${group.recipeId}-${ing.ingredientId}`}
+                          onClick={() => {
+                            setSelectedIngredientId(ing.ingredientId);
+                            activeIngIdRef.current = ing.ingredientId;
+                            postPresence(ing.ingredientId);
+                          }}
+                          className={cn(
+                            "w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors border-t border-border/30",
+                            isSelected
+                              ? "bg-emerald-500/10 border-l-4 border-l-emerald-500"
+                              : "hover:bg-secondary/40 border-l-4 border-l-transparent",
+                            status.isFullyDone && !isSelected && "opacity-60"
+                          )}
+                        >
+                          {/* Completion indicator */}
+                          <div className="flex-shrink-0">
+                            {status.isFullyDone ? (
+                              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                            ) : status.totalTinCount > 0 ? (
+                              <div className="relative w-4 h-4">
+                                <svg className="w-4 h-4 -rotate-90" viewBox="0 0 16 16">
+                                  <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="2" className="text-border" />
+                                  {status.completedTinCount > 0 && (
+                                    <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="2"
+                                      className="text-emerald-500"
+                                      strokeDasharray={`${(status.completedTinCount / status.totalTinCount) * 37.7} 37.7`}
+                                    />
+                                  )}
+                                </svg>
+                              </div>
+                            ) : (
+                              <div className="w-4 h-4 rounded-full border-2 border-muted-foreground/30" />
                             )}
-                          </svg>
-                        </div>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <p className={cn(
-                          "text-sm font-medium truncate",
-                          isSelected && "font-semibold",
-                          allDone && "line-through text-muted-foreground"
-                        )}>
-                          {rg.recipeName}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {rg.ingredients.length} ingredient{rg.ingredients.length !== 1 ? "s" : ""} · {rgDoneTins}/{rgTotalTins} tins
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-1.5 flex-shrink-0">
-                        {hasPresence && (
-                          <span className="text-xs text-blue-500">👁</span>
-                        )}
-                        <span className={cn(
-                          "text-xs font-semibold tabular-nums",
-                          allDone ? "text-emerald-600" : isSelected ? "text-emerald-700" : "text-muted-foreground"
-                        )}>
-                          {rgPct}%
-                        </span>
-                      </div>
-                    </button>
-                  );
-                })}
+                          </div>
+                          {/* Name + qty */}
+                          <div className="min-w-0 flex-1">
+                            <p className={cn(
+                              "text-sm font-medium truncate",
+                              isSelected && "font-semibold",
+                              status.isFullyDone && "line-through text-muted-foreground"
+                            )}>
+                              {ing.ingredientName}
+                              {presence.length > 0 && <span className="ml-1 text-[10px] text-blue-500">👁</span>}
+                            </p>
+                            <p className="text-xs text-muted-foreground tabular-nums">
+                              {fmtQty(qtyForRecipe, ing.unit)}
+                              {ing.recipes.length > 1 && <span className="ml-1 text-amber-500">shared</span>}
+                            </p>
+                          </div>
+                          {/* Tins fraction */}
+                          {status.totalTinCount > 0 && (
+                            <span className={cn(
+                              "text-xs tabular-nums flex-shrink-0",
+                              status.isFullyDone ? "text-emerald-600 font-semibold" : "text-muted-foreground"
+                            )}>
+                              {status.completedTinCount}/{status.totalTinCount}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
               </div>
             </div>
           </div>
 
-          {/* RIGHT — Ingredients for selected recipe */}
+          {/* RIGHT — Detail card for selected ingredient */}
           <div className="flex-1 min-w-0">
-            {selectedRecipe ? (
-              <div className="space-y-3">
-                {selectedRecipe.ingredients.map(ing => {
-                  const status = ingredientDoneStatus(ing);
-                  const presence = presenceData[ing.ingredientId] ?? [];
-                  const isShared = ing.recipes.length > 1;
-                  const otherRecipes = ing.recipes.filter(r => r.recipeId !== selectedRecipeId);
-                  const tins = Array.from({ length: ing.totalTinCount }, (_, i) => i + 1);
-                  const qtyPerTin = ing.totalTinCount > 0 ? ing.totalQty / ing.totalTinCount : ing.totalQty;
-                  return (
-                    <div
-                      key={ing.ingredientId}
-                      className={cn(
-                        "bg-card border-2 rounded-2xl p-5 transition-colors",
-                        status.isFullyDone
-                          ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/20 dark:bg-emerald-950/10"
-                          : status.needsStockCheck
-                            ? "border-blue-300 dark:border-blue-700"
-                            : "border-border"
-                      )}
-                    >
+            {selectedIngredient ? (() => {
+              const ing = selectedIngredient;
+              const status = ingredientDoneStatus(ing);
+              const presence = presenceData[ing.ingredientId] ?? [];
+              const isShared = ing.recipes.length > 1;
+              const tins = Array.from({ length: ing.totalTinCount }, (_, i) => i + 1);
+              const qtyPerTin = ing.totalTinCount > 0 ? ing.totalQty / ing.totalTinCount : ing.totalQty;
+              return (
+              <div
+                className={cn(
+                  "bg-card border-2 rounded-2xl p-5 transition-colors",
+                  status.isFullyDone
+                    ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/20 dark:bg-emerald-950/10"
+                    : status.needsStockCheck
+                      ? "border-blue-300 dark:border-blue-700"
+                      : "border-border"
+                )}
+              >
                       {/* Header */}
                       <div className="flex items-start justify-between mb-3">
                         <div className="min-w-0 flex-1">
@@ -3063,10 +3160,10 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                             <span className="font-semibold text-foreground">{fmtQty(ing.totalQty, ing.unit)}</span>
                             {" total · "}{status.completedTinCount}/{status.totalTinCount} tins done
                           </p>
-                          {isShared && otherRecipes.length > 0 && (
+                          {isShared && (
                             <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
                               <span className="font-medium">Shared —</span>
-                              {" also in: "}{otherRecipes.map(r => r.recipeName).join(", ")}
+                              {" in: "}{ing.recipes.map(r => r.recipeName).join(", ")}
                             </p>
                           )}
                           {presence.length > 0 && (
@@ -3177,14 +3274,12 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                           )}
                         </div>
                       )}
-                    </div>
-                  );
-                })}
               </div>
-            ) : (
+              );
+            })() : (
               <div className="bg-card border-2 border-dashed border-border rounded-2xl p-12 flex flex-col items-center justify-center text-muted-foreground">
                 <ClipboardList className="w-12 h-12 mb-3 opacity-40" />
-                <p className="font-medium">Select a recipe to view its ingredients</p>
+                <p className="font-medium">Select an ingredient to view its tins</p>
               </div>
             )}
           </div>
@@ -3196,11 +3291,15 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   );
 }
 
+// (PrepVegStation removed — vegetable ingredients now appear in Main Prep)
+
 // ──────────────────────────────────────────────────────────────────────────────
-function PrepVegStation({ plan }: { plan: ProductionPlanDetail }) {
+// Bases & Sauces Prep Station — kept as separate sub-station
+// ──────────────────────────────────────────────────────────────────────────────
+function PrepVegStation_UNUSED({ plan }: { plan: ProductionPlanDetail }) {
   const [mode, setMode] = useState<"fullscreen" | "overview">("fullscreen");
   const [isOnBreak, setIsOnBreak] = useState(false);
-  const { recipes, isLoading, nextPlan } = usePrepByRecipe("prep_veg", plan.id, plan.planDate);
+  const { recipes, isLoading, nextPlan } = usePrepByRecipe("prep_veg" as never, plan.id, plan.planDate);
 
   // Build full-screen items: recipe header → each veg ingredient for that recipe
   const fullScreenItems: PrepFullScreenItem[] = recipes.flatMap(recipe =>
@@ -3288,7 +3387,7 @@ function PrepVegStation({ plan }: { plan: ProductionPlanDetail }) {
         </div>
       )}
 
-      <BreakTracker planId={plan.id} stationType="prep_veg" onBreakActiveChange={setIsOnBreak} />
+      <BreakTracker planId={plan.id} stationType={"prep_veg" as never} onBreakActiveChange={setIsOnBreak} />
     </div>
   );
 }
@@ -6443,7 +6542,6 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
 // ──────────────────────────────────────────────────────────────────────────────
 const PREP_SUB_STATIONS = [
   { key: "main_prep",  label: "Main Prep",      short: "Main",   icon: ClipboardList, activeClass: "bg-emerald-500 dark:bg-emerald-600 text-white", inactiveClass: "text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40" },
-  { key: "prep_veg",   label: "Veg Prep",        short: "Veg",    icon: Salad,         activeClass: "bg-green-500 dark:bg-green-600 text-white",    inactiveClass: "text-green-700 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-950/40" },
   { key: "prep_bases", label: "Bases & Sauces",  short: "Bases",  icon: Layers,        activeClass: "bg-yellow-500 dark:bg-yellow-600 text-white",  inactiveClass: "text-yellow-700 dark:text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-950/40" },
   { key: "prep_meat",  label: "Raw Meat",        short: "Meat",   icon: Beef,          activeClass: "bg-rose-500 dark:bg-rose-600 text-white",      inactiveClass: "text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40" },
 ] as const;
@@ -6623,8 +6721,6 @@ export default function StationPage() {
         return <PrepHub planId={planId} planDate={plan.planDate} />;
       case "main_prep":
         return <MainPrepStation plan={plan} />;
-      case "prep_veg":
-        return <PrepVegStation plan={plan} />;
       case "prep_bases":
         return <PrepBasesStation plan={plan} />;
       case "prep_meat":
