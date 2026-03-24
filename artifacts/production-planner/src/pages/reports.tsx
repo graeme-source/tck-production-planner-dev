@@ -196,7 +196,7 @@ export default function Reports() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Reports"
+        title="Analytics"
         description="Production KPIs, break and lunch tracking analytics."
       />
 

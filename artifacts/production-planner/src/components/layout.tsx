@@ -37,7 +37,7 @@ const navItems: NavItem[] = [
   { name: "Production Plans", href: "/plans", icon: CalendarDays },
   { name: "Suppliers", href: "/suppliers", icon: Building2 },
   { name: "Dispatches", href: "/dispatches", icon: Truck },
-  { name: "Reports", href: "/reports", icon: BarChart2 },
+  { name: "Analytics", href: "/reports", icon: BarChart2 },
 ];
 
 const inventorySubItems: NavItem[] = [
