@@ -1887,6 +1887,8 @@ function IngredientStorageAssignmentsSection() {
 
   const addMutation = useMutation({
     mutationFn: async (data: { ingredientId: number; locationId: number; rackLabel: string | null; shelfLabel: string | null }) => {
+      const existing = assignments?.find(a => a.ingredientId === data.ingredientId && a.locationId === data.locationId);
+      if (existing) throw new Error("This ingredient is already assigned to this location");
       const res = await fetch(`${BASE}/api/storage-locations/ingredient-assignments`, {
         method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
         body: JSON.stringify(data),
