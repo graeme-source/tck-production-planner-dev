@@ -24,6 +24,8 @@ import fulfilmentRouter from "./fulfilment";
 import temperatureRecordsRouter from "./temperature-records";
 import ovenEventsRouter from "./oven-events";
 import invitesRouter from "./invites";
+import storageLocationsRouter from "./storage-locations";
+import stockTransfersRouter from "./stock-transfers";
 
 const router: IRouter = Router();
 
@@ -78,5 +80,7 @@ router.use("/reports", reportsRouter);
 router.use("/fulfilment", fulfilmentRouter);
 router.use("/temperature-records", temperatureRecordsRouter);
 router.use("/oven-events", ovenEventsRouter);
+router.use("/storage-locations", storageLocationsRouter);
+router.use("/stock-transfers", stockTransfersRouter);
 
 export default router;

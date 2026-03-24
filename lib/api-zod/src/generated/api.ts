@@ -108,6 +108,8 @@ export const CreateSupplierBody = zod.object({
   website: zod.string().nullish(),
   address: zod.string().nullish(),
   notes: zod.string().nullish(),
+  orderFrequency: zod.enum(["daily", "weekly"]).optional(),
+  orderDays: zod.string().nullish(),
 });
 
 /**
@@ -126,6 +128,8 @@ export const GetSupplierResponse = zod.object({
   website: zod.string().nullish(),
   address: zod.string().nullish(),
   notes: zod.string().nullish(),
+  orderFrequency: zod.string(),
+  orderDays: zod.string().nullish(),
   createdAt: zod.string(),
 });
 
@@ -144,6 +148,8 @@ export const UpdateSupplierBody = zod.object({
   website: zod.string().nullish(),
   address: zod.string().nullish(),
   notes: zod.string().nullish(),
+  orderFrequency: zod.enum(["daily", "weekly"]).optional(),
+  orderDays: zod.string().nullish(),
 });
 
 export const UpdateSupplierResponse = zod.object({
@@ -155,6 +161,8 @@ export const UpdateSupplierResponse = zod.object({
   website: zod.string().nullish(),
   address: zod.string().nullish(),
   notes: zod.string().nullish(),
+  orderFrequency: zod.string(),
+  orderDays: zod.string().nullish(),
   createdAt: zod.string(),
 });
 
@@ -235,6 +243,8 @@ export const CreateIngredientBody = zod.object({
   stockCheckEnabled: zod.boolean().optional(),
   stockCheckFrequency: zod.enum(["daily", "weekly"]).optional(),
   stockCheckDay: zod.string().nullish(),
+  surplusPercent: zod.number().min(0).max(100).optional(),
+  shelfLifeDays: zod.number().int().positive().nullish(),
 });
 
 /**
@@ -276,6 +286,8 @@ export const GetIngredientResponse = zod.object({
   stockCheckEnabled: zod.boolean(),
   stockCheckFrequency: zod.string(),
   stockCheckDay: zod.string().nullish(),
+  surplusPercent: zod.number(),
+  shelfLifeDays: zod.number().int().nullish(),
   createdAt: zod.string(),
 });
 
@@ -307,6 +319,8 @@ export const UpdateIngredientBody = zod.object({
   stockCheckEnabled: zod.boolean().optional(),
   stockCheckFrequency: zod.enum(["daily", "weekly"]).optional(),
   stockCheckDay: zod.string().nullish(),
+  surplusPercent: zod.number().min(0).max(100).optional(),
+  shelfLifeDays: zod.number().int().positive().nullish(),
 });
 
 export const UpdateIngredientResponse = zod.object({
@@ -341,6 +355,8 @@ export const UpdateIngredientResponse = zod.object({
   stockCheckEnabled: zod.boolean(),
   stockCheckFrequency: zod.string(),
   stockCheckDay: zod.string().nullish(),
+  surplusPercent: zod.number(),
+  shelfLifeDays: zod.number().int().nullish(),
   createdAt: zod.string(),
 });
 

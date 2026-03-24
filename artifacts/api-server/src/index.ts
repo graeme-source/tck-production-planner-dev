@@ -17,6 +17,24 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
+async function seedStorageLocations() {
+  const SYSTEM_LOCATIONS = [
+    { name: "Prep Fridge", zone: "fridge" },
+    { name: "Raw Meat Fridge", zone: "fridge" },
+    { name: "Raw Freezer", zone: "freezer" },
+    { name: "Production Fridge", zone: "fridge" },
+    { name: "Production Freezer", zone: "freezer" },
+    { name: "Dry Store", zone: "ambient" },
+  ];
+  for (const loc of SYSTEM_LOCATIONS) {
+    await db.execute(sql`
+      INSERT INTO storage_locations (name, zone, is_system)
+      SELECT ${loc.name}, ${loc.zone}, TRUE
+      WHERE NOT EXISTS (SELECT 1 FROM storage_locations WHERE name = ${loc.name})
+    `);
+  }
+}
+
 async function runStartupMigrations() {
   try {
     await db.execute(sql`
@@ -94,6 +112,140 @@ async function runStartupMigrations() {
     await db.execute(sql`
       ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS extra_packs_built INTEGER NOT NULL DEFAULT 0
     `);
+    await db.execute(sql`
+      ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS surplus_percent NUMERIC(5,2) NOT NULL DEFAULT 10
+    `);
+    await db.execute(sql`
+      ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS shelf_life_days INTEGER
+    `);
+    await db.execute(sql`
+      ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS order_frequency TEXT NOT NULL DEFAULT 'daily'
+    `);
+    await db.execute(sql`
+      ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS order_days TEXT
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS storage_locations (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        zone TEXT NOT NULL DEFAULT 'fridge',
+        is_system BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS storage_racks (
+        id SERIAL PRIMARY KEY,
+        location_id INTEGER NOT NULL REFERENCES storage_locations(id) ON DELETE CASCADE,
+        label TEXT NOT NULL
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS ingredient_storage_locations (
+        id SERIAL PRIMARY KEY,
+        ingredient_id INTEGER NOT NULL REFERENCES ingredients(id) ON DELETE CASCADE,
+        location_id INTEGER NOT NULL REFERENCES storage_locations(id) ON DELETE CASCADE,
+        rack_label TEXT,
+        shelf_label TEXT
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS stock_transfers (
+        id SERIAL PRIMARY KEY,
+        ingredient_id INTEGER REFERENCES ingredients(id) ON DELETE SET NULL,
+        from_location TEXT NOT NULL,
+        to_location TEXT NOT NULL,
+        quantity NUMERIC(10,4) NOT NULL,
+        unit TEXT NOT NULL,
+        transferred_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        notes TEXT
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS purchase_orders (
+        id SERIAL PRIMARY KEY,
+        supplier_id INTEGER NOT NULL REFERENCES suppliers(id) ON DELETE RESTRICT,
+        plan_id INTEGER REFERENCES production_plans(id) ON DELETE SET NULL,
+        status TEXT NOT NULL DEFAULT 'draft',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        placed_at TIMESTAMP,
+        expected_delivery_date DATE,
+        notes TEXT,
+        placed_by_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS purchase_order_lines (
+        id SERIAL PRIMARY KEY,
+        purchase_order_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+        ingredient_id INTEGER NOT NULL REFERENCES ingredients(id) ON DELETE RESTRICT,
+        quantity_required NUMERIC(10,4) NOT NULL DEFAULT 0,
+        quantity_ordered NUMERIC(10,4) NOT NULL DEFAULT 0,
+        quantity_received NUMERIC(10,4) NOT NULL DEFAULT 0,
+        unit TEXT NOT NULL,
+        unit_price NUMERIC(10,4),
+        checked_off BOOLEAN NOT NULL DEFAULT FALSE,
+        notes TEXT
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS delivery_records (
+        id SERIAL PRIMARY KEY,
+        purchase_order_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL,
+        supplier_id INTEGER NOT NULL REFERENCES suppliers(id) ON DELETE RESTRICT,
+        received_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        received_by_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        chilled_temp_c NUMERIC(5,1),
+        frozen_temp_c NUMERIC(5,1),
+        invoice_filed BOOLEAN NOT NULL DEFAULT FALSE,
+        all_put_away BOOLEAN NOT NULL DEFAULT FALSE,
+        kanbans_replaced BOOLEAN NOT NULL DEFAULT FALSE,
+        notes TEXT
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS delivery_check_configs (
+        id SERIAL PRIMARY KEY,
+        supplier_id INTEGER NOT NULL REFERENCES suppliers(id) ON DELETE CASCADE,
+        label TEXT NOT NULL,
+        is_required BOOLEAN NOT NULL DEFAULT TRUE,
+        sort_order INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS delivery_check_results (
+        id SERIAL PRIMARY KEY,
+        delivery_record_id INTEGER NOT NULL REFERENCES delivery_records(id) ON DELETE CASCADE,
+        check_config_id INTEGER NOT NULL REFERENCES delivery_check_configs(id) ON DELETE CASCADE,
+        passed BOOLEAN NOT NULL DEFAULT FALSE,
+        notes TEXT
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS kanban_items (
+        id SERIAL PRIMARY KEY,
+        ingredient_id INTEGER NOT NULL REFERENCES ingredients(id) ON DELETE CASCADE,
+        supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        pulled_at TIMESTAMP,
+        pulled_by_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        order_day_target DATE,
+        notes TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS dpt_ingredient_requirements (
+        id SERIAL PRIMARY KEY,
+        ingredient_id INTEGER NOT NULL REFERENCES ingredients(id) ON DELETE CASCADE,
+        daily_qty_raw NUMERIC(10,4) NOT NULL DEFAULT 0,
+        daily_qty_cooked NUMERIC(10,4) NOT NULL DEFAULT 0,
+        unit TEXT NOT NULL,
+        calculated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await seedStorageLocations();
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

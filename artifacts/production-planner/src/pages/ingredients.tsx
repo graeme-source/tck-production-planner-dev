@@ -419,6 +419,11 @@ const schema = z.object({
   stockCheckEnabled: z.boolean().optional(),
   stockCheckFrequency: z.enum(["daily", "weekly"]).optional(),
   stockCheckDay: z.string().optional(),
+  surplusPercent: z.coerce.number().min(0).max(100).optional(),
+  shelfLifeDays: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().int().positive().nullable().optional()
+  ),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -426,7 +431,7 @@ type FormValues = z.infer<typeof schema>;
 const emptyDefaults: FormValues = {
   name: "", unit: "kg", packWeight: 0, costPerPack: 0,
   brand: "", supplierPartNumber: "", supplierId: 0, secondarySupplierId: 0,
-  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null, estimatedCookTimeMin: null, ovenTempC: null, steamPct: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "",
+  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null, estimatedCookTimeMin: null, ovenTempC: null, steamPct: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "", surplusPercent: 10, shelfLifeDays: null,
 };
 
 export default function Ingredients() {
@@ -502,6 +507,8 @@ export default function Ingredients() {
       stockCheckEnabled: item.stockCheckEnabled ?? false,
       stockCheckFrequency: (item.stockCheckFrequency as "daily" | "weekly") ?? "daily",
       stockCheckDay: item.stockCheckDay ?? "",
+      surplusPercent: (item as Record<string, unknown>).surplusPercent != null ? Number((item as Record<string, unknown>).surplusPercent) : 10,
+      shelfLifeDays: (item as Record<string, unknown>).shelfLifeDays != null ? Number((item as Record<string, unknown>).shelfLifeDays) : null,
     });
     setIsDialogOpen(true);
   };
@@ -527,6 +534,8 @@ export default function Ingredients() {
     stockCheckEnabled: data.stockCheckEnabled ?? false,
     stockCheckFrequency: data.stockCheckFrequency ?? "daily",
     stockCheckDay: data.stockCheckFrequency === "weekly" ? (data.stockCheckDay || null) : null,
+    surplusPercent: data.surplusPercent ?? 10,
+    shelfLifeDays: data.shelfLifeDays ?? null,
   });
 
   const onSubmit = (data: FormValues) => {
@@ -853,7 +862,48 @@ export default function Ingredients() {
               </div>
             )}
 
-            {/* Supplier + Secondary Supplier */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium mb-1 block">
+                  Surplus %
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">(ordering buffer)</span>
+                </label>
+                <div className="relative max-w-[160px]">
+                  <input
+                    type="number"
+                    step="1"
+                    min="0"
+                    max="100"
+                    {...register("surplusPercent")}
+                    className="w-full px-3 pr-10 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    placeholder="10"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">%</span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">Extra % added when calculating order quantities.</p>
+                {errors.surplusPercent && <span className="text-destructive text-xs">{String(errors.surplusPercent.message)}</span>}
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">
+                  Shelf Life
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">(days)</span>
+                </label>
+                <div className="relative max-w-[160px]">
+                  <input
+                    type="number"
+                    step="1"
+                    min="1"
+                    {...register("shelfLifeDays")}
+                    className="w-full px-3 pr-14 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    placeholder="e.g. 5"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">days</span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">Used for use-by date calculation on deliveries.</p>
+                {errors.shelfLifeDays && <span className="text-destructive text-xs">{String(errors.shelfLifeDays.message)}</span>}
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-sm font-medium mb-1 block">Supplier</label>

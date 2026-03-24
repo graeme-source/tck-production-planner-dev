@@ -2,11 +2,14 @@ import { useState } from "react";
 import { useListSuppliers } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
+import { cn } from "@/lib/utils";
 import { Plus, Trash2, Edit2, Loader2, Building2, Mail, Phone, Globe, MapPin, Search } from "lucide-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+
+const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
 
 const schema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -16,6 +19,8 @@ const schema = z.object({
   website: z.string().optional(),
   address: z.string().optional(),
   notes: z.string().optional(),
+  orderFrequency: z.enum(["daily", "weekly"]).optional(),
+  orderDays: z.string().optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -29,11 +34,13 @@ type SupplierItem = {
   website?: string | null;
   address?: string | null;
   notes?: string | null;
+  orderFrequency?: string;
+  orderDays?: string | null;
   createdAt: string;
 };
 
 const defaultValues: FormValues = {
-  name: "", contactName: "", email: "", phone: "", website: "", address: "", notes: "",
+  name: "", contactName: "", email: "", phone: "", website: "", address: "", notes: "", orderFrequency: "daily", orderDays: "",
 };
 
 function SupplierForm({
@@ -47,10 +54,21 @@ function SupplierForm({
   isPending: boolean;
   isEdit: boolean;
 }) {
-  const { register, handleSubmit, formState: { errors } } = useForm<FormValues>({
+  const { register, handleSubmit, formState: { errors }, watch, setValue } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: values,
   });
+
+  const watchedFrequency = watch("orderFrequency");
+  const watchedOrderDays = watch("orderDays") ?? "";
+  const selectedDays = watchedOrderDays ? watchedOrderDays.split(",").filter(Boolean) : [];
+
+  const toggleDay = (day: string) => {
+    const next = selectedDays.includes(day)
+      ? selectedDays.filter(d => d !== day)
+      : [...selectedDays, day];
+    setValue("orderDays", next.join(","));
+  };
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 mt-4">
@@ -113,6 +131,41 @@ function SupplierForm({
       </div>
 
       <div>
+        <label className="text-sm font-medium mb-1 block">Order Frequency</label>
+        <select
+          {...register("orderFrequency")}
+          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+        >
+          <option value="daily">Daily — can order any day</option>
+          <option value="weekly">Weekly — specific order days only</option>
+        </select>
+      </div>
+
+      {watchedFrequency === "weekly" && (
+        <div>
+          <label className="text-sm font-medium mb-1 block">Order Days</label>
+          <div className="flex flex-wrap gap-2">
+            {WEEKDAYS.map(day => (
+              <button
+                key={day}
+                type="button"
+                onClick={() => toggleDay(day)}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors",
+                  selectedDays.includes(day)
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-background border-border text-muted-foreground hover:border-primary/50"
+                )}
+              >
+                {day.slice(0, 3)}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">Select which days orders can be placed with this supplier.</p>
+        </div>
+      )}
+
+      <div>
         <label className="text-sm font-medium mb-1 block">Notes</label>
         <textarea
           {...register("notes")}
@@ -173,7 +226,7 @@ export default function Suppliers() {
             isPending={createSupplier.isPending}
             onSubmit={(data) =>
               createSupplier.mutate(
-                { data: { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined } },
+                { data: { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null } },
                 { onSuccess: () => setIsAddOpen(false) }
               )
             }
@@ -198,12 +251,14 @@ export default function Suppliers() {
                 website: editingItem.website ?? "",
                 address: editingItem.address ?? "",
                 notes: editingItem.notes ?? "",
+                orderFrequency: (editingItem.orderFrequency as "daily" | "weekly") ?? "daily",
+                orderDays: editingItem.orderDays ?? "",
               }}
               isEdit
               isPending={updateSupplier.isPending}
               onSubmit={(data) =>
                 updateSupplier.mutate(
-                  { id: editingItem.id, data: { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined } },
+                  { id: editingItem.id, data: { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null } },
                   { onSuccess: () => setEditingItem(null) }
                 )
               }

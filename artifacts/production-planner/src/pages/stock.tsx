@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { useListStockEntries, useListIngredients, useListRecipes } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
-import { PackageSearch, Plus, Trash2, Pencil, Refrigerator, Snowflake, ThermometerSun, Warehouse, X, ChevronRight, Check, Save } from "lucide-react";
+import { PackageSearch, Plus, Trash2, Pencil, Refrigerator, Snowflake, ThermometerSun, Warehouse, X, ChevronRight, Check, Save, Beef, ArrowRightLeft, Loader2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -10,6 +10,9 @@ import { format } from "date-fns";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const LOCATIONS = [
   {
@@ -45,6 +48,30 @@ const LOCATIONS = [
     borderColor: "border-green-500/30",
     iconColor: "text-green-500",
     badgeColor: "bg-green-500/10 text-green-600",
+    finishedProductOnly: false,
+    defaultUnit: "kg",
+  },
+  {
+    key: "raw_meat_fridge",
+    label: "Raw Meat Fridge",
+    subtitle: "Raw meats only",
+    icon: Beef,
+    color: "from-red-500/20 to-red-600/10",
+    borderColor: "border-red-500/30",
+    iconColor: "text-red-500",
+    badgeColor: "bg-red-500/10 text-red-600",
+    finishedProductOnly: false,
+    defaultUnit: "kg",
+  },
+  {
+    key: "raw_freezer",
+    label: "Raw Freezer",
+    subtitle: "Frozen raw materials",
+    icon: Snowflake,
+    color: "from-indigo-500/20 to-indigo-600/10",
+    borderColor: "border-indigo-500/30",
+    iconColor: "text-indigo-500",
+    badgeColor: "bg-indigo-500/10 text-indigo-600",
     finishedProductOnly: false,
     defaultUnit: "kg",
   },
@@ -95,6 +122,32 @@ export default function Stock() {
   const [isEditing, setIsEditing] = useState(false);
   const [editRows, setEditRows] = useState<Record<string, EditRow>>({});
   const [isSaving, setIsSaving] = useState(false);
+  const [isTransferOpen, setIsTransferOpen] = useState(false);
+  const [transferFrom, setTransferFrom] = useState<string>("production_fridge");
+  const [transferTo, setTransferTo] = useState<string>("prep_fridge");
+  const [transferIngredientId, setTransferIngredientId] = useState<number | null>(null);
+  const [transferQty, setTransferQty] = useState<number>(0);
+  const [transferUnit, setTransferUnit] = useState<string>("kg");
+  const [transferNotes, setTransferNotes] = useState<string>("");
+  const queryClient = useQueryClient();
+
+  const transferMutation = useMutation({
+    mutationFn: async (data: { ingredientId: number | null; fromLocation: string; toLocation: string; quantity: number; unit: string; notes: string | null }) => {
+      const res = await fetch(`${BASE}/api/stock-transfers`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "Transfer failed");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/stock-entries"] });
+      setIsTransferOpen(false);
+      setTransferQty(0);
+      setTransferNotes("");
+      setTransferIngredientId(null);
+    },
+  });
 
   const locConfig = useMemo(() => LOCATIONS.find(l => l.key === dialogLocation), [dialogLocation]);
   const isFinishedProductOnly = locConfig?.finishedProductOnly ?? false;
@@ -238,6 +291,16 @@ export default function Stock() {
       <PageHeader
         title="Stock & Inventory"
         description="Visual map of storage locations. Click a location to view and manage its contents."
+        action={
+          canEdit ? (
+            <button
+              onClick={() => setIsTransferOpen(true)}
+              className="px-4 py-2.5 border border-border rounded-xl font-medium flex items-center gap-2 hover:bg-secondary/50 transition-colors text-sm"
+            >
+              <ArrowRightLeft className="w-4 h-4" /> Transfer Stock
+            </button>
+          ) : undefined
+        }
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
@@ -289,12 +352,25 @@ export default function Stock() {
             </div>
             <div className="flex items-center gap-2">
               {canEdit && !isEditing && latestItems.length > 0 && (
-                <button
-                  onClick={startEditing}
-                  className="px-3 py-1.5 bg-secondary text-foreground border border-border rounded-lg text-xs font-medium flex items-center gap-1.5 hover:bg-secondary/80 transition-colors"
-                >
-                  <Pencil className="w-3.5 h-3.5" /> Edit Stock
-                </button>
+                <>
+                  <button
+                    onClick={() => {
+                      setTransferFrom(selectedLocation!);
+                      const otherLoc = LOCATIONS.find(l => l.key !== selectedLocation);
+                      if (otherLoc) setTransferTo(otherLoc.key);
+                      setIsTransferOpen(true);
+                    }}
+                    className="px-3 py-1.5 bg-secondary text-foreground border border-border rounded-lg text-xs font-medium flex items-center gap-1.5 hover:bg-secondary/80 transition-colors"
+                  >
+                    <ArrowRightLeft className="w-3.5 h-3.5" /> Transfer
+                  </button>
+                  <button
+                    onClick={startEditing}
+                    className="px-3 py-1.5 bg-secondary text-foreground border border-border rounded-lg text-xs font-medium flex items-center gap-1.5 hover:bg-secondary/80 transition-colors"
+                  >
+                    <Pencil className="w-3.5 h-3.5" /> Edit Stock
+                  </button>
+                </>
               )}
               {canEdit && isEditing && (
                 <>
@@ -566,6 +642,101 @@ export default function Stock() {
               Save Record
             </button>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isTransferOpen} onOpenChange={setIsTransferOpen}>
+        <DialogContent className="sm:max-w-[480px] bg-card border-border rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="font-display text-xl flex items-center gap-2">
+              <ArrowRightLeft className="w-5 h-5 text-primary" /> Transfer Stock
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium mb-1 block">From</label>
+                <select
+                  value={transferFrom}
+                  onChange={e => setTransferFrom(e.target.value)}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                >
+                  {LOCATIONS.map(l => <option key={l.key} value={l.key}>{l.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">To</label>
+                <select
+                  value={transferTo}
+                  onChange={e => setTransferTo(e.target.value)}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                >
+                  {LOCATIONS.filter(l => l.key !== transferFrom).map(l => <option key={l.key} value={l.key}>{l.label}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium mb-1 block">Ingredient (optional)</label>
+              <select
+                value={transferIngredientId ?? ""}
+                onChange={e => setTransferIngredientId(e.target.value ? Number(e.target.value) : null)}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                <option value="">— General transfer —</option>
+                {ingredients?.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium mb-1 block">Quantity</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={transferQty}
+                  onChange={e => setTransferQty(Number(e.target.value))}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Unit</label>
+                <input
+                  value={transferUnit}
+                  onChange={e => setTransferUnit(e.target.value)}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  placeholder="kg"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium mb-1 block">Notes (optional)</label>
+              <input
+                value={transferNotes}
+                onChange={e => setTransferNotes(e.target.value)}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                placeholder="e.g. Moving to prep for tomorrow"
+              />
+            </div>
+
+            <button
+              onClick={() => transferMutation.mutate({
+                ingredientId: transferIngredientId,
+                fromLocation: transferFrom,
+                toLocation: transferTo,
+                quantity: transferQty,
+                unit: transferUnit,
+                notes: transferNotes || null,
+              })}
+              disabled={transferMutation.isPending || transferQty <= 0 || !transferUnit || transferFrom === transferTo}
+              className="w-full py-3 bg-primary text-primary-foreground rounded-xl font-semibold mt-2 disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {transferMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+              {transferMutation.isPending ? "Transferring..." : "Record Transfer"}
+            </button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

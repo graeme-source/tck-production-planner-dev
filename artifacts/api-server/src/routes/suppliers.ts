@@ -16,8 +16,8 @@ router.get("/", async (_req, res) => {
 });
 
 router.post("/", validate(CreateSupplierBody), async (req, res) => {
-  const { name, contactName, email, phone, website, address, notes } = req.body;
-  const [row] = await db.insert(suppliersTable).values({ name, contactName, email, phone, website, address, notes }).returning();
+  const { name, contactName, email, phone, website, address, notes, orderFrequency, orderDays } = req.body;
+  const [row] = await db.insert(suppliersTable).values({ name, contactName, email, phone, website, address, notes, orderFrequency: orderFrequency ?? "daily", orderDays: orderDays || null }).returning();
   res.status(201).json(mapRow(row));
 });
 
@@ -30,8 +30,8 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateSupplierBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, contactName, email, phone, website, address, notes } = req.body;
-  const [row] = await db.update(suppliersTable).set({ name, contactName, email, phone, website, address, notes }).where(eq(suppliersTable.id, id)).returning();
+  const { name, contactName, email, phone, website, address, notes, orderFrequency, orderDays } = req.body;
+  const [row] = await db.update(suppliersTable).set({ name, contactName, email, phone, website, address, notes, ...(orderFrequency !== undefined ? { orderFrequency } : {}), orderDays: orderDays || null }).where(eq(suppliersTable.id, id)).returning();
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   res.json(mapRow(row));
 });

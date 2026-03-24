@@ -9,14 +9,16 @@ import { PageHeader } from "@/components/page-header";
 import {
   Plus, Trash2, Edit2, Loader2, Users, ShieldCheck, Eye, Wrench,
   CheckCircle2, XCircle, KeyRound, Package, ChevronDown, ChevronUp,
-  Lock, Timer, BarChart2, Coffee, Truck, Mail,
+  Lock, Timer, BarChart2, Coffee, Truck, Mail, Warehouse,
 } from "lucide-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { upsertDptSettingByRecipe, updateTimingStandard, getListDptSettingsQueryKey, getListTimingStandardsQueryKey } from "@workspace/api-client-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 type Role = "admin" | "manager" | "viewer";
 
@@ -507,6 +509,9 @@ export default function Settings() {
 
       {/* Category Defaults Section */}
       <CategoryDefaultsSection />
+
+      {/* Storage Locations — admin only */}
+      {user?.role === "admin" && <StorageLocationsSection />}
 
       {/* DPT Settings & Timing Standards — admin only */}
       {user?.role === "admin" && <DptSettingsSection />}
@@ -1319,8 +1324,6 @@ function BreakDefaultsSection() {
   );
 }
 
-const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
-
 function ApcServiceCodesSection() {
   const [codes, setCodes] = useState({
     smallWeekday: "",
@@ -1672,6 +1675,178 @@ function AccessControlSection() {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+type StorageLocationRow = {
+  id: number;
+  name: string;
+  zone: string;
+  isSystem: boolean;
+  createdAt: string;
+  racks: { id: number; locationId: number; label: string }[];
+};
+
+const ZONE_LABELS: Record<string, string> = { fridge: "Fridge", freezer: "Freezer", ambient: "Ambient / Dry" };
+const ZONE_COLORS: Record<string, string> = { fridge: "bg-blue-50 text-blue-700", freezer: "bg-indigo-50 text-indigo-700", ambient: "bg-amber-50 text-amber-700" };
+
+function StorageLocationsSection() {
+  const queryClient = useQueryClient();
+  const [addName, setAddName] = useState("");
+  const [addZone, setAddZone] = useState("fridge");
+  const [rackInputs, setRackInputs] = useState<Record<number, string>>({});
+
+  const { data: locations, isLoading } = useQuery<StorageLocationRow[]>({
+    queryKey: ["/api/storage-locations"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/storage-locations`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load");
+      return res.json();
+    },
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data: { name: string; zone: string }) => {
+      const res = await fetch(`${BASE}/api/storage-locations`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "Create failed");
+      return res.json();
+    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/storage-locations"] }); setAddName(""); },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`${BASE}/api/storage-locations/${id}`, { method: "DELETE", credentials: "include" });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "Delete failed");
+    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/storage-locations"] }); },
+  });
+
+  const addRackMutation = useMutation({
+    mutationFn: async (data: { locationId: number; label: string }) => {
+      const res = await fetch(`${BASE}/api/storage-locations/racks`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error("Failed to add rack");
+      return res.json();
+    },
+    onSuccess: (_d, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/storage-locations"] });
+      setRackInputs(prev => ({ ...prev, [vars.locationId]: "" }));
+    },
+  });
+
+  const deleteRackMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`${BASE}/api/storage-locations/racks/${id}`, { method: "DELETE", credentials: "include" });
+      if (!res.ok) throw new Error("Failed to delete rack");
+    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/storage-locations"] }); },
+  });
+
+  return (
+    <div className="rounded-2xl border border-border bg-card overflow-hidden">
+      <div className="p-5 border-b border-border bg-secondary/20 flex items-center justify-between">
+        <h2 className="text-lg font-semibold flex items-center gap-2"><Warehouse className="w-5 h-5 text-primary" /> Storage Locations</h2>
+      </div>
+      <div className="p-5 space-y-4">
+        <div className="flex items-end gap-3">
+          <div className="flex-1">
+            <label className="text-sm font-medium mb-1 block">Location Name</label>
+            <input
+              value={addName}
+              onChange={e => setAddName(e.target.value)}
+              placeholder="e.g. Walk-in Chiller"
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium mb-1 block">Zone</label>
+            <select
+              value={addZone}
+              onChange={e => setAddZone(e.target.value)}
+              className="px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
+              <option value="fridge">Fridge</option>
+              <option value="freezer">Freezer</option>
+              <option value="ambient">Ambient / Dry</option>
+            </select>
+          </div>
+          <button
+            onClick={() => addName.trim() && createMutation.mutate({ name: addName.trim(), zone: addZone })}
+            disabled={!addName.trim() || createMutation.isPending}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2"
+          >
+            {createMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+            Add
+          </button>
+        </div>
+
+        {isLoading ? (
+          <div className="py-8 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+        ) : !locations?.length ? (
+          <p className="text-sm text-muted-foreground py-4 text-center">No storage locations configured yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {locations.map(loc => (
+              <div key={loc.id} className="border border-border rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="font-medium text-sm">{loc.name}</span>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ZONE_COLORS[loc.zone] ?? "bg-gray-50 text-gray-600"}`}>
+                      {ZONE_LABELS[loc.zone] ?? loc.zone}
+                    </span>
+                    {loc.isSystem && <span className="text-xs text-muted-foreground italic">System</span>}
+                  </div>
+                  {!loc.isSystem && (
+                    <button
+                      onClick={() => { if (confirm(`Delete "${loc.name}"?`)) deleteMutation.mutate(loc.id); }}
+                      className="p-1.5 text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {loc.racks.map(rack => (
+                    <span key={rack.id} className="inline-flex items-center gap-1 text-xs bg-secondary/50 px-2 py-1 rounded-lg">
+                      {rack.label}
+                      <button onClick={() => deleteRackMutation.mutate(rack.id)} className="text-muted-foreground hover:text-destructive ml-0.5">
+                        <XCircle className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                  <div className="inline-flex items-center gap-1">
+                    <input
+                      value={rackInputs[loc.id] ?? ""}
+                      onChange={e => setRackInputs(prev => ({ ...prev, [loc.id]: e.target.value }))}
+                      placeholder="Add rack..."
+                      className="w-24 px-2 py-1 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-primary/30"
+                      onKeyDown={e => {
+                        if (e.key === "Enter" && rackInputs[loc.id]?.trim()) {
+                          addRackMutation.mutate({ locationId: loc.id, label: rackInputs[loc.id].trim() });
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={() => rackInputs[loc.id]?.trim() && addRackMutation.mutate({ locationId: loc.id, label: rackInputs[loc.id].trim() })}
+                      disabled={!rackInputs[loc.id]?.trim()}
+                      className="p-1 text-primary hover:bg-primary/10 rounded disabled:opacity-30"
+                    >
+                      <Plus className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

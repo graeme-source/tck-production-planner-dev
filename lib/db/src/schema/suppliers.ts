@@ -11,6 +11,8 @@ export const suppliersTable = pgTable("suppliers", {
   website: text("website"),
   address: text("address"),
   notes: text("notes"),
+  orderFrequency: text("order_frequency").notNull().default("daily"),
+  orderDays: text("order_days"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

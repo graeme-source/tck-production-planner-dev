@@ -1,8 +1,10 @@
 import { Router, type IRouter } from "express";
 import { db, stockEntriesTable, recipesTable, ingredientsTable } from "@workspace/db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, notInArray } from "drizzle-orm";
 import { CreateStockEntryBody, UpdateStockEntryBody } from "@workspace/api-zod";
 import { validate } from "../middleware/validate";
+
+const FREEZER_LOCATIONS = ["production_freezer", "raw_freezer"];
 
 const router: IRouter = Router();
 
@@ -59,7 +61,9 @@ router.get("/factory-numbers", async (_req, res) => {
   res.json(result);
 });
 
-router.get("/", async (_req, res) => {
+router.get("/", async (req, res) => {
+  const excludeFrozen = req.query.excludeFrozen === "true";
+  const conditions = excludeFrozen ? [notInArray(stockEntriesTable.location, FREEZER_LOCATIONS)] : [];
   const rows = await db
     .select({
       id: stockEntriesTable.id,
@@ -78,6 +82,7 @@ router.get("/", async (_req, res) => {
     .from(stockEntriesTable)
     .leftJoin(recipesTable, eq(stockEntriesTable.recipeId, recipesTable.id))
     .leftJoin(ingredientsTable, eq(stockEntriesTable.ingredientId, ingredientsTable.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(stockEntriesTable.checkedAt);
   res.json(rows.map(r => ({ ...r, quantity: Number(r.quantity), checkedAt: r.checkedAt.toISOString() })));
 });

@@ -9,6 +9,13 @@ export const STORAGE_LOCATIONS = [
   "production_freezer",
   "prep_fridge",
   "dry_store",
+  "raw_meat_fridge",
+  "raw_freezer",
+] as const;
+
+export const FREEZER_LOCATIONS: readonly string[] = [
+  "production_freezer",
+  "raw_freezer",
 ] as const;
 
 export type StorageLocation = typeof STORAGE_LOCATIONS[number];
