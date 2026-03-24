@@ -317,7 +317,7 @@ export default function Stock() {
   }, [stock]);
 
   const latestByLocation = useMemo(() => {
-    const result: Record<string, Record<string, { quantity: number; unit: string; name: string; itemType: string; checkedAt: string; color?: string | null; ingredientId?: number; recipeId?: number; stockItemId?: number }>> = {};
+    const result: Record<string, Record<string, { entryId: number; quantity: number; unit: string; name: string; itemType: string; checkedAt: string; color?: string | null; ingredientId?: number; recipeId?: number; stockItemId?: number }>> = {};
     for (const loc of LOCATIONS) result[loc.key] = {};
     if (stock) {
       for (const entry of stock) {
@@ -326,6 +326,7 @@ export default function Stock() {
         const name = entry.itemType === "recipe" ? (entry as any).recipeName : entry.itemType === "stock_item" ? (entry as any).stockItemName : (entry as any).ingredientName;
         if (!result[loc]) result[loc] = {};
         result[loc][key] = {
+          entryId: entry.id,
           quantity: Number(entry.quantity),
           unit: entry.unit,
           name: name || "Unknown",
@@ -345,6 +346,7 @@ export default function Stock() {
           const key = `r-${r.id}`;
           if (!fridgeItems[key]) {
             fridgeItems[key] = {
+              entryId: 0,
               quantity: 0,
               unit: "2 Packs",
               name: r.name,
@@ -606,6 +608,24 @@ export default function Stock() {
                                 className="w-24 px-2 py-1 bg-background border border-primary/40 rounded-lg text-sm font-bold tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30"
                               />
                               <span className="text-xs text-muted-foreground">{row.unit}</span>
+                              {item.entryId > 0 && (
+                                <button
+                                  onClick={() => {
+                                    if (confirm(`Remove "${item.name}" from this location?`)) {
+                                      deleteStock.mutate({ id: item.entryId });
+                                      setEditRows(prev => {
+                                        const next = { ...prev };
+                                        delete next[item.key];
+                                        return next;
+                                      });
+                                    }
+                                  }}
+                                  className="p-1.5 text-destructive hover:bg-destructive/10 rounded-lg transition-colors ml-1"
+                                  title="Delete entry"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </div>
                           ) : (
                             <span className="font-bold tabular-nums float-right">
