@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { useListStockEntries, useListIngredients, useListRecipes, useListStockItems } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
-import { PackageSearch, Plus, Trash2, Pencil, Refrigerator, Snowflake, ThermometerSun, Warehouse, X, ChevronRight, Check, Save, Beef, ArrowRightLeft, Loader2 } from "lucide-react";
+import { PackageSearch, Plus, Trash2, Pencil, Refrigerator, Snowflake, ThermometerSun, Warehouse, X, ChevronRight, Check, Save, Beef, ArrowRightLeft, Loader2, AlertTriangle, Ban } from "lucide-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -10,7 +10,7 @@ import { format } from "date-fns";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -106,6 +106,135 @@ interface EditRow {
   quantity: number;
   unit: string;
   dirty: boolean;
+}
+
+interface ExpiryWarning {
+  id: number;
+  ingredientId: number;
+  ingredientName: string;
+  quantity: number;
+  unit: string;
+  location: string;
+  useByDate: string;
+  checkedAt: string;
+  isExpired: boolean;
+}
+
+function ExpiryWarnings({ canEdit }: { canEdit: boolean }) {
+  const queryClient = useQueryClient();
+  const { data: warnings } = useQuery({
+    queryKey: ["/api/deliveries/expiry-warnings"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/deliveries/expiry-warnings`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json() as Promise<ExpiryWarning[]>;
+    },
+    refetchInterval: 60000,
+  });
+
+  const discardMutation = useMutation({
+    mutationFn: async ({ stockId, reason }: { stockId: number; reason: string }) => {
+      const res = await fetch(`${BASE}/api/deliveries/stock/${stockId}/discard`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ reason }),
+      });
+      if (!res.ok) throw new Error("Failed to discard");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deliveries/expiry-warnings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/stock-entries"] });
+    },
+  });
+
+  const freezeMutation = useMutation({
+    mutationFn: async (item: ExpiryWarning) => {
+      const res = await fetch(`${BASE}/api/stock-transfers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          ingredientId: item.ingredientId,
+          fromLocation: item.location,
+          toLocation: "raw_freezer",
+          quantity: item.quantity,
+          unit: item.unit,
+          notes: `Frozen before expiry (use-by: ${item.useByDate})`,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to transfer");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deliveries/expiry-warnings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/stock-entries"] });
+    },
+  });
+
+  if (!warnings || warnings.length === 0) return null;
+
+  const locationLabel = (loc: string) => LOCATIONS.find(l => l.key === loc)?.label || loc;
+
+  return (
+    <div className="rounded-2xl border-2 border-amber-300 dark:border-amber-700 bg-amber-50/50 dark:bg-amber-900/10 p-5">
+      <div className="flex items-center gap-2 mb-3">
+        <AlertTriangle className="w-5 h-5 text-amber-500" />
+        <h3 className="font-semibold text-sm text-amber-700 dark:text-amber-300">
+          Expiry Warnings ({warnings.length})
+        </h3>
+      </div>
+      <p className="text-xs text-amber-600 dark:text-amber-400 mb-4">
+        These items are expiring soon or have already expired. Take action to freeze or discard them.
+      </p>
+      <div className="space-y-2">
+        {warnings.map((item) => (
+          <div
+            key={item.id}
+            className={cn(
+              "flex items-center gap-3 rounded-xl border px-4 py-3",
+              item.isExpired
+                ? "border-red-300 bg-red-50/50 dark:bg-red-900/10 dark:border-red-700"
+                : "border-amber-200 bg-white dark:bg-card dark:border-amber-700/50"
+            )}
+          >
+            <div className="flex-1 min-w-0">
+              <span className="text-sm font-medium">{item.ingredientName}</span>
+              <div className="flex items-center gap-3 text-xs text-muted-foreground mt-0.5">
+                <span>{item.quantity} {item.unit}</span>
+                <span>{locationLabel(item.location)}</span>
+                <span className={item.isExpired ? "text-red-600 dark:text-red-400 font-medium" : "text-amber-600 dark:text-amber-400"}>
+                  {item.isExpired ? "EXPIRED" : "Expires"}: {item.useByDate}
+                </span>
+              </div>
+            </div>
+            {canEdit && (
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={() => freezeMutation.mutate(item)}
+                  disabled={freezeMutation.isPending}
+                  className="px-3 py-1.5 text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 rounded-lg hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors flex items-center gap-1.5"
+                >
+                  <Snowflake className="w-3.5 h-3.5" /> Freeze
+                </button>
+                <button
+                  onClick={() => {
+                    if (confirm(`Discard ${item.ingredientName}?`))
+                      discardMutation.mutate({ stockId: item.id, reason: "expired" });
+                  }}
+                  disabled={discardMutation.isPending}
+                  className="px-3 py-1.5 text-xs font-medium bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300 rounded-lg hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors flex items-center gap-1.5"
+                >
+                  <Ban className="w-3.5 h-3.5" /> Discard
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export default function Stock() {
@@ -307,6 +436,8 @@ export default function Stock() {
           ) : undefined
         }
       />
+
+      <ExpiryWarnings canEdit={canEdit} />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
         {LOCATIONS.map((loc) => {

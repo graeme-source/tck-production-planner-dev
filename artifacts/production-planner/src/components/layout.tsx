@@ -26,6 +26,7 @@ import {
   Box,
   ArrowDownCircle,
   ShoppingCart,
+  PackageCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -36,6 +37,7 @@ const navItems: NavItem[] = [
   { name: "Production Plans", href: "/plans", icon: CalendarDays },
   { name: "Suppliers", href: "/suppliers", icon: Building2 },
   { name: "Stock Inventory", href: "/stock", icon: PackageSearch },
+  { name: "Deliveries", href: "/deliveries", icon: PackageCheck },
   { name: "Supplies", href: "/supplies", icon: Box },
   { name: "Kanbans", href: "/kanbans", icon: ArrowDownCircle },
   { name: "Orders", href: "/orders", icon: ShoppingCart },

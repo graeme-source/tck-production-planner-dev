@@ -1,4 +1,4 @@
-import { pgTable, serial, text, numeric, integer, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, numeric, integer, timestamp, date } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { recipesTable } from "./recipes";
@@ -32,6 +32,7 @@ export const stockEntriesTable = pgTable("stock_entries", {
   location: text("location").notNull().default("production_fridge"),
   checkedAt: timestamp("checked_at").notNull().defaultNow(),
   notes: text("notes"),
+  useByDate: date("use_by_date"),
 });
 
 export const insertStockEntrySchema = createInsertSchema(stockEntriesTable).omit({ id: true });

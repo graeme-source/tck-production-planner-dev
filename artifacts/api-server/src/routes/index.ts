@@ -30,6 +30,7 @@ import stockTransfersRouter from "./stock-transfers";
 import dptIngredientRequirementsRouter from "./dpt-ingredient-requirements";
 import kanbansRouter from "./kanbans";
 import ordersRouter from "./orders";
+import deliveriesRouter from "./deliveries";
 
 const router: IRouter = Router();
 
@@ -90,5 +91,6 @@ router.use("/stock-transfers", stockTransfersRouter);
 router.use("/dpt-ingredient-requirements", dptIngredientRequirementsRouter);
 router.use("/kanbans", kanbansRouter);
 router.use("/orders", ordersRouter);
+router.use("/deliveries", deliveriesRouter);
 
 export default router;

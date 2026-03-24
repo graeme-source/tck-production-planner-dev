@@ -1,13 +1,16 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useListSuppliers } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
-import { Plus, Trash2, Edit2, Loader2, Building2, Mail, Phone, Globe, MapPin, Search } from "lucide-react";
+import { Plus, Trash2, Edit2, Loader2, Building2, Mail, Phone, Globe, MapPin, Search, ClipboardCheck, GripVertical } from "lucide-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
 
@@ -186,6 +189,172 @@ function SupplierForm({
   );
 }
 
+interface CheckConfig {
+  id: number;
+  supplierId: number;
+  label: string;
+  isRequired: boolean;
+  sortOrder: number;
+}
+
+function DeliveryChecksEditor({ supplierId }: { supplierId: number }) {
+  const queryClient = useQueryClient();
+  const [newLabel, setNewLabel] = useState("");
+
+  const { data: checks, isLoading } = useQuery({
+    queryKey: ["/api/deliveries/supplier", supplierId, "check-configs"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/deliveries/supplier/${supplierId}/check-configs`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch checks");
+      return res.json() as Promise<CheckConfig[]>;
+    },
+  });
+
+  const seedDefaults = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${BASE}/api/deliveries/supplier/${supplierId}/seed-defaults`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to seed defaults");
+      return res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/deliveries/supplier", supplierId, "check-configs"] }),
+  });
+
+  const addCheck = useMutation({
+    mutationFn: async (label: string) => {
+      const sortOrder = (checks?.length ?? 0);
+      const res = await fetch(`${BASE}/api/deliveries/supplier/${supplierId}/check-configs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ label, isRequired: true, sortOrder }),
+      });
+      if (!res.ok) throw new Error("Failed to add check");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deliveries/supplier", supplierId, "check-configs"] });
+      setNewLabel("");
+    },
+  });
+
+  const deleteCheck = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`${BASE}/api/deliveries/check-configs/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to delete check");
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/deliveries/supplier", supplierId, "check-configs"] }),
+  });
+
+  const toggleRequired = useMutation({
+    mutationFn: async ({ id, isRequired }: { id: number; isRequired: boolean }) => {
+      const res = await fetch(`${BASE}/api/deliveries/check-configs/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ isRequired }),
+      });
+      if (!res.ok) throw new Error("Failed to update check");
+      return res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/deliveries/supplier", supplierId, "check-configs"] }),
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 py-4 text-muted-foreground text-sm">
+        <Loader2 className="w-4 h-4 animate-spin" /> Loading checks...
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3 mt-4 border-t border-border pt-4">
+      <div className="flex items-center justify-between">
+        <h4 className="text-sm font-semibold flex items-center gap-2">
+          <ClipboardCheck className="w-4 h-4 text-primary" /> Delivery Checks
+        </h4>
+        {(!checks || checks.length === 0) && (
+          <button
+            type="button"
+            onClick={() => seedDefaults.mutate()}
+            disabled={seedDefaults.isPending}
+            className="text-xs text-primary hover:underline"
+          >
+            {seedDefaults.isPending ? "Adding..." : "Add default checks"}
+          </button>
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Checks that must be completed when receiving deliveries from this supplier.
+      </p>
+
+      {checks && checks.length > 0 && (
+        <div className="space-y-2">
+          {checks.map((check) => (
+            <div
+              key={check.id}
+              className="flex items-center gap-3 rounded-lg border border-border px-3 py-2 bg-background"
+            >
+              <GripVertical className="w-3.5 h-3.5 text-muted-foreground/50 flex-shrink-0" />
+              <span className="text-sm flex-1">{check.label}</span>
+              <button
+                type="button"
+                onClick={() => toggleRequired.mutate({ id: check.id, isRequired: !check.isRequired })}
+                className={cn(
+                  "text-xs px-2 py-0.5 rounded-full border transition-colors",
+                  check.isRequired
+                    ? "bg-primary/10 text-primary border-primary/30"
+                    : "bg-secondary text-muted-foreground border-border"
+                )}
+              >
+                {check.isRequired ? "Required" : "Optional"}
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteCheck.mutate(check.id)}
+                className="p-1 text-muted-foreground hover:text-destructive transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={newLabel}
+          onChange={(e) => setNewLabel(e.target.value)}
+          placeholder="Add custom check..."
+          className="flex-1 px-3 py-1.5 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && newLabel.trim()) {
+              e.preventDefault();
+              addCheck.mutate(newLabel.trim());
+            }
+          }}
+        />
+        <button
+          type="button"
+          disabled={!newLabel.trim() || addCheck.isPending}
+          onClick={() => newLabel.trim() && addCheck.mutate(newLabel.trim())}
+          className="px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+        >
+          <Plus className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function Suppliers() {
   const { data: suppliers, isLoading } = useListSuppliers();
   const { createSupplier, updateSupplier, deleteSupplier } = useAppMutations();
@@ -234,7 +403,6 @@ export default function Suppliers() {
         </DialogContent>
       </Dialog>
 
-      {/* Edit Dialog */}
       {editingItem && (
         <Dialog open={!!editingItem} onOpenChange={(v) => { if (!v) setEditingItem(null); }}>
           <DialogContent className="sm:max-w-[540px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
@@ -263,6 +431,7 @@ export default function Suppliers() {
                 )
               }
             />
+            <DeliveryChecksEditor supplierId={editingItem.id} />
           </DialogContent>
         </Dialog>
       )}

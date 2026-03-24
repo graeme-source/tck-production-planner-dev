@@ -284,6 +284,12 @@ async function runStartupMigrations() {
     await db.execute(sql`
       ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS kanban_quantity NUMERIC(10,4) NOT NULL DEFAULT 0
     `);
+    await db.execute(sql`
+      ALTER TABLE stock_entries ADD COLUMN IF NOT EXISTS use_by_date DATE
+    `);
+    await db.execute(sql`
+      ALTER TABLE purchase_order_lines ADD COLUMN IF NOT EXISTS use_by_date DATE
+    `);
     await seedStorageLocations();
     console.log("Startup migrations OK");
   } catch (err) {

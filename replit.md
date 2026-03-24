@@ -5,7 +5,9 @@ The Food Production Planner is a full-stack monorepo application designed to str
 Key capabilities include:
 - **Recipe Management:** Detailed tracking of ingredients, sub-recipes, and final products with a full cost/margin engine.
 - **Production Planning:** Dynamic daily production plans, calculating deficits based on Shopify sales, and suggesting batch allocations.
-- **Inventory Management:** Stock checks for finished recipes, raw ingredients, and non-food supplies.
+- **Order Calculation & Supplier Forms:** Automated calculation of order requirements based on production plans, stock levels, and DPT-based surplus targets, with a workflow for placing and tracking purchase orders.
+- **Deliveries & Goods In:** A weekly calendar for tracking expected deliveries, with a receiving workflow that includes temperature checks, use-by date tracking, and quality control checklists.
+- **Inventory Management:** Stock checks for finished recipes, raw ingredients, and non-food supplies, with expiry warnings and actions.
 - **Sales & Dispatch:** Logging sales data and managing upcoming dispatch orders.
 - **Operational Stations:** A 9-station workflow system (Mixing, Building, Prep Hub, Dough Prep, Ovens, Wrapping, Packing) with cascading completion logic to guide production.
 - **Reporting & Settings:** Dashboard overview, user management, category cost defaults, and production target settings.
@@ -14,7 +16,7 @@ The project envisions empowering food businesses with a robust, integrated platf
 
 # User Preferences
 
-I prefer iterative development. Before making any major changes, please ask. I like detailed explanations for complex logic. Do not make changes to files outside of `artifacts/api-server` and `artifacts/production-planner` unless explicitly requested, or for shared utility functions in `lib/`.
+I prefer iterative development. Before making any major changes, please ask. I like detailed explanations for complex logic. Do not make changes to files outside of `artifacts/api-server` and `artifacts/production-planner` unless explicitly requested, or for shared utility functions in `lib/`. Do not make changes to the folder `lib/api-spec`. Do not make changes to the file `lib/api-zod/src/index.ts`.
 
 # System Architecture
 
@@ -36,11 +38,14 @@ The application is structured as a pnpm workspace monorepo using TypeScript, com
 - **Validation:** Zod (`zod/v4`), `drizzle-zod`
 - **Authentication:** Session-based using `express-session` and `connect-pg-simple`.
 - **Core Features:**
-    - **Cost/Margin Engine:** Recipes include pack size, RRP, packaging cost, labour cost, and a gross margin calculation with color-coded profitability.
+    - **Cost/Margin Engine:** Recipes include pack size, RRP, packaging cost, labour cost, and a gross margin calculation with color-coded profitability (≥60% green, 50-59% amber, <50% red).
     - **Production Plan Calculator:** Implements a 3-weekday-dispatch model, fetching Shopify sales, calculating deficits, and allocating batches using the Largest Remainder Method.
-    - **Ingredient Resolution:** A utility (`ingredient-resolver.ts`) for recursively resolving all raw ingredients for a recipe, handling sub-recipes and scaling.
-    - **Station Cascade System:** Enforces a production flow where downstream stations can only complete items that have been completed by upstream stations. API validation prevents out-of-order completions.
-    - **API Routes:** Comprehensive RESTful API for CRUD operations across all entities (ingredients, recipes, production plans, stock, sales, dispatch) and specialized endpoints for station-specific data (e.g., dough prep, packing, ingredient requirements).
+    - **Order Engine:** Calculates requirements for each supplier based on production plans, stock levels, DPT-based surplus targets, and kanban pulls.
+    - **Goods In Workflow:** Specific receiving logic for purchase orders, including temperature logs, configurable quality checks, and use-by date recording for stock entries.
+    - **Ingredient Resolution:** A utility (`ingredient-resolver.ts`) for recursively resolving all raw ingredients for a recipe, handling sub-recipes and scaling, with cycle detection.
+    - **Station Cascade System:** Enforces a production flow where downstream stations can only complete items that have been completed by upstream stations. API validation prevents out-of-order completions (409 Conflict).
+    - **Marinade System:** Flexible assignment of marinades/seasonings to raw meat ingredients within recipes, ensuring accurate cost accounting.
+    - **API Routes:** Comprehensive RESTful API for CRUD operations across all entities (ingredients, recipes, production plans, stock, sales, dispatch, orders, deliveries) and specialized endpoints for station-specific data.
     - **Settings:** Global application settings managed via key-value store in `app_settings` table.
 
 **Shared Components (`lib/`):**
@@ -55,10 +60,14 @@ The application is structured as a pnpm workspace monorepo using TypeScript, com
 
 # External Dependencies
 
+- **Node.js:** Version 24
+- **Package Manager:** pnpm
+- **TypeScript:** Version 5.9
 - **Database:** PostgreSQL
 - **ORMs:** Drizzle ORM
 - **Authentication Libraries:** `express-session`, `connect-pg-simple`
-- **Validation Library:** Zod
+- **Validation Library:** Zod with `drizzle-zod` integration
 - **API Code Generation:** Orval
 - **Frontend Frameworks/Libraries:** React, Vite, Tailwind CSS, shadcn/ui, React Query, react-hook-form, recharts, date-fns, framer-motion
 - **Sales Data Integration:** Shopify (for fetching sales data for production planning)
+
