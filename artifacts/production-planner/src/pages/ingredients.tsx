@@ -420,7 +420,7 @@ const schema = z.object({
   stockCheckEnabled: z.boolean().optional(),
   stockCheckFrequency: z.enum(["daily", "weekly"]).optional(),
   stockCheckDay: z.string().optional(),
-  surplusPercent: z.coerce.number().min(0).max(100).optional(),
+  surplusPercent: z.coerce.number().min(0).optional(),
   shelfLifeDays: z.preprocess(
     (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
     z.number().int().positive().nullable().optional()
@@ -968,7 +968,6 @@ export default function Ingredients() {
                     type="number"
                     step="1"
                     min="0"
-                    max="100"
                     {...register("surplusPercent")}
                     className="w-full px-3 pr-10 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                     placeholder="10"
