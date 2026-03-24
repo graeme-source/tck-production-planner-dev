@@ -108,8 +108,6 @@ export const CreateSupplierBody = zod.object({
   website: zod.string().nullish(),
   address: zod.string().nullish(),
   notes: zod.string().nullish(),
-  orderFrequency: zod.enum(["daily", "weekly"]).optional(),
-  orderDays: zod.string().nullish(),
 });
 
 /**
@@ -128,8 +126,6 @@ export const GetSupplierResponse = zod.object({
   website: zod.string().nullish(),
   address: zod.string().nullish(),
   notes: zod.string().nullish(),
-  orderFrequency: zod.string(),
-  orderDays: zod.string().nullish(),
   createdAt: zod.string(),
 });
 
@@ -148,8 +144,6 @@ export const UpdateSupplierBody = zod.object({
   website: zod.string().nullish(),
   address: zod.string().nullish(),
   notes: zod.string().nullish(),
-  orderFrequency: zod.enum(["daily", "weekly"]).optional(),
-  orderDays: zod.string().nullish(),
 });
 
 export const UpdateSupplierResponse = zod.object({
@@ -161,8 +155,6 @@ export const UpdateSupplierResponse = zod.object({
   website: zod.string().nullish(),
   address: zod.string().nullish(),
   notes: zod.string().nullish(),
-  orderFrequency: zod.string(),
-  orderDays: zod.string().nullish(),
   createdAt: zod.string(),
 });
 
@@ -208,13 +200,6 @@ export const ListIngredientsResponseItem = zod.object({
     .describe(
       "Capacity of a raw meat tray in kg (used for tray count calculation)",
     ),
-  minCookingTempC: zod.number().nullish().describe("Minimum food-safe cooking temperature in °C"),
-  estimatedCookTimeMin: zod.number().int().nullish().describe("Estimated cook time in minutes"),
-  ovenTempC: zod.number().int().nullish().describe("Oven temperature in °C"),
-  steamPct: zod.number().int().min(0).max(100).nullish().describe("Steam percentage 0-100"),
-  stockCheckEnabled: zod.boolean(),
-  stockCheckFrequency: zod.string(),
-  stockCheckDay: zod.string().nullish(),
   createdAt: zod.string(),
 });
 export const ListIngredientsResponse = zod.array(ListIngredientsResponseItem);
@@ -236,15 +221,6 @@ export const CreateIngredientBody = zod.object({
   processingRatio: zod.number().nullish(),
   category: zod.string().nullish(),
   rawMeatTrayCapacityKg: zod.number().nullish(),
-  minCookingTempC: zod.number().nullish(),
-  estimatedCookTimeMin: zod.number().int().nullish(),
-  ovenTempC: zod.number().int().nullish(),
-  steamPct: zod.number().int().min(0).max(100).nullish(),
-  stockCheckEnabled: zod.boolean().optional(),
-  stockCheckFrequency: zod.enum(["daily", "weekly"]).optional(),
-  stockCheckDay: zod.string().nullish(),
-  surplusPercent: zod.number().min(0).max(100).optional(),
-  shelfLifeDays: zod.number().int().positive().nullish(),
 });
 
 /**
@@ -279,15 +255,6 @@ export const GetIngredientResponse = zod.object({
     .describe(
       "Capacity of a raw meat tray in kg (used for tray count calculation)",
     ),
-  minCookingTempC: zod.number().nullish().describe("Minimum food-safe cooking temperature in °C"),
-  estimatedCookTimeMin: zod.number().int().nullish().describe("Estimated cook time in minutes"),
-  ovenTempC: zod.number().int().nullish().describe("Oven temperature in °C"),
-  steamPct: zod.number().int().min(0).max(100).nullish().describe("Steam percentage 0-100"),
-  stockCheckEnabled: zod.boolean(),
-  stockCheckFrequency: zod.string(),
-  stockCheckDay: zod.string().nullish(),
-  surplusPercent: zod.number(),
-  shelfLifeDays: zod.number().int().nullish(),
   createdAt: zod.string(),
 });
 
@@ -312,15 +279,6 @@ export const UpdateIngredientBody = zod.object({
   processingRatio: zod.number().nullish(),
   category: zod.string().nullish(),
   rawMeatTrayCapacityKg: zod.number().nullish(),
-  minCookingTempC: zod.number().nullish(),
-  estimatedCookTimeMin: zod.number().int().nullish(),
-  ovenTempC: zod.number().int().nullish(),
-  steamPct: zod.number().int().min(0).max(100).nullish(),
-  stockCheckEnabled: zod.boolean().optional(),
-  stockCheckFrequency: zod.enum(["daily", "weekly"]).optional(),
-  stockCheckDay: zod.string().nullish(),
-  surplusPercent: zod.number().min(0).max(100).optional(),
-  shelfLifeDays: zod.number().int().positive().nullish(),
 });
 
 export const UpdateIngredientResponse = zod.object({
@@ -348,15 +306,6 @@ export const UpdateIngredientResponse = zod.object({
     .describe(
       "Capacity of a raw meat tray in kg (used for tray count calculation)",
     ),
-  minCookingTempC: zod.number().nullish().describe("Minimum food-safe cooking temperature in °C"),
-  estimatedCookTimeMin: zod.number().int().nullish().describe("Estimated cook time in minutes"),
-  ovenTempC: zod.number().int().nullish().describe("Oven temperature in °C"),
-  steamPct: zod.number().int().min(0).max(100).nullish().describe("Steam percentage 0-100"),
-  stockCheckEnabled: zod.boolean(),
-  stockCheckFrequency: zod.string(),
-  stockCheckDay: zod.string().nullish(),
-  surplusPercent: zod.number(),
-  shelfLifeDays: zod.number().int().nullish(),
   createdAt: zod.string(),
 });
 
@@ -561,9 +510,6 @@ export const ListRecipesResponseItem = zod.object({
     .number()
     .nullish()
     .describe("Weight of base per builder in grams"),
-  isCoreMenu: zod.boolean().optional(),
-  isCurrentSpecial: zod.boolean().optional(),
-  color: zod.string().nullish(),
   rawMaterialCostPerBatch: zod.number(),
   costPerPortion: zod.number(),
   packIngredientCost: zod.number(),
@@ -598,36 +544,18 @@ export const CreateRecipeBody = zod.object({
   fillWeightGrams: zod.number().nullish(),
   baseType: zod.string().nullish(),
   baseWeightGrams: zod.number().nullish(),
-  isCoreMenu: zod.boolean().optional(),
-  isCurrentSpecial: zod.boolean().optional(),
-  color: zod.string().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
       quantity: zod.number(),
-      marinadeForIngredientId: zod.number().nullish(),
-      includeInFillingMix: zod.boolean().optional(),
     }),
   ),
   subRecipes: zod.array(
     zod.object({
       subRecipeId: zod.number(),
       quantity: zod.number(),
-      marinadeForIngredientId: zod.number().nullish(),
-      includeInFillingMix: zod.boolean().optional(),
     }),
   ),
-  marinades: zod.array(
-    zod.object({
-      rawMeatIngredientId: zod.number(),
-      marinadeIngredientId: zod.number().nullish(),
-      marinadeSubRecipeId: zod.number().nullish(),
-      gramsPerKg: zod.number().positive(),
-    }).refine(
-      m => (m.marinadeIngredientId != null) !== (m.marinadeSubRecipeId != null),
-      { message: "Exactly one of marinadeIngredientId or marinadeSubRecipeId must be set" },
-    ),
-  ).optional(),
 });
 
 /**
@@ -718,18 +646,6 @@ export const GetRecipeResponse = zod
           breakdown: zod.array(zod.object({}).passthrough()).nullish(),
         }),
       ),
-      marinades: zod.array(
-        zod.object({
-          id: zod.number(),
-          rawMeatIngredientId: zod.number(),
-          rawMeatIngredientName: zod.string(),
-          marinadeIngredientId: zod.number().nullish(),
-          marinadeIngredientName: zod.string().nullish(),
-          marinadeSubRecipeId: zod.number().nullish(),
-          marinadeSubRecipeName: zod.string().nullish(),
-          gramsPerKg: zod.number(),
-        }),
-      ),
     }),
   );
 
@@ -762,36 +678,18 @@ export const UpdateRecipeBody = zod.object({
   fillWeightGrams: zod.number().nullish(),
   baseType: zod.string().nullish(),
   baseWeightGrams: zod.number().nullish(),
-  isCoreMenu: zod.boolean().optional(),
-  isCurrentSpecial: zod.boolean().optional(),
-  color: zod.string().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
       quantity: zod.number(),
-      marinadeForIngredientId: zod.number().nullish(),
-      includeInFillingMix: zod.boolean().optional(),
     }),
   ),
   subRecipes: zod.array(
     zod.object({
       subRecipeId: zod.number(),
       quantity: zod.number(),
-      marinadeForIngredientId: zod.number().nullish(),
-      includeInFillingMix: zod.boolean().optional(),
     }),
   ),
-  marinades: zod.array(
-    zod.object({
-      rawMeatIngredientId: zod.number(),
-      marinadeIngredientId: zod.number().nullish(),
-      marinadeSubRecipeId: zod.number().nullish(),
-      gramsPerKg: zod.number().positive(),
-    }).refine(
-      m => (m.marinadeIngredientId != null) !== (m.marinadeSubRecipeId != null),
-      { message: "Exactly one of marinadeIngredientId or marinadeSubRecipeId must be set" },
-    ),
-  ).optional(),
 });
 
 export const UpdateRecipeResponse = zod.object({
@@ -1418,7 +1316,9 @@ export const ListStockEntriesResponseItem = zod.object({
   recipeName: zod.string().nullish(),
   ingredientId: zod.number().nullish(),
   ingredientName: zod.string().nullish(),
-  itemType: zod.enum(["recipe", "ingredient"]),
+  stockItemId: zod.number().nullish(),
+  stockItemName: zod.string().nullish(),
+  itemType: zod.enum(["recipe", "ingredient", "stock_item"]),
   quantity: zod.number(),
   unit: zod.string(),
   checkedAt: zod.string(),
@@ -1432,7 +1332,8 @@ export const ListStockEntriesResponse = zod.array(ListStockEntriesResponseItem);
 export const CreateStockEntryBody = zod.object({
   recipeId: zod.number().nullish(),
   ingredientId: zod.number().nullish(),
-  itemType: zod.enum(["recipe", "ingredient"]),
+  stockItemId: zod.number().nullish(),
+  itemType: zod.enum(["recipe", "ingredient", "stock_item"]),
   quantity: zod.number(),
   unit: zod.string(),
   location: zod.string().nullish(),
@@ -1449,7 +1350,8 @@ export const UpdateStockEntryParams = zod.object({
 export const UpdateStockEntryBody = zod.object({
   recipeId: zod.number().nullish(),
   ingredientId: zod.number().nullish(),
-  itemType: zod.enum(["recipe", "ingredient"]),
+  stockItemId: zod.number().nullish(),
+  itemType: zod.enum(["recipe", "ingredient", "stock_item"]),
   quantity: zod.number(),
   unit: zod.string(),
   location: zod.string().nullish(),
@@ -1462,7 +1364,9 @@ export const UpdateStockEntryResponse = zod.object({
   recipeName: zod.string().nullish(),
   ingredientId: zod.number().nullish(),
   ingredientName: zod.string().nullish(),
-  itemType: zod.enum(["recipe", "ingredient"]),
+  stockItemId: zod.number().nullish(),
+  stockItemName: zod.string().nullish(),
+  itemType: zod.enum(["recipe", "ingredient", "stock_item"]),
   quantity: zod.number(),
   unit: zod.string(),
   checkedAt: zod.string(),
@@ -1473,6 +1377,124 @@ export const UpdateStockEntryResponse = zod.object({
  * @summary Delete a stock entry
  */
 export const DeleteStockEntryParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+/**
+ * @summary List all stock items
+ */
+export const ListStockItemsQueryParams = zod.object({
+  category: zod.coerce.string().optional(),
+});
+
+export const ListStockItemsResponseItem = zod.object({
+  id: zod.number(),
+  name: zod.string(),
+  category: zod.string(),
+  unit: zod.string(),
+  packWeight: zod.number(),
+  costPerPack: zod.number(),
+  supplierId: zod.number().nullish(),
+  secondarySupplierId: zod.number().nullish(),
+  supplierPartNumber: zod.string().nullish(),
+  orderingUrl: zod.string().nullish(),
+  stockCheckEnabled: zod.boolean(),
+  stockCheckFrequency: zod.string(),
+  stockCheckDay: zod.string().nullish(),
+  notes: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+export const ListStockItemsResponse = zod.array(ListStockItemsResponseItem);
+
+/**
+ * @summary Create a stock item
+ */
+export const CreateStockItemBody = zod.object({
+  name: zod.string(),
+  category: zod.string(),
+  unit: zod.string(),
+  packWeight: zod.number(),
+  costPerPack: zod.number(),
+  supplierId: zod.number().nullish(),
+  secondarySupplierId: zod.number().nullish(),
+  supplierPartNumber: zod.string().nullish(),
+  orderingUrl: zod.string().nullish(),
+  stockCheckEnabled: zod.boolean().optional(),
+  stockCheckFrequency: zod.string().optional(),
+  stockCheckDay: zod.string().nullish(),
+  notes: zod.string().nullish(),
+});
+
+/**
+ * @summary Get stock item by ID
+ */
+export const GetStockItemParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetStockItemResponse = zod.object({
+  id: zod.number(),
+  name: zod.string(),
+  category: zod.string(),
+  unit: zod.string(),
+  packWeight: zod.number(),
+  costPerPack: zod.number(),
+  supplierId: zod.number().nullish(),
+  secondarySupplierId: zod.number().nullish(),
+  supplierPartNumber: zod.string().nullish(),
+  orderingUrl: zod.string().nullish(),
+  stockCheckEnabled: zod.boolean(),
+  stockCheckFrequency: zod.string(),
+  stockCheckDay: zod.string().nullish(),
+  notes: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+
+/**
+ * @summary Update a stock item
+ */
+export const UpdateStockItemParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateStockItemBody = zod.object({
+  name: zod.string(),
+  category: zod.string(),
+  unit: zod.string(),
+  packWeight: zod.number(),
+  costPerPack: zod.number(),
+  supplierId: zod.number().nullish(),
+  secondarySupplierId: zod.number().nullish(),
+  supplierPartNumber: zod.string().nullish(),
+  orderingUrl: zod.string().nullish(),
+  stockCheckEnabled: zod.boolean().optional(),
+  stockCheckFrequency: zod.string().optional(),
+  stockCheckDay: zod.string().nullish(),
+  notes: zod.string().nullish(),
+});
+
+export const UpdateStockItemResponse = zod.object({
+  id: zod.number(),
+  name: zod.string(),
+  category: zod.string(),
+  unit: zod.string(),
+  packWeight: zod.number(),
+  costPerPack: zod.number(),
+  supplierId: zod.number().nullish(),
+  secondarySupplierId: zod.number().nullish(),
+  supplierPartNumber: zod.string().nullish(),
+  orderingUrl: zod.string().nullish(),
+  stockCheckEnabled: zod.boolean(),
+  stockCheckFrequency: zod.string(),
+  stockCheckDay: zod.string().nullish(),
+  notes: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+
+/**
+ * @summary Delete a stock item
+ */
+export const DeleteStockItemParams = zod.object({
   id: zod.coerce.number(),
 });
 

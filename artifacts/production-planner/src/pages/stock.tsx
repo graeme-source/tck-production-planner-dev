@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useListStockEntries, useListIngredients, useListRecipes } from "@workspace/api-client-react";
+import { useListStockEntries, useListIngredients, useListRecipes, useListStockItems } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { PackageSearch, Plus, Trash2, Pencil, Refrigerator, Snowflake, ThermometerSun, Warehouse, X, ChevronRight, Check, Save, Beef, ArrowRightLeft, Loader2 } from "lucide-react";
@@ -92,9 +92,10 @@ const LOCATIONS = [
 type LocationKey = typeof LOCATIONS[number]["key"];
 
 const schema = z.object({
-  itemType: z.enum(["recipe", "ingredient"]),
+  itemType: z.enum(["recipe", "ingredient", "stock_item"]),
   ingredientId: z.coerce.number().optional(),
   recipeId: z.coerce.number().optional(),
+  stockItemId: z.coerce.number().optional(),
   quantity: z.coerce.number().min(0),
   unit: z.string().min(1),
   location: z.string().min(1),
@@ -111,6 +112,7 @@ export default function Stock() {
   const { data: stock, isLoading } = useListStockEntries();
   const { data: ingredients } = useListIngredients();
   const { data: recipes } = useListRecipes();
+  const { data: stockItems } = useListStockItems();
   const { createStock, deleteStock } = useAppMutations();
   const { state } = useAuth();
   const canEdit = state.status === "authenticated" && (state.user.role === "admin" || state.user.role === "manager");
@@ -154,18 +156,19 @@ export default function Stock() {
 
   const { register, watch, handleSubmit, reset, setValue } = useForm({
     resolver: zodResolver(schema),
-    defaultValues: { itemType: "recipe" as const, quantity: 0, unit: "2 Packs", location: "production_fridge" },
+    defaultValues: { itemType: "recipe" as "recipe" | "ingredient" | "stock_item", recipeId: 0, ingredientId: 0, stockItemId: 0, quantity: 0, unit: "2 Packs", location: "production_fridge", notes: "" },
   });
 
-  const selectedType = watch("itemType");
+  const selectedType = watch("itemType") as string;
   const watchedLocation = watch("location");
   const watchedLocConfig = LOCATIONS.find(l => l.key === watchedLocation);
   const watchedFinishedOnly = watchedLocConfig?.finishedProductOnly ?? false;
 
   const onSubmit = (data: any) => {
     const payload = { ...data };
-    if (payload.itemType === "ingredient") delete payload.recipeId;
-    if (payload.itemType === "recipe") delete payload.ingredientId;
+    if (payload.itemType === "ingredient") { delete payload.recipeId; delete payload.stockItemId; }
+    if (payload.itemType === "recipe") { delete payload.ingredientId; delete payload.stockItemId; }
+    if (payload.itemType === "stock_item") { delete payload.recipeId; delete payload.ingredientId; }
     createStock.mutate({ data: payload }, {
       onSuccess: () => { setIsDialogOpen(false); reset(); },
     });
@@ -185,13 +188,13 @@ export default function Stock() {
   }, [stock]);
 
   const latestByLocation = useMemo(() => {
-    const result: Record<string, Record<string, { quantity: number; unit: string; name: string; itemType: string; checkedAt: string; color?: string | null; ingredientId?: number; recipeId?: number }>> = {};
+    const result: Record<string, Record<string, { quantity: number; unit: string; name: string; itemType: string; checkedAt: string; color?: string | null; ingredientId?: number; recipeId?: number; stockItemId?: number }>> = {};
     for (const loc of LOCATIONS) result[loc.key] = {};
     if (stock) {
       for (const entry of stock) {
         const loc = (entry as any).location || "production_fridge";
-        const key = entry.itemType === "recipe" ? `r-${entry.recipeId}` : `i-${entry.ingredientId}`;
-        const name = entry.itemType === "recipe" ? (entry as any).recipeName : (entry as any).ingredientName;
+        const key = entry.itemType === "recipe" ? `r-${entry.recipeId}` : entry.itemType === "stock_item" ? `s-${(entry as any).stockItemId}` : `i-${entry.ingredientId}`;
+        const name = entry.itemType === "recipe" ? (entry as any).recipeName : entry.itemType === "stock_item" ? (entry as any).stockItemName : (entry as any).ingredientName;
         if (!result[loc]) result[loc] = {};
         result[loc][key] = {
           quantity: Number(entry.quantity),
@@ -202,6 +205,7 @@ export default function Stock() {
           color: (entry as any).recipeColor ?? null,
           ingredientId: entry.ingredientId ?? undefined,
           recipeId: entry.recipeId ?? undefined,
+          stockItemId: (entry as any).stockItemId ?? undefined,
         };
       }
     }
@@ -275,6 +279,7 @@ export default function Stock() {
           location: selectedLocation,
         };
         if (item.itemType === "recipe") payload.recipeId = item.recipeId;
+        else if (item.itemType === "stock_item") payload.stockItemId = item.stockItemId;
         else payload.ingredientId = item.ingredientId;
         return new Promise<void>(resolve => {
           createStock.mutate({ data: payload }, { onSuccess: resolve, onError: resolve });
@@ -451,8 +456,8 @@ export default function Stock() {
                           {isEditing && isDirty && <span className="text-xs text-primary font-normal ml-1">•</span>}
                         </td>
                         <td className="px-6 py-3">
-                          <span className={`text-xs px-2 py-1 rounded-md uppercase tracking-wider ${item.itemType === "recipe" ? "bg-accent/10 text-accent" : "bg-primary/10 text-primary"}`}>
-                            {item.itemType === "recipe" ? "product" : "ingredient"}
+                          <span className={`text-xs px-2 py-1 rounded-md uppercase tracking-wider ${item.itemType === "recipe" ? "bg-accent/10 text-accent" : item.itemType === "stock_item" ? "bg-orange-500/10 text-orange-600" : "bg-primary/10 text-primary"}`}>
+                            {item.itemType === "recipe" ? "product" : item.itemType === "stock_item" ? "supply" : "ingredient"}
                           </span>
                         </td>
                         <td className="px-6 py-3">
@@ -593,11 +598,15 @@ export default function Stock() {
                 <div className="flex bg-secondary/50 rounded-lg p-1 border border-border">
                   <label className={`flex-1 text-center py-2 rounded-md text-sm font-medium cursor-pointer transition-colors ${selectedType === "ingredient" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
                     <input type="radio" value="ingredient" {...register("itemType")} className="hidden" />
-                    Raw Ingredient
+                    Ingredient
                   </label>
                   <label className={`flex-1 text-center py-2 rounded-md text-sm font-medium cursor-pointer transition-colors ${selectedType === "recipe" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
                     <input type="radio" value="recipe" {...register("itemType")} className="hidden" />
-                    Finished Product
+                    Product
+                  </label>
+                  <label className={`flex-1 text-center py-2 rounded-md text-sm font-medium cursor-pointer transition-colors ${selectedType === "stock_item" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                    <input type="radio" value="stock_item" {...register("itemType")} className="hidden" />
+                    Supply
                   </label>
                 </div>
               </div>
@@ -614,6 +623,10 @@ export default function Stock() {
               {(watchedFinishedOnly || selectedType === "recipe") ? (
                 <select {...register("recipeId")} className="w-full px-3 py-2 bg-background border border-border rounded-lg focus-ring appearance-none">
                   {recipes?.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </select>
+              ) : selectedType === "stock_item" ? (
+                <select {...register("stockItemId")} className="w-full px-3 py-2 bg-background border border-border rounded-lg focus-ring appearance-none">
+                  {stockItems?.map(s => <option key={s.id} value={s.id}>{s.name} ({s.category})</option>)}
                 </select>
               ) : (
                 <select {...register("ingredientId")} className="w-full px-3 py-2 bg-background border border-border rounded-lg focus-ring appearance-none">

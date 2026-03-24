@@ -41,13 +41,17 @@ import {
   useUpdateCategoryDefault,
   useDeleteCategoryDefault,
   getListCategoryDefaultsQueryKey,
+  useCreateStockItem,
+  useUpdateStockItem,
+  useDeleteStockItem,
+  getListStockItemsQueryKey,
 } from "@workspace/api-client-react";
 
 export function useAppMutations() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  const handleSuccess = (queryKey: any[], message: string, invalidatePrefix = false) => {
+  const handleSuccess = (queryKey: readonly any[], message: string, invalidatePrefix = false) => {
     if (invalidatePrefix && typeof queryKey[0] === "string") {
       const prefix = queryKey[0] as string;
       queryClient.invalidateQueries({
@@ -111,6 +115,11 @@ export function useAppMutations() {
     createSale: useCreateSalesEntry({ mutation: { onSuccess: () => handleSuccess(getListSalesEntriesQueryKey(), "Sale logged"), onError: handleError } }),
     updateSale: useUpdateSalesEntry({ mutation: { onSuccess: () => handleSuccess(getListSalesEntriesQueryKey(), "Sale updated"), onError: handleError } }),
     deleteSale: useDeleteSalesEntry({ mutation: { onSuccess: () => handleSuccess(getListSalesEntriesQueryKey(), "Sale deleted"), onError: handleError } }),
+
+    // Stock Items
+    createStockItem: useCreateStockItem({ mutation: { onSuccess: () => handleSuccess(getListStockItemsQueryKey(), "Stock item created"), onError: handleError } }),
+    updateStockItem: useUpdateStockItem({ mutation: { onSuccess: () => handleSuccess(getListStockItemsQueryKey(), "Stock item updated"), onError: handleError } }),
+    deleteStockItem: useDeleteStockItem({ mutation: { onSuccess: () => handleSuccess(getListStockItemsQueryKey(), "Stock item deleted"), onError: handleError } }),
 
     // Dispatches
     createDispatch: useCreateDispatchOrder({ mutation: { onSuccess: () => handleSuccess(getListDispatchOrdersQueryKey(), "Dispatch scheduled"), onError: handleError } }),

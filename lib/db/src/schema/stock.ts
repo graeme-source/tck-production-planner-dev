@@ -3,6 +3,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { recipesTable } from "./recipes";
 import { ingredientsTable } from "./ingredients";
+import { stockItemsTable } from "./stock_items";
 
 export const STORAGE_LOCATIONS = [
   "production_fridge",
@@ -24,6 +25,7 @@ export const stockEntriesTable = pgTable("stock_entries", {
   id: serial("id").primaryKey(),
   recipeId: integer("recipe_id").references(() => recipesTable.id, { onDelete: "set null" }),
   ingredientId: integer("ingredient_id").references(() => ingredientsTable.id, { onDelete: "set null" }),
+  stockItemId: integer("stock_item_id").references(() => stockItemsTable.id, { onDelete: "set null" }),
   itemType: text("item_type").notNull(),
   quantity: numeric("quantity", { precision: 10, scale: 4 }).notNull(),
   unit: text("unit").notNull(),

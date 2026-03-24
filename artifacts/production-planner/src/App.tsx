@@ -16,6 +16,7 @@ import Stock from "@/pages/stock";
 import Sales from "@/pages/sales";
 import Dispatches from "@/pages/dispatches";
 import Suppliers from "@/pages/suppliers";
+import Supplies from "@/pages/supplies";
 import Settings from "@/pages/settings";
 import LeanCave from "@/pages/lean-cave";
 import Reports from "@/pages/reports";
@@ -60,6 +61,7 @@ function Router() {
               <Route path="/sales">{() => <ProtectedRoute component={Sales} pageKey="/sales" />}</Route>
               <Route path="/dispatches" component={Dispatches} />
               <Route path="/suppliers" component={Suppliers} />
+              <Route path="/supplies" component={Supplies} />
               <Route path="/fulfilment">{() => <ProtectedRoute component={Fulfilment} pageKey="/fulfilment" />}</Route>
               <Route path="/locations">{() => <ProtectedRoute component={Locations} pageKey="/locations" />}</Route>
               <Route path="/reports">{() => <ProtectedRoute component={Reports} pageKey="/reports" />}</Route>

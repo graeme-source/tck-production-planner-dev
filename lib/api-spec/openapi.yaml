@@ -33,6 +33,8 @@ tags:
     description: DPT (Daily Production Target) settings
   - name: timingStandards
     description: Timing standards by station
+  - name: stockItems
+    description: Non-food stock item management
 paths:
   /users:
     get:
@@ -1165,6 +1167,98 @@ paths:
       operationId: deleteStockEntry
       tags: [stockEntries]
       summary: Delete a stock entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /stock-items:
+    get:
+      operationId: listStockItems
+      tags: [stockItems]
+      summary: List all stock items
+      parameters:
+        - name: category
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of stock items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StockItem"
+    post:
+      operationId: createStockItem
+      tags: [stockItems]
+      summary: Create a stock item
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStockItem"
+      responses:
+        "201":
+          description: Created stock item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockItem"
+
+  /stock-items/{id}:
+    get:
+      operationId: getStockItem
+      tags: [stockItems]
+      summary: Get stock item by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Stock item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockItem"
+    put:
+      operationId: updateStockItem
+      tags: [stockItems]
+      summary: Update a stock item
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStockItem"
+      responses:
+        "200":
+          description: Updated stock item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockItem"
+    delete:
+      operationId: deleteStockItem
+      tags: [stockItems]
+      summary: Delete a stock item
       parameters:
         - name: id
           in: path
@@ -2488,9 +2582,15 @@ components:
         ingredientName:
           type: string
           nullable: true
+        stockItemId:
+          type: integer
+          nullable: true
+        stockItemName:
+          type: string
+          nullable: true
         itemType:
           type: string
-          enum: [recipe, ingredient]
+          enum: [recipe, ingredient, stock_item]
         quantity:
           type: number
         unit:
@@ -2516,13 +2616,19 @@ components:
         ingredientId:
           type: integer
           nullable: true
+        stockItemId:
+          type: integer
+          nullable: true
         itemType:
           type: string
-          enum: [recipe, ingredient]
+          enum: [recipe, ingredient, stock_item]
         quantity:
           type: number
         unit:
           type: string
+        location:
+          type: string
+          nullable: true
         notes:
           type: string
           nullable: true
@@ -2530,6 +2636,98 @@ components:
         - itemType
         - quantity
         - unit
+
+    StockItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        category:
+          type: string
+        unit:
+          type: string
+        packWeight:
+          type: number
+        costPerPack:
+          type: number
+        supplierId:
+          type: integer
+          nullable: true
+        secondarySupplierId:
+          type: integer
+          nullable: true
+        supplierPartNumber:
+          type: string
+          nullable: true
+        orderingUrl:
+          type: string
+          nullable: true
+        stockCheckEnabled:
+          type: boolean
+        stockCheckFrequency:
+          type: string
+        stockCheckDay:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+      required:
+        - id
+        - name
+        - category
+        - unit
+        - packWeight
+        - costPerPack
+        - stockCheckEnabled
+        - stockCheckFrequency
+        - createdAt
+
+    CreateStockItem:
+      type: object
+      properties:
+        name:
+          type: string
+        category:
+          type: string
+        unit:
+          type: string
+        packWeight:
+          type: number
+        costPerPack:
+          type: number
+        supplierId:
+          type: integer
+          nullable: true
+        secondarySupplierId:
+          type: integer
+          nullable: true
+        supplierPartNumber:
+          type: string
+          nullable: true
+        orderingUrl:
+          type: string
+          nullable: true
+        stockCheckEnabled:
+          type: boolean
+        stockCheckFrequency:
+          type: string
+        stockCheckDay:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+      required:
+        - name
+        - category
+        - unit
+        - packWeight
+        - costPerPack
 
     SalesEntry:
       type: object

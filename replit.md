@@ -11,7 +11,8 @@ A full-stack production management app for food businesses with:
 - **Sub-recipes** — intermediate preparations (e.g., sauces, doughs) with ingredient lists
 - **Recipes (Products)** — final products with full cost/margin engine: pack size, RRP, packaging cost, labour cost, gross margin colour-coded by profitability (≥60% green, 50-59% amber, <50% red)
 - **Production Plans** — daily plans with a list of recipes and target quantities; track actual output and status (draft/active/completed). Calculator uses 3-weekday-dispatch model: starts from planDate+1 weekday, fetches Shopify sales for all 3 dispatch dates in parallel, deficit = max(0, totalDispatch3Days - fridgeStock), then DPT% allocation for remaining capacity via Largest Remainder Method. API fields: fridgeStock, dispatch1Qty/2Qty/3Qty, totalDispatchQty, deficit, suggestedBatches, nextFactoryNumber.
-- **Stock Inventory** — stock check entries for finished recipes and raw ingredients
+- **Stock Inventory** — stock check entries for finished recipes, raw ingredients, and non-food stock items (supplies)
+- **Supplies (Non-Food Stock)** — manage non-food stock items (packaging, cleaning materials, chemicals + custom categories) with CRUD, category management, supplier linking, pack weight/cost tracking, and stock check integration. DB: `stock_items` + `stock_item_categories` tables. API: `/api/stock-items` + `/api/stock-items/categories/*`. Frontend: `/supplies` page with category filter tabs, sortable table, create/edit dialog, inline CategoryManager
 - **Sales Data** — log sales per recipe by date, channel, and quantity
 - **Dispatch Orders** — upcoming dispatch orders with customer, date, quantity, and status
 - **Dashboard** — overview of today's plan, upcoming dispatches, low stock, and recent sales

@@ -23,6 +23,7 @@ import {
   Lightbulb,
   ShoppingBag,
   ChevronDown,
+  Box,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -33,6 +34,7 @@ const navItems: NavItem[] = [
   { name: "Production Plans", href: "/plans", icon: CalendarDays },
   { name: "Suppliers", href: "/suppliers", icon: Building2 },
   { name: "Stock Inventory", href: "/stock", icon: PackageSearch },
+  { name: "Supplies", href: "/supplies", icon: Box },
   { name: "Sales Data", href: "/sales", icon: TrendingUp },
   { name: "Dispatches", href: "/dispatches", icon: Truck },
   { name: "Reports", href: "/reports", icon: BarChart2 },

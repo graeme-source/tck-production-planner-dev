@@ -245,6 +245,39 @@ async function runStartupMigrations() {
         calculated_at TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS stock_items (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        category TEXT NOT NULL,
+        unit TEXT NOT NULL,
+        pack_weight NUMERIC(10,4) NOT NULL DEFAULT 0,
+        cost_per_pack NUMERIC(10,4) NOT NULL DEFAULT 0,
+        supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL,
+        secondary_supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL,
+        supplier_part_number TEXT,
+        ordering_url TEXT,
+        stock_check_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        stock_check_frequency TEXT NOT NULL DEFAULT 'daily',
+        stock_check_day TEXT,
+        notes TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      ALTER TABLE stock_entries ADD COLUMN IF NOT EXISTS stock_item_id INTEGER REFERENCES stock_items(id) ON DELETE SET NULL
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS stock_item_categories (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      INSERT INTO stock_item_categories (name) VALUES ('Packaging'), ('Cleaning Materials'), ('Chemicals')
+      ON CONFLICT (name) DO NOTHING
+    `);
     await seedStorageLocations();
     console.log("Startup migrations OK");
   } catch (err) {

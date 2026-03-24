@@ -30,6 +30,7 @@ import type {
   CreateSalesEntry,
   CreateStationBreakBody,
   CreateStockEntry,
+  CreateStockItem,
   CreateSubRecipe,
   CreateSupplier,
   CreateTimingStandard,
@@ -50,6 +51,7 @@ import type {
   ListProductionPlansParams,
   ListSalesEntriesParams,
   ListStationBreaksParams,
+  ListStockItemsParams,
   ProductionPlan,
   ProductionPlanDetail,
   ProductionPlanItem,
@@ -59,6 +61,7 @@ import type {
   StationBreak,
   StationKpi,
   StockEntry,
+  StockItem,
   SubRecipe,
   SubRecipeDetail,
   Supplier,
@@ -4932,6 +4935,444 @@ export const useDeleteStockEntry = <
   TContext
 > => {
   return useMutation(getDeleteStockEntryMutationOptions(options));
+};
+
+/**
+ * @summary List all stock items
+ */
+export const getListStockItemsUrl = (params?: ListStockItemsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/stock-items?${stringifiedParams}`
+    : `/api/stock-items`;
+};
+
+export const listStockItems = async (
+  params?: ListStockItemsParams,
+  options?: RequestInit,
+): Promise<StockItem[]> => {
+  return customFetch<StockItem[]>(getListStockItemsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListStockItemsQueryKey = (params?: ListStockItemsParams) => {
+  return [`/api/stock-items`, ...(params ? [params] : [])] as const;
+};
+
+export const getListStockItemsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listStockItems>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListStockItemsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listStockItems>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListStockItemsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listStockItems>>> = ({
+    signal,
+  }) => listStockItems(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listStockItems>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListStockItemsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listStockItems>>
+>;
+export type ListStockItemsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List all stock items
+ */
+
+export function useListStockItems<
+  TData = Awaited<ReturnType<typeof listStockItems>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListStockItemsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listStockItems>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListStockItemsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create a stock item
+ */
+export const getCreateStockItemUrl = () => {
+  return `/api/stock-items`;
+};
+
+export const createStockItem = async (
+  createStockItem: CreateStockItem,
+  options?: RequestInit,
+): Promise<StockItem> => {
+  return customFetch<StockItem>(getCreateStockItemUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createStockItem),
+  });
+};
+
+export const getCreateStockItemMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createStockItem>>,
+    TError,
+    { data: BodyType<CreateStockItem> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createStockItem>>,
+  TError,
+  { data: BodyType<CreateStockItem> },
+  TContext
+> => {
+  const mutationKey = ["createStockItem"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createStockItem>>,
+    { data: BodyType<CreateStockItem> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createStockItem(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateStockItemMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createStockItem>>
+>;
+export type CreateStockItemMutationBody = BodyType<CreateStockItem>;
+export type CreateStockItemMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Create a stock item
+ */
+export const useCreateStockItem = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createStockItem>>,
+    TError,
+    { data: BodyType<CreateStockItem> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createStockItem>>,
+  TError,
+  { data: BodyType<CreateStockItem> },
+  TContext
+> => {
+  return useMutation(getCreateStockItemMutationOptions(options));
+};
+
+/**
+ * @summary Get stock item by ID
+ */
+export const getGetStockItemUrl = (id: number) => {
+  return `/api/stock-items/${id}`;
+};
+
+export const getStockItem = async (
+  id: number,
+  options?: RequestInit,
+): Promise<StockItem> => {
+  return customFetch<StockItem>(getGetStockItemUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetStockItemQueryKey = (id: number) => {
+  return [`/api/stock-items/${id}`] as const;
+};
+
+export const getGetStockItemQueryOptions = <
+  TData = Awaited<ReturnType<typeof getStockItem>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getStockItem>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetStockItemQueryKey(id);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getStockItem>>> = ({
+    signal,
+  }) => getStockItem(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getStockItem>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetStockItemQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getStockItem>>
+>;
+export type GetStockItemQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get stock item by ID
+ */
+
+export function useGetStockItem<
+  TData = Awaited<ReturnType<typeof getStockItem>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getStockItem>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetStockItemQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update a stock item
+ */
+export const getUpdateStockItemUrl = (id: number) => {
+  return `/api/stock-items/${id}`;
+};
+
+export const updateStockItem = async (
+  id: number,
+  createStockItem: CreateStockItem,
+  options?: RequestInit,
+): Promise<StockItem> => {
+  return customFetch<StockItem>(getUpdateStockItemUrl(id), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createStockItem),
+  });
+};
+
+export const getUpdateStockItemMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateStockItem>>,
+    TError,
+    { id: number; data: BodyType<CreateStockItem> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateStockItem>>,
+  TError,
+  { id: number; data: BodyType<CreateStockItem> },
+  TContext
+> => {
+  const mutationKey = ["updateStockItem"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateStockItem>>,
+    { id: number; data: BodyType<CreateStockItem> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateStockItem(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateStockItemMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateStockItem>>
+>;
+export type UpdateStockItemMutationBody = BodyType<CreateStockItem>;
+export type UpdateStockItemMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update a stock item
+ */
+export const useUpdateStockItem = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateStockItem>>,
+    TError,
+    { id: number; data: BodyType<CreateStockItem> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateStockItem>>,
+  TError,
+  { id: number; data: BodyType<CreateStockItem> },
+  TContext
+> => {
+  return useMutation(getUpdateStockItemMutationOptions(options));
+};
+
+/**
+ * @summary Delete a stock item
+ */
+export const getDeleteStockItemUrl = (id: number) => {
+  return `/api/stock-items/${id}`;
+};
+
+export const deleteStockItem = async (
+  id: number,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getDeleteStockItemUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteStockItemMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteStockItem>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteStockItem>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["deleteStockItem"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteStockItem>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteStockItem(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteStockItemMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteStockItem>>
+>;
+
+export type DeleteStockItemMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Delete a stock item
+ */
+export const useDeleteStockItem = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteStockItem>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteStockItem>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getDeleteStockItemMutationOptions(options));
 };
 
 /**

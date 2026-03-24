@@ -48,17 +48,6 @@ export interface Ingredient {
   category?: string | null;
   /** Capacity of a raw meat tray in kg (used for tray count calculation) */
   rawMeatTrayCapacityKg?: number | null;
-  /** Minimum food-safe cooking temperature in °C */
-  minCookingTempC?: number | null;
-  /** Estimated cook time in minutes */
-  estimatedCookTimeMin?: number | null;
-  /** Oven temperature in °C */
-  ovenTempC?: number | null;
-  /** Steam percentage 0-100 */
-  steamPct?: number | null;
-  stockCheckEnabled: boolean;
-  stockCheckFrequency: string;
-  stockCheckDay?: string | null;
   createdAt: string;
 }
 
@@ -76,13 +65,6 @@ export interface CreateIngredient {
   processingRatio?: number | null;
   category?: string | null;
   rawMeatTrayCapacityKg?: number | null;
-  minCookingTempC?: number | null;
-  estimatedCookTimeMin?: number | null;
-  ovenTempC?: number | null;
-  steamPct?: number | null;
-  stockCheckEnabled?: boolean;
-  stockCheckFrequency?: string;
-  stockCheckDay?: string | null;
 }
 
 export interface SubRecipe {
@@ -213,21 +195,9 @@ export interface RecipeSubRecipe {
   breakdown?: RecipeSubRecipeBreakdownItem[] | null;
 }
 
-export type RecipeMarinade = {
-  id: number;
-  rawMeatIngredientId: number;
-  rawMeatIngredientName: string;
-  marinadeIngredientId?: number | null;
-  marinadeIngredientName?: string | null;
-  marinadeSubRecipeId?: number | null;
-  marinadeSubRecipeName?: string | null;
-  gramsPerKg: number;
-};
-
 export type RecipeDetail = Recipe & {
   ingredients: RecipeIngredient[];
   subRecipes: RecipeSubRecipe[];
-  marinades: RecipeMarinade[];
 };
 
 export type CreateRecipeIngredientsItem = {
@@ -238,13 +208,6 @@ export type CreateRecipeIngredientsItem = {
 export type CreateRecipeSubRecipesItem = {
   subRecipeId: number;
   quantity: number;
-};
-
-export type CreateRecipeMarinadeItem = {
-  rawMeatIngredientId: number;
-  marinadeIngredientId?: number | null;
-  marinadeSubRecipeId?: number | null;
-  gramsPerKg: number;
 };
 
 export interface CreateRecipe {
@@ -269,7 +232,6 @@ export interface CreateRecipe {
   baseWeightGrams?: number | null;
   ingredients: CreateRecipeIngredientsItem[];
   subRecipes: CreateRecipeSubRecipesItem[];
-  marinades?: CreateRecipeMarinadeItem[];
 }
 
 export interface CategoryDefault {
@@ -307,16 +269,12 @@ export interface ProductionPlanItem {
   batchesTarget: number;
   batchesComplete: number;
   wonlyCount: number;
-  extraPacksBuilt: number;
-  wrappingComplete: boolean;
-  fridgeQty: number;
   tinSize?: string | null;
   maxBatchesPerTin?: number | null;
   sopUrl?: string | null;
   fillWeightGrams?: number | null;
   baseType?: string | null;
   baseWeightGrams?: number | null;
-  recipeColor?: string | null;
 }
 
 export type ProductionPlanStatus =
@@ -425,8 +383,8 @@ export interface DptSetting {
   id: number;
   recipeId: number;
   recipeName: string;
-  packsSold: number;
   defaultBatchesPerDay: number;
+  /** Percentage surplus buffer added on top of demand batches */
   surplusPercent: number;
   isActive: boolean;
   updatedAt: string;
@@ -463,15 +421,15 @@ export interface StationBreak {
 
 export interface CreateDptSetting {
   recipeId: number;
-  packsSold?: number;
-  defaultBatchesPerDay?: number;
+  defaultBatchesPerDay: number;
+  /** Percentage surplus buffer (default 20) */
   surplusPercent?: number;
   isActive?: boolean;
 }
 
 export interface UpdateDptSetting {
-  packsSold?: number;
   defaultBatchesPerDay?: number;
+  /** Percentage surplus buffer (default 20) */
   surplusPercent?: number;
   isActive?: boolean;
 }
@@ -509,11 +467,20 @@ export interface DptSuggestion {
   tinSize?: string | null;
   maxBatchesPerTin?: number | null;
   sopUrl?: string | null;
-  packsSold: number;
-  salesPercent: number;
+  currentStock: number;
+  demand: number;
+  batchesForDemand: number;
+  /** This recipe's share weight of remaining capacity (%) */
+  surplusPercent: number;
+  /** This recipe's stored DPT default (informational) */
+  defaultBatchesPerDay: number;
+  /** Total shared batch capacity for the day */
+  totalDailyCapacity: number;
+  /** Remaining capacity after must-make batches */
+  remainingCapacity: number;
+  /** Batches allocated to this recipe from remaining capacity */
+  surplusShare: number;
   suggestedBatches: number;
-  totalDailyBatches: number;
-  totalPacksSold: number;
   tinCount?: number | null;
   isActive: boolean;
 }
@@ -524,6 +491,7 @@ export type StockEntryItemType =
 export const StockEntryItemType = {
   recipe: "recipe",
   ingredient: "ingredient",
+  stock_item: "stock_item",
 } as const;
 
 export interface StockEntry {
@@ -532,6 +500,8 @@ export interface StockEntry {
   recipeName?: string | null;
   ingredientId?: number | null;
   ingredientName?: string | null;
+  stockItemId?: number | null;
+  stockItemName?: string | null;
   itemType: StockEntryItemType;
   quantity: number;
   unit: string;
@@ -545,14 +515,51 @@ export type CreateStockEntryItemType =
 export const CreateStockEntryItemType = {
   recipe: "recipe",
   ingredient: "ingredient",
+  stock_item: "stock_item",
 } as const;
 
 export interface CreateStockEntry {
   recipeId?: number | null;
   ingredientId?: number | null;
+  stockItemId?: number | null;
   itemType: CreateStockEntryItemType;
   quantity: number;
   unit: string;
+  location?: string | null;
+  notes?: string | null;
+}
+
+export interface StockItem {
+  id: number;
+  name: string;
+  category: string;
+  unit: string;
+  packWeight: number;
+  costPerPack: number;
+  supplierId?: number | null;
+  secondarySupplierId?: number | null;
+  supplierPartNumber?: string | null;
+  orderingUrl?: string | null;
+  stockCheckEnabled: boolean;
+  stockCheckFrequency: string;
+  stockCheckDay?: string | null;
+  notes?: string | null;
+  createdAt: string;
+}
+
+export interface CreateStockItem {
+  name: string;
+  category: string;
+  unit: string;
+  packWeight: number;
+  costPerPack: number;
+  supplierId?: number | null;
+  secondarySupplierId?: number | null;
+  supplierPartNumber?: string | null;
+  orderingUrl?: string | null;
+  stockCheckEnabled?: boolean;
+  stockCheckFrequency?: string;
+  stockCheckDay?: string | null;
   notes?: string | null;
 }
 
@@ -760,6 +767,10 @@ export type GetDptCalculatorParams = {
    * Plan date (YYYY-MM-DD) to calculate demand from
    */
   date?: string;
+};
+
+export type ListStockItemsParams = {
+  category?: string;
 };
 
 export type ListSalesEntriesParams = {
