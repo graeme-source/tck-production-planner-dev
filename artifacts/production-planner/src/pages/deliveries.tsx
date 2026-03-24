@@ -174,12 +174,14 @@ function ReceivingDialog({
     }
   }, [open, order, checks]);
 
-  const hasChilled = order.lines.some(
-    (l) => l.ingredientCategory && !l.ingredientCategory.toLowerCase().includes("frozen") && !l.ingredientCategory.toLowerCase().includes("ambient") && !l.ingredientCategory.toLowerCase().includes("dry")
-  );
-  const hasFrozen = order.lines.some(
-    (l) => l.ingredientCategory && l.ingredientCategory.toLowerCase().includes("frozen")
-  );
+  const FRIDGE_LOCATIONS = new Set(["prep_fridge", "raw_meat_fridge", "production_fridge"]);
+  const FREEZER_LOCATIONS = new Set(["raw_freezer", "production_freezer"]);
+
+  const hasChilled = order.lines.some((l) => l.defaultStorageLocation && FRIDGE_LOCATIONS.has(l.defaultStorageLocation));
+  const hasFrozen = order.lines.some((l) => l.defaultStorageLocation && FREEZER_LOCATIONS.has(l.defaultStorageLocation));
+
+  const chilledTempMissing = hasChilled && chilledTemp.trim() === "";
+  const frozenTempMissing = hasFrozen && frozenTemp.trim() === "";
 
   const requiredChecks = checks.filter((c) => c.isRequired);
   const allRequiredPassed = requiredChecks.every((rc) => {
@@ -187,7 +189,10 @@ function ReceivingDialog({
     return result?.passed;
   });
 
-  const canReceive = allRequiredPassed || requiredChecks.length === 0;
+  const canReceive =
+    (allRequiredPassed || requiredChecks.length === 0) &&
+    !chilledTempMissing &&
+    !frozenTempMissing;
 
   const receiveMutation = useMutation({
     mutationFn: async () => {
@@ -331,34 +336,62 @@ function ReceivingDialog({
 
           {(hasChilled || hasFrozen) && (
             <div>
-              <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+              <h3 className="text-sm font-semibold mb-1 flex items-center gap-2">
                 <Thermometer className="w-4 h-4" /> Temperature Checks
+                <span className="text-xs font-normal text-destructive ml-1">Required</span>
               </h3>
+              <p className="text-xs text-muted-foreground mb-3">
+                Temperature must be recorded for all chilled and frozen items before the delivery can be marked as received.
+              </p>
               <div className="grid grid-cols-2 gap-4">
                 {hasChilled && (
                   <div>
-                    <label className="text-xs text-muted-foreground block mb-1">Chilled Temp (°C)</label>
+                    <label className="text-xs font-medium block mb-1">
+                      Chilled Temp (°C) <span className="text-destructive">*</span>
+                    </label>
                     <input
                       type="number"
                       step="0.1"
                       value={chilledTemp}
                       onChange={(e) => setChilledTemp(e.target.value)}
                       placeholder="e.g. 3.5"
-                      className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      className={cn(
+                        "w-full px-3 py-2 bg-background border rounded-lg text-sm focus:outline-none focus:ring-2",
+                        chilledTempMissing
+                          ? "border-destructive focus:ring-destructive/30"
+                          : "border-border focus:ring-primary/30"
+                      )}
                     />
+                    {chilledTempMissing && (
+                      <p className="text-xs text-destructive mt-1 flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" /> Chilled temperature is required
+                      </p>
+                    )}
                   </div>
                 )}
                 {hasFrozen && (
                   <div>
-                    <label className="text-xs text-muted-foreground block mb-1">Frozen Temp (°C)</label>
+                    <label className="text-xs font-medium block mb-1">
+                      Frozen Temp (°C) <span className="text-destructive">*</span>
+                    </label>
                     <input
                       type="number"
                       step="0.1"
                       value={frozenTemp}
                       onChange={(e) => setFrozenTemp(e.target.value)}
                       placeholder="e.g. -18.0"
-                      className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      className={cn(
+                        "w-full px-3 py-2 bg-background border rounded-lg text-sm focus:outline-none focus:ring-2",
+                        frozenTempMissing
+                          ? "border-destructive focus:ring-destructive/30"
+                          : "border-border focus:ring-primary/30"
+                      )}
                     />
+                    {frozenTempMissing && (
+                      <p className="text-xs text-destructive mt-1 flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" /> Frozen temperature is required
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
