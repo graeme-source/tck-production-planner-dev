@@ -936,8 +936,8 @@ export default function Ingredients() {
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-1 block">
-                    Kanban Quantity
-                    <span className="ml-2 text-xs font-normal text-muted-foreground">(per kanban card)</span>
+                    Order when using last
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">(quantity per kanban card)</span>
                   </label>
                   <div className="relative max-w-[200px]">
                     <input

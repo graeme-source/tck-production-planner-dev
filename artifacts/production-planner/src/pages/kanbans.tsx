@@ -16,6 +16,7 @@ import {
   Search,
   Building2,
   AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 import {
   Dialog,
@@ -167,6 +168,28 @@ export default function Kanbans() {
     onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
+  const syncMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${BASE}/api/kanbans/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "Sync failed");
+      return res.json() as Promise<{ created: number }>;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/kanbans"] });
+      toast({
+        title: "Sync complete",
+        description: data.created === 0
+          ? "All kanban-enabled ingredients already have cards."
+          : `Created ${data.created} new kanban card${data.created === 1 ? "" : "s"}.`,
+      });
+    },
+    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
   const filtered = useMemo(() => {
     let items = (kanbans ?? []) as KanbanItemData[];
     if (search) {
@@ -217,12 +240,23 @@ export default function Kanbans() {
         description="Track kanban pulls and order scheduling. Pull a kanban when stock runs low, and it will queue for ordering on the supplier's next order day."
         action={
           canEdit ? (
-            <button
-              onClick={() => setIsAddOpen(true)}
-              className="px-5 py-2.5 bg-primary text-primary-foreground rounded-xl font-medium shadow-md shadow-primary/20 flex items-center gap-2 hover:bg-primary/90 transition-colors"
-            >
-              <Plus className="w-5 h-5" /> New Kanban
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => syncMutation.mutate()}
+                disabled={syncMutation.isPending}
+                className="px-4 py-2.5 bg-secondary text-foreground border border-border rounded-xl font-medium flex items-center gap-2 hover:bg-secondary/80 transition-colors disabled:opacity-50"
+                title="Create kanban cards for all kanban-enabled ingredients that don't have one yet"
+              >
+                {syncMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                Sync from Ingredients
+              </button>
+              <button
+                onClick={() => setIsAddOpen(true)}
+                className="px-5 py-2.5 bg-primary text-primary-foreground rounded-xl font-medium shadow-md shadow-primary/20 flex items-center gap-2 hover:bg-primary/90 transition-colors"
+              >
+                <Plus className="w-5 h-5" /> New Kanban
+              </button>
+            </div>
           ) : undefined
         }
       />
@@ -307,7 +341,7 @@ export default function Kanbans() {
             <thead className="bg-secondary/10 text-muted-foreground">
               <tr>
                 <th className="px-5 py-2.5 font-medium">Ingredient</th>
-                <th className="px-5 py-2.5 font-medium">Qty</th>
+                <th className="px-5 py-2.5 font-medium">Order when using last</th>
                 <th className="px-5 py-2.5 font-medium">Status</th>
                 <th className="px-5 py-2.5 font-medium">Pulled By</th>
                 <th className="px-5 py-2.5 font-medium">Pulled At</th>

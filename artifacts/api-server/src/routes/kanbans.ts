@@ -102,6 +102,40 @@ router.post("/", async (req, res) => {
   res.status(201).json(mapRow(full));
 });
 
+router.post("/sync", async (_req, res) => {
+  const enabledIngredients = await db
+    .select({ id: ingredientsTable.id, supplierId: ingredientsTable.supplierId })
+    .from(ingredientsTable)
+    .where(eq(ingredientsTable.kanbanEnabled, true));
+
+  if (enabledIngredients.length === 0) {
+    res.json({ created: 0 });
+    return;
+  }
+
+  const existing = await db
+    .select({ ingredientId: kanbanItemsTable.ingredientId })
+    .from(kanbanItemsTable);
+
+  const existingIds = new Set(existing.map(r => r.ingredientId));
+  const toCreate = enabledIngredients.filter(i => !existingIds.has(i.id));
+
+  if (toCreate.length === 0) {
+    res.json({ created: 0 });
+    return;
+  }
+
+  await db.insert(kanbanItemsTable).values(
+    toCreate.map(i => ({
+      ingredientId: i.id,
+      supplierId: i.supplierId ?? null,
+      status: "active",
+    }))
+  );
+
+  res.json({ created: toCreate.length });
+});
+
 router.post("/:id/pull", async (req, res) => {
   const id = Number(req.params.id);
   const userId = req.session.userId;
