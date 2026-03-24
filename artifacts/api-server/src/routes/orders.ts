@@ -284,6 +284,7 @@ router.get("/calculate", async (req, res) => {
           supplierId: ingredientsTable.supplierId,
           supplierPartNumber: ingredientsTable.supplierPartNumber,
           kanbanQuantity: ingredientsTable.kanbanQuantity,
+          kanbanOrderAmount: ingredientsTable.kanbanOrderAmount,
           kanbanUnit: ingredientsTable.kanbanUnit,
         })
         .from(ingredientsTable)
@@ -295,12 +296,10 @@ router.get("/calculate", async (req, res) => {
       const suppId = kanban.supplierId ?? d.supplierId;
       if (!suppId) continue;
 
-      const isPack = (d.kanbanUnit ?? "weight") === "pack";
-      const kanbanQty = Number(d.kanbanQuantity) || 1;
-      const packWeight = isPack ? 1 : (Number(d.packWeight) || 1);
-      const orderQty = isPack ? kanbanQty : kanbanQty;
-      const packsToOrder = isPack ? kanbanQty : (packWeight > 0 ? Math.ceil(kanbanQty / packWeight) : 1);
-      const displayUnit = isPack ? "packs" : d.unit;
+      const packWeight = Number(d.packWeight) || 1;
+      const packsToOrder = Number(d.kanbanOrderAmount ?? d.kanbanQuantity) || 1;
+      const orderQty = packsToOrder * packWeight;
+      const displayUnit = d.unit ?? "kg";
 
       if (!supplierOrderMap[suppId]) {
         const supplier = supplierLookup[suppId] ??
@@ -539,16 +538,6 @@ router.patch("/purchase-orders/:id/place", async (req, res) => {
     })
     .where(eq(purchaseOrdersTable.id, orderId))
     .returning();
-
-  const today = new Date().toISOString().split("T")[0];
-  await db
-    .update(kanbanItemsTable)
-    .set({ status: "ordered" })
-    .where(and(
-      eq(kanbanItemsTable.status, "pulled"),
-      eq(kanbanItemsTable.orderDayTarget, today),
-      eq(kanbanItemsTable.supplierId, existing.supplierId),
-    ));
 
   res.json({
     ...updated,

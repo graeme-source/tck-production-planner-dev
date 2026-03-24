@@ -110,6 +110,8 @@ type KanbanIngredient = {
   kanbanQuantity: number | null;
   kanbanOrderAmount: number | null;
   kanbanUnit: string;
+  packWeight: number | null;
+  costPerPack: number | null;
   supplierId: number | null;
   supplierName: string | null;
 };
@@ -226,24 +228,22 @@ export default function Orders() {
     );
     for (const kanban of toAdd) {
       const qty = kanban.kanbanOrderAmount ?? kanban.kanbanQuantity ?? 1;
-      const unitLabel =
-        kanban.kanbanUnit === "pack" ? "packs"
-        : kanban.kanbanUnit === "bottle" ? "bottles"
-        : (kanban.ingredientUnit ?? "kg");
+      const packWeight = kanban.packWeight ?? 1;
+      const unit = kanban.ingredientUnit ?? "kg";
       const newLine: EditableLine = {
         ingredientId: kanban.ingredientId,
         ingredientName: kanban.ingredientName ?? "Unknown",
-        unit: unitLabel,
-        totalRequired: qty,
+        unit,
+        totalRequired: 0,
         stockOnHand: 0,
         surplusTarget: 0,
-        packWeight: 1,
-        costPerPack: 0,
+        packWeight,
+        costPerPack: kanban.costPerPack ?? 0,
         supplierPartNumber: null,
-        orderQty: qty,
+        orderQty: qty * packWeight,
         packsToOrder: qty,
         isKanban: true,
-        checked: true,
+        checked: false,
         editedPacks: qty,
       };
       const supplierId = kanban.supplierId!;
@@ -588,16 +588,16 @@ export default function Orders() {
                             )}
                           </td>
                           <td className="p-3 text-right tabular-nums">
-                            {line.totalRequired.toLocaleString()}{line.unit}
+                            {line.totalRequired.toLocaleString()} {line.unit}
                           </td>
                           <td className="p-3 text-right tabular-nums">
-                            {line.stockOnHand.toLocaleString()}{line.unit}
+                            {line.stockOnHand.toLocaleString()} {line.unit}
                           </td>
                           <td className="p-3 text-right tabular-nums">
-                            {line.surplusTarget.toLocaleString()}{line.unit}
+                            {line.surplusTarget.toLocaleString()} {line.unit}
                           </td>
                           <td className="p-3 text-right tabular-nums">
-                            {line.packWeight}{line.unit}
+                            {line.packWeight} {line.unit}
                           </td>
                           <td className="p-3 text-center">
                             <input
@@ -609,7 +609,7 @@ export default function Orders() {
                             />
                           </td>
                           <td className="p-3 text-right tabular-nums font-medium">
-                            {(line.editedPacks * line.packWeight).toLocaleString()}{line.unit}
+                            {(line.editedPacks * line.packWeight).toLocaleString()} {line.unit}
                           </td>
                           {lines.some(l => l.costPerPack > 0) && (
                             <td className="p-3 text-right tabular-nums">
@@ -843,7 +843,7 @@ export default function Orders() {
                     <div key={l.ingredientId} className="flex justify-between">
                       <span>{l.ingredientName}</span>
                       <span className="tabular-nums font-medium">
-                        {l.editedPacks} x {l.packWeight}{l.unit} = {(l.editedPacks * l.packWeight).toLocaleString()}{l.unit}
+                        {l.editedPacks} x {l.packWeight} {l.unit} = {(l.editedPacks * l.packWeight).toLocaleString()} {l.unit}
                       </span>
                     </div>
                   ))}

@@ -111,6 +111,8 @@ router.get("/ingredients", async (_req, res) => {
       kanbanQuantity: ingredientsTable.kanbanQuantity,
       kanbanOrderAmount: ingredientsTable.kanbanOrderAmount,
       kanbanUnit: ingredientsTable.kanbanUnit,
+      packWeight: ingredientsTable.packWeight,
+      costPerPack: ingredientsTable.costPerPack,
       supplierId: ingredientsTable.supplierId,
       supplierName: suppliersTable.name,
     })
@@ -126,6 +128,8 @@ router.get("/ingredients", async (_req, res) => {
     kanbanQuantity: r.kanbanQuantity != null ? Number(r.kanbanQuantity) : null,
     kanbanOrderAmount: r.kanbanOrderAmount != null ? Number(r.kanbanOrderAmount) : null,
     kanbanUnit: r.kanbanUnit ?? "weight",
+    packWeight: r.packWeight != null ? Number(r.packWeight) : null,
+    costPerPack: r.costPerPack != null ? Number(r.costPerPack) : null,
     supplierId: r.supplierId,
     supplierName: r.supplierName ?? null,
   })));
