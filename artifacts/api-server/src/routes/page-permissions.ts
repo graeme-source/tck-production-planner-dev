@@ -17,6 +17,7 @@ const KNOWN_PAGES = [
   { pageKey: "/locations", label: "Bin Locations" },
   { pageKey: "/dispatch-tag", label: "Dispatch Tagging" },
   { pageKey: "/reports", label: "Reports" },
+  { pageKey: "/kanbans", label: "Kanbans" },
 ];
 
 const DEFAULT_PERMISSIONS: Record<string, string> = {

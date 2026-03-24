@@ -22,6 +22,7 @@ import LeanCave from "@/pages/lean-cave";
 import Reports from "@/pages/reports";
 import Fulfilment from "@/pages/fulfilment";
 import Locations from "@/pages/locations";
+import Kanbans from "@/pages/kanbans";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import AcceptInvite from "@/pages/accept-invite";
@@ -64,6 +65,7 @@ function Router() {
               <Route path="/supplies" component={Supplies} />
               <Route path="/fulfilment">{() => <ProtectedRoute component={Fulfilment} pageKey="/fulfilment" />}</Route>
               <Route path="/locations">{() => <ProtectedRoute component={Locations} pageKey="/locations" />}</Route>
+              <Route path="/kanbans">{() => <ProtectedRoute component={Kanbans} pageKey="/kanbans" />}</Route>
               <Route path="/reports">{() => <ProtectedRoute component={Reports} pageKey="/reports" />}</Route>
               <Route path="/lean-cave" component={LeanCave} />
               <Route path="/settings" component={Settings} />

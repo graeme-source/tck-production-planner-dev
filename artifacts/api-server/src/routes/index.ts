@@ -27,6 +27,8 @@ import ovenEventsRouter from "./oven-events";
 import invitesRouter from "./invites";
 import storageLocationsRouter from "./storage-locations";
 import stockTransfersRouter from "./stock-transfers";
+import dptIngredientRequirementsRouter from "./dpt-ingredient-requirements";
+import kanbansRouter from "./kanbans";
 
 const router: IRouter = Router();
 
@@ -84,5 +86,7 @@ router.use("/temperature-records", temperatureRecordsRouter);
 router.use("/oven-events", ovenEventsRouter);
 router.use("/storage-locations", storageLocationsRouter);
 router.use("/stock-transfers", stockTransfersRouter);
+router.use("/dpt-ingredient-requirements", dptIngredientRequirementsRouter);
+router.use("/kanbans", kanbansRouter);
 
 export default router;

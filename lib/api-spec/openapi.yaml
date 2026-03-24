@@ -35,6 +35,8 @@ tags:
     description: Timing standards by station
   - name: stockItems
     description: Non-food stock item management
+  - name: kanbans
+    description: Kanban pull tracking
 paths:
   /users:
     get:
@@ -1497,6 +1499,119 @@ paths:
         "204":
           description: Deleted
 
+  /kanbans:
+    get:
+      operationId: listKanbans
+      tags: [kanbans]
+      summary: List all kanban items
+      responses:
+        "200":
+          description: List of kanban items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/KanbanItem"
+    post:
+      operationId: createKanban
+      tags: [kanbans]
+      summary: Create a kanban item
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateKanban"
+      responses:
+        "201":
+          description: Created kanban item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KanbanItem"
+
+  /kanbans/{id}/pull:
+    post:
+      operationId: pullKanban
+      tags: [kanbans]
+      summary: Mark a kanban as pulled
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Pulled kanban
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KanbanItem"
+
+  /kanbans/{id}/order:
+    post:
+      operationId: orderKanban
+      tags: [kanbans]
+      summary: Mark a kanban as ordered
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Ordered kanban
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KanbanItem"
+
+  /kanbans/{id}:
+    delete:
+      operationId: deleteKanban
+      tags: [kanbans]
+      summary: Delete a kanban item
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /dpt-ingredient-requirements:
+    get:
+      operationId: listDptIngredientRequirements
+      tags: [dptSettings]
+      summary: List DPT ingredient requirements
+      responses:
+        "200":
+          description: List of DPT ingredient requirements
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DptIngredientRequirement"
+
+  /dpt-ingredient-requirements/recalculate:
+    post:
+      operationId: recalculateDptIngredientRequirements
+      tags: [dptSettings]
+      summary: Recalculate DPT ingredient requirements
+      responses:
+        "200":
+          description: Recalculation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DptRecalculateResult"
+
 components:
   schemas:
     HealthStatus:
@@ -1607,6 +1722,10 @@ components:
           type: number
           nullable: true
           description: Capacity of a raw meat tray in kg (used for tray count calculation)
+        kanbanEnabled:
+          type: boolean
+        kanbanQuantity:
+          type: number
         createdAt:
           type: string
       required:
@@ -1655,11 +1774,126 @@ components:
         rawMeatTrayCapacityKg:
           type: number
           nullable: true
+        kanbanEnabled:
+          type: boolean
+        kanbanQuantity:
+          type: number
       required:
         - name
         - unit
         - packWeight
         - costPerPack
+
+    KanbanItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        ingredientId:
+          type: integer
+        ingredientName:
+          type: string
+          nullable: true
+        ingredientUnit:
+          type: string
+          nullable: true
+        kanbanQuantity:
+          type: number
+          nullable: true
+        supplierId:
+          type: integer
+          nullable: true
+        supplierName:
+          type: string
+          nullable: true
+        orderFrequency:
+          type: string
+        orderDays:
+          type: string
+          nullable: true
+        status:
+          type: string
+        pulledAt:
+          type: string
+          nullable: true
+        pulledByUserId:
+          type: integer
+          nullable: true
+        pulledByName:
+          type: string
+          nullable: true
+        orderDayTarget:
+          type: string
+          nullable: true
+        orderDayLabel:
+          type: string
+        isDueToday:
+          type: boolean
+        notes:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          nullable: true
+      required:
+        - id
+        - ingredientId
+        - status
+        - orderDayLabel
+        - isDueToday
+
+    CreateKanban:
+      type: object
+      properties:
+        ingredientId:
+          type: integer
+        supplierId:
+          type: integer
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+      required:
+        - ingredientId
+
+    DptIngredientRequirement:
+      type: object
+      properties:
+        id:
+          type: integer
+        ingredientId:
+          type: integer
+        dailyQtyRaw:
+          type: number
+        dailyQtyCooked:
+          type: number
+        unit:
+          type: string
+        calculatedAt:
+          type: string
+      required:
+        - id
+        - ingredientId
+        - dailyQtyRaw
+        - dailyQtyCooked
+        - unit
+        - calculatedAt
+
+    DptRecalculateResult:
+      type: object
+      properties:
+        recalculated:
+          type: boolean
+        count:
+          type: integer
+        requirements:
+          type: array
+          items:
+            $ref: "#/components/schemas/DptIngredientRequirement"
+      required:
+        - recalculated
+        - count
+        - requirements
 
     SubRecipe:
       type: object

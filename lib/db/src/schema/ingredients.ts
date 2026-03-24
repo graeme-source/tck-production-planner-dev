@@ -27,6 +27,8 @@ export const ingredientsTable = pgTable("ingredients", {
   stockCheckDay: text("stock_check_day"),
   surplusPercent: numeric("surplus_percent", { precision: 5, scale: 2 }).notNull().default("10"),
   shelfLifeDays: integer("shelf_life_days"),
+  kanbanEnabled: boolean("kanban_enabled").notNull().default(false),
+  kanbanQuantity: numeric("kanban_quantity", { precision: 10, scale: 4 }).notNull().default("0"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

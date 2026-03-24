@@ -278,6 +278,12 @@ async function runStartupMigrations() {
       INSERT INTO stock_item_categories (name) VALUES ('Packaging'), ('Cleaning Materials'), ('Chemicals')
       ON CONFLICT (name) DO NOTHING
     `);
+    await db.execute(sql`
+      ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS kanban_enabled BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+    await db.execute(sql`
+      ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS kanban_quantity NUMERIC(10,4) NOT NULL DEFAULT 0
+    `);
     await seedStorageLocations();
     console.log("Startup migrations OK");
   } catch (err) {

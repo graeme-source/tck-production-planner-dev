@@ -424,6 +424,8 @@ const schema = z.object({
     (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
     z.number().int().positive().nullable().optional()
   ),
+  kanbanEnabled: z.boolean().optional(),
+  kanbanQuantity: z.coerce.number().min(0).optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -431,7 +433,7 @@ type FormValues = z.infer<typeof schema>;
 const emptyDefaults: FormValues = {
   name: "", unit: "kg", packWeight: 0, costPerPack: 0,
   brand: "", supplierPartNumber: "", supplierId: 0, secondarySupplierId: 0,
-  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null, estimatedCookTimeMin: null, ovenTempC: null, steamPct: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "", surplusPercent: 10, shelfLifeDays: null,
+  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null, estimatedCookTimeMin: null, ovenTempC: null, steamPct: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "", surplusPercent: 10, shelfLifeDays: null, kanbanEnabled: false, kanbanQuantity: 0,
 };
 
 export default function Ingredients() {
@@ -473,6 +475,7 @@ export default function Ingredients() {
   const watchedStockCheckEnabled = watch("stockCheckEnabled");
   const watchedStockCheckFrequency = watch("stockCheckFrequency");
   const watchedCategory = watch("category");
+  const watchedKanbanEnabled = watch("kanbanEnabled");
   const liveCostPerUnit = watchedPackWeight > 0 ? watchedCostPerPack / watchedPackWeight : null;
   const showRawMeatTray = watchedCategory === "raw_meat";
 
@@ -509,6 +512,8 @@ export default function Ingredients() {
       stockCheckDay: item.stockCheckDay ?? "",
       surplusPercent: (item as Record<string, unknown>).surplusPercent != null ? Number((item as Record<string, unknown>).surplusPercent) : 10,
       shelfLifeDays: (item as Record<string, unknown>).shelfLifeDays != null ? Number((item as Record<string, unknown>).shelfLifeDays) : null,
+      kanbanEnabled: (item as Record<string, unknown>).kanbanEnabled as boolean ?? false,
+      kanbanQuantity: (item as Record<string, unknown>).kanbanQuantity != null ? Number((item as Record<string, unknown>).kanbanQuantity) : 0,
     });
     setIsDialogOpen(true);
   };
@@ -536,6 +541,8 @@ export default function Ingredients() {
     stockCheckDay: data.stockCheckFrequency === "weekly" ? (data.stockCheckDay || null) : null,
     surplusPercent: data.surplusPercent ?? 10,
     shelfLifeDays: data.shelfLifeDays ?? null,
+    kanbanEnabled: data.kanbanEnabled ?? false,
+    kanbanQuantity: data.kanbanQuantity ?? 0,
   });
 
   const onSubmit = (data: FormValues) => {
@@ -859,6 +866,44 @@ export default function Ingredients() {
                     </p>
                   </div>
                 )}
+              </div>
+            )}
+
+            <div className="flex items-center gap-3 py-1">
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  {...register("kanbanEnabled")}
+                  className="sr-only peer"
+                />
+                <div className="w-9 h-5 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/30 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+              </label>
+              <div>
+                <span className="text-sm font-medium">Kanban Enabled</span>
+                <p className="text-xs text-muted-foreground">
+                  Track this ingredient with kanban pull cards for ordering.
+                </p>
+              </div>
+            </div>
+
+            {watchedKanbanEnabled && (
+              <div className="pl-4 border-l-2 border-primary/20">
+                <label className="text-sm font-medium mb-1 block">
+                  Kanban Quantity
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">(per kanban card)</span>
+                </label>
+                <div className="relative max-w-[200px]">
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    {...register("kanbanQuantity")}
+                    className="w-full px-3 pr-12 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    placeholder="e.g. 10"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">{watchedUnit || "unit"}</span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">Standard order quantity per kanban card.</p>
               </div>
             )}
 

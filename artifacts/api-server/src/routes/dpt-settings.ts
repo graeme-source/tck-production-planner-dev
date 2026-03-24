@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { db, dptSettingsTable, recipesTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
+import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
 
 const router: IRouter = Router();
 
@@ -45,6 +46,7 @@ router.post("/", async (req, res) => {
   }).returning();
   const recipeName = await db.select({ name: recipesTable.name }).from(recipesTable).where(eq(recipesTable.id, row.recipeId));
   res.status(201).json(mapRow({ ...row, recipeName: recipeName[0]?.name ?? null }));
+  recalculateDptRequirements().catch(err => console.error("Auto-recalculate after DPT create failed:", err));
 });
 
 router.put("/:id", async (req, res) => {
@@ -62,12 +64,14 @@ router.put("/:id", async (req, res) => {
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   const recipeName = await db.select({ name: recipesTable.name }).from(recipesTable).where(eq(recipesTable.id, row.recipeId));
   res.json(mapRow({ ...row, recipeName: recipeName[0]?.name ?? null }));
+  recalculateDptRequirements().catch(err => console.error("Auto-recalculate after DPT update failed:", err));
 });
 
 router.delete("/:id", async (req, res) => {
   const id = Number(req.params.id);
   await db.delete(dptSettingsTable).where(eq(dptSettingsTable.id, id));
   res.status(204).send();
+  recalculateDptRequirements().catch(err => console.error("Auto-recalculate after DPT delete failed:", err));
 });
 
 router.put("/by-recipe/:recipeId", async (req, res) => {
@@ -93,6 +97,7 @@ router.put("/by-recipe/:recipeId", async (req, res) => {
   }
   const recipeName = await db.select({ name: recipesTable.name }).from(recipesTable).where(eq(recipesTable.id, recipeId));
   res.json(mapRow({ ...row, recipeName: recipeName[0]?.name ?? null }));
+  recalculateDptRequirements().catch(err => console.error("Auto-recalculate after DPT upsert-by-recipe failed:", err));
 });
 
 export default router;
