@@ -1,0 +1,43 @@
+OK big process change for the production planning section - We need to build a system for creating orders to be placed based on the production plan requirments, stock and kanbans that have been pulled physically in the factory. 
+
+
+
+I will eventually add QR codes to be added to the Kanbans that when scanned by a phone of ipad, mark these items as "Kanban Pulled" and we'll factory them into orders. But for now we'll just manually mark them as pulled so that we can add them to the orders to be placed. We'll get the logic from teh Gemba Docs API on all of our current kanbans based on how many we need to order and when they need to be ordered. Sometimes we wait until a certain day of the week to order from certain suppliers. We probably want to set this for Daily ordering or for certain days of teh week where we will check which days of teh week we order, and when those kanbans are pulled, we automatically add them to the orders to be placed on that day, and don't show them until that day. 
+
+The other section of orders are products that don't have kanbans, and get stock checked either daily or weekly as per the settings in the ingredients database. 
+
+When we create a production plan, we create a database of required ingredients for that production plan (I think you already have this) because we use it in prep etc. We then need to clauclate how much to order depending on a number of factors. 
+
+1. What do we need to prep (unprocessed weights)
+2. What do we have in stock (we willl store the items in the prep fridge and also a new storgae frideg that needs creating called Raw Meat Fridge). 
+3. Surplus amount required in stock. We set a % that we want to have left in stock after the prep will be carried out (so effecively creating a base amount of any ingredient that we store, above what we will require for tomorrows prep, which is teh production plan we make today). 
+
+The surplus % needs to be calculated based not on what we're using in this production, but on a styored DPT production. So if our DPT is 80 batches, even if we're making 60 today, we will work out the surplus % on the DPT ingredient requirement. Thie means if we're makign an unusally large production of a certain recipe, we will order the right eamount to satisfy that production, but the surplus won't increase relatively to an unusnally high amount which we won;t be makign teh next day, rather the DPT amoutn which is our best guess about what we are making the next day at that time. We will need to store a DPT ingredient requirment somewhere for use here, and potntailly for use elsewhere for kaban calculations and otehr future features. 
+
+4. Pack size - we will always round up ordering quantities to teh nearest pack size which we have already set in the ingredient database. 
+
+Side note - we also have a Raw Freezer. When we put stock into the freezer, it's not "available for use" until we bring it back into the fridge and shoudl be dicarded from the calculation. So we need to monitor these stock levels and adjust based on whats in teh fridge, setting up teh ability for prep users to move stock from the fridge to the freezer, when they carry out stock checks of those items after prep. We also need to add this ability in the stock page, to carry out stock transfers". 
+
+Can we also create a Deliveries/Goods in section, where we can sign deliveries (created by previous productions from orders placed) into the factory and their relevant storage locations. We need to map correctly to our suppliers and ingredient categories. Prep fridge for chilled goods, Raw fridge for Raw Chilled goods, ambient for ambient goods, with teh ability to setup different rack and shelf locations for each of these items. 
+
+Let me know if you need any more info about stock holding and transfers. Back to the ordering system now: 
+
+We will set the surplus % of each ingredients in the stock and then using teh aforementioed variables, calculate what we need to order to return to our target base line after tomorrows production. when we will place new orders based on a new calculation. 
+
+We can include estimated left overs based on deliveries, stock on hand, production requirments, and then manual checks when the prep team do stock check on those items after prep. To set the in stock amount. 
+
+Once orders for each supplier are generated, we want to create an easy to use order form for each supplier, with everything in an unticked state to start, and tick these things off as we add them to our orders, with the ability to update quantities if the required quantity isn't available for what ever reason. 
+
+Once an order is placed we can mark it as such and then create an order placed. We should then send this data to the goods in page, which should have a view that shows different days of the week and what is arriving with the primary focus on today, from who on each day going forwards. This is where we can then access these orders placed, allowing teh user to mark them as received, which will put them into the relevant storage locations and record them as stock. 
+
+Chilled deliveries will require one chilled temp record and frozen deliveries will require one frozen temp record to be taken per delivery. ambient not required temp record. We will want the ability to add a Use by date to the stcok that we're bringing into the factory, with teh view to be able see what is going out of date and shoud be frozen or discarded, across the system. We probably want a prompt for teh user when they are stock checking, to let them know if the ingredient they are stock checking, will go out of date before the production that it will get used in 
+
+We will also need the ability to add checks to each delivery and configure which checks apply for which suppliers in teh suppliers edit section of the app. For example, Check goods match incoming delivery (scope to make adjustments based on what is delivered vs what was ordered and what is on the delivery note/invoice). 
+
+A check for putting the invoice in the invoice tray. 
+
+A check for physically putting the order away and replacing any relevant kanbans at the time. 
+
+We will also be adding new categories of stock items. Packaging and Cleaning Materials and Chemicals. With teh ability to add further categories and setup new items, just liek we do for ingredients. We can mirror the ingredient creation poage for this, but adjust to remove any "non food related items" like shelf life isn't required. 
+
+
