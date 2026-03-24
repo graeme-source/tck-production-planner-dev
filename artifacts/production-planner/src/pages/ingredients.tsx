@@ -446,6 +446,7 @@ export default function Ingredients() {
   const [search, setSearch] = useState("");
   const [filterCategory, setFilterCategory] = useState("all");
   const [filterStockCheck, setFilterStockCheck] = useState("all");
+  const [filterSupplier, setFilterSupplier] = useState("all");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -460,7 +461,10 @@ export default function Ingredients() {
     const matchesStockCheck =
       filterStockCheck === "all" ||
       (filterStockCheck === "enabled" ? i.stockCheckEnabled : !i.stockCheckEnabled);
-    return matchesSearch && matchesCategory && matchesStockCheck;
+    const matchesSupplier =
+      filterSupplier === "all" ||
+      (filterSupplier === "none" ? !i.supplierId : String(i.supplierId) === filterSupplier);
+    return matchesSearch && matchesCategory && matchesStockCheck && matchesSupplier;
   });
 
   const supplierMap = Object.fromEntries((suppliers ?? []).map(s => [s.id, s.name]));
@@ -1101,9 +1105,21 @@ export default function Ingredients() {
             <option value="disabled">Not Checked</option>
           </select>
 
-          {(filterCategory !== "all" || filterStockCheck !== "all" || search) && (
+          <select
+            value={filterSupplier}
+            onChange={e => setFilterSupplier(e.target.value)}
+            className="px-3 py-2 bg-background border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 appearance-none pr-8 cursor-pointer"
+          >
+            <option value="all">All Suppliers</option>
+            {(suppliers ?? []).map(s => (
+              <option key={s.id} value={String(s.id)}>{s.name}</option>
+            ))}
+            <option value="none">No Supplier</option>
+          </select>
+
+          {(filterCategory !== "all" || filterStockCheck !== "all" || filterSupplier !== "all" || search) && (
             <button
-              onClick={() => { setFilterCategory("all"); setFilterStockCheck("all"); setSearch(""); }}
+              onClick={() => { setFilterCategory("all"); setFilterStockCheck("all"); setFilterSupplier("all"); setSearch(""); }}
               className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 whitespace-nowrap"
             >
               Clear filters
