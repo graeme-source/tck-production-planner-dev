@@ -49,7 +49,7 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical } from "lucide-react";
+import { GripVertical, Lock } from "lucide-react";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Station metadata
@@ -931,6 +931,11 @@ function MixingStation({ plan }: MixingStationProps) {
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
+  // A recipe is locked in place once the building station has started it
+  // (first batch completed by builders). Locked recipes always stay at the top.
+  const isBuildingStarted = (it: ProductionPlanItem) => getStationCount(it, "building") > 0;
+  const isOrderLocked = (it: ProductionPlanItem) => isBuildingStarted(it) || it.status === "complete";
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
@@ -940,10 +945,16 @@ function MixingStation({ plan }: MixingStationProps) {
     if (oldIndex === -1 || newIndex === -1) return;
 
     const movingItem = items[oldIndex];
-    const swappingWith = items[newIndex];
 
     if (!isAdmin) {
-      if (movingItem.status !== "pending" || swappingWith.status !== "pending") return;
+      // Never move a locked recipe
+      if (isOrderLocked(movingItem)) return;
+      // Never drop into the locked zone (above locked recipes)
+      const lockedCount = items.filter(isOrderLocked).length;
+      if (newIndex < lockedCount) {
+        toast({ title: "Can't reorder", description: "Recipes already in production are fixed at the top.", variant: "destructive" });
+        return;
+      }
     }
 
     const reordered = arrayMove(items, oldIndex, newIndex);
@@ -1420,7 +1431,7 @@ function MixingStation({ plan }: MixingStationProps) {
                 const filling = getFillingForItem(item.id);
                 const hasFillingItems = filling && (filling.fillingIngredients.length > 0 || filling.fillingSubRecipes.length > 0);
                 const isActive = activeItemId === item.id;
-                const isDraggable = isAdmin || (item.status === "pending" && mixingCount === 0);
+                const isDraggable = isAdmin || (!isOrderLocked(item) && item.status === "pending");
 
                 return (
                   <MixingOverviewRow
@@ -1541,8 +1552,11 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
                 <GripVertical className="w-4 h-4" />
               </div>
             ) : (
-              <div className="p-1 text-muted-foreground opacity-30" title="Locked — recipe in progress">
-                <GripVertical className="w-4 h-4" />
+              <div
+                className="p-1 text-amber-500 dark:text-amber-400"
+                title="Locked — building has started, position is fixed"
+              >
+                <Lock className="w-3.5 h-3.5" />
               </div>
             )}
           </div>
