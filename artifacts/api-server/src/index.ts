@@ -291,6 +291,9 @@ async function runStartupMigrations() {
       ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS kanban_quantity NUMERIC(10,4) NOT NULL DEFAULT 0
     `);
     await db.execute(sql`
+      ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS kanban_unit TEXT NOT NULL DEFAULT 'weight'
+    `);
+    await db.execute(sql`
       ALTER TABLE stock_entries ADD COLUMN IF NOT EXISTS use_by_date DATE
     `);
     await db.execute(sql`

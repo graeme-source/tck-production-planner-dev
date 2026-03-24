@@ -97,6 +97,7 @@ type KanbanItem = {
   ingredientName: string | null;
   ingredientUnit: string | null;
   kanbanQuantity: number | null;
+  kanbanUnit: string;
   supplierId: number | null;
   supplierName: string | null;
   status: string;
@@ -211,7 +212,8 @@ export default function Orders() {
       if (!res.ok) throw new Error("Failed to pull kanban");
 
       const qty = kanban.kanbanQuantity ?? 1;
-      const unit = kanban.ingredientUnit ?? "kg";
+      const isPack = kanban.kanbanUnit === "pack";
+      const unit = isPack ? "packs" : (kanban.ingredientUnit ?? "kg");
       const newLine: EditableLine = {
         ingredientId: kanban.ingredientId,
         ingredientName: kanban.ingredientName ?? "Unknown",
@@ -219,7 +221,7 @@ export default function Orders() {
         totalRequired: qty,
         stockOnHand: 0,
         surplusTarget: 0,
-        packWeight: 1,
+        packWeight: isPack ? 1 : 1,
         costPerPack: 0,
         supplierPartNumber: null,
         orderQty: qty,
@@ -748,7 +750,7 @@ export default function Orders() {
                     <div className="flex-1 min-w-0">
                       <p className="font-medium truncate">{kanban.ingredientName ?? "Unknown"}</p>
                       <p className="text-xs text-muted-foreground truncate">
-                        {kanban.supplierName ?? "No supplier"} &middot; {kanban.kanbanQuantity ?? "?"}{kanban.ingredientUnit ?? ""}
+                        {kanban.supplierName ?? "No supplier"} &middot; {kanban.kanbanQuantity ?? "?"} {kanban.kanbanUnit === "pack" ? "packs" : (kanban.ingredientUnit ?? "")}
                       </p>
                     </div>
                     <div className="shrink-0 ml-3">

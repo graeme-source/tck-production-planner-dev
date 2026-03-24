@@ -99,6 +99,8 @@ router.get("/calculate", async (req, res) => {
       supplierPartNumber: ingredientsTable.supplierPartNumber,
       stockCheckEnabled: ingredientsTable.stockCheckEnabled,
       surplusPercent: ingredientsTable.surplusPercent,
+      kanbanQuantity: ingredientsTable.kanbanQuantity,
+      kanbanUnit: ingredientsTable.kanbanUnit,
     })
     .from(ingredientsTable)
     .where(inArray(ingredientsTable.id, ingredientIds));
@@ -279,6 +281,8 @@ router.get("/calculate", async (req, res) => {
           costPerPack: ingredientsTable.costPerPack,
           supplierId: ingredientsTable.supplierId,
           supplierPartNumber: ingredientsTable.supplierPartNumber,
+          kanbanQuantity: ingredientsTable.kanbanQuantity,
+          kanbanUnit: ingredientsTable.kanbanUnit,
         })
         .from(ingredientsTable)
         .where(eq(ingredientsTable.id, kanban.ingredientId))
@@ -289,7 +293,12 @@ router.get("/calculate", async (req, res) => {
       const suppId = kanban.supplierId ?? d.supplierId;
       if (!suppId) continue;
 
-      const packWeight = Number(d.packWeight) || 1;
+      const isPack = (d.kanbanUnit ?? "weight") === "pack";
+      const kanbanQty = Number(d.kanbanQuantity) || 1;
+      const packWeight = isPack ? 1 : (Number(d.packWeight) || 1);
+      const orderQty = isPack ? kanbanQty : kanbanQty;
+      const packsToOrder = isPack ? kanbanQty : (packWeight > 0 ? Math.ceil(kanbanQty / packWeight) : 1);
+      const displayUnit = isPack ? "packs" : d.unit;
 
       if (!supplierOrderMap[suppId]) {
         const supplier = supplierLookup[suppId] ??
@@ -310,15 +319,15 @@ router.get("/calculate", async (req, res) => {
       supplierOrderMap[suppId].lines.push({
         ingredientId: d.id,
         ingredientName: d.name,
-        unit: d.unit,
+        unit: displayUnit,
         totalRequired: 0,
         stockOnHand: 0,
         surplusTarget: 0,
         packWeight,
         costPerPack: Number(d.costPerPack) || 0,
         supplierPartNumber: d.supplierPartNumber ?? null,
-        orderQty: packWeight,
-        packsToOrder: 1,
+        orderQty,
+        packsToOrder,
         isKanban: true,
       });
     }

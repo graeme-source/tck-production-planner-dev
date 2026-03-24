@@ -29,6 +29,7 @@ export const ingredientsTable = pgTable("ingredients", {
   shelfLifeDays: integer("shelf_life_days"),
   kanbanEnabled: boolean("kanban_enabled").notNull().default(false),
   kanbanQuantity: numeric("kanban_quantity", { precision: 10, scale: 4 }).notNull().default("0"),
+  kanbanUnit: text("kanban_unit").notNull().default("weight"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

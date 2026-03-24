@@ -3,6 +3,7 @@ import { useListIngredients, useListSuppliers } from "@workspace/api-client-reac
 import type { Ingredient } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
+import { cn } from "@/lib/utils";
 import { Search, Plus, Trash2, Edit2, Loader2, ExternalLink, Upload, FileText, CheckCircle2, XCircle, AlertTriangle, RefreshCw } from "lucide-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
@@ -426,6 +427,7 @@ const schema = z.object({
   ),
   kanbanEnabled: z.boolean().optional(),
   kanbanQuantity: z.coerce.number().min(0).optional(),
+  kanbanUnit: z.enum(["weight", "pack"]).optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -433,7 +435,7 @@ type FormValues = z.infer<typeof schema>;
 const emptyDefaults: FormValues = {
   name: "", unit: "kg", packWeight: 0, costPerPack: 0,
   brand: "", supplierPartNumber: "", supplierId: 0, secondarySupplierId: 0,
-  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null, estimatedCookTimeMin: null, ovenTempC: null, steamPct: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "", surplusPercent: 10, shelfLifeDays: null, kanbanEnabled: false, kanbanQuantity: 0,
+  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null, estimatedCookTimeMin: null, ovenTempC: null, steamPct: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "", surplusPercent: 10, shelfLifeDays: null, kanbanEnabled: false, kanbanQuantity: 0, kanbanUnit: "weight" as const,
 };
 
 export default function Ingredients() {
@@ -463,7 +465,7 @@ export default function Ingredients() {
 
   const supplierMap = Object.fromEntries((suppliers ?? []).map(s => [s.id, s.name]));
 
-  const { register, handleSubmit, reset, watch, formState: { errors } } = useForm<FormValues>({
+  const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: emptyDefaults,
   });
@@ -476,6 +478,7 @@ export default function Ingredients() {
   const watchedStockCheckFrequency = watch("stockCheckFrequency");
   const watchedCategory = watch("category");
   const watchedKanbanEnabled = watch("kanbanEnabled");
+  const watchedKanbanUnit = watch("kanbanUnit");
   const liveCostPerUnit = watchedPackWeight > 0 ? watchedCostPerPack / watchedPackWeight : null;
   const showRawMeatTray = watchedCategory === "raw_meat";
 
@@ -514,6 +517,7 @@ export default function Ingredients() {
       shelfLifeDays: (item as Record<string, unknown>).shelfLifeDays != null ? Number((item as Record<string, unknown>).shelfLifeDays) : null,
       kanbanEnabled: (item as Record<string, unknown>).kanbanEnabled as boolean ?? false,
       kanbanQuantity: (item as Record<string, unknown>).kanbanQuantity != null ? Number((item as Record<string, unknown>).kanbanQuantity) : 0,
+      kanbanUnit: ((item as Record<string, unknown>).kanbanUnit as "weight" | "pack") ?? "weight",
     });
     setIsDialogOpen(true);
   };
@@ -543,6 +547,7 @@ export default function Ingredients() {
     shelfLifeDays: data.shelfLifeDays ?? null,
     kanbanEnabled: data.kanbanEnabled ?? false,
     kanbanQuantity: data.kanbanQuantity ?? 0,
+    kanbanUnit: data.kanbanUnit ?? "weight",
   });
 
   const onSubmit = (data: FormValues) => {
@@ -887,23 +892,68 @@ export default function Ingredients() {
             </div>
 
             {watchedKanbanEnabled && (
-              <div className="pl-4 border-l-2 border-primary/20">
-                <label className="text-sm font-medium mb-1 block">
-                  Kanban Quantity
-                  <span className="ml-2 text-xs font-normal text-muted-foreground">(per kanban card)</span>
-                </label>
-                <div className="relative max-w-[200px]">
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    {...register("kanbanQuantity")}
-                    className="w-full px-3 pr-12 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                    placeholder="e.g. 10"
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">{watchedUnit || "unit"}</span>
+              <div className="pl-4 border-l-2 border-primary/20 space-y-3">
+                <div>
+                  <label className="text-sm font-medium mb-1.5 block">
+                    Order Unit
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">(how this ingredient is ordered)</span>
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setValue("kanbanUnit", "weight")}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors",
+                        watchedKanbanUnit === "weight"
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-background border-border text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      Weight ({watchedUnit || "kg"})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setValue("kanbanUnit", "pack")}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors",
+                        watchedKanbanUnit === "pack"
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-background border-border text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      Pack
+                    </button>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {watchedKanbanUnit === "pack"
+                      ? "Each kanban card will order a set number of packs (bottles, bags, etc.)."
+                      : `Each kanban card will order a set weight in ${watchedUnit || "kg"}.`}
+                  </p>
                 </div>
-                <p className="text-xs text-muted-foreground mt-1">Standard order quantity per kanban card.</p>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">
+                    Kanban Quantity
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">(per kanban card)</span>
+                  </label>
+                  <div className="relative max-w-[200px]">
+                    <input
+                      type="number"
+                      step={watchedKanbanUnit === "pack" ? "1" : "0.01"}
+                      min="0"
+                      {...register("kanbanQuantity")}
+                      className="w-full px-3 pr-16 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      placeholder={watchedKanbanUnit === "pack" ? "e.g. 2" : "e.g. 10"}
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">
+                      {watchedKanbanUnit === "pack" ? "packs" : (watchedUnit || "unit")}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {watchedKanbanUnit === "pack"
+                      ? "Number of packs to order per kanban card."
+                      : "Standard order quantity per kanban card."}
+                  </p>
+                </div>
               </div>
             )}
 

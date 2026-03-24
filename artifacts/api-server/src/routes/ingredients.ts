@@ -21,6 +21,7 @@ function mapRow(r: typeof ingredientsTable.$inferSelect) {
     shelfLifeDays: r.shelfLifeDays ?? null,
     kanbanEnabled: r.kanbanEnabled ?? false,
     kanbanQuantity: Number(r.kanbanQuantity ?? 0),
+    kanbanUnit: r.kanbanUnit ?? "weight",
     createdAt: r.createdAt.toISOString(),
   };
 }
@@ -38,7 +39,7 @@ function validateProcessingRatio(value: unknown): string | null {
 }
 
 router.post("/", validate(CreateIngredientBody), async (req, res) => {
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, shelfLifeDays, kanbanEnabled, kanbanQuantity } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const [row] = await db.insert(ingredientsTable).values({
@@ -66,6 +67,7 @@ router.post("/", validate(CreateIngredientBody), async (req, res) => {
     shelfLifeDays: shelfLifeDays != null ? Number(shelfLifeDays) : null,
     kanbanEnabled: kanbanEnabled ?? false,
     kanbanQuantity: kanbanQuantity != null ? String(kanbanQuantity) : "0",
+    kanbanUnit: kanbanUnit ?? "weight",
   }).returning();
   res.status(201).json(mapRow(row));
 });
@@ -79,7 +81,7 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, shelfLifeDays, kanbanEnabled, kanbanQuantity } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const [row] = await db.update(ingredientsTable).set({
@@ -107,6 +109,7 @@ router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
     ...(shelfLifeDays !== undefined ? { shelfLifeDays: shelfLifeDays != null ? Number(shelfLifeDays) : null } : {}),
     ...(kanbanEnabled !== undefined ? { kanbanEnabled } : {}),
     ...(kanbanQuantity !== undefined ? { kanbanQuantity: kanbanQuantity != null ? String(kanbanQuantity) : "0" } : {}),
+    ...(kanbanUnit !== undefined ? { kanbanUnit } : {}),
   }).where(eq(ingredientsTable.id, id)).returning();
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   res.json(mapRow(row));
