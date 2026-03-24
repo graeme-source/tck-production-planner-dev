@@ -102,6 +102,35 @@ router.post("/", async (req, res) => {
   res.status(201).json(mapRow(full));
 });
 
+router.get("/ingredients", async (_req, res) => {
+  const rows = await db
+    .select({
+      ingredientId: ingredientsTable.id,
+      ingredientName: ingredientsTable.name,
+      ingredientUnit: ingredientsTable.unit,
+      kanbanQuantity: ingredientsTable.kanbanQuantity,
+      kanbanOrderAmount: ingredientsTable.kanbanOrderAmount,
+      kanbanUnit: ingredientsTable.kanbanUnit,
+      supplierId: ingredientsTable.supplierId,
+      supplierName: suppliersTable.name,
+    })
+    .from(ingredientsTable)
+    .leftJoin(suppliersTable, eq(ingredientsTable.supplierId, suppliersTable.id))
+    .where(eq(ingredientsTable.kanbanEnabled, true))
+    .orderBy(ingredientsTable.name);
+
+  res.json(rows.map(r => ({
+    ingredientId: r.ingredientId,
+    ingredientName: r.ingredientName,
+    ingredientUnit: r.ingredientUnit,
+    kanbanQuantity: r.kanbanQuantity != null ? Number(r.kanbanQuantity) : null,
+    kanbanOrderAmount: r.kanbanOrderAmount != null ? Number(r.kanbanOrderAmount) : null,
+    kanbanUnit: r.kanbanUnit ?? "weight",
+    supplierId: r.supplierId,
+    supplierName: r.supplierName ?? null,
+  })));
+});
+
 router.post("/sync", async (_req, res) => {
   const enabledIngredients = await db
     .select({ id: ingredientsTable.id, supplierId: ingredientsTable.supplierId })
