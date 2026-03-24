@@ -777,6 +777,8 @@ function MixingStation({ plan }: MixingStationProps) {
   const [mixingTab, setMixingTab] = useState<"tins" | "cooking">("cooking");
   // key = `${recipeId}-${ingredientId}`, value = map of trayIdx → 0 (empty), 1 (in oven), 2 (done)
   const [trayStates, setTrayStates] = useState<Record<string, Record<number, 0 | 1 | 2>>>({});
+  // key = `${recipeId}-${ingredientId}`, value = map of trayIdx → pack count (1 or 2, default 2)
+  const [trayPacks, setTrayPacks] = useState<Record<string, Record<number, 1 | 2>>>({});
   interface OvenEventRow {
     id: number; planId: number; recipeId: number | null; recipeName: string | null;
     ingredientId: number | null; ingredientName: string | null; trayIndex: number;
@@ -862,6 +864,14 @@ function MixingStation({ plan }: MixingStationProps) {
       // Revert on error
       setTrayStates(prev => ({ ...prev, [key]: { ...prev[key], [trayIdx]: cur } }));
     }
+  };
+
+  // Toggle pack count for a tray between 1 and 2 (default 2)
+  const togglePacks = (key: string, trayIdx: number) => {
+    setTrayPacks(prev => {
+      const cur = prev[key]?.[trayIdx] ?? 2;
+      return { ...prev, [key]: { ...prev[key], [trayIdx]: cur === 2 ? 1 : 2 } };
+    });
   };
 
   const submitTemp = async () => {
@@ -1262,13 +1272,23 @@ function MixingStation({ plan }: MixingStationProps) {
                     <div className={cn("flex items-center justify-between px-4 py-3 border-b border-border", recipeAllDone ? "bg-green-50 dark:bg-green-900/20" : "bg-secondary/30")}>
                       <div>
                         <p className="font-semibold">{recipe.recipeName}</p>
-                        <p className="text-xs text-muted-foreground">{recipe.batchesTarget} batches · {totalTraysForRecipe} tray{totalTraysForRecipe !== 1 ? "s" : ""}</p>
+                        <div className="flex items-baseline gap-2 mt-0.5">
+                          <span className="text-xs text-muted-foreground">{recipe.batchesTarget} batches</span>
+                          <span className="text-lg font-extrabold tabular-nums leading-none">
+                            {totalTraysForRecipe}
+                            <span className="text-xs font-semibold text-muted-foreground ml-0.5">tray{totalTraysForRecipe !== 1 ? "s" : ""}</span>
+                          </span>
+                        </div>
                       </div>
                       <div className="text-right">
                         {recipeAllDone ? (
                           <span className="text-green-600 dark:text-green-400 font-bold text-sm">✓ All done</span>
                         ) : (
-                          <span className="text-sm font-semibold tabular-nums text-muted-foreground">{totalDoneForRecipe}/{totalTraysForRecipe} done</span>
+                          <div className="flex items-baseline gap-0.5 justify-end">
+                            <span className="text-2xl font-extrabold tabular-nums leading-none">{totalDoneForRecipe}</span>
+                            <span className="text-sm font-semibold text-muted-foreground tabular-nums">/{totalTraysForRecipe}</span>
+                            <span className="text-xs text-muted-foreground ml-1">done</span>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -1337,24 +1357,58 @@ function MixingStation({ plan }: MixingStationProps) {
                               </div>
                             )}
 
-                            {/* Tray completion buttons — tap to cycle: empty → in oven → done */}
+                            {/* Tray completion buttons — tap to cycle: empty → in oven → done
+                                Pack badge (×1/×2) in corner shows how many packs are on the tray. */}
                             <div className="grid grid-cols-4 gap-2">
                               {Array.from({ length: ingTrays }, (_, idx) => {
                                 const st = ingTrayMap[idx] ?? 0;
+                                const packs = trayPacks[key]?.[idx] ?? 2;
+                                const isFull = packs === 2;
                                 return (
-                                  <button
-                                    key={idx}
-                                    onClick={() => advanceTray(recipe.recipeId, recipe.recipeName, ing.ingredientId, ing.ingredientName, idx, plan.id, plan.name ?? "")}
-                                    className={cn(
-                                      "flex flex-col items-center justify-center py-3 rounded-xl border-2 font-semibold text-sm transition-all active:scale-95",
-                                      st === 2 ? "bg-green-500 border-green-500 text-white"
-                                      : st === 1 ? "bg-orange-500 border-orange-500 text-white"
-                                      : "bg-card border-border text-muted-foreground hover:border-rose-400 hover:text-foreground"
-                                    )}
-                                  >
-                                    <span className="text-base">{st === 2 ? "✓" : st === 1 ? "🔥" : idx + 1}</span>
-                                    <span className="text-xs opacity-80">{st === 2 ? "done" : st === 1 ? "in oven" : "tray"}</span>
-                                  </button>
+                                  <div key={idx} className="relative">
+                                    <button
+                                      onClick={() => advanceTray(recipe.recipeId, recipe.recipeName, ing.ingredientId, ing.ingredientName, idx, plan.id, plan.name ?? "")}
+                                      className={cn(
+                                        "w-full flex flex-col items-center justify-center py-3 rounded-xl border-2 font-semibold text-sm transition-all active:scale-95 overflow-hidden relative",
+                                        st === 2
+                                          ? isFull
+                                            ? "bg-green-500 border-green-500 text-white"
+                                            : "border-green-500 text-green-700 dark:text-green-400 bg-card"
+                                          : st === 1
+                                            ? isFull
+                                              ? "bg-orange-500 border-orange-500 text-white"
+                                              : "border-orange-500 text-orange-700 dark:text-orange-400 bg-card"
+                                            : isFull
+                                              ? "bg-card border-border text-muted-foreground hover:border-rose-400 hover:text-foreground"
+                                              : "bg-card border-amber-300 dark:border-amber-700 text-muted-foreground hover:border-amber-400"
+                                      )}
+                                    >
+                                      {/* Half-fill overlay for 1-pack trays */}
+                                      {!isFull && (
+                                        <div className={cn(
+                                          "absolute bottom-0 left-0 right-0 h-1/2",
+                                          st === 2 ? "bg-green-500"
+                                          : st === 1 ? "bg-orange-500"
+                                          : "bg-amber-100 dark:bg-amber-900/40"
+                                        )} />
+                                      )}
+                                      <span className="relative z-10 text-base">{st === 2 ? "✓" : st === 1 ? "🔥" : idx + 1}</span>
+                                      <span className="relative z-10 text-xs opacity-80">{st === 2 ? "done" : st === 1 ? "in oven" : "tray"}</span>
+                                    </button>
+                                    {/* Pack count badge — tap to toggle 1 ↔ 2 packs */}
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); togglePacks(key, idx); }}
+                                      className={cn(
+                                        "absolute top-1 right-1 z-20 h-5 min-w-[20px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center shadow-sm transition-colors",
+                                        packs === 1
+                                          ? "bg-amber-500 text-white"
+                                          : "bg-white/80 dark:bg-black/50 border border-border/60 text-muted-foreground"
+                                      )}
+                                      title="Tap to toggle: 1 or 2 packs on this tray"
+                                    >
+                                      ×{packs}
+                                    </button>
+                                  </div>
                                 );
                               })}
                             </div>
