@@ -5226,7 +5226,7 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
       recipeId: item.recipeId,
       recipeName: item.recipeName ?? `Recipe #${item.recipeId}`,
       trayCount: chillerTrays(item),
-      colour: RECIPE_RACK_COLOURS[idx % RECIPE_RACK_COLOURS.length],
+      colour: item.recipeColor ?? RECIPE_RACK_COLOURS[idx % RECIPE_RACK_COLOURS.length],
     }))
     .filter(r => r.trayCount > 0);
 
@@ -5425,7 +5425,7 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
               const nPacks = netPacks(item);
               const trays = chillerTrays(item);
               const wonlys = item.wonlyCount ?? 0;
-              const recipeColour = RECIPE_RACK_COLOURS[idx % RECIPE_RACK_COLOURS.length];
+              const recipeColour = item.recipeColor ?? RECIPE_RACK_COLOURS[idx % RECIPE_RACK_COLOURS.length];
               return (
                 <tr key={item.id} className={cn(
                   "border-b border-border/50 last:border-0",

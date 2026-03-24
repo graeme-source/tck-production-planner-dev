@@ -316,6 +316,7 @@ export interface ProductionPlanItem {
   fillWeightGrams?: number | null;
   baseType?: string | null;
   baseWeightGrams?: number | null;
+  recipeColor?: string | null;
 }
 
 export type ProductionPlanStatus =
