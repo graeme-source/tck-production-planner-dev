@@ -90,4 +90,51 @@ router.post("/", validate(CreateTransferBody), async (req, res) => {
   });
 });
 
+router.get("/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  const rows = await db
+    .select({
+      id: stockTransfersTable.id,
+      ingredientId: stockTransfersTable.ingredientId,
+      ingredientName: ingredientsTable.name,
+      fromLocation: stockTransfersTable.fromLocation,
+      toLocation: stockTransfersTable.toLocation,
+      quantity: stockTransfersTable.quantity,
+      unit: stockTransfersTable.unit,
+      transferredAt: stockTransfersTable.transferredAt,
+      userId: stockTransfersTable.userId,
+      notes: stockTransfersTable.notes,
+    })
+    .from(stockTransfersTable)
+    .leftJoin(ingredientsTable, eq(stockTransfersTable.ingredientId, ingredientsTable.id))
+    .where(eq(stockTransfersTable.id, id));
+
+  if (!rows.length) { res.status(404).json({ error: "Not found" }); return; }
+  const r = rows[0];
+  res.json({ ...r, quantity: Number(r.quantity), transferredAt: r.transferredAt.toISOString() });
+});
+
+const UpdateTransferBody = z.object({
+  notes: z.string().nullish(),
+});
+
+router.put("/:id", validate(UpdateTransferBody), async (req, res) => {
+  const id = Number(req.params.id);
+  const { notes } = req.body;
+  const [row] = await db.update(stockTransfersTable)
+    .set({ notes: notes || null })
+    .where(eq(stockTransfersTable.id, id))
+    .returning();
+  if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  res.json({ ...row, quantity: Number(row.quantity), transferredAt: row.transferredAt.toISOString() });
+});
+
+router.delete("/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  const existing = await db.select().from(stockTransfersTable).where(eq(stockTransfersTable.id, id));
+  if (!existing.length) { res.status(404).json({ error: "Not found" }); return; }
+  await db.delete(stockTransfersTable).where(eq(stockTransfersTable.id, id));
+  res.status(204).send();
+});
+
 export default router;
