@@ -3075,6 +3075,32 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     }
   };
 
+  const [transferringId, setTransferringId] = useState<number | null>(null);
+
+  const transferToPrepFridge = async (ingredientId: number, ingredientName: string, qty: number, unit: string) => {
+    setTransferringId(ingredientId);
+    try {
+      const resp = await fetch("/api/stock-transfers", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ingredientId,
+          fromLocation: "production_fridge",
+          toLocation: "prep_fridge",
+          quantity: qty,
+          unit,
+          notes: `Prep transfer: ${ingredientName}`,
+        }),
+      });
+      if (!resp.ok) throw new Error("Transfer failed");
+      toast({ title: `Transferred ${qty} ${unit} of ${ingredientName} to Prep Fridge` });
+    } catch {
+      toast({ title: "Transfer failed", variant: "destructive" });
+    } finally {
+      setTransferringId(null);
+    }
+  };
+
   const totalTins = ingredients.reduce((s, ing) => s + ing.totalTinCount, 0);
   const completedTins = completions.length;
   const overallPct = totalTins > 0 ? Math.round((completedTins / totalTins) * 100) : 0;
@@ -3375,6 +3401,17 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                             </p>
                           )}
                         </div>
+                      )}
+
+                      {status.allTinsDone && (
+                        <button
+                          onClick={() => transferToPrepFridge(ing.ingredientId, ing.ingredientName, ing.totalQty, ing.unit)}
+                          disabled={transferringId === ing.ingredientId}
+                          className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300 rounded-xl text-sm font-semibold hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors"
+                        >
+                          {transferringId === ing.ingredientId ? <Loader2 className="w-4 h-4 animate-spin" /> : <Truck className="w-4 h-4" />}
+                          Transfer {ing.totalQty} {ing.unit} to Prep Fridge
+                        </button>
                       )}
               </div>
               );

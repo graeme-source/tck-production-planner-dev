@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { useListUsers, useListCategoryDefaults, useListDptSettings, useListTimingStandards, useListRecipes } from "@workspace/api-client-react";
+import { useListUsers, useListCategoryDefaults, useListDptSettings, useListTimingStandards, useListRecipes, useListIngredients } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { usePagePermissions, useSavePagePermissions } from "@/hooks/use-page-permissions";
 import { useAuth } from "@/contexts/auth-context";
@@ -512,6 +512,7 @@ export default function Settings() {
 
       {/* Storage Locations — admin only */}
       {user?.role === "admin" && <StorageLocationsSection />}
+      {user?.role === "admin" && <IngredientStorageAssignmentsSection />}
 
       {/* DPT Settings & Timing Standards — admin only */}
       {user?.role === "admin" && <DptSettingsSection />}
@@ -1825,8 +1826,8 @@ function StorageLocationsSection() {
                     <input
                       value={rackInputs[loc.id] ?? ""}
                       onChange={e => setRackInputs(prev => ({ ...prev, [loc.id]: e.target.value }))}
-                      placeholder="Add rack..."
-                      className="w-24 px-2 py-1 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-primary/30"
+                      placeholder="Add shelf/rack..."
+                      className="w-28 px-2 py-1 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-primary/30"
                       onKeyDown={e => {
                         if (e.key === "Enter" && rackInputs[loc.id]?.trim()) {
                           addRackMutation.mutate({ locationId: loc.id, label: rackInputs[loc.id].trim() });
@@ -1844,6 +1845,173 @@ function StorageLocationsSection() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+type IngredientAssignment = {
+  id: number;
+  ingredientId: number;
+  locationId: number;
+  rackLabel: string | null;
+  shelfLabel: string | null;
+};
+
+function IngredientStorageAssignmentsSection() {
+  const queryClient = useQueryClient();
+  const { data: ingredients } = useListIngredients();
+  const { data: locations } = useQuery<StorageLocationRow[]>({
+    queryKey: ["/api/storage-locations"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/storage-locations`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load");
+      return res.json();
+    },
+  });
+  const { data: assignments, isLoading } = useQuery<IngredientAssignment[]>({
+    queryKey: ["/api/storage-locations/ingredient-assignments"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/storage-locations/ingredient-assignments`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load");
+      return res.json();
+    },
+  });
+
+  const [selIngredient, setSelIngredient] = useState<number | "">("");
+  const [selLocation, setSelLocation] = useState<number | "">("");
+  const [selRack, setSelRack] = useState("");
+  const [selShelf, setSelShelf] = useState("");
+
+  const addMutation = useMutation({
+    mutationFn: async (data: { ingredientId: number; locationId: number; rackLabel: string | null; shelfLabel: string | null }) => {
+      const res = await fetch(`${BASE}/api/storage-locations/ingredient-assignments`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error("Failed to assign");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/storage-locations/ingredient-assignments"] });
+      setSelIngredient("");
+      setSelLocation("");
+      setSelRack("");
+      setSelShelf("");
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`${BASE}/api/storage-locations/ingredient-assignments/${id}`, { method: "DELETE", credentials: "include" });
+      if (!res.ok) throw new Error("Failed to remove");
+    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/storage-locations/ingredient-assignments"] }); },
+  });
+
+  const ingredientName = (id: number) => (ingredients as { id: number; name: string }[] | undefined)?.find(i => i.id === id)?.name ?? `#${id}`;
+  const locationName = (id: number) => locations?.find(l => l.id === id)?.name ?? `#${id}`;
+
+  return (
+    <div className="rounded-2xl border border-border bg-card overflow-hidden">
+      <div className="p-5 border-b border-border bg-secondary/20">
+        <h2 className="text-lg font-semibold flex items-center gap-2"><Package className="w-5 h-5 text-primary" /> Ingredient Default Locations</h2>
+        <p className="text-xs text-muted-foreground mt-1">Assign where each ingredient is normally stored (location, rack/shelf label).</p>
+      </div>
+      <div className="p-5 space-y-4">
+        <div className="flex items-end gap-3 flex-wrap">
+          <div className="flex-1 min-w-[160px]">
+            <label className="text-sm font-medium mb-1 block">Ingredient</label>
+            <select
+              value={selIngredient}
+              onChange={e => setSelIngredient(e.target.value ? Number(e.target.value) : "")}
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
+              <option value="">Select ingredient…</option>
+              {(ingredients as { id: number; name: string }[] | undefined)?.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+            </select>
+          </div>
+          <div className="flex-1 min-w-[140px]">
+            <label className="text-sm font-medium mb-1 block">Location</label>
+            <select
+              value={selLocation}
+              onChange={e => setSelLocation(e.target.value ? Number(e.target.value) : "")}
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
+              <option value="">Select location…</option>
+              {locations?.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          </div>
+          <div className="w-24">
+            <label className="text-sm font-medium mb-1 block">Rack</label>
+            <input
+              value={selRack}
+              onChange={e => setSelRack(e.target.value)}
+              placeholder="e.g. A1"
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-primary/30"
+            />
+          </div>
+          <div className="w-24">
+            <label className="text-sm font-medium mb-1 block">Shelf</label>
+            <input
+              value={selShelf}
+              onChange={e => setSelShelf(e.target.value)}
+              placeholder="e.g. Top"
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-primary/30"
+            />
+          </div>
+          <button
+            onClick={() => selIngredient && selLocation && addMutation.mutate({
+              ingredientId: Number(selIngredient),
+              locationId: Number(selLocation),
+              rackLabel: selRack.trim() || null,
+              shelfLabel: selShelf.trim() || null,
+            })}
+            disabled={!selIngredient || !selLocation || addMutation.isPending}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2"
+          >
+            {addMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+            Assign
+          </button>
+        </div>
+
+        {isLoading ? (
+          <div className="py-6 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+        ) : !assignments?.length ? (
+          <p className="text-sm text-muted-foreground py-4 text-center">No ingredient storage assignments yet.</p>
+        ) : (
+          <div className="border border-border rounded-xl overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-secondary/30">
+                <tr>
+                  <th className="text-left px-4 py-2 font-medium">Ingredient</th>
+                  <th className="text-left px-4 py-2 font-medium">Location</th>
+                  <th className="text-left px-4 py-2 font-medium">Rack</th>
+                  <th className="text-left px-4 py-2 font-medium">Shelf</th>
+                  <th className="w-10 px-4 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {assignments.map(a => (
+                  <tr key={a.id} className="border-t border-border">
+                    <td className="px-4 py-2">{ingredientName(a.ingredientId)}</td>
+                    <td className="px-4 py-2">{locationName(a.locationId)}</td>
+                    <td className="px-4 py-2 text-muted-foreground">{a.rackLabel || "—"}</td>
+                    <td className="px-4 py-2 text-muted-foreground">{a.shelfLabel || "—"}</td>
+                    <td className="px-4 py-2">
+                      <button
+                        onClick={() => deleteMutation.mutate(a.id)}
+                        className="p-1 text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

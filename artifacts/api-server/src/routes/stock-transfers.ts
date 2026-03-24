@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, stockTransfersTable, ingredientsTable } from "@workspace/db";
+import { db, stockTransfersTable, stockEntriesTable, ingredientsTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { z } from "zod/v4";
 import { validate } from "../middleware/validate";
@@ -61,6 +61,26 @@ router.post("/", validate(CreateTransferBody), async (req, res) => {
     userId: userId || null,
     notes: notes || null,
   }).returning();
+
+  await db.insert(stockEntriesTable).values({
+    ingredientId: ingredientId || null,
+    recipeId: null,
+    itemType: "ingredient",
+    quantity: String(-quantity),
+    unit,
+    location: fromLocation,
+    notes: `Transfer out to ${toLocation}`,
+  });
+
+  await db.insert(stockEntriesTable).values({
+    ingredientId: ingredientId || null,
+    recipeId: null,
+    itemType: "ingredient",
+    quantity: String(quantity),
+    unit,
+    location: toLocation,
+    notes: `Transfer in from ${fromLocation}`,
+  });
 
   res.status(201).json({
     ...row,
