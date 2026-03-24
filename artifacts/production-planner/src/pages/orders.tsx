@@ -106,13 +106,22 @@ type KanbanItem = {
 
 export default function Orders() {
   const queryClient = useQueryClient();
-  const urlPlanId = useRef<number | null>(
-    (() => {
-      const p = new URLSearchParams(window.location.search).get("planId");
-      return p ? Number(p) : null;
-    })()
-  );
-  const [selectedPlanId, setSelectedPlanId] = useState<number | null>(urlPlanId.current);
+  const initialPlanId = (() => {
+    const urlParam = new URLSearchParams(window.location.search).get("planId");
+    if (urlParam) return Number(urlParam);
+    const stored = sessionStorage.getItem("orders_selectedPlanId");
+    if (stored) return Number(stored);
+    return null;
+  })();
+  const [selectedPlanId, setSelectedPlanIdRaw] = useState<number | null>(initialPlanId);
+  const setSelectedPlanId = useCallback((id: number | null) => {
+    setSelectedPlanIdRaw(id);
+    if (id) {
+      sessionStorage.setItem("orders_selectedPlanId", String(id));
+    } else {
+      sessionStorage.removeItem("orders_selectedPlanId");
+    }
+  }, []);
   const [viewFilter, setViewFilter] = useState<"pending" | "placed">("pending");
   const [expandedSuppliers, setExpandedSuppliers] = useState<Set<number>>(new Set());
   const [editableLines, setEditableLines] = useState<Record<number, EditableLine[]>>({});
@@ -134,10 +143,11 @@ export default function Orders() {
 
   useEffect(() => {
     if (plans && plans.length > 0 && !selectedPlanId) {
-      const activePlan = plans.find(p => p.status === "active") ?? plans[0];
-      setSelectedPlanId(activePlan.id);
+      const activePlans = plans.filter(p => p.status === "active");
+      const bestPlan = activePlans.length > 0 ? activePlans[activePlans.length - 1] : plans[plans.length - 1];
+      setSelectedPlanId(bestPlan.id);
     }
-  }, [plans, selectedPlanId]);
+  }, [plans, selectedPlanId, setSelectedPlanId]);
 
   const { data: calculated, isLoading: calcLoading, error: calcError } = useQuery<CalculateResponse>({
     queryKey: ["order-calculate", selectedPlanId],
@@ -318,7 +328,8 @@ export default function Orders() {
   };
 
   const suppliers = calculated?.suppliers ?? [];
-  const placedSupplierIds = new Set(placedOrders.filter(o => o.status === "placed").map(o => o.supplierId));
+  const placedForPlan = placedOrders.filter(o => o.status === "placed" && o.planId === selectedPlanId);
+  const placedSupplierIds = new Set(placedForPlan.map(o => o.supplierId));
   const dptPendingSuppliers = suppliers.filter(s => !placedSupplierIds.has(s.supplier.id));
   const kanbanOnlyPending = Object.values(kanbanOnlySupplierInfo)
     .filter(s => !placedSupplierIds.has(s.id) && !suppliers.some(ds => ds.supplier.id === s.id))
