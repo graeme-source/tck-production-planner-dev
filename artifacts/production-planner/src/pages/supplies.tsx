@@ -270,7 +270,7 @@ export default function Supplies() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Supplies & Non-Food Stock"
+        title="Non Perishable Stock"
         description="Manage packaging, cleaning materials, chemicals and other non-food items."
         action={
           <div className="flex items-center gap-2">

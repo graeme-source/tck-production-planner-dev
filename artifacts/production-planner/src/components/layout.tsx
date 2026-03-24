@@ -36,15 +36,20 @@ const navItems: NavItem[] = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Production Plans", href: "/plans", icon: CalendarDays },
   { name: "Suppliers", href: "/suppliers", icon: Building2 },
-  { name: "Stock Inventory", href: "/stock", icon: PackageSearch },
   { name: "Deliveries", href: "/deliveries", icon: PackageCheck },
-  { name: "Supplies", href: "/supplies", icon: Box },
-  { name: "Kanbans", href: "/kanbans", icon: ArrowDownCircle },
   { name: "Orders", href: "/orders", icon: ShoppingCart },
   { name: "Sales Data", href: "/sales", icon: TrendingUp },
   { name: "Dispatches", href: "/dispatches", icon: Truck },
   { name: "Reports", href: "/reports", icon: BarChart2 },
 ];
+
+const inventorySubItems: NavItem[] = [
+  { name: "Stock Inventory", href: "/stock", icon: PackageSearch },
+  { name: "Non Perishable Stock", href: "/supplies", icon: Box },
+  { name: "Kanbans", href: "/kanbans", icon: ArrowDownCircle },
+];
+
+const INVENTORY_PATHS = ["/stock", "/supplies", "/kanbans"];
 
 const productNavItems: NavItem[] = [
   { name: "Recipes", href: "/recipes", icon: ChefHat },
@@ -63,20 +68,24 @@ const DISPATCH_PATHS = ["/dispatches", "/locations"];
 function NavLinks({
   visibleNavItems,
   visibleProductItems,
+  visibleInventoryItems,
   location,
   user,
   onNavigate,
 }: {
   visibleNavItems: NavItem[];
   visibleProductItems: NavItem[];
+  visibleInventoryItems: NavItem[];
   location: string;
   user: { name?: string; role?: string } | null;
   onNavigate?: () => void;
 }) {
   const isOnProductPage = PRODUCT_PATHS.includes(location);
   const isOnDispatchPage = DISPATCH_PATHS.includes(location);
+  const isOnInventoryPage = INVENTORY_PATHS.includes(location);
   const [productOpen, setProductOpen] = useState(isOnProductPage);
   const [dispatchOpen, setDispatchOpen] = useState(isOnDispatchPage);
+  const [inventoryOpen, setInventoryOpen] = useState(isOnInventoryPage);
 
   useEffect(() => {
     if (isOnProductPage) setProductOpen(true);
@@ -85,6 +94,10 @@ function NavLinks({
   useEffect(() => {
     if (isOnDispatchPage) setDispatchOpen(true);
   }, [isOnDispatchPage]);
+
+  useEffect(() => {
+    if (isOnInventoryPage) setInventoryOpen(true);
+  }, [isOnInventoryPage]);
 
   const dispatchSubItems = [
     { name: "Dispatches", href: "/dispatches", icon: Truck },
@@ -187,6 +200,8 @@ function NavLinks({
 
   const beforeProduct = visibleNavItems.filter(i => i.href === "/" || i.href === "/plans");
   const afterProduct = visibleNavItems.filter(i => i.href !== "/" && i.href !== "/plans");
+  const beforeInventory = afterProduct.filter(i => i.href === "/suppliers");
+  const afterInventory = afterProduct.filter(i => i.href !== "/suppliers");
 
   return (
     <>
@@ -257,7 +272,72 @@ function NavLinks({
           </div>
         )}
 
-        {afterProduct.map(renderNavItem)}
+        {beforeInventory.map(renderNavItem)}
+
+        {visibleInventoryItems.length > 0 && (
+          <div>
+            <button
+              onClick={() => setInventoryOpen(o => !o)}
+              className={cn(
+                "w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group",
+                isOnInventoryPage
+                  ? "text-primary font-semibold"
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+              )}
+            >
+              <PackageSearch className={cn("w-5 h-5", isOnInventoryPage ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+              <span className="flex-1 text-left">Inventory</span>
+              <ChevronDown className={cn(
+                "w-4 h-4 transition-transform duration-200",
+                inventoryOpen ? "rotate-180" : "",
+                isOnInventoryPage ? "text-primary" : "text-muted-foreground"
+              )} />
+            </button>
+            <AnimatePresence initial={false}>
+              {inventoryOpen && (
+                <motion.div
+                  key="inventory-group"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="overflow-hidden"
+                >
+                  <div className="ml-4 pl-3 border-l border-border/60 space-y-0.5 py-1">
+                    {visibleInventoryItems.map(sub => {
+                      const subActive = location === sub.href;
+                      return (
+                        <Link
+                          key={sub.name}
+                          href={sub.href}
+                          onClick={onNavigate}
+                          className={cn(
+                            "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative text-sm",
+                            subActive
+                              ? "text-primary font-semibold"
+                              : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+                          )}
+                        >
+                          {subActive && (
+                            <motion.div
+                              layoutId="activeNav"
+                              className="absolute inset-0 bg-primary/10 rounded-lg"
+                              transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                            />
+                          )}
+                          <sub.icon className={cn("w-4 h-4 relative z-10", subActive ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+                          <span className="relative z-10">{sub.name}</span>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
+
+        {afterInventory.map(renderNavItem)}
       </nav>
 
       <div className="px-4 pb-2">
@@ -307,7 +387,11 @@ export function Layout({ children }: { children: ReactNode }) {
     canAccess(user?.role ?? "viewer", item.href)
   );
 
-  const allNavItems = [...navItems, ...productNavItems, ...bottomNavItems];
+  const visibleInventoryItems = inventorySubItems.filter(item =>
+    canAccess(user?.role ?? "viewer", item.href)
+  );
+
+  const allNavItems = [...navItems, ...productNavItems, ...inventorySubItems, ...bottomNavItems];
   const currentPageName = location === "/locations"
     ? "Bin Locations"
     : (allNavItems.find(n => n.href === location)?.name || "Dashboard");
@@ -334,6 +418,7 @@ export function Layout({ children }: { children: ReactNode }) {
         <NavLinks
           visibleNavItems={visibleNavItems}
           visibleProductItems={visibleProductItems}
+          visibleInventoryItems={visibleInventoryItems}
           location={location}
           user={user}
         />
@@ -405,6 +490,7 @@ export function Layout({ children }: { children: ReactNode }) {
               <NavLinks
                 visibleNavItems={visibleNavItems}
                 visibleProductItems={visibleProductItems}
+                visibleInventoryItems={visibleInventoryItems}
                 location={location}
                 user={user}
                 onNavigate={() => setMobileOpen(false)}
