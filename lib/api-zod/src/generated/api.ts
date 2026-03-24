@@ -224,6 +224,8 @@ export const ListIngredientsResponseItem = zod.object({
   kanbanQuantity: zod.number().optional(),
   kanbanUnit: zod.enum(["weight", "pack", "bottle"]).optional(),
   kanbanOrderAmount: zod.number().nullish(),
+  perishable: zod.boolean().optional(),
+  palletSize: zod.number().nullish(),
   createdAt: zod.string(),
 });
 export const ListIngredientsResponse = zod.array(ListIngredientsResponseItem);
@@ -258,6 +260,8 @@ export const CreateIngredientBody = zod.object({
   kanbanQuantity: zod.number().optional(),
   kanbanUnit: zod.enum(["weight", "pack", "bottle"]).optional(),
   kanbanOrderAmount: zod.number().nullish(),
+  perishable: zod.boolean().optional(),
+  palletSize: zod.number().nullish(),
 });
 
 /**
@@ -296,6 +300,8 @@ export const GetIngredientResponse = zod.object({
   kanbanQuantity: zod.number().optional(),
   kanbanUnit: zod.enum(["weight", "pack", "bottle"]).optional(),
   kanbanOrderAmount: zod.number().nullish(),
+  perishable: zod.boolean().optional(),
+  palletSize: zod.number().nullish(),
   createdAt: zod.string(),
 });
 
@@ -333,6 +339,8 @@ export const UpdateIngredientBody = zod.object({
   kanbanQuantity: zod.number().optional(),
   kanbanUnit: zod.enum(["weight", "pack", "bottle"]).optional(),
   kanbanOrderAmount: zod.number().nullish(),
+  perishable: zod.boolean().optional(),
+  palletSize: zod.number().nullish(),
 });
 
 export const UpdateIngredientResponse = zod.object({
@@ -363,6 +371,9 @@ export const UpdateIngredientResponse = zod.object({
   kanbanEnabled: zod.boolean().optional(),
   kanbanQuantity: zod.number().optional(),
   kanbanUnit: zod.enum(["weight", "pack", "bottle"]).optional(),
+  kanbanOrderAmount: zod.number().nullish(),
+  perishable: zod.boolean().optional(),
+  palletSize: zod.number().nullish(),
   createdAt: zod.string(),
 });
 

@@ -1,5 +1,5 @@
 import React, { ReactNode, useState, useEffect } from "react";
-import { Link, useLocation } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
@@ -41,19 +41,19 @@ const navItems: NavItem[] = [
 ];
 
 const inventorySubItems: NavItem[] = [
-  { name: "Perishable Stock", href: "/stock", icon: PackageSearch },
-  { name: "Non Perishable Stock", href: "/supplies", icon: Box },
+  { name: "Ingredients", href: "/inventory?tab=ingredients", icon: Carrot },
+  { name: "Supplies", href: "/inventory?tab=supplies", icon: Box },
   { name: "Kanbans", href: "/kanbans", icon: ArrowDownCircle },
   { name: "Orders", href: "/orders", icon: ShoppingCart },
   { name: "Deliveries", href: "/deliveries", icon: PackageCheck },
 ];
 
-const INVENTORY_PATHS = ["/stock", "/supplies", "/kanbans", "/orders", "/deliveries"];
+const INVENTORY_PATHS = ["/inventory", "/kanbans", "/orders", "/deliveries"];
 
 const productNavItems: NavItem[] = [
   { name: "Recipes", href: "/recipes", icon: ChefHat },
   { name: "Sub-Recipes", href: "/sub-recipes", icon: ClipboardList },
-  { name: "Ingredients", href: "/ingredients", icon: Carrot },
+  { name: "Ingredients", href: "/inventory?tab=ingredients", icon: Carrot },
 ];
 
 const bottomNavItems: NavItem[] = [
@@ -61,7 +61,7 @@ const bottomNavItems: NavItem[] = [
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
-const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/ingredients"];
+const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory"];
 const DISPATCH_PATHS = ["/dispatches", "/locations"];
 
 function NavLinks({
@@ -69,6 +69,7 @@ function NavLinks({
   visibleProductItems,
   visibleInventoryItems,
   location,
+  search,
   user,
   onNavigate,
 }: {
@@ -76,9 +77,11 @@ function NavLinks({
   visibleProductItems: NavItem[];
   visibleInventoryItems: NavItem[];
   location: string;
+  search: string;
   user: { name?: string; role?: string } | null;
   onNavigate?: () => void;
 }) {
+  const fullPath = location + (search ? search : "");
   const isOnProductPage = PRODUCT_PATHS.includes(location);
   const isOnDispatchPage = DISPATCH_PATHS.includes(location);
   const isOnInventoryPage = INVENTORY_PATHS.includes(location);
@@ -239,7 +242,7 @@ function NavLinks({
                 >
                   <div className="ml-4 pl-3 border-l border-border/60 space-y-0.5 py-1">
                     {visibleProductItems.map(item => {
-                      const isActive = location === item.href;
+                      const isActive = item.href.includes("?") ? fullPath === item.href : location === item.href;
                       return (
                         <Link
                           key={item.name}
@@ -304,7 +307,7 @@ function NavLinks({
                 >
                   <div className="ml-4 pl-3 border-l border-border/60 space-y-0.5 py-1">
                     {visibleInventoryItems.map(sub => {
-                      const subActive = location === sub.href;
+                      const subActive = sub.href.includes("?") ? fullPath === sub.href : location === sub.href;
                       return (
                         <Link
                           key={sub.name}
@@ -373,6 +376,7 @@ function NavLinks({
 
 export function Layout({ children }: { children: ReactNode }) {
   const [location] = useLocation();
+  const search = useSearch();
   const { state, logout } = useAuth();
   const user = state.status === "authenticated" ? state.user : null;
   const { canAccess } = usePagePermissions();
@@ -393,7 +397,9 @@ export function Layout({ children }: { children: ReactNode }) {
   const allNavItems = [...navItems, ...productNavItems, ...inventorySubItems, ...bottomNavItems];
   const currentPageName = location === "/locations"
     ? "Bin Locations"
-    : (allNavItems.find(n => n.href === location)?.name || "Dashboard");
+    : location === "/inventory"
+      ? "Inventory"
+      : (allNavItems.find(n => n.href.split("?")[0] === location)?.name || "Dashboard");
 
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
@@ -419,6 +425,7 @@ export function Layout({ children }: { children: ReactNode }) {
           visibleProductItems={visibleProductItems}
           visibleInventoryItems={visibleInventoryItems}
           location={location}
+          search={search}
           user={user}
         />
 
@@ -491,6 +498,7 @@ export function Layout({ children }: { children: ReactNode }) {
                 visibleProductItems={visibleProductItems}
                 visibleInventoryItems={visibleInventoryItems}
                 location={location}
+                search={search}
                 user={user}
                 onNavigate={() => setMobileOpen(false)}
               />

@@ -8,6 +8,7 @@ import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { Layout } from "@/components/layout";
 import Dashboard from "@/pages/dashboard";
 import Ingredients from "@/pages/ingredients";
+import Inventory from "@/pages/inventory";
 import SubRecipes from "@/pages/sub-recipes";
 import Recipes from "@/pages/recipes";
 import ProductionPlans from "@/pages/production-plans";
@@ -56,7 +57,8 @@ function Router() {
           <Layout>
             <Switch>
               <Route path="/" component={Dashboard} />
-              <Route path="/ingredients" component={Ingredients} />
+              <Route path="/inventory" component={Inventory} />
+              <Route path="/ingredients">{() => <Redirect to="/inventory?tab=ingredients" />}</Route>
               <Route path="/sub-recipes" component={SubRecipes} />
               <Route path="/recipes" component={Recipes} />
               <Route path="/plans" component={ProductionPlans} />
@@ -64,7 +66,7 @@ function Router() {
               <Route path="/sales">{() => <ProtectedRoute component={Sales} pageKey="/sales" />}</Route>
               <Route path="/dispatches" component={Dispatches} />
               <Route path="/suppliers" component={Suppliers} />
-              <Route path="/supplies" component={Supplies} />
+              <Route path="/supplies">{() => <Redirect to="/inventory?tab=supplies" />}</Route>
               <Route path="/orders" component={Orders} />
               <Route path="/fulfilment">{() => <ProtectedRoute component={Fulfilment} pageKey="/fulfilment" />}</Route>
               <Route path="/locations">{() => <ProtectedRoute component={Locations} pageKey="/locations" />}</Route>

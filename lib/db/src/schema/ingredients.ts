@@ -31,6 +31,8 @@ export const ingredientsTable = pgTable("ingredients", {
   kanbanQuantity: numeric("kanban_quantity", { precision: 10, scale: 4 }).notNull().default("0"),
   kanbanUnit: text("kanban_unit").notNull().default("weight"),
   kanbanOrderAmount: numeric("kanban_order_amount", { precision: 10, scale: 4 }),
+  perishable: boolean("perishable").notNull().default(true),
+  palletSize: integer("pallet_size"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

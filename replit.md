@@ -7,7 +7,7 @@ Key capabilities include:
 - **Production Planning:** Dynamic daily production plans, calculating deficits based on Shopify sales, and suggesting batch allocations.
 - **Order Calculation & Supplier Forms:** Automated calculation of order requirements based on production plans, stock levels, and DPT-based surplus targets, with a workflow for placing and tracking purchase orders.
 - **Deliveries & Goods In:** A weekly calendar for tracking expected deliveries, with a receiving workflow that includes temperature checks, use-by date tracking, and quality control checklists.
-- **Inventory Management:** Stock checks for finished recipes, raw ingredients, and non-food supplies, with expiry warnings and actions.
+- **Inventory Management:** Unified `/inventory` page with "Ingredients" (perishable=true) and "Supplies" (perishable=false) tabs. Both live in the `ingredients` table with `perishable boolean` and `palletSize integer` columns. Smart form auto-switches fields by type (perishable-only: processing ratio, shelf life, cooking temps; supply-only: pallet size).
 - **Sales & Dispatch:** Logging sales data and managing upcoming dispatch orders.
 - **Operational Stations:** A 9-station workflow system (Mixing, Building, Prep Hub, Dough Prep, Ovens, Wrapping, Packing) with cascading completion logic to guide production.
 - **Reporting & Settings:** Dashboard overview, user management, category cost defaults, and production target settings.

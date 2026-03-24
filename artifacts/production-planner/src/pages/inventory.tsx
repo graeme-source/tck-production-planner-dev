@@ -1,0 +1,1016 @@
+import { useState, useRef, useMemo } from "react";
+import { useListIngredients, useListSuppliers } from "@workspace/api-client-react";
+import type { Ingredient } from "@workspace/api-client-react";
+import { useAppMutations } from "@/hooks/use-mutations";
+import { PageHeader } from "@/components/page-header";
+import { cn } from "@/lib/utils";
+import {
+  Search, Plus, Trash2, Edit2, Loader2, ExternalLink, Upload,
+  FileText, CheckCircle2, XCircle, AlertTriangle, RefreshCw,
+  Carrot, Box,
+} from "lucide-react";
+import { useForm } from "react-hook-form";
+import * as z from "zod";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import Papa from "papaparse";
+import { useQueryClient } from "@tanstack/react-query";
+import { useSearch } from "wouter";
+
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+type TabType = "ingredients" | "supplies";
+
+const INGREDIENT_CATEGORIES = [
+  { value: "", label: "— No category —" },
+  { value: "raw_meat", label: "Raw Meat" },
+  { value: "vegetable", label: "Vegetable" },
+  { value: "base", label: "Base (Sauce/Mozzarella)" },
+  { value: "sauce", label: "Sauce" },
+  { value: "cheese", label: "Cheese" },
+  { value: "seasoning", label: "Seasoning/Spice" },
+  { value: "dough", label: "Dough" },
+  { value: "packaging", label: "Packaging" },
+  { value: "other", label: "Other" },
+] as const;
+
+const SUPPLY_CATEGORIES = [
+  { value: "", label: "— No category —" },
+  { value: "packaging", label: "Packaging & Containers" },
+  { value: "courier", label: "Courier & Shipping" },
+  { value: "insulation", label: "Insulation & Cool Packs" },
+  { value: "tape_labels", label: "Tape & Labels" },
+  { value: "cleaning", label: "Cleaning Supplies" },
+  { value: "trays", label: "Trays & Bakeware" },
+  { value: "other", label: "Other" },
+] as const;
+
+const schema = z.object({
+  formMode: z.enum(["ingredient", "supply"]),
+  name: z.string().min(1, "Name is required"),
+  unit: z.string().min(1, "Unit is required"),
+  packWeight: z.coerce.number().min(0, "Must be positive"),
+  costPerPack: z.coerce.number().min(0, "Must be positive"),
+  brand: z.string().optional(),
+  supplierPartNumber: z.string().optional(),
+  supplierId: z.coerce.number().optional(),
+  secondarySupplierId: z.coerce.number().optional(),
+  orderingUrl: z.string().optional(),
+  notes: z.string().optional(),
+  category: z.string().optional(),
+  palletSize: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().int().positive().nullable().optional()
+  ),
+  processingRatioPct: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().min(0).max(100).nullable().optional()
+  ),
+  rawMeatTrayCapacityKg: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().positive().nullable().optional()
+  ),
+  minCookingTempC: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().min(0).max(300).nullable().optional()
+  ),
+  estimatedCookTimeMin: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().int().min(1).nullable().optional()
+  ),
+  ovenTempC: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().int().min(0).max(500).nullable().optional()
+  ),
+  steamPct: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().int().min(0).max(100).nullable().optional()
+  ),
+  stockCheckEnabled: z.boolean().optional(),
+  stockCheckFrequency: z.enum(["daily", "weekly"]).optional(),
+  stockCheckDay: z.string().optional(),
+  surplusPercent: z.coerce.number().min(0).optional(),
+  shelfLifeDays: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().int().positive().nullable().optional()
+  ),
+  kanbanEnabled: z.boolean().optional(),
+  kanbanQuantity: z.coerce.number().min(0).optional(),
+  kanbanUnit: z.enum(["weight", "pack", "bottle"]).optional(),
+  kanbanOrderAmount: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().min(0).nullable().optional()
+  ),
+});
+
+type FormValues = z.infer<typeof schema>;
+
+function emptyDefaults(mode: TabType): FormValues {
+  return {
+    formMode: mode === "supplies" ? "supply" : "ingredient",
+    name: "", unit: mode === "supplies" ? "each" : "kg", packWeight: 0, costPerPack: 0,
+    brand: "", supplierPartNumber: "", supplierId: 0, secondarySupplierId: 0,
+    orderingUrl: "", notes: "", category: "", palletSize: null,
+    processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null,
+    estimatedCookTimeMin: null, ovenTempC: null, steamPct: null,
+    stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "",
+    surplusPercent: 10, shelfLifeDays: null,
+    kanbanEnabled: false, kanbanQuantity: 0, kanbanUnit: "weight" as const, kanbanOrderAmount: null,
+  };
+}
+
+function categoryLabel(value: string | null | undefined, isPerishable: boolean): string {
+  const cats = isPerishable ? INGREDIENT_CATEGORIES : SUPPLY_CATEGORIES;
+  return (cats as readonly { value: string; label: string }[]).find(c => c.value === value)?.label ?? value ?? "—";
+}
+
+const CSV_COLUMNS = ["name","unit","pack_weight","cost_per_pack","brand","supplier_name","secondary_supplier_name","supplier_part_number","ordering_url","notes","processing_ratio_percent"];
+const CSV_EXAMPLE = ["Caputo Flour","kg","15","16.00","Caputo","Brakes Food Service","","BRK-FLOUR-15","https://brakes.co.uk/flour","00 pizza flour",""];
+
+function downloadTemplate() {
+  const header = CSV_COLUMNS.join(",");
+  const example = CSV_EXAMPLE.join(",");
+  const hint = ["# Remove this line before importing. Units: kg g l ml pcs box bag tub each. processing_ratio_percent is 0-100 (leave blank for no loss).","","","","","","","","","",""].join(",");
+  const csv = [header, hint, example].join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "ingredients_template.csv"; a.click();
+  URL.revokeObjectURL(url);
+}
+
+interface ImportResult {
+  created: { name: string }[];
+  updated: { name: string; changes: string[] }[];
+  issues: { row: number; field: string; message: string }[];
+  suppliersCreated: string[];
+  dryRun: boolean;
+}
+
+async function callImport(rows: Record<string, string>[], dryRun: boolean): Promise<ImportResult> {
+  const res = await fetch(`${BASE}/api/ingredients/import`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    credentials: "include", body: JSON.stringify({ rows, dryRun }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error ?? "Import failed");
+  }
+  return res.json();
+}
+
+type ImportStep = "upload" | "preview" | "done";
+
+function ImportDialog({ open, onClose, onDone }: { open: boolean; onClose: () => void; onDone: () => void }) {
+  const [step, setStep] = useState<ImportStep>("upload");
+  const [parsedRows, setParsedRows] = useState<Record<string, string>[]>([]);
+  const [fileName, setFileName] = useState("");
+  const [preview, setPreview] = useState<ImportResult | null>(null);
+  const [result, setResult] = useState<ImportResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  function reset() { setStep("upload"); setParsedRows([]); setFileName(""); setPreview(null); setResult(null); setError(null); }
+  function handleClose() { reset(); onClose(); }
+
+  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name); setError(null);
+    Papa.parse<Record<string, string>>(file, {
+      header: true, skipEmptyLines: true,
+      transformHeader: h => h.trim().toLowerCase().replace(/\s+/g, "_"),
+      complete: (res) => {
+        const rows = (res.data as Record<string, string>[]).filter(r => !String(Object.values(r)[0] ?? "").startsWith("#"));
+        if (rows.length === 0) { setError("No data rows found in the file."); return; }
+        setParsedRows(rows);
+      },
+      error: (err: { message: string }) => setError(err.message),
+    });
+    e.target.value = "";
+  }
+
+  async function runPreview() {
+    setLoading(true); setError(null);
+    try { setPreview(await callImport(parsedRows, true)); setStep("preview"); }
+    catch (e: unknown) { setError(e instanceof Error ? e.message : "Unknown error"); }
+    finally { setLoading(false); }
+  }
+
+  async function runImport() {
+    setLoading(true); setError(null);
+    try { setResult(await callImport(parsedRows, false)); setStep("done"); onDone(); }
+    catch (e: unknown) { setError(e instanceof Error ? e.message : "Unknown error"); }
+    finally { setLoading(false); }
+  }
+
+  const blockingIssues = preview?.issues.filter(i => i.message.includes("skipped")) ?? [];
+  const warningIssues = preview?.issues.filter(i => !i.message.includes("skipped")) ?? [];
+
+  return (
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="sm:max-w-[680px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="font-display text-xl">Import Ingredients from CSV</DialogTitle>
+        </DialogHeader>
+        <div className="flex items-center gap-2 mt-2 mb-4">
+          {(["upload","preview","done"] as ImportStep[]).map((s, i) => (
+            <div key={s} className="flex items-center gap-2">
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${step === s ? "bg-primary text-primary-foreground" : (["upload","preview","done"].indexOf(step) > i ? "bg-emerald-500 text-white" : "bg-secondary text-muted-foreground")}`}>
+                {["upload","preview","done"].indexOf(step) > i ? "✓" : i + 1}
+              </div>
+              <span className={`text-xs font-medium ${step === s ? "text-foreground" : "text-muted-foreground"}`}>
+                {s === "upload" ? "Upload" : s === "preview" ? "Preview" : "Done"}
+              </span>
+              {i < 2 && <div className="w-8 h-px bg-border" />}
+            </div>
+          ))}
+        </div>
+        {error && <div className="flex items-start gap-2 p-3 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive text-sm mb-3"><XCircle className="w-4 h-4 mt-0.5 flex-shrink-0" /><span>{error}</span></div>}
+
+        {step === "upload" && (
+          <div className="space-y-4">
+            <div className="p-4 bg-secondary/30 rounded-xl border border-border text-sm space-y-1">
+              <p className="font-medium">How it works:</p>
+              <ul className="text-muted-foreground space-y-1 list-disc list-inside">
+                <li>Download the template, fill in your ingredients, save as CSV</li>
+                <li>Existing ingredients (matched by name) will be <span className="text-amber-600 font-medium">updated</span></li>
+                <li>New ingredients will be <span className="text-emerald-600 font-medium">created</span></li>
+              </ul>
+            </div>
+            <button onClick={downloadTemplate} className="flex items-center gap-2 px-4 py-2.5 border border-border rounded-xl text-sm font-medium hover:bg-secondary/50 transition-colors">
+              <FileText className="w-4 h-4" /> Download CSV Template
+            </button>
+            <div>
+              <label className="text-sm font-medium mb-2 block">Upload your CSV file</label>
+              <div onClick={() => fileRef.current?.click()} className="border-2 border-dashed border-border rounded-xl p-8 text-center cursor-pointer hover:border-primary/50 hover:bg-secondary/20 transition-colors">
+                <Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
+                {fileName ? <p className="font-medium text-foreground">{fileName}</p> : <p className="text-muted-foreground text-sm">Click to select a CSV file</p>}
+                {parsedRows.length > 0 && <p className="text-xs text-emerald-600 mt-1 font-medium">{parsedRows.length} rows ready</p>}
+              </div>
+              <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleFile} />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button onClick={handleClose} className="px-4 py-2 text-sm rounded-xl border border-border hover:bg-secondary/50 transition-colors">Cancel</button>
+              <button onClick={runPreview} disabled={parsedRows.length === 0 || loading} className="px-5 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium disabled:opacity-50 flex items-center gap-2 hover:bg-primary/90 transition-colors">
+                {loading && <RefreshCw className="w-4 h-4 animate-spin" />} Preview Import
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === "preview" && preview && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap gap-2">
+              <span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-sm font-medium border border-emerald-200">{preview.created.length} new</span>
+              <span className="px-3 py-1 rounded-full bg-amber-50 text-amber-700 text-sm font-medium border border-amber-200">{preview.updated.length} updates</span>
+              {blockingIssues.length > 0 && <span className="px-3 py-1 rounded-full bg-destructive/10 text-destructive text-sm font-medium border border-destructive/20">{blockingIssues.length} skipped</span>}
+              {warningIssues.length > 0 && <span className="px-3 py-1 rounded-full bg-orange-50 text-orange-700 text-sm font-medium border border-orange-200">{warningIssues.length} warning{warningIssues.length !== 1 ? "s" : ""}</span>}
+            </div>
+            {preview.issues.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-sm font-medium">Issues:</p>
+                <div className="rounded-xl border border-border overflow-hidden divide-y divide-border">
+                  {preview.issues.map((issue, i) => (
+                    <div key={i} className={`flex items-start gap-3 px-4 py-2.5 text-sm ${issue.message.includes("skipped") ? "bg-destructive/5" : "bg-amber-50/50"}`}>
+                      {issue.message.includes("skipped") ? <XCircle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />}
+                      <span className="text-muted-foreground">Row {issue.row} · <span className="font-mono text-xs">{issue.field}</span>: {issue.message}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {preview.created.length > 0 && (
+              <details className="rounded-xl border border-border overflow-hidden">
+                <summary className="px-4 py-3 text-sm font-medium bg-secondary/20 cursor-pointer">New items ({preview.created.length})</summary>
+                <div className="px-4 py-3 grid grid-cols-2 gap-x-4 gap-y-1 max-h-48 overflow-y-auto">
+                  {preview.created.map((c, i) => <div key={i} className="flex items-center gap-1.5 text-sm"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" /><span className="truncate">{c.name}</span></div>)}
+                </div>
+              </details>
+            )}
+            <div className="flex justify-between gap-2 pt-2">
+              <button onClick={() => setStep("upload")} className="px-4 py-2 text-sm rounded-xl border border-border hover:bg-secondary/50 transition-colors">← Back</button>
+              <div className="flex gap-2">
+                <button onClick={handleClose} className="px-4 py-2 text-sm rounded-xl border border-border hover:bg-secondary/50 transition-colors">Cancel</button>
+                <button onClick={runImport} disabled={loading || (preview.created.length === 0 && preview.updated.length === 0)} className="px-5 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium disabled:opacity-50 flex items-center gap-2">
+                  {loading && <RefreshCw className="w-4 h-4 animate-spin" />} Confirm Import ({preview.created.length + preview.updated.length} items)
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {step === "done" && result && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
+              <CheckCircle2 className="w-6 h-6 text-emerald-600 flex-shrink-0" />
+              <div><p className="font-semibold text-emerald-800">Import complete</p><p className="text-sm text-emerald-700">{result.created.length} created · {result.updated.length} updated</p></div>
+            </div>
+            <div className="flex justify-end"><button onClick={handleClose} className="px-5 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90 transition-colors">Close</button></div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ItemFormDialog({
+  open, onClose, editingItem, defaultMode, suppliers,
+  onSave,
+}: {
+  open: boolean;
+  onClose: () => void;
+  editingItem: Ingredient | null;
+  defaultMode: TabType;
+  suppliers: { id: number; name: string }[];
+  onSave: (data: FormValues, id: number | null) => void;
+}) {
+  const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<FormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: emptyDefaults(defaultMode),
+  });
+
+  const formMode = watch("formMode");
+  const isIngredient = formMode === "ingredient";
+  const watchedUnit = watch("unit");
+  const watchedPackWeight = watch("packWeight");
+  const watchedCostPerPack = watch("costPerPack");
+  const watchedProcessingRatioPct = watch("processingRatioPct");
+  const watchedStockCheckEnabled = watch("stockCheckEnabled");
+  const watchedStockCheckFrequency = watch("stockCheckFrequency");
+  const watchedCategory = watch("category");
+  const watchedKanbanEnabled = watch("kanbanEnabled");
+  const watchedKanbanUnit = watch("kanbanUnit");
+  const liveCostPerUnit = watchedPackWeight > 0 ? watchedCostPerPack / watchedPackWeight : null;
+  const showRawMeatTray = isIngredient && watchedCategory === "raw_meat";
+
+  const populateForm = (item: Ingredient | null, mode: TabType) => {
+    if (!item) { reset(emptyDefaults(mode)); return; }
+    const isItemIngredient = item.perishable !== false;
+    reset({
+      formMode: isItemIngredient ? "ingredient" : "supply",
+      name: item.name,
+      unit: item.unit,
+      packWeight: Number(item.packWeight),
+      costPerPack: Number(item.costPerPack),
+      brand: item.brand ?? "",
+      supplierPartNumber: item.supplierPartNumber ?? "",
+      supplierId: item.supplierId ?? 0,
+      secondarySupplierId: item.secondarySupplierId ?? 0,
+      orderingUrl: item.orderingUrl ?? "",
+      notes: item.notes ?? "",
+      category: item.category ?? "",
+      palletSize: (item as Record<string, unknown>).palletSize != null ? Number((item as Record<string, unknown>).palletSize) : null,
+      processingRatioPct: item.processingRatio != null ? parseFloat((Number(item.processingRatio) * 100).toFixed(4)) : null,
+      rawMeatTrayCapacityKg: item.rawMeatTrayCapacityKg != null ? Number(item.rawMeatTrayCapacityKg) : null,
+      minCookingTempC: item.minCookingTempC != null ? Number(item.minCookingTempC) : null,
+      estimatedCookTimeMin: item.estimatedCookTimeMin != null ? Number(item.estimatedCookTimeMin) : null,
+      ovenTempC: item.ovenTempC != null ? Number(item.ovenTempC) : null,
+      steamPct: item.steamPct != null ? Number(item.steamPct) : null,
+      stockCheckEnabled: item.stockCheckEnabled ?? false,
+      stockCheckFrequency: (item.stockCheckFrequency as "daily" | "weekly") ?? "daily",
+      stockCheckDay: item.stockCheckDay ?? "",
+      surplusPercent: (item as Record<string, unknown>).surplusPercent != null ? Number((item as Record<string, unknown>).surplusPercent) : 10,
+      shelfLifeDays: (item as Record<string, unknown>).shelfLifeDays != null ? Number((item as Record<string, unknown>).shelfLifeDays) : null,
+      kanbanEnabled: (item as Record<string, unknown>).kanbanEnabled as boolean ?? false,
+      kanbanQuantity: (item as Record<string, unknown>).kanbanQuantity != null ? Number((item as Record<string, unknown>).kanbanQuantity) : 0,
+      kanbanUnit: ((item as Record<string, unknown>).kanbanUnit as "weight" | "pack" | "bottle") ?? "weight",
+      kanbanOrderAmount: (item as Record<string, unknown>).kanbanOrderAmount != null ? Number((item as Record<string, unknown>).kanbanOrderAmount) : null,
+    });
+  };
+
+  const [initialized, setInitialized] = useState(false);
+  if (open && !initialized) { populateForm(editingItem, defaultMode); setInitialized(true); }
+  if (!open && initialized) setInitialized(false);
+
+  const switchMode = (mode: "ingredient" | "supply") => {
+    setValue("formMode", mode);
+    setValue("category", "");
+  };
+
+  const onSubmit = (data: FormValues) => {
+    onSave(data, editingItem?.id ?? null);
+  };
+
+  const inputClass = "w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30";
+  const numInputClass = "w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30";
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="sm:max-w-[640px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="font-display text-xl">
+            {editingItem ? "Edit Item" : "Add New Item"}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="flex gap-1 p-1 bg-secondary/40 rounded-xl mt-2 mb-1">
+          <button
+            type="button"
+            onClick={() => switchMode("ingredient")}
+            className={cn(
+              "flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-all",
+              formMode === "ingredient"
+                ? "bg-card shadow-sm text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Carrot className="w-4 h-4" /> Ingredient
+          </button>
+          <button
+            type="button"
+            onClick={() => switchMode("supply")}
+            className={cn(
+              "flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-all",
+              formMode === "supply"
+                ? "bg-card shadow-sm text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Box className="w-4 h-4" /> Supply
+          </button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-4 text-center">
+          {formMode === "ingredient"
+            ? "Perishable food item used in recipes"
+            : "Non-perishable packaging, courier materials or supplies"}
+        </p>
+
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-2">
+              <label className="text-sm font-medium mb-1 block">Name *</label>
+              <input {...register("name")} className={inputClass} placeholder={formMode === "ingredient" ? "e.g. Organic Plain Flour" : "e.g. Courier Box (Large)"} />
+              {errors.name && <span className="text-destructive text-xs">{errors.name.message}</span>}
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block">Unit *</label>
+              <select {...register("unit")} className={inputClass}>
+                <option value="kg">kg</option>
+                <option value="g">g</option>
+                <option value="l">L</option>
+                <option value="ml">ml</option>
+                <option value="pcs">pcs</option>
+                <option value="box">box</option>
+                <option value="bag">bag</option>
+                <option value="tub">tub</option>
+                <option value="each">each</option>
+                <option value="roll">roll</option>
+                <option value="sheet">sheet</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium mb-1 block">Brand</label>
+              <input {...register("brand")} className={inputClass} placeholder="e.g. Jiffy" />
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block">Supplier Part No.</label>
+              <input {...register("supplierPartNumber")} className={inputClass} placeholder="e.g. JF-BOX-L" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium mb-1 block">Pack size ({watchedUnit || "unit"}) *</label>
+              <input type="number" step="0.001" {...register("packWeight")} className={numInputClass} placeholder="e.g. 50" />
+              <p className="text-xs text-muted-foreground mt-1">How many {watchedUnit || "units"} in one pack</p>
+              {errors.packWeight && <span className="text-destructive text-xs">{errors.packWeight.message}</span>}
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block">Cost per pack (£) *</label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm font-medium">£</span>
+                <input type="number" step="0.01" {...register("costPerPack")} className="w-full pl-7 pr-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0.00" />
+              </div>
+              {errors.costPerPack && <span className="text-destructive text-xs">{errors.costPerPack.message}</span>}
+            </div>
+          </div>
+
+          {liveCostPerUnit !== null && (
+            <div className="rounded-lg bg-secondary/30 border border-border px-3.5 py-2.5 text-sm flex items-center justify-between">
+              <span className="text-muted-foreground">Implied cost per {watchedUnit || "unit"}:</span>
+              <span className="font-semibold tabular-nums">£{liveCostPerUnit.toFixed(4)} / {watchedUnit || "unit"}</span>
+            </div>
+          )}
+
+          {!isIngredient && (
+            <div>
+              <label className="text-sm font-medium mb-1 block">Pallet Size <span className="text-xs font-normal text-muted-foreground">(packs per pallet)</span></label>
+              <input type="number" step="1" min="1" {...register("palletSize")} className={cn(numInputClass, "max-w-[160px]")} placeholder="e.g. 48" />
+              <p className="text-xs text-muted-foreground mt-1">How many packs fit on a full pallet. Used for bulk ordering calculations.</p>
+              {errors.palletSize && <span className="text-destructive text-xs">{String(errors.palletSize.message)}</span>}
+            </div>
+          )}
+
+          <div>
+            <label className="text-sm font-medium mb-1 block">
+              {isIngredient ? "Ingredient Category" : "Supply Category"}
+            </label>
+            <select {...register("category")} className={inputClass}>
+              {(isIngredient ? INGREDIENT_CATEGORIES : SUPPLY_CATEGORIES).map(c => (
+                <option key={c.value} value={c.value}>{c.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {isIngredient && (
+            <>
+              <div>
+                <label className="text-sm font-medium mb-1 block">
+                  Processing Ratio <span className="text-xs font-normal text-muted-foreground">(unchopped → chopped / raw → cooked)</span>
+                </label>
+                <div className="relative max-w-[160px]">
+                  <input type="number" step="0.01" min="0" max="100" {...register("processingRatioPct")} className={cn(numInputClass, "pr-8")} placeholder="e.g. 84.70" />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">%</span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">Leave blank for 100% (no loss). Adjusts sub-recipe yield.</p>
+                {errors.processingRatioPct && <span className="text-destructive text-xs">{String(errors.processingRatioPct.message)}</span>}
+              </div>
+
+              <div>
+                <label className="text-sm font-medium mb-1 block">Shelf Life <span className="text-xs font-normal text-muted-foreground">(days)</span></label>
+                <div className="relative max-w-[160px]">
+                  <input type="number" step="1" min="1" {...register("shelfLifeDays")} className={cn(numInputClass, "pr-12")} placeholder="e.g. 7" />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">days</span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">Auto-calculates use-by dates on deliveries.</p>
+              </div>
+            </>
+          )}
+
+          {showRawMeatTray && (
+            <div className="pl-4 border-l-2 border-primary/20 flex flex-col gap-3">
+              <div>
+                <label className="text-sm font-medium mb-1 block">Tray Capacity <span className="text-xs font-normal text-muted-foreground">(kg per tray)</span></label>
+                <div className="relative max-w-[160px]">
+                  <input type="number" step="0.1" min="0" {...register("rawMeatTrayCapacityKg")} className={cn(numInputClass, "pr-10")} placeholder="e.g. 10" />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">kg</span>
+                </div>
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Min Cooking Temp <span className="text-xs font-normal text-muted-foreground">(°C)</span></label>
+                <div className="relative max-w-[160px]">
+                  <input type="number" step="1" min="0" max="300" {...register("minCookingTempC")} className={cn(numInputClass, "pr-10")} placeholder="e.g. 75" />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">°C</span>
+                </div>
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Estimated Cook Time <span className="text-xs font-normal text-muted-foreground">(minutes)</span></label>
+                <div className="relative max-w-[160px]">
+                  <input type="number" step="1" min="1" {...register("estimatedCookTimeMin")} className={cn(numInputClass, "pr-12")} placeholder="e.g. 45" />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">min</span>
+                </div>
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Oven Temperature <span className="text-xs font-normal text-muted-foreground">(°C)</span></label>
+                <div className="relative max-w-[160px]">
+                  <input type="number" step="1" min="0" max="500" {...register("ovenTempC")} className={cn(numInputClass, "pr-10")} placeholder="e.g. 180" />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">°C</span>
+                </div>
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Steam %</label>
+                <select {...register("steamPct")} className={cn(inputClass, "max-w-[160px]")}>
+                  <option value="">— not set —</option>
+                  {[0,10,20,30,40,50,60,70,80,90,100].map(v => <option key={v} value={v}>{v}%</option>)}
+                </select>
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium mb-1 block">Primary Supplier</label>
+              <select {...register("supplierId")} className={inputClass}>
+                <option value="0">— No supplier —</option>
+                {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block">Secondary Supplier</label>
+              <select {...register("secondarySupplierId")} className={inputClass}>
+                <option value="0">— None —</option>
+                {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium mb-1 block">Ordering URL</label>
+            <input {...register("orderingUrl")} className={inputClass} placeholder="https://..." />
+          </div>
+
+          <div className="flex items-center gap-3 py-1">
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" {...register("stockCheckEnabled")} className="sr-only peer" />
+              <div className="w-9 h-5 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/30 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+            </label>
+            <div>
+              <span className="text-sm font-medium">Requires Stock Check</span>
+              <p className="text-xs text-muted-foreground">Operators must record remaining stock during Main Prep.</p>
+            </div>
+          </div>
+
+          {watchedStockCheckEnabled && (
+            <div className="pl-4 border-l-2 border-primary/20 flex flex-col gap-3">
+              <div>
+                <label className="text-sm font-medium mb-1 block">Check Frequency</label>
+                <select {...register("stockCheckFrequency")} className={inputClass}>
+                  <option value="daily">Daily — check every production day</option>
+                  <option value="weekly">Weekly — check on a specific day only</option>
+                </select>
+              </div>
+              {watchedStockCheckFrequency === "weekly" && (
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Check Day</label>
+                  <select {...register("stockCheckDay")} className={inputClass}>
+                    <option value="">— Select a day —</option>
+                    {["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"].map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </div>
+              )}
+              <div>
+                <label className="text-sm font-medium mb-1 block">Surplus % <span className="text-xs font-normal text-muted-foreground">(ordering buffer)</span></label>
+                <div className="relative max-w-[160px]">
+                  <input type="number" step="1" min="0" {...register("surplusPercent")} className={cn(numInputClass, "pr-8")} placeholder="10" />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">%</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center gap-3 py-1">
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" {...register("kanbanEnabled")} className="sr-only peer" />
+              <div className="w-9 h-5 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/30 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+            </label>
+            <div>
+              <span className="text-sm font-medium">Kanban Enabled</span>
+              <p className="text-xs text-muted-foreground">Item appears in the kanban reorder system.</p>
+            </div>
+          </div>
+
+          {watchedKanbanEnabled && (
+            <div className="pl-4 border-l-2 border-primary/20 flex flex-col gap-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Kanban Unit</label>
+                  <select {...register("kanbanUnit")} className={inputClass}>
+                    <option value="weight">Weight (kg/g/L)</option>
+                    <option value="pack">Pack</option>
+                    <option value="bottle">Bottle</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Trigger Quantity</label>
+                  <input type="number" step="0.1" min="0" {...register("kanbanQuantity")} className={numInputClass} placeholder="e.g. 10" />
+                  <p className="text-xs text-muted-foreground mt-1">Pull card when stock reaches this level.</p>
+                </div>
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Order Amount</label>
+                <input type="number" step="0.1" min="0" {...register("kanbanOrderAmount")} className={cn(numInputClass, "max-w-[160px]")} placeholder="e.g. 50" />
+                <p className="text-xs text-muted-foreground mt-1">Quantity to order when card is pulled.</p>
+              </div>
+            </div>
+          )}
+
+          <div>
+            <label className="text-sm font-medium mb-1 block">Notes</label>
+            <textarea {...register("notes")} rows={2} className={cn(inputClass, "resize-none")} placeholder="Any additional notes..." />
+          </div>
+
+          <div className="flex justify-end gap-3 pt-2 border-t border-border">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-sm rounded-xl border border-border hover:bg-secondary/50 transition-colors">Cancel</button>
+            <button type="submit" className="px-5 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90 transition-colors shadow-sm shadow-primary/20">
+              {editingItem ? "Save Changes" : formMode === "ingredient" ? "Add Ingredient" : "Add Supply"}
+            </button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function buildPayload(data: FormValues) {
+  return {
+    name: data.name,
+    unit: data.unit,
+    packWeight: data.packWeight,
+    costPerPack: data.costPerPack,
+    brand: data.brand || null,
+    supplierPartNumber: data.supplierPartNumber || null,
+    supplierId: data.supplierId && data.supplierId > 0 ? data.supplierId : null,
+    secondarySupplierId: data.secondarySupplierId && data.secondarySupplierId > 0 ? data.secondarySupplierId : null,
+    orderingUrl: data.orderingUrl || null,
+    notes: data.notes || null,
+    category: data.category || null,
+    perishable: data.formMode === "ingredient",
+    palletSize: data.palletSize ?? null,
+    processingRatio: data.processingRatioPct != null ? data.processingRatioPct / 100 : null,
+    rawMeatTrayCapacityKg: data.rawMeatTrayCapacityKg ?? null,
+    minCookingTempC: data.minCookingTempC ?? null,
+    estimatedCookTimeMin: data.estimatedCookTimeMin ?? null,
+    ovenTempC: data.ovenTempC ?? null,
+    steamPct: data.steamPct ?? null,
+    stockCheckEnabled: data.stockCheckEnabled ?? false,
+    stockCheckFrequency: data.stockCheckFrequency ?? "daily",
+    stockCheckDay: data.stockCheckFrequency === "weekly" ? (data.stockCheckDay || null) : null,
+    surplusPercent: data.surplusPercent ?? 10,
+    shelfLifeDays: data.shelfLifeDays ?? null,
+    kanbanEnabled: data.kanbanEnabled ?? false,
+    kanbanQuantity: data.kanbanQuantity ?? 0,
+    kanbanUnit: data.kanbanUnit ?? "weight",
+    kanbanOrderAmount: data.kanbanOrderAmount ?? null,
+  };
+}
+
+export default function Inventory() {
+  const searchStr = useSearch();
+  const params = new URLSearchParams(searchStr);
+  const rawTab = params.get("tab");
+  const activeTab: TabType = rawTab === "supplies" ? "supplies" : "ingredients";
+
+  const { data: allIngredients, isLoading } = useListIngredients();
+  const { data: suppliers } = useListSuppliers();
+  const { createIngredient, updateIngredient, deleteIngredient } = useAppMutations();
+  const queryClient = useQueryClient();
+
+  const [search, setSearch] = useState("");
+  const [filterCategory, setFilterCategory] = useState("all");
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<Ingredient | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
+  const [isPending, setIsPending] = useState(false);
+
+  const tabItems = useMemo(() => {
+    return (allIngredients ?? []).filter(i => {
+      const itemPerishable = (i as Record<string, unknown>).perishable !== false;
+      return activeTab === "ingredients" ? itemPerishable : !itemPerishable;
+    });
+  }, [allIngredients, activeTab]);
+
+  const filtered = useMemo(() => {
+    return tabItems.filter(i => {
+      const matchesSearch =
+        i.name.toLowerCase().includes(search.toLowerCase()) ||
+        (i.brand ?? "").toLowerCase().includes(search.toLowerCase());
+      const matchesCategory =
+        filterCategory === "all" ||
+        (filterCategory === "uncategorised" ? !i.category : i.category === filterCategory);
+      return matchesSearch && matchesCategory;
+    });
+  }, [tabItems, search, filterCategory]);
+
+  const supplierMap = Object.fromEntries((suppliers ?? []).map(s => [s.id, s.name]));
+  const categoryOptions = activeTab === "ingredients" ? INGREDIENT_CATEGORIES : SUPPLY_CATEGORIES;
+
+  const openAdd = () => { setEditingItem(null); setIsDialogOpen(true); };
+  const openEdit = (item: Ingredient) => { setEditingItem(item); setIsDialogOpen(true); };
+
+  const handleSave = (data: FormValues, id: number | null) => {
+    const payload = buildPayload(data);
+    setIsPending(true);
+    if (id !== null) {
+      updateIngredient.mutate({ id, data: payload }, {
+        onSuccess: () => { setIsDialogOpen(false); setEditingItem(null); setIsPending(false); },
+        onError: () => setIsPending(false),
+      });
+    } else {
+      createIngredient.mutate({ data: payload }, {
+        onSuccess: () => { setIsDialogOpen(false); setIsPending(false); },
+        onError: () => setIsPending(false),
+      });
+    }
+  };
+
+  const ingredientCount = (allIngredients ?? []).filter(i => (i as Record<string, unknown>).perishable !== false).length;
+  const supplyCount = (allIngredients ?? []).filter(i => (i as Record<string, unknown>).perishable === false).length;
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Inventory"
+        description="Manage your ingredients, packaging and supplies — one system for everything you stock."
+        action={
+          <div className="flex items-center gap-2">
+            {activeTab === "ingredients" && (
+              <button onClick={() => setIsImportOpen(true)} className="px-4 py-2.5 border border-border rounded-xl font-medium flex items-center gap-2 hover:bg-secondary/50 transition-colors text-sm">
+                <Upload className="w-4 h-4" /> Import CSV
+              </button>
+            )}
+            <button
+              onClick={openAdd}
+              className="px-5 py-2.5 bg-primary text-primary-foreground rounded-xl font-medium shadow-md shadow-primary/20 flex items-center gap-2 hover:bg-primary/90 transition-colors"
+            >
+              <Plus className="w-5 h-5" />
+              {activeTab === "ingredients" ? "Add Ingredient" : "Add Supply"}
+            </button>
+          </div>
+        }
+      />
+
+      <div className="flex gap-0 p-1 bg-secondary/40 rounded-2xl w-full">
+        <a
+          href={`${BASE}/inventory?tab=ingredients`}
+          className={cn(
+            "flex-1 flex items-center justify-center gap-2.5 py-3 rounded-xl text-sm font-semibold transition-all",
+            activeTab === "ingredients"
+              ? "bg-card shadow-sm text-foreground"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <Carrot className="w-4 h-4" />
+          Ingredients
+          <span className={cn(
+            "text-xs font-medium px-2 py-0.5 rounded-full",
+            activeTab === "ingredients" ? "bg-primary/10 text-primary" : "bg-secondary text-muted-foreground"
+          )}>
+            {ingredientCount}
+          </span>
+        </a>
+        <a
+          href={`${BASE}/inventory?tab=supplies`}
+          className={cn(
+            "flex-1 flex items-center justify-center gap-2.5 py-3 rounded-xl text-sm font-semibold transition-all",
+            activeTab === "supplies"
+              ? "bg-card shadow-sm text-foreground"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <Box className="w-4 h-4" />
+          Supplies
+          <span className={cn(
+            "text-xs font-medium px-2 py-0.5 rounded-full",
+            activeTab === "supplies" ? "bg-primary/10 text-primary" : "bg-secondary text-muted-foreground"
+          )}>
+            {supplyCount}
+          </span>
+        </a>
+      </div>
+
+      <div className="flex gap-3 flex-wrap items-center">
+        <div className="relative flex-1 min-w-48">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder={activeTab === "ingredients" ? "Search ingredients..." : "Search supplies..."}
+            className="w-full pl-9 pr-3 py-2 bg-card border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+        </div>
+        <select
+          value={filterCategory}
+          onChange={e => setFilterCategory(e.target.value)}
+          className="px-3 py-2 bg-card border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+        >
+          <option value="all">All categories</option>
+          <option value="uncategorised">Uncategorised</option>
+          {categoryOptions.filter(c => c.value !== "").map(c => (
+            <option key={c.value} value={c.value}>{c.label}</option>
+          ))}
+        </select>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-16 text-muted-foreground">
+          <Loader2 className="w-6 h-6 animate-spin mr-2" /> Loading...
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-16 bg-secondary/20 rounded-2xl border border-dashed border-border">
+          {activeTab === "ingredients" ? <Carrot className="w-10 h-10 mx-auto mb-3 text-muted-foreground opacity-30" /> : <Box className="w-10 h-10 mx-auto mb-3 text-muted-foreground opacity-30" />}
+          <p className="font-medium text-muted-foreground">
+            {search || filterCategory !== "all" ? "No items match your search" : activeTab === "ingredients" ? "No ingredients yet" : "No supplies yet"}
+          </p>
+          <p className="text-sm text-muted-foreground mt-1">
+            {activeTab === "ingredients" ? "Add food ingredients used in your recipes" : "Add packaging, courier boxes, tape and other supplies"}
+          </p>
+          <button onClick={openAdd} className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover-lift flex items-center gap-1.5 mx-auto">
+            <Plus className="w-4 h-4" />
+            {activeTab === "ingredients" ? "Add Ingredient" : "Add Supply"}
+          </button>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-border overflow-hidden bg-card">
+          <table className="w-full text-sm">
+            <thead className="border-b border-border bg-secondary/20">
+              <tr>
+                <th className="text-left py-3 px-4 font-medium text-muted-foreground">Name</th>
+                <th className="text-left py-3 px-3 font-medium text-muted-foreground">Category</th>
+                <th className="text-left py-3 px-3 font-medium text-muted-foreground">Unit</th>
+                <th className="text-right py-3 px-3 font-medium text-muted-foreground">Pack Size</th>
+                {activeTab === "supplies" && <th className="text-right py-3 px-3 font-medium text-muted-foreground">Pallet</th>}
+                <th className="text-right py-3 px-3 font-medium text-muted-foreground">Cost/Pack</th>
+                <th className="text-left py-3 px-3 font-medium text-muted-foreground">Supplier</th>
+                <th className="text-center py-3 px-3 font-medium text-muted-foreground">Kanban</th>
+                <th className="py-3 px-3" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/60">
+              {filtered.map(item => {
+                const itemPerishable = (item as Record<string, unknown>).perishable !== false;
+                const palletSz = (item as Record<string, unknown>).palletSize as number | null ?? null;
+                return (
+                  <tr key={item.id} className="hover:bg-secondary/20 transition-colors group">
+                    <td className="py-3 px-4">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{item.name}</span>
+                        {item.brand && <span className="text-xs text-muted-foreground">{item.brand}</span>}
+                        {item.orderingUrl && (
+                          <a href={item.orderingUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-primary transition-colors" title="Order link">
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        )}
+                      </div>
+                      {item.supplierPartNumber && <span className="text-xs text-muted-foreground font-mono">{item.supplierPartNumber}</span>}
+                    </td>
+                    <td className="py-3 px-3 text-muted-foreground text-xs">
+                      {item.category ? categoryLabel(item.category, itemPerishable) : <span className="opacity-40">—</span>}
+                    </td>
+                    <td className="py-3 px-3 text-muted-foreground">{item.unit}</td>
+                    <td className="py-3 px-3 text-right tabular-nums">
+                      {Number(item.packWeight) > 0 ? `${Number(item.packWeight)} ${item.unit}` : <span className="text-muted-foreground opacity-40">—</span>}
+                    </td>
+                    {activeTab === "supplies" && (
+                      <td className="py-3 px-3 text-right tabular-nums text-muted-foreground">
+                        {palletSz != null ? `${palletSz} packs` : <span className="opacity-40">—</span>}
+                      </td>
+                    )}
+                    <td className="py-3 px-3 text-right tabular-nums font-medium">
+                      {Number(item.costPerPack) > 0 ? `£${Number(item.costPerPack).toFixed(2)}` : <span className="text-muted-foreground opacity-40">—</span>}
+                    </td>
+                    <td className="py-3 px-3 text-muted-foreground text-xs">
+                      {item.supplierId ? supplierMap[item.supplierId] ?? "—" : <span className="opacity-40">—</span>}
+                    </td>
+                    <td className="py-3 px-3 text-center">
+                      {(item as Record<string, unknown>).kanbanEnabled ? (
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary">Active</span>
+                      ) : (
+                        <span className="text-muted-foreground opacity-40 text-xs">—</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-3">
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity justify-end">
+                        <button onClick={() => openEdit(item)} className="p-1.5 text-muted-foreground hover:text-primary transition-colors rounded-lg hover:bg-primary/10" title="Edit">
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={() => setDeleteTarget({ id: item.id, name: item.name })} className="p-1.5 text-muted-foreground hover:text-destructive transition-colors rounded-lg hover:bg-destructive/10" title="Delete">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot className="border-t border-border bg-secondary/10">
+              <tr>
+                <td colSpan={activeTab === "supplies" ? 9 : 8} className="py-2 px-4 text-xs text-muted-foreground">
+                  {filtered.length} {filtered.length === 1 ? "item" : "items"}
+                  {filtered.length !== tabItems.length && ` (filtered from ${tabItems.length})`}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+
+      <ItemFormDialog
+        open={isDialogOpen}
+        onClose={() => { setIsDialogOpen(false); setEditingItem(null); }}
+        editingItem={editingItem}
+        defaultMode={activeTab}
+        suppliers={suppliers ?? []}
+        onSave={handleSave}
+      />
+
+      <ImportDialog
+        open={isImportOpen}
+        onClose={() => setIsImportOpen(false)}
+        onDone={() => queryClient.invalidateQueries({ queryKey: ["/api/ingredients"] })}
+      />
+
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setDeleteTarget(null)}>
+          <div className="bg-card border border-border rounded-xl p-6 shadow-xl max-w-sm mx-4" onClick={e => e.stopPropagation()}>
+            <h3 className="font-semibold text-lg mb-2">Delete Item?</h3>
+            <p className="text-sm text-muted-foreground mb-6">This will permanently delete "{deleteTarget.name}". This cannot be undone.</p>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setDeleteTarget(null)} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-secondary/60 transition-colors">Cancel</button>
+              <button
+                onClick={() => { deleteIngredient.mutate({ id: deleteTarget.id }); setDeleteTarget(null); }}
+                className="px-4 py-2 text-sm rounded-lg bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors font-medium"
+              >Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

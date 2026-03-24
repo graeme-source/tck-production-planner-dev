@@ -23,12 +23,18 @@ function mapRow(r: typeof ingredientsTable.$inferSelect) {
     kanbanQuantity: Number(r.kanbanQuantity ?? 0),
     kanbanUnit: r.kanbanUnit ?? "weight",
     kanbanOrderAmount: r.kanbanOrderAmount != null ? Number(r.kanbanOrderAmount) : null,
+    perishable: r.perishable ?? true,
+    palletSize: r.palletSize ?? null,
     createdAt: r.createdAt.toISOString(),
   };
 }
 
-router.get("/", async (_req, res) => {
-  const rows = await db.select().from(ingredientsTable).orderBy(ingredientsTable.name);
+router.get("/", async (req, res) => {
+  const { perishable } = req.query;
+  let query = db.select().from(ingredientsTable).orderBy(ingredientsTable.name).$dynamic();
+  if (perishable === "true") query = query.where(eq(ingredientsTable.perishable, true));
+  else if (perishable === "false") query = query.where(eq(ingredientsTable.perishable, false));
+  const rows = await query;
   res.json(rows.map(mapRow));
 });
 
@@ -40,7 +46,7 @@ function validateProcessingRatio(value: unknown): string | null {
 }
 
 router.post("/", validate(CreateIngredientBody), async (req, res) => {
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const [row] = await db.insert(ingredientsTable).values({
@@ -70,6 +76,8 @@ router.post("/", validate(CreateIngredientBody), async (req, res) => {
     kanbanQuantity: kanbanQuantity != null ? String(kanbanQuantity) : "0",
     kanbanUnit: kanbanUnit ?? "weight",
     kanbanOrderAmount: kanbanOrderAmount != null ? String(kanbanOrderAmount) : null,
+    perishable: perishable !== false,
+    palletSize: palletSize != null ? Number(palletSize) : null,
   }).returning();
   res.status(201).json(mapRow(row));
 });
@@ -83,7 +91,7 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const [row] = await db.update(ingredientsTable).set({
@@ -113,6 +121,8 @@ router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
     ...(kanbanQuantity !== undefined ? { kanbanQuantity: kanbanQuantity != null ? String(kanbanQuantity) : "0" } : {}),
     ...(kanbanUnit !== undefined ? { kanbanUnit } : {}),
     ...(kanbanOrderAmount !== undefined ? { kanbanOrderAmount: kanbanOrderAmount != null ? String(kanbanOrderAmount) : null } : {}),
+    ...(perishable !== undefined ? { perishable } : {}),
+    ...(palletSize !== undefined ? { palletSize: palletSize != null ? Number(palletSize) : null } : {}),
   }).where(eq(ingredientsTable.id, id)).returning();
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   res.json(mapRow(row));
