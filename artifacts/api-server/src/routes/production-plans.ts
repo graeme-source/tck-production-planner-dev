@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, dptSettingsTable } from "@workspace/db";
-import { eq, and, desc, sql, gt, gte, lte, asc, inArray, sum as drizzleSum, ne, isNotNull, isNull } from "drizzle-orm";
+import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as drizzleSum, ne, isNotNull, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
 import * as z from "zod";
@@ -293,7 +293,10 @@ router.get("/calculate", async (req, res) => {
       quantity: stockEntriesTable.quantity,
     })
     .from(stockEntriesTable)
-    .where(eq(stockEntriesTable.itemType, "recipe"))
+    .where(and(
+      eq(stockEntriesTable.itemType, "recipe"),
+      notInArray(stockEntriesTable.location, ["production_freezer", "raw_freezer"]),
+    ))
     .orderBy(asc(stockEntriesTable.checkedAt));
 
   const latestStock: Record<number, number> = {};
