@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { useListProductionPlans, useListStockEntries, useListDispatchOrders, useListSalesEntries, useGetProductionPlan } from "@workspace/api-client-react";
+import { useListProductionPlans, useListDispatchOrders, useGetProductionPlan } from "@workspace/api-client-react";
 import { PageHeader } from "@/components/page-header";
-import { format, isToday, isFuture, startOfWeek, addWeeks } from "date-fns";
-import { ArrowRight, AlertTriangle, ChefHat, Truck, TrendingUp, Package, RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
+import { format, isToday, startOfWeek, addWeeks } from "date-fns";
+import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck } from "lucide-react";
 import { Link } from "wouter";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { useQuery } from "@tanstack/react-query";
@@ -30,14 +30,28 @@ function TodayPlanRecipes({ planId }: { planId: number }) {
   );
 }
 
+async function fetchTodayBatchCount(planIds: number[]): Promise<number> {
+  if (planIds.length === 0) return 0;
+  let total = 0;
+  for (const id of planIds) {
+    const res = await fetch(`${BASE}/api/production-plans/${id}`, { credentials: "include" });
+    if (!res.ok) continue;
+    const plan = await res.json();
+    for (const it of plan.items ?? []) {
+      total += it.batchesTarget ?? 0;
+    }
+  }
+  return total;
+}
+
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 function getDefaultWeekOffset(): number {
   const now = new Date();
-  const day = now.getDay(); // 0=Sun, 5=Fri, 6=Sat
-  if (day === 6) return 1;           // Saturday all day
-  if (day === 0) return 1;           // Sunday all day
-  if (day === 5 && now.getHours() >= 15) return 1; // Friday from 3pm
+  const day = now.getDay();
+  if (day === 6) return 1;
+  if (day === 0) return 1;
+  if (day === 5 && now.getHours() >= 15) return 1;
   return 0;
 }
 
@@ -52,14 +66,22 @@ async function fetchWeeklyOrders(weekStart: string) {
   return (data.days ?? data) as { date: string; deliveryDate: string; day: string; orderCount: number; fulfilledCount: number; unfulfilledCount: number }[];
 }
 
+async function fetchTodayDeliveriesCount(): Promise<number> {
+  const today = new Date().toISOString().split("T")[0];
+  const res = await fetch(`${BASE}/api/deliveries/weekly?weekOf=${today}`, { credentials: "include" });
+  if (!res.ok) return 0;
+  const data = await res.json();
+  const orders = data.orders ?? data ?? [];
+  return orders.filter((o: any) => o.expectedDeliveryDate === today).length;
+}
+
 export default function Dashboard() {
   const { data: plans } = useListProductionPlans();
-  const { data: stock } = useListStockEntries();
   const { data: dispatches } = useListDispatchOrders();
-  const { data: sales } = useListSalesEntries();
 
   const [weekOffset, setWeekOffset] = useState<number>(getDefaultWeekOffset);
   const today = new Date();
+  const todayStr = format(today, "yyyy-MM-dd");
   const currentMonday = getMonday(today);
   const selectedMonday = addWeeks(currentMonday, weekOffset);
   const weekStartStr = format(selectedMonday, "yyyy-MM-dd");
@@ -74,9 +96,23 @@ export default function Dashboard() {
     staleTime: 5 * 60 * 1000,
   });
 
+  const { data: todayDeliveriesCount } = useQuery({
+    queryKey: ["today-deliveries-count"],
+    queryFn: fetchTodayDeliveriesCount,
+    staleTime: 5 * 60 * 1000,
+  });
+
   const todayPlans = plans?.filter(p => isToday(new Date(p.planDate))) || [];
-  const lowStock = stock?.filter(s => s.quantity < 10) || [];
-  const upcomingDispatches = dispatches?.filter(d => isFuture(new Date(d.dispatchDate)) && d.status === 'pending') || [];
+  const todayPlanIds = todayPlans.map(p => p.id);
+
+  const { data: totalBatches, isLoading: batchesLoading } = useQuery({
+    queryKey: ["today-batch-count", todayPlanIds.join(",")],
+    queryFn: () => fetchTodayBatchCount(todayPlanIds),
+    enabled: todayPlanIds.length > 0,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const todayDispatches = dispatches?.filter(d => d.dispatchDate === todayStr) || [];
 
   const todayTag = format(today, "yyyy-MM-dd");
   const todayIndex = weeklyOrders?.findIndex(d => d.date === todayTag) ?? -1;
@@ -110,45 +146,38 @@ export default function Dashboard() {
         description={format(new Date(), "EEEE, MMMM do, yyyy")}
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <StatCard
-          title="Today's Plans"
-          value={todayPlans.length.toString()}
+          title="Total Batches Today"
+          value={batchesLoading ? "…" : (totalBatches ?? 0).toString()}
           icon={ChefHat}
           color="text-primary"
           bg="bg-primary/10"
           href="/plans"
         />
         <StatCard
-          title="Low Stock Items"
-          value={lowStock.length.toString()}
-          icon={AlertTriangle}
-          color="text-accent"
-          bg="bg-accent/10"
-          href="/stock"
-        />
-        <StatCard
-          title="Pending Dispatches"
-          value={upcomingDispatches.length.toString()}
+          title="Dispatching Today"
+          value={todayDispatches.length.toString()}
           icon={Truck}
           color="text-blue-500"
           bg="bg-blue-500/10"
           href="/dispatches"
         />
         <StatCard
-          title="Recent Sales"
-          value={sales?.length.toString() || "0"}
-          icon={TrendingUp}
+          title="Deliveries Arriving"
+          value={(todayDeliveriesCount ?? 0).toString()}
+          icon={PackageCheck}
           color="text-emerald-500"
           bg="bg-emerald-500/10"
-          href="/sales"
+          href="/orders"
         />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
-        <div className="glass-panel rounded-2xl flex flex-col">
-          <div className="p-6 border-b border-border">
+        <Link href="/plans" className="glass-panel rounded-2xl flex flex-col group cursor-pointer hover-lift">
+          <div className="p-6 border-b border-border flex items-center justify-between">
             <h3 className="font-display font-bold text-lg">Today's Production</h3>
+            <ArrowRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
           </div>
           <div className="p-4 flex-1 overflow-y-auto">
             {todayPlans.length === 0 ? (
@@ -167,12 +196,7 @@ export default function Dashboard() {
               </div>
             )}
           </div>
-          <div className="p-4 border-t border-border">
-            <Link href="/plans" className="text-sm font-medium text-primary flex items-center justify-center gap-1 hover:underline">
-              View all plans <ArrowRight className="w-4 h-4" />
-            </Link>
-          </div>
-        </div>
+        </Link>
 
         <div className="lg:col-span-2 glass-panel p-6 rounded-2xl">
           <div className="flex items-center justify-between mb-4">
