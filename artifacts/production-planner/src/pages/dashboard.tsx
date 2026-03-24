@@ -18,10 +18,10 @@ function TodayPlanRecipes({ planId }: { planId: number }) {
     <div className="space-y-1.5">
       {items.map((it: any) => (
         <div key={it.id} className="flex items-center justify-between py-1.5 px-3 rounded-lg hover:bg-secondary/50 transition-colors">
-          <span className="text-sm font-medium truncate pr-2" style={it.color ? { color: it.color } : undefined}>
+          <span className="text-sm font-medium truncate pr-2" style={it.recipeColor ? { color: it.recipeColor } : undefined}>
             {it.recipeName ?? "Unknown"}
           </span>
-          <span className="text-sm font-bold tabular-nums text-primary shrink-0">
+          <span className="text-sm font-bold tabular-nums shrink-0" style={it.recipeColor ? { color: it.recipeColor } : undefined}>
             {it.batchesTarget} <span className="text-xs font-normal text-muted-foreground">batch{it.batchesTarget !== 1 ? "es" : ""}</span>
           </span>
         </div>
