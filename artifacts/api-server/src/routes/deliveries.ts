@@ -15,23 +15,26 @@ import { eq, and, gte, lte, sql, desc, asc, inArray } from "drizzle-orm";
 const router: IRouter = Router();
 
 const CATEGORY_LOCATION_MAP: Record<string, string> = {
-  chilled: "prep_fridge",
-  dairy: "prep_fridge",
-  produce: "prep_fridge",
-  meat: "raw_meat_fridge",
-  poultry: "raw_meat_fridge",
-  frozen: "raw_freezer",
-  ambient: "dry_store",
-  dry: "dry_store",
+  vegetable: "prep_fridge",
+  herb: "prep_fridge",
+  base: "production_fridge",
+  dairy: "production_fridge",
+  cheese: "production_fridge",
+  cooked_meat: "production_fridge",
+  raw_meat: "raw_meat_fridge",
+  sauce: "dry_store",
+  spice: "dry_store",
+  seasoning: "dry_store",
+  other: "dry_store",
+  dough: "dry_store",
 };
 
-function resolveStorageLocation(category: string | null): string {
+function resolveStorageLocation(category: string | null, ingredientName?: string | null): string {
   if (!category) return "prep_fridge";
   const lower = category.toLowerCase();
-  for (const [key, loc] of Object.entries(CATEGORY_LOCATION_MAP)) {
-    if (lower.includes(key)) return loc;
-  }
-  return "prep_fridge";
+  const name = (ingredientName || "").toLowerCase();
+  if (lower === "dough" && name.includes("frozen")) return "production_freezer";
+  return CATEGORY_LOCATION_MAP[lower] ?? "prep_fridge";
 }
 
 router.get("/weekly", async (req, res) => {
@@ -267,6 +270,7 @@ router.get("/:id", async (req, res) => {
       ingredientId: purchaseOrderLinesTable.ingredientId,
       ingredientName: ingredientsTable.name,
       ingredientCategory: ingredientsTable.category,
+      shelfLifeDays: ingredientsTable.shelfLifeDays,
       quantityRequired: purchaseOrderLinesTable.quantityRequired,
       quantityOrdered: purchaseOrderLinesTable.quantityOrdered,
       quantityReceived: purchaseOrderLinesTable.quantityReceived,
@@ -295,6 +299,8 @@ router.get("/:id", async (req, res) => {
       quantityOrdered: Number(l.quantityOrdered),
       quantityReceived: Number(l.quantityReceived),
       unitPrice: l.unitPrice ? Number(l.unitPrice) : null,
+      shelfLifeDays: l.shelfLifeDays ?? null,
+      defaultStorageLocation: resolveStorageLocation(l.ingredientCategory, l.ingredientName),
     })),
     checks,
   });
@@ -343,6 +349,7 @@ router.post("/:id/receive", async (req, res) => {
     .select({
       id: purchaseOrderLinesTable.id,
       ingredientId: purchaseOrderLinesTable.ingredientId,
+      ingredientName: ingredientsTable.name,
       quantityOrdered: purchaseOrderLinesTable.quantityOrdered,
       quantityReceived: purchaseOrderLinesTable.quantityReceived,
       unit: purchaseOrderLinesTable.unit,
@@ -384,7 +391,7 @@ router.post("/:id/receive", async (req, res) => {
       .where(eq(purchaseOrderLinesTable.id, line.lineId));
 
     if (delta > 0) {
-      const location = resolveStorageLocation(existing.ingredientCategory);
+      const location = resolveStorageLocation(existing.ingredientCategory, existing.ingredientName);
       stockInserts.push({
         ingredientId: existing.ingredientId,
         quantity: String(delta),

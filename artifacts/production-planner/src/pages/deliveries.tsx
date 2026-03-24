@@ -27,6 +27,8 @@ interface POLine {
   checkedOff: boolean;
   notes: string | null;
   useByDate: string | null;
+  shelfLifeDays: number | null;
+  defaultStorageLocation: string | null;
 }
 
 interface DeliveryOrder {
@@ -88,6 +90,15 @@ function useDeliveryDetail(orderId: number | null) {
   });
 }
 
+const LOCATION_LABELS: Record<string, string> = {
+  prep_fridge: "Prep Fridge",
+  raw_meat_fridge: "Raw Meat Fridge",
+  production_fridge: "Production Fridge",
+  raw_freezer: "Raw Freezer",
+  production_freezer: "Production Freezer",
+  dry_store: "Dry Store",
+};
+
 interface ReceivingLine {
   lineId: number;
   ingredientName: string;
@@ -96,6 +107,9 @@ interface ReceivingLine {
   quantityReceived: number;
   unit: string;
   useByDate: string;
+  shelfLifeDays: number | null;
+  defaultStorageLocation: string | null;
+  useByIsAuto: boolean;
 }
 
 interface CheckResult {
@@ -124,16 +138,32 @@ function ReceivingDialog({
 
   useEffect(() => {
     if (open && order) {
+      const deliveryDate = order.expectedDeliveryDate ? new Date(order.expectedDeliveryDate + "T00:00:00") : new Date();
+
       setLines(
-        order.lines.map((l) => ({
-          lineId: l.id,
-          ingredientName: l.ingredientName,
-          ingredientCategory: l.ingredientCategory,
-          quantityOrdered: l.quantityOrdered,
-          quantityReceived: l.quantityReceived > 0 ? l.quantityReceived : l.quantityOrdered,
-          unit: l.unit,
-          useByDate: l.useByDate || "",
-        }))
+        order.lines.map((l) => {
+          let autoUseByDate = "";
+          let useByIsAuto = false;
+          if (l.shelfLifeDays != null && l.shelfLifeDays > 0) {
+            const d = new Date(deliveryDate);
+            d.setDate(d.getDate() + l.shelfLifeDays);
+            autoUseByDate = d.toISOString().split("T")[0];
+            useByIsAuto = true;
+          }
+          const existingUseBy = l.useByDate || "";
+          return {
+            lineId: l.id,
+            ingredientName: l.ingredientName,
+            ingredientCategory: l.ingredientCategory,
+            quantityOrdered: l.quantityOrdered,
+            quantityReceived: l.quantityReceived > 0 ? l.quantityReceived : l.quantityOrdered,
+            unit: l.unit,
+            useByDate: existingUseBy || autoUseByDate,
+            shelfLifeDays: l.shelfLifeDays,
+            defaultStorageLocation: l.defaultStorageLocation,
+            useByIsAuto: existingUseBy === "" && useByIsAuto,
+          };
+        })
       );
       setCheckResults(
         checks.map((c) => ({ checkConfigId: c.id, passed: false, notes: "" }))
@@ -208,21 +238,39 @@ function ReceivingDialog({
             <div className="space-y-3">
               {lines.map((line, idx) => {
                 const discrepancy = line.quantityReceived !== line.quantityOrdered;
+                const needsManualUseBy = !line.useByDate && line.shelfLifeDays == null;
+                const locationLabel = line.defaultStorageLocation ? LOCATION_LABELS[line.defaultStorageLocation] || line.defaultStorageLocation : null;
                 return (
                   <div
                     key={line.lineId}
                     className={cn(
                       "rounded-xl border p-3 space-y-2",
-                      discrepancy ? "border-amber-300 bg-amber-50/50 dark:bg-amber-900/10 dark:border-amber-700" : "border-border"
+                      needsManualUseBy
+                        ? "border-amber-300 bg-amber-50/50 dark:bg-amber-900/10 dark:border-amber-700"
+                        : discrepancy
+                        ? "border-amber-300 bg-amber-50/30 dark:bg-amber-900/5 dark:border-amber-700"
+                        : "border-border"
                     )}
                   >
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2">
                       <span className="text-sm font-medium">{line.ingredientName}</span>
-                      {line.ingredientCategory && (
-                        <span className="text-xs text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">
-                          {line.ingredientCategory}
-                        </span>
-                      )}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {locationLabel && (
+                          <span className="text-xs text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">
+                            → {locationLabel}
+                          </span>
+                        )}
+                        {needsManualUseBy && (
+                          <span className="text-xs font-medium text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <AlertTriangle className="w-3 h-3" /> Check use-by
+                          </span>
+                        )}
+                        {line.useByIsAuto && (
+                          <span className="text-xs font-medium text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/30 px-2 py-0.5 rounded-full">
+                            Auto-dated
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <div className="grid grid-cols-3 gap-3">
                       <div>
@@ -250,16 +298,22 @@ function ReceivingDialog({
                         />
                       </div>
                       <div>
-                        <label className="text-xs text-muted-foreground block mb-1">Use-by Date</label>
+                        <label className="text-xs text-muted-foreground block mb-1">
+                          Use-by Date
+                          {needsManualUseBy && <span className="text-amber-500 ml-1">*</span>}
+                        </label>
                         <input
                           type="date"
                           value={line.useByDate}
                           onChange={(e) => {
                             const next = [...lines];
-                            next[idx] = { ...next[idx], useByDate: e.target.value };
+                            next[idx] = { ...next[idx], useByDate: e.target.value, useByIsAuto: false };
                             setLines(next);
                           }}
-                          className="w-full px-2 py-1 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                          className={cn(
+                            "w-full px-2 py-1 bg-background border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30",
+                            needsManualUseBy ? "border-amber-400" : "border-border"
+                          )}
                         />
                       </div>
                     </div>
