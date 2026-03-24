@@ -4202,7 +4202,7 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
               />
             </div>
             {hasAnyMixDone && !allBallingDone && (
-              <div className="flex flex-wrap items-stretch gap-2" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
 
                 {/* PRIMARY — Tray controls */}
                 <div className="flex gap-1.5 items-stretch">
@@ -4227,34 +4227,36 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                   </button>
                 </div>
 
-                {/* Divider */}
-                <div className="w-px bg-border/50 self-stretch" />
+                {/* SECONDARY — Single ball + extras, pushed to the right */}
+                <div className="ml-auto flex items-stretch gap-2">
 
-                {/* SECONDARY — Single ball */}
-                <div className="flex flex-col items-center justify-center gap-0.5">
-                  <div className="flex gap-1">
-                    <button
-                      onClick={(e) => { e.stopPropagation(); undoBall(); }}
-                      disabled={ballCount === 0 || isOnBreak}
-                      className="h-8 w-8 flex items-center justify-center rounded-lg border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
-                    >
-                      <Minus className="w-3 h-3" />
-                    </button>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); addBalls(1); }}
-                      disabled={isOnBreak}
-                      className="h-8 px-3 rounded-lg text-xs font-semibold border border-border bg-background hover:bg-secondary/60 disabled:opacity-50 transition-all"
-                    >
-                      + 1 Ball
-                    </button>
+                  <div className="w-px bg-border/50 self-stretch" />
+
+                  {/* Single ball */}
+                  <div className="flex flex-col items-center justify-center gap-0.5">
+                    <div className="flex gap-1">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); undoBall(); }}
+                        disabled={ballCount === 0 || isOnBreak}
+                        className="h-8 w-8 flex items-center justify-center rounded-lg border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
+                      >
+                        <Minus className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); addBalls(1); }}
+                        disabled={isOnBreak}
+                        className="h-8 px-3 rounded-lg text-xs font-semibold border border-border bg-background hover:bg-secondary/60 disabled:opacity-50 transition-all"
+                      >
+                        + 1 Ball
+                      </button>
+                    </div>
+                    <span className="text-[9px] text-muted-foreground">single</span>
                   </div>
-                  <span className="text-[9px] text-muted-foreground">single</span>
-                </div>
 
-                {/* Extra ball types */}
-                {(extraPackItems.length > 0 || snackItems.length > 0) && (
-                  <>
-                    <div className="w-px bg-border/50 self-stretch" />
+                  {/* Extra ball types */}
+                  {(extraPackItems.length > 0 || snackItems.length > 0) && (
+                    <>
+                      <div className="w-px bg-border/50 self-stretch" />
 
                     {extraPackItems.length > 0 && (
                       <div className="flex flex-col items-center justify-center gap-0.5">
@@ -4309,8 +4311,9 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                         <span className="text-[9px] text-muted-foreground">{snackDone} of {snackItems.length}</span>
                       </div>
                     )}
-                  </>
-                )}
+                    </>
+                  )}
+                </div>
               </div>
             )}
           </button>
