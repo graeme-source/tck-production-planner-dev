@@ -425,7 +425,7 @@ export default function Stock() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Stock & Inventory"
+        title="Perishable Stock"
         description="Visual map of storage locations. Click a location to view and manage its contents."
         action={
           canEdit ? (

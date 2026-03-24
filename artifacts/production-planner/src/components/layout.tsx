@@ -44,7 +44,7 @@ const navItems: NavItem[] = [
 ];
 
 const inventorySubItems: NavItem[] = [
-  { name: "Stock Inventory", href: "/stock", icon: PackageSearch },
+  { name: "Perishable", href: "/stock", icon: PackageSearch },
   { name: "Non Perishable Stock", href: "/supplies", icon: Box },
   { name: "Kanbans", href: "/kanbans", icon: ArrowDownCircle },
 ];
