@@ -36,20 +36,20 @@ const navItems: NavItem[] = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Production Plans", href: "/plans", icon: CalendarDays },
   { name: "Suppliers", href: "/suppliers", icon: Building2 },
-  { name: "Deliveries", href: "/deliveries", icon: PackageCheck },
-  { name: "Orders", href: "/orders", icon: ShoppingCart },
   { name: "Sales Data", href: "/sales", icon: TrendingUp },
   { name: "Dispatches", href: "/dispatches", icon: Truck },
   { name: "Reports", href: "/reports", icon: BarChart2 },
 ];
 
 const inventorySubItems: NavItem[] = [
-  { name: "Perishable", href: "/stock", icon: PackageSearch },
+  { name: "Perishable Stock", href: "/stock", icon: PackageSearch },
   { name: "Non Perishable Stock", href: "/supplies", icon: Box },
   { name: "Kanbans", href: "/kanbans", icon: ArrowDownCircle },
+  { name: "Orders", href: "/orders", icon: ShoppingCart },
+  { name: "Deliveries", href: "/deliveries", icon: PackageCheck },
 ];
 
-const INVENTORY_PATHS = ["/stock", "/supplies", "/kanbans"];
+const INVENTORY_PATHS = ["/stock", "/supplies", "/kanbans", "/orders", "/deliveries"];
 
 const productNavItems: NavItem[] = [
   { name: "Recipes", href: "/recipes", icon: ChefHat },
