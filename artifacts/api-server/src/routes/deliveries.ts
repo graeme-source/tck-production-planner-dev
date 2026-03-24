@@ -10,7 +10,7 @@ import {
   ingredientsTable,
   stockEntriesTable,
 } from "@workspace/db";
-import { eq, and, gte, lte, sql, desc, asc } from "drizzle-orm";
+import { eq, and, gte, lte, sql, desc, asc, inArray } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -88,7 +88,7 @@ router.get("/weekly", async (req, res) => {
       })
       .from(purchaseOrderLinesTable)
       .innerJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
-      .where(sql`${purchaseOrderLinesTable.purchaseOrderId} = ANY(${orderIds})`);
+      .where(inArray(purchaseOrderLinesTable.purchaseOrderId, orderIds));
   }
 
   const linesByOrder: Record<number, typeof lines> = {};

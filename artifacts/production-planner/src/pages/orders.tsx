@@ -24,6 +24,16 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
+function calcExpectedDelivery(leadTimeDays = 1, cutoffTime = "17:00"): string {
+  const now = new Date();
+  const [cutH, cutM] = cutoffTime.split(":").map(Number);
+  const isBeforeCutoff = now.getHours() < cutH || (now.getHours() === cutH && now.getMinutes() < cutM);
+  const days = isBeforeCutoff ? leadTimeDays : leadTimeDays + 1;
+  const d = new Date(now);
+  d.setDate(d.getDate() + days);
+  return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+}
+
 type OrderLine = {
   ingredientId: number;
   ingredientName: string;
@@ -47,6 +57,8 @@ type SupplierOrder = {
     email: string | null;
     phone: string | null;
     website: string | null;
+    leadTimeDays?: number;
+    cutoffTime?: string;
   };
   lines: OrderLine[];
 };
@@ -504,6 +516,10 @@ export default function Orders() {
                     {lines.length} item{lines.length !== 1 ? "s" : ""} &middot;
                     {checkedCount}/{lines.length} checked
                     {cost > 0 && <> &middot; &pound;{cost.toFixed(2)} est.</>}
+                  </p>
+                  <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                    <Truck className="w-3 h-3 inline shrink-0" />
+                    Est. delivery: {calcExpectedDelivery(so.supplier.leadTimeDays, so.supplier.cutoffTime)}
                   </p>
                 </div>
               </div>

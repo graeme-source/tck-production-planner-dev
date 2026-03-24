@@ -246,6 +246,8 @@ router.get("/calculate", async (req, res) => {
           email: supplier?.email ?? null,
           phone: supplier?.phone ?? null,
           website: supplier?.website ?? null,
+          leadTimeDays: supplier?.leadTimeDays ?? 1,
+          cutoffTime: supplier?.cutoffTime ?? "17:00",
         },
         lines: [],
       };
@@ -311,6 +313,8 @@ router.get("/calculate", async (req, res) => {
             email: supplier?.email ?? null,
             phone: supplier?.phone ?? null,
             website: supplier?.website ?? null,
+            leadTimeDays: supplier?.leadTimeDays ?? 1,
+            cutoffTime: supplier?.cutoffTime ?? "17:00",
           },
           lines: [],
         };
