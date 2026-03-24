@@ -5566,18 +5566,81 @@ function ChillerRackVisual({
                   </div>
                 </div>
 
-                {/* Right: milestone position numbers */}
-                <div className="flex flex-col gap-[2px] py-[6px]">
-                  {Array.from({ length: TRAYS_PER_RACK }).map((_, i) =>
-                    [0, 6, 13, 20, 27].includes(i) ? (
-                      <div key={i} className="h-[15px] flex items-center">
-                        <span className="text-[9px] text-muted-foreground/70 leading-none">{i + 1}</span>
+                {/* Right: recipe stacked bar — sub-count per recipe, total shown if split across racks */}
+                {(() => {
+                  // Group consecutive filled slots into recipe segments
+                  const segs: Array<{ colour: string; recipeName: string; count: number; isWonky: boolean }> = [];
+                  for (const slot of slots) {
+                    if (!slot) continue;
+                    const last = segs[segs.length - 1];
+                    if (slot.isWonky) {
+                      if (last?.isWonky) last.count++;
+                      else segs.push({ colour: wonkyBackground, recipeName: "Wonky", count: 1, isWonky: true });
+                    } else if (last && last.recipeName === slot.recipeName && !last.isWonky) {
+                      last.count++;
+                    } else {
+                      segs.push({ colour: slot.colour, recipeName: slot.recipeName, count: 1, isWonky: false });
+                    }
+                  }
+
+                  // Total trays per recipe across ALL racks
+                  const totalByName = new Map<string, number>(rackItems.map(r => [r.recipeName, r.trayCount]));
+                  if (hasWonky) totalByName.set("Wonky", 1);
+
+                  // Recipes whose trays are split across multiple racks
+                  const splitSegs = segs.filter(s => (totalByName.get(s.recipeName) ?? s.count) > s.count);
+
+                  return (
+                    <div className="flex flex-col" style={{ minWidth: 34 }}>
+                      {/* Stacked bar — heights match tray slot heights exactly */}
+                      <div className="flex flex-col gap-[2px] py-[6px]">
+                        {segs.map((seg, si) => {
+                          const h = seg.count * 15 + Math.max(0, seg.count - 1) * 2;
+                          const total = totalByName.get(seg.recipeName) ?? seg.count;
+                          const isPartial = total > seg.count;
+                          return (
+                            <div
+                              key={si}
+                              style={{ height: h, background: seg.colour }}
+                              className="rounded-[2px] flex flex-col items-center justify-center overflow-hidden"
+                            >
+                              <span
+                                className="text-white font-extrabold text-[11px] leading-none"
+                                style={{ textShadow: "0 0 4px rgba(0,0,0,0.9)" }}
+                              >
+                                {seg.count}
+                              </span>
+                              {isPartial && (
+                                <span
+                                  className="text-white/80 text-[8px] leading-none mt-0.5"
+                                  style={{ textShadow: "0 0 3px rgba(0,0,0,0.8)" }}
+                                >
+                                  /{total}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
-                    ) : (
-                      <div key={i} className="h-[15px]" />
-                    )
-                  )}
-                </div>
+                      {/* Below bar: grand total for recipes that span multiple racks */}
+                      {splitSegs.length > 0 && (
+                        <div className="mt-1.5 flex flex-col gap-0.5">
+                          {splitSegs.map((seg, si) => (
+                            <div key={si} className="flex items-center gap-1 justify-center">
+                              <div
+                                className="w-2 h-2 rounded-[1px] flex-shrink-0 border border-black/10"
+                                style={{ background: seg.colour }}
+                              />
+                              <span className="text-[9px] font-bold tabular-nums text-foreground">
+                                {totalByName.get(seg.recipeName)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           );
