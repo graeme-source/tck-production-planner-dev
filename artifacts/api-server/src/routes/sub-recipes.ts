@@ -19,7 +19,7 @@ router.get("/", async (_req, res) => {
 });
 
 router.post("/", validate(CreateSubRecipeBody), async (req, res) => {
-  const { name, description, yield: yieldAmt, yieldUnit, notes, shelfLifeDays, ingredients, subRecipeComponents } = req.body;
+  const { name, description, yield: yieldAmt, yieldUnit, notes, shelfLifeDays, isBase, ingredients, subRecipeComponents } = req.body;
 
   if (subRecipeComponents?.length) {
     const proposedIds = subRecipeComponents.map((c: { componentSubRecipeId: number }) => c.componentSubRecipeId);
@@ -33,7 +33,7 @@ router.post("/", validate(CreateSubRecipeBody), async (req, res) => {
 
   const [subRecipe] = await db
     .insert(subRecipesTable)
-    .values({ name, description, yield: String(yieldAmt), yieldUnit, notes, shelfLifeDays: shelfLifeDays ?? null })
+    .values({ name, description, yield: String(yieldAmt), yieldUnit, notes, shelfLifeDays: shelfLifeDays ?? null, isBase: isBase ?? false })
     .returning();
 
   if (ingredients?.length) {
@@ -141,7 +141,7 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateSubRecipeBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, description, yield: yieldAmt, yieldUnit, notes, shelfLifeDays, ingredients, subRecipeComponents } = req.body;
+  const { name, description, yield: yieldAmt, yieldUnit, notes, shelfLifeDays, isBase, ingredients, subRecipeComponents } = req.body;
 
   if (subRecipeComponents?.length) {
     const proposedIds = subRecipeComponents.map((c: { componentSubRecipeId: number }) => c.componentSubRecipeId);
@@ -154,7 +154,7 @@ router.put("/:id", validate(UpdateSubRecipeBody), async (req, res) => {
 
   const [updated] = await db
     .update(subRecipesTable)
-    .set({ name, description, yield: String(yieldAmt), yieldUnit, notes, shelfLifeDays: shelfLifeDays ?? null })
+    .set({ name, description, yield: String(yieldAmt), yieldUnit, notes, shelfLifeDays: shelfLifeDays ?? null, isBase: isBase ?? false })
     .where(eq(subRecipesTable.id, id))
     .returning();
 

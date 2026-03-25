@@ -121,6 +121,7 @@ export interface SubRecipe {
   yieldUnit: string;
   notes?: string | null;
   shelfLifeDays?: number | null;
+  isBase?: boolean | null;
   /** Computed cost per yield unit */
   costPerYieldUnit?: number | null;
   createdAt: string;
@@ -173,6 +174,7 @@ export interface CreateSubRecipe {
   yieldUnit: string;
   notes?: string | null;
   shelfLifeDays?: number | null;
+  isBase?: boolean | null;
   ingredients: CreateSubRecipeIngredientsItem[];
   subRecipeComponents?: CreateSubRecipeSubRecipeComponentsItem[];
 }

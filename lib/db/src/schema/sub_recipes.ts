@@ -1,4 +1,4 @@
-import { pgTable, serial, text, numeric, integer, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, numeric, integer, timestamp, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { ingredientsTable } from "./ingredients";
@@ -11,6 +11,7 @@ export const subRecipesTable = pgTable("sub_recipes", {
   yieldUnit: text("yield_unit").notNull(),
   notes: text("notes"),
   shelfLifeDays: integer("shelf_life_days"),
+  isBase: boolean("is_base").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

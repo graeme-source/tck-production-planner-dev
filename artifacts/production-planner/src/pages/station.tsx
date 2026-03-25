@@ -3755,7 +3755,9 @@ function SubRecipeMakeFlow({
 
   const filteredList = mode === "plan"
     ? planRequirements.filter(r => r.subRecipeName.toLowerCase().includes(search.toLowerCase()))
-    : allSubRecipes.filter(r => r.name.toLowerCase().includes(search.toLowerCase()))
+    : allSubRecipes
+        .filter(r => !r.isBase)
+        .filter(r => r.name.toLowerCase().includes(search.toLowerCase()))
         .map(resolveStandaloneSr);
 
   const back = () => setState(s => ({ ...s, phase: "pick", sr: null, stockOnHand: "", batchMultiplier: 1, customBatches: 1, checked: new Set() }));

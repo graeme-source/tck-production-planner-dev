@@ -17,6 +17,7 @@ const schema = z.object({
   yieldUnit: z.string().min(1, "Unit required"),
   notes: z.string().optional(),
   shelfLifeDays: z.coerce.number().int().nonnegative().optional(),
+  isBase: z.boolean().optional(),
   ingredients: z.array(z.object({
     ingredientId: z.coerce.number().min(1, "Select an ingredient"),
     quantity: z.coerce.number().min(0.001, "Must be > 0"),
@@ -404,6 +405,19 @@ function SubRecipeForm({
           </div>
         </div>
 
+        <div className="flex items-center gap-3 py-1">
+          <input
+            type="checkbox"
+            id="isBase"
+            {...register("isBase")}
+            className="w-4 h-4 rounded border-border accent-primary"
+          />
+          <div>
+            <label htmlFor="isBase" className="text-sm font-medium cursor-pointer">Base sub-recipe</label>
+            <p className="text-xs text-muted-foreground">Bases (sauces, dough) are managed in the Bases & Sauces station. Non-base sub-recipes appear in the ad-hoc Replenish flow.</p>
+          </div>
+        </div>
+
         <div className="border-t border-border pt-4">
           <div className="flex items-center justify-between mb-3">
             <label className="text-sm font-bold">Ingredients</label>
@@ -625,6 +639,7 @@ function EditSubRecipeDialog({
         yieldUnit: detail.yieldUnit,
         notes: detail.notes ?? "",
         shelfLifeDays: detail.shelfLifeDays != null ? Number(detail.shelfLifeDays) : undefined,
+        isBase: detail.isBase ?? false,
         ingredients: (detail.ingredients ?? []).map(i => ({
           ingredientId: i.ingredientId,
           quantity: Number(i.quantity),
@@ -634,7 +649,7 @@ function EditSubRecipeDialog({
           quantity: Number(c.quantity),
         })),
       }
-    : { name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined, ingredients: [], subRecipeComponents: [] };
+    : { name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, ingredients: [], subRecipeComponents: [] };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -945,7 +960,7 @@ export default function SubRecipes() {
   }));
 
   const addDefaults: FormValues = {
-    name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined,
+    name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false,
     ingredients: [],
     subRecipeComponents: [],
   };
