@@ -1879,6 +1879,26 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     return () => clearInterval(interval);
   }, [plan.id, stationType, sessionBatches]);
 
+  type AssemblyItemData = { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number };
+  type AssemblyData = { itemId: number; fillingWeightPerBatch: number; fillingWeightHalfBatch: number; assemblyItems: AssemblyItemData[] };
+  const [assemblyMap, setAssemblyMap] = useState<Record<number, AssemblyData>>({});
+  useEffect(() => {
+    fetch(`/api/production-plans/${plan.id}/assembly-items`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.items) {
+          const map: Record<number, AssemblyData> = {};
+          for (const it of d.items) map[it.itemId] = it;
+          setAssemblyMap(map);
+        }
+      })
+      .catch(() => {});
+  }, [plan.id]);
+
+  const [checkedItems, setCheckedItems] = useState<Record<string, boolean>>({});
+  const [checklistLockedForItem, setChecklistLockedForItem] = useState<number | null>(null);
+  const prevRecipeIdRef = useRef<number | null>(null);
+
   // Mozzarella closing check — total to load to building fridges (in 2kg bags)
   type MozzarellaLoad = { name: string; unit: string; totalQty: number; bagWeight: number; bags: number };
   const [mozzLoad, setMozzLoad] = useState<MozzarellaLoad | null>(null);
@@ -1930,6 +1950,27 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   const remaining = currentItem ? Math.max(0, (currentItem.batchesTarget ?? 0) - buildingCount) : 0;
   const allDone = items.length > 0 && !currentItem;
 
+  useEffect(() => {
+    const curId = currentItem?.id ?? null;
+    if (curId !== prevRecipeIdRef.current) {
+      prevRecipeIdRef.current = curId;
+      setCheckedItems({});
+      setChecklistLockedForItem(null);
+    }
+  }, [currentItem?.id]);
+
+  useEffect(() => {
+    if (!currentItem || checklistLockedForItem === currentItem.id) return;
+    const asm = assemblyMap[currentItem.id];
+    if (!asm) return;
+    const allKeys: string[] = [];
+    if (asm.fillingWeightPerBatch > 0) allKeys.push("filling");
+    asm.assemblyItems.forEach((_, i) => allKeys.push(`item-${i}`));
+    if (allKeys.length > 0 && allKeys.every(k => checkedItems[k])) {
+      setChecklistLockedForItem(currentItem.id);
+    }
+  }, [checkedItems, currentItem?.id, assemblyMap, checklistLockedForItem]);
+
   // Auto-show mozzarella popup once when production completes
   useEffect(() => {
     if (allDone && mozzLoad && !mozzPopupShownRef.current) {
@@ -1938,9 +1979,17 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     }
   }, [allDone, mozzLoad]);
 
+  const checklistPending = (() => {
+    if (!currentItem) return false;
+    const asm = assemblyMap[currentItem.id];
+    if (!asm) return false;
+    if (asm.fillingWeightPerBatch === 0 && asm.assemblyItems.length === 0) return false;
+    return checklistLockedForItem !== currentItem.id;
+  })();
+
   // Large "BATCH COMPLETE" tap — single write via createBatchCompletion only
   const handleBatchComplete = () => {
-    if (!currentItem || pendingTap || available <= 0 || isOnBreak) return;
+    if (!currentItem || pendingTap || available <= 0 || isOnBreak || checklistPending) return;
     setPendingTap(true);
     createBatch.mutate({
       id: plan.id,
@@ -2036,170 +2085,205 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
         </div>
       )}
 
-      {/* Current recipe — full-screen focus card */}
+      {/* Current recipe — driving-view focus card */}
       {currentItem ? (
-        <div className="bg-card border-2 border-primary rounded-2xl p-6">
-          {/* Recipe name + progress */}
-          <div className="mb-4">
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
-              Currently Building — Line {lineNumber}
-            </p>
-            <div className="flex items-start gap-3">
-              <h2 className="font-display text-3xl font-bold leading-tight flex-1">
-                {currentItem.recipeName ?? `Recipe #${currentItem.recipeId}`}
-              </h2>
-              {currentItem.sopUrl && (
-                <a
-                  href={currentItem.sopUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-xl text-blue-700 dark:text-blue-300 text-sm font-medium hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors whitespace-nowrap mt-1"
-                >
-                  SOP <ExternalLink className="w-3.5 h-3.5" />
-                </a>
-              )}
-            </div>
-            <div className="flex flex-wrap items-center gap-3 mt-2 text-sm text-muted-foreground">
-              {currentItem.tinSize && (
-                <span className="bg-secondary/50 rounded px-2 py-0.5">{currentItem.tinSize} tin</span>
-              )}
-              {currentItem.portionsPerBatch > 0 && (
-                <span className="bg-secondary/50 rounded px-2 py-0.5">{currentItem.portionsPerBatch} portions/batch</span>
-              )}
-
-              {currentItem.notes && (
-                <span className="italic text-xs">{currentItem.notes}</span>
-              )}
-            </div>
-
-            {/* Current pace for this recipe */}
-            {paceData[currentItem.id] != null && (
-              <div className="mt-3">
-                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-700 text-sm font-medium text-violet-700 dark:text-violet-300">
-                  <Timer className="w-3.5 h-3.5" />
-                  {paceData[currentItem.id]} mins/batch
-                </span>
-              </div>
-            )}
-
-            {/* Building-specific: fill weight, base type, base weight */}
-            {(currentItem.fillWeightGrams != null || currentItem.baseType != null || currentItem.baseWeightGrams != null) && (
-              <div className="flex flex-wrap gap-3 mt-3">
-                {currentItem.baseType && (
-                  <div className="flex flex-col items-center bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-xl px-4 py-2 min-w-[90px]">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">Base</span>
-                    <span className="text-lg font-bold text-amber-800 dark:text-amber-300">{currentItem.baseType}</span>
-                  </div>
-                )}
-                {currentItem.baseWeightGrams != null && (
-                  <div className="flex flex-col items-center bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-xl px-4 py-2 min-w-[90px]">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">Base Wt</span>
-                    <span className="text-lg font-bold text-amber-800 dark:text-amber-300">{currentItem.baseWeightGrams}g</span>
-                  </div>
-                )}
-                {currentItem.fillWeightGrams != null && (
-                  <div className="flex flex-col items-center bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-xl px-4 py-2 min-w-[90px]">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-blue-700 dark:text-blue-400">Fill Wt</span>
-                    <span className="text-lg font-bold text-blue-800 dark:text-blue-300">{currentItem.fillWeightGrams}g</span>
-                  </div>
-                )}
-              </div>
+        <div className="bg-card border-2 border-primary rounded-2xl p-4 sm:p-5">
+          {/* Header: recipe name + SOP */}
+          <div className="flex items-center gap-2 mb-3">
+            <h2 className="font-display text-2xl sm:text-3xl font-bold leading-tight flex-1 truncate">
+              {currentItem.recipeName ?? `Recipe #${currentItem.recipeId}`}
+            </h2>
+            {currentItem.sopUrl && (
+              <a
+                href={currentItem.sopUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 px-2.5 py-1.5 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg text-blue-700 dark:text-blue-300 text-xs font-medium hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors whitespace-nowrap"
+              >
+                SOP <ExternalLink className="w-3 h-3" />
+              </a>
             )}
           </div>
 
-          {/* Cascade availability badge */}
-          {available <= 0 && (
-            <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-xl mb-4">
-              <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
-              <p className="text-sm text-amber-700 dark:text-amber-300">Waiting for Mixing to complete more batches</p>
-            </div>
-          )}
+          {/* Two-column driving layout */}
+          <div className="flex gap-3">
+            {/* LEFT — Assembly items checklist */}
+            <div className="w-1/2 min-w-0">
+              {(() => {
+                const asm = currentItem ? assemblyMap[currentItem.id] : null;
+                if (!asm) return null;
+                const hasFilling = asm.fillingWeightPerBatch > 0;
+                const hasItems = asm.assemblyItems.length > 0;
+                if (!hasFilling && !hasItems) return null;
 
-          {/* Large batch counter */}
-          <div className="flex items-center justify-center gap-8 my-6">
-            <div className="text-center">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Both Lines</p>
-              <p className="text-6xl font-bold font-display tabular-nums text-primary">
-                {buildingCount}
-              </p>
-              {myCount > 0 && (
-                <p className="text-xs text-muted-foreground mt-1">My batches: {myCount}</p>
-              )}
+                const isLocked = checklistLockedForItem === currentItem.id;
+
+                const toggleCheck = (key: string) => {
+                  if (isLocked) return;
+                  setCheckedItems(prev => ({ ...prev, [key]: !prev[key] }));
+                };
+
+                return (
+                  <div className="bg-slate-50 dark:bg-slate-900/30 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
+                    <div className="px-3 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
+                      <ClipboardList className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400">
+                        {isLocked ? "Ready" : "Items needed"}
+                      </span>
+                      {isLocked && <Check className="w-4 h-4 text-emerald-500 ml-auto" />}
+                    </div>
+                    <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {hasFilling && (
+                        <button
+                          type="button"
+                          onClick={() => toggleCheck("filling")}
+                          disabled={isLocked}
+                          className={cn(
+                            "w-full flex items-center gap-3 px-3 py-3 text-left transition-colors",
+                            !isLocked && "active:bg-slate-200 dark:active:bg-slate-700"
+                          )}
+                        >
+                          {isLocked || checkedItems["filling"]
+                            ? <CheckSquare className="w-6 h-6 text-emerald-500 flex-shrink-0" />
+                            : <Square className="w-6 h-6 text-slate-400 flex-shrink-0" />}
+                          <span className="text-base font-semibold text-blue-700 dark:text-blue-400 flex-1">Filling</span>
+                          <div className="text-right flex-shrink-0">
+                            <span className="text-lg font-bold font-mono tabular-nums">{Math.round(asm.fillingWeightPerBatch)}g</span>
+                            <span className="block text-xs text-muted-foreground font-mono tabular-nums">{Math.round(asm.fillingWeightHalfBatch)}g half</span>
+                          </div>
+                        </button>
+                      )}
+                      {asm.assemblyItems.map((ai, i) => {
+                        const key = `item-${i}`;
+                        return (
+                          <button
+                            type="button"
+                            key={key}
+                            onClick={() => toggleCheck(key)}
+                            disabled={isLocked}
+                            className={cn(
+                              "w-full flex items-center gap-3 px-3 py-3 text-left transition-colors",
+                              !isLocked && "active:bg-slate-200 dark:active:bg-slate-700"
+                            )}
+                          >
+                            {isLocked || checkedItems[key]
+                              ? <CheckSquare className="w-6 h-6 text-emerald-500 flex-shrink-0" />
+                              : <Square className="w-6 h-6 text-slate-400 flex-shrink-0" />}
+                            <span className="text-base font-semibold flex-1">{ai.name}</span>
+                            <div className="text-right flex-shrink-0">
+                              <span className="text-lg font-bold font-mono tabular-nums">{Math.round(ai.weightPerBatch)}g</span>
+                              <span className="block text-xs text-muted-foreground font-mono tabular-nums">{Math.round(ai.weightHalfBatch)}g half</span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Compact meta row */}
+              <div className="flex flex-wrap items-center gap-2 mt-2 text-xs text-muted-foreground">
+                {currentItem.tinSize && (
+                  <span className="bg-secondary/50 rounded px-1.5 py-0.5">{currentItem.tinSize} tin</span>
+                )}
+                {currentItem.portionsPerBatch > 0 && (
+                  <span className="bg-secondary/50 rounded px-1.5 py-0.5">{currentItem.portionsPerBatch}/batch</span>
+                )}
+                {paceData[currentItem.id] != null && (
+                  <span className="bg-violet-50 dark:bg-violet-900/20 text-violet-600 dark:text-violet-400 rounded px-1.5 py-0.5 font-medium">
+                    {paceData[currentItem.id]} min/batch
+                  </span>
+                )}
+                {currentItem.notes && (
+                  <span className="italic">{currentItem.notes}</span>
+                )}
+              </div>
             </div>
-            <div className="text-4xl font-light text-muted-foreground">/</div>
-            <div className="text-center">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Target</p>
-              <p className="text-6xl font-bold font-display tabular-nums">
-                {currentItem.batchesTarget ?? 0}
-              </p>
-            </div>
-            {currentItem.maxBatchesPerTin && (currentItem.batchesTarget ?? 0) > 0 && (
-              <>
-                <div className="text-4xl font-light text-muted-foreground hidden sm:block">·</div>
-                <div className="text-center hidden sm:block">
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Tins</p>
-                  <p className="text-4xl font-bold font-display tabular-nums text-amber-600 dark:text-amber-400">
-                    {Math.ceil((currentItem.batchesTarget ?? 0) / currentItem.maxBatchesPerTin)}
+
+            {/* RIGHT — Batch counter + action column */}
+            <div className="flex flex-col items-center justify-between w-1/2">
+              {/* Batch counter */}
+              <div className="text-center mb-3">
+                <p className="text-5xl sm:text-6xl font-bold font-display tabular-nums text-primary leading-none">
+                  {buildingCount}
+                </p>
+                <p className="text-lg font-light text-muted-foreground">/ {currentItem.batchesTarget ?? 0}</p>
+                {currentItem.maxBatchesPerTin && (currentItem.batchesTarget ?? 0) > 0 && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 font-semibold mt-0.5">
+                    {Math.ceil((currentItem.batchesTarget ?? 0) / currentItem.maxBatchesPerTin)} tins
                   </p>
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Remaining + progress */}
-          <div className="mb-6">
-            <div className="flex justify-between text-xs text-muted-foreground mb-1.5">
-              <span>{remaining} batch{remaining !== 1 ? "es" : ""} remaining</span>
-              <span>{pct}%</span>
-            </div>
-            <div className="w-full h-4 bg-secondary rounded-full overflow-hidden">
-              <div
-                className={cn(
-                  "h-full rounded-full transition-all",
-                  pct >= 100 ? "bg-emerald-500" : "bg-primary"
                 )}
-                style={{ width: `${Math.min(pct, 100)}%` }}
-              />
+                {myCount > 0 && (
+                  <p className="text-xs text-muted-foreground mt-0.5">Mine: {myCount}</p>
+                )}
+              </div>
+
+              {/* Progress bar */}
+              <div className="w-full mb-3">
+                <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden">
+                  <div
+                    className={cn(
+                      "h-full rounded-full transition-all",
+                      pct >= 100 ? "bg-emerald-500" : "bg-primary"
+                    )}
+                    style={{ width: `${Math.min(pct, 100)}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-muted-foreground text-center mt-0.5">{remaining} left</p>
+              </div>
+
+              {/* Waiting badge */}
+              {available <= 0 && (
+                <div className="w-full flex items-center justify-center gap-1 px-2 py-1.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg mb-2">
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                  <p className="text-[10px] font-medium text-amber-700 dark:text-amber-300 leading-tight">Waiting for Mixing</p>
+                </div>
+              )}
+
+              {/* BATCH COMPLETE button — large, easy to tap */}
+              <button
+                onClick={handleBatchComplete}
+                disabled={pendingTap || isOnBreak || available <= 0 || checklistPending}
+                className={cn(
+                  "w-full flex-1 min-h-[100px] rounded-2xl text-xl sm:text-2xl font-bold transition-all select-none active:scale-95 flex items-center justify-center",
+                  remaining === 0
+                    ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 border-2 border-emerald-400 opacity-60 cursor-not-allowed"
+                    : isOnBreak
+                      ? "bg-amber-100 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 border-2 border-amber-300 cursor-not-allowed opacity-70"
+                      : checklistPending
+                        ? "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 border-2 border-slate-300 dark:border-slate-600 cursor-not-allowed opacity-70"
+                        : available <= 0
+                          ? "bg-amber-100 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 border-2 border-amber-300 cursor-not-allowed opacity-70"
+                          : pendingTap
+                            ? "bg-primary/60 text-primary-foreground cursor-wait"
+                            : "bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg hover:shadow-xl"
+                )}
+              >
+                {isOnBreak
+                  ? "On Break"
+                  : remaining === 0
+                    ? "All Done ✓"
+                    : checklistPending
+                      ? "Tick items ←"
+                      : available <= 0
+                        ? "Waiting…"
+                        : pendingTap
+                          ? "Recording..."
+                          : "BATCH DONE ✓"}
+              </button>
+
+              {/* Undo */}
+              {buildingCount > 0 && !isOnBreak && (
+                <button
+                  onClick={handleUndo}
+                  className="mt-1.5 w-full py-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg transition-colors"
+                >
+                  Undo
+                </button>
+              )}
             </div>
           </div>
-
-          {/* Large BATCH COMPLETE button */}
-          <button
-            onClick={handleBatchComplete}
-            disabled={pendingTap || isOnBreak || available <= 0}
-            className={cn(
-              "w-full py-6 rounded-2xl text-2xl font-bold transition-all select-none active:scale-95",
-              remaining === 0
-                ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 border-2 border-emerald-400 opacity-60 cursor-not-allowed"
-                : isOnBreak
-                  ? "bg-amber-100 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 border-2 border-amber-300 cursor-not-allowed opacity-70"
-                  : available <= 0
-                    ? "bg-amber-100 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 border-2 border-amber-300 cursor-not-allowed opacity-70"
-                    : pendingTap
-                      ? "bg-primary/60 text-primary-foreground cursor-wait"
-                      : "bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg hover:shadow-xl"
-            )}
-          >
-            {isOnBreak
-              ? "On Break — End Break First"
-              : remaining === 0
-                ? "✓ All Batches Complete"
-                : available <= 0
-                  ? "Waiting for Mixing…"
-                  : pendingTap
-                    ? "Recording..."
-                    : "BATCH COMPLETE ✓"}
-          </button>
-
-          {/* Undo */}
-          {buildingCount > 0 && !isOnBreak && (
-            <button
-              onClick={handleUndo}
-              className="mt-2 w-full py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-xl transition-colors"
-            >
-              Undo last batch
-            </button>
-          )}
 
           {/* Extra Pack secondary control */}
           {currentItem && (
@@ -3227,10 +3311,9 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                               {ing.ingredientName}
                               {presence.length > 0 && <span className="ml-1 text-[10px] text-blue-500">👁</span>}
                             </p>
-                            <p className="text-xs text-muted-foreground tabular-nums">
-                              {fmtQty(qtyForRecipe, ing.unit)}
-                              {ing.recipes.length > 1 && <span className="ml-1 text-amber-500">shared</span>}
-                            </p>
+                            {ing.recipes.length > 1 && (
+                              <p className="text-xs text-muted-foreground"><span className="text-amber-500">shared</span></p>
+                            )}
                           </div>
                           <div className="flex items-center gap-1 flex-shrink-0">
                             {rStatus.completedTins > 0 && getPreppedByInitials(ing.ingredientId, group.recipeId).map(({ initials, fullName }) => (
@@ -4421,8 +4504,7 @@ function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
                                     {ing.ingredientName}
                                   </p>
                                   <p className="text-xs text-muted-foreground tabular-nums">
-                                    {fmtQty(qtyForRecipe, ing.unit)}
-                                    {ing.recipes.length > 1 && <span className="ml-1 text-amber-500">shared</span>}
+                                    {ing.recipes.length > 1 && <span className="text-amber-500">shared</span>}
                                   </p>
                                 </div>
                                 <div className="flex items-center gap-1 flex-shrink-0">
@@ -4695,10 +4777,6 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                     <Beef className={cn("w-5 h-5 flex-shrink-0", isSelected ? "text-rose-500" : "text-muted-foreground")} />
                     <div className="min-w-0 flex-1">
                       <p className={cn("text-sm font-medium truncate", isSelected && "font-semibold")}>{recipe.recipeName}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {rTotalKg.toFixed(2)} kg
-                        {recipe.trayCount != null && ` · ${recipe.trayCount} tray${recipe.trayCount !== 1 ? "s" : ""}`}
-                      </p>
                     </div>
                     <span className="text-xs text-muted-foreground flex-shrink-0">{recipe.batchesTarget}×</span>
                   </button>

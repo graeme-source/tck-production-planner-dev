@@ -2019,6 +2019,140 @@ router.get("/:id/filling-mix", async (req, res) => {
   }
 });
 
+// GET /:id/assembly-items — assembly checklist for building station
+router.get("/:id/assembly-items", async (req, res) => {
+  try {
+    const planId = Number(req.params.id);
+
+    const planItemsResult = await db.execute(sql`
+      SELECT ppi.id, ppi.recipe_id as "recipeId", r.name as "recipeName",
+             ppi.batches_target as "batchesTarget", r.portions_per_batch as "portionsPerBatch"
+      FROM production_plan_items ppi
+      LEFT JOIN recipes r ON ppi.recipe_id = r.id
+      WHERE ppi.plan_id = ${planId}
+      ORDER BY ppi.order_position
+    `);
+    const planItems = planItemsResult.rows as Array<{
+      id: number; recipeId: number; recipeName: string | null;
+      batchesTarget: number | null; portionsPerBatch: number | null;
+    }>;
+
+    if (planItems.length === 0) {
+      res.json({ items: [] });
+      return;
+    }
+
+    const recipeIds = [...new Set(planItems.map(i => i.recipeId))].filter((x): x is number => x != null);
+    if (recipeIds.length === 0) {
+      res.json({ items: planItems.map(item => ({ itemId: item.id, recipeId: item.recipeId, recipeName: item.recipeName, fillingWeightPerBatch: 0, fillingWeightHalfBatch: 0, assemblyItems: [] })) });
+      return;
+    }
+
+    const fillingIngRows = await db.execute(sql`
+      SELECT ri.recipe_id as "recipeId", ri.quantity, i.unit
+      FROM recipe_ingredients ri
+      LEFT JOIN ingredients i ON ri.ingredient_id = i.id
+      WHERE ri.recipe_id IN (${sql.join(recipeIds.map(id => sql`${id}`), sql`, `)})
+        AND ri.include_in_filling_mix = true
+    `);
+
+    const fillingSubRows = await db.execute(sql`
+      SELECT rs.recipe_id as "recipeId", rs.quantity, s.yield_unit as unit
+      FROM recipe_sub_recipes rs
+      LEFT JOIN sub_recipes s ON rs.sub_recipe_id = s.id
+      WHERE rs.recipe_id IN (${sql.join(recipeIds.map(id => sql`${id}`), sql`, `)})
+        AND rs.include_in_filling_mix = true
+        AND (s.is_base = false OR s.is_base IS NULL)
+    `);
+
+    const nonFillingIngRows = await db.execute(sql`
+      SELECT ri.recipe_id as "recipeId", ri.ingredient_id as "ingredientId",
+             i.name as "ingredientName", i.unit, ri.quantity
+      FROM recipe_ingredients ri
+      LEFT JOIN ingredients i ON ri.ingredient_id = i.id
+      WHERE ri.recipe_id IN (${sql.join(recipeIds.map(id => sql`${id}`), sql`, `)})
+        AND ri.include_in_filling_mix = false
+        AND ri.marinade_for_ingredient_id IS NULL
+    `);
+
+    const nonFillingSubRows = await db.execute(sql`
+      SELECT rs.recipe_id as "recipeId", rs.sub_recipe_id as "subRecipeId",
+             s.name as "subRecipeName", s.yield_unit as unit, rs.quantity,
+             s.is_base as "isBase"
+      FROM recipe_sub_recipes rs
+      LEFT JOIN sub_recipes s ON rs.sub_recipe_id = s.id
+      WHERE rs.recipe_id IN (${sql.join(recipeIds.map(id => sql`${id}`), sql`, `)})
+        AND rs.include_in_filling_mix = false
+        AND rs.marinade_for_ingredient_id IS NULL
+        AND (s.is_base = false OR s.is_base IS NULL)
+        AND LOWER(s.name) NOT LIKE '%dough%'
+    `);
+
+    const fiRows = fillingIngRows.rows as Array<{ recipeId: number; quantity: string; unit: string }>;
+    const fsRows = fillingSubRows.rows as Array<{ recipeId: number; quantity: string; unit: string }>;
+    const nfiRows = nonFillingIngRows.rows as Array<{ recipeId: number; ingredientId: number; ingredientName: string; unit: string; quantity: string }>;
+    const nfsRows = nonFillingSubRows.rows as Array<{ recipeId: number; subRecipeId: number; subRecipeName: string; unit: string; quantity: string; isBase: boolean }>;
+
+    const toGrams = (qty: number, unit: string): number => {
+      const u = (unit || "").toLowerCase();
+      if (u === "kg") return qty * 1000;
+      if (u === "mg") return qty / 1000;
+      if (u === "l") return qty * 1000;
+      if (u === "ml") return qty;
+      return qty;
+    };
+
+    const result = planItems.map(item => {
+      const ppb = item.portionsPerBatch ?? 1;
+
+      const fillingTotalGrams = [
+        ...fiRows.filter(r => r.recipeId === item.recipeId).map(r => toGrams(Number(r.quantity), r.unit)),
+        ...fsRows.filter(r => r.recipeId === item.recipeId).map(r => toGrams(Number(r.quantity), r.unit)),
+      ].reduce((sum, q) => sum + q, 0);
+
+      const fillingWeightPerBatch = fillingTotalGrams * ppb;
+      const fillingWeightHalfBatch = fillingWeightPerBatch / 2;
+
+      const assemblyItems: Array<{ name: string; unit: string; weightPerBatch: number; weightHalfBatch: number }> = [];
+
+      for (const row of nfiRows.filter(r => r.recipeId === item.recipeId)) {
+        const wt = toGrams(Number(row.quantity), row.unit) * ppb;
+        assemblyItems.push({
+          name: row.ingredientName,
+          unit: "g",
+          weightPerBatch: wt,
+          weightHalfBatch: wt / 2,
+        });
+      }
+
+      for (const row of nfsRows.filter(r => r.recipeId === item.recipeId)) {
+        if (row.isBase) continue;
+        const wt = toGrams(Number(row.quantity), row.unit) * ppb;
+        assemblyItems.push({
+          name: row.subRecipeName,
+          unit: "g",
+          weightPerBatch: wt,
+          weightHalfBatch: wt / 2,
+        });
+      }
+
+      return {
+        itemId: item.id,
+        recipeId: item.recipeId,
+        recipeName: item.recipeName,
+        fillingWeightPerBatch,
+        fillingWeightHalfBatch,
+        assemblyItems,
+      };
+    });
+
+    res.json({ items: result });
+  } catch (err) {
+    console.error("assembly-items error:", err);
+    res.status(500).json({ error: "Internal error computing assembly items" });
+  }
+});
+
 // GET /:id/ingredient-requirements?station=prep_veg|prep_bases|prep_meat|all
 router.get("/:id/ingredient-requirements", async (req, res) => {
   const planId = Number(req.params.id);
