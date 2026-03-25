@@ -2571,12 +2571,15 @@ router.get("/:id/station-activity", async (req, res) => {
 //       – zeroes wonlyCount so wrapping-complete auto-freeze doesn't double-count
 //   • Returns { transferred: [{ itemId, recipeId, recipeName, qty }], totalQty }
 // ──────────────────────────────────────────────────────────────────────────────
+const WonkyToFreezerParams = z.object({ id: z.coerce.number().int().positive() });
+
 router.post("/:id/wonky-to-freezer", async (req, res) => {
-  const planId = Number(req.params.id);
-  if (!Number.isInteger(planId) || planId < 1) {
+  const parseResult = WonkyToFreezerParams.safeParse({ id: req.params.id });
+  if (!parseResult.success) {
     res.status(400).json({ error: "Invalid plan id" });
     return;
   }
+  const planId = parseResult.data.id;
   try {
     const items = await db
       .select({
@@ -2720,11 +2723,19 @@ router.patch("/:id/items/:itemId/wrapping-complete", async (req, res) => {
   let shopifyError: string | null = null;
 
   if (complete && item.recipeId) {
-    // Auto-freeze wonky packs into production_freezer stock
+    // Auto-freeze wonky packs into production_freezer stock.
+    // Also zeroes wonlyCount and updates freezerQty so the Wonky Rack card
+    // cannot double-transfer the same packs via /wonky-to-freezer.
     const wonlys = Number(item.wonlyCount) || 0;
     if (wonlys > 0) {
       await syncRecipeFreezerStock(item.recipeId, wonlys);
       wonkyFrozen = wonlys;
+      await db.update(productionPlanItemsTable)
+        .set({
+          wonlyCount: 0,
+          freezerQty: sql`${productionPlanItemsTable.freezerQty} + ${wonlys}`,
+        })
+        .where(eq(productionPlanItemsTable.id, itemId));
     }
 
     // Shopify inventory sync (only when netPacks explicitly provided by client)
