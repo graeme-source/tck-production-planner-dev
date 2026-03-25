@@ -8,6 +8,7 @@ import { useForm, useFieldArray, Controller } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 
 const schema = z.object({
@@ -174,6 +175,8 @@ function RecipeForm({
   categoryDefaults,
   currentSpecialName,
   thisRecipeIsSpecial,
+  onDirtyChange,
+  submitRef,
 }: {
   defaultValues: FormValues;
   onSubmit: (data: FormValues) => void;
@@ -184,11 +187,24 @@ function RecipeForm({
   categoryDefaults: { category: string; defaultPackagingCost: number; defaultLabourCost: number }[];
   currentSpecialName?: string | null;
   thisRecipeIsSpecial?: boolean;
+  onDirtyChange?: (isDirty: boolean) => void;
+  submitRef?: React.MutableRefObject<(() => void) | null>;
 }) {
-  const { register, control, handleSubmit, setValue, watch, formState: { errors } } = useForm<FormValues>({
+  const { register, control, handleSubmit, setValue, watch, formState: { errors, isDirty } } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues,
   });
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+
+  useEffect(() => {
+    if (submitRef) {
+      submitRef.current = handleSubmit(onSubmit);
+    }
+  }, [submitRef, handleSubmit, onSubmit]);
+
   const { fields: ingFields, append: appendIng, remove: removeIng } = useFieldArray({ control, name: "ingredients" });
   const { fields: subFields, append: appendSub, remove: removeSub } = useFieldArray({ control, name: "subRecipes" });
 
@@ -617,9 +633,32 @@ function EditRecipeDialog({
   const { data: allRecipes } = useListRecipes({ query: { enabled: open } });
   const { updateRecipe } = useAppMutations();
 
+  const [formIsDirty, setFormIsDirty] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const submitRef = useRef<(() => void) | null>(null);
+
   const specialRecipe = allRecipes?.find((r) => r.isCurrentSpecial);
   const currentSpecialName = specialRecipe ? specialRecipe.name : null;
   const thisRecipeIsSpecial = detail?.isCurrentSpecial ?? false;
+
+  function handleOpenChange(v: boolean) {
+    if (!v && formIsDirty) {
+      setConfirmOpen(true);
+    } else {
+      onOpenChange(v);
+    }
+  }
+
+  function handleDiscard() {
+    setConfirmOpen(false);
+    setFormIsDirty(false);
+    onOpenChange(false);
+  }
+
+  function handleSaveFromConfirm() {
+    setConfirmOpen(false);
+    submitRef.current?.();
+  }
 
   if (!open) return null;
 
@@ -649,27 +688,57 @@ function EditRecipeDialog({
     : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", ingredients: [], subRecipes: [] };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[720px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader><DialogTitle className="font-display text-xl">Edit Recipe</DialogTitle></DialogHeader>
-        {isLoading ? (
-          <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
-        ) : (
-          <RecipeForm
-            key={id}
-            defaultValues={defaultValues}
-            isEdit
-            isPending={updateRecipe.isPending}
-            ingredients={ingredients}
-            subRecipes={subRecipes}
-            categoryDefaults={categoryDefaults}
-            currentSpecialName={currentSpecialName}
-            thisRecipeIsSpecial={thisRecipeIsSpecial}
-            onSubmit={(data) => updateRecipe.mutate({ id, data }, { onSuccess: () => onOpenChange(false) })}
-          />
-        )}
-      </DialogContent>
-    </Dialog>
+    <>
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent className="bg-card border-border rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unsaved changes</AlertDialogTitle>
+            <AlertDialogDescription>
+              You have unsaved changes to this recipe. What would you like to do?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <AlertDialogCancel className="sm:mr-auto">Keep editing</AlertDialogCancel>
+            <button
+              onClick={handleDiscard}
+              className="inline-flex items-center justify-center rounded-md text-sm font-medium px-4 py-2 border border-destructive text-destructive hover:bg-destructive/10 transition-colors"
+            >
+              Discard changes
+            </button>
+            <AlertDialogAction
+              onClick={handleSaveFromConfirm}
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              Save changes
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={open} onOpenChange={handleOpenChange}>
+        <DialogContent className="sm:max-w-[720px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle className="font-display text-xl">Edit Recipe</DialogTitle></DialogHeader>
+          {isLoading ? (
+            <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+          ) : (
+            <RecipeForm
+              key={id}
+              defaultValues={defaultValues}
+              isEdit
+              isPending={updateRecipe.isPending}
+              ingredients={ingredients}
+              subRecipes={subRecipes}
+              categoryDefaults={categoryDefaults}
+              currentSpecialName={currentSpecialName}
+              thisRecipeIsSpecial={thisRecipeIsSpecial}
+              onDirtyChange={setFormIsDirty}
+              submitRef={submitRef}
+              onSubmit={(data) => updateRecipe.mutate({ id, data }, { onSuccess: () => onOpenChange(false) })}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
