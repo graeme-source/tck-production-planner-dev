@@ -53,6 +53,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical, Lock } from "lucide-react";
+import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Station metadata
@@ -7033,56 +7034,6 @@ interface ShopifyWrapConfirmState {
   variantTitle: string | null;
 }
 
-function ShopifyWrapConfirmDialog({
-  state,
-  onConfirm,
-  onCancel,
-}: {
-  state: ShopifyWrapConfirmState;
-  onConfirm: () => void;
-  onCancel: () => void;
-}) {
-  const displayName = state.variantTitle
-    ? `${state.productTitle} – ${state.variantTitle}`
-    : state.productTitle;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-card border border-border rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center flex-shrink-0">
-            <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-          </div>
-          <div>
-            <p className="font-semibold text-base">Sync Shopify inventory?</p>
-            <p className="text-xs text-muted-foreground">This will adjust live stock on your store.</p>
-          </div>
-        </div>
-        <div className="bg-secondary/40 rounded-xl p-3 space-y-1 text-sm">
-          <p className="font-medium text-foreground">{displayName}</p>
-          <p className="text-muted-foreground">
-            + <strong className="text-foreground tabular-nums">{state.netPacks}</strong> packs added to inventory
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={onCancel}
-            className="flex-1 px-4 py-2.5 rounded-xl border border-border text-sm font-medium text-muted-foreground hover:bg-secondary/50 transition-colors"
-          >
-            Skip sync
-          </button>
-          <button
-            onClick={onConfirm}
-            className="flex-1 px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition-colors"
-          >
-            Confirm &amp; sync
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // Per-recipe pack count display (read from oven completions) + wrapping-complete toggle
 // ──────────────────────────────────────────────────────────────────────────────
 function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
@@ -7256,18 +7207,29 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   return (
     <div className="space-y-4">
       {shopifyConfirm && (
-        <ShopifyWrapConfirmDialog
-          state={shopifyConfirm}
+        <ShopifyConfirmDialog
+          title="Sync Shopify inventory?"
+          description="This will adjust live stock on your store."
+          products={[{
+            name: shopifyConfirm.variantTitle
+              ? `${shopifyConfirm.productTitle} – ${shopifyConfirm.variantTitle}`
+              : shopifyConfirm.productTitle,
+            quantity: shopifyConfirm.netPacks,
+            quantityLabel: "packs",
+          }]}
+          confirmLabel="Confirm & sync"
+          skipLabel="Skip sync"
           onConfirm={async () => {
             const { item, netPacks: np } = shopifyConfirm;
             setShopifyConfirm(null);
             await sendWrappingComplete(item, true, np);
           }}
-          onCancel={async () => {
+          onSkip={async () => {
             const { item } = shopifyConfirm;
             setShopifyConfirm(null);
             await sendWrappingComplete(item, true);
           }}
+          onCancel={() => setShopifyConfirm(null)}
         />
       )}
       {/* Session summary */}

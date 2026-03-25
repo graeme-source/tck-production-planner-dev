@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useListRecipes, useListIngredients, useListSubRecipes, useGetRecipe, useListCategoryDefaults } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
+import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
 import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2 } from "lucide-react";
@@ -642,6 +643,10 @@ function EditRecipeDialog({
   subRecipes: SubRecipeOption[];
   categoryDefaults: { category: string; defaultPackagingCost: number; defaultLabourCost: number }[];
 }) {
+  const { state: authState } = useAuth();
+  const canEditShopify = authState.status === "authenticated" &&
+    (authState.user.role === "admin" || authState.user.role === "manager");
+
   const { data: detail, isLoading } = useGetRecipe(id, { query: { enabled: open } });
   const { data: allRecipes } = useListRecipes({ query: { enabled: open } });
   const { updateRecipe } = useAppMutations();
@@ -664,7 +669,7 @@ function EditRecipeDialog({
     if (!open) return;
     // Load current mapping
     setShopifyLoading(true);
-    fetch(`/api/shopify/recipe-mappings/${id}`, { credentials: "include" })
+    fetch(`/api/recipes/${id}/shopify-mapping`, { credentials: "include" })
       .then(r => r.ok ? r.json() : null)
       .then((data: ShopifyMapping | null) => {
         setShopifyMapping(data);
@@ -709,7 +714,7 @@ function EditRecipeDialog({
     setShopifySaving(true);
     setShopifyError(null);
     try {
-      const res = await fetch(`/api/shopify/recipe-mappings/${id}`, {
+      const res = await fetch(`/api/recipes/${id}/shopify-mapping`, {
         method: "PUT",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -733,7 +738,7 @@ function EditRecipeDialog({
     setShopifySaving(true);
     setShopifyError(null);
     try {
-      await fetch(`/api/shopify/recipe-mappings/${id}`, { method: "DELETE", credentials: "include" });
+      await fetch(`/api/recipes/${id}/shopify-mapping`, { method: "DELETE", credentials: "include" });
       setShopifyMapping(null);
       setSelectedVariant(null);
     } catch (err) {
@@ -863,17 +868,19 @@ function EditRecipeDialog({
                         </p>
                         <p className="text-xs text-muted-foreground">Variant ID: {shopifyMapping.shopify_variant_id}</p>
                       </div>
-                      <button
-                        onClick={removeShopifyMapping}
-                        disabled={shopifySaving}
-                        className="text-xs px-2.5 py-1.5 rounded-lg border border-destructive/50 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50 flex-shrink-0"
-                      >
-                        {shopifySaving ? <Loader2 className="w-3 h-3 animate-spin inline" /> : "Remove"}
-                      </button>
+                      {canEditShopify && (
+                        <button
+                          onClick={removeShopifyMapping}
+                          disabled={shopifySaving}
+                          className="text-xs px-2.5 py-1.5 rounded-lg border border-destructive/50 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50 flex-shrink-0"
+                        >
+                          {shopifySaving ? <Loader2 className="w-3 h-3 animate-spin inline" /> : "Remove"}
+                        </button>
+                      )}
                     </div>
                     <p className="text-xs text-emerald-700 dark:text-emerald-300">When wrapping is marked complete, Shopify inventory will be adjusted by the net pack count.</p>
                   </div>
-                ) : (
+                ) : canEditShopify ? (
                   <div className="space-y-2">
                     <p className="text-xs text-muted-foreground">Link this recipe to a Shopify product variant. Inventory will auto-sync when wrapping is completed.</p>
                     {shopifyProductsLoading ? (
@@ -931,6 +938,8 @@ function EditRecipeDialog({
                       </div>
                     )}
                   </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground italic">No Shopify product linked. Contact an admin to set up the link.</p>
                 )}
                 {shopifyError && <p className="text-xs text-destructive mt-1">{shopifyError}</p>}
               </div>

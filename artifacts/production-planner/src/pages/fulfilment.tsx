@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/page-header";
+import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 import { format, addDays, parseISO } from "date-fns";
 import { useLocation } from "wouter";
 import {
@@ -527,6 +528,7 @@ export default function Fulfilment() {
   };
 
   const [bulkTagging, setBulkTagging] = useState(false);
+  const [showBulkTagConfirm, setShowBulkTagConfirm] = useState(false);
   const [consignmentAction, setConsignmentAction] = useState<"idle" | "adding-box" | "reprinting" | "cancelling">("idle");
   const [consignmentActionError, setConsignmentActionError] = useState<string | null>(null);
   const [showAddBoxConfirm, setShowAddBoxConfirm] = useState(false);
@@ -1743,19 +1745,7 @@ export default function Fulfilment() {
                   </span>
                 </div>
                 <button
-                  onClick={async () => {
-                    setBulkTagging(true);
-                    try {
-                      await bulkTagDispatch(queryTag, boxFilter);
-                      refetch();
-                      refetchProgress();
-                      refetchTags();
-                      refetchPostcodes();
-                    } catch {
-                    } finally {
-                      setBulkTagging(false);
-                    }
-                  }}
+                  onClick={() => setShowBulkTagConfirm(true)}
                   disabled={bulkTagging}
                   className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-xl text-sm font-semibold hover:bg-amber-700 transition-colors disabled:opacity-50"
                 >
@@ -1765,6 +1755,31 @@ export default function Fulfilment() {
                     <><Tag className="w-4 h-4" /> Tag {boxFilter === "all" ? "All" : boxFilter === "small box" ? "Small Box" : boxFilter === "large box" ? "Large Box" : boxFilter === "wholesale" ? "Wholesale" : "Other"} Orders for Dispatch</>
                   )}
                 </button>
+                {showBulkTagConfirm && (
+                  <ShopifyConfirmDialog
+                    title="Tag orders for dispatch?"
+                    description={`This will tag ${filteredUntagged.length} order${filteredUntagged.length === 1 ? "" : "s"} on Shopify as ready to dispatch. This cannot be undone.`}
+                    products={filteredUntagged.slice(0, 10).map(o => ({
+                      name: `${o.name} — ${o.shipping_address?.name ?? `${o.customer?.first_name ?? ""} ${o.customer?.last_name ?? ""}`.trim()}`,
+                    }))}
+                    confirmLabel="Tag All for Dispatch"
+                    onConfirm={async () => {
+                      setShowBulkTagConfirm(false);
+                      setBulkTagging(true);
+                      try {
+                        await bulkTagDispatch(queryTag, boxFilter);
+                        refetch();
+                        refetchProgress();
+                        refetchTags();
+                        refetchPostcodes();
+                      } catch {
+                      } finally {
+                        setBulkTagging(false);
+                      }
+                    }}
+                    onCancel={() => setShowBulkTagConfirm(false)}
+                  />
+                )}
               </div>
               <div className="space-y-1.5 max-h-48 overflow-y-auto">
                 {filteredUntagged.map(order => (
