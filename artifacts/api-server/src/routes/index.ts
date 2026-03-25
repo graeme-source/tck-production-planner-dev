@@ -32,7 +32,6 @@ import dptIngredientRequirementsRouter from "./dpt-ingredient-requirements";
 import kanbansRouter from "./kanbans";
 import ordersRouter from "./orders";
 import deliveriesRouter from "./deliveries";
-import adminRouter from "./admin";
 
 const router: IRouter = Router();
 
@@ -41,8 +40,6 @@ router.use(healthRouter);
 router.use("/auth", authRouter);
 router.use("/auth", invitesRouter);
 router.use(storageRouter);
-// Admin utility endpoint — auth via MIGRATION_TOKEN env var (not session)
-router.use("/admin", adminRouter);
 
 // Auth guard for all routes below
 router.use((req: Request, res: Response, next: NextFunction) => {
