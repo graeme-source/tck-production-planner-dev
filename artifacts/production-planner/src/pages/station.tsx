@@ -7381,36 +7381,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
             style={{ width: `${items.length > 0 ? Math.min(Math.round((wrappedCount / items.length) * 100), 100) : 0}%` }}
           />
         </div>
-        <div className="pb-3 border-b border-border/50 mb-3">
-          <BreakTracker planId={plan.id} stationType="wrapping" onBreakActiveChange={setIsOnBreak} />
-        </div>
-        <div className="grid grid-cols-3 gap-2 mb-2">
-          <div className="text-center bg-secondary/30 rounded-lg py-2">
-            <p className="text-xs text-muted-foreground">Gross Packs</p>
-            <p className="text-lg font-bold tabular-nums">{totalGross}</p>
-          </div>
-          <div className="text-center bg-red-50 dark:bg-red-950/20 rounded-lg py-2">
-            <p className="text-xs text-red-600 dark:text-red-400">Wonky</p>
-            <p className="text-lg font-bold tabular-nums text-red-600 dark:text-red-400">{totalWonly}</p>
-          </div>
-          <div className="text-center bg-purple-50 dark:bg-purple-950/20 rounded-lg py-2">
-            <p className="text-xs text-purple-700 dark:text-purple-300">Net Packs</p>
-            <p className="text-lg font-bold tabular-nums text-purple-700 dark:text-purple-300">{totalNet}</p>
-            {totalExtraPacks > 0 && (
-              <p className="text-xs text-amber-600 dark:text-amber-400">+{totalExtraPacks} extra</p>
-            )}
-          </div>
-        </div>
-        <div className="grid grid-cols-3 gap-2">
-          <div className="text-center bg-blue-50 dark:bg-blue-950/20 rounded-lg py-2">
-            <p className="text-xs text-blue-700 dark:text-blue-300">Prod Fridge</p>
-            <p className="text-lg font-bold tabular-nums text-blue-700 dark:text-blue-300">{totalFridge}</p>
-          </div>
-          <div className="text-center bg-cyan-50 dark:bg-cyan-950/20 rounded-lg py-2">
-            <p className="text-xs text-cyan-700 dark:text-cyan-300">Freezer</p>
-            <p className="text-lg font-bold tabular-nums text-cyan-700 dark:text-cyan-300">{items.reduce((s, it) => s + (it.freezerQty ?? 0), 0)}</p>
-          </div>
-        </div>
+        <BreakTracker planId={plan.id} stationType="wrapping" onBreakActiveChange={setIsOnBreak} />
       </div>
 
       {/* Per-recipe wrapping cards */}
