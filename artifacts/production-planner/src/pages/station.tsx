@@ -6851,6 +6851,23 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
 
   return (
     <div className="space-y-4">
+      {/* Overall progress + breaks */}
+      <div className="bg-card border border-border rounded-xl p-4">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-sm font-medium">Daily Progress — {totalOvenComplete} / {totalTarget} batches</p>
+          <span className="text-lg font-bold">{overallPct}%</span>
+        </div>
+        <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
+          <div
+            className={cn("h-full rounded-full transition-all", overallPct >= 100 ? "bg-emerald-500" : "bg-red-500")}
+            style={{ width: `${Math.min(overallPct, 100)}%` }}
+          />
+        </div>
+        <div className="mt-3 pt-3 border-t border-border/50">
+          <BreakTracker planId={plan.id} stationType="ovens" onBreakActiveChange={setIsOnBreak} />
+        </div>
+      </div>
+
       {/* Current recipe — batches as focus */}
       {currentItem ? (
         <div className="bg-card border-2 border-red-400 dark:border-red-600 rounded-xl p-5">
@@ -6996,23 +7013,6 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
         <div className="bg-cyan-50 dark:bg-cyan-950/20 border border-cyan-200 dark:border-cyan-800 rounded-xl p-3 text-center">
           <p className="text-xs text-cyan-700 dark:text-cyan-300 mb-1">Trays</p>
           <p className="text-xl font-bold tabular-nums text-cyan-600 dark:text-cyan-400">{sessionTotalTrays}</p>
-        </div>
-      </div>
-
-      {/* Overall progress + breaks */}
-      <div className="bg-card border border-border rounded-xl p-4">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-sm font-medium">Daily Progress — {totalOvenComplete} / {totalTarget} batches</p>
-          <span className="text-lg font-bold">{overallPct}%</span>
-        </div>
-        <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
-          <div
-            className={cn("h-full rounded-full transition-all", overallPct >= 100 ? "bg-emerald-500" : "bg-red-500")}
-            style={{ width: `${Math.min(overallPct, 100)}%` }}
-          />
-        </div>
-        <div className="mt-3 pt-3 border-t border-border/50">
-          <BreakTracker planId={plan.id} stationType="ovens" onBreakActiveChange={setIsOnBreak} />
         </div>
       </div>
 
