@@ -315,6 +315,11 @@ async function runStartupMigrations() {
       CREATE UNIQUE INDEX IF NOT EXISTS uq_prep_completion_v3
       ON prep_completions (plan_id, ingredient_id, recipe_id, tin_number)
     `);
+    // PIN login & avatar support (Task #36)
+    await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS pin_hash TEXT`);
+    await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS pin_attempts INTEGER NOT NULL DEFAULT 0`);
+    await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS pin_locked_until TIMESTAMP`);
+    await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS avatar_url TEXT`);
     await seedStorageLocations();
     console.log("Startup migrations OK");
   } catch (err) {
