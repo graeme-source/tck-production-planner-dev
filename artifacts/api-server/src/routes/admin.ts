@@ -1,15 +1,22 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { pool } from "@workspace/db";
-import { readFileSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { readFileSync, existsSync } from "fs";
+import { resolve } from "path";
 
 const router: IRouter = Router();
 
-const SEED_FILE = join(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../scripts/prod-seed.sql",
-);
+function resolveSeedFile(): string {
+  const candidates = [
+    resolve("scripts/prod-seed.sql"),
+    resolve("artifacts/api-server/scripts/prod-seed.sql"),
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  return candidates[0];
+}
+
+const SEED_FILE = resolveSeedFile();
 
 /**
  * POST /api/admin/apply-seed
