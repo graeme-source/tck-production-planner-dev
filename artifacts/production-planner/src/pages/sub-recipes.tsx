@@ -4,7 +4,7 @@ import type { Ingredient, SubRecipeDetail, SubRecipe } from "@workspace/api-clie
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
-import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2, RotateCcw, FlaskConical, Info, Layers } from "lucide-react";
+import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2, RotateCcw, FlaskConical, Info, Layers, Eye, Target, Minus } from "lucide-react";
 import { useForm, useFieldArray } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -666,6 +666,260 @@ function EditSubRecipeDialog({
   );
 }
 
+type BatchMultiplier = 1 | 2 | 4 | "custom";
+
+function BatchMultiplierControl({
+  multiplier,
+  customBatches,
+  targetYield,
+  yieldPerBatch,
+  yieldUnit,
+  onMultiplierChange,
+  onCustomBatchesChange,
+  onTargetYieldChange,
+}: {
+  multiplier: BatchMultiplier;
+  customBatches: number;
+  targetYield: string;
+  yieldPerBatch: number;
+  yieldUnit: string;
+  onMultiplierChange: (m: BatchMultiplier) => void;
+  onCustomBatchesChange: (n: number) => void;
+  onTargetYieldChange: (v: string) => void;
+}) {
+  const effectiveBatches = multiplier === "custom" ? customBatches : multiplier;
+  const totalYield = yieldPerBatch * effectiveBatches;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-sm font-medium text-muted-foreground">Batches:</span>
+        {([1, 2, 4] as const).map(m => (
+          <button
+            key={m}
+            onClick={() => onMultiplierChange(m)}
+            className={`px-3.5 py-1.5 rounded-xl text-sm font-semibold border transition-all ${
+              multiplier === m
+                ? "bg-primary text-primary-foreground border-primary"
+                : "bg-background border-border text-foreground hover:bg-secondary/60"
+            }`}
+          >
+            {m}×
+          </button>
+        ))}
+        <button
+          onClick={() => onMultiplierChange("custom")}
+          className={`px-3.5 py-1.5 rounded-xl text-sm font-semibold border transition-all ${
+            multiplier === "custom"
+              ? "bg-primary text-primary-foreground border-primary"
+              : "bg-background border-border text-foreground hover:bg-secondary/60"
+          }`}
+        >
+          Custom
+        </button>
+        {multiplier === "custom" && (
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => onCustomBatchesChange(Math.max(1, customBatches - 1))}
+              className="w-7 h-7 rounded-lg border border-border flex items-center justify-center hover:bg-secondary/60 transition-colors"
+            >
+              <Minus className="w-3.5 h-3.5" />
+            </button>
+            <input
+              type="number"
+              min={1}
+              value={customBatches}
+              onChange={e => onCustomBatchesChange(Math.max(1, Number(e.target.value) || 1))}
+              className="w-16 text-center px-2 py-1.5 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+            <button
+              onClick={() => onCustomBatchesChange(customBatches + 1)}
+              className="w-7 h-7 rounded-lg border border-border flex items-center justify-center hover:bg-secondary/60 transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Target className="w-3.5 h-3.5 text-muted-foreground" />
+          <span className="text-xs text-muted-foreground">Or enter target yield:</span>
+          <div className="flex items-center gap-1">
+            <input
+              type="number"
+              min={0}
+              step={0.1}
+              value={targetYield}
+              onChange={e => onTargetYieldChange(e.target.value)}
+              placeholder={`e.g. ${(yieldPerBatch * 2).toFixed(1)}`}
+              className="w-24 px-2 py-1 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+            <span className="text-xs text-muted-foreground">{yieldUnit}</span>
+          </div>
+        </div>
+        <div className="ml-auto bg-primary/10 text-primary rounded-xl px-3.5 py-1.5 text-sm font-semibold">
+          Total yield: {totalYield % 1 === 0 ? totalYield : totalYield.toFixed(2)} {yieldUnit}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ScaledIngredientList({
+  ingredients,
+  subRecipeComponents,
+  effectiveBatches,
+}: {
+  ingredients: SubRecipeDetail["ingredients"];
+  subRecipeComponents: NonNullable<SubRecipeDetail["subRecipeComponents"]>;
+  effectiveBatches: number;
+}) {
+  if (ingredients.length === 0 && subRecipeComponents.length === 0) {
+    return <p className="text-sm text-muted-foreground italic">No ingredients defined.</p>;
+  }
+
+  const fmtScaled = (qty: number, unit: string, batches: number): string => {
+    const scaled = qty * batches;
+    if (unit === "g" && scaled >= 1000) return `${(scaled / 1000).toFixed(3)} kg`;
+    if (unit === "ml" && scaled >= 1000) return `${(scaled / 1000).toFixed(2)} l`;
+    return `${scaled % 1 === 0 ? scaled : scaled.toFixed(3)} ${unit}`;
+  };
+
+  return (
+    <div className="space-y-1.5">
+      {ingredients.map(ing => (
+        <div
+          key={ing.id}
+          className="flex items-center justify-between px-4 py-3 rounded-xl border border-border bg-background"
+        >
+          <span className="font-medium text-sm">{ing.ingredientName}</span>
+          <span className="text-base font-bold tabular-nums text-primary">
+            {fmtScaled(ing.quantity, ing.unit, effectiveBatches)}
+          </span>
+        </div>
+      ))}
+      {subRecipeComponents.map(c => (
+        <div
+          key={c.id}
+          className="flex items-center justify-between px-4 py-3 rounded-xl border border-dashed border-primary/40 bg-primary/5"
+        >
+          <span className="flex items-center gap-2 text-sm font-medium">
+            <Layers className="w-3.5 h-3.5 text-primary/70" />
+            {c.componentSubRecipeName ?? `SR-${c.componentSubRecipeId}`}
+          </span>
+          <span className="text-base font-bold tabular-nums text-primary">
+            {fmtScaled(c.quantity, c.componentYieldUnit ?? "kg", effectiveBatches)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ViewSubRecipeDialog({
+  id,
+  open,
+  onOpenChange,
+}: {
+  id: number;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const { data: detail, isLoading } = useGetSubRecipe(id, { query: { enabled: open } });
+  const [multiplier, setMultiplier] = useState<BatchMultiplier>(1);
+  const [customBatches, setCustomBatches] = useState(1);
+  const [targetYield, setTargetYield] = useState("");
+
+  const yieldPerBatch = detail ? Number(detail.yield) : 1;
+  const yieldUnit = detail?.yieldUnit ?? "kg";
+
+  const handleTargetYieldChange = (v: string) => {
+    setTargetYield(v);
+    const parsed = parseFloat(v);
+    if (!isNaN(parsed) && parsed > 0 && yieldPerBatch > 0) {
+      const needed = Math.ceil(parsed / yieldPerBatch);
+      setMultiplier("custom");
+      setCustomBatches(needed);
+    }
+  };
+
+  const effectiveBatches = multiplier === "custom" ? customBatches : multiplier;
+
+  if (!open) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[640px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="font-display text-xl flex items-center gap-2">
+            <BookOpen className="w-5 h-5 text-primary" />
+            {detail?.name ?? "Sub-Recipe"}
+          </DialogTitle>
+        </DialogHeader>
+
+        {isLoading ? (
+          <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+        ) : detail ? (
+          <div className="space-y-5 mt-1">
+            {detail.description && (
+              <p className="text-sm text-muted-foreground">{detail.description}</p>
+            )}
+
+            <div className="flex items-center gap-4 flex-wrap text-sm">
+              <div className="bg-secondary/30 rounded-lg px-3 py-1.5">
+                <span className="text-muted-foreground">Yield per batch: </span>
+                <span className="font-semibold">{yieldPerBatch} {yieldUnit}</span>
+              </div>
+              {detail.shelfLifeDays != null && (
+                <div className="bg-secondary/30 rounded-lg px-3 py-1.5">
+                  <span className="text-muted-foreground">Shelf life: </span>
+                  <span className="font-semibold">{detail.shelfLifeDays} days</span>
+                </div>
+              )}
+            </div>
+
+            <div className="border border-border rounded-xl p-4 bg-secondary/10 space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Batch Scale</p>
+              <BatchMultiplierControl
+                multiplier={multiplier}
+                customBatches={customBatches}
+                targetYield={targetYield}
+                yieldPerBatch={yieldPerBatch}
+                yieldUnit={yieldUnit}
+                onMultiplierChange={(m) => { setMultiplier(m); setTargetYield(""); }}
+                onCustomBatchesChange={(n) => { setCustomBatches(n); setTargetYield(""); }}
+                onTargetYieldChange={handleTargetYieldChange}
+              />
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                Ingredients {effectiveBatches > 1 ? `× ${effectiveBatches} batches` : "(1 batch)"}
+              </p>
+              <ScaledIngredientList
+                ingredients={detail.ingredients ?? []}
+                subRecipeComponents={detail.subRecipeComponents ?? []}
+                effectiveBatches={effectiveBatches}
+              />
+            </div>
+
+            {detail.notes && (
+              <div className="rounded-xl border border-border bg-secondary/10 px-4 py-3">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Notes</p>
+                <p className="text-sm">{detail.notes}</p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground py-8 text-center">Sub-recipe not found.</p>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function SubRecipes() {
   const { data: subRecipes, isLoading } = useListSubRecipes();
   const { data: ingredients } = useListIngredients();
@@ -673,6 +927,7 @@ export default function SubRecipes() {
   const [search, setSearch] = useState("");
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [viewingId, setViewingId] = useState<number | null>(null);
 
   const filtered = subRecipes?.filter(r => r.name.toLowerCase().includes(search.toLowerCase()));
 
@@ -736,6 +991,14 @@ export default function SubRecipes() {
         />
       )}
 
+      {viewingId !== null && (
+        <ViewSubRecipeDialog
+          id={viewingId}
+          open={viewingId !== null}
+          onOpenChange={(v) => { if (!v) setViewingId(null); }}
+        />
+      )}
+
       <div className="mb-4">
         <div className="relative max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -768,6 +1031,13 @@ export default function SubRecipes() {
                 <BookOpen className="w-5 h-5" />
               </div>
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  onClick={() => setViewingId(recipe.id)}
+                  className="p-2 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-colors"
+                  title="View & Scale"
+                >
+                  <Eye className="w-4 h-4" />
+                </button>
                 <button
                   onClick={() => setEditingId(recipe.id)}
                   className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"

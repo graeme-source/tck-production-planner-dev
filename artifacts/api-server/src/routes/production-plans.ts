@@ -1782,6 +1782,107 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
   res.json({ recipes: result });
 });
 
+// GET /:id/sub-recipe-requirements — total quantity of each sub-recipe needed for the plan
+router.get("/:id/sub-recipe-requirements", async (req, res) => {
+  const planId = Number(req.params.id);
+
+  const planItems = await db
+    .select({
+      recipeId: productionPlanItemsTable.recipeId,
+      batchesTarget: productionPlanItemsTable.batchesTarget,
+    })
+    .from(productionPlanItemsTable)
+    .where(eq(productionPlanItemsTable.planId, planId));
+
+  const subRecipeTotals = new Map<number, number>();
+
+  for (const item of planItems) {
+    if (!item.recipeId) continue;
+    const batches = Number(item.batchesTarget) || 0;
+    if (batches === 0) continue;
+
+    const srRows = await db
+      .select({
+        subRecipeId: recipeSubRecipesTable.subRecipeId,
+        quantity: recipeSubRecipesTable.quantity,
+      })
+      .from(recipeSubRecipesTable)
+      .where(eq(recipeSubRecipesTable.recipeId, item.recipeId));
+
+    for (const sr of srRows) {
+      if (sr.subRecipeId == null) continue;
+      const qty = Number(sr.quantity) * batches;
+      subRecipeTotals.set(sr.subRecipeId, (subRecipeTotals.get(sr.subRecipeId) ?? 0) + qty);
+    }
+  }
+
+  if (subRecipeTotals.size === 0) {
+    res.json({ subRecipes: [] });
+    return;
+  }
+
+  const subRecipeIds = [...subRecipeTotals.keys()];
+  const srRows = await db
+    .select()
+    .from(subRecipesTable)
+    .where(inArray(subRecipesTable.id, subRecipeIds))
+    .orderBy(subRecipesTable.name);
+
+  const subRecipeAlias = alias(subRecipesTable, "comp_sr");
+
+  const result = [];
+  for (const sr of srRows) {
+    const ingRows = await db
+      .select({
+        id: subRecipeIngredientsTable.id,
+        ingredientId: subRecipeIngredientsTable.ingredientId,
+        ingredientName: ingredientsTable.name,
+        unit: ingredientsTable.unit,
+        quantity: subRecipeIngredientsTable.quantity,
+      })
+      .from(subRecipeIngredientsTable)
+      .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
+      .where(eq(subRecipeIngredientsTable.subRecipeId, sr.id));
+
+    const nestedRows = await db
+      .select({
+        id: subRecipeSubRecipesTable.id,
+        componentSubRecipeId: subRecipeSubRecipesTable.componentSubRecipeId,
+        componentSubRecipeName: subRecipeAlias.name,
+        componentYieldUnit: subRecipeAlias.yieldUnit,
+        quantity: subRecipeSubRecipesTable.quantity,
+      })
+      .from(subRecipeSubRecipesTable)
+      .leftJoin(subRecipeAlias, eq(subRecipeSubRecipesTable.componentSubRecipeId, subRecipeAlias.id))
+      .where(eq(subRecipeSubRecipesTable.subRecipeId, sr.id));
+
+    result.push({
+      subRecipeId: sr.id,
+      subRecipeName: sr.name,
+      yield: Number(sr.yield),
+      yieldUnit: sr.yieldUnit,
+      shelfLifeDays: sr.shelfLifeDays,
+      totalRequired: subRecipeTotals.get(sr.id) ?? 0,
+      ingredients: ingRows.map(i => ({
+        id: i.id,
+        ingredientId: i.ingredientId ?? 0,
+        ingredientName: i.ingredientName ?? "",
+        unit: i.unit ?? "kg",
+        quantity: Number(i.quantity),
+      })),
+      subRecipeComponents: nestedRows.map(n => ({
+        id: n.id,
+        componentSubRecipeId: n.componentSubRecipeId ?? 0,
+        componentSubRecipeName: n.componentSubRecipeName ?? "",
+        componentYieldUnit: n.componentYieldUnit ?? "kg",
+        quantity: Number(n.quantity),
+      })),
+    });
+  }
+
+  res.json({ subRecipes: result });
+});
+
 // GET /:id/filling-mix — per-item filling mix ingredients with per-tin weights
 router.get("/:id/filling-mix", async (req, res) => {
   try {

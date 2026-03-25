@@ -13,11 +13,13 @@ import {
   useGetStationKpi,
   useGetStationActivity,
   useListBatchCompletions,
+  useListSubRecipes,
+  useGetSubRecipe,
   getGetProductionPlanQueryKey,
   getGetStationKpiQueryKey,
   getGetStationActivityQueryKey,
 } from "@workspace/api-client-react";
-import type { ProductionPlanDetail, ProductionPlanItem, PrepRequirementItem, StationKpi } from "@workspace/api-client-react";
+import type { ProductionPlanDetail, ProductionPlanItem, PrepRequirementItem, StationKpi, SubRecipe } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
@@ -30,6 +32,7 @@ import {
   List, LayoutGrid, CalendarCheck,
   Snowflake, Truck, AlertCircle, Info, Droplets, Timer,
   ClipboardList, Check, Package, RotateCcw, RefreshCw, Scan,
+  BookOpen, Target, FlaskConical, Scale, PackageSearch, Square, CheckSquare, ArrowLeft, Beaker, Search,
 } from "lucide-react";
 import { format, parseISO, differenceInMinutes, differenceInSeconds, addDays } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -3536,13 +3539,581 @@ function PrepVegStation_UNUSED({ plan }: { plan: ProductionPlanDetail }) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Sub-Recipe Batch Scaling — Shared Components
+// Used by Bases station "Make Sub-Recipes" tab and PrepHub "Replenish" flow.
+// ──────────────────────────────────────────────────────────────────────────────
+
+interface SubRecipePlanRequirement {
+  subRecipeId: number;
+  subRecipeName: string;
+  yield: number;
+  yieldUnit: string;
+  shelfLifeDays: number | null;
+  totalRequired: number;
+  ingredients: Array<{
+    id: number;
+    ingredientId: number;
+    ingredientName: string;
+    unit: string;
+    quantity: number;
+  }>;
+  subRecipeComponents: Array<{
+    id: number;
+    componentSubRecipeId: number;
+    componentSubRecipeName: string;
+    componentYieldUnit: string;
+    quantity: number;
+  }>;
+}
+
+function fmtScaledQty(qty: number, unit: string, batches: number): string {
+  const scaled = qty * batches;
+  if (unit === "g" && scaled >= 1000) return `${(scaled / 1000).toFixed(3)} kg`;
+  if (unit === "ml" && scaled >= 1000) return `${(scaled / 1000).toFixed(2)} l`;
+  return `${scaled % 1 === 0 ? scaled : scaled.toFixed(3)} ${unit}`;
+}
+
+function ScaledIngredientChecklist({
+  ingredients,
+  subRecipeComponents,
+  batches,
+  checked,
+  onToggle,
+}: {
+  ingredients: SubRecipePlanRequirement["ingredients"];
+  subRecipeComponents: SubRecipePlanRequirement["subRecipeComponents"];
+  batches: number;
+  checked: Set<string>;
+  onToggle: (key: string) => void;
+}) {
+  const allItems = [
+    ...ingredients.map(i => ({ key: `ing-${i.id}`, label: i.ingredientName, qty: i.quantity, unit: i.unit, isComponent: false })),
+    ...subRecipeComponents.map(c => ({ key: `comp-${c.id}`, label: c.componentSubRecipeName, qty: c.quantity, unit: c.componentYieldUnit, isComponent: true })),
+  ];
+
+  if (allItems.length === 0) {
+    return <p className="text-sm text-muted-foreground italic py-4 text-center">No ingredients defined for this sub-recipe.</p>;
+  }
+
+  return (
+    <div className="space-y-2">
+      {allItems.map(item => {
+        const isDone = checked.has(item.key);
+        return (
+          <button
+            key={item.key}
+            onClick={() => onToggle(item.key)}
+            className={cn(
+              "w-full flex items-center gap-4 px-5 py-4 rounded-xl border-2 text-left transition-all active:scale-[0.99]",
+              isDone
+                ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/20"
+                : item.isComponent
+                  ? "border-dashed border-primary/40 bg-primary/5 hover:bg-primary/10"
+                  : "border-border bg-background hover:bg-secondary/30"
+            )}
+          >
+            {isDone
+              ? <CheckCircle2 className="w-6 h-6 text-emerald-500 flex-shrink-0" />
+              : item.isComponent
+                ? <Layers className="w-6 h-6 text-primary/70 flex-shrink-0" />
+                : <Square className="w-6 h-6 text-muted-foreground/40 flex-shrink-0" />
+            }
+            <span className={cn("flex-1 font-medium text-base", isDone && "line-through text-muted-foreground")}>
+              {item.label}
+            </span>
+            <span className={cn("text-xl font-bold tabular-nums", isDone ? "text-emerald-600 dark:text-emerald-400" : "text-foreground")}>
+              {fmtScaledQty(item.qty, item.unit, batches)}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+type SubReplenishMode = "plan" | "standalone";
+
+interface SubReplenishState {
+  phase: "pick" | "stock_check" | "batch_pick" | "checklist" | "done";
+  sr: SubRecipePlanRequirement | null;
+  batchMultiplier: 1 | 2 | 4 | "custom";
+  customBatches: number;
+  stockOnHand: string;
+  batches: number;
+  checked: Set<string>;
+}
+
+function SubRecipeMakeFlow({
+  mode,
+  planRequirements,
+  allSubRecipes,
+  onClose,
+}: {
+  mode: SubReplenishMode;
+  planRequirements: SubRecipePlanRequirement[];
+  allSubRecipes: SubRecipe[];
+  onClose?: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [state, setState] = useState<SubReplenishState>({
+    phase: "pick",
+    sr: null,
+    batchMultiplier: 1,
+    customBatches: 1,
+    stockOnHand: "",
+    batches: 1,
+    checked: new Set(),
+  });
+
+  const selectSr = (sr: SubRecipePlanRequirement) => {
+    if (mode === "plan") {
+      setState(s => ({ ...s, phase: "stock_check", sr }));
+    } else {
+      setState(s => ({ ...s, phase: "batch_pick", sr, batchMultiplier: 1, customBatches: 1 }));
+    }
+  };
+
+  const resolveStandaloneSr = (sr: SubRecipe): SubRecipePlanRequirement => ({
+    subRecipeId: sr.id,
+    subRecipeName: sr.name,
+    yield: Number(sr.yield),
+    yieldUnit: sr.yieldUnit,
+    shelfLifeDays: null,
+    totalRequired: 0,
+    ingredients: [],
+    subRecipeComponents: [],
+  });
+
+  const [loadedDetail, setLoadedDetail] = useState<SubRecipePlanRequirement | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+
+  useEffect(() => {
+    if (!state.sr || state.phase === "pick") return;
+    if (state.sr.ingredients.length > 0 || state.sr.subRecipeComponents.length > 0) {
+      setLoadedDetail(state.sr);
+      return;
+    }
+    setLoadingDetail(true);
+    fetch(`/api/sub-recipes/${state.sr.subRecipeId}`, { credentials: "include" })
+      .then(r => r.json())
+      .then((d: {
+        id: number; name: string; yield: number; yieldUnit: string; shelfLifeDays: number | null;
+        ingredients: Array<{ id: number; ingredientId: number; ingredientName: string; unit: string; quantity: number }>;
+        subRecipeComponents: Array<{ id: number; componentSubRecipeId: number; componentSubRecipeName: string; componentYieldUnit: string; quantity: number }>;
+      }) => {
+        setLoadedDetail({
+          subRecipeId: d.id,
+          subRecipeName: d.name,
+          yield: Number(d.yield),
+          yieldUnit: d.yieldUnit,
+          shelfLifeDays: d.shelfLifeDays,
+          totalRequired: state.sr?.totalRequired ?? 0,
+          ingredients: (d.ingredients ?? []).map(i => ({ id: i.id, ingredientId: i.ingredientId, ingredientName: i.ingredientName ?? "", unit: i.unit ?? "kg", quantity: Number(i.quantity) })),
+          subRecipeComponents: (d.subRecipeComponents ?? []).map(c => ({ id: c.id, componentSubRecipeId: c.componentSubRecipeId, componentSubRecipeName: c.componentSubRecipeName ?? "", componentYieldUnit: c.componentYieldUnit ?? "kg", quantity: Number(c.quantity) })),
+        });
+        setLoadingDetail(false);
+      })
+      .catch(() => setLoadingDetail(false));
+  }, [state.sr, state.phase]);
+
+  const sr = loadedDetail ?? state.sr;
+  const effectiveBatches = state.batchMultiplier === "custom" ? state.customBatches : state.batchMultiplier;
+  const yieldPerBatch = sr?.yield ?? 1;
+  const totalYield = yieldPerBatch * effectiveBatches;
+
+  const netNeeded = (() => {
+    if (mode !== "plan" || !sr) return null;
+    const stock = parseFloat(state.stockOnHand);
+    if (isNaN(stock)) return null;
+    return Math.max(0, sr.totalRequired - stock);
+  })();
+
+  const autoBatches = (() => {
+    if (netNeeded == null || yieldPerBatch <= 0) return null;
+    return Math.ceil(netNeeded / yieldPerBatch);
+  })();
+
+  const checkedCount = state.checked.size;
+  const totalItems = (sr?.ingredients?.length ?? 0) + (sr?.subRecipeComponents?.length ?? 0);
+
+  const startChecklist = () => {
+    if (mode === "plan") {
+      const batches = autoBatches ?? 1;
+      setState(s => ({ ...s, phase: "checklist", batches, checked: new Set() }));
+    } else {
+      setState(s => ({ ...s, phase: "checklist", batches: effectiveBatches, checked: new Set() }));
+    }
+  };
+
+  const toggleItem = (key: string) => {
+    setState(s => {
+      const next = new Set(s.checked);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return { ...s, checked: next };
+    });
+  };
+
+  const filteredList = mode === "plan"
+    ? planRequirements.filter(r => r.subRecipeName.toLowerCase().includes(search.toLowerCase()))
+    : allSubRecipes.filter(r => r.name.toLowerCase().includes(search.toLowerCase()))
+        .map(resolveStandaloneSr);
+
+  const back = () => setState(s => ({ ...s, phase: "pick", sr: null, stockOnHand: "", batchMultiplier: 1, customBatches: 1, checked: new Set() }));
+
+  if (state.phase === "done") {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-6">
+        <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 flex items-center justify-center">
+          <CheckCircle2 className="w-10 h-10 text-emerald-500" />
+        </div>
+        <div className="text-center">
+          <h3 className="font-bold text-2xl">{sr?.subRecipeName} Complete!</h3>
+          <p className="text-muted-foreground mt-1">
+            {state.batches} batch{state.batches !== 1 ? "es" : ""} made · {(yieldPerBatch * state.batches).toFixed(2)} {sr?.yieldUnit} ready
+          </p>
+        </div>
+        <div className="flex gap-3">
+          <button onClick={back} className="px-6 py-3 rounded-xl border border-border hover:bg-secondary/60 font-medium transition-colors">
+            Make Another
+          </button>
+          {onClose && (
+            <button onClick={onClose} className="px-6 py-3 rounded-xl bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors">
+              Done
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (state.phase === "checklist") {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <button onClick={back} className="p-2 rounded-lg hover:bg-secondary/60 transition-colors">
+            <ArrowLeft className="w-5 h-5 text-muted-foreground" />
+          </button>
+          <div className="flex-1">
+            <h3 className="font-bold text-xl">{sr?.subRecipeName}</h3>
+            <p className="text-sm text-muted-foreground">
+              {state.batches} batch{state.batches !== 1 ? "es" : ""} · Total yield: {(yieldPerBatch * state.batches).toFixed(2)} {sr?.yieldUnit}
+            </p>
+          </div>
+          <div className={cn(
+            "px-3 py-1.5 rounded-xl text-sm font-semibold",
+            checkedCount === totalItems && totalItems > 0
+              ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300"
+              : "bg-secondary/50 text-muted-foreground"
+          )}>
+            {checkedCount}/{totalItems} done
+          </div>
+        </div>
+
+        {loadingDetail ? (
+          <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+        ) : (
+          <>
+            <ScaledIngredientChecklist
+              ingredients={sr?.ingredients ?? []}
+              subRecipeComponents={sr?.subRecipeComponents ?? []}
+              batches={state.batches}
+              checked={state.checked}
+              onToggle={toggleItem}
+            />
+
+            {checkedCount === totalItems && totalItems > 0 && (
+              <button
+                onClick={() => setState(s => ({ ...s, phase: "done" }))}
+                className="w-full py-4 mt-4 rounded-2xl bg-emerald-500 text-white font-bold text-base hover:bg-emerald-600 transition-colors flex items-center justify-center gap-2"
+              >
+                <CheckCircle2 className="w-5 h-5" />
+                Mark Complete
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    );
+  }
+
+  if (state.phase === "stock_check" && sr) {
+    const stock = parseFloat(state.stockOnHand);
+    const stockValid = !isNaN(stock) && stock >= 0;
+    const net = stockValid ? Math.max(0, sr.totalRequired - stock) : null;
+    const batchCount = (net != null && yieldPerBatch > 0) ? Math.ceil(net / yieldPerBatch) : null;
+    return (
+      <div className="space-y-5">
+        <div className="flex items-center gap-3">
+          <button onClick={back} className="p-2 rounded-lg hover:bg-secondary/60 transition-colors">
+            <ArrowLeft className="w-5 h-5 text-muted-foreground" />
+          </button>
+          <div>
+            <h3 className="font-bold text-xl">{sr.subRecipeName}</h3>
+            <p className="text-sm text-muted-foreground">Stock check before production</p>
+          </div>
+        </div>
+
+        <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-secondary/30 rounded-xl px-4 py-3">
+              <p className="text-xs text-muted-foreground mb-1">Required by plan</p>
+              <p className="text-2xl font-bold tabular-nums">{sr.totalRequired.toFixed(2)} <span className="text-base font-medium text-muted-foreground">{sr.yieldUnit}</span></p>
+            </div>
+            <div className="bg-secondary/30 rounded-xl px-4 py-3">
+              <p className="text-xs text-muted-foreground mb-1">Yield per batch</p>
+              <p className="text-2xl font-bold tabular-nums">{yieldPerBatch.toFixed(2)} <span className="text-base font-medium text-muted-foreground">{sr.yieldUnit}</span></p>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-sm font-semibold block mb-2">How much is currently in stock?</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                step={0.1}
+                value={state.stockOnHand}
+                onChange={e => setState(s => ({ ...s, stockOnHand: e.target.value }))}
+                placeholder={`0.00`}
+                autoFocus
+                className="flex-1 px-4 py-3 border-2 border-border rounded-xl text-lg font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+              />
+              <span className="text-base font-medium text-muted-foreground">{sr.yieldUnit}</span>
+            </div>
+          </div>
+
+          {stockValid && net != null && (
+            <div className="space-y-2">
+              <div className={cn(
+                "rounded-xl px-4 py-3 flex items-center justify-between",
+                net === 0 ? "bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800"
+                  : "bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800"
+              )}>
+                <span className="text-sm font-medium">Net needed</span>
+                <span className="text-xl font-bold tabular-nums">{net.toFixed(2)} {sr.yieldUnit}</span>
+              </div>
+              {batchCount !== null && (
+                <div className={cn(
+                  "rounded-xl px-4 py-4 flex items-center justify-between",
+                  batchCount === 0
+                    ? "bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800"
+                    : "bg-primary/10 border border-primary/30"
+                )}>
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Batches to make</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">⌈{net.toFixed(2)} ÷ {yieldPerBatch.toFixed(2)}⌉ = {batchCount}</p>
+                  </div>
+                  <span className="text-4xl font-bold tabular-nums text-primary">{batchCount}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {stockValid && batchCount !== null && batchCount === 0 ? (
+            <div className="rounded-xl bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 px-4 py-3 text-center">
+              <CheckCircle2 className="w-6 h-6 text-emerald-500 mx-auto mb-1" />
+              <p className="text-emerald-700 dark:text-emerald-300 font-semibold">Stock is sufficient — no batches needed</p>
+            </div>
+          ) : (
+            <button
+              disabled={!stockValid || batchCount == null || batchCount <= 0}
+              onClick={startChecklist}
+              className="w-full py-4 rounded-2xl bg-primary text-primary-foreground font-bold text-base hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              <Beaker className="w-5 h-5" />
+              Start Making {batchCount != null && batchCount > 0 ? `${batchCount} Batch${batchCount !== 1 ? "es" : ""}` : ""}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (state.phase === "batch_pick" && sr) {
+    return (
+      <div className="space-y-5">
+        <div className="flex items-center gap-3">
+          <button onClick={back} className="p-2 rounded-lg hover:bg-secondary/60 transition-colors">
+            <ArrowLeft className="w-5 h-5 text-muted-foreground" />
+          </button>
+          <div>
+            <h3 className="font-bold text-xl">{sr.subRecipeName}</h3>
+            <p className="text-sm text-muted-foreground">Choose how many batches to make</p>
+          </div>
+        </div>
+
+        <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+          <div className="bg-secondary/30 rounded-xl px-4 py-3">
+            <p className="text-xs text-muted-foreground mb-1">Yield per batch</p>
+            <p className="text-xl font-bold tabular-nums">{yieldPerBatch.toFixed(2)} {sr.yieldUnit}</p>
+          </div>
+
+          <div>
+            <p className="text-sm font-semibold mb-3">Number of batches</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              {([1, 2, 4] as const).map(m => (
+                <button
+                  key={m}
+                  onClick={() => setState(s => ({ ...s, batchMultiplier: m }))}
+                  className={cn(
+                    "px-5 py-3 rounded-xl text-base font-bold border-2 transition-all",
+                    state.batchMultiplier === m
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "border-border hover:bg-secondary/60"
+                  )}
+                >
+                  {m}×
+                </button>
+              ))}
+              <button
+                onClick={() => setState(s => ({ ...s, batchMultiplier: "custom" }))}
+                className={cn(
+                  "px-5 py-3 rounded-xl text-base font-bold border-2 transition-all",
+                  state.batchMultiplier === "custom"
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "border-border hover:bg-secondary/60"
+                )}
+              >
+                Custom
+              </button>
+            </div>
+
+            {state.batchMultiplier === "custom" && (
+              <div className="flex items-center gap-3 mt-3">
+                <button
+                  onClick={() => setState(s => ({ ...s, customBatches: Math.max(1, s.customBatches - 1) }))}
+                  className="w-10 h-10 rounded-xl border-2 border-border flex items-center justify-center hover:bg-secondary/60 transition-colors"
+                >
+                  <Minus className="w-4 h-4" />
+                </button>
+                <input
+                  type="number"
+                  min={1}
+                  value={state.customBatches}
+                  onChange={e => setState(s => ({ ...s, customBatches: Math.max(1, Number(e.target.value) || 1) }))}
+                  className="w-20 text-center px-3 py-2.5 border-2 border-border rounded-xl text-lg font-bold focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+                <button
+                  onClick={() => setState(s => ({ ...s, customBatches: s.customBatches + 1 }))}
+                  className="w-10 h-10 rounded-xl border-2 border-border flex items-center justify-center hover:bg-secondary/60 transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+                <span className="text-sm text-muted-foreground">batches</span>
+              </div>
+            )}
+
+            <div className="mt-3 bg-primary/10 rounded-xl px-4 py-2.5">
+              <p className="text-sm font-semibold text-primary">Total yield: {totalYield.toFixed(2)} {sr.yieldUnit}</p>
+            </div>
+          </div>
+
+          <button
+            onClick={startChecklist}
+            className="w-full py-4 rounded-2xl bg-primary text-primary-foreground font-bold text-base hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
+          >
+            <Beaker className="w-5 h-5" />
+            Start Making {effectiveBatches} Batch{effectiveBatches !== 1 ? "es" : ""}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        {onClose && (
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-secondary/60 transition-colors">
+            <ArrowLeft className="w-5 h-5 text-muted-foreground" />
+          </button>
+        )}
+        <div className="relative flex-1 max-w-xs">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder={mode === "plan" ? "Search plan sub-recipes…" : "Search all sub-recipes…"}
+            className="w-full pl-9 pr-4 py-2 bg-card border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+        </div>
+      </div>
+
+      {filteredList.length === 0 && (
+        <div className="text-center py-10 text-muted-foreground">
+          <PackageSearch className="w-8 h-8 mx-auto mb-2 opacity-30" />
+          <p className="font-medium">No sub-recipes found</p>
+          {mode === "plan" && (
+            <p className="text-sm mt-1">No sub-recipe components are linked to this production plan's recipes.</p>
+          )}
+        </div>
+      )}
+
+      <div className="space-y-2">
+        {filteredList.map(sr => {
+          const batchsNeeded = mode === "plan" && sr.totalRequired > 0 && sr.yield > 0
+            ? Math.ceil(sr.totalRequired / sr.yield)
+            : null;
+          return (
+            <button
+              key={sr.subRecipeId}
+              onClick={() => selectSr(sr)}
+              className="w-full flex items-center gap-4 px-5 py-4 rounded-2xl border-2 border-border bg-card hover:border-primary/40 hover:bg-primary/5 text-left transition-all active:scale-[0.99]"
+            >
+              <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center flex-shrink-0">
+                <FlaskConical className="w-5 h-5 text-accent" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-base truncate">{sr.subRecipeName}</p>
+                <p className="text-sm text-muted-foreground">
+                  {sr.yield.toFixed(2)} {sr.yieldUnit} per batch
+                  {mode === "plan" && sr.totalRequired > 0 && ` · ${sr.totalRequired.toFixed(2)} ${sr.yieldUnit} required`}
+                </p>
+              </div>
+              {batchsNeeded !== null && (
+                <div className="text-right flex-shrink-0">
+                  <p className="text-2xl font-bold text-primary tabular-nums">{batchsNeeded}</p>
+                  <p className="text-xs text-muted-foreground">batch{batchsNeeded !== 1 ? "es" : ""}</p>
+                </div>
+              )}
+              <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Bases & Sauces Prep Station
 // Left: recipe list overview. Right: focused ingredient detail for selected recipe.
 // ──────────────────────────────────────────────────────────────────────────────
+function usePlanSubRecipeRequirements(planId: number) {
+  const [data, setData] = useState<SubRecipePlanRequirement[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`/api/production-plans/${planId}/sub-recipe-requirements`, { credentials: "include" })
+      .then(r => r.json())
+      .then((d: { subRecipes?: SubRecipePlanRequirement[] }) => {
+        setData(d.subRecipes ?? []);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, [planId]);
+
+  return { subRecipes: data, loading };
+}
+
 function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
   const [isOnBreak, setIsOnBreak] = useState(false);
   const [selectedRecipeId, setSelectedRecipeId] = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState<"ingredients" | "sub_recipes">("ingredients");
   const { recipes, isLoading, nextPlan } = usePrepByRecipe("prep_bases", plan.id, plan.planDate);
+  const { subRecipes: planSubRecipes, loading: subRecipesLoading } = usePlanSubRecipeRequirements(plan.id);
+  const { data: allSubRecipesData } = useListSubRecipes();
+  const allSubRecipes = (allSubRecipesData ?? []) as SubRecipe[];
 
   // Auto-select first recipe
   useEffect(() => {
@@ -3555,19 +4126,7 @@ function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
     return <div className="flex items-center justify-center py-20 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin mr-2" />Loading…</div>;
   }
 
-  if (recipes.length === 0) {
-    return (
-      <div className="space-y-4">
-        <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
-        <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
-          <p className="font-medium">No base/sauce/cheese ingredients to prep</p>
-          <p className="text-sm mt-1">Assign ingredient categories: "base", "sauce", or "cheese"</p>
-        </div>
-      </div>
-    );
-  }
-
-  const selected = recipes.find(r => r.recipeId === selectedRecipeId) ?? recipes[0];
+  const selected = recipes.length > 0 ? (recipes.find(r => r.recipeId === selectedRecipeId) ?? recipes[0]) : null;
   const totalIngCount = recipes.reduce((s, r) => s + r.ingredients.length, 0);
 
   return (
@@ -3576,133 +4135,199 @@ function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
 
       <PrepSubNav planId={plan.id} current="prep_bases" />
 
-      {/* Summary bar */}
-      <div className="bg-card border border-border rounded-xl p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Layers className="w-6 h-6 text-yellow-500" />
-            <div>
-              <h2 className="font-semibold text-base">Bases & Sauces</h2>
-              <p className="text-xs text-muted-foreground">
-                {recipes.length} recipe{recipes.length !== 1 ? "s" : ""} · {totalIngCount} ingredient{totalIngCount !== 1 ? "s" : ""}
-              </p>
-            </div>
-          </div>
-        </div>
+      {/* Tab bar */}
+      <div className="flex gap-1 bg-card border border-border rounded-xl p-1.5">
+        <button
+          onClick={() => setActiveTab("ingredients")}
+          className={cn(
+            "flex flex-1 items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all",
+            activeTab === "ingredients"
+              ? "bg-yellow-500 dark:bg-yellow-600 text-white shadow-sm"
+              : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
+          )}
+        >
+          <Layers className="w-4 h-4 flex-shrink-0" />
+          <span>Recipe Ingredients</span>
+          {totalIngCount > 0 && (
+            <span className={cn("ml-1 px-1.5 py-0.5 rounded-md text-xs font-bold",
+              activeTab === "ingredients" ? "bg-white/20 text-white" : "bg-secondary text-muted-foreground"
+            )}>{totalIngCount}</span>
+          )}
+        </button>
+        <button
+          onClick={() => setActiveTab("sub_recipes")}
+          className={cn(
+            "flex flex-1 items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all",
+            activeTab === "sub_recipes"
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
+          )}
+        >
+          <FlaskConical className="w-4 h-4 flex-shrink-0" />
+          <span>Make Sub-Recipes</span>
+          {planSubRecipes.length > 0 && (
+            <span className={cn("ml-1 px-1.5 py-0.5 rounded-md text-xs font-bold",
+              activeTab === "sub_recipes" ? "bg-white/20 text-white" : "bg-secondary text-muted-foreground"
+            )}>{planSubRecipes.length}</span>
+          )}
+        </button>
       </div>
 
-      {/* Split panel */}
-      <div className="flex flex-col lg:flex-row gap-4">
-
-        {/* Left: recipe list */}
-        <div className="lg:w-72 xl:w-80 flex-shrink-0">
-          <div className="bg-card border border-border rounded-xl overflow-hidden">
-            <div className="px-4 py-2.5 bg-secondary/30 border-b border-border">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Recipes</p>
-            </div>
-            <div className="divide-y divide-border/50 max-h-[calc(100vh-320px)] overflow-y-auto">
-              {recipes.map(recipe => {
-                const isSelected = recipe.recipeId === selected.recipeId;
-                return (
-                  <button
-                    key={recipe.recipeId}
-                    onClick={() => setSelectedRecipeId(recipe.recipeId)}
-                    className={cn(
-                      "w-full flex items-center gap-3 px-4 py-3 text-left transition-colors",
-                      isSelected
-                        ? "bg-yellow-50/80 dark:bg-yellow-900/20 border-l-4 border-l-yellow-500"
-                        : "hover:bg-secondary/40 border-l-4 border-l-transparent"
-                    )}
-                  >
-                    <Layers className={cn("w-5 h-5 flex-shrink-0", isSelected ? "text-yellow-500" : "text-muted-foreground")} />
-                    <div className="min-w-0 flex-1">
-                      <p className={cn("text-sm font-medium truncate", isSelected && "font-semibold")}>{recipe.recipeName}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {recipe.ingredients.length} ingredient{recipe.ingredients.length !== 1 ? "s" : ""}
-                        {recipe.tinCount != null && ` · ${recipe.tinCount} tin${recipe.tinCount !== 1 ? "s" : ""}`}
-                      </p>
-                    </div>
-                    <span className="text-xs text-muted-foreground flex-shrink-0">{recipe.batchesTarget}×</span>
-                  </button>
-                );
-              })}
+      {activeTab === "sub_recipes" ? (
+        <div className="bg-card border border-border rounded-2xl p-5">
+          <div className="flex items-center gap-3 mb-4">
+            <FlaskConical className="w-5 h-5 text-primary" />
+            <div>
+              <h3 className="font-semibold">Sub-Recipe Production</h3>
+              <p className="text-xs text-muted-foreground">Stock check → auto-calculate batches → ingredient checklist</p>
             </div>
           </div>
+          {subRecipesLoading ? (
+            <div className="py-8 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+          ) : (
+            <SubRecipeMakeFlow
+              mode="plan"
+              planRequirements={planSubRecipes}
+              allSubRecipes={allSubRecipes}
+            />
+          )}
         </div>
-
-        {/* Right: selected recipe detail */}
-        <div className="flex-1 min-w-0">
-          <div className="bg-card border-2 border-yellow-400 dark:border-yellow-600 rounded-2xl p-6">
-
-            {/* Header */}
-            <div className="mb-5">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Currently Prepping</p>
-              <div className="flex items-start justify-between gap-3">
-                <h2 className="font-display text-3xl font-bold leading-tight">{selected.recipeName}</h2>
-                {selected.sopUrl && (
-                  <a href={selected.sopUrl} target="_blank" rel="noopener noreferrer"
-                    className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline flex-shrink-0 mt-1">
-                    SOP <ExternalLink className="w-3 h-3" />
-                  </a>
-                )}
-              </div>
-              <div className="flex items-center gap-3 mt-2 flex-wrap">
-                <p className="text-sm text-muted-foreground">{selected.batchesTarget} batch{selected.batchesTarget !== 1 ? "es" : ""}</p>
-                {selected.tinCount != null && (
-                  <span className="bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 rounded-full px-3 py-0.5 text-sm font-semibold">
-                    {selected.tinCount} tin{selected.tinCount !== 1 ? "s" : ""}
-                  </span>
-                )}
-                {selected.tinSize && (
-                  <span className="text-sm text-muted-foreground">{selected.tinSize}</span>
-                )}
-                {selected.maxBatchesPerTin && (
-                  <span className="text-sm text-muted-foreground">{selected.maxBatchesPerTin} batches/tin</span>
-                )}
-              </div>
+      ) : (
+        <>
+          {recipes.length === 0 ? (
+            <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
+              <p className="font-medium">No base/sauce/cheese ingredients to prep</p>
+              <p className="text-sm mt-1">Assign ingredient categories: "base", "sauce", or "cheese"</p>
             </div>
-
-            {/* Ingredient rows */}
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Ingredients</p>
-              <div className="space-y-2">
-                {selected.ingredients.map((ing, idx) => (
-                  <div
-                    key={ing.ingredientId}
-                    className={cn(
-                      "flex items-center justify-between px-5 py-4 rounded-xl border",
-                      idx === 0
-                        ? "border-yellow-300 dark:border-yellow-700 bg-yellow-50/50 dark:bg-yellow-900/10"
-                        : "border-border bg-background"
-                    )}
-                  >
-                    <p className="font-medium text-base">{ing.ingredientName}</p>
-                    <p className="text-2xl font-bold tabular-nums text-yellow-700 dark:text-yellow-300">
-                      {fmtQty(ing.cookedQty, ing.unit)}
+          ) : selected && (
+            <>
+              {/* Summary bar */}
+              <div className="bg-card border border-border rounded-xl p-4">
+                <div className="flex items-center gap-3">
+                  <Layers className="w-6 h-6 text-yellow-500" />
+                  <div>
+                    <h2 className="font-semibold text-base">Bases & Sauces</h2>
+                    <p className="text-xs text-muted-foreground">
+                      {recipes.length} recipe{recipes.length !== 1 ? "s" : ""} · {totalIngCount} ingredient{totalIngCount !== 1 ? "s" : ""}
                     </p>
                   </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Navigate to next recipe */}
-            {recipes.length > 1 && (() => {
-              const currentIdx = recipes.findIndex(r => r.recipeId === selected.recipeId);
-              const nextRecipe = recipes[(currentIdx + 1) % recipes.length];
-              return (
-                <div className="mt-6 flex justify-end">
-                  <button
-                    onClick={() => setSelectedRecipeId(nextRecipe.recipeId)}
-                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-yellow-500/10 text-yellow-700 dark:text-yellow-300 hover:bg-yellow-500/20 font-medium text-sm transition-colors"
-                  >
-                    Next: {nextRecipe.recipeName} →
-                  </button>
                 </div>
-              );
-            })()}
-          </div>
-        </div>
-      </div>
+              </div>
+
+              {/* Split panel */}
+              <div className="flex flex-col lg:flex-row gap-4">
+                {/* Left: recipe list */}
+                <div className="lg:w-72 xl:w-80 flex-shrink-0">
+                  <div className="bg-card border border-border rounded-xl overflow-hidden">
+                    <div className="px-4 py-2.5 bg-secondary/30 border-b border-border">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Recipes</p>
+                    </div>
+                    <div className="divide-y divide-border/50 max-h-[calc(100vh-320px)] overflow-y-auto">
+                      {recipes.map(recipe => {
+                        const isSelected = recipe.recipeId === selected.recipeId;
+                        return (
+                          <button
+                            key={recipe.recipeId}
+                            onClick={() => setSelectedRecipeId(recipe.recipeId)}
+                            className={cn(
+                              "w-full flex items-center gap-3 px-4 py-3 text-left transition-colors",
+                              isSelected
+                                ? "bg-yellow-50/80 dark:bg-yellow-900/20 border-l-4 border-l-yellow-500"
+                                : "hover:bg-secondary/40 border-l-4 border-l-transparent"
+                            )}
+                          >
+                            <Layers className={cn("w-5 h-5 flex-shrink-0", isSelected ? "text-yellow-500" : "text-muted-foreground")} />
+                            <div className="min-w-0 flex-1">
+                              <p className={cn("text-sm font-medium truncate", isSelected && "font-semibold")}>{recipe.recipeName}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {recipe.ingredients.length} ingredient{recipe.ingredients.length !== 1 ? "s" : ""}
+                                {recipe.tinCount != null && ` · ${recipe.tinCount} tin${recipe.tinCount !== 1 ? "s" : ""}`}
+                              </p>
+                            </div>
+                            <span className="text-xs text-muted-foreground flex-shrink-0">{recipe.batchesTarget}×</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right: selected recipe detail */}
+                <div className="flex-1 min-w-0">
+                  <div className="bg-card border-2 border-yellow-400 dark:border-yellow-600 rounded-2xl p-6">
+                    {/* Header */}
+                    <div className="mb-5">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Currently Prepping</p>
+                      <div className="flex items-start justify-between gap-3">
+                        <h2 className="font-display text-3xl font-bold leading-tight">{selected.recipeName}</h2>
+                        {selected.sopUrl && (
+                          <a href={selected.sopUrl} target="_blank" rel="noopener noreferrer"
+                            className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline flex-shrink-0 mt-1">
+                            SOP <ExternalLink className="w-3 h-3" />
+                          </a>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 mt-2 flex-wrap">
+                        <p className="text-sm text-muted-foreground">{selected.batchesTarget} batch{selected.batchesTarget !== 1 ? "es" : ""}</p>
+                        {selected.tinCount != null && (
+                          <span className="bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 rounded-full px-3 py-0.5 text-sm font-semibold">
+                            {selected.tinCount} tin{selected.tinCount !== 1 ? "s" : ""}
+                          </span>
+                        )}
+                        {selected.tinSize && (
+                          <span className="text-sm text-muted-foreground">{selected.tinSize}</span>
+                        )}
+                        {selected.maxBatchesPerTin && (
+                          <span className="text-sm text-muted-foreground">{selected.maxBatchesPerTin} batches/tin</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Ingredient rows */}
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Ingredients</p>
+                      <div className="space-y-2">
+                        {selected.ingredients.map((ing, idx) => (
+                          <div
+                            key={ing.ingredientId}
+                            className={cn(
+                              "flex items-center justify-between px-5 py-4 rounded-xl border",
+                              idx === 0
+                                ? "border-yellow-300 dark:border-yellow-700 bg-yellow-50/50 dark:bg-yellow-900/10"
+                                : "border-border bg-background"
+                            )}
+                          >
+                            <p className="font-medium text-base">{ing.ingredientName}</p>
+                            <p className="text-2xl font-bold tabular-nums text-yellow-700 dark:text-yellow-300">
+                              {fmtQty(ing.cookedQty, ing.unit)}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Navigate to next recipe */}
+                    {recipes.length > 1 && (() => {
+                      const currentIdx = recipes.findIndex(r => r.recipeId === selected.recipeId);
+                      const nextRecipe = recipes[(currentIdx + 1) % recipes.length];
+                      return (
+                        <div className="mt-6 flex justify-end">
+                          <button
+                            onClick={() => setSelectedRecipeId(nextRecipe.recipeId)}
+                            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-yellow-500/10 text-yellow-700 dark:text-yellow-300 hover:bg-yellow-500/20 font-medium text-sm transition-colors"
+                          >
+                            Next: {nextRecipe.recipeName} →
+                          </button>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </>
+      )}
 
       <BreakTracker planId={plan.id} stationType="prep_bases" onBreakActiveChange={setIsOnBreak} />
     </div>
@@ -6787,6 +7412,9 @@ function PrepSubNav({ planId, current }: { planId: number; current: string }) {
 function PrepHub({ planId, planDate }: { planId: number; planDate?: string }) {
   const [, navigate] = useLocation();
   const { data: nextPlan, isLoading } = useNextActivePlan(planDate) as { data: NextActivePlan | null; isLoading: boolean };
+  const [showReplenish, setShowReplenish] = useState(false);
+  const { data: allSubRecipesData } = useListSubRecipes();
+  const allSubRecipes = (allSubRecipesData ?? []) as SubRecipe[];
 
   const subStations = [
     {
@@ -6818,6 +7446,33 @@ function PrepHub({ planId, planDate }: { planId: number; planDate?: string }) {
     },
   ] as const;
 
+  if (showReplenish) {
+    return (
+      <div className="space-y-4">
+        <div className="bg-card border border-border rounded-2xl p-5">
+          <div className="flex items-center gap-3 mb-5">
+            <button
+              onClick={() => setShowReplenish(false)}
+              className="p-2 rounded-lg hover:bg-secondary/60 transition-colors"
+            >
+              <ArrowLeft className="w-5 h-5 text-muted-foreground" />
+            </button>
+            <div>
+              <h3 className="font-bold text-xl">Replenish Sub Recipes</h3>
+              <p className="text-sm text-muted-foreground">Ad-hoc production of spice rubs, dough mixes, and other sub-recipes</p>
+            </div>
+          </div>
+          <SubRecipeMakeFlow
+            mode="standalone"
+            planRequirements={[]}
+            allSubRecipes={allSubRecipes}
+            onClose={() => setShowReplenish(false)}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5">
       <PrepDateBanner
@@ -6834,7 +7489,6 @@ function PrepHub({ planId, planDate }: { planId: number; planDate?: string }) {
         <div className="grid gap-4">
           {subStations.map(s => {
             const Icon = s.icon;
-            // Compute the prep date label for this tile
             const prepDateLabel = isLoading
               ? "Loading…"
               : nextPlan?.planDate
@@ -6869,6 +7523,22 @@ function PrepHub({ planId, planDate }: { planId: number; planDate?: string }) {
               </button>
             );
           })}
+
+          {/* Replenish Sub Recipes tile */}
+          <button
+            onClick={() => setShowReplenish(true)}
+            className="flex items-center gap-4 p-5 border-2 border-violet-200 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/20 rounded-2xl text-left transition-all hover:scale-[1.01] active:scale-[0.99]"
+          >
+            <div className="p-3 bg-background rounded-xl border border-violet-200 dark:border-violet-800">
+              <FlaskConical className="w-8 h-8 text-violet-500" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-bold text-lg">Replenish Sub Recipes</h3>
+              <p className="text-sm text-muted-foreground leading-snug">Ad-hoc spice rubs, dough mixes, and other prepared components — any time</p>
+              <p className="text-xs font-semibold mt-1.5 text-violet-500">Pick a sub-recipe · choose batch count · follow checklist</p>
+            </div>
+            <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+          </button>
         </div>
       </div>
     </div>
