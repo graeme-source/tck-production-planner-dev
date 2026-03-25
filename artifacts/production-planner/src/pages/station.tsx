@@ -3772,11 +3772,13 @@ function SubRecipeMakeFlow({
   planRequirements,
   allSubRecipes,
   onClose,
+  onDone,
 }: {
   mode: SubReplenishMode;
   planRequirements: SubRecipePlanRequirement[];
   allSubRecipes: SubRecipe[];
   onClose?: () => void;
+  onDone?: (subRecipeId: number) => void;
 }) {
   const [search, setSearch] = useState("");
   const [state, setState] = useState<SubReplenishState>({
@@ -3955,7 +3957,10 @@ function SubRecipeMakeFlow({
 
             {checkedCount === totalItems && totalItems > 0 && (
               <button
-                onClick={() => setState(s => ({ ...s, phase: "done" }))}
+                onClick={() => {
+                  if (state.sr) onDone?.(state.sr.subRecipeId);
+                  setState(s => ({ ...s, phase: "done" }));
+                }}
                 className="w-full py-4 mt-4 rounded-2xl bg-emerald-500 text-white font-bold text-base hover:bg-emerald-600 transition-colors flex items-center justify-center gap-2"
               >
                 <CheckCircle2 className="w-5 h-5" />
@@ -4241,9 +4246,18 @@ function usePlanSubRecipeRequirements(planId: number) {
 function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
   const [isOnBreak, setIsOnBreak] = useState(false);
   const [selectedItem, setSelectedItem] = useState<"tomato_base" | number>("tomato_base");
+  const [completedSubRecipeIds, setCompletedSubRecipeIds] = useState<Set<number>>(new Set());
   const { subRecipes: planSubRecipes, loading: subRecipesLoading } = usePlanSubRecipeRequirements(plan.id);
   const { data: allSubRecipesData } = useListSubRecipes();
   const allSubRecipes = (allSubRecipesData ?? []) as SubRecipe[];
+
+  const handleSubRecipeDone = (subRecipeId: number) => {
+    setCompletedSubRecipeIds(prev => new Set([...prev, subRecipeId]));
+  };
+
+  // Tomato Base is "done" when every base sub-recipe in the plan has been completed
+  const baseSubRecipes = planSubRecipes.filter(r => r.isBase !== false);
+  const tomatoBaseDone = baseSubRecipes.length > 0 && baseSubRecipes.every(r => completedSubRecipeIds.has(r.subRecipeId));
 
   const { data: nextPlanData, isLoading: isNextPlanLoading } = useNextActivePlan(plan.planDate);
   const nextPlan = nextPlanData as NextActivePlan | null;
@@ -4392,17 +4406,28 @@ function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
                   "w-full flex items-center gap-3 px-4 py-3 text-left transition-colors border-b border-border",
                   selectedItem === "tomato_base"
                     ? "bg-primary/10 border-l-4 border-l-primary"
-                    : "hover:bg-secondary/40 border-l-4 border-l-transparent"
+                    : "hover:bg-secondary/40 border-l-4 border-l-transparent",
+                  tomatoBaseDone && selectedItem !== "tomato_base" && "opacity-60"
                 )}
               >
-                <FlaskConical className={cn("w-4 h-4 flex-shrink-0", selectedItem === "tomato_base" ? "text-primary" : "text-muted-foreground")} />
+                {tomatoBaseDone ? (
+                  <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-500" />
+                ) : (
+                  <FlaskConical className={cn("w-4 h-4 flex-shrink-0", selectedItem === "tomato_base" ? "text-primary" : "text-muted-foreground")} />
+                )}
                 <div className="min-w-0 flex-1">
-                  <p className={cn("text-sm font-semibold", selectedItem === "tomato_base" && "text-primary")}>
+                  <p className={cn(
+                    "text-sm font-semibold",
+                    selectedItem === "tomato_base" && "text-primary",
+                    tomatoBaseDone && "line-through text-muted-foreground"
+                  )}>
                     Tomato Base
                   </p>
-                  <p className="text-xs text-muted-foreground">Sub-recipe production</p>
+                  <p className="text-xs text-muted-foreground">
+                    {tomatoBaseDone ? "Complete" : "Sub-recipe production"}
+                  </p>
                 </div>
-                <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                {!tomatoBaseDone && <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
               </button>
 
               {/* Sauce ingredients grouped by recipe */}
@@ -4508,6 +4533,7 @@ function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
                   mode="plan"
                   planRequirements={planSubRecipes}
                   allSubRecipes={allSubRecipes}
+                  onDone={handleSubRecipeDone}
                 />
               )}
             </div>
