@@ -330,12 +330,17 @@ export interface ProductionPlanItem {
   batchesTarget: number;
   batchesComplete: number;
   wonlyCount: number;
+  extraPacksBuilt: number;
+  wrappingComplete: boolean;
+  fridgeQty: number;
+  freezerQty: number;
   tinSize?: string | null;
   maxBatchesPerTin?: number | null;
   sopUrl?: string | null;
   fillWeightGrams?: number | null;
   baseType?: string | null;
   baseWeightGrams?: number | null;
+  recipeColor?: string | null;
 }
 
 export type ProductionPlanStatus =

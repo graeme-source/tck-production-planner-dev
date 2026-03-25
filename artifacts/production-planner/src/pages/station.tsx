@@ -7190,7 +7190,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const totalWonly = items.reduce((s, it) => s + (it.wonlyCount ?? 0), 0);
   const totalNet = items.reduce((s, it) => s + netPacks(it), 0);
   const totalExtraPacks = items.reduce((s, it) => s + (it.extraPacksBuilt ?? 0), 0);
-  const totalFridge = items.reduce((s, it) => s + ((it as any).fridgeQty ?? 0), 0);
+  const totalFridge = items.reduce((s, it) => s + (it.fridgeQty ?? 0), 0);
   const wrappedCount = items.filter(it => it.wrappingComplete).length;
   const allWrapped = items.length > 0 && items.every(it => it.wrappingComplete);
 
@@ -7249,7 +7249,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
     if (newValue) {
       const mapping = item.recipeId ? shopifyMappings[item.recipeId] : undefined;
       if (mapping) {
-        const displayDelta = ((item as any).freezerQty ?? 0) + (item.wonlyCount ?? 0);
+        const displayDelta = item.freezerQty + (item.wonlyCount ?? 0);
         setShopifyConfirm({ item, productTitle: mapping.productTitle, variantTitle: mapping.variantTitle, displayDelta });
         return;
       }
@@ -7265,8 +7265,8 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   ] as const;
 
   const getStorageQty = (item: ProductionPlanItem, key: string): number => {
-    if (key === "fridge") return (item as any).fridgeQty ?? 0;
-    if (key === "freezer") return (item as any).freezerQty ?? 0;
+    if (key === "fridge") return item.fridgeQty ?? 0;
+    if (key === "freezer") return item.freezerQty ?? 0;
     return 0;
   };
 
@@ -7408,7 +7408,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
           </div>
           <div className="text-center bg-cyan-50 dark:bg-cyan-950/20 rounded-lg py-2">
             <p className="text-xs text-cyan-700 dark:text-cyan-300">Freezer</p>
-            <p className="text-lg font-bold tabular-nums text-cyan-700 dark:text-cyan-300">{items.reduce((s, it) => s + ((it as any).freezerQty ?? 0), 0)}</p>
+            <p className="text-lg font-bold tabular-nums text-cyan-700 dark:text-cyan-300">{items.reduce((s, it) => s + (it.freezerQty ?? 0), 0)}</p>
           </div>
         </div>
       </div>
@@ -7419,8 +7419,8 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
           const gross = grossPacks(item);
           const wonlys = item.wonlyCount ?? 0;
           const net = netPacks(item);
-          const fridge = (item as any).fridgeQty ?? 0;
-          const freezer = (item as any).freezerQty ?? 0;
+          const fridge = item.fridgeQty ?? 0;
+          const freezer = item.freezerQty ?? 0;
           const totalStored = fridge + freezer;
           const remaining = net - totalStored;
           const isWrapped = item.wrappingComplete;
