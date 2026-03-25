@@ -1,18 +1,48 @@
 -- ============================================================
 -- TCK Production Seed
--- Generated: 2026-03-25T14:21:35.353Z
+-- Generated: 2026-03-25T14:26:37.086Z
+--
+-- !! WARNING: For a FRESHLY-PROVISIONED production database only !!
+-- The TRUNCATE below uses CASCADE, which will also clear any tables
+-- that hold foreign-key references to the seed tables (e.g.
+-- production_plans, purchase_orders, dispatch_orders).  Do NOT run
+-- this against a database that already contains live operational data.
 --
 -- Apply via psql:
---   psql $PRODUCTION_DATABASE_URL < prod-seed.sql
+--   psql "$PRODUCTION_DATABASE_URL" < prod-seed.sql
 --
--- Or POST via admin API:
---   curl -X POST https://YOUR_API/api/admin/apply-seed \
---        -H 'Content-Type: text/plain' \
---        --data-binary @scripts/prod-seed.sql
---        (requires admin session cookie)
+-- Or apply via the admin API endpoint (see MIGRATION.md).
 -- ============================================================
 
-BEGIN;
+-- Step 1: clear seed tables and reset sequences
+TRUNCATE TABLE
+  ingredient_storage_locations,
+  kanban_items,
+  delivery_check_configs,
+  dpt_settings,
+  sub_recipe_sub_recipes,
+  sub_recipe_ingredients,
+  recipe_shopify_mappings,
+  recipe_meat_marinades,
+  recipe_sub_recipes,
+  recipe_ingredients,
+  stock_items,
+  storage_racks,
+  recipes,
+  sub_recipes,
+  ingredients,
+  sku_locations,
+  postcode_validations,
+  page_permissions,
+  app_settings,
+  timing_standards,
+  category_defaults,
+  stock_item_categories,
+  storage_locations,
+  suppliers
+RESTART IDENTITY CASCADE;
+
+-- Step 2: insert seed data (FK-safe order)
 
 -- TABLE: suppliers (18 rows)
 INSERT INTO suppliers (id, name, contact_name, email, phone, website, address, notes, created_at, order_frequency, order_days, lead_time_days, cutoff_time) VALUES
@@ -33,8 +63,7 @@ INSERT INTO suppliers (id, name, contact_name, email, phone, website, address, n
   (23, 'Bidfood', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-19 09:57:56.337', 'daily', NULL, 1, '17:00'),
   (24, 'Jay D Meats', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-19 09:57:56.475', 'daily', NULL, 1, '17:00'),
   (25, 'Test Lead Time Supplier', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-24 14:30:57.710', 'daily', NULL, 3, '10:00'),
-  (26, 'NFS Meats', 'Vera', 'sales@nfsmeats.co.uk', '01604 761746', 'https://nfsmeats.co.uk/', NULL, NULL, '2026-03-24 15:57:12.642', 'daily', NULL, 2, '17:00')
-ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, contact_name=EXCLUDED.contact_name, email=EXCLUDED.email, phone=EXCLUDED.phone, website=EXCLUDED.website, address=EXCLUDED.address, notes=EXCLUDED.notes, created_at=EXCLUDED.created_at, order_frequency=EXCLUDED.order_frequency, order_days=EXCLUDED.order_days, lead_time_days=EXCLUDED.lead_time_days, cutoff_time=EXCLUDED.cutoff_time;
+  (26, 'NFS Meats', 'Vera', 'sales@nfsmeats.co.uk', '01604 761746', 'https://nfsmeats.co.uk/', NULL, NULL, '2026-03-24 15:57:12.642', 'daily', NULL, 2, '17:00');
 
 
 -- TABLE: storage_locations (6 rows)
@@ -44,22 +73,19 @@ INSERT INTO storage_locations (id, name, zone, is_system, created_at) VALUES
   (3, 'Raw Freezer', 'freezer', TRUE, '2026-03-24 09:35:49.941'),
   (4, 'Production Fridge', 'fridge', TRUE, '2026-03-24 09:35:49.945'),
   (5, 'Production Freezer', 'freezer', TRUE, '2026-03-24 09:35:49.947'),
-  (6, 'Dry Store', 'ambient', TRUE, '2026-03-24 09:35:49.950')
-ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, zone=EXCLUDED.zone, is_system=EXCLUDED.is_system, created_at=EXCLUDED.created_at;
+  (6, 'Dry Store', 'ambient', TRUE, '2026-03-24 09:35:49.950');
 
 
 -- TABLE: stock_item_categories (3 rows)
 INSERT INTO stock_item_categories (id, name, created_at) VALUES
   (3, 'Chemicals', '2026-03-24 09:57:13.402'),
   (2, 'Cleaning Materials', '2026-03-24 09:57:13.402'),
-  (1, 'Packaging', '2026-03-24 09:57:13.402')
-ON CONFLICT (name) DO UPDATE SET id=EXCLUDED.id, created_at=EXCLUDED.created_at;
+  (1, 'Packaging', '2026-03-24 09:57:13.402');
 
 
 -- TABLE: category_defaults (1 rows)
 INSERT INTO category_defaults (id, category, default_packaging_cost, default_labour_cost, created_at) VALUES
-  (1, 'Calzones', '0.4000', '3.0000', '2026-03-19 14:43:37.682')
-ON CONFLICT (id) DO UPDATE SET category=EXCLUDED.category, default_packaging_cost=EXCLUDED.default_packaging_cost, default_labour_cost=EXCLUDED.default_labour_cost, created_at=EXCLUDED.created_at;
+  (1, 'Calzones', '0.4000', '3.0000', '2026-03-19 14:43:37.682');
 
 
 -- TABLE: timing_standards (11 rows)
@@ -74,8 +100,7 @@ INSERT INTO timing_standards (id, station_type, station_label, min_batches_per_h
   (8, 'dough_sheeting', 'Dough Sheeting', '0.00', '0.00', '2026-03-19 17:48:38.420'),
   (9, 'prep_veg', 'Prep - Raw Veg', '0.00', '0.00', '2026-03-19 17:48:42.304'),
   (10, 'prep_bases', 'Prep - Bases & Mozzarella', '0.00', '0.00', '2026-03-19 17:48:46.595'),
-  (11, 'prep_meat', 'Prep - Raw Meat', '0.00', '0.00', '2026-03-19 17:48:50.655')
-ON CONFLICT (id) DO UPDATE SET station_type=EXCLUDED.station_type, station_label=EXCLUDED.station_label, min_batches_per_hour=EXCLUDED.min_batches_per_hour, target_batches_per_hour=EXCLUDED.target_batches_per_hour, updated_at=EXCLUDED.updated_at;
+  (11, 'prep_meat', 'Prep - Raw Meat', '0.00', '0.00', '2026-03-19 17:48:50.655');
 
 
 -- TABLE: app_settings (14 rows)
@@ -93,8 +118,7 @@ INSERT INTO app_settings (id, key, value, updated_at) VALUES
   (8, 'default_break_minutes', '20', '2026-03-21 06:50:29.093'),
   (1, 'mixer_capacity_kg', '25', '2026-03-20 05:43:38.020'),
   (92, 'production_order_recipe_ids', '[1,10,6,4,2,5,3,9,7,8]', '2026-03-24 12:52:44.101'),
-  (3, 'total_daily_batches', '75', '2026-03-22 17:22:00.839')
-ON CONFLICT (key) DO UPDATE SET id=EXCLUDED.id, value=EXCLUDED.value, updated_at=EXCLUDED.updated_at;
+  (3, 'total_daily_batches', '75', '2026-03-22 17:22:00.839');
 
 
 -- TABLE: page_permissions (9 rows)
@@ -107,8 +131,7 @@ INSERT INTO page_permissions (page_key, min_role) VALUES
   ('/sales', 'manager'),
   ('/stock', 'viewer'),
   ('/sub-recipes', 'viewer'),
-  ('/suppliers', 'viewer')
-ON CONFLICT (page_key) DO UPDATE SET min_role=EXCLUDED.min_role;
+  ('/suppliers', 'viewer');
 
 
 -- TABLE: postcode_validations (0 rows)
@@ -321,8 +344,7 @@ INSERT INTO ingredients (id, name, unit, cost_per_pack, notes, created_at, pack_
   (207, 'Brakes Chilli Jam', 'kg', '9.8700', NULL, '2026-03-23 17:10:17.021', '1.2500', 'Brakes', '126918', 1, NULL, 'https://www.brake.co.uk/dry-store/condiments-pickles/chutney-relish-pickles/chutney-relish/brakes-chilli-jam/p/126918', NULL, NULL, 'sauce', FALSE, 'daily', NULL, NULL, NULL, NULL, NULL, '10.00', NULL, TRUE, '0.0000', 'weight', NULL, TRUE, NULL),
   (208, 'Streky Bacon', 'kg', '9.9900', NULL, '2026-03-23 17:11:02.220', '1.0000', NULL, 'NFS', NULL, NULL, NULL, NULL, NULL, 'other', FALSE, 'daily', NULL, NULL, NULL, NULL, NULL, '10.00', NULL, TRUE, '0.0000', 'weight', NULL, TRUE, NULL),
   (209, 'Sysco Classic Grated Monterey Jack Cheese', 'kg', '6.9900', NULL, '2026-03-23 17:21:22.760', '1.0000', 'Sysco Classic', '112826', 1, NULL, 'https://www.brake.co.uk/dairy/block-grated-cheese/soft-cheese/grated-shredded/sysco-classic-grated-monterey-jack-cheese/p/112826', NULL, NULL, 'cheese', FALSE, 'daily', NULL, NULL, NULL, NULL, NULL, '10.00', NULL, TRUE, '0.0000', 'weight', NULL, TRUE, NULL),
-  (210, 'Beef Burgers', 'kg', '6.7900', NULL, '2026-03-23 17:26:33.316', '1.0000', 'NFS', NULL, NULL, NULL, NULL, NULL, '2.5000', 'raw_meat', TRUE, 'daily', NULL, '70.00', 30, 170, 50, '10.00', NULL, FALSE, '0.0000', 'weight', NULL, TRUE, NULL)
-ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, unit=EXCLUDED.unit, cost_per_pack=EXCLUDED.cost_per_pack, notes=EXCLUDED.notes, created_at=EXCLUDED.created_at, pack_weight=EXCLUDED.pack_weight, brand=EXCLUDED.brand, supplier_part_number=EXCLUDED.supplier_part_number, supplier_id=EXCLUDED.supplier_id, secondary_supplier_id=EXCLUDED.secondary_supplier_id, ordering_url=EXCLUDED.ordering_url, processing_ratio=EXCLUDED.processing_ratio, raw_meat_tray_capacity_kg=EXCLUDED.raw_meat_tray_capacity_kg, category=EXCLUDED.category, stock_check_enabled=EXCLUDED.stock_check_enabled, stock_check_frequency=EXCLUDED.stock_check_frequency, stock_check_day=EXCLUDED.stock_check_day, min_cooking_temp_c=EXCLUDED.min_cooking_temp_c, estimated_cook_time_min=EXCLUDED.estimated_cook_time_min, oven_temp_c=EXCLUDED.oven_temp_c, steam_pct=EXCLUDED.steam_pct, surplus_percent=EXCLUDED.surplus_percent, shelf_life_days=EXCLUDED.shelf_life_days, kanban_enabled=EXCLUDED.kanban_enabled, kanban_quantity=EXCLUDED.kanban_quantity, kanban_unit=EXCLUDED.kanban_unit, kanban_order_amount=EXCLUDED.kanban_order_amount, perishable=EXCLUDED.perishable, pallet_size=EXCLUDED.pallet_size;
+  (210, 'Beef Burgers', 'kg', '6.7900', NULL, '2026-03-23 17:26:33.316', '1.0000', 'NFS', NULL, NULL, NULL, NULL, NULL, '2.5000', 'raw_meat', TRUE, 'daily', NULL, '70.00', 30, 170, 50, '10.00', NULL, FALSE, '0.0000', 'weight', NULL, TRUE, NULL);
 
 
 -- TABLE: stock_items (0 rows)
@@ -343,8 +365,7 @@ INSERT INTO sub_recipes (id, name, description, yield, yield_unit, notes, create
   (44, 'Garlic Confit', NULL, '3.8090', 'kg', NULL, '2026-03-19 16:00:48.266', NULL, FALSE),
   (45, 'Beef Seasoning', NULL, '2.0000', 'kg', NULL, '2026-03-19 16:14:31.470', NULL, FALSE),
   (46, 'Chicken Seasoning ', 'Carnizone Chicken Seasoning', '2.6260', 'kg', '', '2026-03-21 10:27:14.122', 90, FALSE),
-  (47, 'Test Spice Rub XQ7', '', '0.5000', 'kg', '', '2026-03-25 04:43:42.804', 1, FALSE)
-ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, description=EXCLUDED.description, yield=EXCLUDED.yield, yield_unit=EXCLUDED.yield_unit, notes=EXCLUDED.notes, created_at=EXCLUDED.created_at, shelf_life_days=EXCLUDED.shelf_life_days, is_base=EXCLUDED.is_base;
+  (47, 'Test Spice Rub XQ7', '', '0.5000', 'kg', '', '2026-03-25 04:43:42.804', 1, FALSE);
 
 
 -- TABLE: recipes (11 rows)
@@ -359,8 +380,7 @@ INSERT INTO recipes (id, name, description, servings, serving_unit, category, no
   (8, 'The Donald', 'Gressingham Peking shredded duck with a rich and sweet Hoisin sauce, spring onions, and creamy Fior Di Latte mozzarella.', '1.0000', 'portion', 'Calzones', '', '2026-03-21 14:44:15.111', '2.0000', '14.7500', '0.4000', '3.0000', 10, 13, 'XXL', 5, '', NULL, NULL, NULL, FALSE, '#ff00a2', FALSE),
   (9, 'Chilli Chorizo & Fior Di Latte', 'A double portion of shredded chorizo with fresh sliced red chillies and creamy fior di latte mozzarella on our signature spicy base (medium spice level).', '1.0000', 'portion', 'Calzones', '', '2026-03-21 15:11:31.052', '1.0000', '12.6500', '0.4000', '3.0000', 10, 0, 'XXL', 10, '', NULL, NULL, NULL, FALSE, '#ff0000', FALSE),
   (10, 'Garlic Cheese Calzones (V)', 'Roasted garlic herb confit with mozzarella and mature cheddar in our 24-hour Neapolitan-inspired dough, topped with our own garlic and parsley butter.', '1.0000', 'portion', 'Calzones', 'Roasted garlic herb confit with mozzarella and mature cheddar in our 24-hour Neapolitan-inspired dough, topped with our own garlic and parsley butter.', '2026-03-21 15:13:29.715', '1.0000', '10.4500', '0.4000', '3.0000', 10, 0, 'XXL', 10, '', NULL, NULL, NULL, TRUE, '#219712', FALSE),
-  (11, 'The Don Burger', '', '1.0000', 'portion', 'Calzones', '', '2026-03-23 17:04:29.246', '1.0000', '17.9500', '0.4000', '3.0000', 10, 10, 'N/A', 10, '', NULL, NULL, NULL, FALSE, '#000000', FALSE)
-ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, description=EXCLUDED.description, servings=EXCLUDED.servings, serving_unit=EXCLUDED.serving_unit, category=EXCLUDED.category, notes=EXCLUDED.notes, created_at=EXCLUDED.created_at, pack_size=EXCLUDED.pack_size, rrp=EXCLUDED.rrp, packaging_cost=EXCLUDED.packaging_cost, labour_cost=EXCLUDED.labour_cost, portions_per_batch=EXCLUDED.portions_per_batch, shelf_life_days=EXCLUDED.shelf_life_days, tin_size=EXCLUDED.tin_size, max_batches_per_tin=EXCLUDED.max_batches_per_tin, sop_url=EXCLUDED.sop_url, fill_weight_grams=EXCLUDED.fill_weight_grams, base_type=EXCLUDED.base_type, base_weight_grams=EXCLUDED.base_weight_grams, is_core_menu=EXCLUDED.is_core_menu, color=EXCLUDED.color, is_current_special=EXCLUDED.is_current_special;
+  (11, 'The Don Burger', '', '1.0000', 'portion', 'Calzones', '', '2026-03-23 17:04:29.246', '1.0000', '17.9500', '0.4000', '3.0000', 10, 10, 'N/A', 10, '', NULL, NULL, NULL, FALSE, '#000000', FALSE);
 
 
 -- TABLE: storage_racks (0 rows)
@@ -421,8 +441,7 @@ INSERT INTO recipe_ingredients (id, recipe_id, ingredient_id, quantity, marinade
   (550, 8, 24, '0.0600', NULL, TRUE),
   (551, 8, 15, '0.0200', NULL, TRUE),
   (552, 8, 7, '0.0700', NULL, TRUE),
-  (553, 8, 27, '0.0070', NULL, TRUE)
-ON CONFLICT (id) DO UPDATE SET recipe_id=EXCLUDED.recipe_id, ingredient_id=EXCLUDED.ingredient_id, quantity=EXCLUDED.quantity, marinade_for_ingredient_id=EXCLUDED.marinade_for_ingredient_id, include_in_filling_mix=EXCLUDED.include_in_filling_mix;
+  (553, 8, 27, '0.0070', NULL, TRUE);
 
 
 -- TABLE: recipe_sub_recipes (23 rows)
@@ -449,8 +468,7 @@ INSERT INTO recipe_sub_recipes (id, recipe_id, sub_recipe_id, quantity, marinade
   (216, 5, 2, '0.0360', NULL, TRUE),
   (217, 9, 1, '0.1150', NULL, FALSE),
   (218, 9, 2, '0.0380', NULL, TRUE),
-  (219, 8, 1, '0.1150', NULL, FALSE)
-ON CONFLICT (id) DO UPDATE SET recipe_id=EXCLUDED.recipe_id, sub_recipe_id=EXCLUDED.sub_recipe_id, quantity=EXCLUDED.quantity, marinade_for_ingredient_id=EXCLUDED.marinade_for_ingredient_id, include_in_filling_mix=EXCLUDED.include_in_filling_mix;
+  (219, 8, 1, '0.1150', NULL, FALSE);
 
 
 -- TABLE: recipe_meat_marinades (0 rows)
@@ -500,14 +518,12 @@ INSERT INTO sub_recipe_ingredients (id, sub_recipe_id, ingredient_id, quantity) 
   (122, 47, 79, '0.1000'),
   (123, 2, 26, '5.0000'),
   (124, 2, 95, '2.1820'),
-  (125, 2, 37, '4000.0000')
-ON CONFLICT (id) DO UPDATE SET sub_recipe_id=EXCLUDED.sub_recipe_id, ingredient_id=EXCLUDED.ingredient_id, quantity=EXCLUDED.quantity;
+  (125, 2, 37, '4000.0000');
 
 
 -- TABLE: sub_recipe_sub_recipes (1 rows)
 INSERT INTO sub_recipe_sub_recipes (id, sub_recipe_id, component_sub_recipe_id, quantity) VALUES
-  (37, 2, 41, '0.6560')
-ON CONFLICT (id) DO UPDATE SET sub_recipe_id=EXCLUDED.sub_recipe_id, component_sub_recipe_id=EXCLUDED.component_sub_recipe_id, quantity=EXCLUDED.quantity;
+  (37, 2, 41, '0.6560');
 
 
 -- TABLE: dpt_settings (10 rows)
@@ -521,8 +537,7 @@ INSERT INTO dpt_settings (id, recipe_id, default_batches_per_day, is_active, upd
   (7, 7, '0.00', TRUE, '2026-03-22 17:22:02.052', '20.00', 699),
   (8, 9, '0.00', TRUE, '2026-03-22 17:22:01.622', '20.00', 615),
   (9, 10, '0.00', TRUE, '2026-03-22 17:22:01.761', '20.00', 500),
-  (10, 8, '0.00', TRUE, '2026-03-22 17:22:02.199', '20.00', 700)
-ON CONFLICT (id) DO UPDATE SET recipe_id=EXCLUDED.recipe_id, default_batches_per_day=EXCLUDED.default_batches_per_day, is_active=EXCLUDED.is_active, updated_at=EXCLUDED.updated_at, surplus_percent=EXCLUDED.surplus_percent, packs_sold=EXCLUDED.packs_sold;
+  (10, 8, '0.00', TRUE, '2026-03-22 17:22:02.199', '20.00', 700);
 
 
 -- TABLE: kanban_items (0 rows)
@@ -532,27 +547,3 @@ ON CONFLICT (id) DO UPDATE SET recipe_id=EXCLUDED.recipe_id, default_batches_per
 -- TABLE: ingredient_storage_locations (0 rows)
 -- ingredient_storage_locations: no rows
 
-
--- ── Sequence resets ──────────────────────────────────────────────
-SELECT setval(pg_get_serial_sequence('suppliers', 'id'), COALESCE((SELECT MAX(id) FROM suppliers), 0) + 1, false);
-SELECT setval(pg_get_serial_sequence('storage_locations', 'id'), COALESCE((SELECT MAX(id) FROM storage_locations), 0) + 1, false);
-SELECT setval(pg_get_serial_sequence('category_defaults', 'id'), COALESCE((SELECT MAX(id) FROM category_defaults), 0) + 1, false);
-SELECT setval(pg_get_serial_sequence('timing_standards', 'id'), COALESCE((SELECT MAX(id) FROM timing_standards), 0) + 1, false);
-SELECT setval(pg_get_serial_sequence('ingredients', 'id'), COALESCE((SELECT MAX(id) FROM ingredients), 0) + 1, false);
-SELECT setval(pg_get_serial_sequence('sub_recipes', 'id'), COALESCE((SELECT MAX(id) FROM sub_recipes), 0) + 1, false);
-SELECT setval(pg_get_serial_sequence('recipes', 'id'), COALESCE((SELECT MAX(id) FROM recipes), 0) + 1, false);
-SELECT setval(pg_get_serial_sequence('storage_racks', 'id'), COALESCE((SELECT MAX(id) FROM storage_racks), 0) + 1, false);
-SELECT setval(pg_get_serial_sequence('stock_items', 'id'), COALESCE((SELECT MAX(id) FROM stock_items), 0) + 1, false);
-SELECT setval(pg_get_serial_sequence('recipe_ingredients', 'id'), COALESCE((SELECT MAX(id) FROM recipe_ingredients), 0) + 1, false);
-SELECT setval(pg_get_serial_sequence('recipe_sub_recipes', 'id'), COALESCE((SELECT MAX(id) FROM recipe_sub_recipes), 0) + 1, false);
-SELECT setval(pg_get_serial_sequence('recipe_meat_marinades', 'id'), COALESCE((SELECT MAX(id) FROM recipe_meat_marinades), 0) + 1, false);
-SELECT setval(pg_get_serial_sequence('recipe_shopify_mappings', 'id'), COALESCE((SELECT MAX(id) FROM recipe_shopify_mappings), 0) + 1, false);
-SELECT setval(pg_get_serial_sequence('sub_recipe_ingredients', 'id'), COALESCE((SELECT MAX(id) FROM sub_recipe_ingredients), 0) + 1, false);
-SELECT setval(pg_get_serial_sequence('sub_recipe_sub_recipes', 'id'), COALESCE((SELECT MAX(id) FROM sub_recipe_sub_recipes), 0) + 1, false);
-SELECT setval(pg_get_serial_sequence('dpt_settings', 'id'), COALESCE((SELECT MAX(id) FROM dpt_settings), 0) + 1, false);
-SELECT setval(pg_get_serial_sequence('delivery_check_configs', 'id'), COALESCE((SELECT MAX(id) FROM delivery_check_configs), 0) + 1, false);
-SELECT setval(pg_get_serial_sequence('kanban_items', 'id'), COALESCE((SELECT MAX(id) FROM kanban_items), 0) + 1, false);
-SELECT setval(pg_get_serial_sequence('ingredient_storage_locations', 'id'), COALESCE((SELECT MAX(id) FROM ingredient_storage_locations), 0) + 1, false);
-SELECT setval(pg_get_serial_sequence('postcode_validations', 'id'), COALESCE((SELECT MAX(id) FROM postcode_validations), 0) + 1, false);
-
-COMMIT;

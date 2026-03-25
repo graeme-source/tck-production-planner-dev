@@ -10,6 +10,10 @@
  *
  * Output:
  *   artifacts/api-server/scripts/prod-seed.sql
+ *
+ * WARNING: The generated file uses TRUNCATE … CASCADE which is intended for a
+ * freshly-provisioned production database only. Do NOT apply it to a database
+ * that already contains production plan, purchase order, or dispatch data.
  */
 
 import { pool } from "@workspace/db";
@@ -24,39 +28,31 @@ function sqlLiteral(val: unknown): string {
   if (val === null || val === undefined) return "NULL";
   if (typeof val === "boolean") return val ? "TRUE" : "FALSE";
   if (typeof val === "number") return String(val);
-  if (val instanceof Date) return `'${val.toISOString().replace("T", " ").replace("Z", "")}'`;
+  if (val instanceof Date) {
+    return `'${val.toISOString().replace("T", " ").replace("Z", "")}'`;
+  }
   const s = String(val);
   return `'${s.replace(/\\/g, "\\\\").replace(/'/g, "''")}'`;
 }
 
-function buildUpsertBlock(
-  tableName: string,
-  conflictCols: string[],
-  rows: Record<string, unknown>[],
-): string {
-  if (rows.length === 0) return `-- ${tableName}: no rows\n\n`;
+function buildInsert(tableName: string, rows: Record<string, unknown>[]): string {
+  if (rows.length === 0) return `-- ${tableName}: no rows\n`;
   const cols = Object.keys(rows[0]);
-  const updateCols = cols.filter(c => !conflictCols.includes(c));
-  const updateClause =
-    updateCols.length > 0
-      ? `DO UPDATE SET ${updateCols.map(c => `${c}=EXCLUDED.${c}`).join(", ")}`
-      : "DO NOTHING";
-
   const valueRows = rows
     .map(r => `  (${cols.map(c => sqlLiteral(r[c])).join(", ")})`)
     .join(",\n");
-
-  return (
-    `INSERT INTO ${tableName} (${cols.join(", ")}) VALUES\n` +
-    `${valueRows}\n` +
-    `ON CONFLICT (${conflictCols.join(", ")}) ${updateClause};\n\n`
-  );
+  return `INSERT INTO ${tableName} (${cols.join(", ")}) VALUES\n${valueRows};\n`;
 }
 
-async function queryTable(tableName: string, orderBy: string): Promise<Record<string, unknown>[]> {
+async function queryTable(
+  tableName: string,
+  orderBy: string,
+): Promise<Record<string, unknown>[]> {
   const client = await pool.connect();
   try {
-    const result = await client.query(`SELECT * FROM ${tableName} ORDER BY ${orderBy}`);
+    const result = await client.query(
+      `SELECT * FROM ${tableName} ORDER BY ${orderBy}`,
+    );
     return result.rows as Record<string, unknown>[];
   } finally {
     client.release();
@@ -64,106 +60,108 @@ async function queryTable(tableName: string, orderBy: string): Promise<Record<st
 }
 
 async function main() {
+  // ── Tables to truncate in reverse FK order ──────────────────────────────────
+  // Listed from most-dependent (leaf) to least-dependent (root) so that
+  // a single TRUNCATE statement with RESTART IDENTITY (no CASCADE needed when
+  // all seed tables are listed together) respects FK constraints between them.
+  const TRUNCATE_REVERSE_ORDER = [
+    "ingredient_storage_locations",
+    "kanban_items",
+    "delivery_check_configs",
+    "dpt_settings",
+    "sub_recipe_sub_recipes",
+    "sub_recipe_ingredients",
+    "recipe_shopify_mappings",
+    "recipe_meat_marinades",
+    "recipe_sub_recipes",
+    "recipe_ingredients",
+    "stock_items",
+    "storage_racks",
+    "recipes",
+    "sub_recipes",
+    "ingredients",
+    "sku_locations",
+    "postcode_validations",
+    "page_permissions",
+    "app_settings",
+    "timing_standards",
+    "category_defaults",
+    "stock_item_categories",
+    "storage_locations",
+    "suppliers",
+  ].join(",\n  ");
+
   const lines: string[] = [
     "-- ============================================================",
     "-- TCK Production Seed",
     `-- Generated: ${new Date().toISOString()}`,
     "--",
-    "-- Apply via psql:",
-    "--   psql $PRODUCTION_DATABASE_URL < prod-seed.sql",
+    "-- !! WARNING: For a FRESHLY-PROVISIONED production database only !!",
+    "-- The TRUNCATE below uses CASCADE, which will also clear any tables",
+    "-- that hold foreign-key references to the seed tables (e.g.",
+    "-- production_plans, purchase_orders, dispatch_orders).  Do NOT run",
+    "-- this against a database that already contains live operational data.",
     "--",
-    "-- Or POST via admin API:",
-    "--   curl -X POST https://YOUR_API/api/admin/apply-seed \\",
-    "--        -H 'Content-Type: text/plain' \\",
-    "--        --data-binary @scripts/prod-seed.sql",
-    "--        (requires admin session cookie)",
+    "-- Apply via psql:",
+    "--   psql \"$PRODUCTION_DATABASE_URL\" < prod-seed.sql",
+    "--",
+    "-- Or apply via the admin API endpoint (see MIGRATION.md).",
     "-- ============================================================",
-    "",
-    "BEGIN;",
     "",
   ];
 
-  const dump = async (tableName: string, conflictCols: string[], orderBy: string) => {
+  // ── 1. Truncate all seed tables (CASCADE handles dependent non-seed tables) ─
+  lines.push("-- Step 1: clear seed tables and reset sequences");
+  lines.push("TRUNCATE TABLE");
+  lines.push(`  ${TRUNCATE_REVERSE_ORDER}`);
+  lines.push("RESTART IDENTITY CASCADE;");
+  lines.push("");
+
+  // ── 2. Insert data in FK-safe forward order ─────────────────────────────────
+  lines.push("-- Step 2: insert seed data (FK-safe order)");
+  lines.push("");
+
+  const dump = async (tableName: string, orderBy: string) => {
     console.log(`  Exporting ${tableName}...`);
     const rows = await queryTable(tableName, orderBy);
     lines.push(`-- TABLE: ${tableName} (${rows.length} rows)`);
-    lines.push(buildUpsertBlock(tableName, conflictCols, rows));
+    lines.push(buildInsert(tableName, rows));
+    lines.push("");
   };
 
-  console.log("Exporting seed tables...");
-
-  // ── FK-safe insertion order ─────────────────────────────────────────────────
   // No FK deps
-  await dump("suppliers",             ["id"],                    "id");
-  await dump("storage_locations",     ["id"],                    "id");
-  await dump("stock_item_categories", ["name"],                  "name");
-  await dump("category_defaults",     ["id"],                    "id");
-  await dump("timing_standards",      ["id"],                    "id");
-  await dump("app_settings",          ["key"],                   "key");
-  await dump("page_permissions",      ["page_key"],              "page_key");
-  await dump("postcode_validations",  ["shopify_order_id", "service_code"], "shopify_order_id, service_code");
-  await dump("sku_locations",         ["sku"],                   "sku");
+  await dump("suppliers",             "id");
+  await dump("storage_locations",     "id");
+  await dump("stock_item_categories", "name");
+  await dump("category_defaults",     "id");
+  await dump("timing_standards",      "id");
+  await dump("app_settings",          "key");
+  await dump("page_permissions",      "page_key");
+  await dump("postcode_validations",  "shopify_order_id, service_code");
+  await dump("sku_locations",         "sku");
 
   // Depend on suppliers
-  await dump("ingredients",           ["id"],                    "id");
-  await dump("stock_items",           ["id"],                    "id");
-  await dump("delivery_check_configs",["id"],                    "id");
+  await dump("ingredients",           "id");
+  await dump("stock_items",           "id");
+  await dump("delivery_check_configs","id");
 
   // No FK in table itself
-  await dump("sub_recipes",           ["id"],                    "id");
-  await dump("recipes",               ["id"],                    "id");
+  await dump("sub_recipes",           "id");
+  await dump("recipes",               "id");
 
-  // Depend on storage_locations
-  await dump("storage_racks",         ["id"],                    "id");
+  // Depends on storage_locations
+  await dump("storage_racks",         "id");
 
-  // Depend on recipes / ingredients / sub_recipes
-  await dump("recipe_ingredients",        ["id"], "id");
-  await dump("recipe_sub_recipes",        ["id"], "id");
-  await dump("recipe_meat_marinades",     ["id"], "id");
-  await dump("recipe_shopify_mappings",   ["id"], "id");
-  await dump("sub_recipe_ingredients",    ["id"], "id");
-  await dump("sub_recipe_sub_recipes",    ["id"], "id");
-  await dump("dpt_settings",             ["id"], "id");
-
-  // Depend on ingredients + storage_locations / suppliers
-  await dump("kanban_items",              ["id"], "id");
-  await dump("ingredient_storage_locations", ["id"], "id");
-
-  // ── Sequence reset — ensures new rows don't collide with seeded IDs ─────────
-  const serialTables: Array<[string, string]> = [
-    ["suppliers",                      "id"],
-    ["storage_locations",              "id"],
-    ["category_defaults",              "id"],
-    ["timing_standards",               "id"],
-    ["ingredients",                    "id"],
-    ["sub_recipes",                    "id"],
-    ["recipes",                        "id"],
-    ["storage_racks",                  "id"],
-    ["stock_items",                    "id"],
-    ["recipe_ingredients",             "id"],
-    ["recipe_sub_recipes",             "id"],
-    ["recipe_meat_marinades",          "id"],
-    ["recipe_shopify_mappings",        "id"],
-    ["sub_recipe_ingredients",         "id"],
-    ["sub_recipe_sub_recipes",         "id"],
-    ["dpt_settings",                   "id"],
-    ["delivery_check_configs",         "id"],
-    ["kanban_items",                   "id"],
-    ["ingredient_storage_locations",   "id"],
-    ["postcode_validations",           "id"],
-  ];
-
-  lines.push("-- ── Sequence resets ──────────────────────────────────────────────");
-  for (const [t, col] of serialTables) {
-    lines.push(
-      `SELECT setval(pg_get_serial_sequence('${t}', '${col}'), ` +
-      `COALESCE((SELECT MAX(${col}) FROM ${t}), 0) + 1, false);`,
-    );
-  }
-  lines.push("");
-
-  lines.push("COMMIT;");
-  lines.push("");
+  // Junction / child tables
+  await dump("recipe_ingredients",         "id");
+  await dump("recipe_sub_recipes",         "id");
+  await dump("recipe_meat_marinades",      "id");
+  await dump("recipe_shopify_mappings",    "id");
+  await dump("sub_recipe_ingredients",     "id");
+  await dump("sub_recipe_sub_recipes",     "id");
+  await dump("dpt_settings",              "id");
+  await dump("kanban_items",              "id");
+  await dump("ingredient_storage_locations", "id");
 
   const content = lines.join("\n");
   writeFileSync(OUTPUT, content, "utf-8");
@@ -175,6 +173,9 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error("Export failed:", err instanceof Error ? err.message : String(err));
+  console.error(
+    "Export failed:",
+    err instanceof Error ? err.message : String(err),
+  );
   process.exit(1);
 });

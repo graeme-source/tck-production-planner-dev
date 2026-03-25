@@ -2,9 +2,13 @@
 
 This document explains how to seed a fresh production database with the reference/config data from the development environment.
 
-## What is seeded?
+> **!! IMPORTANT !!**
+> The seed file uses `TRUNCATE … CASCADE`. It is designed for a **freshly-provisioned production database** that contains no live operational data.
+> Do **not** apply it to a database that already holds production plans, purchase orders, or dispatch records — CASCADE will wipe those tables.
 
-The `prod-seed.sql` file contains all **reference and configuration data** — the tables you set up in dev that the app needs to function. Specifically:
+---
+
+## What is seeded?
 
 | Table | Contents |
 |---|---|
@@ -34,7 +38,7 @@ The `prod-seed.sql` file contains all **reference and configuration data** — t
 | `ingredient_storage_locations` | Ingredient bin locations |
 
 **Not seeded** (kept separate per environment):
-- `app_users` — user accounts are created fresh in prod
+- `app_users` — user accounts (the server auto-creates the default admin)
 - `production_plans` / `production_plan_items` — daily production data
 - `stock_entries` / `stock_transfers` — live stock counts
 - `dispatch_orders` / `sales` — order history
@@ -44,15 +48,15 @@ The `prod-seed.sql` file contains all **reference and configuration data** — t
 
 ## Step 1 — Generate the seed file
 
-Run this on the **development** machine/environment:
+Run this on the **development** machine/environment to capture the latest state:
 
 ```bash
 pnpm --filter @workspace/api-server run export-seed
 ```
 
-This writes `artifacts/api-server/scripts/prod-seed.sql`.
+Output: `artifacts/api-server/scripts/prod-seed.sql`
 
-Re-run whenever you want to capture the latest dev state.
+Re-run whenever you want to capture the latest dev reference data.
 
 ---
 
@@ -60,30 +64,45 @@ Re-run whenever you want to capture the latest dev state.
 
 ### Option A — Direct `psql` (recommended, fastest)
 
-```bash
-psql $PRODUCTION_DATABASE_URL < artifacts/api-server/scripts/prod-seed.sql
-```
-
-If you need to obtain `PRODUCTION_DATABASE_URL`:
-1. Open the Replit deployment environment
-2. Check the **Secrets** tab for `DATABASE_URL` (the production value)
-
-### Option B — Admin API endpoint
-
-The API exposes `POST /api/admin/apply-seed`, which requires an active **admin** session.
+Obtain the production `DATABASE_URL` from the deployment environment's Secrets tab, then run:
 
 ```bash
-# 1. Obtain your admin session cookie (log in via the app first)
-# 2. POST the SQL file:
-curl -X POST https://YOUR_PRODUCTION_API_URL/api/admin/apply-seed \
-     -H 'Content-Type: text/plain' \
-     --data-binary @artifacts/api-server/scripts/prod-seed.sql \
-     -b 'connect.sid=YOUR_SESSION_COOKIE_VALUE'
+psql "$PRODUCTION_DATABASE_URL" < artifacts/api-server/scripts/prod-seed.sql
 ```
 
-On success you'll receive:
+### Option B — Admin API endpoint (`MIGRATION_TOKEN`)
+
+The API exposes `POST /api/admin/apply-seed`.  
+It is authenticated via a `MIGRATION_TOKEN` secret — **no browser session is required**.
+
+#### 2B-1: Set the secret
+
+In the production deployment environment, add the secret:
+
+```
+MIGRATION_TOKEN = <a strong random string you choose>
+```
+
+If `MIGRATION_TOKEN` is not set, the endpoint returns `404` (disabled).
+
+#### 2B-2: Apply the seed
+
+```bash
+export MIGRATION_TOKEN=your-secret-value
+export PROD_API=https://YOUR_PRODUCTION_API_URL
+
+curl -X POST "$PROD_API/api/admin/apply-seed" \
+     -H "Authorization: Bearer $MIGRATION_TOKEN"
+```
+
+On success:
 ```json
 { "ok": true, "message": "Seed applied successfully." }
+```
+
+On failure (the transaction is automatically rolled back):
+```json
+{ "error": "Seed failed — transaction rolled back", "detail": "..." }
 ```
 
 ---
@@ -92,19 +111,22 @@ On success you'll receive:
 
 After applying the seed:
 
-1. Log in to the production app with the default admin account:
-   - Email: `admin@thecalzonekitchen.co.uk`
-   - Password: `TCKAdmin2024!`
-   - *(The server auto-creates this if no users exist)*
+1. Log in with the default admin account:
+   - **Email**: `admin@thecalzonekitchen.co.uk`
+   - **Password**: `TCKAdmin2024!`
+   - *(The server auto-creates this account if the `app_users` table is empty)*
 2. Navigate to **Recipes**, **Ingredients**, and **Suppliers** — all dev data should be present.
 3. Create a test production plan to confirm the recipes load correctly.
 4. **Change the default admin password immediately.**
 
 ---
 
-## Notes
+## Updating production after dev changes
 
-- The seed uses `ON CONFLICT … DO UPDATE` — it is **idempotent** and safe to re-run.
-- Sequences are reset after all inserts, so new rows created in prod won't collide with seeded IDs.
-- If you add or update recipes/ingredients/etc. in dev, re-export and re-apply to sync prod.
-- The `storage_locations` system locations (Prep Fridge, Raw Meat Fridge, etc.) are also seeded by the server's startup migration — applying the seed is not required for those, but it won't cause conflicts if both run.
+When you add or update recipes/ingredients/etc. in dev:
+
+1. Re-run the export: `pnpm --filter @workspace/api-server run export-seed`
+2. Commit `scripts/prod-seed.sql`
+3. Re-apply via psql or the API endpoint
+
+Because the file uses `TRUNCATE … CASCADE`, re-applying on a DB that already has production plan data will **wipe that data**. For incremental updates to a live prod DB, apply individual SQL changes manually instead.

@@ -41,6 +41,8 @@ router.use(healthRouter);
 router.use("/auth", authRouter);
 router.use("/auth", invitesRouter);
 router.use(storageRouter);
+// Admin utility endpoint — auth via MIGRATION_TOKEN env var (not session)
+router.use("/admin", adminRouter);
 
 // Auth guard for all routes below
 router.use((req: Request, res: Response, next: NextFunction) => {
@@ -95,6 +97,5 @@ router.use("/dpt-ingredient-requirements", dptIngredientRequirementsRouter);
 router.use("/kanbans", kanbansRouter);
 router.use("/orders", ordersRouter);
 router.use("/deliveries", deliveriesRouter);
-router.use("/admin", requireAdmin, adminRouter);
 
 export default router;
