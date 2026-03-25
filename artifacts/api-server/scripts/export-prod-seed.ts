@@ -150,28 +150,17 @@ async function main() {
     "-- Or POST to /api/admin/apply-seed (see MIGRATION.md).",
     "-- ============================================================",
     "",
-    "-- ── Step 1: disable FK triggers on all seed tables ─────────────────────",
-    "-- Disabling triggers allows the INSERT phase to proceed in any order and",
-    "-- prevents FK enforcement overhead during bulk loading.",
   ];
 
-  for (const tbl of SEED_TABLES_REVERSE) {
-    lines.push(`ALTER TABLE ${tbl} DISABLE TRIGGER ALL;`);
-  }
-  lines.push("");
-
-  // ── Step 2: TRUNCATE with CASCADE ─────────────────────────────────────────
-  // CASCADE is required because PostgreSQL's TRUNCATE checks FK references at
-  // statement level, independent of trigger state.  CASCADE ensures dependent
-  // non-seed tables (production_plan_items, etc.) are also cleared on a fresh DB.
-  lines.push("-- ── Step 2: clear seed tables (CASCADE clears FK-dependent tables) ──");
+  // ── Step 1: TRUNCATE with CASCADE ─────────────────────────────────────────
+  lines.push("-- ── Step 1: clear seed tables (CASCADE clears FK-dependent tables) ──");
   lines.push("TRUNCATE TABLE");
   lines.push("  " + SEED_TABLES_REVERSE.join(",\n  "));
   lines.push("CASCADE;");
   lines.push("");
 
-  // ── Step 3: INSERT in FK-safe forward order ────────────────────────────────
-  lines.push("-- ── Step 3: insert seed data (FK-safe order) ──────────────────");
+  // ── Step 2: INSERT in FK-safe forward order ────────────────────────────────
+  lines.push("-- ── Step 2: insert seed data (FK-safe order) ──────────────────");
   lines.push("");
 
   const insertOrder: Array<[string, string]> = [
@@ -217,8 +206,8 @@ async function main() {
     lines.push("");
   }
 
-  // ── Step 4: reset sequences to max(id) + 1 ────────────────────────────────
-  lines.push("-- ── Step 4: reset sequences to max(id) + 1 ────────────────────");
+  // ── Step 3: reset sequences to max(id) + 1 ────────────────────────────────
+  lines.push("-- ── Step 3: reset sequences to max(id) + 1 ────────────────────");
   for (const tbl of SERIAL_ID_TABLES) {
     lines.push(
       `SELECT setval(pg_get_serial_sequence('${tbl}', 'id'),` +
@@ -227,12 +216,6 @@ async function main() {
   }
   lines.push("");
 
-  // ── Step 5: re-enable FK triggers ─────────────────────────────────────────
-  lines.push("-- ── Step 5: re-enable FK triggers ─────────────────────────────");
-  for (const tbl of SEED_TABLES_REVERSE) {
-    lines.push(`ALTER TABLE ${tbl} ENABLE TRIGGER ALL;`);
-  }
-  lines.push("");
 
   const content = lines.join("\n");
   writeFileSync(OUTPUT, content, "utf-8");
