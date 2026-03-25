@@ -506,7 +506,7 @@ router.get("/:id/shopify-mapping", async (req, res) => {
     const rows = await db.execute(sql`
       SELECT * FROM recipe_shopify_mappings WHERE recipe_id = ${recipeId}
     `);
-    if (rows.rows.length === 0) { res.status(404).json({ error: "No mapping found for this recipe" }); return; }
+    if (rows.rows.length === 0) { res.json(null); return; }
     res.json(rows.rows[0]);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
