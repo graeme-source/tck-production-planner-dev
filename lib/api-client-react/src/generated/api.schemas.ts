@@ -207,6 +207,12 @@ export interface Recipe {
   baseType?: string | null;
   /** Weight of base per builder in grams */
   baseWeightGrams?: number | null;
+  /** Hex colour used to identify the recipe */
+  color?: string | null;
+  /** Whether this recipe is on the core menu */
+  isCoreMenu?: boolean;
+  /** Whether this recipe is the current Calzone Club Special */
+  isCurrentSpecial?: boolean;
   rawMaterialCostPerBatch: number;
   costPerPortion: number;
   packIngredientCost: number;
@@ -251,11 +257,15 @@ export type RecipeDetail = Recipe & {
 export type CreateRecipeIngredientsItem = {
   ingredientId: number;
   quantity: number;
+  marinadeForIngredientId?: number | null;
+  includeInFillingMix?: boolean;
 };
 
 export type CreateRecipeSubRecipesItem = {
   subRecipeId: number;
   quantity: number;
+  marinadeForIngredientId?: number | null;
+  includeInFillingMix?: boolean;
 };
 
 export interface CreateRecipe {
@@ -278,6 +288,9 @@ export interface CreateRecipe {
   fillWeightGrams?: number | null;
   baseType?: string | null;
   baseWeightGrams?: number | null;
+  color?: string | null;
+  isCoreMenu?: boolean;
+  isCurrentSpecial?: boolean;
   ingredients: CreateRecipeIngredientsItem[];
   subRecipes: CreateRecipeSubRecipesItem[];
 }

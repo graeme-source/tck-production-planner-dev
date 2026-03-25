@@ -642,7 +642,7 @@ function EditRecipeDialog({
         sopUrl: detail.sopUrl ?? "",
         isCoreMenu: detail.isCoreMenu ?? false,
         isCurrentSpecial: detail.isCurrentSpecial ?? false,
-        color: (detail as any).color ?? "",
+        color: detail.color ?? "",
         ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false })),
         subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false })),
       }

@@ -615,16 +615,23 @@ export const CreateRecipeBody = zod.object({
   fillWeightGrams: zod.number().nullish(),
   baseType: zod.string().nullish(),
   baseWeightGrams: zod.number().nullish(),
+  color: zod.string().nullish(),
+  isCoreMenu: zod.boolean().optional(),
+  isCurrentSpecial: zod.boolean().optional(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
       quantity: zod.number(),
+      marinadeForIngredientId: zod.number().nullish(),
+      includeInFillingMix: zod.boolean().optional(),
     }),
   ),
   subRecipes: zod.array(
     zod.object({
       subRecipeId: zod.number(),
       quantity: zod.number(),
+      marinadeForIngredientId: zod.number().nullish(),
+      includeInFillingMix: zod.boolean().optional(),
     }),
   ),
 });
@@ -749,16 +756,23 @@ export const UpdateRecipeBody = zod.object({
   fillWeightGrams: zod.number().nullish(),
   baseType: zod.string().nullish(),
   baseWeightGrams: zod.number().nullish(),
+  color: zod.string().nullish(),
+  isCoreMenu: zod.boolean().optional(),
+  isCurrentSpecial: zod.boolean().optional(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
       quantity: zod.number(),
+      marinadeForIngredientId: zod.number().nullish(),
+      includeInFillingMix: zod.boolean().optional(),
     }),
   ),
   subRecipes: zod.array(
     zod.object({
       subRecipeId: zod.number(),
       quantity: zod.number(),
+      marinadeForIngredientId: zod.number().nullish(),
+      includeInFillingMix: zod.boolean().optional(),
     }),
   ),
 });
