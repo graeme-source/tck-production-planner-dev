@@ -3666,6 +3666,7 @@ function SubRecipeMakeFlow({
   });
 
   const selectSr = (sr: SubRecipePlanRequirement) => {
+    setLoadedDetail(null);
     if (mode === "plan") {
       setState(s => ({ ...s, phase: "stock_check", sr }));
     } else {
@@ -3760,7 +3761,10 @@ function SubRecipeMakeFlow({
         .filter(r => r.name.toLowerCase().includes(search.toLowerCase()))
         .map(resolveStandaloneSr);
 
-  const back = () => setState(s => ({ ...s, phase: "pick", sr: null, stockOnHand: "", batchMultiplier: 1, customBatches: 1, checked: new Set() }));
+  const back = () => {
+    setLoadedDetail(null);
+    setState(s => ({ ...s, phase: "pick", sr: null, stockOnHand: "", batchMultiplier: 1, customBatches: 1, checked: new Set() }));
+  };
 
   if (state.phase === "done") {
     return (

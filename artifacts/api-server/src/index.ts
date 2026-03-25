@@ -299,6 +299,9 @@ async function runStartupMigrations() {
     await db.execute(sql`
       ALTER TABLE purchase_order_lines ADD COLUMN IF NOT EXISTS use_by_date DATE
     `);
+    await db.execute(sql`
+      ALTER TABLE sub_recipes ADD COLUMN IF NOT EXISTS is_base BOOLEAN NOT NULL DEFAULT FALSE
+    `);
     await seedStorageLocations();
     console.log("Startup migrations OK");
   } catch (err) {
