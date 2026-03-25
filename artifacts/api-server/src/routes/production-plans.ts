@@ -1862,6 +1862,7 @@ router.get("/:id/sub-recipe-requirements", async (req, res) => {
       yield: Number(sr.yield),
       yieldUnit: sr.yieldUnit,
       shelfLifeDays: sr.shelfLifeDays,
+      isBase: sr.isBase,
       totalRequired: subRecipeTotals.get(sr.id) ?? 0,
       ingredients: ingRows.map(i => ({
         id: i.id,

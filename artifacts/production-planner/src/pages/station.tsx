@@ -3549,6 +3549,7 @@ interface SubRecipePlanRequirement {
   yield: number;
   yieldUnit: string;
   shelfLifeDays: number | null;
+  isBase?: boolean | null;
   totalRequired: number;
   ingredients: Array<{
     id: number;
@@ -3755,7 +3756,9 @@ function SubRecipeMakeFlow({
   };
 
   const filteredList = mode === "plan"
-    ? planRequirements.filter(r => r.subRecipeName.toLowerCase().includes(search.toLowerCase()))
+    ? planRequirements
+        .filter(r => r.isBase !== false)
+        .filter(r => r.subRecipeName.toLowerCase().includes(search.toLowerCase()))
     : allSubRecipes
         .filter(r => !r.isBase)
         .filter(r => r.name.toLowerCase().includes(search.toLowerCase()))
