@@ -440,14 +440,14 @@ function BreakTracker({ planId, stationType, onBreakChange, onBreakActiveChange 
           <span className="text-xs text-muted-foreground">Breaks:</span>
           <button
             onClick={() => startBreak("morning")}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs border border-border rounded-lg hover:bg-secondary/60 transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-break-action hover:opacity-90 text-break-action-foreground rounded-lg transition-colors font-medium"
           >
             <Coffee className="w-3.5 h-3.5" />
             Snack ({defaults.breakMins}m)
           </button>
           <button
             onClick={() => startBreak("lunch")}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs border border-border rounded-lg hover:bg-secondary/60 transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-break-action hover:opacity-90 text-break-action-foreground rounded-lg transition-colors font-medium"
           >
             <Utensils className="w-3.5 h-3.5" />
             Lunch ({defaults.lunchMins}m)
@@ -2034,6 +2034,10 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     ? Math.round((buildingCount / (currentItem.batchesTarget ?? 0)) * 100)
     : 0;
 
+  const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
+  const totalBatchesDone = items.reduce((s, it) => s + getCombinedBuildCount(it), 0);
+  const overallProgress = totalBatchesTarget > 0 ? Math.round((totalBatchesDone / totalBatchesTarget) * 100) : 0;
+
   return (
     <div className="space-y-4">
       {showEod && (
@@ -2085,6 +2089,31 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
           </div>
         </div>
       )}
+
+      {/* Daily progress + break buttons */}
+      <div className="bg-card border border-border rounded-xl p-4">
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <h2 className="font-semibold">Today's Production</h2>
+            <p className="text-sm text-muted-foreground">
+              {totalBatchesDone} / {totalBatchesTarget} batches complete · Line {lineNumber}
+            </p>
+          </div>
+          <span className="text-2xl font-bold font-display">{overallProgress}%</span>
+        </div>
+        <div className="w-full h-3 bg-secondary rounded-full overflow-hidden">
+          <div
+            className={cn(
+              "h-full rounded-full transition-all",
+              overallProgress >= 100 ? "bg-emerald-500" : "bg-primary"
+            )}
+            style={{ width: `${Math.min(overallProgress, 100)}%` }}
+          />
+        </div>
+        <div className="mt-3 pt-3 border-t border-border/50">
+          <BreakTracker planId={plan.id} stationType={stationType} onBreakChange={handleBreakChange} onBreakActiveChange={setIsOnBreak} />
+        </div>
+      </div>
 
       {/* Current recipe — driving-view focus card */}
       {currentItem ? (
@@ -2320,9 +2349,6 @@ function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
         minBph={minBph}
         serverKpi={serverKpi}
       />
-
-      {/* Break tracker */}
-      <BreakTracker planId={plan.id} stationType={stationType} onBreakChange={handleBreakChange} onBreakActiveChange={setIsOnBreak} />
 
       {/* End of day button + queue */}
       <div className="flex justify-end">
@@ -3238,6 +3264,9 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
             style={{ width: `${Math.min(overallPct, 100)}%` }}
           />
         </div>
+        <div className="mt-3 pt-3 border-t border-border/50">
+          <BreakTracker planId={targetPlanId} stationType="main_prep" onBreakActiveChange={setIsOnBreak} />
+        </div>
       </div>
 
       {ingredients.length === 0 ? (
@@ -3556,7 +3585,6 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
         </div>
       )}
 
-      <BreakTracker planId={targetPlanId} stationType="main_prep" onBreakActiveChange={setIsOnBreak} />
     </div>
   );
 }
@@ -4371,26 +4399,29 @@ function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
       <PrepSubNav planId={plan.id} current="prep_bases" />
 
       {/* Sauce progress bar (excludes Tomato Base which tracks via sub-recipe) */}
-      {ingredients.length > 0 && (
-        <div className="bg-card border border-border rounded-xl p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-3">
-              <Layers className="w-6 h-6 text-yellow-500" />
-              <div>
-                <h2 className="font-semibold text-base">Sauces</h2>
-                <p className="text-xs text-muted-foreground">{completedTins} of {totalTins} tins completed</p>
-              </div>
+      <div className="bg-card border border-border rounded-xl p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <Layers className="w-6 h-6 text-yellow-500" />
+            <div>
+              <h2 className="font-semibold text-base">Sauces</h2>
+              <p className="text-xs text-muted-foreground">
+                {ingredients.length > 0 ? `${completedTins} of ${totalTins} tins completed` : "No sauces to prep"}
+              </p>
             </div>
-            <span className="text-2xl font-bold font-display">{overallPct}%</span>
           </div>
-          <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden">
-            <div
-              className={cn("h-full rounded-full transition-all", overallPct >= 100 ? "bg-yellow-500" : "bg-yellow-400")}
-              style={{ width: `${Math.min(overallPct, 100)}%` }}
-            />
-          </div>
+          <span className="text-2xl font-bold font-display">{ingredients.length > 0 ? `${overallPct}%` : "—"}</span>
         </div>
-      )}
+        <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden mb-3">
+          <div
+            className={cn("h-full rounded-full transition-all", overallPct >= 100 && ingredients.length > 0 ? "bg-yellow-500" : "bg-yellow-400")}
+            style={{ width: `${ingredients.length > 0 ? Math.min(overallPct, 100) : 0}%` }}
+          />
+        </div>
+        <div className="pt-3 border-t border-border/50">
+          <BreakTracker planId={plan.id} stationType="prep_bases" onBreakActiveChange={setIsOnBreak} />
+        </div>
+      </div>
 
       <div className="flex flex-col lg:flex-row gap-4">
         {/* LEFT — Tomato Base pinned at top, then sauce ingredients by recipe */}
@@ -4673,7 +4704,6 @@ function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
         </div>
       </div>
 
-      <BreakTracker planId={plan.id} stationType="prep_bases" onBreakActiveChange={setIsOnBreak} />
     </div>
   );
 }
@@ -4724,20 +4754,34 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
       <PrepSubNav planId={plan.id} current="prep_meat" />
 
       {/* Summary bar */}
-      <div className="bg-card border border-border rounded-xl p-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Beef className="w-6 h-6 text-rose-500" />
-          <div>
-            <h2 className="font-semibold text-base">Raw Meat Prep</h2>
-            <p className="text-xs text-muted-foreground">{recipes.length} recipe{recipes.length !== 1 ? "s" : ""}</p>
+      <div className="bg-card border border-border rounded-xl p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <Beef className="w-6 h-6 text-rose-500" />
+            <div>
+              <h2 className="font-semibold text-base">Raw Meat Prep</h2>
+              <p className="text-xs text-muted-foreground">{recipes.length} recipe{recipes.length !== 1 ? "s" : ""}</p>
+            </div>
+          </div>
+          {totalTrays > 0 && (
+            <div className="text-right">
+              <p className="text-xs text-muted-foreground">Total Trays</p>
+              <p className="text-2xl font-bold text-rose-600 dark:text-rose-400 tabular-nums">{totalTrays}</p>
+            </div>
+          )}
+        </div>
+        <div className="mb-3">
+          <div className="flex items-center justify-between mb-1.5">
+            <p className="text-xs text-muted-foreground">Prep progress</p>
+            <p className="text-xs text-muted-foreground italic">Not tracked at this station</p>
+          </div>
+          <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden">
+            <div className="h-full rounded-full transition-all bg-rose-300 dark:bg-rose-800" style={{ width: "0%" }} />
           </div>
         </div>
-        {totalTrays > 0 && (
-          <div className="text-right">
-            <p className="text-xs text-muted-foreground">Total Trays</p>
-            <p className="text-2xl font-bold text-rose-600 dark:text-rose-400 tabular-nums">{totalTrays}</p>
-          </div>
-        )}
+        <div className="pt-3 border-t border-border/50">
+          <BreakTracker planId={plan.id} stationType="prep_meat" onBreakActiveChange={setIsOnBreak} />
+        </div>
       </div>
 
       {/* Split panel */}
@@ -4913,7 +4957,6 @@ function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
         </div>
       </div>
 
-      <BreakTracker planId={plan.id} stationType="prep_meat" onBreakActiveChange={setIsOnBreak} />
     </div>
   );
 }
@@ -5205,22 +5248,43 @@ function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
         />
       )}
 
-      <div className="flex items-center gap-2 justify-end">
-        <button
-          onClick={() => setActiveView("overview")}
-          className={cn(
-            "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
-            activeView === "overview"
-              ? "bg-background text-foreground shadow-sm border border-border"
-              : "text-muted-foreground hover:text-foreground hover:bg-secondary/40"
-          )}
-        >
-          <ClipboardList className="w-3.5 h-3.5" />
-          Overview
-        </button>
+      <div className="bg-card border border-border rounded-xl p-4">
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <h2 className="font-semibold">Dough Prep Progress</h2>
+            <p className="text-sm text-muted-foreground">
+              {ballCount} of {totalBallsNeeded} balls · {completedMixes.size} / {mixCount} mixes
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-2xl font-bold font-display">{overallPct}%</span>
+            <button
+              onClick={() => setActiveView("overview")}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
+                activeView === "overview"
+                  ? "bg-background text-foreground shadow-sm border border-border"
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/40"
+              )}
+            >
+              <ClipboardList className="w-3.5 h-3.5" />
+              Overview
+            </button>
+          </div>
+        </div>
+        <div className="w-full h-3 bg-secondary rounded-full overflow-hidden">
+          <div
+            className={cn(
+              "h-full rounded-full transition-all",
+              overallPct >= 100 ? "bg-emerald-500" : "bg-amber-500"
+            )}
+            style={{ width: `${Math.min(overallPct, 100)}%` }}
+          />
+        </div>
+        <div className="mt-3 pt-3 border-t border-border/50">
+          <BreakTracker planId={plan.id} stationType="dough_prep" onBreakActiveChange={setIsOnBreak} />
+        </div>
       </div>
-
-      <BreakTracker planId={plan.id} stationType="dough_prep" onBreakActiveChange={setIsOnBreak} />
 
       {activeView === "overview" ? (
         <DoughOverview
@@ -6209,10 +6273,18 @@ function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
   return (
     <div className="space-y-4">
       {allDone ? (
-        <div className="bg-card border-2 border-emerald-400 dark:border-emerald-600 rounded-xl p-6 text-center">
-          <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
-          <h2 className="font-semibold text-lg mb-1">All sheeting complete!</h2>
-          <p className="text-muted-foreground text-sm">{totalSheeted} batches sheeted and passed to builders.</p>
+        <div className="bg-card border-2 border-emerald-400 dark:border-emerald-600 rounded-xl p-6">
+          <div className="text-center mb-4">
+            <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
+            <h2 className="font-semibold text-lg mb-1">All sheeting complete!</h2>
+            <p className="text-muted-foreground text-sm">{totalSheeted} batches sheeted and passed to builders.</p>
+          </div>
+          <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden mb-4">
+            <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: "100%" }} />
+          </div>
+          <div className="pt-3 border-t border-border/50">
+            <BreakTracker planId={plan.id} stationType="dough_sheeting" onBreakActiveChange={setIsOnBreak} />
+          </div>
         </div>
       ) : (
         <div className="bg-card border-2 border-amber-400 dark:border-amber-600 rounded-xl p-5">
@@ -6231,11 +6303,15 @@ function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
             </div>
           </div>
 
-          <div className="w-full bg-secondary rounded-full h-3 mb-4">
+          <div className="w-full bg-secondary rounded-full h-3 mb-3">
             <div
               className="bg-amber-500 h-3 rounded-full transition-all duration-300"
               style={{ width: `${overallProgress}%` }}
             />
+          </div>
+
+          <div className="mb-3 pb-3 border-b border-border/50">
+            <BreakTracker planId={plan.id} stationType="dough_sheeting" onBreakActiveChange={setIsOnBreak} />
           </div>
 
           {nextBallWeight && (
@@ -6264,8 +6340,6 @@ function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
           </div>
         </div>
       )}
-
-      <BreakTracker planId={plan.id} stationType="dough_sheeting" onBreakActiveChange={setIsOnBreak} />
 
       {/* Sheet Extra Balls — secondary collapsible */}
       {extraSheetLoaded && extraSheetItems.length > 0 && (
@@ -7249,6 +7323,18 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
             </div>
           )}
         </div>
+        <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden mb-3">
+          <div
+            className={cn(
+              "h-full rounded-full transition-all",
+              allWrapped ? "bg-emerald-500" : "bg-purple-500"
+            )}
+            style={{ width: `${items.length > 0 ? Math.min(Math.round((wrappedCount / items.length) * 100), 100) : 0}%` }}
+          />
+        </div>
+        <div className="pb-3 border-b border-border/50 mb-3">
+          <BreakTracker planId={plan.id} stationType="wrapping" onBreakActiveChange={setIsOnBreak} />
+        </div>
         <div className="grid grid-cols-3 gap-2 mb-2">
           <div className="text-center bg-secondary/30 rounded-lg py-2">
             <p className="text-xs text-muted-foreground">Gross Packs</p>
@@ -7266,7 +7352,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
             )}
           </div>
         </div>
-        <div className="grid grid-cols-3 gap-2 mb-3">
+        <div className="grid grid-cols-3 gap-2">
           <div className="text-center bg-blue-50 dark:bg-blue-950/20 rounded-lg py-2">
             <p className="text-xs text-blue-700 dark:text-blue-300">Prod Fridge</p>
             <p className="text-lg font-bold tabular-nums text-blue-700 dark:text-blue-300">{totalFridge}</p>
@@ -7275,9 +7361,6 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
             <p className="text-xs text-cyan-700 dark:text-cyan-300">Freezer</p>
             <p className="text-lg font-bold tabular-nums text-cyan-700 dark:text-cyan-300">{items.reduce((s, it) => s + ((it as any).freezerQty ?? 0), 0)}</p>
           </div>
-        </div>
-        <div className="pt-3 border-t border-border/50">
-          <BreakTracker planId={plan.id} stationType="wrapping" onBreakActiveChange={setIsOnBreak} />
         </div>
       </div>
 
@@ -7631,7 +7714,7 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
     <div className="space-y-4">
       {/* Header — single source of date truth */}
       <div className="bg-card border border-border rounded-xl p-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-3">
             <Box className="w-6 h-6 text-indigo-500" />
             <div>
@@ -7644,13 +7727,32 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
               </p>
             </div>
           </div>
-          <button
-            onClick={fetchData}
-            className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
-            title="Refresh"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-          </button>
+          <div className="flex items-center gap-2">
+            {progress && (
+              <span className="text-2xl font-bold font-display">
+                {progress.totalOrders > 0 ? Math.round((progress.totalFulfilled / progress.totalOrders) * 100) : 0}%
+              </span>
+            )}
+            <button
+              onClick={fetchData}
+              className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+            </button>
+          </div>
+        </div>
+        <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden mb-3">
+          <div
+            className={cn(
+              "h-full rounded-full transition-all",
+              progress && progress.totalFulfilled >= progress.totalOrders && progress.totalOrders > 0 ? "bg-emerald-500" : "bg-indigo-500"
+            )}
+            style={{ width: `${progress && progress.totalOrders > 0 ? Math.min(Math.round((progress.totalFulfilled / progress.totalOrders) * 100), 100) : 0}%` }}
+          />
+        </div>
+        <div className="pt-3 border-t border-border/50">
+          <BreakTracker planId={plan.id} stationType="packing" onBreakActiveChange={() => {}} />
         </div>
       </div>
 
@@ -7788,7 +7890,6 @@ function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
         </button>
       )}
 
-      <BreakTracker planId={plan.id} stationType="packing" onBreakActiveChange={() => {}} />
     </div>
   );
 }

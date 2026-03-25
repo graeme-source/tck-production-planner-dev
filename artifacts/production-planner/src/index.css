@@ -44,6 +44,9 @@
   --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
   --color-sidebar-ring: hsl(var(--sidebar-ring));
 
+  --color-break-action: hsl(var(--break-action));
+  --color-break-action-foreground: hsl(var(--break-action-foreground));
+
   --font-sans: 'DM Sans', sans-serif;
   --font-display: 'Outfit', sans-serif;
 
@@ -102,6 +105,9 @@
   --chart-3: 35 60% 60%;
   --chart-4: 180 20% 45%;
   --chart-5: 20 20% 70%;
+
+  --break-action: 38 92% 50%;
+  --break-action-foreground: 0 0% 100%;
 }
 
 .dark {
@@ -144,6 +150,9 @@
   --sidebar-accent: 20 10% 20%;
   --sidebar-accent-foreground: 45 29% 95%;
   --sidebar-ring: 142 30% 45%;
+
+  --break-action: 38 85% 45%;
+  --break-action-foreground: 0 0% 100%;
 }
 
 @layer base {
