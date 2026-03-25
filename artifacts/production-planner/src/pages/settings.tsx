@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { useListUsers, useListCategoryDefaults, useListDptSettings, useListTimingStandards, useListRecipes, useListIngredients } from "@workspace/api-client-react";
@@ -10,6 +10,7 @@ import {
   Plus, Trash2, Edit2, Loader2, Users, ShieldCheck, Eye, Wrench,
   CheckCircle2, XCircle, KeyRound, Package, ChevronDown, ChevronUp,
   Lock, Timer, BarChart2, Coffee, Truck, Mail, Warehouse,
+  Camera, User,
 } from "lucide-react";
 import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { upsertDptSettingByRecipe, updateTimingStandard, getListDptSettingsQueryKey, getListTimingStandardsQueryKey } from "@workspace/api-client-react";
@@ -17,6 +18,10 @@ import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { UserAvatar } from "@/components/user-avatar";
+import { PinNumpad } from "@/components/pin-numpad";
+import { AvatarCropModal } from "@/components/avatar-crop-modal";
+import { useSearch } from "wouter";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -211,13 +216,230 @@ function UserForm({
   );
 }
 
+function ProfileSection() {
+  const { state, refreshUser } = useAuth();
+  const user = state.status === "authenticated" ? state.user : null;
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [cropFile, setCropFile] = useState<File | null>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+    setCropFile(file);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleCropUpload = async (blob: Blob) => {
+    setUploading(true);
+    setCropFile(null);
+    try {
+      const formData = new FormData();
+      formData.append("avatar", blob, "avatar.jpg");
+      const res = await fetch(`${BASE}/api/auth/avatar`, {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      });
+      if (res.ok) {
+        await refreshUser();
+        toast({ title: "Avatar updated!" });
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast({ title: "Upload failed", description: data.error ?? "Unknown error", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Upload failed", description: "Network error", variant: "destructive" });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  if (!user) return null;
+
+  return (
+    <div id="profile-section">
+      {cropFile && (
+        <AvatarCropModal
+          file={cropFile}
+          onUpload={handleCropUpload}
+          onClose={() => setCropFile(null)}
+        />
+      )}
+      <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
+        <User className="w-4 h-4 text-primary" /> Profile & Avatar
+      </h2>
+      <div className="rounded-2xl border border-border bg-card p-6">
+        <div className="flex items-center gap-5">
+          <div className="relative group">
+            <UserAvatar name={user.name} avatarUrl={user.avatarUrl} size="xl" />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              className={cn(
+                "absolute inset-0 rounded-full flex items-center justify-center",
+                "bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity",
+                "text-white cursor-pointer disabled:cursor-not-allowed"
+              )}
+              title="Upload photo"
+            >
+              {uploading ? (
+                <Loader2 className="w-6 h-6 animate-spin" />
+              ) : (
+                <Camera className="w-6 h-6" />
+              )}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              className="hidden"
+              onChange={handleFileChange}
+            />
+          </div>
+          <div>
+            <p className="font-semibold text-lg">{user.name}</p>
+            <p className="text-sm text-muted-foreground capitalize">{user.role}</p>
+            <p className="text-xs text-muted-foreground">{user.email}</p>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              className="mt-2 text-sm text-primary hover:text-primary/80 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+            >
+              <Camera className="w-3.5 h-3.5" />
+              {user.avatarUrl ? "Change photo" : "Upload photo"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PinSection() {
+  const { state, refreshUser } = useAuth();
+  const user = state.status === "authenticated" ? state.user : null;
+  const [step, setStep] = useState<"idle" | "enter" | "confirm">("idle");
+  const [firstPin, setFirstPin] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const handleFirstPin = async (pin: string) => {
+    setFirstPin(pin);
+    setError("");
+    setStep("confirm");
+  };
+
+  const handleConfirmPin = async (pin: string) => {
+    if (pin !== firstPin) {
+      setError("PINs don't match. Please try again.");
+      setStep("enter");
+      setFirstPin("");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const res = await fetch(`${BASE}/api/auth/pin/set`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin }),
+      });
+      if (res.ok) {
+        await refreshUser();
+        toast({ title: user?.hasPin ? "PIN changed!" : "PIN set!" });
+        setStep("idle");
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? "Failed to set PIN");
+        setStep("enter");
+      }
+    } catch {
+      setError("Network error");
+      setStep("enter");
+    } finally {
+      setSaving(false);
+      setFirstPin("");
+    }
+  };
+
+  if (!user) return null;
+
+  return (
+    <div id="pin-section">
+      <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
+        <KeyRound className="w-4 h-4 text-primary" /> Quick-Sign PIN
+      </h2>
+      <div className="rounded-2xl border border-border bg-card p-6">
+        {step === "idle" ? (
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium">
+                {user.hasPin ? "PIN is set" : "No PIN set"}
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {user.hasPin
+                  ? "You can sign in quickly using your 4-digit PIN on this device."
+                  : "Set a 4-digit PIN to sign in quickly from the device login screen."}
+              </p>
+            </div>
+            <button
+              onClick={() => { setError(""); setStep("enter"); }}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90 transition-colors whitespace-nowrap flex-shrink-0"
+            >
+              {user.hasPin ? "Change PIN" : "Set PIN"}
+            </button>
+          </div>
+        ) : (
+          <div className="max-w-xs mx-auto">
+            {step === "enter" && (
+              <>
+                <p className="text-sm text-center text-muted-foreground mb-4">
+                  {user.hasPin ? "Enter your new PIN" : "Choose a 4-digit PIN"}
+                </p>
+                <PinNumpad onComplete={handleFirstPin} error={error} label="" />
+              </>
+            )}
+            {step === "confirm" && (
+              <>
+                <p className="text-sm text-center text-muted-foreground mb-4">
+                  Confirm your new PIN
+                </p>
+                <PinNumpad onComplete={handleConfirmPin} loading={saving} label="" />
+              </>
+            )}
+            <button
+              onClick={() => { setStep("idle"); setError(""); setFirstPin(""); }}
+              className="mt-4 w-full text-sm text-muted-foreground hover:text-foreground transition-colors text-center"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Settings() {
   const { data: users, isLoading } = useListUsers();
   const { createUser, updateUser, deleteUser } = useAppMutations();
   const { state } = useAuth();
   const user = state.status === "authenticated" ? state.user : null;
+  const search = useSearch();
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<AppUser | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(search);
+    const tab = params.get("tab");
+    if (tab === "profile") {
+      document.getElementById("profile-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else if (tab === "pin") {
+      document.getElementById("pin-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [search]);
 
   const createDefaults: CreateValues = {
     name: "", email: "", password: "", role: "viewer", isActive: true,
@@ -256,6 +478,12 @@ export default function Settings() {
         title="Settings"
         description="Manage user accounts and access levels for your team."
       />
+
+      {/* Profile & Avatar */}
+      <ProfileSection />
+
+      {/* PIN */}
+      <PinSection />
 
       {/* Access Level Reference */}
       <div>

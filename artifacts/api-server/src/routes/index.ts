@@ -3,6 +3,7 @@ import { db, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import healthRouter from "./health";
 import authRouter from "./auth";
+import storageRouter from "./storage";
 import ingredientsRouter from "./ingredients";
 import subRecipesRouter from "./sub-recipes";
 import recipesRouter from "./recipes";
@@ -38,6 +39,7 @@ const router: IRouter = Router();
 router.use(healthRouter);
 router.use("/auth", authRouter);
 router.use("/auth", invitesRouter);
+router.use(storageRouter);
 
 // Auth guard for all routes below
 router.use((req: Request, res: Response, next: NextFunction) => {

@@ -1,4 +1,4 @@
-import React, { ReactNode, useState, useEffect } from "react";
+import React, { ReactNode, useState, useEffect, useRef } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/contexts/auth-context";
@@ -27,8 +27,11 @@ import {
   ArrowDownCircle,
   ShoppingCart,
   PackageCheck,
+  KeyRound,
+  User,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { UserAvatar } from "@/components/user-avatar";
 
 type NavItem = { name: string; href: string; icon: React.ComponentType<{ className?: string }> };
 
@@ -63,6 +66,85 @@ const bottomNavItems: NavItem[] = [
 
 const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory"];
 const DISPATCH_PATHS = ["/dispatches", "/locations"];
+
+type AccountButtonUser = { name?: string; role?: string; avatarUrl?: string | null } | null;
+
+function AccountButton({
+  user,
+  logout,
+  onNavigate,
+}: {
+  user: AccountButtonUser;
+  logout: () => void;
+  onNavigate?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-3 p-3 rounded-xl bg-secondary/30 hover:bg-secondary/50 transition-colors"
+      >
+        <UserAvatar name={user?.name ?? "?"} avatarUrl={user?.avatarUrl} size="md" />
+        <div className="flex flex-col min-w-0 flex-1 text-left">
+          <span className="text-sm font-semibold truncate">{user?.name ?? "—"}</span>
+          <span className="text-xs text-muted-foreground capitalize">{user?.role ?? ""}</span>
+        </div>
+        <ChevronDown className={cn("w-4 h-4 text-muted-foreground transition-transform duration-200 flex-shrink-0", open ? "rotate-180" : "")} />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: 4, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 4, scale: 0.97 }}
+            transition={{ duration: 0.15 }}
+            className="absolute bottom-full left-0 right-0 mb-2 bg-card border border-border rounded-xl shadow-lg overflow-hidden z-50"
+          >
+            <Link
+              href="/settings?tab=profile"
+              onClick={() => { setOpen(false); onNavigate?.(); }}
+              className="flex items-center gap-3 px-4 py-3 text-sm text-foreground hover:bg-secondary/50 transition-colors"
+            >
+              <User className="w-4 h-4 text-muted-foreground" />
+              Profile & Avatar
+            </Link>
+            <Link
+              href="/settings?tab=pin"
+              onClick={() => { setOpen(false); onNavigate?.(); }}
+              className="flex items-center gap-3 px-4 py-3 text-sm text-foreground hover:bg-secondary/50 transition-colors"
+            >
+              <KeyRound className="w-4 h-4 text-muted-foreground" />
+              Change PIN
+            </Link>
+            <div className="border-t border-border" />
+            <button
+              onClick={() => { setOpen(false); logout(); onNavigate?.(); }}
+              className="w-full flex items-center gap-3 px-4 py-3 text-sm text-destructive hover:bg-destructive/10 transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+              Sign out
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
 
 function NavLinks({
   visibleNavItems,
@@ -430,22 +512,7 @@ export function Layout({ children }: { children: ReactNode }) {
         />
 
         <div className="p-4 border-t border-border">
-          <div className="flex items-center gap-3 p-3 rounded-xl bg-secondary/30">
-            <div className="w-9 h-9 rounded-full bg-primary/20 text-primary flex items-center justify-center font-semibold text-sm flex-shrink-0">
-              {user?.name?.[0]?.toUpperCase() ?? "?"}
-            </div>
-            <div className="flex flex-col min-w-0 flex-1">
-              <span className="text-sm font-semibold truncate">{user?.name ?? "—"}</span>
-              <span className="text-xs text-muted-foreground capitalize">{user?.role ?? ""}</span>
-            </div>
-            <button
-              onClick={logout}
-              title="Sign out"
-              className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-colors flex-shrink-0"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
+          <AccountButton user={user} logout={logout} />
         </div>
       </aside>
 
@@ -504,22 +571,7 @@ export function Layout({ children }: { children: ReactNode }) {
               />
 
               <div className="p-4 border-t border-border">
-                <div className="flex items-center gap-3 p-3 rounded-xl bg-secondary/30">
-                  <div className="w-9 h-9 rounded-full bg-primary/20 text-primary flex items-center justify-center font-semibold text-sm flex-shrink-0">
-                    {user?.name?.[0]?.toUpperCase() ?? "?"}
-                  </div>
-                  <div className="flex flex-col min-w-0 flex-1">
-                    <span className="text-sm font-semibold truncate">{user?.name ?? "—"}</span>
-                    <span className="text-xs text-muted-foreground capitalize">{user?.role ?? ""}</span>
-                  </div>
-                  <button
-                    onClick={() => { logout(); setMobileOpen(false); }}
-                    title="Sign out"
-                    className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-colors flex-shrink-0"
-                  >
-                    <LogOut className="w-4 h-4" />
-                  </button>
-                </div>
+                <AccountButton user={user} logout={logout} onNavigate={() => setMobileOpen(false)} />
               </div>
             </motion.div>
           </>

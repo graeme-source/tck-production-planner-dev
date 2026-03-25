@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { Layout } from "@/components/layout";
+import { PinSetupModal } from "@/components/pin-setup-modal";
 import Dashboard from "@/pages/dashboard";
 import Ingredients from "@/pages/ingredients";
 import Inventory from "@/pages/inventory";
@@ -85,7 +86,7 @@ function Router() {
 }
 
 function AuthGate() {
-  const { state } = useAuth();
+  const { state, refreshUser } = useAuth();
   const [location] = useLocation();
 
   const isPublicPath = PUBLIC_PATHS.some(p => location.startsWith(p));
@@ -110,6 +111,20 @@ function AuthGate() {
 
   if (state.status === "unauthenticated") {
     return <Login />;
+  }
+
+  const user = state.user;
+  if (!user.hasPin) {
+    return (
+      <PinSetupModal
+        user={user}
+        required
+        onClose={() => {}}
+        onComplete={async () => {
+          await refreshUser();
+        }}
+      />
+    );
   }
 
   return <Router />;

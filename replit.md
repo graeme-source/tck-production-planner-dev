@@ -52,11 +52,35 @@ The application is structured as a pnpm workspace monorepo using TypeScript, com
 - **API Specification:** OpenAPI spec for consistent API design.
 - **Code Generation:** Orval is used to generate React Query hooks (`api-client-react`) and Zod schemas (`api-zod`) from the OpenAPI spec.
 - **Database Schema:** Drizzle ORM schema definitions and database connection logic.
+- **Object Storage:** `lib/object-storage-web` provides GCS-backed file upload utilities (Uppy-based).
 
 **Monorepo Structure:**
 - `artifacts/`: Deployable applications (`api-server`, `production-planner`).
-- `lib/`: Shared libraries (`api-spec`, `api-client-react`, `api-zod`, `db`).
+- `lib/`: Shared libraries (`api-spec`, `api-client-react`, `api-zod`, `db`, `object-storage-web`).
 - `scripts/`: Utility scripts.
+
+# Authentication & User Features
+
+## Quick-Switch Login / PIN Authentication
+- **Login page** has two modes: "picker" (card grid for known device users) and "credential" (email/password form)
+- Device user IDs stored in `localStorage` under key `"tck_device_user_ids"` - never credentials
+- After email/password login, user ID is auto-added to localStorage
+- If user has no PIN after first login, a PIN setup modal is shown before reaching the app
+- **PIN numpad component** (`/src/components/pin-numpad.tsx`): 4-dot indicator, 3-column digit grid, auto-submits on 4th digit
+- **PIN APIs**: `POST /api/auth/pin/set` (set/change), `POST /api/auth/pin/login` (verify), `GET /api/auth/devices/users?ids[]=N` (fetch device user profiles)
+- Rate limiting: 5 failed PIN attempts triggers 15-minute lockout (stored in `pin_attempts`, `pin_locked_until` DB columns)
+
+## User Avatars
+- Users can upload a profile photo via the Settings page Profile & Avatar section
+- Avatar stored in GCS object storage (`PRIVATE_OBJECT_DIR/avatars/`)
+- `GET /api/storage/objects/*path` serves objects; `POST /api/auth/avatar` accepts multipart upload
+- **UserAvatar component** (`/src/components/user-avatar.tsx`): shows image or colored initial fallback with consistent hash-based colors
+- Avatar shown in: sidebar account button, login picker cards, settings profile section
+
+## Sidebar Account Button
+- Bottom-left of sidebar shows `UserAvatar` + user name + role + chevron
+- Clicking opens a popup menu (framer-motion animated) with: Profile & Avatar, Change PIN, Sign out
+- Links navigate to `/settings?tab=profile` and `/settings?tab=pin` which scroll to respective sections
 
 # External Dependencies
 
@@ -65,7 +89,8 @@ The application is structured as a pnpm workspace monorepo using TypeScript, com
 - **TypeScript:** Version 5.9
 - **Database:** PostgreSQL
 - **ORMs:** Drizzle ORM
-- **Authentication Libraries:** `express-session`, `connect-pg-simple`
+- **Authentication Libraries:** `express-session`, `connect-pg-simple`, `bcryptjs`
+- **File Upload:** `multer` (API server), `@google-cloud/storage` (GCS object storage)
 - **Validation Library:** Zod with `drizzle-zod` integration
 - **API Code Generation:** Orval
 - **Frontend Frameworks/Libraries:** React, Vite, Tailwind CSS, shadcn/ui, React Query, react-hook-form, recharts, date-fns, framer-motion

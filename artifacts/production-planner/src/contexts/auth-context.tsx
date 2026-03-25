@@ -1,10 +1,13 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
+import { addDeviceUserId } from "@/lib/device-users";
 
 export type AuthUser = {
   id: number;
   name: string;
   email: string;
   role: "admin" | "manager" | "viewer";
+  avatarUrl: string | null;
+  hasPin: boolean;
 };
 
 type AuthState =
@@ -14,8 +17,10 @@ type AuthState =
 
 type AuthContextValue = {
   state: AuthState;
-  login: (email: string, password: string) => Promise<{ error?: string }>;
+  login: (email: string, password: string) => Promise<{ error?: string; user?: AuthUser }>;
+  pinLogin: (userId: number, pin: string) => Promise<{ error?: string; attemptsLeft?: number; lockedUntil?: string; remainingSeconds?: number }>;
   logout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -28,6 +33,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const res = await fetch("/api/auth/me", { credentials: "include" });
       if (res.ok) {
         const user: AuthUser = await res.json();
+        addDeviceUserId(user.id);
         setState({ status: "authenticated", user });
       } else {
         setState({ status: "unauthenticated" });
@@ -41,6 +47,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     checkSession();
   }, [checkSession]);
 
+  const refreshUser = useCallback(async () => {
+    await checkSession();
+  }, [checkSession]);
+
   const login = useCallback(async (email: string, password: string) => {
     try {
       const res = await fetch("/api/auth/login", {
@@ -51,11 +61,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       if (res.ok) {
         const user: AuthUser = await res.json();
+        addDeviceUserId(user.id);
+        setState({ status: "authenticated", user });
+        return { user };
+      }
+      const data = await res.json().catch(() => ({}));
+      return { error: data.error ?? "Login failed" };
+    } catch {
+      return { error: "Network error — please try again" };
+    }
+  }, []);
+
+  const pinLogin = useCallback(async (userId: number, pin: string) => {
+    try {
+      const res = await fetch("/api/auth/pin/login", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, pin }),
+      });
+      if (res.ok) {
+        const user: AuthUser = await res.json();
+        addDeviceUserId(user.id);
         setState({ status: "authenticated", user });
         return {};
       }
       const data = await res.json().catch(() => ({}));
-      return { error: data.error ?? "Login failed" };
+      return {
+        error: data.error ?? "Login failed",
+        attemptsLeft: data.attemptsLeft,
+        lockedUntil: data.lockedUntil,
+        remainingSeconds: data.remainingSeconds,
+      };
     } catch {
       return { error: "Network error — please try again" };
     }
@@ -67,7 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ state, login, logout }}>
+    <AuthContext.Provider value={{ state, login, pinLogin, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );
