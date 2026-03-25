@@ -266,15 +266,26 @@ router.get("/calculate", async (req, res) => {
     return d.toISOString().slice(0, 10);
   }
 
-  // Shopify order tags are DELIVERY dates (APC next-day: dispatch on day D → delivery on D+1).
-  // dispatch1 = products delivered TODAY (dispatched yesterday) → tag = planDate
-  // dispatch2 = products delivered TOMORROW (dispatched today, our main production target) → tag = planDate+1
-  // dispatch3 = products delivered day-after-tomorrow (dispatched tomorrow) → tag = planDate+2
-  const deliveryDates = [
+  function getNextCalendarDay(dateStr: string): string {
+    const d = new Date(`${dateStr}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + 1);
+    return d.toISOString().slice(0, 10);
+  }
+
+  // Dispatch happens Mon–Fri; delivery is always dispatch + 1 calendar day (APC overnight).
+  // dispatch1 = yesterday's dispatch (reduces fridge stock)
+  // dispatch2 = today's dispatch (main production target)
+  // dispatch3 = tomorrow's dispatch
+  const dispatchDates = [
+    getPreviousWorkingDay(planDate),
     planDate,
     getNextWorkingDay(planDate),
-    getNextWorkingDay(getNextWorkingDay(planDate)),
   ];
+
+  // Shopify order tags are DELIVERY dates = dispatch date + 1 calendar day.
+  // e.g. Thursday dispatch → Friday delivery → Shopify tag "2026-03-27"
+  // e.g. Friday dispatch   → Saturday delivery → Shopify tag "2026-03-28"
+  const deliveryDates = dispatchDates.map(getNextCalendarDay);
 
   const prevProductionDate = getPreviousWorkingDay(planDate);
   const prevPlanItems = await db
@@ -634,10 +645,6 @@ router.get("/calculate", async (req, res) => {
   const unmatchedRecipes = clubSpecialUnmatched
     ? [...unmatchedRecipeNames, `Calzone Club Special (${clubSpecialSales} units — no special recipe is configured)`]
     : unmatchedRecipeNames;
-
-  // dispatchDates = the physical dispatch day for each slot (1 working day before the delivery tag).
-  // e.g. delivery tag "2026-03-27" (Friday) → dispatched "2026-03-26" (Thursday).
-  const dispatchDates = deliveryDates.map(getPreviousWorkingDay);
 
   res.json({
     planDate,
