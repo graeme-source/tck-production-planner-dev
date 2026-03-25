@@ -11,9 +11,12 @@
  * Output:
  *   artifacts/api-server/scripts/prod-seed.sql
  *
- * WARNING: The generated file uses TRUNCATE … CASCADE which is intended for a
- * freshly-provisioned production database only. Do NOT apply it to a database
- * that already contains production plan, purchase order, or dispatch data.
+ * The generated file:
+ *   1. Disables FK triggers on all seed tables
+ *   2. TRUNCATEs seed tables (no CASCADE — triggers are disabled)
+ *   3. INSERTs data in FK-safe forward order
+ *   4. Resets sequences to max(id) + 1 (safe for new rows)
+ *   5. Re-enables FK triggers
  */
 
 import { pool } from "@workspace/db";
@@ -23,6 +26,65 @@ import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUTPUT = join(__dirname, "prod-seed.sql");
+
+// ── Seed tables ─────────────────────────────────────────────────────────────
+// Reverse FK order (most-dependent first) — used for TRUNCATE and for
+// DISABLE/ENABLE TRIGGER statements so we can truncate without CASCADE.
+const SEED_TABLES_REVERSE: string[] = [
+  "ingredient_storage_locations",
+  "kanban_items",
+  "delivery_check_configs",
+  "dpt_settings",
+  "sub_recipe_sub_recipes",
+  "sub_recipe_ingredients",
+  "recipe_shopify_mappings",
+  "recipe_meat_marinades",
+  "recipe_sub_recipes",
+  "recipe_ingredients",
+  "stock_items",
+  "storage_racks",
+  "recipes",
+  "sub_recipes",
+  "ingredients",
+  "sku_locations",
+  "postcode_validations",
+  "page_permissions",
+  "app_settings",
+  "timing_standards",
+  "category_defaults",
+  "stock_item_categories",
+  "storage_locations",
+  "suppliers",
+];
+
+// Tables that have a serial integer PK named "id" — used for sequence resets.
+const SERIAL_ID_TABLES: string[] = [
+  "suppliers",
+  "storage_locations",
+  "category_defaults",
+  "timing_standards",
+  "ingredients",
+  "sub_recipes",
+  "recipes",
+  "storage_racks",
+  "stock_items",
+  "recipe_ingredients",
+  "recipe_sub_recipes",
+  "recipe_meat_marinades",
+  "recipe_shopify_mappings",
+  "sub_recipe_ingredients",
+  "sub_recipe_sub_recipes",
+  "dpt_settings",
+  "delivery_check_configs",
+  "kanban_items",
+  "ingredient_storage_locations",
+  "postcode_validations",
+];
+
+// Forward FK order — used for INSERT statements
+const SEED_TABLES_FORWARD = [...SEED_TABLES_REVERSE].reverse();
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function sqlLiteral(val: unknown): string {
   if (val === null || val === undefined) return "NULL";
@@ -59,109 +121,98 @@ async function queryTable(
   }
 }
 
-async function main() {
-  // ── Tables to truncate in reverse FK order ──────────────────────────────────
-  // Listed from most-dependent (leaf) to least-dependent (root) so that
-  // a single TRUNCATE statement with RESTART IDENTITY (no CASCADE needed when
-  // all seed tables are listed together) respects FK constraints between them.
-  const TRUNCATE_REVERSE_ORDER = [
-    "ingredient_storage_locations",
-    "kanban_items",
-    "delivery_check_configs",
-    "dpt_settings",
-    "sub_recipe_sub_recipes",
-    "sub_recipe_ingredients",
-    "recipe_shopify_mappings",
-    "recipe_meat_marinades",
-    "recipe_sub_recipes",
-    "recipe_ingredients",
-    "stock_items",
-    "storage_racks",
-    "recipes",
-    "sub_recipes",
-    "ingredients",
-    "sku_locations",
-    "postcode_validations",
-    "page_permissions",
-    "app_settings",
-    "timing_standards",
-    "category_defaults",
-    "stock_item_categories",
-    "storage_locations",
-    "suppliers",
-  ].join(",\n  ");
+// ── Main ─────────────────────────────────────────────────────────────────────
 
+async function main() {
   const lines: string[] = [
     "-- ============================================================",
     "-- TCK Production Seed",
     `-- Generated: ${new Date().toISOString()}`,
     "--",
-    "-- !! WARNING: For a FRESHLY-PROVISIONED production database only !!",
-    "-- The TRUNCATE below uses CASCADE, which will also clear any tables",
-    "-- that hold foreign-key references to the seed tables (e.g.",
-    "-- production_plans, purchase_orders, dispatch_orders).  Do NOT run",
-    "-- this against a database that already contains live operational data.",
-    "--",
+    "-- For a FRESHLY-PROVISIONED production database only.",
     "-- Apply via psql:",
-    "--   psql \"$PRODUCTION_DATABASE_URL\" < prod-seed.sql",
+    '--   psql "$PRODUCTION_DATABASE_URL" < prod-seed.sql',
     "--",
-    "-- Or apply via the admin API endpoint (see MIGRATION.md).",
+    "-- Or POST to /api/admin/apply-seed (see MIGRATION.md).",
     "-- ============================================================",
     "",
+    "-- ── Step 1: disable FK triggers on all seed tables ─────────────",
+    "-- (Allows TRUNCATE without CASCADE and order-independent INSERTs)",
   ];
 
-  // ── 1. Truncate all seed tables (CASCADE handles dependent non-seed tables) ─
-  lines.push("-- Step 1: clear seed tables and reset sequences");
+  for (const tbl of SEED_TABLES_REVERSE) {
+    lines.push(`ALTER TABLE ${tbl} DISABLE TRIGGER ALL;`);
+  }
+  lines.push("");
+
+  // ── Step 2: TRUNCATE (no CASCADE — triggers are disabled) ─────────
+  lines.push("-- ── Step 2: clear seed tables ─────────────────────────────────");
   lines.push("TRUNCATE TABLE");
-  lines.push(`  ${TRUNCATE_REVERSE_ORDER}`);
-  lines.push("RESTART IDENTITY CASCADE;");
+  lines.push("  " + SEED_TABLES_REVERSE.join(",\n  ") + ";");
   lines.push("");
 
-  // ── 2. Insert data in FK-safe forward order ─────────────────────────────────
-  lines.push("-- Step 2: insert seed data (FK-safe order)");
+  // ── Step 3: INSERT in FK-safe forward order ────────────────────────
+  lines.push("-- ── Step 3: insert seed data (FK-safe order) ──────────────────");
   lines.push("");
 
-  const dump = async (tableName: string, orderBy: string) => {
+  const insertOrder: Array<[string, string]> = [
+    ["suppliers",                    "id"],
+    ["storage_locations",            "id"],
+    ["stock_item_categories",        "name"],
+    ["category_defaults",            "id"],
+    ["timing_standards",             "id"],
+    ["app_settings",                 "key"],
+    ["page_permissions",             "page_key"],
+    ["postcode_validations",         "shopify_order_id, service_code"],
+    ["sku_locations",                "sku"],
+    // Depend on suppliers
+    ["ingredients",                  "id"],
+    ["stock_items",                  "id"],
+    ["delivery_check_configs",       "id"],
+    // No FK in table itself
+    ["sub_recipes",                  "id"],
+    ["recipes",                      "id"],
+    // Depends on storage_locations
+    ["storage_racks",                "id"],
+    // Junction / child tables
+    ["recipe_ingredients",           "id"],
+    ["recipe_sub_recipes",           "id"],
+    ["recipe_meat_marinades",        "id"],
+    ["recipe_shopify_mappings",      "id"],
+    ["sub_recipe_ingredients",       "id"],
+    ["sub_recipe_sub_recipes",       "id"],
+    ["dpt_settings",                 "id"],
+    ["kanban_items",                 "id"],
+    // ingredient_storage_locations: no quantity/amount columns in schema
+    // (columns are id, ingredient_id, location_id, rack_label, shelf_label)
+    // — copied as-is
+    ["ingredient_storage_locations", "id"],
+  ];
+
+  for (const [tableName, orderBy] of insertOrder) {
     console.log(`  Exporting ${tableName}...`);
     const rows = await queryTable(tableName, orderBy);
     lines.push(`-- TABLE: ${tableName} (${rows.length} rows)`);
     lines.push(buildInsert(tableName, rows));
     lines.push("");
-  };
+  }
 
-  // No FK deps
-  await dump("suppliers",             "id");
-  await dump("storage_locations",     "id");
-  await dump("stock_item_categories", "name");
-  await dump("category_defaults",     "id");
-  await dump("timing_standards",      "id");
-  await dump("app_settings",          "key");
-  await dump("page_permissions",      "page_key");
-  await dump("postcode_validations",  "shopify_order_id, service_code");
-  await dump("sku_locations",         "sku");
+  // ── Step 4: reset sequences to max(id) + 1 ───────────────────────
+  lines.push("-- ── Step 4: reset sequences to max(id) + 1 ────────────────────");
+  for (const tbl of SERIAL_ID_TABLES) {
+    lines.push(
+      `SELECT setval(pg_get_serial_sequence('${tbl}', 'id'),` +
+      ` COALESCE((SELECT MAX(id) FROM ${tbl}), 0) + 1, false);`,
+    );
+  }
+  lines.push("");
 
-  // Depend on suppliers
-  await dump("ingredients",           "id");
-  await dump("stock_items",           "id");
-  await dump("delivery_check_configs","id");
-
-  // No FK in table itself
-  await dump("sub_recipes",           "id");
-  await dump("recipes",               "id");
-
-  // Depends on storage_locations
-  await dump("storage_racks",         "id");
-
-  // Junction / child tables
-  await dump("recipe_ingredients",         "id");
-  await dump("recipe_sub_recipes",         "id");
-  await dump("recipe_meat_marinades",      "id");
-  await dump("recipe_shopify_mappings",    "id");
-  await dump("sub_recipe_ingredients",     "id");
-  await dump("sub_recipe_sub_recipes",     "id");
-  await dump("dpt_settings",              "id");
-  await dump("kanban_items",              "id");
-  await dump("ingredient_storage_locations", "id");
+  // ── Step 5: re-enable FK triggers ────────────────────────────────
+  lines.push("-- ── Step 5: re-enable FK triggers ─────────────────────────────");
+  for (const tbl of SEED_TABLES_REVERSE) {
+    lines.push(`ALTER TABLE ${tbl} ENABLE TRIGGER ALL;`);
+  }
+  lines.push("");
 
   const content = lines.join("\n");
   writeFileSync(OUTPUT, content, "utf-8");
