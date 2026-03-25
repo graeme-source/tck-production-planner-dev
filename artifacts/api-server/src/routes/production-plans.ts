@@ -2683,17 +2683,17 @@ router.delete("/:id/items/:itemId/wonly", async (req, res) => {
 // ──────────────────────────────────────────────────────────────────────────────
 // PATCH /:id/items/:itemId/wrapping-complete — toggle wrapping done for a plan item.
 // When completing (complete=true):
-//   • Auto-freezes wonky (reject) packs to production_freezer stock.
-//   • If a Shopify mapping exists for the recipe AND netPacks is sent, adjusts Shopify inventory.
-// Body: { complete: boolean, netPacks?: number }
+//   • Reads freezerQty from the item BEFORE any updates (used as Shopify delta base).
+//   • Auto-freezes wonky (reject) packs to production_freezer stock; also zeroes
+//     wonlyCount and updates freezerQty so /wonky-to-freezer cannot double-count.
+//   • If a Shopify mapping exists, always adjusts Shopify inventory by
+//     (pre-update freezerQty + wonkyFrozen) — computed server-side, no client value.
+// Body: { complete: boolean }
 // ──────────────────────────────────────────────────────────────────────────────
 router.patch("/:id/items/:itemId/wrapping-complete", async (req, res) => {
   const planId = Number(req.params.id);
   const itemId = Number(req.params.itemId);
   const complete = req.body.complete;
-  const netPacks: number | undefined = typeof req.body.netPacks === "number" && req.body.netPacks > 0
-    ? Math.floor(req.body.netPacks)
-    : undefined;
 
   if (typeof complete !== "boolean") {
     res.status(400).json({ error: "Body must contain { complete: boolean }" });
@@ -2704,6 +2704,8 @@ router.patch("/:id/items/:itemId/wrapping-complete", async (req, res) => {
     id: productionPlanItemsTable.id,
     recipeId: productionPlanItemsTable.recipeId,
     wonlyCount: productionPlanItemsTable.wonlyCount,
+    // Read freezerQty BEFORE any updates so we can compute the Shopify delta.
+    freezerQty: productionPlanItemsTable.freezerQty,
   })
     .from(productionPlanItemsTable)
     .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
@@ -2738,8 +2740,11 @@ router.patch("/:id/items/:itemId/wrapping-complete", async (req, res) => {
         .where(eq(productionPlanItemsTable.id, itemId));
     }
 
-    // Shopify inventory sync (only when netPacks explicitly provided by client)
-    if (netPacks !== undefined) {
+    // Shopify inventory sync — delta computed server-side as:
+    //   (packs already committed to Product Freezer) + (wonky packs just frozen)
+    // This avoids relying on any client-supplied value.
+    const shopifyDelta = Number(item.freezerQty) + wonkyFrozen;
+    if (shopifyDelta > 0) {
       const mappingRows = await db.execute(sql`
         SELECT shopify_variant_id, shopify_product_title, shopify_variant_title
         FROM recipe_shopify_mappings WHERE recipe_id = ${item.recipeId}
@@ -2753,7 +2758,7 @@ router.patch("/:id/items/:itemId/wrapping-complete", async (req, res) => {
         shopifyProductTitle = mapping.shopify_product_title;
         shopifyVariantTitle = mapping.shopify_variant_title;
         try {
-          const adj = await adjustInventoryLevel(mapping.shopify_variant_id, netPacks);
+          const adj = await adjustInventoryLevel(mapping.shopify_variant_id, shopifyDelta);
           shopifyNewQty = adj.newQuantity;
         } catch (err: unknown) {
           shopifyError = err instanceof Error ? err.message : String(err);

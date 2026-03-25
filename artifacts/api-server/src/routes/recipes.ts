@@ -6,6 +6,14 @@ import { sql } from "drizzle-orm";
 import { CreateRecipeBody, UpdateRecipeBody } from "@workspace/api-zod";
 import { validate } from "../middleware/validate";
 import { computeSubRecipeCosts } from "../lib/sub-recipe-costs";
+import * as z from "zod";
+
+const RecipeIdParams = z.object({ id: z.coerce.number().int().positive() });
+const ShopifyMappingBody = z.object({
+  shopifyVariantId: z.string().min(1, "shopifyVariantId is required"),
+  shopifyProductTitle: z.string().optional(),
+  shopifyVariantTitle: z.string().optional(),
+});
 
 const router: IRouter = Router();
 
@@ -491,11 +499,9 @@ router.delete("/:id", async (req, res) => {
 // ── Recipe → Shopify variant mapping CRUD ────────────────────────────────────
 
 router.get("/:id/shopify-mapping", async (req, res) => {
-  const recipeId = Number(req.params.id);
-  if (!Number.isInteger(recipeId) || recipeId < 1) {
-    res.status(400).json({ error: "Invalid id" });
-    return;
-  }
+  const parsed = RecipeIdParams.safeParse({ id: req.params.id });
+  if (!parsed.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
+  const recipeId = parsed.data.id;
   try {
     const rows = await db.execute(sql`
       SELECT * FROM recipe_shopify_mappings WHERE recipe_id = ${recipeId}
@@ -509,20 +515,15 @@ router.get("/:id/shopify-mapping", async (req, res) => {
 });
 
 router.put("/:id/shopify-mapping", async (req, res) => {
-  const recipeId = Number(req.params.id);
-  if (!Number.isInteger(recipeId) || recipeId < 1) {
-    res.status(400).json({ error: "Invalid id" });
+  const parsedParams = RecipeIdParams.safeParse({ id: req.params.id });
+  if (!parsedParams.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
+  const parsedBody = ShopifyMappingBody.safeParse(req.body);
+  if (!parsedBody.success) {
+    res.status(400).json({ error: parsedBody.error.issues[0]?.message ?? "Invalid request body" });
     return;
   }
-  const { shopifyVariantId, shopifyProductTitle, shopifyVariantTitle } = req.body as {
-    shopifyVariantId?: string;
-    shopifyProductTitle?: string;
-    shopifyVariantTitle?: string;
-  };
-  if (!shopifyVariantId || typeof shopifyVariantId !== "string") {
-    res.status(400).json({ error: "shopifyVariantId (string) is required" });
-    return;
-  }
+  const recipeId = parsedParams.data.id;
+  const { shopifyVariantId, shopifyProductTitle, shopifyVariantTitle } = parsedBody.data;
   try {
     const [recipe] = await db.select({ id: recipesTable.id }).from(recipesTable).where(eq(recipesTable.id, recipeId));
     if (!recipe) { res.status(404).json({ error: "Recipe not found" }); return; }
@@ -543,11 +544,9 @@ router.put("/:id/shopify-mapping", async (req, res) => {
 });
 
 router.delete("/:id/shopify-mapping", async (req, res) => {
-  const recipeId = Number(req.params.id);
-  if (!Number.isInteger(recipeId) || recipeId < 1) {
-    res.status(400).json({ error: "Invalid id" });
-    return;
-  }
+  const parsed = RecipeIdParams.safeParse({ id: req.params.id });
+  if (!parsed.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
+  const recipeId = parsed.data.id;
   try {
     await db.execute(sql`DELETE FROM recipe_shopify_mappings WHERE recipe_id = ${recipeId}`);
     res.json({ ok: true });

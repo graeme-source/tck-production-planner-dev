@@ -7103,7 +7103,6 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
 // ── Shopify confirm dialog for wrapping-complete ──────────────────────────────
 interface ShopifyWrapConfirmState {
   item: ProductionPlanItem;
-  netPacks: number;
   productTitle: string;
   variantTitle: string | null;
 }
@@ -7213,16 +7212,14 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
       .catch(() => {});
   }, []);
 
-  const sendWrappingComplete = async (item: ProductionPlanItem, complete: boolean, withNetPacks?: number) => {
+  const sendWrappingComplete = async (item: ProductionPlanItem, complete: boolean) => {
     setWrappingLoading(item.id);
     try {
-      const body: Record<string, unknown> = { complete };
-      if (complete && withNetPacks !== undefined) body.netPacks = withNetPacks;
       const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/wrapping-complete`, {
         method: "PATCH",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ complete }),
       });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const data = await res.json() as { wonkyFrozen?: number; shopifyProductTitle?: string | null; shopifyNewQty?: number | null; shopifyError?: string | null };
@@ -7250,9 +7247,8 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
     const newValue = !item.wrappingComplete;
     if (newValue) {
       const mapping = item.recipeId ? shopifyMappings[item.recipeId] : undefined;
-      const np = netPacks(item);
-      if (mapping && np > 0) {
-        setShopifyConfirm({ item, netPacks: np, productTitle: mapping.productTitle, variantTitle: mapping.variantTitle });
+      if (mapping) {
+        setShopifyConfirm({ item, productTitle: mapping.productTitle, variantTitle: mapping.variantTitle });
         return;
       }
       await sendWrappingComplete(item, true);
@@ -7339,23 +7335,15 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
     <div className="space-y-4">
       {shopifyConfirm && (
         <ShopifyConfirmDialog
-          title="Sync Shopify inventory?"
-          description="This will adjust live stock on your store."
+          title="Shopify inventory will be updated"
+          description="Marking this recipe complete will sync frozen packs to Shopify inventory."
           products={[{
             name: shopifyConfirm.variantTitle
               ? `${shopifyConfirm.productTitle} – ${shopifyConfirm.variantTitle}`
               : shopifyConfirm.productTitle,
-            quantity: shopifyConfirm.netPacks,
-            quantityLabel: "packs",
           }]}
           confirmLabel="Confirm & sync"
-          skipLabel="Skip sync"
           onConfirm={async () => {
-            const { item, netPacks: np } = shopifyConfirm;
-            setShopifyConfirm(null);
-            await sendWrappingComplete(item, true, np);
-          }}
-          onSkip={async () => {
             const { item } = shopifyConfirm;
             setShopifyConfirm(null);
             await sendWrappingComplete(item, true);
