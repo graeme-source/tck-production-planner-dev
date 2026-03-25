@@ -1496,7 +1496,12 @@ router.get("/:id/prep-requirements", async (req, res) => {
   } else if (station === "prep_veg") {
     items = items.filter(i => i.category === "vegetable");
   } else if (station === "prep_bases") {
-    items = items.filter(i => ["base", "sauce", "cheese"].includes(i.category ?? ""));
+    items = items.filter(i => {
+      if (!["base", "sauce", "cheese"].includes(i.category ?? "")) return false;
+      const name = (i.ingredientName ?? "").toLowerCase();
+      if (name.includes("mozzarella") || name.includes("fior di latte")) return false;
+      return true;
+    });
   }
 
   const plan = await db.select({ planDate: productionPlansTable.planDate }).from(productionPlansTable).where(eq(productionPlansTable.id, planId)).limit(1);
@@ -1616,8 +1621,9 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
 
       if (!isMainStation) continue;
 
-      // Mozzarella is loaded directly to the building fridges — exclude from all prep stations
-      if ((ing.ingredientName ?? "").toLowerCase().includes("mozzarella")) continue;
+      // Mozzarella / Fior Di Latte is loaded directly to the building fridges — exclude from all prep stations
+      const ingNameLc = (ing.ingredientName ?? "").toLowerCase();
+      if (ingNameLc.includes("mozzarella") || ingNameLc.includes("fior di latte")) continue;
 
       hasRelevantIngredients = true;
       // At non-prep_meat stations use only the non-marinade portion of the quantity.
@@ -2118,7 +2124,12 @@ router.get("/:id/ingredient-requirements", async (req, res) => {
   } else if (station === "prep_veg") {
     ingredients = ingredients.filter(i => i.category === "vegetable");
   } else if (station === "prep_bases") {
-    ingredients = ingredients.filter(i => ["base", "sauce", "cheese"].includes(i.category ?? ""));
+    ingredients = ingredients.filter(i => {
+      if (!["base", "sauce", "cheese"].includes(i.category ?? "")) return false;
+      const name = (i.ingredientName ?? "").toLowerCase();
+      if (name.includes("mozzarella") || name.includes("fior di latte")) return false;
+      return true;
+    });
   }
 
   ingredients.sort((a, b) => a.ingredientName.localeCompare(b.ingredientName));
@@ -3076,9 +3087,12 @@ router.get("/:id/main-prep", async (req, res) => {
       const cat = row.category ?? "";
       if (station === "prep_bases") {
         if (!BASES_CATEGORIES.includes(cat)) continue;
+        const rowNameLc = (row.ingredientName ?? "").toLowerCase();
+        if (rowNameLc.includes("mozzarella") || rowNameLc.includes("fior di latte")) continue;
       } else {
         if (MAIN_PREP_EXCLUDED.includes(cat)) continue;
-        if ((row.ingredientName ?? "").toLowerCase().includes("mozzarella")) continue;
+        const rowNameLc = (row.ingredientName ?? "").toLowerCase();
+        if (rowNameLc.includes("mozzarella") || rowNameLc.includes("fior di latte")) continue;
       }
 
       const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
