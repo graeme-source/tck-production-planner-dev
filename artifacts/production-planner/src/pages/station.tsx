@@ -6332,7 +6332,7 @@ function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
             <button
               onClick={sheetNext}
               disabled={isOnBreak || !nextItem}
-              className="flex-1 flex items-center justify-center gap-2 px-6 py-3 text-base rounded-xl bg-amber-500 text-white font-semibold hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              className="flex-1 flex items-center justify-center gap-2 px-6 py-3 text-base rounded-xl bg-primary text-primary-foreground font-semibold hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               <Plus className="w-5 h-5" />
               Sheet Batch
