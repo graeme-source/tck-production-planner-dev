@@ -365,11 +365,21 @@ async function seedAdminIfNeeded() {
 }
 
 async function startup() {
-  await runStartupMigrations();
-  await seedAdminIfNeeded();
+  // Listen immediately so the deployment health-check can pass quickly,
+  // then run migrations and seeding in the background.
   app.listen(port, () => {
     console.log(`Server listening on port ${port}`);
   });
+
+  try {
+    await runStartupMigrations();
+    await seedAdminIfNeeded();
+  } catch (err) {
+    console.error(
+      "Background startup tasks failed:",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
 }
 
 startup();
