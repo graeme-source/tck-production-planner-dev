@@ -1497,7 +1497,7 @@ router.get("/:id/prep-requirements", async (req, res) => {
     items = items.filter(i => i.category === "vegetable");
   } else if (station === "prep_bases") {
     items = items.filter(i => {
-      if (!["base", "sauce", "cheese"].includes(i.category ?? "")) return false;
+      if (!["base", "sauce"].includes(i.category ?? "")) return false;
       const name = (i.ingredientName ?? "").toLowerCase();
       if (name.includes("mozzarella") || name.includes("fior di latte")) return false;
       return true;
@@ -1548,7 +1548,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
   const categoryMatchesStation = (category: string | null): boolean => {
     if (station === "prep_meat") return category === "raw_meat";
     if (station === "prep_veg") return category === "vegetable";
-    if (station === "prep_bases") return ["base", "sauce", "cheese"].includes(category ?? "");
+    if (station === "prep_bases") return ["base", "sauce"].includes(category ?? "");
     return true;
   };
 
@@ -2259,7 +2259,7 @@ router.get("/:id/ingredient-requirements", async (req, res) => {
     ingredients = ingredients.filter(i => i.category === "vegetable");
   } else if (station === "prep_bases") {
     ingredients = ingredients.filter(i => {
-      if (!["base", "sauce", "cheese"].includes(i.category ?? "")) return false;
+      if (!["base", "sauce"].includes(i.category ?? "")) return false;
       const name = (i.ingredientName ?? "").toLowerCase();
       if (name.includes("mozzarella") || name.includes("fior di latte")) return false;
       return true;
@@ -3164,7 +3164,7 @@ router.get("/:id/main-prep", async (req, res) => {
     return;
   }
 
-  const BASES_CATEGORIES = ["base", "sauce", "cheese"];
+  const BASES_CATEGORIES = ["base", "sauce"];
   const MAIN_PREP_EXCLUDED = ["raw_meat", "base", "sauce", "dough"];
 
   const ingredientMap = new Map<number, {
