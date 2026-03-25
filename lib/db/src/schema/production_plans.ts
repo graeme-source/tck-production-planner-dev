@@ -93,12 +93,12 @@ export const prepCompletionsTable = pgTable("prep_completions", {
   id: serial("id").primaryKey(),
   planId: integer("plan_id").notNull().references(() => productionPlansTable.id, { onDelete: "cascade" }),
   ingredientId: integer("ingredient_id").notNull().references(() => ingredientsTable.id, { onDelete: "cascade" }),
-  recipeId: integer("recipe_id").references(() => recipesTable.id, { onDelete: "cascade" }),
+  recipeId: integer("recipe_id").notNull().references(() => recipesTable.id, { onDelete: "cascade" }),
   tinNumber: integer("tin_number").notNull(),
   userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
   completedAt: timestamp("completed_at").notNull().defaultNow(),
 }, (table) => [
-  unique("uq_prep_completion_v2").on(table.planId, table.ingredientId, table.tinNumber),
+  unique("uq_prep_completion_v3").on(table.planId, table.ingredientId, table.recipeId, table.tinNumber),
 ]);
 
 export const dailyStockChecksTable = pgTable("daily_stock_checks", {

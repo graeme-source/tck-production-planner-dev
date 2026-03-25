@@ -302,6 +302,19 @@ async function runStartupMigrations() {
     await db.execute(sql`
       ALTER TABLE sub_recipes ADD COLUMN IF NOT EXISTS is_base BOOLEAN NOT NULL DEFAULT FALSE
     `);
+    await db.execute(sql`
+      DELETE FROM prep_completions WHERE recipe_id IS NULL
+    `);
+    await db.execute(sql`
+      ALTER TABLE prep_completions ALTER COLUMN recipe_id SET NOT NULL
+    `);
+    await db.execute(sql`
+      DROP INDEX IF EXISTS uq_prep_completion_v2
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_prep_completion_v3
+      ON prep_completions (plan_id, ingredient_id, recipe_id, tin_number)
+    `);
     await seedStorageLocations();
     console.log("Startup migrations OK");
   } catch (err) {

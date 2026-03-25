@@ -2835,7 +2835,7 @@ interface MainPrepIngredient {
 interface PrepTinCompletion {
   id: number;
   ingredientId: number;
-  recipeId: number | null;
+  recipeId: number;
   tinNumber: number;
   userId: number | null;
   userName: string | null;
@@ -2962,12 +2962,11 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const ingredients = data?.ingredients ?? [];
   const completions = data?.completions ?? [];
 
-  // Shared completion: match by ingredientId + tinNumber only (no recipeId)
-  const isCompleted = (ingredientId: number, tinNumber: number) =>
-    completions.some(c => c.ingredientId === ingredientId && c.tinNumber === tinNumber);
+  const isCompleted = (ingredientId: number, recipeId: number, tinNumber: number) =>
+    completions.some(c => c.ingredientId === ingredientId && c.recipeId === recipeId && c.tinNumber === tinNumber);
 
-  const getCompletion = (ingredientId: number, tinNumber: number) =>
-    completions.find(c => c.ingredientId === ingredientId && c.tinNumber === tinNumber);
+  const getCompletion = (ingredientId: number, recipeId: number, tinNumber: number) =>
+    completions.find(c => c.ingredientId === ingredientId && c.recipeId === recipeId && c.tinNumber === tinNumber);
 
   const todayDayName = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date().getDay()];
 
@@ -2978,9 +2977,14 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   };
 
   const ingredientDoneStatus = (ing: MainPrepIngredient) => {
-    const totalTinCount = ing.totalTinCount;
-    const completedTinCount = Array.from({ length: totalTinCount }, (_, i) => i + 1)
-      .filter(tn => isCompleted(ing.ingredientId, tn)).length;
+    let totalTinCount = 0;
+    let completedTinCount = 0;
+    for (const r of ing.recipes) {
+      totalTinCount += r.tinCount;
+      for (let tn = 1; tn <= r.tinCount; tn++) {
+        if (isCompleted(ing.ingredientId, r.recipeId, tn)) completedTinCount++;
+      }
+    }
     const allTinsDone = totalTinCount > 0 && completedTinCount >= totalTinCount;
     const stockSaved = stockValues[ing.ingredientId] !== undefined && stockValues[ing.ingredientId] !== "";
     const activeStockCheck = stockCheckActiveToday(ing);
@@ -2989,12 +2993,21 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     return { allTinsDone, needsStockCheck, stockSaved, isFullyDone, totalTinCount, completedTinCount };
   };
 
-  // Returns deduplicated initials for every user who has completed at least one tin for this ingredient
-  const getPreppedByInitials = (ingredientId: number): { initials: string; fullName: string }[] => {
+  const recipeIngredientStatus = (ing: MainPrepIngredient, recipeId: number) => {
+    const recipe = ing.recipes.find(r => r.recipeId === recipeId);
+    if (!recipe) return { completedTins: 0, totalTins: 0, allDone: false };
+    const totalTins = recipe.tinCount;
+    const completedTins = Array.from({ length: totalTins }, (_, i) => i + 1)
+      .filter(tn => isCompleted(ing.ingredientId, recipeId, tn)).length;
+    return { completedTins, totalTins, allDone: totalTins > 0 && completedTins >= totalTins };
+  };
+
+  const getPreppedByInitials = (ingredientId: number, recipeId?: number): { initials: string; fullName: string }[] => {
     const seen = new Set<string>();
     const result: { initials: string; fullName: string }[] = [];
     for (const c of completions) {
       if (c.ingredientId !== ingredientId || !c.userName) continue;
+      if (recipeId !== undefined && c.recipeId !== recipeId) continue;
       if (seen.has(c.userName)) continue;
       seen.add(c.userName);
       result.push({
@@ -3035,22 +3048,22 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
 
   const selectedIngredient = ingredients.find(i => i.ingredientId === selectedIngredientId) ?? null;
 
-  const toggleTin = async (ingredientId: number, tinNumber: number) => {
+  const toggleTin = async (ingredientId: number, recipeId: number, tinNumber: number) => {
     if (isOnBreak) return;
     activeIngIdRef.current = ingredientId;
     postPresence(ingredientId);
-    const existing = getCompletion(ingredientId, tinNumber);
+    const existing = getCompletion(ingredientId, recipeId, tinNumber);
     if (existing) {
       await fetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
         method: "DELETE", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ingredientId, tinNumber }),
+        body: JSON.stringify({ ingredientId, recipeId, tinNumber }),
       });
     } else {
       await fetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ingredientId, tinNumber }),
+        body: JSON.stringify({ ingredientId, recipeId, tinNumber }),
       });
     }
     refetch();
@@ -3166,9 +3179,8 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                         {group.batchesTarget} batch{group.batchesTarget !== 1 ? "es" : ""}
                       </span>
                     </div>
-                    {/* Ingredient rows for this recipe */}
                     {group.items.map(({ ing, qtyForRecipe }) => {
-                      const status = ingredientDoneStatus(ing);
+                      const rStatus = recipeIngredientStatus(ing, group.recipeId);
                       const isSelected = ing.ingredientId === selectedIngredientId;
                       const presence = presenceData[ing.ingredientId] ?? [];
                       return (
@@ -3184,21 +3196,20 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                             isSelected
                               ? "bg-emerald-500/10 border-l-4 border-l-emerald-500"
                               : "hover:bg-secondary/40 border-l-4 border-l-transparent",
-                            status.isFullyDone && !isSelected && "opacity-60"
+                            rStatus.allDone && !isSelected && "opacity-60"
                           )}
                         >
-                          {/* Completion indicator */}
                           <div className="flex-shrink-0">
-                            {status.isFullyDone ? (
+                            {rStatus.allDone ? (
                               <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                            ) : status.totalTinCount > 0 ? (
+                            ) : rStatus.totalTins > 0 ? (
                               <div className="relative w-4 h-4">
                                 <svg className="w-4 h-4 -rotate-90" viewBox="0 0 16 16">
                                   <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="2" className="text-border" />
-                                  {status.completedTinCount > 0 && (
+                                  {rStatus.completedTins > 0 && (
                                     <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="2"
                                       className="text-emerald-500"
-                                      strokeDasharray={`${(status.completedTinCount / status.totalTinCount) * 37.7} 37.7`}
+                                      strokeDasharray={`${(rStatus.completedTins / rStatus.totalTins) * 37.7} 37.7`}
                                     />
                                   )}
                                 </svg>
@@ -3207,12 +3218,11 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                               <div className="w-4 h-4 rounded-full border-2 border-muted-foreground/30" />
                             )}
                           </div>
-                          {/* Name + qty */}
                           <div className="min-w-0 flex-1">
                             <p className={cn(
                               "text-sm font-medium truncate",
                               isSelected && "font-semibold",
-                              status.isFullyDone && "line-through text-muted-foreground"
+                              rStatus.allDone && "line-through text-muted-foreground"
                             )}>
                               {ing.ingredientName}
                               {presence.length > 0 && <span className="ml-1 text-[10px] text-blue-500">👁</span>}
@@ -3222,9 +3232,8 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                               {ing.recipes.length > 1 && <span className="ml-1 text-amber-500">shared</span>}
                             </p>
                           </div>
-                          {/* Tins fraction + who-prepped initials */}
                           <div className="flex items-center gap-1 flex-shrink-0">
-                            {status.completedTinCount > 0 && getPreppedByInitials(ing.ingredientId).map(({ initials, fullName }) => (
+                            {rStatus.completedTins > 0 && getPreppedByInitials(ing.ingredientId, group.recipeId).map(({ initials, fullName }) => (
                               <span
                                 key={fullName}
                                 title={fullName}
@@ -3233,12 +3242,12 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                                 {initials}
                               </span>
                             ))}
-                            {status.totalTinCount > 0 && (
+                            {rStatus.totalTins > 0 && (
                               <span className={cn(
                                 "text-xs tabular-nums",
-                                status.isFullyDone ? "text-emerald-600 font-semibold" : "text-muted-foreground"
+                                rStatus.allDone ? "text-emerald-600 font-semibold" : "text-muted-foreground"
                               )}>
-                                {status.completedTinCount}/{status.totalTinCount}
+                                {rStatus.completedTins}/{rStatus.totalTins}
                               </span>
                             )}
                           </div>
@@ -3258,8 +3267,6 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
               const status = ingredientDoneStatus(ing);
               const presence = presenceData[ing.ingredientId] ?? [];
               const isShared = ing.recipes.length > 1;
-              const tins = Array.from({ length: ing.totalTinCount }, (_, i) => i + 1);
-              const qtyPerTin = ing.totalTinCount > 0 ? ing.totalQty / ing.totalTinCount : ing.totalQty;
               return (
               <div
                 className={cn(
@@ -3271,7 +3278,6 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                       : "border-border"
                 )}
               >
-                      {/* Header */}
                       <div className="flex items-start justify-between mb-3">
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 flex-wrap">
@@ -3317,7 +3323,6 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                         )}
                       </div>
 
-                      {/* Progress bar */}
                       {status.totalTinCount > 1 && (
                         <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden mb-3">
                           <div
@@ -3327,44 +3332,79 @@ function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                         </div>
                       )}
 
-                      {/* Tin buttons */}
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
-                        {tins.map(tn => {
-                          const done = isCompleted(ing.ingredientId, tn);
-                          const completion = getCompletion(ing.ingredientId, tn);
-                          return (
-                            <button
-                              key={tn}
-                              onClick={() => toggleTin(ing.ingredientId, tn)}
-                              disabled={isOnBreak}
-                              className={cn(
-                                "relative flex flex-col items-center border-2 rounded-2xl px-3 py-3.5 transition-all active:scale-95",
-                                isOnBreak ? "opacity-50 cursor-not-allowed" : "",
-                                done
-                                  ? "bg-emerald-50 dark:bg-emerald-900/30 border-emerald-400 dark:border-emerald-600 shadow-sm"
-                                  : "bg-background border-border hover:border-emerald-400 hover:shadow-md"
-                              )}
-                            >
-                              <div className="flex items-center gap-1.5 mb-1.5">
-                                {done ? (
-                                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                                ) : (
-                                  <div className="w-4 h-4 rounded-full border-2 border-muted-foreground/40" />
-                                )}
-                                <span className="text-sm font-bold">Tin {tn}</span>
+                      {ing.recipes.map((recipe, ri) => {
+                        const rTins = Array.from({ length: recipe.tinCount }, (_, i) => i + 1);
+                        const rDone = rTins.filter(tn => isCompleted(ing.ingredientId, recipe.recipeId, tn)).length;
+                        const allRecipeDone = rTins.length > 0 && rDone >= rTins.length;
+                        return (
+                          <div key={recipe.recipeId} className={cn(ri > 0 && "mt-4")}>
+                            <div className={cn(
+                              "flex items-center justify-between px-3 py-2 rounded-lg mb-2",
+                              allRecipeDone
+                                ? "bg-emerald-50 dark:bg-emerald-900/20"
+                                : "bg-secondary/40"
+                            )}>
+                              <div className="flex items-center gap-2 min-w-0">
+                                {allRecipeDone && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />}
+                                <p className={cn(
+                                  "text-sm font-bold uppercase tracking-wider truncate",
+                                  allRecipeDone ? "text-emerald-700 dark:text-emerald-300" : "text-emerald-800 dark:text-emerald-300"
+                                )}>
+                                  {recipe.recipeName}
+                                </p>
                               </div>
-                              <span className={cn("text-lg font-bold tabular-nums", done ? "text-emerald-700 dark:text-emerald-300" : "text-foreground")}>
-                                {fmtQty(qtyPerTin, ing.unit)}
-                              </span>
-                              {done && completion && (
-                                <span className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1 leading-tight text-center">
-                                  {completion.userName ?? "User"} · {format(new Date(completion.completedAt), "HH:mm")}
+                              <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                                <span className="text-xs text-muted-foreground tabular-nums">
+                                  {fmtQty(recipe.qtyForRecipe, ing.unit)}
                                 </span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
+                                <span className={cn(
+                                  "text-xs font-semibold tabular-nums",
+                                  allRecipeDone ? "text-emerald-600" : "text-muted-foreground"
+                                )}>
+                                  {rDone}/{rTins.length}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+                              {rTins.map(tn => {
+                                const done = isCompleted(ing.ingredientId, recipe.recipeId, tn);
+                                const completion = getCompletion(ing.ingredientId, recipe.recipeId, tn);
+                                return (
+                                  <button
+                                    key={tn}
+                                    onClick={() => toggleTin(ing.ingredientId, recipe.recipeId, tn)}
+                                    disabled={isOnBreak}
+                                    className={cn(
+                                      "relative flex flex-col items-center border-2 rounded-2xl px-3 py-3.5 transition-all active:scale-95",
+                                      isOnBreak ? "opacity-50 cursor-not-allowed" : "",
+                                      done
+                                        ? "bg-emerald-50 dark:bg-emerald-900/30 border-emerald-400 dark:border-emerald-600 shadow-sm"
+                                        : "bg-background border-border hover:border-emerald-400 hover:shadow-md"
+                                    )}
+                                  >
+                                    <div className="flex items-center gap-1.5 mb-1.5">
+                                      {done ? (
+                                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                                      ) : (
+                                        <div className="w-4 h-4 rounded-full border-2 border-muted-foreground/40" />
+                                      )}
+                                      <span className="text-sm font-bold">Tin {tn}</span>
+                                    </div>
+                                    <span className={cn("text-lg font-bold tabular-nums", done ? "text-emerald-700 dark:text-emerald-300" : "text-foreground")}>
+                                      {fmtQty(recipe.qtyPerTin, ing.unit)}
+                                    </span>
+                                    {done && completion && (
+                                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1 leading-tight text-center">
+                                        {completion.userName ?? "User"} · {format(new Date(completion.completedAt), "HH:mm")}
+                                      </span>
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
 
                       {/* Stock check */}
                       {status.needsStockCheck && (

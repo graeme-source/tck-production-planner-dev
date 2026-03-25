@@ -3148,16 +3148,16 @@ router.get("/:id/main-prep", async (req, res) => {
   res.json({ ingredients, completions });
 });
 
-// POST /:id/prep-completions — mark a prep tin as complete (ingredient-level, no recipeId needed)
 router.post("/:id/prep-completions", async (req, res) => {
   const planId = Number(req.params.id);
-  const { ingredientId, tinNumber } = req.body;
+  const { ingredientId, recipeId, tinNumber } = req.body;
+  if (!recipeId) { res.status(400).json({ error: "recipeId is required" }); return; }
   const userId = (req.session as any)?.userId ?? null;
 
   const [row] = await db.insert(prepCompletionsTable).values({
     planId,
     ingredientId,
-    recipeId: null,
+    recipeId,
     tinNumber,
     userId,
   }).onConflictDoNothing().returning();
@@ -3171,14 +3171,15 @@ router.post("/:id/prep-completions", async (req, res) => {
   res.status(201).json({ ...row, userName });
 });
 
-// DELETE /:id/prep-completions/by-tin — undo a tin by ingredient+tinNumber
 router.delete("/:id/prep-completions/by-tin", async (req, res) => {
   const planId = Number(req.params.id);
-  const { ingredientId, tinNumber } = req.body;
+  const { ingredientId, recipeId, tinNumber } = req.body;
+  if (!recipeId) { res.status(400).json({ error: "recipeId is required" }); return; }
   await db.delete(prepCompletionsTable)
     .where(and(
       eq(prepCompletionsTable.planId, planId),
       eq(prepCompletionsTable.ingredientId, ingredientId),
+      eq(prepCompletionsTable.recipeId, recipeId),
       eq(prepCompletionsTable.tinNumber, tinNumber),
     ));
   res.json({ ok: true });
