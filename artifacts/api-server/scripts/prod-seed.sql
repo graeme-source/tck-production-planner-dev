@@ -1,9 +1,9 @@
 -- ============================================================
 -- TCK Production Seed
--- Generated: 2026-03-25T14:36:43.893Z
+-- Generated: 2026-03-25T14:39:02.130Z
 --
 -- !! WARNING: For a FRESHLY-PROVISIONED production database only !!
--- TRUNCATE … CASCADE also clears dependent tables:
+-- TRUNCATE … CASCADE also clears dependent tables such as:
 -- production_plan_items, prep_completions, batch_completions,
 -- daily_stock_checks, temperature_records, oven_events, etc.
 -- Do NOT run against a database with live operational data.
@@ -14,7 +14,35 @@
 -- Or POST to /api/admin/apply-seed (see MIGRATION.md).
 -- ============================================================
 
--- ── Step 1: clear seed tables (CASCADE wipes dependent tables) ──
+-- ── Step 1: disable FK triggers on all seed tables ─────────────────────
+-- Disabling triggers allows the INSERT phase to proceed in any order and
+-- prevents FK enforcement overhead during bulk loading.
+ALTER TABLE ingredient_storage_locations DISABLE TRIGGER ALL;
+ALTER TABLE kanban_items DISABLE TRIGGER ALL;
+ALTER TABLE delivery_check_configs DISABLE TRIGGER ALL;
+ALTER TABLE dpt_settings DISABLE TRIGGER ALL;
+ALTER TABLE sub_recipe_sub_recipes DISABLE TRIGGER ALL;
+ALTER TABLE sub_recipe_ingredients DISABLE TRIGGER ALL;
+ALTER TABLE recipe_shopify_mappings DISABLE TRIGGER ALL;
+ALTER TABLE recipe_meat_marinades DISABLE TRIGGER ALL;
+ALTER TABLE recipe_sub_recipes DISABLE TRIGGER ALL;
+ALTER TABLE recipe_ingredients DISABLE TRIGGER ALL;
+ALTER TABLE stock_items DISABLE TRIGGER ALL;
+ALTER TABLE storage_racks DISABLE TRIGGER ALL;
+ALTER TABLE recipes DISABLE TRIGGER ALL;
+ALTER TABLE sub_recipes DISABLE TRIGGER ALL;
+ALTER TABLE ingredients DISABLE TRIGGER ALL;
+ALTER TABLE sku_locations DISABLE TRIGGER ALL;
+ALTER TABLE postcode_validations DISABLE TRIGGER ALL;
+ALTER TABLE page_permissions DISABLE TRIGGER ALL;
+ALTER TABLE app_settings DISABLE TRIGGER ALL;
+ALTER TABLE timing_standards DISABLE TRIGGER ALL;
+ALTER TABLE category_defaults DISABLE TRIGGER ALL;
+ALTER TABLE stock_item_categories DISABLE TRIGGER ALL;
+ALTER TABLE storage_locations DISABLE TRIGGER ALL;
+ALTER TABLE suppliers DISABLE TRIGGER ALL;
+
+-- ── Step 2: clear seed tables (CASCADE clears FK-dependent tables) ──
 TRUNCATE TABLE
   ingredient_storage_locations,
   kanban_items,
@@ -42,7 +70,7 @@ TRUNCATE TABLE
   suppliers
 CASCADE;
 
--- ── Step 2: insert seed data (FK-safe order) ──────────────────
+-- ── Step 3: insert seed data (FK-safe order) ──────────────────
 
 -- TABLE: suppliers (18 rows)
 INSERT INTO suppliers (id, name, contact_name, email, phone, website, address, notes, created_at, order_frequency, order_days, lead_time_days, cutoff_time) VALUES
@@ -548,7 +576,7 @@ INSERT INTO dpt_settings (id, recipe_id, default_batches_per_day, is_active, upd
 -- ingredient_storage_locations: no rows
 
 
--- ── Step 3: reset sequences to max(id) + 1 ────────────────────
+-- ── Step 4: reset sequences to max(id) + 1 ────────────────────
 SELECT setval(pg_get_serial_sequence('suppliers', 'id'), COALESCE((SELECT MAX(id) FROM suppliers), 0) + 1, false);
 SELECT setval(pg_get_serial_sequence('storage_locations', 'id'), COALESCE((SELECT MAX(id) FROM storage_locations), 0) + 1, false);
 SELECT setval(pg_get_serial_sequence('stock_item_categories', 'id'), COALESCE((SELECT MAX(id) FROM stock_item_categories), 0) + 1, false);
@@ -571,3 +599,29 @@ SELECT setval(pg_get_serial_sequence('delivery_check_configs', 'id'), COALESCE((
 SELECT setval(pg_get_serial_sequence('kanban_items', 'id'), COALESCE((SELECT MAX(id) FROM kanban_items), 0) + 1, false);
 SELECT setval(pg_get_serial_sequence('ingredient_storage_locations', 'id'), COALESCE((SELECT MAX(id) FROM ingredient_storage_locations), 0) + 1, false);
 SELECT setval(pg_get_serial_sequence('postcode_validations', 'id'), COALESCE((SELECT MAX(id) FROM postcode_validations), 0) + 1, false);
+
+-- ── Step 5: re-enable FK triggers ─────────────────────────────
+ALTER TABLE ingredient_storage_locations ENABLE TRIGGER ALL;
+ALTER TABLE kanban_items ENABLE TRIGGER ALL;
+ALTER TABLE delivery_check_configs ENABLE TRIGGER ALL;
+ALTER TABLE dpt_settings ENABLE TRIGGER ALL;
+ALTER TABLE sub_recipe_sub_recipes ENABLE TRIGGER ALL;
+ALTER TABLE sub_recipe_ingredients ENABLE TRIGGER ALL;
+ALTER TABLE recipe_shopify_mappings ENABLE TRIGGER ALL;
+ALTER TABLE recipe_meat_marinades ENABLE TRIGGER ALL;
+ALTER TABLE recipe_sub_recipes ENABLE TRIGGER ALL;
+ALTER TABLE recipe_ingredients ENABLE TRIGGER ALL;
+ALTER TABLE stock_items ENABLE TRIGGER ALL;
+ALTER TABLE storage_racks ENABLE TRIGGER ALL;
+ALTER TABLE recipes ENABLE TRIGGER ALL;
+ALTER TABLE sub_recipes ENABLE TRIGGER ALL;
+ALTER TABLE ingredients ENABLE TRIGGER ALL;
+ALTER TABLE sku_locations ENABLE TRIGGER ALL;
+ALTER TABLE postcode_validations ENABLE TRIGGER ALL;
+ALTER TABLE page_permissions ENABLE TRIGGER ALL;
+ALTER TABLE app_settings ENABLE TRIGGER ALL;
+ALTER TABLE timing_standards ENABLE TRIGGER ALL;
+ALTER TABLE category_defaults ENABLE TRIGGER ALL;
+ALTER TABLE stock_item_categories ENABLE TRIGGER ALL;
+ALTER TABLE storage_locations ENABLE TRIGGER ALL;
+ALTER TABLE suppliers ENABLE TRIGGER ALL;

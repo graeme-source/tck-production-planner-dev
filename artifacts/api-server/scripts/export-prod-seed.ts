@@ -12,13 +12,11 @@
  *   artifacts/api-server/scripts/prod-seed.sql
  *
  * The generated file:
- *   1. TRUNCATEs all seed tables with CASCADE (clears referencing non-seed tables too)
- *   2. INSERTs data in FK-safe forward order using explicit IDs
- *   3. Resets every serial sequence to max(id) + 1
- *
- * WARNING: Intended for a freshly-provisioned production database.
- * TRUNCATE … CASCADE also clears dependent tables such as production_plan_items,
- * prep_completions, batch_completions, etc.
+ *   1. Disables FK triggers on all seed tables (ALTER TABLE … DISABLE TRIGGER ALL)
+ *   2. TRUNCATEs seed tables with CASCADE to clear any dependent non-seed tables
+ *   3. INSERTs data in FK-safe forward order using explicit IDs
+ *   4. Resets every serial sequence to max(id) + 1 via setval()
+ *   5. Re-enables FK triggers on all seed tables (ALTER TABLE … ENABLE TRIGGER ALL)
  */
 
 import { pool } from "@workspace/db";
@@ -30,8 +28,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUTPUT = join(__dirname, "prod-seed.sql");
 
 // ── Seed tables (reverse FK order — most-dependent first) ───────────────────
-// Listed this way so TRUNCATE CASCADE can be applied as a single statement.
-// Dependent non-seed tables (production_plan_items, etc.) are handled by CASCADE.
 const SEED_TABLES_REVERSE: string[] = [
   "ingredient_storage_locations",
   "kanban_items",
@@ -59,15 +55,14 @@ const SEED_TABLES_REVERSE: string[] = [
   "suppliers",
 ];
 
-// Tables with a serial integer PK named "id" — need explicit sequence resets
-// after INSERT (because TRUNCATE with explicit-ID INSERTs leaves sequences stale).
+// Tables with a serial integer PK named "id" — need explicit sequence resets.
 const SERIAL_ID_TABLES: string[] = [
   "suppliers",
   "storage_locations",
-  "stock_item_categories",   // id SERIAL, name TEXT UNIQUE
+  "stock_item_categories",
   "category_defaults",
   "timing_standards",
-  "app_settings",            // id SERIAL, key TEXT UNIQUE
+  "app_settings",
   "ingredients",
   "sub_recipes",
   "recipes",
@@ -87,6 +82,15 @@ const SERIAL_ID_TABLES: string[] = [
   // page_permissions  — text PK (page_key), no serial id
   // sku_locations     — text PK (sku),       no serial id
 ];
+
+// ── Per-table column overrides ───────────────────────────────────────────────
+// ingredient_storage_locations has NO quantity or amount columns per schema:
+//   id, ingredient_id, location_id, rack_label, shelf_label
+// Selecting columns explicitly (rather than SELECT *) documents intent clearly.
+const COLUMN_OVERRIDES: Record<string, string> = {
+  ingredient_storage_locations:
+    "id, ingredient_id, location_id, rack_label, shelf_label",
+};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -113,11 +117,12 @@ function buildInsert(tableName: string, rows: Record<string, unknown>[]): string
 async function queryTable(
   tableName: string,
   orderBy: string,
+  selectCols = "*",
 ): Promise<Record<string, unknown>[]> {
   const client = await pool.connect();
   try {
     const result = await client.query(
-      `SELECT * FROM ${tableName} ORDER BY ${orderBy}`,
+      `SELECT ${selectCols} FROM ${tableName} ORDER BY ${orderBy}`,
     );
     return result.rows as Record<string, unknown>[];
   } finally {
@@ -134,7 +139,7 @@ async function main() {
     `-- Generated: ${new Date().toISOString()}`,
     "--",
     "-- !! WARNING: For a FRESHLY-PROVISIONED production database only !!",
-    "-- TRUNCATE … CASCADE also clears dependent tables:",
+    "-- TRUNCATE … CASCADE also clears dependent tables such as:",
     "-- production_plan_items, prep_completions, batch_completions,",
     "-- daily_stock_checks, temperature_records, oven_events, etc.",
     "-- Do NOT run against a database with live operational data.",
@@ -145,15 +150,28 @@ async function main() {
     "-- Or POST to /api/admin/apply-seed (see MIGRATION.md).",
     "-- ============================================================",
     "",
-    "-- ── Step 1: clear seed tables (CASCADE wipes dependent tables) ──",
-    "TRUNCATE TABLE",
-    "  " + SEED_TABLES_REVERSE.join(",\n  "),
-    "CASCADE;",
-    "",
+    "-- ── Step 1: disable FK triggers on all seed tables ─────────────────────",
+    "-- Disabling triggers allows the INSERT phase to proceed in any order and",
+    "-- prevents FK enforcement overhead during bulk loading.",
   ];
 
-  // ── Step 2: INSERT in FK-safe forward order ────────────────────────────────
-  lines.push("-- ── Step 2: insert seed data (FK-safe order) ──────────────────");
+  for (const tbl of SEED_TABLES_REVERSE) {
+    lines.push(`ALTER TABLE ${tbl} DISABLE TRIGGER ALL;`);
+  }
+  lines.push("");
+
+  // ── Step 2: TRUNCATE with CASCADE ─────────────────────────────────────────
+  // CASCADE is required because PostgreSQL's TRUNCATE checks FK references at
+  // statement level, independent of trigger state.  CASCADE ensures dependent
+  // non-seed tables (production_plan_items, etc.) are also cleared on a fresh DB.
+  lines.push("-- ── Step 2: clear seed tables (CASCADE clears FK-dependent tables) ──");
+  lines.push("TRUNCATE TABLE");
+  lines.push("  " + SEED_TABLES_REVERSE.join(",\n  "));
+  lines.push("CASCADE;");
+  lines.push("");
+
+  // ── Step 3: INSERT in FK-safe forward order ────────────────────────────────
+  lines.push("-- ── Step 3: insert seed data (FK-safe order) ──────────────────");
   lines.push("");
 
   const insertOrder: Array<[string, string]> = [
@@ -184,26 +202,35 @@ async function main() {
     ["sub_recipe_sub_recipes",       "id"],
     ["dpt_settings",                 "id"],
     ["kanban_items",                 "id"],
-    // ingredient_storage_locations has no quantity/amount columns
-    // (id, ingredient_id, location_id, rack_label, shelf_label — copied as-is)
+    // ingredient_storage_locations schema: id, ingredient_id, location_id,
+    // rack_label, shelf_label.  No quantity or amount columns exist in this
+    // table; selecting explicit columns documents this clearly.
     ["ingredient_storage_locations", "id"],
   ];
 
   for (const [tableName, orderBy] of insertOrder) {
     console.log(`  Exporting ${tableName}...`);
-    const rows = await queryTable(tableName, orderBy);
+    const selectCols = COLUMN_OVERRIDES[tableName] ?? "*";
+    const rows = await queryTable(tableName, orderBy, selectCols);
     lines.push(`-- TABLE: ${tableName} (${rows.length} rows)`);
     lines.push(buildInsert(tableName, rows));
     lines.push("");
   }
 
-  // ── Step 3: reset sequences to max(id) + 1 ────────────────────────────────
-  lines.push("-- ── Step 3: reset sequences to max(id) + 1 ────────────────────");
+  // ── Step 4: reset sequences to max(id) + 1 ────────────────────────────────
+  lines.push("-- ── Step 4: reset sequences to max(id) + 1 ────────────────────");
   for (const tbl of SERIAL_ID_TABLES) {
     lines.push(
       `SELECT setval(pg_get_serial_sequence('${tbl}', 'id'),` +
       ` COALESCE((SELECT MAX(id) FROM ${tbl}), 0) + 1, false);`,
     );
+  }
+  lines.push("");
+
+  // ── Step 5: re-enable FK triggers ─────────────────────────────────────────
+  lines.push("-- ── Step 5: re-enable FK triggers ─────────────────────────────");
+  for (const tbl of SEED_TABLES_REVERSE) {
+    lines.push(`ALTER TABLE ${tbl} ENABLE TRIGGER ALL;`);
   }
   lines.push("");
 
