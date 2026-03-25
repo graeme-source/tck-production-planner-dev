@@ -1,6 +1,6 @@
 -- ============================================================
 -- TCK Production Seed
--- Generated: 2026-03-25T14:29:55.544Z
+-- Generated: 2026-03-25T14:33:16.638Z
 --
 -- For a FRESHLY-PROVISIONED production database only.
 -- Apply via psql:
@@ -572,6 +572,7 @@ INSERT INTO dpt_settings (id, recipe_id, default_batches_per_day, is_active, upd
 -- ── Step 4: reset sequences to max(id) + 1 ────────────────────
 SELECT setval(pg_get_serial_sequence('suppliers', 'id'), COALESCE((SELECT MAX(id) FROM suppliers), 0) + 1, false);
 SELECT setval(pg_get_serial_sequence('storage_locations', 'id'), COALESCE((SELECT MAX(id) FROM storage_locations), 0) + 1, false);
+SELECT setval(pg_get_serial_sequence('stock_item_categories', 'id'), COALESCE((SELECT MAX(id) FROM stock_item_categories), 0) + 1, false);
 SELECT setval(pg_get_serial_sequence('category_defaults', 'id'), COALESCE((SELECT MAX(id) FROM category_defaults), 0) + 1, false);
 SELECT setval(pg_get_serial_sequence('timing_standards', 'id'), COALESCE((SELECT MAX(id) FROM timing_standards), 0) + 1, false);
 SELECT setval(pg_get_serial_sequence('ingredients', 'id'), COALESCE((SELECT MAX(id) FROM ingredients), 0) + 1, false);
@@ -590,6 +591,7 @@ SELECT setval(pg_get_serial_sequence('delivery_check_configs', 'id'), COALESCE((
 SELECT setval(pg_get_serial_sequence('kanban_items', 'id'), COALESCE((SELECT MAX(id) FROM kanban_items), 0) + 1, false);
 SELECT setval(pg_get_serial_sequence('ingredient_storage_locations', 'id'), COALESCE((SELECT MAX(id) FROM ingredient_storage_locations), 0) + 1, false);
 SELECT setval(pg_get_serial_sequence('postcode_validations', 'id'), COALESCE((SELECT MAX(id) FROM postcode_validations), 0) + 1, false);
+SELECT setval(pg_get_serial_sequence('app_settings', 'id'), COALESCE((SELECT MAX(id) FROM app_settings), 0) + 1, false);
 
 -- ── Step 5: re-enable FK triggers ─────────────────────────────
 ALTER TABLE ingredient_storage_locations ENABLE TRIGGER ALL;

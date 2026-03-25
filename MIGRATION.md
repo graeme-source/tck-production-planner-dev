@@ -97,12 +97,12 @@ curl -X POST "$PROD_API/api/admin/apply-seed" \
 
 On success:
 ```json
-{ "ok": true, "message": "Seed applied successfully." }
+{ "success": true, "tablesSeeded": ["suppliers", "ingredients", "..."] }
 ```
 
 On failure (the transaction is automatically rolled back):
 ```json
-{ "error": "Seed failed — transaction rolled back", "detail": "..." }
+{ "success": false, "error": "..." }
 ```
 
 ---
@@ -118,6 +118,31 @@ After applying the seed:
 2. Navigate to **Recipes**, **Ingredients**, and **Suppliers** — all dev data should be present.
 3. Create a test production plan to confirm the recipes load correctly.
 4. **Change the default admin password immediately.**
+
+---
+
+## Step 4 — Post-seed cleanup
+
+Once you have verified the data is correct:
+
+### Remove the MIGRATION_TOKEN secret
+
+The `MIGRATION_TOKEN` should be deleted from production secrets as soon as seeding is confirmed.  Leaving it in place means anyone who discovers the token can re-run the seed and truncate all reference data.
+
+1. Open the production deployment environment's **Secrets** tab.
+2. Delete the `MIGRATION_TOKEN` secret.
+3. Redeploy or restart the API server — the endpoint will return `404` immediately once the environment variable is gone (no code change needed).
+
+### Optional: remove the endpoint entirely
+
+If you prefer to eliminate the endpoint from the deployed codebase:
+
+1. Delete `artifacts/api-server/src/routes/admin.ts`.
+2. Remove the `import adminRouter` line and `router.use("/admin", adminRouter)` from `artifacts/api-server/src/routes/index.ts`.
+3. Remove the `express.text()` line from `artifacts/api-server/src/app.ts`.
+4. Redeploy.
+
+This step is optional — with no `MIGRATION_TOKEN` set, the endpoint is already unreachable.
 
 ---
 

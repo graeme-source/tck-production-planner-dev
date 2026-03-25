@@ -58,9 +58,11 @@ const SEED_TABLES_REVERSE: string[] = [
 ];
 
 // Tables that have a serial integer PK named "id" — used for sequence resets.
+// Includes every seed table whose PK is a serial column (not a text PK).
 const SERIAL_ID_TABLES: string[] = [
   "suppliers",
   "storage_locations",
+  "stock_item_categories",   // id SERIAL, name TEXT UNIQUE
   "category_defaults",
   "timing_standards",
   "ingredients",
@@ -79,6 +81,9 @@ const SERIAL_ID_TABLES: string[] = [
   "kanban_items",
   "ingredient_storage_locations",
   "postcode_validations",
+  "app_settings",            // id SERIAL, key TEXT UNIQUE
+  // Note: page_permissions uses page_key TEXT as PK (no serial id), so excluded.
+  // Note: sku_locations uses sku TEXT as PK, so excluded.
 ];
 
 // Forward FK order — used for INSERT statements
