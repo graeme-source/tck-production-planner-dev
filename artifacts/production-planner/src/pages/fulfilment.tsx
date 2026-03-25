@@ -239,45 +239,6 @@ function TestModeBanner({ trainingCredentialsMissing }: { trainingCredentialsMis
   );
 }
 
-function PickConfirmDialog({ order, onConfirm, onCancel }: { order: ShopifyOrder; onConfirm: () => void; onCancel: () => void }) {
-  const customerName = order.shipping_address?.name ?? `${order.customer?.first_name} ${order.customer?.last_name}`;
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
-        <div className="flex items-start gap-3">
-          <AlertCircle className="w-6 h-6 text-amber-500 flex-shrink-0 mt-0.5" />
-          <div>
-            <h3 className="font-bold text-lg">Create real APC consignment?</h3>
-            <p className="text-sm text-muted-foreground mt-1">
-              This will create a real APC consignment for <strong>{customerName}</strong>. A label will be generated and a collection booked. <strong>This cannot be undone.</strong>
-            </p>
-          </div>
-        </div>
-        <div className="text-sm text-muted-foreground bg-secondary/30 rounded-xl px-4 py-3">
-          <span className="font-mono font-semibold text-foreground">{order.name}</span>
-          {order.shipping_address && (
-            <span> — {order.shipping_address.address1}, {order.shipping_address.city}</span>
-          )}
-        </div>
-        <div className="flex gap-3">
-          <button
-            onClick={onCancel}
-            className="flex-1 py-2.5 border border-border rounded-xl text-sm font-medium hover:bg-secondary/50 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:bg-primary/90 transition-colors"
-          >
-            Start Packing
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 const ZONE_STYLES: Record<string, { bg: string; border: string; text: string; badge: string }> = {
   fridge: {
     bg: "bg-blue-50 dark:bg-blue-950/30",
@@ -1112,8 +1073,11 @@ export default function Fulfilment() {
     return (
       <div className="space-y-6">
         {pendingPickOrder && (
-          <PickConfirmDialog
-            order={pendingPickOrder}
+          <ShopifyConfirmDialog
+            title={`Ship order ${pendingPickOrder.name}?`}
+            description={`This will create a real APC consignment for ${pendingPickOrder.shipping_address?.name ?? `${pendingPickOrder.customer?.first_name ?? ""} ${pendingPickOrder.customer?.last_name ?? ""}`.trim()}. This cannot be undone.`}
+            products={pendingPickOrder.line_items.map(li => ({ name: li.title, quantity: li.quantity, quantityLabel: "ordered", noPlus: true }))}
+            confirmLabel="Start packing"
             onConfirm={() => { const o = pendingPickOrder; setPendingPickOrder(null); startPicking(o); }}
             onCancel={() => setPendingPickOrder(null)}
           />
@@ -1164,8 +1128,11 @@ export default function Fulfilment() {
     return (
       <div className="space-y-4">
         {pendingPickOrder && (
-          <PickConfirmDialog
-            order={pendingPickOrder}
+          <ShopifyConfirmDialog
+            title={`Ship order ${pendingPickOrder.name}?`}
+            description={`This will create a real APC consignment for ${pendingPickOrder.shipping_address?.name ?? `${pendingPickOrder.customer?.first_name ?? ""} ${pendingPickOrder.customer?.last_name ?? ""}`.trim()}. This cannot be undone.`}
+            products={pendingPickOrder.line_items.map(li => ({ name: li.title, quantity: li.quantity, quantityLabel: "×" }))}
+            confirmLabel="Start packing"
             onConfirm={() => { const o = pendingPickOrder; setPendingPickOrder(null); startPicking(o); }}
             onCancel={() => setPendingPickOrder(null)}
           />
@@ -1638,8 +1605,11 @@ export default function Fulfilment() {
 
       {/* Live-mode confirmation dialog — appears when operator selects an order */}
       {pendingPickOrder && (
-        <PickConfirmDialog
-          order={pendingPickOrder}
+        <ShopifyConfirmDialog
+          title={`Ship order ${pendingPickOrder.name}?`}
+          description={`This will create a real APC consignment for ${pendingPickOrder.shipping_address?.name ?? `${pendingPickOrder.customer?.first_name ?? ""} ${pendingPickOrder.customer?.last_name ?? ""}`.trim()}. This cannot be undone.`}
+          products={pendingPickOrder.line_items.map(li => ({ name: li.title, quantity: li.quantity, quantityLabel: "ordered", noPlus: true }))}
+          confirmLabel="Start packing"
           onConfirm={() => { const o = pendingPickOrder; setPendingPickOrder(null); startPicking(o); }}
           onCancel={() => setPendingPickOrder(null)}
         />

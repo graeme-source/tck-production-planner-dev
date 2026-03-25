@@ -4,6 +4,7 @@ interface ShopifyProduct {
   name: string;
   quantity?: number;
   quantityLabel?: string;
+  noPlus?: boolean;
 }
 
 interface ShopifyConfirmDialogProps {
@@ -46,7 +47,7 @@ export function ShopifyConfirmDialog({
                 <p className="font-medium text-foreground truncate">{p.name}</p>
                 {p.quantity !== undefined && (
                   <p className="text-muted-foreground whitespace-nowrap flex-shrink-0">
-                    +<strong className="text-foreground tabular-nums">{p.quantity}</strong>
+                    {!p.noPlus && "+"}<strong className="text-foreground tabular-nums">{p.quantity}</strong>
                     {p.quantityLabel ? ` ${p.quantityLabel}` : " packs"}
                   </p>
                 )}

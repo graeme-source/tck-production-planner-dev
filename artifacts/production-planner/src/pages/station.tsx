@@ -7105,6 +7105,7 @@ interface ShopifyWrapConfirmState {
   item: ProductionPlanItem;
   productTitle: string;
   variantTitle: string | null;
+  displayDelta: number;
 }
 
 // Per-recipe pack count display (read from oven completions) + wrapping-complete toggle
@@ -7248,7 +7249,8 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
     if (newValue) {
       const mapping = item.recipeId ? shopifyMappings[item.recipeId] : undefined;
       if (mapping) {
-        setShopifyConfirm({ item, productTitle: mapping.productTitle, variantTitle: mapping.variantTitle });
+        const displayDelta = ((item as any).freezerQty ?? 0) + (item.wonlyCount ?? 0);
+        setShopifyConfirm({ item, productTitle: mapping.productTitle, variantTitle: mapping.variantTitle, displayDelta });
         return;
       }
       await sendWrappingComplete(item, true);
@@ -7335,12 +7337,14 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
     <div className="space-y-4">
       {shopifyConfirm && (
         <ShopifyConfirmDialog
-          title="Shopify inventory will be updated"
-          description="Marking this recipe complete will sync frozen packs to Shopify inventory."
+          title="Update Shopify inventory?"
+          description={`This will update ${shopifyConfirm.variantTitle ? `${shopifyConfirm.productTitle} – ${shopifyConfirm.variantTitle}` : shopifyConfirm.productTitle} inventory on Shopify by +${shopifyConfirm.displayDelta} pack${shopifyConfirm.displayDelta !== 1 ? "s" : ""}. Are you sure?`}
           products={[{
             name: shopifyConfirm.variantTitle
               ? `${shopifyConfirm.productTitle} – ${shopifyConfirm.variantTitle}`
               : shopifyConfirm.productTitle,
+            quantity: shopifyConfirm.displayDelta,
+            quantityLabel: "packs",
           }]}
           confirmLabel="Confirm & sync"
           onConfirm={async () => {
