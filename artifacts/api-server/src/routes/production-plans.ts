@@ -266,10 +266,14 @@ router.get("/calculate", async (req, res) => {
     return d.toISOString().slice(0, 10);
   }
 
+  // Shopify order tags are DELIVERY dates (APC next-day: dispatch on day D → delivery on D+1).
+  // dispatch1 = products delivered TODAY (dispatched yesterday) → tag = planDate
+  // dispatch2 = products delivered TOMORROW (dispatched today, our main production target) → tag = planDate+1
+  // dispatch3 = products delivered day-after-tomorrow (dispatched tomorrow) → tag = planDate+2
   const deliveryDates = [
-    getPreviousWorkingDay(planDate),
     planDate,
     getNextWorkingDay(planDate),
+    getNextWorkingDay(getNextWorkingDay(planDate)),
   ];
 
   const prevProductionDate = getPreviousWorkingDay(planDate);
