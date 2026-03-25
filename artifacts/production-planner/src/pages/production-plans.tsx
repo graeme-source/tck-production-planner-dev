@@ -653,6 +653,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   const includedCount = items.filter(it => it.included).length;
   const availableToAdd = (allRecipes ?? []).filter((r: Recipe) => !items.some(it => it.recipeId === r.id));
   const deliveryDates = calcData?.deliveryDates ?? [];
+  const dispatchDates = (calcData as { dispatchDates?: string[] } | undefined)?.dispatchDates ?? [];
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -758,18 +759,18 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                             </th>
                             <th className="py-2 px-2 text-left font-medium text-muted-foreground">Recipe</th>
                             <th className="py-2 px-2 text-center font-medium text-muted-foreground min-w-[70px]" title="Current packs in the production fridge">Factory Number</th>
-                            <th className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]" title={deliveryDates[0] ? `Dispatch going out ${format(parseISO(deliveryDates[0]), "EEE d MMM")}` : "Next dispatch"}>
-                              {deliveryDates[0] ? `\u2212 ${format(parseISO(deliveryDates[0]), "EEE")} Dispatch` : "\u2212 Dispatch"}
+                            <th className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]" title={dispatchDates[0] ? `Dispatched ${format(parseISO(dispatchDates[0]), "EEE d MMM")} — delivered ${deliveryDates[0] ? format(parseISO(deliveryDates[0]), "EEE d MMM") : ""}` : "Next dispatch"}>
+                              {dispatchDates[0] ? `\u2212 ${format(parseISO(dispatchDates[0]), "EEE")} Dispatch` : "\u2212 Dispatch"}
                             </th>
                             <th className="py-2 px-2 text-center font-medium text-green-600 min-w-[70px]" title={calcData?.prevProductionDate ? `Production coming in from ${format(parseISO(calcData.prevProductionDate), "EEE d MMM")} plan` : "Previous day's production output"}>
                               {calcData?.prevProductionDate ? `+ ${format(parseISO(calcData.prevProductionDate), "EEE")} Production` : "+ Prev Production"}
                             </th>
                             <th className="py-2 px-2 text-center font-medium text-muted-foreground min-w-[80px]" title="Next day's factory number: Factory Number − Dispatch + Production">= Next Factory Number</th>
-                            <th className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]" title={deliveryDates[1] ? `Dispatch going out ${format(parseISO(deliveryDates[1]), "EEE d MMM")}` : "Dispatch 2"}>
-                              {deliveryDates[1] ? `\u2212 ${format(parseISO(deliveryDates[1]), "EEE")} Dispatch` : "\u2212 Dispatch"}
+                            <th className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]" title={dispatchDates[1] ? `Dispatched ${format(parseISO(dispatchDates[1]), "EEE d MMM")} — delivered ${deliveryDates[1] ? format(parseISO(deliveryDates[1]), "EEE d MMM") : ""}` : "Dispatch 2"}>
+                              {dispatchDates[1] ? `\u2212 ${format(parseISO(dispatchDates[1]), "EEE")} Dispatch` : "\u2212 Dispatch"}
                             </th>
-                            <th className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]" title={deliveryDates[2] ? `Dispatch going out ${format(parseISO(deliveryDates[2]), "EEE d MMM")}` : "Dispatch 3"}>
-                              {deliveryDates[2] ? `\u2212 ${format(parseISO(deliveryDates[2]), "EEE")} Dispatch` : "\u2212 Dispatch"}
+                            <th className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]" title={dispatchDates[2] ? `Dispatched ${format(parseISO(dispatchDates[2]), "EEE d MMM")} — delivered ${deliveryDates[2] ? format(parseISO(deliveryDates[2]), "EEE d MMM") : ""}` : "Dispatch 3"}>
+                              {dispatchDates[2] ? `\u2212 ${format(parseISO(dispatchDates[2]), "EEE")} Dispatch` : "\u2212 Dispatch"}
                             </th>
                             <th className="py-2 px-2 text-center font-medium text-muted-foreground whitespace-nowrap" title="Packs short — need to produce at least this many">Deficit</th>
                             <th className="py-2 px-2 text-center font-medium text-muted-foreground whitespace-nowrap" title="Batches you want to make">Batches</th>

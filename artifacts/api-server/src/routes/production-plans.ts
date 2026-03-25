@@ -635,10 +635,15 @@ router.get("/calculate", async (req, res) => {
     ? [...unmatchedRecipeNames, `Calzone Club Special (${clubSpecialSales} units — no special recipe is configured)`]
     : unmatchedRecipeNames;
 
+  // dispatchDates = the physical dispatch day for each slot (1 working day before the delivery tag).
+  // e.g. delivery tag "2026-03-27" (Friday) → dispatched "2026-03-26" (Thursday).
+  const dispatchDates = deliveryDates.map(getPreviousWorkingDay);
+
   res.json({
     planDate,
     prevProductionDate,
     deliveryDates,
+    dispatchDates,
     totalDailyBatches,
     totalDeficitBatches,
     remainingCapacity,
