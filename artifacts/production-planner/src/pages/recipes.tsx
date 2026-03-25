@@ -621,6 +621,19 @@ function RecipeForm({
   );
 }
 
+interface ShopifyVariantOption {
+  variantId: string;
+  productTitle: string;
+  variantTitle: string | null;
+  display: string;
+}
+
+interface ShopifyMapping {
+  shopify_variant_id: string;
+  shopify_product_title: string | null;
+  shopify_variant_title: string | null;
+}
+
 function EditRecipeDialog({
   id, open, onOpenChange, ingredients, subRecipes, categoryDefaults,
 }: {
@@ -636,6 +649,99 @@ function EditRecipeDialog({
   const [formIsDirty, setFormIsDirty] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const submitRef = useRef<(() => void) | null>(null);
+
+  // Shopify link state
+  const [shopifyMapping, setShopifyMapping] = useState<ShopifyMapping | null>(null);
+  const [shopifyVariants, setShopifyVariants] = useState<ShopifyVariantOption[]>([]);
+  const [shopifyLoading, setShopifyLoading] = useState(false);
+  const [shopifyProductsLoading, setShopifyProductsLoading] = useState(false);
+  const [shopifySaving, setShopifySaving] = useState(false);
+  const [shopifySearch, setShopifySearch] = useState("");
+  const [selectedVariant, setSelectedVariant] = useState<ShopifyVariantOption | null>(null);
+  const [shopifyError, setShopifyError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    // Load current mapping
+    setShopifyLoading(true);
+    fetch(`/api/shopify/recipe-mappings/${id}`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then((data: ShopifyMapping | null) => {
+        setShopifyMapping(data);
+        setSelectedVariant(data ? {
+          variantId: data.shopify_variant_id,
+          productTitle: data.shopify_product_title ?? "",
+          variantTitle: data.shopify_variant_title ?? null,
+          display: data.shopify_variant_title
+            ? `${data.shopify_product_title ?? ""} – ${data.shopify_variant_title}`
+            : (data.shopify_product_title ?? ""),
+        } : null);
+      })
+      .catch(() => setShopifyMapping(null))
+      .finally(() => setShopifyLoading(false));
+
+    // Load Shopify products for picker
+    setShopifyProductsLoading(true);
+    fetch("/api/shopify/products", { credentials: "include" })
+      .then(r => r.ok ? r.json() : [])
+      .then((products: Array<{ id: number; title: string; variants: Array<{ id: number; title: string; sku: string }> }>) => {
+        const opts: ShopifyVariantOption[] = [];
+        for (const p of products) {
+          for (const v of p.variants) {
+            const hasMultipleVariants = p.variants.length > 1;
+            const variantTitle = hasMultipleVariants && v.title !== "Default Title" ? v.title : null;
+            opts.push({
+              variantId: String(v.id),
+              productTitle: p.title,
+              variantTitle,
+              display: variantTitle ? `${p.title} – ${variantTitle}` : p.title,
+            });
+          }
+        }
+        setShopifyVariants(opts);
+      })
+      .catch(() => {})
+      .finally(() => setShopifyProductsLoading(false));
+  }, [open, id]);
+
+  async function saveShopifyMapping() {
+    if (!selectedVariant) return;
+    setShopifySaving(true);
+    setShopifyError(null);
+    try {
+      const res = await fetch(`/api/shopify/recipe-mappings/${id}`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shopifyVariantId: selectedVariant.variantId,
+          shopifyProductTitle: selectedVariant.productTitle,
+          shopifyVariantTitle: selectedVariant.variantTitle,
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error ?? "Failed to save");
+      const saved = await res.json() as ShopifyMapping;
+      setShopifyMapping(saved);
+    } catch (err) {
+      setShopifyError(err instanceof Error ? err.message : "Failed to save mapping");
+    } finally {
+      setShopifySaving(false);
+    }
+  }
+
+  async function removeShopifyMapping() {
+    setShopifySaving(true);
+    setShopifyError(null);
+    try {
+      await fetch(`/api/shopify/recipe-mappings/${id}`, { method: "DELETE", credentials: "include" });
+      setShopifyMapping(null);
+      setSelectedVariant(null);
+    } catch (err) {
+      setShopifyError(err instanceof Error ? err.message : "Failed to remove mapping");
+    } finally {
+      setShopifySaving(false);
+    }
+  }
 
   const specialRecipe = allRecipes?.find((r) => r.isCurrentSpecial);
   const currentSpecialName = specialRecipe ? specialRecipe.name : null;
@@ -721,20 +827,114 @@ function EditRecipeDialog({
           {isLoading ? (
             <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
           ) : (
-            <RecipeForm
-              key={id}
-              defaultValues={defaultValues}
-              isEdit
-              isPending={updateRecipe.isPending}
-              ingredients={ingredients}
-              subRecipes={subRecipes}
-              categoryDefaults={categoryDefaults}
-              currentSpecialName={currentSpecialName}
-              thisRecipeIsSpecial={thisRecipeIsSpecial}
-              onDirtyChange={setFormIsDirty}
-              submitRef={submitRef}
-              onSubmit={(data) => updateRecipe.mutate({ id, data }, { onSuccess: () => onOpenChange(false) })}
-            />
+            <>
+              <RecipeForm
+                key={id}
+                defaultValues={defaultValues}
+                isEdit
+                isPending={updateRecipe.isPending}
+                ingredients={ingredients}
+                subRecipes={subRecipes}
+                categoryDefaults={categoryDefaults}
+                currentSpecialName={currentSpecialName}
+                thisRecipeIsSpecial={thisRecipeIsSpecial}
+                onDirtyChange={setFormIsDirty}
+                submitRef={submitRef}
+                onSubmit={(data) => updateRecipe.mutate({ id, data }, { onSuccess: () => onOpenChange(false) })}
+              />
+
+              {/* Shopify Inventory Link */}
+              <div className="mt-4 border-t border-border pt-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <svg className="w-4 h-4 text-[#96bf48]" viewBox="0 0 24 24" fill="currentColor"><path d="M20.924 7.625a1.523 1.523 0 0 0-1.238-1.044l-1.822-.187-.88-2.062A1.5 1.5 0 0 0 15.6 3.5H8.4a1.5 1.5 0 0 0-1.384.832l-.88 2.062-1.822.187A1.523 1.523 0 0 0 3.076 7.625L2 17.5A1.5 1.5 0 0 0 3.5 19h17a1.5 1.5 0 0 0 1.5-1.5zM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm0-6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
+                  <h4 className="text-sm font-semibold">Shopify Inventory Link</h4>
+                  {shopifyLoading && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+                </div>
+
+                {shopifyMapping ? (
+                  <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-medium text-emerald-900 dark:text-emerald-100">
+                          {shopifyMapping.shopify_product_title ?? "Shopify product"}
+                          {shopifyMapping.shopify_variant_title && (
+                            <span className="text-emerald-700 dark:text-emerald-300 font-normal"> – {shopifyMapping.shopify_variant_title}</span>
+                          )}
+                        </p>
+                        <p className="text-xs text-muted-foreground">Variant ID: {shopifyMapping.shopify_variant_id}</p>
+                      </div>
+                      <button
+                        onClick={removeShopifyMapping}
+                        disabled={shopifySaving}
+                        className="text-xs px-2.5 py-1.5 rounded-lg border border-destructive/50 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50 flex-shrink-0"
+                      >
+                        {shopifySaving ? <Loader2 className="w-3 h-3 animate-spin inline" /> : "Remove"}
+                      </button>
+                    </div>
+                    <p className="text-xs text-emerald-700 dark:text-emerald-300">When wrapping is marked complete, Shopify inventory will be adjusted by the net pack count.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">Link this recipe to a Shopify product variant. Inventory will auto-sync when wrapping is completed.</p>
+                    {shopifyProductsLoading ? (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                        <Loader2 className="w-3 h-3 animate-spin" /> Loading Shopify products…
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="relative">
+                          <input
+                            type="text"
+                            placeholder="Search Shopify products…"
+                            value={shopifySearch}
+                            onChange={e => setShopifySearch(e.target.value)}
+                            className="w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
+                          />
+                          {shopifySearch && (
+                            <div className="absolute top-full left-0 right-0 z-10 bg-card border border-border rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
+                              {shopifyVariants
+                                .filter(v => v.display.toLowerCase().includes(shopifySearch.toLowerCase()))
+                                .slice(0, 20)
+                                .map(v => (
+                                  <button
+                                    key={v.variantId}
+                                    type="button"
+                                    onClick={() => { setSelectedVariant(v); setShopifySearch(""); }}
+                                    className="w-full text-left px-3 py-2 text-sm hover:bg-secondary/50 transition-colors"
+                                  >
+                                    {v.display}
+                                  </button>
+                                ))}
+                              {shopifyVariants.filter(v => v.display.toLowerCase().includes(shopifySearch.toLowerCase())).length === 0 && (
+                                <p className="px-3 py-2 text-sm text-muted-foreground italic">No products found</p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        {selectedVariant && (
+                          <div className="flex items-center gap-2 p-2 bg-secondary/30 rounded-lg text-sm">
+                            <span className="flex-1 font-medium truncate">{selectedVariant.display}</span>
+                            <button type="button" onClick={() => setSelectedVariant(null)} className="text-muted-foreground hover:text-foreground">
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={saveShopifyMapping}
+                          disabled={!selectedVariant || shopifySaving}
+                          className="w-full py-2 px-4 rounded-xl bg-[#96bf48] text-white text-sm font-medium hover:bg-[#7da33c] transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
+                        >
+                          {shopifySaving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                          {shopifySaving ? "Saving…" : "Link to Shopify"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {shopifyError && <p className="text-xs text-destructive mt-1">{shopifyError}</p>}
+              </div>
+            </>
           )}
         </DialogContent>
       </Dialog>

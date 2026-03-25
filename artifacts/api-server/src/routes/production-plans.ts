@@ -5,7 +5,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
 import * as z from "zod";
 import { resolveRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
-import { countProductsByTag } from "../services/shopify";
+import { countProductsByTag, adjustInventoryLevel } from "../services/shopify";
 
 const router: IRouter = Router();
 
@@ -34,6 +34,35 @@ async function syncRecipeFridgeStock(recipeId: number, deltaQty: number) {
       unit: "packs",
       location: "production_fridge",
       notes: "Auto-created from wrapping station",
+    });
+  }
+}
+
+async function syncRecipeFreezerStock(recipeId: number, deltaQty: number) {
+  const existing = await db
+    .select({ id: stockEntriesTable.id, quantity: stockEntriesTable.quantity })
+    .from(stockEntriesTable)
+    .where(and(
+      eq(stockEntriesTable.recipeId, recipeId),
+      eq(stockEntriesTable.itemType, "recipe"),
+      eq(stockEntriesTable.location, "production_freezer"),
+    ))
+    .orderBy(desc(stockEntriesTable.checkedAt))
+    .limit(1);
+
+  if (existing.length > 0) {
+    const newQty = Math.max(0, Number(existing[0].quantity) + deltaQty);
+    await db.update(stockEntriesTable)
+      .set({ quantity: String(newQty), checkedAt: new Date() })
+      .where(eq(stockEntriesTable.id, existing[0].id));
+  } else {
+    await db.insert(stockEntriesTable).values({
+      recipeId,
+      itemType: "recipe",
+      quantity: String(Math.max(0, deltaQty)),
+      unit: "packs",
+      location: "production_freezer",
+      notes: "Auto-created from wrapping station (wonky packs)",
     });
   }
 }
@@ -2593,18 +2622,30 @@ router.delete("/:id/items/:itemId/wonly", async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// PATCH /:id/items/:itemId/wrapping-complete — toggle wrapping done for a plan item
+// PATCH /:id/items/:itemId/wrapping-complete — toggle wrapping done for a plan item.
+// When completing (complete=true):
+//   • Auto-freezes wonky (reject) packs to production_freezer stock.
+//   • If a Shopify mapping exists for the recipe AND netPacks is sent, adjusts Shopify inventory.
+// Body: { complete: boolean, netPacks?: number }
 // ──────────────────────────────────────────────────────────────────────────────
 router.patch("/:id/items/:itemId/wrapping-complete", async (req, res) => {
   const planId = Number(req.params.id);
   const itemId = Number(req.params.itemId);
   const complete = req.body.complete;
+  const netPacks: number | undefined = typeof req.body.netPacks === "number" && req.body.netPacks > 0
+    ? Math.floor(req.body.netPacks)
+    : undefined;
+
   if (typeof complete !== "boolean") {
     res.status(400).json({ error: "Body must contain { complete: boolean }" });
     return;
   }
 
-  const [item] = await db.select({ id: productionPlanItemsTable.id })
+  const [item] = await db.select({
+    id: productionPlanItemsTable.id,
+    recipeId: productionPlanItemsTable.recipeId,
+    wonlyCount: productionPlanItemsTable.wonlyCount,
+  })
     .from(productionPlanItemsTable)
     .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
 
@@ -2616,7 +2657,54 @@ router.patch("/:id/items/:itemId/wrapping-complete", async (req, res) => {
     .where(eq(productionPlanItemsTable.id, itemId))
     .returning({ id: productionPlanItemsTable.id, wrappingComplete: productionPlanItemsTable.wrappingComplete });
 
-  res.json({ itemId: updated.id, wrappingComplete: updated.wrappingComplete });
+  let wonkyFrozen = 0;
+  let shopifyProductTitle: string | null = null;
+  let shopifyVariantTitle: string | null = null;
+  let shopifyNewQty: number | null = null;
+  let shopifyError: string | null = null;
+
+  if (complete && item.recipeId) {
+    // Auto-freeze wonky packs into production_freezer stock
+    const wonlys = Number(item.wonlyCount) || 0;
+    if (wonlys > 0) {
+      await syncRecipeFreezerStock(item.recipeId, wonlys);
+      wonkyFrozen = wonlys;
+    }
+
+    // Shopify inventory sync (only when netPacks explicitly provided by client)
+    if (netPacks !== undefined) {
+      const mappingRows = await db.execute(sql`
+        SELECT shopify_variant_id, shopify_product_title, shopify_variant_title
+        FROM recipe_shopify_mappings WHERE recipe_id = ${item.recipeId}
+      `);
+      if (mappingRows.rows.length > 0) {
+        const mapping = mappingRows.rows[0] as {
+          shopify_variant_id: string;
+          shopify_product_title: string | null;
+          shopify_variant_title: string | null;
+        };
+        shopifyProductTitle = mapping.shopify_product_title;
+        shopifyVariantTitle = mapping.shopify_variant_title;
+        try {
+          const adj = await adjustInventoryLevel(mapping.shopify_variant_id, netPacks);
+          shopifyNewQty = adj.newQuantity;
+        } catch (err: unknown) {
+          shopifyError = err instanceof Error ? err.message : String(err);
+          console.error(`[Wrapping] Shopify inventory adjust failed for recipe ${item.recipeId}:`, shopifyError);
+        }
+      }
+    }
+  }
+
+  res.json({
+    itemId: updated.id,
+    wrappingComplete: updated.wrappingComplete,
+    wonkyFrozen,
+    shopifyProductTitle,
+    shopifyVariantTitle,
+    shopifyNewQty,
+    shopifyError,
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────

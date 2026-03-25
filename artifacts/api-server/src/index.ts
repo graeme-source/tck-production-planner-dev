@@ -320,6 +320,17 @@ async function runStartupMigrations() {
     await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS pin_attempts INTEGER NOT NULL DEFAULT 0`);
     await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS pin_locked_until TIMESTAMP`);
     await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS avatar_url TEXT`);
+    // Shopify inventory sync — recipe→variant mapping (Task #37)
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS recipe_shopify_mappings (
+        id SERIAL PRIMARY KEY,
+        recipe_id INTEGER NOT NULL UNIQUE REFERENCES recipes(id) ON DELETE CASCADE,
+        shopify_variant_id TEXT NOT NULL,
+        shopify_product_title TEXT,
+        shopify_variant_title TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
     await seedStorageLocations();
     console.log("Startup migrations OK");
   } catch (err) {

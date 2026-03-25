@@ -444,6 +444,33 @@ export async function findOrderByName(name: string): Promise<ShopifyOrder | null
   return data.orders[0] ?? null;
 }
 
+// Adjust inventory level for a Shopify variant by delta (positive = add, negative = remove).
+// Resolves the variant → inventory_item_id → location_id chain automatically.
+export async function adjustInventoryLevel(variantId: string, delta: number): Promise<{ newQuantity: number }> {
+  const variantData = (await shopifyFetch(`/variants/${variantId}.json`)) as {
+    variant: { inventory_item_id: number };
+  };
+  const inventoryItemId = variantData.variant.inventory_item_id;
+
+  const locsData = (await shopifyFetch("/inventory_levels.json", {
+    inventory_item_ids: String(inventoryItemId),
+    limit: "1",
+  })) as { inventory_levels: Array<{ location_id: number; available: number }> };
+
+  if (locsData.inventory_levels.length === 0) {
+    throw new Error(`No inventory level found for Shopify variant ${variantId}`);
+  }
+  const locationId = locsData.inventory_levels[0].location_id;
+
+  const result = (await shopifyPost("/inventory_levels/adjust.json", {
+    location_id: locationId,
+    inventory_item_id: inventoryItemId,
+    available_adjustment: delta,
+  })) as { inventory_level: { available: number } };
+
+  return { newQuantity: result.inventory_level.available };
+}
+
 // Add a tag to a Shopify order. No-op if the tag is already present.
 export async function addTagToOrder(orderId: number, currentTags: string, newTag: string): Promise<void> {
   const existing = currentTags.split(",").map(t => t.trim()).filter(Boolean);

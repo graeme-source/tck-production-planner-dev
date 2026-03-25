@@ -7025,6 +7025,64 @@ function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Wrapping Station
+// ── Shopify confirm dialog for wrapping-complete ──────────────────────────────
+interface ShopifyWrapConfirmState {
+  item: ProductionPlanItem;
+  netPacks: number;
+  productTitle: string;
+  variantTitle: string | null;
+}
+
+function ShopifyWrapConfirmDialog({
+  state,
+  onConfirm,
+  onCancel,
+}: {
+  state: ShopifyWrapConfirmState;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const displayName = state.variantTitle
+    ? `${state.productTitle} – ${state.variantTitle}`
+    : state.productTitle;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="bg-card border border-border rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center flex-shrink-0">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+          </div>
+          <div>
+            <p className="font-semibold text-base">Sync Shopify inventory?</p>
+            <p className="text-xs text-muted-foreground">This will adjust live stock on your store.</p>
+          </div>
+        </div>
+        <div className="bg-secondary/40 rounded-xl p-3 space-y-1 text-sm">
+          <p className="font-medium text-foreground">{displayName}</p>
+          <p className="text-muted-foreground">
+            + <strong className="text-foreground tabular-nums">{state.netPacks}</strong> packs added to inventory
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={onCancel}
+            className="flex-1 px-4 py-2.5 rounded-xl border border-border text-sm font-medium text-muted-foreground hover:bg-secondary/50 transition-colors"
+          >
+            Skip sync
+          </button>
+          <button
+            onClick={onConfirm}
+            className="flex-1 px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition-colors"
+          >
+            Confirm &amp; sync
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Per-recipe pack count display (read from oven completions) + wrapping-complete toggle
 // ──────────────────────────────────────────────────────────────────────────────
 function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
@@ -7035,6 +7093,7 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const [customAmounts, setCustomAmounts] = useState<Record<number, string>>({});
   const [showCustom, setShowCustom] = useState<Record<number, boolean>>({});
   const [activeStorage, setActiveStorage] = useState<string>("fridge");
+  const [shopifyConfirm, setShopifyConfirm] = useState<ShopifyWrapConfirmState | null>(null);
 
   const STACK_SIZE = 24;
 
@@ -7053,23 +7112,70 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const wrappedCount = items.filter(it => it.wrappingComplete).length;
   const allWrapped = items.length > 0 && items.every(it => it.wrappingComplete);
 
-  const toggleWrapping = async (item: ProductionPlanItem) => {
-    if (isOnBreak) return;
-    const newValue = !item.wrappingComplete;
+  // Load all recipe→Shopify mappings so we can show the confirm dialog
+  const [shopifyMappings, setShopifyMappings] = useState<Record<number, { productTitle: string; variantTitle: string | null; variantId: string }>>({});
+  useEffect(() => {
+    fetch("/api/shopify/recipe-mappings", { credentials: "include" })
+      .then(r => r.ok ? r.json() : [])
+      .then((rows: Array<{ recipe_id: number; shopify_variant_id: string; shopify_product_title: string | null; shopify_variant_title: string | null }>) => {
+        const map: Record<number, { productTitle: string; variantTitle: string | null; variantId: string }> = {};
+        for (const row of rows) {
+          map[row.recipe_id] = {
+            productTitle: row.shopify_product_title ?? "Shopify product",
+            variantTitle: row.shopify_variant_title ?? null,
+            variantId: row.shopify_variant_id,
+          };
+        }
+        setShopifyMappings(map);
+      })
+      .catch(() => {});
+  }, []);
+
+  const sendWrappingComplete = async (item: ProductionPlanItem, complete: boolean, withNetPacks?: number) => {
     setWrappingLoading(item.id);
     try {
+      const body: Record<string, unknown> = { complete };
+      if (complete && withNetPacks !== undefined) body.netPacks = withNetPacks;
       const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/wrapping-complete`, {
         method: "PATCH",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ complete: newValue }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const data = await res.json() as { wonkyFrozen?: number; shopifyProductTitle?: string | null; shopifyNewQty?: number | null; shopifyError?: string | null };
+      if (complete) {
+        if (data.wonkyFrozen && data.wonkyFrozen > 0) {
+          toast({ title: `${data.wonkyFrozen} wonky pack${data.wonkyFrozen !== 1 ? "s" : ""} → Production Freezer`, description: `Auto-frozen for ${item.recipeName ?? "recipe"}` });
+        }
+        if (data.shopifyNewQty !== null && data.shopifyNewQty !== undefined && data.shopifyProductTitle) {
+          toast({ title: `Shopify updated`, description: `${data.shopifyProductTitle}: inventory now ${data.shopifyNewQty}` });
+        }
+        if (data.shopifyError) {
+          toast({ title: "Shopify sync failed", description: data.shopifyError, variant: "destructive" });
+        }
+      }
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
     } catch (err) {
       toast({ title: "Error", description: err instanceof Error ? err.message : "Could not update wrapping status.", variant: "destructive" });
     } finally {
       setWrappingLoading(null);
+    }
+  };
+
+  const toggleWrapping = async (item: ProductionPlanItem) => {
+    if (isOnBreak) return;
+    const newValue = !item.wrappingComplete;
+    if (newValue) {
+      const mapping = item.recipeId ? shopifyMappings[item.recipeId] : undefined;
+      const np = netPacks(item);
+      if (mapping && np > 0) {
+        setShopifyConfirm({ item, netPacks: np, productTitle: mapping.productTitle, variantTitle: mapping.variantTitle });
+        return;
+      }
+      await sendWrappingComplete(item, true);
+    } else {
+      await sendWrappingComplete(item, false);
     }
   };
 
@@ -7149,6 +7255,21 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
 
   return (
     <div className="space-y-4">
+      {shopifyConfirm && (
+        <ShopifyWrapConfirmDialog
+          state={shopifyConfirm}
+          onConfirm={async () => {
+            const { item, netPacks: np } = shopifyConfirm;
+            setShopifyConfirm(null);
+            await sendWrappingComplete(item, true, np);
+          }}
+          onCancel={async () => {
+            const { item } = shopifyConfirm;
+            setShopifyConfirm(null);
+            await sendWrappingComplete(item, true);
+          }}
+        />
+      )}
       {/* Session summary */}
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center gap-3 mb-3">
