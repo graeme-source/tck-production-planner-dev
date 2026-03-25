@@ -169,7 +169,7 @@ export default function Dashboard() {
           icon={PackageCheck}
           color="text-emerald-500"
           bg="bg-emerald-500/10"
-          href="/orders"
+          href="/deliveries"
         />
       </div>
 
