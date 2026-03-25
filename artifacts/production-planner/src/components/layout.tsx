@@ -35,8 +35,8 @@ type NavItem = { name: string; href: string; icon: React.ComponentType<{ classNa
 const navItems: NavItem[] = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Production Plans", href: "/plans", icon: CalendarDays },
-  { name: "Suppliers", href: "/suppliers", icon: Building2 },
   { name: "Dispatches", href: "/dispatches", icon: Truck },
+  { name: "Suppliers", href: "/suppliers", icon: Building2 },
   { name: "Analytics", href: "/reports", icon: BarChart2 },
 ];
 
