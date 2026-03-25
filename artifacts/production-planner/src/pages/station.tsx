@@ -7114,11 +7114,39 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const queryClient = useQueryClient();
   const [wrappingLoading, setWrappingLoading] = useState<number | null>(null);
   const [storageLoading, setStorageLoading] = useState<number | null>(null);
+  const [wonlyLoading, setWonlyLoading] = useState<number | null>(null);
   const [isOnBreak, setIsOnBreak] = useState(false);
   const [customAmounts, setCustomAmounts] = useState<Record<number, string>>({});
   const [showCustom, setShowCustom] = useState<Record<number, boolean>>({});
   const [activeStorage, setActiveStorage] = useState<string>("fridge");
   const [shopifyConfirm, setShopifyConfirm] = useState<ShopifyWrapConfirmState | null>(null);
+
+  const addWonly = async (item: ProductionPlanItem) => {
+    setWonlyLoading(item.id);
+    try {
+      await fetch(`/api/production-plans/${plan.id}/items/${item.id}/wonly`, {
+        method: "POST", credentials: "include",
+      });
+      await queryClient.invalidateQueries({ queryKey: [`/api/production-plans/${plan.id}`] });
+    } catch {
+    } finally {
+      setWonlyLoading(null);
+    }
+  };
+
+  const removeWonly = async (item: ProductionPlanItem) => {
+    if ((item.wonlyCount ?? 0) <= 0) return;
+    setWonlyLoading(item.id);
+    try {
+      await fetch(`/api/production-plans/${plan.id}/items/${item.id}/wonly`, {
+        method: "DELETE", credentials: "include",
+      });
+      await queryClient.invalidateQueries({ queryKey: [`/api/production-plans/${plan.id}`] });
+    } catch {
+    } finally {
+      setWonlyLoading(null);
+    }
+  };
 
   const STACK_SIZE = 24;
 
@@ -7405,12 +7433,6 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                       <span className="text-xs text-muted-foreground block">Gross</span>
                       <span className="font-semibold tabular-nums">{gross}</span>
                     </div>
-                    {wonlys > 0 && (
-                      <div className="text-center">
-                        <span className="text-xs text-red-500 block">Wonky</span>
-                        <span className="font-semibold tabular-nums text-red-600 dark:text-red-400">−{wonlys}</span>
-                      </div>
-                    )}
                     <div className="text-center">
                       <span className="text-xs text-purple-600 dark:text-purple-400 block">Net</span>
                       <span className="text-xl font-bold tabular-nums text-purple-700 dark:text-purple-300">{net}</span>
@@ -7430,6 +7452,44 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                     {getStationCount(item, "ovens")} / {item.batchesTarget ?? 0} oven loads
                     {totalStored > 0 && ` · ${fridge} fridge · ${freezer} freezer`}
                   </p>
+                  {/* Wonky rack counter — bottom of rack 1 */}
+                  <div className={cn(
+                    "mt-2.5 flex items-center gap-2 rounded-lg px-3 py-2",
+                    wonlys > 0
+                      ? "bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800"
+                      : "bg-secondary/30 border border-dashed border-border"
+                  )}>
+                    <div className="flex-1 min-w-0">
+                      <p className={cn("text-xs font-medium", wonlys > 0 ? "text-red-700 dark:text-red-300" : "text-muted-foreground")}>
+                        Wonky rack
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Rejects from bottom of rack 1</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => removeWonly(item)}
+                        disabled={wonlyLoading === item.id || wonlys <= 0 || isWrapped}
+                        className="w-8 h-8 flex items-center justify-center rounded-full border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 disabled:opacity-40 transition-colors"
+                      >
+                        <Minus className="w-3.5 h-3.5" />
+                      </button>
+                      <span className={cn(
+                        "text-xl font-bold tabular-nums w-8 text-center",
+                        wonlys > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground"
+                      )}>
+                        {wonlyLoading === item.id ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : wonlys}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => addWonly(item)}
+                        disabled={wonlyLoading === item.id || isWrapped || isOnBreak}
+                        className="w-8 h-8 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-40 transition-colors"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
                 </div>
                 <button
                   onClick={() => toggleWrapping(item)}
