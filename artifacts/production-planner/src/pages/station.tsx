@@ -7120,6 +7120,11 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const [showCustom, setShowCustom] = useState<Record<number, boolean>>({});
   const [activeStorage, setActiveStorage] = useState<string>("fridge");
   const [shopifyConfirm, setShopifyConfirm] = useState<ShopifyWrapConfirmState | null>(null);
+  const [wonkyTransferLoading, setWonkyTransferLoading] = useState(false);
+  const [wonkyTransferResult, setWonkyTransferResult] = useState<{
+    transferred: Array<{ recipeName: string | null; qty: number }>;
+    totalQty: number;
+  } | null>(null);
 
   const addWonly = async (item: ProductionPlanItem) => {
     setWonlyLoading(item.id);
@@ -7145,6 +7150,30 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
     } catch {
     } finally {
       setWonlyLoading(null);
+    }
+  };
+
+  const wonkyToFreezer = async () => {
+    setWonkyTransferLoading(true);
+    try {
+      const res = await fetch(`/api/production-plans/${plan.id}/wonky-to-freezer`, {
+        method: "POST", credentials: "include",
+      });
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const data = await res.json() as {
+        transferred: Array<{ recipeName: string | null; qty: number }>;
+        totalQty: number;
+      };
+      setWonkyTransferResult(data);
+      await queryClient.invalidateQueries({ queryKey: [`/api/production-plans/${plan.id}`] });
+      toast({
+        title: `${data.totalQty} wonky pack${data.totalQty !== 1 ? "s" : ""} → Product Freezer`,
+        description: data.transferred.map(t => `${t.recipeName ?? "Recipe"}: ${t.qty}`).join(" · "),
+      });
+    } catch (err: unknown) {
+      toast({ title: "Transfer failed", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+    } finally {
+      setWonkyTransferLoading(false);
     }
   };
 
@@ -7452,44 +7481,6 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                     {getStationCount(item, "ovens")} / {item.batchesTarget ?? 0} oven loads
                     {totalStored > 0 && ` · ${fridge} fridge · ${freezer} freezer`}
                   </p>
-                  {/* Wonky rack counter — bottom of rack 1 */}
-                  <div className={cn(
-                    "mt-2.5 flex items-center gap-2 rounded-lg px-3 py-2",
-                    wonlys > 0
-                      ? "bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800"
-                      : "bg-secondary/30 border border-dashed border-border"
-                  )}>
-                    <div className="flex-1 min-w-0">
-                      <p className={cn("text-xs font-medium", wonlys > 0 ? "text-red-700 dark:text-red-300" : "text-muted-foreground")}>
-                        Wonky rack
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Rejects from bottom of rack 1</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => removeWonly(item)}
-                        disabled={wonlyLoading === item.id || wonlys <= 0 || isWrapped}
-                        className="w-8 h-8 flex items-center justify-center rounded-full border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 disabled:opacity-40 transition-colors"
-                      >
-                        <Minus className="w-3.5 h-3.5" />
-                      </button>
-                      <span className={cn(
-                        "text-xl font-bold tabular-nums w-8 text-center",
-                        wonlys > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground"
-                      )}>
-                        {wonlyLoading === item.id ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : wonlys}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => addWonly(item)}
-                        disabled={wonlyLoading === item.id || isWrapped || isOnBreak}
-                        className="w-8 h-8 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-40 transition-colors"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
                 </div>
                 <button
                   onClick={() => toggleWrapping(item)}
@@ -7598,6 +7589,92 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
             </div>
           );
         })}
+
+        {/* ── Wonky Rack dedicated card ── */}
+        <div className="rounded-xl border-2 border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/30 overflow-hidden">
+          {/* Header */}
+          <div className="flex items-center gap-3 px-4 py-3 bg-red-100 dark:bg-red-900/40 border-b border-red-200 dark:border-red-800">
+            <div className="w-9 h-9 rounded-full bg-red-500 text-white flex items-center justify-center flex-shrink-0">
+              <AlertCircle className="w-5 h-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-red-800 dark:text-red-200">Wonky Rack</p>
+              <p className="text-xs text-red-600 dark:text-red-400">Bottom of rack 1 — rejected packs by recipe</p>
+            </div>
+            <div className="text-right">
+              <p className="text-2xl font-bold tabular-nums text-red-600 dark:text-red-400">{totalWonly}</p>
+              <p className="text-[10px] text-red-500 dark:text-red-500">total wonky</p>
+            </div>
+          </div>
+
+          {/* Per-recipe rows */}
+          <div className="divide-y divide-red-200 dark:divide-red-800">
+            {items.map(item => {
+              const wonlys = item.wonlyCount ?? 0;
+              return (
+                <div key={item.id} className="flex items-center gap-3 px-4 py-2.5">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">{item.recipeName}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => removeWonly(item)}
+                      disabled={wonlyLoading === item.id || wonlys <= 0 || isOnBreak || !!wonkyTransferResult}
+                      className="w-7 h-7 flex items-center justify-center rounded-full border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 disabled:opacity-40 transition-colors"
+                    >
+                      <Minus className="w-3 h-3" />
+                    </button>
+                    <span className={cn(
+                      "text-lg font-bold tabular-nums w-7 text-center",
+                      wonlys > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground"
+                    )}>
+                      {wonlyLoading === item.id
+                        ? <Loader2 className="w-3.5 h-3.5 animate-spin mx-auto" />
+                        : wonlys}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => addWonly(item)}
+                      disabled={wonlyLoading === item.id || isOnBreak || !!wonkyTransferResult}
+                      className="w-7 h-7 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-40 transition-colors"
+                    >
+                      <Plus className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Transfer action */}
+          <div className="px-4 py-3 border-t border-red-200 dark:border-red-800">
+            {wonkyTransferResult ? (
+              <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300">
+                <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold">{wonkyTransferResult.totalQty} packs transferred to Product Freezer</p>
+                  <p className="text-xs text-muted-foreground">
+                    {wonkyTransferResult.transferred.map(t => `${t.recipeName ?? "Recipe"}: ${t.qty}`).join(" · ")}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={wonkyToFreezer}
+                disabled={wonkyTransferLoading || totalWonly === 0 || isOnBreak}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-medium text-sm disabled:opacity-50 transition-colors"
+              >
+                {wonkyTransferLoading
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <Snowflake className="w-4 h-4" />}
+                {totalWonly === 0
+                  ? "No wonky packs to transfer"
+                  : `Transfer ${totalWonly} wonky pack${totalWonly !== 1 ? "s" : ""} to Product Freezer`}
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

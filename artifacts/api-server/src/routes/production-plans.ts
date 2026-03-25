@@ -2564,6 +2564,62 @@ router.get("/:id/station-activity", async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
+// POST /:id/wonky-to-freezer — transfer all wonky packs to production_freezer
+//   • For each plan item with wonlyCount > 0:
+//       – calls syncRecipeFreezerStock to upsert the stock_entries row
+//       – increments freezerQty on the plan item
+//       – zeroes wonlyCount so wrapping-complete auto-freeze doesn't double-count
+//   • Returns { transferred: [{ itemId, recipeId, recipeName, qty }], totalQty }
+// ──────────────────────────────────────────────────────────────────────────────
+router.post("/:id/wonky-to-freezer", async (req, res) => {
+  const planId = Number(req.params.id);
+  if (!Number.isInteger(planId) || planId < 1) {
+    res.status(400).json({ error: "Invalid plan id" });
+    return;
+  }
+  try {
+    const items = await db
+      .select({
+        id: productionPlanItemsTable.id,
+        recipeId: productionPlanItemsTable.recipeId,
+        wonlyCount: productionPlanItemsTable.wonlyCount,
+        recipeName: recipesTable.name,
+      })
+      .from(productionPlanItemsTable)
+      .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+      .where(and(
+        eq(productionPlanItemsTable.planId, planId),
+        sql`${productionPlanItemsTable.wonlyCount} > 0`,
+      ));
+
+    const transferred: Array<{ itemId: number; recipeId: number | null; recipeName: string | null; qty: number }> = [];
+
+    for (const item of items) {
+      const qty = Number(item.wonlyCount) || 0;
+      if (qty <= 0) continue;
+      if (item.recipeId) {
+        await syncRecipeFreezerStock(item.recipeId, qty);
+      }
+      await db.update(productionPlanItemsTable)
+        .set({
+          freezerQty: sql`${productionPlanItemsTable.freezerQty} + ${qty}`,
+          wonlyCount: 0,
+        })
+        .where(eq(productionPlanItemsTable.id, item.id));
+      transferred.push({ itemId: item.id, recipeId: item.recipeId, recipeName: item.recipeName ?? null, qty });
+    }
+
+    res.json({
+      transferred,
+      totalQty: transferred.reduce((s, t) => s + t.qty, 0),
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
 // POST /:id/items/:itemId/wonly — atomically increment wonkyCount by 1 (quality reject)
 // ──────────────────────────────────────────────────────────────────────────────
 router.post("/:id/items/:itemId/wonly", async (req, res) => {
