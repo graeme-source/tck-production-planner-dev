@@ -2998,6 +2998,7 @@ router.get("/:id/packing", async (req, res) => {
 // ──────────────────────────────────────────────────────────────────────────────
 router.get("/:id/main-prep", async (req, res) => {
   const planId = Number(req.params.id);
+  const station = (req.query.station as string) || "main_prep";
 
   const planItems = await db
     .select({
@@ -3018,7 +3019,8 @@ router.get("/:id/main-prep", async (req, res) => {
     return;
   }
 
-  const EXCLUDED_CATEGORIES = ["raw_meat", "base", "sauce", "dough"];
+  const BASES_CATEGORIES = ["base", "sauce", "cheese"];
+  const MAIN_PREP_EXCLUDED = ["raw_meat", "base", "sauce", "dough"];
 
   const ingredientMap = new Map<number, {
     ingredientId: number;
@@ -3072,9 +3074,12 @@ router.get("/:id/main-prep", async (req, res) => {
 
     for (const row of directIngredients) {
       const cat = row.category ?? "";
-      if (EXCLUDED_CATEGORIES.includes(cat)) continue;
-      // Mozzarella is loaded directly to the building fridges — exclude from main prep
-      if ((row.ingredientName ?? "").toLowerCase().includes("mozzarella")) continue;
+      if (station === "prep_bases") {
+        if (!BASES_CATEGORIES.includes(cat)) continue;
+      } else {
+        if (MAIN_PREP_EXCLUDED.includes(cat)) continue;
+        if ((row.ingredientName ?? "").toLowerCase().includes("mozzarella")) continue;
+      }
 
       const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
       const qtyPerPortion = Number(row.quantity) || 0;
