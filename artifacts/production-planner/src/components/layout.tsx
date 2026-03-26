@@ -47,12 +47,13 @@ export const navItems: NavItem[] = [
 export const inventorySubItems: NavItem[] = [
   { name: "Ingredients", href: "/inventory?tab=ingredients", icon: Carrot },
   { name: "Supplies", href: "/inventory?tab=supplies", icon: Box },
+  { name: "Stock Control", href: "/stock-control", icon: PackageSearch },
   { name: "Kanbans", href: "/kanbans", icon: ArrowDownCircle },
   { name: "Orders", href: "/orders", icon: ShoppingCart },
   { name: "Deliveries", href: "/deliveries", icon: PackageCheck },
 ];
 
-const INVENTORY_PATHS = ["/inventory", "/kanbans", "/orders", "/deliveries"];
+const INVENTORY_PATHS = ["/inventory", "/kanbans", "/orders", "/deliveries", "/stock-control"];
 
 export const productNavItems: NavItem[] = [
   { name: "Recipes", href: "/recipes", icon: ChefHat },

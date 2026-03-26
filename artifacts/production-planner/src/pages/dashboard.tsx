@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useListProductionPlans, useListDispatchOrders, useGetProductionPlan } from "@workspace/api-client-react";
 import { PageHeader } from "@/components/page-header";
 import { format, isToday, startOfWeek, addWeeks } from "date-fns";
-import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart } from "lucide-react";
+import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer } from "lucide-react";
 import { Link } from "wouter";
 import { useAuth } from "@/contexts/auth-context";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
@@ -107,6 +107,16 @@ export default function Dashboard() {
     staleTime: 5 * 60 * 1000,
   });
 
+  const { data: stockControlData } = useQuery({
+    queryKey: ["stock-control-dashboard"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/stock-control`, { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json() as Promise<{ productionFridgeTotal: number }>;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
   const todayPlans = plans?.filter(p => isToday(new Date(p.planDate))) || [];
   const todayPlanIds = todayPlans.map(p => p.id);
 
@@ -161,7 +171,7 @@ export default function Dashboard() {
         }
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="Total Batches Today"
           value={batchesLoading ? "…" : (totalBatches ?? 0).toString()}
@@ -185,6 +195,14 @@ export default function Dashboard() {
           color="text-emerald-500"
           bg="bg-emerald-500/10"
           href="/deliveries"
+        />
+        <StatCard
+          title="Current Factory Number"
+          value={stockControlData == null ? "…" : (stockControlData.productionFridgeTotal ?? 0).toLocaleString()}
+          icon={Thermometer}
+          color="text-cyan-500"
+          bg="bg-cyan-500/10"
+          href="/stock-control"
         />
       </div>
 
