@@ -203,7 +203,7 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
             </div>
 
             <div className="flex items-center gap-2">
-              <div className="hidden md:flex items-center gap-1 overflow-x-auto">
+              <div className="hidden md:flex items-center gap-0.5">
                 {STATIONS.map(s => {
                   const Icon = s.icon;
                   const prepSubStations = ["main_prep", "prep_bases", "prep_meat"] as const;
@@ -213,15 +213,15 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
                       key={s.key}
                       onClick={() => navigate(`/plans/${planId}/station/${s.key}`)}
                       className={cn(
-                        "flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap",
+                        "flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-lg font-medium transition-colors min-w-[44px]",
                         isActive
                           ? "bg-primary text-primary-foreground"
                           : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
                       )}
                       title={s.label}
                     >
-                      <Icon className="w-3.5 h-3.5" />
-                      {s.short}
+                      <Icon className="w-4 h-4 flex-shrink-0" />
+                      <span className="text-[9px] leading-tight text-center">{s.short}</span>
                     </button>
                   );
                 })}
