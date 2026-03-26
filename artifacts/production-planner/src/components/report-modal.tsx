@@ -442,10 +442,10 @@ export function ReportButton({ defaultStation, className }: ReportButtonProps) {
           "fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-3 bg-blue-500 text-white rounded-full shadow-lg shadow-blue-500/30 hover:bg-blue-600 transition-all hover:scale-105 active:scale-95 font-medium text-sm",
           className
         )}
-        title="Report an issue or improvement"
+        title="Submit a quick idea or report an issue"
       >
         <AlertTriangle className="w-4 h-4" />
-        Report
+        Quick Idea
       </button>
       <ReportModal open={open} onClose={() => setOpen(false)} defaultStation={defaultStation} />
     </>
