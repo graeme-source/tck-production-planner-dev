@@ -1,4 +1,4 @@
-import React, { useState, useEffect, createContext, useContext } from "react";
+import React, { useState, useEffect } from "react";
 import { useLocation, useSearch } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -17,12 +17,9 @@ import {
 } from "@/components/layout";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
-import { ReportModal, ReportButton } from "@/components/report-modal";
+import { ReportButton } from "@/components/report-modal";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
-
-export const StationRecordContext = createContext<(() => void) | null>(null);
-export function useStationRecord() { return useContext(StationRecordContext); }
 
 interface AndonIssueBadge {
   severity: "yellow" | "red";
@@ -66,7 +63,6 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
   const [location, navigate] = useLocation();
   const search = useSearch();
   const [navOpen, setNavOpen] = useState(false);
-  const [reportOpen, setReportOpen] = useState(false);
   const { state, logout, lockStation } = useAuth();
   const { canAccess } = usePagePermissions();
   const andonBadge = useAndonBadge(stationType);
@@ -95,7 +91,6 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
   const StationIcon = meta.icon;
 
   return (
-    <StationRecordContext.Provider value={() => setReportOpen(true)}>
     <div className="min-h-screen bg-background">
       {/* Backdrop */}
       <AnimatePresence>
@@ -253,9 +248,7 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
         {children}
       </div>
 
-      <ReportModal open={reportOpen} onClose={() => setReportOpen(false)} defaultStation={stationType} />
       <ReportButton defaultStation={stationType} />
     </div>
-    </StationRecordContext.Provider>
   );
 }
