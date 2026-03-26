@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { db, stockEntriesTable, recipesTable, ingredientsTable } from "@workspace/db";
-import { eq, and, gt, sql } from "drizzle-orm";
+import { db, stockEntriesTable, recipesTable, ingredientsTable, storageLocationsTable } from "@workspace/db";
+import { eq, sql } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -135,11 +135,35 @@ router.get("/", async (_req, res) => {
     loc.items.sort((a, b) => b.qty - a.qty);
   }
 
+  // Also include user-created storage locations (not system) from the DB
+  const userLocations = await db
+    .select()
+    .from(storageLocationsTable)
+    .where(eq(storageLocationsTable.isSystem, false));
+
+  for (const ul of userLocations) {
+    const key = `sl_${ul.id}`;
+    if (!locationMap.has(key)) {
+      locationMap.set(key, {
+        key,
+        label: ul.name,
+        zone: ul.zone,
+        icon: ul.zone === "freezer" ? "freezer" : ul.zone === "fridge" ? "fridge" : "ambient",
+        totalPacks: 0,
+        items: [],
+      });
+    }
+  }
+
   const productionFridgeTotal = locationMap.get("production_fridge")?.totalPacks ?? 0;
 
   res.json({
     productionFridgeTotal: Math.round(productionFridgeTotal),
-    locations: [...locationMap.values()].filter(l => l.items.length > 0 || LOCATION_DEFS.some(d => d.key === l.key)),
+    locations: [...locationMap.values()].filter(l =>
+      l.items.length > 0 ||
+      LOCATION_DEFS.some(d => d.key === l.key) ||
+      l.key.startsWith("sl_")
+    ),
   });
 });
 
