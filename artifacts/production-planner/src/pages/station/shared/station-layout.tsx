@@ -17,7 +17,7 @@ import {
 } from "@/components/layout";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
-import { ReportModal } from "@/components/report-modal";
+import { ReportModal, ReportButton } from "@/components/report-modal";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -254,6 +254,7 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
       </div>
 
       <ReportModal open={reportOpen} onClose={() => setReportOpen(false)} defaultStation={stationType} />
+      <ReportButton defaultStation={stationType} />
     </div>
     </StationRecordContext.Provider>
   );
