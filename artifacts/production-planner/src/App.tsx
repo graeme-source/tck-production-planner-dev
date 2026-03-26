@@ -27,6 +27,7 @@ import Locations from "@/pages/locations";
 import Kanbans from "@/pages/kanbans";
 import Orders from "@/pages/orders";
 import Deliveries from "@/pages/deliveries";
+import FounderView from "@/pages/founder";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import AcceptInvite from "@/pages/accept-invite";
@@ -74,6 +75,7 @@ function Router() {
               <Route path="/locations">{() => <ProtectedRoute component={Locations} pageKey="/locations" />}</Route>
               <Route path="/kanbans">{() => <ProtectedRoute component={Kanbans} pageKey="/kanbans" />}</Route>
               <Route path="/deliveries" component={Deliveries} />
+              <Route path="/founder" component={FounderView} />
               <Route path="/reports">{() => <ProtectedRoute component={Reports} pageKey="/reports" />}</Route>
               <Route path="/lean-cave" component={LeanCave} />
               <Route path="/settings" component={Settings} />

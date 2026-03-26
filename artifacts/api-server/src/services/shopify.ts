@@ -471,6 +471,39 @@ export async function adjustInventoryLevel(variantId: string, delta: number): Pr
   return { newQuantity: result.inventory_level.available };
 }
 
+// Fetch all orders created within a date range (YYYY-MM-DD), paginating fully.
+export async function getOrdersByDateRange(
+  fromDate: string,
+  toDate: string,
+): Promise<ShopifyOrder[]> {
+  const min = `${fromDate}T00:00:00Z`;
+  const max = `${toDate}T23:59:59Z`;
+
+  const allOrders: ShopifyOrder[] = [];
+  let pageInfo: string | null = null;
+
+  do {
+    const params: Record<string, string> = {
+      limit: "250",
+      status: "any",
+      created_at_min: min,
+      created_at_max: max,
+      fields:
+        "id,name,tags,created_at,financial_status,fulfillment_status,total_price,customer",
+    };
+    if (pageInfo) {
+      params.page_info = pageInfo;
+    }
+
+    const res = await shopifyFetchRaw("/orders.json", params);
+    const data = (await res.json()) as { orders: ShopifyOrder[] };
+    allOrders.push(...data.orders);
+    pageInfo = parseNextPageInfo(res.headers.get("Link"));
+  } while (pageInfo);
+
+  return allOrders;
+}
+
 // Add a tag to a Shopify order. No-op if the tag is already present.
 export async function addTagToOrder(orderId: number, currentTags: string, newTag: string): Promise<void> {
   const existing = currentTags.split(",").map(t => t.trim()).filter(Boolean);

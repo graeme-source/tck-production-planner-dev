@@ -2,8 +2,9 @@ import { useState } from "react";
 import { useListProductionPlans, useListDispatchOrders, useGetProductionPlan } from "@workspace/api-client-react";
 import { PageHeader } from "@/components/page-header";
 import { format, isToday, startOfWeek, addWeeks } from "date-fns";
-import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck } from "lucide-react";
+import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart } from "lucide-react";
 import { Link } from "wouter";
+import { useAuth } from "@/contexts/auth-context";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { useQuery } from "@tanstack/react-query";
 
@@ -75,7 +76,11 @@ async function fetchTodayDeliveriesCount(): Promise<number> {
   return orders.filter((o: any) => o.expectedDeliveryDate === today).length;
 }
 
+const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
+
 export default function Dashboard() {
+  const { state } = useAuth();
+  const isFounder = state.status === "authenticated" && state.user.email === FOUNDER_EMAIL;
   const { data: plans } = useListProductionPlans();
   const { data: dispatches } = useListDispatchOrders();
 
@@ -144,6 +149,16 @@ export default function Dashboard() {
       <PageHeader
         title="Kitchen Dashboard"
         description={format(new Date(), "EEEE, MMMM do, yyyy")}
+        action={
+          isFounder ? (
+            <Link href="/founder">
+              <button className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-2 hover:bg-secondary transition-colors">
+                <LineChart className="w-3.5 h-3.5" />
+                Founder View
+              </button>
+            </Link>
+          ) : undefined
+        }
       />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

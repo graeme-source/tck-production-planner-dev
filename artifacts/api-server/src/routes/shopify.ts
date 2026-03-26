@@ -1,9 +1,34 @@
-import { Router } from "express";
-import { getOrdersByTag, getProducts, countProductsByTag } from "../services/shopify";
-import { db, recipesTable } from "@workspace/db";
+import { Router, type Request, type Response, type NextFunction } from "express";
+import { getOrdersByTag, getProducts, countProductsByTag, getOrdersByDateRange } from "../services/shopify";
+import { db, recipesTable, usersTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
+
+async function requireFounder(req: Request, res: Response, next: NextFunction) {
+  const userId = req.session.userId;
+  if (!userId) {
+    res.status(401).json({ error: "Not authenticated" });
+    return;
+  }
+  try {
+    const [user] = await db
+      .select({ email: usersTable.email })
+      .from(usersTable)
+      .where(eq(usersTable.id, userId));
+    if (user?.email === FOUNDER_EMAIL) {
+      next();
+      return;
+    }
+    res.status(403).json({ error: "Access denied" });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[requireFounder] DB lookup failed:", msg);
+    res.status(500).json({ error: "Internal server error" });
+  }
+}
 
 function toDateTag(d: Date): string {
   const y = d.getFullYear();
@@ -143,6 +168,113 @@ router.get("/weekly-orders", async (req, res) => {
   } catch (err: any) {
     console.error("[Shopify] weekly-orders error:", err.message);
     res.status(502).json({ error: err.message });
+  }
+});
+
+// ── Founder View: Sales Summary ───────────────────────────────────────────────
+// GET /api/shopify/sales-summary?from=YYYY-MM-DD&to=YYYY-MM-DD
+// Returns aggregated revenue stats for the period + today's revenue.
+router.get("/sales-summary", requireFounder, async (req, res) => {
+  const { from, to } = req.query as { from?: string; to?: string };
+  if (!from || !to) {
+    res.status(400).json({ error: "from and to query params required (YYYY-MM-DD)" });
+    return;
+  }
+  try {
+    const todayStr = toDateTag(new Date());
+    const [periodOrders, todayOrders] = await Promise.all([
+      getOrdersByDateRange(from, to),
+      todayStr >= from && todayStr <= to
+        ? Promise.resolve(null)
+        : getOrdersByDateRange(todayStr, todayStr),
+    ]);
+
+    const todayOrdersFinal = todayOrders ?? periodOrders.filter(o => {
+      const d = o.created_at.slice(0, 10);
+      return d === todayStr;
+    });
+
+    const totalRevenue = periodOrders.reduce((sum, o) => sum + parseFloat(o.total_price || "0"), 0);
+    const todayRevenue = todayOrdersFinal.reduce((sum, o) => sum + parseFloat(o.total_price || "0"), 0);
+
+    // Calculate days elapsed in the period (from → min(to, today))
+    const fromDate = new Date(from + "T00:00:00Z");
+    const toDate = new Date(to + "T23:59:59Z");
+    const nowDate = new Date();
+    const effectiveTo = toDate < nowDate ? toDate : nowDate;
+    const msPerDay = 24 * 60 * 60 * 1000;
+    const dayCount = Math.max(1, Math.ceil((effectiveTo.getTime() - fromDate.getTime()) / msPerDay));
+
+    const averageDailyRevenue = totalRevenue / dayCount;
+
+    // Days in the current calendar month
+    const now = new Date();
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const estimatedMonthlyRevenue = averageDailyRevenue * daysInMonth;
+
+    res.json({
+      from,
+      to,
+      totalRevenue: Math.round(totalRevenue * 100) / 100,
+      orderCount: periodOrders.length,
+      dayCount,
+      averageDailyRevenue: Math.round(averageDailyRevenue * 100) / 100,
+      estimatedMonthlyRevenue: Math.round(estimatedMonthlyRevenue * 100) / 100,
+      todayRevenue: Math.round(todayRevenue * 100) / 100,
+      todayOrderCount: todayOrdersFinal.length,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Shopify] sales-summary error:", msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
+// ── Founder View: Orders by Customer Type ─────────────────────────────────────
+// GET /api/shopify/orders-by-type?from=YYYY-MM-DD&to=YYYY-MM-DD
+// Returns counts + order lists grouped by the four customer-type tags.
+const CUSTOMER_TYPE_TAGS = [
+  "New Customer",
+  "Subscription Recurring Order",
+  "Subscription New Order",
+  "Wholesale",
+] as const;
+
+router.get("/orders-by-type", requireFounder, async (req, res) => {
+  const { from, to } = req.query as { from?: string; to?: string };
+  if (!from || !to) {
+    res.status(400).json({ error: "from and to query params required (YYYY-MM-DD)" });
+    return;
+  }
+  try {
+    const allOrders = await getOrdersByDateRange(from, to);
+
+    const groups = CUSTOMER_TYPE_TAGS.map(tag => {
+      const matchingOrders = allOrders.filter(o => {
+        const tags = o.tags.split(",").map(t => t.trim());
+        return tags.includes(tag);
+      });
+      return {
+        tag,
+        count: matchingOrders.length,
+        orders: matchingOrders.map(o => ({
+          id: o.id,
+          orderNumber: o.name,
+          customerName: o.customer
+            ? `${o.customer.first_name} ${o.customer.last_name}`.trim()
+            : "Guest",
+          date: o.created_at.slice(0, 10),
+          total: parseFloat(o.total_price || "0"),
+          fulfillmentStatus: o.fulfillment_status ?? "unfulfilled",
+        })),
+      };
+    });
+
+    res.json({ from, to, groups });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Shopify] orders-by-type error:", msg);
+    res.status(502).json({ error: msg });
   }
 });
 
