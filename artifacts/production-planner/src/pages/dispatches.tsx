@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
-import { ShoppingBag, Package, RefreshCw, AlertCircle, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight, Scan, Tag, CheckCircle2, XCircle, RotateCcw, Loader2 } from "lucide-react";
+import { ShoppingBag, Package, RefreshCw, AlertCircle, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight, Scan, Tag, CheckCircle2, XCircle, RotateCcw, Loader2, SlidersHorizontal } from "lucide-react";
 import { format, startOfWeek, addWeeks, isSameWeek, parseISO } from "date-fns";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { useLocation } from "wouter";
@@ -162,6 +162,7 @@ export default function Dispatches() {
   const [variantFilter, setVariantFilter] = useState("2 Pack");
   const [excludeVariant, setExcludeVariant] = useState("8 Pack Bag");
   const [excludeTitle, setExcludeTitle] = useState("F2F");
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const { data: weeklyData, isLoading: weeklyLoading, refetch: refetchWeekly } = useQuery({
     queryKey: ["shopify-weekly-orders", weekStartStr],
@@ -536,30 +537,46 @@ export default function Dispatches() {
               </button>
             </div>
 
-            <div className="flex gap-3 items-end flex-wrap pt-1 border-t border-border/50">
-              <FilterInput
-                label="Include variant"
-                value={variantFilter}
-                onChange={setVariantFilter}
-                placeholder="e.g. 2 Pack"
-                hint={variantFilter ? `Showing only "${variantFilter}" variants` : "Showing all variants"}
-              />
-              <FilterInput
-                label="Exclude variant"
-                value={excludeVariant}
-                onChange={setExcludeVariant}
-                placeholder="e.g. 8 Pack Bag"
-                hint={excludeVariant ? `Hiding "${excludeVariant}" variants` : "No variant exclusion"}
-                isExclusion
-              />
-              <FilterInput
-                label="Exclude product title"
-                value={excludeTitle}
-                onChange={setExcludeTitle}
-                placeholder="e.g. F2F"
-                hint={excludeTitle ? `Hiding titles containing "${excludeTitle}"` : "No title exclusion"}
-                isExclusion
-              />
+            <div className="pt-1 border-t border-border/50">
+              <button
+                type="button"
+                onClick={() => setFiltersOpen(o => !o)}
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors py-1"
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5" />
+                <span className="font-medium">Variant Filters</span>
+                {filtersOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                {(variantFilter || excludeVariant || excludeTitle) && !filtersOpen && (
+                  <span className="text-xs text-primary ml-1">Active</span>
+                )}
+              </button>
+              {filtersOpen && (
+                <div className="flex gap-3 items-end flex-wrap mt-3">
+                  <FilterInput
+                    label="Include variant"
+                    value={variantFilter}
+                    onChange={setVariantFilter}
+                    placeholder="e.g. 2 Pack"
+                    hint={variantFilter ? `Showing only "${variantFilter}" variants` : "Showing all variants"}
+                  />
+                  <FilterInput
+                    label="Exclude variant"
+                    value={excludeVariant}
+                    onChange={setExcludeVariant}
+                    placeholder="e.g. 8 Pack Bag"
+                    hint={excludeVariant ? `Hiding "${excludeVariant}" variants` : "No variant exclusion"}
+                    isExclusion
+                  />
+                  <FilterInput
+                    label="Exclude product title"
+                    value={excludeTitle}
+                    onChange={setExcludeTitle}
+                    placeholder="e.g. F2F"
+                    hint={excludeTitle ? `Hiding titles containing "${excludeTitle}"` : "No title exclusion"}
+                    isExclusion
+                  />
+                </div>
+              )}
             </div>
           </div>
         </div>
