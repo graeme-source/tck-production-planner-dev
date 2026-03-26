@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
-import { Thermometer, Snowflake, Package, RefreshCw, ChevronRight, Settings2, Plus, Pencil, Trash2, X, Save, Loader2, Lock, Check } from "lucide-react";
+import { Thermometer, Snowflake, Package, RefreshCw, ChevronRight, Settings2, Plus, Pencil, Trash2, X, Save, Loader2, Lock, LockOpen, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -120,7 +120,7 @@ async function updateStockEntry(id: number, data: {
   unit: string;
   location: string;
 }): Promise<void> {
-  const res = await fetch(`${BASE}/api/stock/${id}`, {
+  const res = await fetch(`${BASE}/api/stock-entries/${id}`, {
     method: "PUT",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
@@ -133,7 +133,7 @@ async function updateStockEntry(id: number, data: {
 }
 
 async function deleteStockEntry(id: number): Promise<void> {
-  const res = await fetch(`${BASE}/api/stock/${id}`, {
+  const res = await fetch(`${BASE}/api/stock-entries/${id}`, {
     method: "DELETE",
     credentials: "include",
   });
@@ -151,7 +151,7 @@ async function createStockEntry(data: {
   unit: string;
   location: string;
 }): Promise<void> {
-  const res = await fetch(`${BASE}/api/stock`, {
+  const res = await fetch(`${BASE}/api/stock-entries`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
@@ -208,11 +208,68 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
   const [addUnit, setAddUnit] = useState("packs");
   const [stockError, setStockError] = useState<string | null>(null);
 
+  // Bulk edit mode
+  const [bulkEdit, setBulkEdit] = useState(false);
+  const [bulkValues, setBulkValues] = useState<Record<number, string>>({});
+  const [bulkSaving, setBulkSaving] = useState(false);
+
+  const enterBulkEdit = () => {
+    const initial: Record<number, string> = {};
+    for (const item of location.items) {
+      initial[item.stockEntryId] = String(item.qty);
+    }
+    setBulkValues(initial);
+    setBulkEdit(true);
+    setEditingEntryId(null);
+    setDeletingEntryId(null);
+    setAddingStock(false);
+    setStockError(null);
+  };
+
+  const exitBulkEdit = () => {
+    setBulkEdit(false);
+    setBulkValues({});
+    setStockError(null);
+  };
+
+  const saveAll = async () => {
+    setBulkSaving(true);
+    setStockError(null);
+    try {
+      const saves = location.items
+        .filter(item => {
+          const raw = bulkValues[item.stockEntryId];
+          if (raw === undefined) return false;
+          const parsed = parseFloat(raw);
+          return !isNaN(parsed) && parsed >= 0 && parsed !== item.qty;
+        })
+        .map(item =>
+          updateStockEntry(item.stockEntryId, {
+            recipeId: item.recipeId,
+            ingredientId: item.ingredientId,
+            itemType: item.type,
+            quantity: parseFloat(bulkValues[item.stockEntryId]),
+            unit: item.unit,
+            location: location.key,
+          })
+        );
+      await Promise.all(saves);
+      invalidate();
+      exitBulkEdit();
+    } catch (err: unknown) {
+      setStockError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBulkSaving(false);
+    }
+  };
+
   // Reset state when location changes
   useEffect(() => {
     setEditingEntryId(null);
     setDeletingEntryId(null);
     setAddingStock(false);
+    setBulkEdit(false);
+    setBulkValues({});
     setStockError(null);
   }, [location.key]);
 
@@ -307,28 +364,68 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
           <h2 className="font-display font-bold text-xl leading-tight">{location.label}</h2>
           <p className="text-xs text-muted-foreground capitalize mt-0.5">{location.zone} storage</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <div className="text-right shrink-0">
             <p className="text-3xl font-display font-bold tabular-nums leading-none">
-              {Math.round(totalQty).toLocaleString()}
+              {Math.round(
+                bulkEdit
+                  ? location.items.reduce((s, i) => {
+                      const v = parseFloat(bulkValues[i.stockEntryId] ?? String(i.qty));
+                      return s + (isNaN(v) ? i.qty : v);
+                    }, 0)
+                  : totalQty
+              ).toLocaleString()}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
               {location.items.length} {location.items.length === 1 ? "item" : "items"}
             </p>
           </div>
-          <button
-            onClick={() => { setAddingStock(a => !a); setEditingEntryId(null); setDeletingEntryId(null); setStockError(null); }}
-            className={cn(
-              "flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border transition-colors",
-              addingStock
-                ? "bg-primary/10 text-primary border-primary/30"
-                : "text-muted-foreground hover:text-foreground border-border hover:bg-secondary"
-            )}
-            title="Add stock entry"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Add Stock
-          </button>
+
+          {bulkEdit ? (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={exitBulkEdit}
+                disabled={bulkSaving}
+                className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-50"
+              >
+                <X className="w-3.5 h-3.5" /> Cancel
+              </button>
+              <button
+                onClick={saveAll}
+                disabled={bulkSaving}
+                className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 font-medium"
+              >
+                {bulkSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                Save All
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              {location.items.length > 0 && (
+                <button
+                  onClick={enterBulkEdit}
+                  className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                  title="Edit all quantities at once"
+                >
+                  <LockOpen className="w-3.5 h-3.5" />
+                  Unlock
+                </button>
+              )}
+              <button
+                onClick={() => { setAddingStock(a => !a); setEditingEntryId(null); setDeletingEntryId(null); setStockError(null); }}
+                className={cn(
+                  "flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border transition-colors",
+                  addingStock
+                    ? "bg-primary/10 text-primary border-primary/30"
+                    : "text-muted-foreground hover:text-foreground border-border hover:bg-secondary"
+                )}
+                title="Add stock entry"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add Stock
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -390,6 +487,17 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
               Save
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Bulk edit banner */}
+      {bulkEdit && (
+        <div className="px-6 py-2.5 border-b border-primary/20 bg-primary/5 flex items-center justify-between">
+          <p className="text-xs text-primary font-medium flex items-center gap-1.5">
+            <LockOpen className="w-3.5 h-3.5" />
+            Editing mode — type new quantities, then click Save All
+          </p>
+          {stockError && <p className="text-xs text-destructive">{stockError}</p>}
         </div>
       )}
 
@@ -480,6 +588,42 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
                 );
               }
 
+              // ── Bulk-edit row ──────────────────────────────────────────
+              if (bulkEdit) {
+                const bulkVal = bulkValues[item.stockEntryId] ?? String(item.qty);
+                const parsed = parseFloat(bulkVal);
+                const changed = !isNaN(parsed) && parsed !== item.qty;
+                return (
+                  <div key={item.stockEntryId} className={cn("px-6 py-3 transition-colors", changed && "bg-primary/5")}>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-semibold text-muted-foreground w-5 tabular-nums shrink-0">{idx + 1}</span>
+                      <span
+                        className="flex-1 font-medium text-sm truncate"
+                        style={item.color ? { color: item.color } : undefined}
+                      >
+                        {item.name}
+                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <input
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={bulkVal}
+                          onChange={e => setBulkValues(v => ({ ...v, [item.stockEntryId]: e.target.value }))}
+                          onFocus={e => e.target.select()}
+                          className={cn(
+                            "w-20 px-2 py-1 text-sm font-bold tabular-nums text-right bg-background border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30",
+                            changed ? "border-primary text-primary" : "border-border text-foreground"
+                          )}
+                        />
+                        <span className="text-xs text-muted-foreground">{item.unit}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+
+              // ── Normal row ─────────────────────────────────────────────
               return (
                 <div key={item.stockEntryId} className="px-6 py-4 hover:bg-secondary/30 transition-colors group">
                   <div className="flex items-center gap-3 mb-2">
