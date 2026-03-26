@@ -1,16 +1,22 @@
 import React, { useState } from "react";
-import { Link, useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
+import { motion, AnimatePresence } from "framer-motion";
 import {
-  ChevronLeft, BarChart2, ClipboardList, Layers, Beef,
-  Menu, X,
-  LayoutDashboard, CalendarDays, ChefHat, Carrot, Truck,
-  Building2, Settings, Lightbulb, PackageSearch, ArrowDownCircle,
-  ShoppingCart, PackageCheck, Box,
+  ChevronLeft, BarChart2, ClipboardList, Layers, Beef, Menu, X,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import { STATIONS, type StationType } from "./constants";
+import {
+  NavLinks,
+  AccountButton,
+  navItems,
+  productNavItems,
+  inventorySubItems,
+} from "@/components/layout";
+import { useAuth } from "@/contexts/auth-context";
+import { usePagePermissions } from "@/hooks/use-page-permissions";
 
 interface StationLayoutProps {
   planId: number;
@@ -19,25 +25,25 @@ interface StationLayoutProps {
   children: React.ReactNode;
 }
 
-const NAV_LINKS = [
-  { label: "Dashboard", href: "/", icon: LayoutDashboard },
-  { label: "Production Plans", href: "/plans", icon: CalendarDays },
-  { label: "Recipes", href: "/recipes", icon: ChefHat },
-  { label: "Sub-Recipes", href: "/sub-recipes", icon: ClipboardList },
-  { label: "Ingredients", href: "/inventory?tab=ingredients", icon: Carrot },
-  { label: "Dispatches", href: "/dispatches", icon: Truck },
-  { label: "Suppliers", href: "/suppliers", icon: Building2 },
-  { label: "Orders", href: "/orders", icon: ShoppingCart },
-  { label: "Deliveries", href: "/deliveries", icon: PackageCheck },
-  { label: "Kanbans", href: "/kanbans", icon: ArrowDownCircle },
-  { label: "Stock", href: "/stock", icon: PackageSearch },
-  { label: "Lean Cave", href: "/lean-cave", icon: Lightbulb },
-  { label: "Settings", href: "/settings", icon: Settings },
-];
-
 export function StationLayout({ planId, stationType, plan, children }: StationLayoutProps) {
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
+  const search = useSearch();
   const [navOpen, setNavOpen] = useState(false);
+  const { state, logout, lockStation } = useAuth();
+  const { canAccess } = usePagePermissions();
+
+  const user = state.status === "authenticated" ? state.user : null;
+
+  const visibleNavItems = navItems.filter(item =>
+    canAccess(user?.role ?? "viewer", item.href)
+  );
+  const visibleProductItems = productNavItems.filter(item =>
+    canAccess(user?.role ?? "viewer", item.href)
+  );
+  const visibleInventoryItems = inventorySubItems.filter(item =>
+    canAccess(user?.role ?? "viewer", item.href)
+  );
+
   const station = STATIONS.find(s => s.key === stationType);
 
   const resolveStationMeta = (key: StationType): { label: string; icon: React.ComponentType<{ className?: string }>; color: string } => {
@@ -51,65 +57,85 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Nav drawer overlay */}
-      {navOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
-          onClick={() => setNavOpen(false)}
-        />
-      )}
-
-      {/* Slide-in nav drawer */}
-      <div
-        className={cn(
-          "fixed inset-y-0 left-0 z-50 w-72 bg-card border-r border-border shadow-2xl flex flex-col transition-transform duration-300 ease-in-out",
-          navOpen ? "translate-x-0" : "-translate-x-full"
-        )}
-      >
-        <div className="flex items-center justify-between px-4 py-4 border-b border-border flex-shrink-0">
-          <div>
-            <p className="font-semibold text-sm">The Calzone Kitchen</p>
-            <p className="text-xs text-muted-foreground">Main Menu</p>
-          </div>
-          <button
+      {/* Backdrop */}
+      <AnimatePresence>
+        {navOpen && (
+          <motion.div
+            key="station-nav-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-40 bg-black/50"
             onClick={() => setNavOpen(false)}
-            className="p-1.5 rounded-lg hover:bg-secondary/60 text-muted-foreground hover:text-foreground transition-colors"
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Slide-in nav drawer — identical structure to the main mobile drawer */}
+      <AnimatePresence>
+        {navOpen && (
+          <motion.div
+            key="station-nav-drawer"
+            initial={{ x: "-100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "-100%" }}
+            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+            className="fixed inset-y-0 left-0 z-50 w-72 bg-card border-r border-border flex flex-col"
           >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+            {/* Header */}
+            <div className="px-5 py-4 flex items-center justify-between border-b border-border flex-shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="flex-shrink-0 w-9 h-9 rounded-xl bg-primary flex items-center justify-center p-1.5">
+                  <img
+                    src={`${import.meta.env.BASE_URL}tck-logo-short-cream.png`}
+                    alt="TCK"
+                    className="w-full h-full object-contain"
+                  />
+                </div>
+                <div className="flex flex-col min-w-0">
+                  <span className="font-display font-bold text-sm leading-tight">The Calzone Kitchen</span>
+                  <span className="text-xs text-muted-foreground">Production Planner</span>
+                </div>
+              </div>
+              <button
+                onClick={() => setNavOpen(false)}
+                className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
-        <nav className="flex-1 overflow-y-auto py-3 px-3 space-y-0.5">
-          {NAV_LINKS.map(item => (
-            <Link
-              key={item.href}
-              href={item.href}
-              onClick={() => setNavOpen(false)}
-              className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
-            >
-              <item.icon className="w-4 h-4 flex-shrink-0" />
-              {item.label}
-            </Link>
-          ))}
-        </nav>
+            {/* Nav links — exactly the same component the sidebar uses */}
+            <NavLinks
+              visibleNavItems={visibleNavItems}
+              visibleProductItems={visibleProductItems}
+              visibleInventoryItems={visibleInventoryItems}
+              location={location}
+              search={search}
+              user={user}
+              onNavigate={() => setNavOpen(false)}
+            />
 
-        <div className="border-t border-border p-3 flex-shrink-0">
-          <button
-            onClick={() => { setNavOpen(false); navigate(`/plans`); }}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
-          >
-            <CalendarDays className="w-4 h-4 flex-shrink-0" />
-            Back to Production Plans
-          </button>
-        </div>
-      </div>
+            {/* Account button at bottom */}
+            <div className="p-4 border-t border-border flex-shrink-0">
+              <AccountButton
+                user={user}
+                logout={logout}
+                lockStation={lockStation}
+                onNavigate={() => setNavOpen(false)}
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {/* Sticky top header */}
+      {/* Sticky station top-bar */}
       <div className="border-b border-border bg-card sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-4 py-3">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 min-w-0">
-              {/* Hamburger button */}
+              {/* Hamburger — opens the real app nav */}
               <button
                 onClick={() => setNavOpen(true)}
                 className="flex-shrink-0 p-1.5 rounded-lg hover:bg-secondary/60 text-muted-foreground hover:text-foreground transition-colors"

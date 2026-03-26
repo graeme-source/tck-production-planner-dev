@@ -34,9 +34,9 @@ import {
 import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/user-avatar";
 
-type NavItem = { name: string; href: string; icon: React.ComponentType<{ className?: string }> };
+export type NavItem = { name: string; href: string; icon: React.ComponentType<{ className?: string }> };
 
-const navItems: NavItem[] = [
+export const navItems: NavItem[] = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Production Plans", href: "/plans", icon: CalendarDays },
   { name: "Dispatches", href: "/dispatches", icon: Truck },
@@ -44,7 +44,7 @@ const navItems: NavItem[] = [
   { name: "Analytics", href: "/reports", icon: BarChart2 },
 ];
 
-const inventorySubItems: NavItem[] = [
+export const inventorySubItems: NavItem[] = [
   { name: "Ingredients", href: "/inventory?tab=ingredients", icon: Carrot },
   { name: "Supplies", href: "/inventory?tab=supplies", icon: Box },
   { name: "Kanbans", href: "/kanbans", icon: ArrowDownCircle },
@@ -54,13 +54,13 @@ const inventorySubItems: NavItem[] = [
 
 const INVENTORY_PATHS = ["/inventory", "/kanbans", "/orders", "/deliveries"];
 
-const productNavItems: NavItem[] = [
+export const productNavItems: NavItem[] = [
   { name: "Recipes", href: "/recipes", icon: ChefHat },
   { name: "Sub-Recipes", href: "/sub-recipes", icon: ClipboardList },
   { name: "Ingredients", href: "/inventory?tab=ingredients", icon: Carrot },
 ];
 
-const bottomNavItems: NavItem[] = [
+export const bottomNavItems: NavItem[] = [
   { name: "Lean Cave", href: "/lean-cave", icon: Lightbulb },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
@@ -70,7 +70,7 @@ const DISPATCH_PATHS = ["/dispatches", "/locations"];
 
 type AccountButtonUser = { name?: string; role?: string; avatarUrl?: string | null } | null;
 
-function AccountButton({
+export function AccountButton({
   user,
   logout,
   lockStation,
@@ -157,7 +157,7 @@ function AccountButton({
   );
 }
 
-function NavLinks({
+export function NavLinks({
   visibleNavItems,
   visibleProductItems,
   visibleInventoryItems,
