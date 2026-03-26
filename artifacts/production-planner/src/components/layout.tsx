@@ -29,6 +29,7 @@ import {
   PackageCheck,
   KeyRound,
   User,
+  LockKeyhole,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/user-avatar";
@@ -72,10 +73,12 @@ type AccountButtonUser = { name?: string; role?: string; avatarUrl?: string | nu
 function AccountButton({
   user,
   logout,
+  lockStation,
   onNavigate,
 }: {
   user: AccountButtonUser;
   logout: () => void;
+  lockStation: () => void;
   onNavigate?: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -131,6 +134,14 @@ function AccountButton({
               <KeyRound className="w-4 h-4 text-muted-foreground" />
               Change PIN
             </Link>
+            <div className="border-t border-border" />
+            <button
+              onClick={() => { setOpen(false); lockStation(); }}
+              className="w-full flex items-center gap-3 px-4 py-3 text-sm text-foreground hover:bg-secondary/50 transition-colors"
+            >
+              <LockKeyhole className="w-4 h-4 text-muted-foreground" />
+              Lock station
+            </button>
             <div className="border-t border-border" />
             <button
               onClick={() => { setOpen(false); logout(); onNavigate?.(); }}
@@ -459,7 +470,7 @@ function NavLinks({
 export function Layout({ children }: { children: ReactNode }) {
   const [location] = useLocation();
   const search = useSearch();
-  const { state, logout } = useAuth();
+  const { state, logout, lockStation } = useAuth();
   const user = state.status === "authenticated" ? state.user : null;
   const { canAccess } = usePagePermissions();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -512,7 +523,7 @@ export function Layout({ children }: { children: ReactNode }) {
         />
 
         <div className="p-4 border-t border-border">
-          <AccountButton user={user} logout={logout} />
+          <AccountButton user={user} logout={logout} lockStation={lockStation} />
         </div>
       </aside>
 
@@ -571,7 +582,7 @@ export function Layout({ children }: { children: ReactNode }) {
               />
 
               <div className="p-4 border-t border-border">
-                <AccountButton user={user} logout={logout} onNavigate={() => setMobileOpen(false)} />
+                <AccountButton user={user} logout={logout} lockStation={lockStation} onNavigate={() => setMobileOpen(false)} />
               </div>
             </motion.div>
           </>

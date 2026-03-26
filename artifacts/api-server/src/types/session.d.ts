@@ -4,5 +4,6 @@ declare module "express-session" {
   interface SessionData {
     userId?: number;
     userRole?: "admin" | "manager" | "viewer";
+    pinVerifiedAt?: string;
   }
 }

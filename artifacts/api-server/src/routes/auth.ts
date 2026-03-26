@@ -26,6 +26,25 @@ const LoginBody = z.object({
   password: z.string().min(1),
 });
 
+// Returns true if the session needs PIN re-verification.
+// PIN lock resets daily at 5am UTC — staff must re-enter PIN each morning.
+function isPinRequired(pinVerifiedAt: string | undefined): boolean {
+  if (!pinVerifiedAt) return true;
+
+  const verified = new Date(pinVerifiedAt);
+  const now = new Date();
+
+  // Most recent 5am UTC reset point
+  const reset = new Date();
+  reset.setUTCHours(5, 0, 0, 0);
+  if (now.getTime() < reset.getTime()) {
+    // Before today's 5am — use yesterday's 5am as the cutoff
+    reset.setUTCDate(reset.getUTCDate() - 1);
+  }
+
+  return verified.getTime() < reset.getTime();
+}
+
 router.post("/login", loginLimiter, validate(LoginBody), async (req, res) => {
   const { email, password } = req.body as z.infer<typeof LoginBody>;
 
@@ -47,6 +66,7 @@ router.post("/login", loginLimiter, validate(LoginBody), async (req, res) => {
 
   req.session.userId = user.id;
   req.session.userRole = user.role as "admin" | "manager" | "viewer";
+  req.session.pinVerifiedAt = new Date().toISOString();
   req.session.save((err) => {
     if (err) {
       res.status(500).json({ error: "Failed to create session" });
@@ -87,6 +107,8 @@ router.get("/me", async (req, res) => {
     return;
   }
 
+  const pinRequired = isPinRequired(req.session.pinVerifiedAt);
+
   res.json({
     id: user.id,
     name: user.name,
@@ -94,6 +116,7 @@ router.get("/me", async (req, res) => {
     role: user.role,
     avatarUrl: user.avatarUrl ?? null,
     hasPin: !!user.pinHash,
+    pinRequired,
   });
 });
 
@@ -121,6 +144,10 @@ router.post("/pin/set", async (req, res) => {
     .set({ pinHash, pinAttempts: 0, pinLockedUntil: null })
     .where(eq(usersTable.id, req.session.userId));
 
+  // Setting a new PIN counts as verification
+  req.session.pinVerifiedAt = new Date().toISOString();
+  await new Promise<void>((resolve) => req.session.save(() => resolve()));
+
   res.json({ ok: true });
 });
 
@@ -132,6 +159,7 @@ const PinLoginBody = z.object({
 const PIN_MAX_ATTEMPTS = 5;
 const PIN_LOCKOUT_MS = 15 * 60 * 1000;
 
+// Device picker PIN login — used when selecting a user from the device list.
 router.post("/pin/login", loginLimiter, async (req, res) => {
   const parsed = PinLoginBody.safeParse(req.body);
   if (!parsed.success) {
@@ -203,6 +231,7 @@ router.post("/pin/login", loginLimiter, async (req, res) => {
 
   req.session.userId = user.id;
   req.session.userRole = user.role as "admin" | "manager" | "viewer";
+  req.session.pinVerifiedAt = new Date().toISOString();
   req.session.save((err) => {
     if (err) {
       res.status(500).json({ error: "Failed to create session" });
@@ -216,6 +245,112 @@ router.post("/pin/login", loginLimiter, async (req, res) => {
       avatarUrl: user.avatarUrl ?? null,
       hasPin: true,
     });
+  });
+});
+
+// In-session PIN verification — used by the daily PIN lock overlay.
+// The user is already authenticated; this just confirms their identity and
+// stamps pinVerifiedAt so they won't be prompted again until tomorrow's 5am.
+router.post("/pin/verify", loginLimiter, async (req, res) => {
+  if (!req.session.userId) {
+    res.status(401).json({ error: "Not authenticated" });
+    return;
+  }
+
+  const parsed = PinSetBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "PIN must be exactly 4 digits" });
+    return;
+  }
+
+  const { pin } = parsed.data;
+  const userId = req.session.userId;
+
+  const [user] = await db
+    .select()
+    .from(usersTable)
+    .where(eq(usersTable.id, userId));
+
+  if (!user || !user.isActive) {
+    req.session.destroy(() => {});
+    res.status(401).json({ error: "Not authenticated" });
+    return;
+  }
+
+  if (!user.pinHash) {
+    res.status(400).json({ error: "No PIN set for this user" });
+    return;
+  }
+
+  if (user.pinLockedUntil && user.pinLockedUntil > new Date()) {
+    const remainingMs = user.pinLockedUntil.getTime() - Date.now();
+    res.status(429).json({
+      error: "Too many failed attempts. Try again later.",
+      lockedUntil: user.pinLockedUntil.toISOString(),
+      remainingSeconds: Math.ceil(remainingMs / 1000),
+    });
+    return;
+  }
+
+  const valid = await bcrypt.compare(pin, user.pinHash);
+
+  if (!valid) {
+    const newAttempts = (user.pinAttempts ?? 0) + 1;
+    const updates: Partial<typeof usersTable.$inferInsert> = { pinAttempts: newAttempts };
+
+    if (newAttempts >= PIN_MAX_ATTEMPTS) {
+      updates.pinLockedUntil = new Date(Date.now() + PIN_LOCKOUT_MS);
+      updates.pinAttempts = 0;
+    }
+
+    await db.update(usersTable).set(updates).where(eq(usersTable.id, userId));
+
+    const attemptsLeft = PIN_MAX_ATTEMPTS - newAttempts;
+    if (attemptsLeft <= 0) {
+      res.status(429).json({
+        error: "Too many failed attempts. Account locked for 15 minutes.",
+        lockedUntil: updates.pinLockedUntil?.toISOString(),
+        remainingSeconds: Math.ceil(PIN_LOCKOUT_MS / 1000),
+      });
+    } else {
+      res.status(401).json({
+        error: `Incorrect PIN. ${attemptsLeft} attempt${attemptsLeft === 1 ? "" : "s"} remaining.`,
+        attemptsLeft,
+      });
+    }
+    return;
+  }
+
+  await db
+    .update(usersTable)
+    .set({ pinAttempts: 0, pinLockedUntil: null })
+    .where(eq(usersTable.id, userId));
+
+  req.session.pinVerifiedAt = new Date().toISOString();
+  req.session.save((err) => {
+    if (err) {
+      res.status(500).json({ error: "Failed to save session" });
+      return;
+    }
+    res.json({ ok: true });
+  });
+});
+
+// Manual PIN lock — clears pinVerifiedAt so the overlay appears on next render.
+// Available to all authenticated users (e.g. "Lock station" button).
+router.post("/pin/lock", (req, res) => {
+  if (!req.session.userId) {
+    res.status(401).json({ error: "Not authenticated" });
+    return;
+  }
+
+  req.session.pinVerifiedAt = undefined;
+  req.session.save((err) => {
+    if (err) {
+      res.status(500).json({ error: "Failed to lock session" });
+      return;
+    }
+    res.json({ ok: true });
   });
 });
 

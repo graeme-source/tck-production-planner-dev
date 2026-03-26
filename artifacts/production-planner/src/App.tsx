@@ -33,6 +33,7 @@ import AcceptInvite from "@/pages/accept-invite";
 import ForgotPassword from "@/pages/forgot-password";
 import ResetPassword from "@/pages/reset-password";
 import { Loader2 } from "lucide-react";
+import { PinLockOverlay } from "@/components/pin-lock-overlay";
 
 const queryClient = new QueryClient();
 
@@ -86,7 +87,7 @@ function Router() {
 }
 
 function AuthGate() {
-  const { state, refreshUser } = useAuth();
+  const { state, pinLocked, refreshUser } = useAuth();
   const [location] = useLocation();
 
   const isPublicPath = PUBLIC_PATHS.some(p => location.startsWith(p));
@@ -127,7 +128,12 @@ function AuthGate() {
     );
   }
 
-  return <Router />;
+  return (
+    <>
+      <Router />
+      {pinLocked && <PinLockOverlay />}
+    </>
+  );
 }
 
 function App() {
