@@ -1581,7 +1581,7 @@ export default function Fulfilment() {
                       )}
                     </div>
                     <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                      <span className="flex items-center gap-1"><Package className="w-3.5 h-3.5" /> {group.orderCount} orders</span>
+                      <span className="flex items-center gap-1"><Package className="w-3.5 h-3.5" /> {group.orderCount} unfulfilled</span>
                       <span>{group.totalItems} items</span>
                       <span>{weightKg} kg</span>
                       {group.postcodeIssues > 0 && (
@@ -1807,7 +1807,7 @@ export default function Fulfilment() {
       {orders && (
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            {unfulfilledOrders.length} ready to pack &middot; {untaggedOrders.length} awaiting approval &middot; {fulfilledOrders.length} fulfilled
+            {unfulfilledOrders.length} ready to pack &middot; {untaggedOrders.length} awaiting approval &middot; {progress ? progress.totalFulfilled : fulfilledOrders.length} fulfilled
           </p>
 
           <div className="flex gap-2 flex-wrap">
