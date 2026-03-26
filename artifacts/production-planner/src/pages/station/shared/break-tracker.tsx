@@ -1,7 +1,8 @@
-import React from "react";
+import React, { useContext } from "react";
 import { createPortal } from "react-dom";
 import { useState, useEffect, useRef } from "react";
-import { Coffee, Utensils, Loader2 } from "lucide-react";
+import { Coffee, Utensils, Loader2, AlertTriangle } from "lucide-react";
+import { StationRecordContext } from "./station-layout";
 import { format, parseISO, differenceInSeconds } from "date-fns";
 import { cn } from "@/lib/utils";
 import { useCreateStationBreak, useEndStationBreak } from "@workspace/api-client-react";
@@ -21,6 +22,7 @@ export interface ActiveBreak {
 }
 
 export function BreakTracker({ planId, stationType, onBreakChange, onBreakActiveChange }: BreakTrackerProps) {
+  const openRecord = useContext(StationRecordContext);
   const [activeBreak, setActiveBreak] = useState<ActiveBreak | null>(null);
   const [elapsedSecs, setElapsedSecs] = useState(0);
   const [hydrated, setHydrated] = useState(false);
@@ -241,22 +243,31 @@ export function BreakTracker({ planId, stationType, onBreakChange, onBreakActive
     <>
       {breakOverlay}
       {!activeBreak && (
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">Breaks:</span>
+        <div className="flex items-center gap-2 w-full">
+          <span className="text-xs text-muted-foreground flex-shrink-0">Breaks:</span>
           <button
             onClick={() => startBreak("morning")}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-break-action hover:opacity-90 text-break-action-foreground rounded-lg transition-colors font-medium"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-break-action hover:opacity-90 text-break-action-foreground rounded-lg transition-colors font-medium flex-shrink-0"
           >
             <Coffee className="w-3.5 h-3.5" />
             Snack ({defaults.breakMins}m)
           </button>
           <button
             onClick={() => startBreak("lunch")}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-break-action hover:opacity-90 text-break-action-foreground rounded-lg transition-colors font-medium"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-break-action hover:opacity-90 text-break-action-foreground rounded-lg transition-colors font-medium flex-shrink-0"
           >
             <Utensils className="w-3.5 h-3.5" />
             Lunch ({defaults.lunchMins}m)
           </button>
+          {openRecord && (
+            <button
+              onClick={openRecord}
+              className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors font-semibold flex-shrink-0 shadow-sm shadow-blue-500/30"
+            >
+              <AlertTriangle className="w-3.5 h-3.5" />
+              Record
+            </button>
+          )}
         </div>
       )}
     </>

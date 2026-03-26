@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, createContext, useContext } from "react";
 import { useLocation, useSearch } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ChevronLeft, BarChart2, ClipboardList, Layers, Beef, Menu, X, AlertTriangle,
+  ChevronLeft, BarChart2, ClipboardList, Layers, Beef, Menu, X,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -20,6 +20,9 @@ import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { ReportModal } from "@/components/report-modal";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+export const StationRecordContext = createContext<(() => void) | null>(null);
+export function useStationRecord() { return useContext(StationRecordContext); }
 
 interface AndonIssueBadge {
   severity: "yellow" | "red";
@@ -92,6 +95,7 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
   const StationIcon = meta.icon;
 
   return (
+    <StationRecordContext.Provider value={() => setReportOpen(true)}>
     <div className="min-h-screen bg-background">
       {/* Backdrop */}
       <AnimatePresence>
@@ -227,14 +231,6 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
                 })}
               </div>
 
-              <button
-                onClick={() => setReportOpen(true)}
-                className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors border border-border rounded-lg px-3 py-1.5 hover:bg-secondary/50"
-              >
-                <AlertTriangle className="w-4 h-4" />
-                <span className="hidden sm:inline">Report</span>
-              </button>
-
               {(() => {
                 const prepSubKeys = ["main_prep", "prep_bases", "prep_meat"] as const;
                 const isInPrepSub = (prepSubKeys as readonly string[]).includes(stationType);
@@ -259,5 +255,6 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
 
       <ReportModal open={reportOpen} onClose={() => setReportOpen(false)} defaultStation={stationType} />
     </div>
+    </StationRecordContext.Provider>
   );
 }
