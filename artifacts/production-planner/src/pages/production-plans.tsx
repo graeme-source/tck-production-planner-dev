@@ -1574,6 +1574,21 @@ function RawMaterialsManifest({ planId, planName, onClose }: RawMaterialsManifes
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [creatingOrder, setCreatingOrder] = useState(false);
   const [orderResult, setOrderResult] = useState<{ ordersCreated: number; ordersUpdated: number; orders: Array<{ orderId: number; supplierName: string; lineCount: number; action: string }> } | null>(null);
+  const [showPacked, setShowPacked] = useState(false);
+  const [checks, setChecks] = useState<Record<string, boolean>>({});
+
+  const toggle = (key: string) => setChecks(prev => ({ ...prev, [key]: !prev[key] }));
+
+  const cb = (id: string) => (
+    <td key={id} className="py-1.5 px-2 text-center">
+      <input
+        type="checkbox"
+        checked={!!checks[id]}
+        onChange={() => toggle(id)}
+        className="print-checkbox w-4 h-4 rounded border-2 border-gray-400 accent-primary cursor-pointer"
+      />
+    </td>
+  );
 
   const { data, isLoading, error } = useQuery<RawMaterialsData>({
     queryKey: ["raw-materials", planId],
@@ -1620,10 +1635,10 @@ function RawMaterialsManifest({ planId, planName, onClose }: RawMaterialsManifes
   };
 
   return (
-    <div data-print-target className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 overflow-y-auto py-6 px-4 print:relative print:bg-transparent print:py-0 print:px-0 print:block print:overflow-visible">
-      <div className="bg-card border border-border rounded-2xl w-full max-w-3xl shadow-2xl print:shadow-none print:border-0 print:rounded-none print:max-w-none">
+    <div data-print-target className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 overflow-y-auto py-6 px-4 print:block print:p-0 print:bg-white print:overflow-visible">
+      <div className="bg-card border border-border rounded-2xl w-full max-w-3xl shadow-2xl print:shadow-none print:border-0 print:rounded-none print:max-w-none print:w-full">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border print:border-b-2 print:border-black">
+        <div className="flex items-start justify-between px-6 py-4 border-b border-border print:border-b-2 print:border-black">
           <div>
             <h2 className="font-bold text-lg flex items-center gap-2 print:text-xl">
               <FlaskConical className="w-5 h-5 text-primary print:hidden" />
@@ -1635,8 +1650,24 @@ function RawMaterialsManifest({ planId, planName, onClose }: RawMaterialsManifes
                 {data.batchNumber && <span className="ml-2 font-mono">Batch #{data.batchNumber}</span>}
               </p>
             )}
+            {showPacked && (
+              <p className="text-xs text-primary font-medium mt-0.5 print:block print:text-black hidden">Event mode — Packed column shown</p>
+            )}
           </div>
-          <div className="flex items-center gap-2 print:hidden">
+          <div className="flex items-center gap-2 print:hidden flex-wrap justify-end">
+            <button
+              onClick={() => setShowPacked(v => !v)}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 text-xs border rounded-lg transition-colors font-medium",
+                showPacked
+                  ? "bg-primary/10 border-primary/40 text-primary"
+                  : "border-border hover:bg-secondary/50 text-muted-foreground"
+              )}
+              title="Toggle Packed column (for events)"
+            >
+              <Package className="w-3.5 h-3.5" />
+              {showPacked ? "Event mode on" : "Event mode"}
+            </button>
             <button
               onClick={() => { onClose(); navigate(`/orders?planId=${planId}`); }}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors font-medium"
@@ -1691,7 +1722,7 @@ function RawMaterialsManifest({ planId, planName, onClose }: RawMaterialsManifes
               <div className="space-y-4">
                 <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground print:text-black">Per Recipe Breakdown</h3>
                 {data.recipes.map((recipe, recipeIdx) => (
-                  <div key={recipe.recipeId} className="border border-border rounded-xl overflow-hidden print:border print:border-black print:rounded-none">
+                  <div key={recipe.recipeId} className="print-avoid-break border border-border rounded-xl overflow-hidden print:border print:border-black print:rounded-none">
                     <div className="bg-secondary/30 px-4 py-2.5 flex items-center justify-between print:bg-gray-100">
                       <span className="font-semibold text-sm">{recipe.recipeName}</span>
                       <span className="text-xs text-muted-foreground print:text-black">{recipe.batchesTarget} batch{recipe.batchesTarget !== 1 ? "es" : ""}</span>
@@ -1700,11 +1731,23 @@ function RawMaterialsManifest({ planId, planName, onClose }: RawMaterialsManifes
                     {/* Direct ingredients */}
                     {recipe.directIngredients.length > 0 && (
                       <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-t border-border/40 print:border-gray-200 bg-secondary/10 print:bg-gray-50">
+                            <th className="py-1.5 px-4 text-left font-medium text-muted-foreground print:text-black">Ingredient</th>
+                            <th className="py-1.5 px-4 text-right font-medium text-muted-foreground print:text-black">Qty</th>
+                            <th className="py-1.5 px-2 text-center font-medium text-muted-foreground print:text-black w-12">Ordered</th>
+                            <th className="py-1.5 px-2 text-center font-medium text-muted-foreground print:text-black w-12">Prepped</th>
+                            {showPacked && <th className="py-1.5 px-2 text-center font-medium text-muted-foreground print:text-black w-12">Packed</th>}
+                          </tr>
+                        </thead>
                         <tbody>
                           {recipe.directIngredients.map(ing => (
                             <tr key={ing.ingredientId} className="border-t border-border/40 print:border-gray-200">
                               <td className="py-1.5 px-4 text-muted-foreground print:text-black">{ing.name}</td>
                               <td className="py-1.5 px-4 text-right font-mono tabular-nums print:text-black">{fmtQty(ing.quantity, ing.unit)}</td>
+                              {cb(`r${recipe.recipeId}-i${ing.ingredientId}-ordered`)}
+                              {cb(`r${recipe.recipeId}-i${ing.ingredientId}-prepped`)}
+                              {showPacked && cb(`r${recipe.recipeId}-i${ing.ingredientId}-packed`)}
                             </tr>
                           ))}
                         </tbody>
@@ -1732,16 +1775,28 @@ function RawMaterialsManifest({ planId, planName, onClose }: RawMaterialsManifes
                             </div>
                           </button>
                           <div className={cn("overflow-hidden transition-all", isExpanded ? "max-h-screen" : "max-h-0 print:max-h-screen")}>
-                              <table className="w-full text-xs pl-4">
-                                <tbody>
-                                  {sr.components.map(comp => (
-                                    <tr key={comp.ingredientId} className="border-t border-border/30 print:border-gray-100">
-                                      <td className="py-1.5 pl-8 pr-4 text-muted-foreground print:text-gray-700">↳ {comp.name}</td>
-                                      <td className="py-1.5 px-4 text-right font-mono tabular-nums print:text-black">{fmtQty(comp.quantity, comp.unit)}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="border-t border-border/20 print:border-gray-100 bg-secondary/5">
+                                  <th className="py-1 pl-8 pr-4 text-left font-medium text-muted-foreground print:text-black">Component</th>
+                                  <th className="py-1 px-4 text-right font-medium text-muted-foreground print:text-black">Qty</th>
+                                  <th className="py-1 px-2 text-center font-medium text-muted-foreground print:text-black w-12">Ordered</th>
+                                  <th className="py-1 px-2 text-center font-medium text-muted-foreground print:text-black w-12">Prepped</th>
+                                  {showPacked && <th className="py-1 px-2 text-center font-medium text-muted-foreground print:text-black w-12">Packed</th>}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {sr.components.map(comp => (
+                                  <tr key={comp.ingredientId} className="border-t border-border/30 print:border-gray-100">
+                                    <td className="py-1.5 pl-8 pr-4 text-muted-foreground print:text-gray-700">↳ {comp.name}</td>
+                                    <td className="py-1.5 px-4 text-right font-mono tabular-nums print:text-black">{fmtQty(comp.quantity, comp.unit)}</td>
+                                    {cb(`r${recipe.recipeId}-sr${sr.subRecipeId}-i${comp.ingredientId}-ordered`)}
+                                    {cb(`r${recipe.recipeId}-sr${sr.subRecipeId}-i${comp.ingredientId}-prepped`)}
+                                    {showPacked && cb(`r${recipe.recipeId}-sr${sr.subRecipeId}-i${comp.ingredientId}-packed`)}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
                           </div>
                         </div>
                       );
@@ -1751,7 +1806,7 @@ function RawMaterialsManifest({ planId, planName, onClose }: RawMaterialsManifes
               </div>
 
               {/* Grand totals */}
-              <div className="border border-border rounded-xl overflow-hidden print:border print:border-black print:rounded-none">
+              <div className="print-avoid-break border border-border rounded-xl overflow-hidden print:border print:border-black print:rounded-none">
                 <div className="bg-primary/10 px-4 py-2.5 print:bg-gray-200">
                   <h3 className="text-sm font-bold">Total Requirements (All Recipes)</h3>
                 </div>
@@ -1760,6 +1815,9 @@ function RawMaterialsManifest({ planId, planName, onClose }: RawMaterialsManifes
                     <tr className="bg-secondary/20 border-b border-border print:border-gray-300">
                       <th className="py-2 px-4 text-left font-medium text-muted-foreground print:text-black">Ingredient</th>
                       <th className="py-2 px-4 text-right font-medium text-muted-foreground print:text-black">Total Required</th>
+                      <th className="py-2 px-2 text-center font-medium text-muted-foreground print:text-black w-14">Ordered</th>
+                      <th className="py-2 px-2 text-center font-medium text-muted-foreground print:text-black w-14">Prepped</th>
+                      {showPacked && <th className="py-2 px-2 text-center font-medium text-muted-foreground print:text-black w-14">Packed</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -1767,6 +1825,9 @@ function RawMaterialsManifest({ planId, planName, onClose }: RawMaterialsManifes
                       <tr key={ing.ingredientId} className="border-t border-border/40 print:border-gray-200">
                         <td className="py-1.5 px-4 print:text-black">{ing.name}</td>
                         <td className="py-1.5 px-4 text-right font-mono tabular-nums font-medium print:text-black">{fmtQty(ing.quantity, ing.unit)}</td>
+                        {cb(`total-i${ing.ingredientId}-ordered`)}
+                        {cb(`total-i${ing.ingredientId}-prepped`)}
+                        {showPacked && cb(`total-i${ing.ingredientId}-packed`)}
                       </tr>
                     ))}
                   </tbody>

@@ -185,20 +185,49 @@
 
 /* Print styles — only active when body has .printing-manifest class */
 @media print {
+  /* Allow full document flow so content can span multiple pages */
+  body.printing-manifest,
+  body.printing-manifest html {
+    overflow: visible !important;
+    height: auto !important;
+  }
+  /* Hide everything that's not the print target or its descendants */
   body.printing-manifest *:not([data-print-target]):not([data-print-target] *) {
     visibility: hidden !important;
-    position: absolute !important;
-    overflow: hidden !important;
+    overflow: visible !important;
   }
+  /* Ensure ancestors of the print target don't clip it */
+  body.printing-manifest,
+  body.printing-manifest #root,
+  body.printing-manifest #root > * {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+  }
+  /* The print target and all its children are fully visible */
   body.printing-manifest [data-print-target],
   body.printing-manifest [data-print-target] * {
     visibility: visible !important;
-    position: static !important;
   }
+  /* Position print target at origin and allow it to flow naturally */
   body.printing-manifest [data-print-target] {
-    position: fixed !important;
+    position: absolute !important;
     left: 0 !important;
     top: 0 !important;
     width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    background: white !important;
+  }
+  /* Avoid breaking recipe cards mid-page */
+  body.printing-manifest .print-avoid-break {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  /* Print-safe checkbox */
+  body.printing-manifest .print-checkbox {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 }
