@@ -82,6 +82,12 @@ function AndonBanner({ userRole }: { userRole?: string }) {
           <span className="text-sm font-semibold text-destructive">
             {issues.length} unacknowledged issue{issues.length !== 1 ? "s" : ""}
           </span>
+          <Link
+            href="/reports?tab=andon"
+            className="ml-auto flex items-center gap-1 text-xs font-medium text-destructive/70 hover:text-destructive transition-colors flex-shrink-0"
+          >
+            View full log <ArrowRight className="w-3.5 h-3.5" />
+          </Link>
         </div>
         <div className="divide-y divide-border/50">
           {issues.map(issue => (
