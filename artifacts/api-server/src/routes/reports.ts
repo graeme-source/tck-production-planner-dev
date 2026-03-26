@@ -491,18 +491,33 @@ router.get("/packing-speed", async (req, res) => {
     : 0;
   const totalIdleMinutes = dailyRows.reduce((s, d) => s + (d.idleMinutes ?? 0), 0);
 
-  const bestDay = dailyRows.reduce<{ date: string; count: number } | null>(
-    (best, d) => (!best || d.count > best.count ? d : best),
+  const busiestDay = dailyRows.reduce<{ date: string; count: number } | null>(
+    (best, d) => (!best || d.count > best.count ? { date: d.date, count: d.count } : best),
     null,
   );
+
+  const rowsWithSpeed = dailyRows.filter(d => d.ordersPerHour != null);
+  const fastestDay = rowsWithSpeed.reduce<{ date: string; ordersPerHour: number } | null>(
+    (best, d) => (!best || (d.ordersPerHour ?? 0) > best.ordersPerHour ? { date: d.date, ordersPerHour: d.ordersPerHour! } : best),
+    null,
+  );
+  const slowestDay = rowsWithSpeed.reduce<{ date: string; ordersPerHour: number } | null>(
+    (worst, d) => (!worst || (d.ordersPerHour ?? Infinity) < worst.ordersPerHour ? { date: d.date, ordersPerHour: d.ordersPerHour! } : worst),
+    null,
+  );
+
+  const totalActiveMinutes = dailyRows.reduce((s, d) => s + (d.activeMinutes ?? 0), 0);
 
   res.json({
     totalOrders,
     totalDays,
     ordersPerHour: overallOrdersPerHour,
     avgPerDay,
-    bestDay,
+    busiestDay,
+    fastestDay,
+    slowestDay,
     totalIdleMinutes,
+    totalActiveMinutes,
     dailyRows,
     source: "shopify",
   });
