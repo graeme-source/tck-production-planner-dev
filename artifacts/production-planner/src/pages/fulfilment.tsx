@@ -113,6 +113,21 @@ async function fetchConfigStatus(): Promise<ConfigStatus> {
   return res.json();
 }
 
+interface WeekendCheckOrderResult {
+  orderName: string;
+  customerName: string;
+  postcode: string;
+  available: boolean;
+  reason?: string;
+}
+
+interface WeekendCheckResult {
+  tag: string;
+  serviceCode: string;
+  results: WeekendCheckOrderResult[];
+  summary: { available: number; unavailable: number; total: number };
+}
+
 interface DispatchProgress {
   tag: string;
   totalOrders: number;
@@ -494,6 +509,29 @@ export default function Fulfilment() {
   const [consignmentActionError, setConsignmentActionError] = useState<string | null>(null);
   const [showAddBoxConfirm, setShowAddBoxConfirm] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+
+  const [weekendCheckTag, setWeekendCheckTag] = useState(today);
+  const [weekendCheckServiceCode, setWeekendCheckServiceCode] = useState("WL16");
+  const [weekendCheckLoading, setWeekendCheckLoading] = useState(false);
+  const [weekendCheckError, setWeekendCheckError] = useState<string | null>(null);
+  const [weekendCheckResults, setWeekendCheckResults] = useState<WeekendCheckResult | null>(null);
+
+  async function runWeekendCheck() {
+    setWeekendCheckLoading(true);
+    setWeekendCheckError(null);
+    setWeekendCheckResults(null);
+    try {
+      const params = new URLSearchParams({ tag: weekendCheckTag, serviceCode: weekendCheckServiceCode });
+      const res = await fetch(`${BASE}/api/fulfilment/weekend-service-check?${params}`, { credentials: "include" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Check failed");
+      setWeekendCheckResults(data as WeekendCheckResult);
+    } catch (err: any) {
+      setWeekendCheckError(err.message ?? "Unknown error");
+    } finally {
+      setWeekendCheckLoading(false);
+    }
+  }
 
   function preQueueNextOrder(nextOrderId: number) {
     if (preQueueRef.current.has(nextOrderId)) return;
@@ -1571,6 +1609,105 @@ export default function Fulfilment() {
             })}
           </div>
         )}
+
+        {/* Weekend Service Check */}
+        <details className="text-sm">
+          <summary className="cursor-pointer font-medium text-foreground hover:text-primary transition-colors select-none">
+            Weekend Service Check
+          </summary>
+          <div className="mt-4 space-y-4">
+            <div className="flex flex-wrap gap-3 items-end">
+              <div>
+                <label className="text-xs font-medium mb-1 block text-muted-foreground">Delivery date tag</label>
+                <input
+                  type="date"
+                  value={weekendCheckTag}
+                  onChange={e => { setWeekendCheckTag(e.target.value); setWeekendCheckResults(null); }}
+                  className="px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium mb-1 block text-muted-foreground">APC service code</label>
+                <input
+                  type="text"
+                  value={weekendCheckServiceCode}
+                  onChange={e => { setWeekendCheckServiceCode(e.target.value.toUpperCase()); setWeekendCheckResults(null); }}
+                  placeholder="WL16"
+                  className="px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 w-28 font-mono uppercase"
+                />
+              </div>
+              <button
+                onClick={runWeekendCheck}
+                disabled={weekendCheckLoading || !weekendCheckTag || !weekendCheckServiceCode}
+                className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {weekendCheckLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldAlert className="w-4 h-4" />}
+                Run Check
+              </button>
+            </div>
+
+            {weekendCheckError && (
+              <div className="flex items-center gap-3 p-3 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive text-sm">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                {weekendCheckError}
+              </div>
+            )}
+
+            {weekendCheckResults && (
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-3 text-sm">
+                  <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 font-medium">
+                    {weekendCheckResults.summary.available} available
+                  </span>
+                  <span className="px-3 py-1 rounded-full bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 font-medium">
+                    {weekendCheckResults.summary.unavailable} unavailable
+                  </span>
+                  <span className="px-3 py-1 rounded-full bg-secondary text-muted-foreground font-medium">
+                    {weekendCheckResults.summary.total} total — service code {weekendCheckResults.serviceCode}
+                  </span>
+                </div>
+
+                {weekendCheckResults.results.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No unfulfilled orders found for this tag.</p>
+                ) : (
+                  <div className="overflow-x-auto rounded-xl border border-border">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-secondary/50 text-left">
+                          <th className="px-4 py-2.5 font-semibold text-muted-foreground">Order</th>
+                          <th className="px-4 py-2.5 font-semibold text-muted-foreground">Customer</th>
+                          <th className="px-4 py-2.5 font-semibold text-muted-foreground">Postcode</th>
+                          <th className="px-4 py-2.5 font-semibold text-muted-foreground">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {weekendCheckResults.results.map((row, i) => (
+                          <tr key={i} className={row.available ? "" : "bg-red-50/40 dark:bg-red-950/10"}>
+                            <td className="px-4 py-2.5 font-mono font-medium">{row.orderName}</td>
+                            <td className="px-4 py-2.5 text-muted-foreground">{row.customerName}</td>
+                            <td className="px-4 py-2.5 font-mono">{row.postcode || <span className="text-muted-foreground italic">none</span>}</td>
+                            <td className="px-4 py-2.5">
+                              {row.available ? (
+                                <span className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 font-medium">
+                                  <CheckCircle2 className="w-4 h-4" /> Available
+                                </span>
+                              ) : (
+                                <span className="flex items-center gap-1.5 text-red-600 dark:text-red-400 font-medium">
+                                  <XCircle className="w-4 h-4" />
+                                  <span>Unavailable{row.reason ? ` — ${row.reason}` : ""}</span>
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </details>
 
         {/* Manual override for dates without a dispatch tag */}
         <details className="text-sm text-muted-foreground">

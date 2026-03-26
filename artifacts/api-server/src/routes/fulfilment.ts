@@ -820,6 +820,75 @@ router.get("/desserts-report", requireManagerOrAdmin, async (req: Request, res: 
   }
 });
 
+router.get("/weekend-service-check", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const { tag, serviceCode } = req.query as { tag?: string; serviceCode?: string };
+
+  if (!tag) {
+    res.status(400).json({ error: "tag query param required" });
+    return;
+  }
+
+  const code = serviceCode?.trim() || "WL16";
+
+  try {
+    const testModeSetting = await getAppSetting("apc_test_mode");
+    const isTestMode = testModeSetting === "true";
+    const apiBase = isTestMode ? APC_TRAINING_BASE : undefined;
+
+    const orders = await getUnfulfilledOrdersByTag(tag);
+
+    const results = await Promise.all(
+      orders.map(async (order) => {
+        const customerName =
+          order.shipping_address?.name ||
+          `${order.customer?.first_name ?? ""} ${order.customer?.last_name ?? ""}`.trim() ||
+          "Unknown";
+
+        const postcode = order.shipping_address?.zip;
+
+        if (!postcode) {
+          return {
+            orderName: order.name,
+            customerName,
+            postcode: "",
+            available: false,
+            reason: "Order has no postcode",
+          };
+        }
+
+        try {
+          const result = await checkPostcodeService(postcode, code, apiBase);
+          return {
+            orderName: order.name,
+            customerName,
+            postcode,
+            available: result.available,
+            reason: result.reason,
+          };
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return {
+            orderName: order.name,
+            customerName,
+            postcode,
+            available: false,
+            reason: `Check failed: ${msg}`,
+          };
+        }
+      }),
+    );
+
+    const available = results.filter(r => r.available).length;
+    const unavailable = results.filter(r => !r.available).length;
+
+    res.json({ tag, serviceCode: code, results, summary: { available, unavailable, total: results.length } });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Fulfilment] weekend-service-check error:", msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
 router.get("/config-status", requireManagerOrAdmin, async (_req: Request, res: Response) => {
   try {
     const [smallWeekday, largeWeekday, smallFriday, largeFriday, testModeSetting] = await Promise.all([
