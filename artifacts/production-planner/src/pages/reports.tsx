@@ -149,7 +149,7 @@ interface ImprovementRecord {
   station: string;
   submittedByName: string | null;
   approvalTier: "minor" | "medium" | "major" | null;
-  progressStatus: "submitted_for_review" | "approved" | "testing" | "complete";
+  progressStatus: "submitted_for_review" | "approved" | "testing" | "complete" | "rejected";
   notes: string | null;
   createdAt: string;
   updatedAt: string;
@@ -299,7 +299,7 @@ export default function Reports() {
       {activeTab === "breaks" && <BreaksTab fromDate={fromDate} toDate={toDate} />}
       {activeTab === "temperature" && <TemperatureRecordsTab fromDate={fromDate} toDate={toDate} />}
       {activeTab === "packing-speed" && <PackingSpeedTab />}
-      {activeTab === "improvements" && <ImprovementsTab userRole={userRole} />}
+      {activeTab === "improvements" && <ImprovementsTab userRole={userRole} currentUserName={state.status === "authenticated" ? state.user.name : null} />}
       {activeTab === "andon" && <AndonLogTab userRole={userRole} />}
     </div>
   );
@@ -1242,7 +1242,35 @@ const IMPROVEMENT_PROGRESS_OPTIONS = [
   { value: "approved", label: "Approved" },
   { value: "testing", label: "Testing" },
   { value: "complete", label: "Complete" },
+  { value: "rejected", label: "Rejected" },
 ];
+
+function statusRowClass(status: string) {
+  if (status === "submitted_for_review") return "bg-yellow-50/60 dark:bg-yellow-900/10";
+  if (status === "approved") return "bg-green-50/60 dark:bg-green-900/10";
+  if (status === "testing") return "bg-blue-50/60 dark:bg-blue-900/10";
+  if (status === "complete") return "bg-emerald-50/60 dark:bg-emerald-900/10";
+  if (status === "rejected") return "bg-red-50/60 dark:bg-red-900/10";
+  return "";
+}
+
+function statusBadgeClass(status: string) {
+  if (status === "submitted_for_review") return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300";
+  if (status === "approved") return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";
+  if (status === "testing") return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
+  if (status === "complete") return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400 font-semibold";
+  if (status === "rejected") return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
+  return "bg-secondary text-muted-foreground";
+}
+
+function statusSelectClass(status: string) {
+  if (status === "submitted_for_review") return "border-yellow-300 bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300 dark:border-yellow-700";
+  if (status === "approved") return "border-green-300 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400 dark:border-green-700";
+  if (status === "testing") return "border-blue-300 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-700";
+  if (status === "complete") return "border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-700";
+  if (status === "rejected") return "border-red-300 bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400 dark:border-red-700";
+  return "border-border bg-background";
+}
 
 const IMPROVEMENT_TIER_OPTIONS = [
   { value: "", label: "— None —" },
@@ -1251,11 +1279,18 @@ const IMPROVEMENT_TIER_OPTIONS = [
   { value: "major", label: "Major" },
 ];
 
-function ImprovementsTab({ userRole }: { userRole: string }) {
+function ImprovementsTab({ userRole, currentUserName }: { userRole: string; currentUserName: string | null }) {
   const [improvements, setImprovements] = useState<ImprovementRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<number | null>(null);
   const [editNotes, setEditNotes] = useState<Record<number, string>>({});
+
+  // Filters
+  const [viewTab, setViewTab] = useState<"all" | "mine">("all");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [filterStation, setFilterStation] = useState("");
+  const [filterTier, setFilterTier] = useState("");
+  const [filterSearch, setFilterSearch] = useState("");
 
   const isManager = userRole === "admin" || userRole === "manager";
 
@@ -1288,121 +1323,191 @@ function ImprovementsTab({ userRole }: { userRole: string }) {
     await updateField(id, "notes", editNotes[id] ?? "");
   }
 
-  if (loading) return <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+  const filtered = improvements.filter(imp => {
+    if (viewTab === "mine" && imp.submittedByName !== currentUserName) return false;
+    if (filterStatus && imp.progressStatus !== filterStatus) return false;
+    if (filterStation && imp.station !== filterStation) return false;
+    if (filterTier && (imp.approvalTier ?? "") !== filterTier) return false;
+    if (filterSearch) {
+      const q = filterSearch.toLowerCase();
+      if (!imp.title.toLowerCase().includes(q) && !imp.description.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
 
-  if (improvements.length === 0) {
-    return (
-      <div className="rounded-2xl border border-dashed border-border p-12 text-center">
-        <Lightbulb className="w-10 h-10 mx-auto mb-3 opacity-30" />
-        <p className="font-medium text-muted-foreground">No improvement submissions yet</p>
-        <p className="text-sm text-muted-foreground mt-1">Team members can submit ideas from the Report button on any page.</p>
-      </div>
-    );
-  }
+  if (loading) return <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
 
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl border border-border bg-card overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-secondary/30 text-muted-foreground text-xs">
-            <tr>
-              <th className="px-4 py-3 font-medium text-left">Title</th>
-              <th className="px-4 py-3 font-medium text-left">Station</th>
-              <th className="px-4 py-3 font-medium text-left">Submitted by</th>
-              <th className="px-4 py-3 font-medium text-left">Date</th>
-              <th className="px-4 py-3 font-medium text-center">Tier</th>
-              <th className="px-4 py-3 font-medium text-center">Status</th>
-              <th className="px-4 py-3 font-medium text-left">Notes</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border/50">
-            {improvements.map(imp => (
-              <tr key={imp.id} className="hover:bg-secondary/10 transition-colors align-top">
-                <td className="px-4 py-3">
-                  <p className="font-medium">{imp.title}</p>
-                  {imp.description && <p className="text-xs text-muted-foreground mt-0.5 max-w-xs">{imp.description}</p>}
-                </td>
-                <td className="px-4 py-3 text-muted-foreground">
-                  {STATION_LABELS_REPORT[imp.station] ?? imp.station}
-                </td>
-                <td className="px-4 py-3 text-muted-foreground">{imp.submittedByName ?? "—"}</td>
-                <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
-                  {imp.createdAt ? format(new Date(imp.createdAt), "d MMM yyyy") : "—"}
-                </td>
-                <td className="px-4 py-3 text-center">
-                  {isManager ? (
-                    <select
-                      value={imp.approvalTier ?? ""}
-                      onChange={e => updateField(imp.id, "approvalTier", e.target.value)}
-                      disabled={updating === imp.id}
-                      className="px-2 py-1 border border-border rounded-lg text-xs bg-background disabled:opacity-50"
-                    >
-                      {IMPROVEMENT_TIER_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                    </select>
-                  ) : (
-                    <span className="text-muted-foreground capitalize">{imp.approvalTier ?? "—"}</span>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-center">
-                  {isManager ? (
-                    <select
-                      value={imp.progressStatus}
-                      onChange={e => updateField(imp.id, "progressStatus", e.target.value)}
-                      disabled={updating === imp.id}
-                      className={cn(
-                        "px-2 py-1 border rounded-lg text-xs disabled:opacity-50",
-                        imp.progressStatus === "complete"
-                          ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-700"
-                          : imp.progressStatus === "testing"
-                          ? "border-blue-300 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-700"
-                          : imp.progressStatus === "approved"
-                          ? "border-violet-300 bg-violet-50 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400 dark:border-violet-700"
-                          : "border-border bg-background"
-                      )}
-                    >
-                      {IMPROVEMENT_PROGRESS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                    </select>
-                  ) : (
-                    <span className={cn(
-                      "px-2 py-1 rounded-full text-xs",
-                      imp.progressStatus === "complete" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-                        : imp.progressStatus === "testing" ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                        : imp.progressStatus === "approved" ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400"
-                        : "bg-secondary text-muted-foreground"
-                    )}>
-                      {IMPROVEMENT_PROGRESS_OPTIONS.find(o => o.value === imp.progressStatus)?.label ?? imp.progressStatus}
-                    </span>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  {isManager ? (
-                    <div className="flex items-start gap-2">
-                      <textarea
-                        value={editNotes[imp.id] !== undefined ? editNotes[imp.id] : (imp.notes ?? "")}
-                        onChange={e => setEditNotes(prev => ({ ...prev, [imp.id]: e.target.value }))}
-                        rows={2}
-                        className="w-full min-w-[180px] px-2 py-1 border border-border rounded-lg text-xs bg-background resize-none"
-                        placeholder="Add notes..."
-                      />
-                      {editNotes[imp.id] !== undefined && editNotes[imp.id] !== (imp.notes ?? "") && (
-                        <button
-                          onClick={() => saveNotes(imp.id)}
-                          disabled={updating === imp.id}
-                          className="text-xs px-2 py-1 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 whitespace-nowrap"
-                        >
-                          Save
-                        </button>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">{imp.notes ?? "—"}</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {/* Tab + filter bar */}
+      <div className="flex flex-wrap items-center gap-3">
+        {/* All / My Improvements tabs */}
+        <div className="flex rounded-xl border border-border overflow-hidden text-sm">
+          <button
+            onClick={() => setViewTab("all")}
+            className={cn("px-4 py-2 font-medium transition-colors", viewTab === "all" ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:text-foreground")}
+          >
+            All Improvements
+          </button>
+          <button
+            onClick={() => setViewTab("mine")}
+            className={cn("px-4 py-2 font-medium transition-colors border-l border-border", viewTab === "mine" ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:text-foreground")}
+          >
+            My Improvements
+          </button>
+        </div>
+
+        {/* Search */}
+        <input
+          type="text"
+          placeholder="Search title / description…"
+          value={filterSearch}
+          onChange={e => setFilterSearch(e.target.value)}
+          className="px-3 py-2 border border-border rounded-xl text-sm bg-background focus-ring w-48"
+        />
+
+        {/* Status filter */}
+        <select
+          value={filterStatus}
+          onChange={e => setFilterStatus(e.target.value)}
+          className="px-3 py-2 border border-border rounded-xl text-sm bg-background focus-ring"
+        >
+          <option value="">All statuses</option>
+          {IMPROVEMENT_PROGRESS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+
+        {/* Station filter */}
+        <select
+          value={filterStation}
+          onChange={e => setFilterStation(e.target.value)}
+          className="px-3 py-2 border border-border rounded-xl text-sm bg-background focus-ring"
+        >
+          <option value="">All stations</option>
+          {Object.entries(STATION_LABELS_REPORT).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+
+        {/* Tier filter */}
+        <select
+          value={filterTier}
+          onChange={e => setFilterTier(e.target.value)}
+          className="px-3 py-2 border border-border rounded-xl text-sm bg-background focus-ring"
+        >
+          <option value="">All tiers</option>
+          {IMPROVEMENT_TIER_OPTIONS.filter(o => o.value).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+
+        {(filterSearch || filterStatus || filterStation || filterTier) && (
+          <button
+            onClick={() => { setFilterSearch(""); setFilterStatus(""); setFilterStation(""); setFilterTier(""); }}
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
+          >
+            Clear filters
+          </button>
+        )}
+
+        <span className="ml-auto text-sm text-muted-foreground">{filtered.length} result{filtered.length !== 1 ? "s" : ""}</span>
       </div>
+
+      {filtered.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-border p-12 text-center">
+          <Lightbulb className="w-10 h-10 mx-auto mb-3 opacity-30" />
+          <p className="font-medium text-muted-foreground">
+            {improvements.length === 0 ? "No improvement submissions yet" : "No results match your filters"}
+          </p>
+          <p className="text-sm text-muted-foreground mt-1">
+            {improvements.length === 0
+              ? "Team members can submit ideas from the Record button on any page."
+              : "Try adjusting or clearing your filters."}
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-border bg-card overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-secondary/30 text-muted-foreground text-xs">
+              <tr>
+                <th className="px-4 py-3 font-medium text-left">Title</th>
+                <th className="px-4 py-3 font-medium text-left">Station</th>
+                <th className="px-4 py-3 font-medium text-left">Submitted by</th>
+                <th className="px-4 py-3 font-medium text-left">Date</th>
+                <th className="px-4 py-3 font-medium text-center">Tier</th>
+                <th className="px-4 py-3 font-medium text-center">Status</th>
+                <th className="px-4 py-3 font-medium text-left">Notes</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/50">
+              {filtered.map(imp => (
+                <tr key={imp.id} className={cn("transition-colors align-top", statusRowClass(imp.progressStatus))}>
+                  <td className="px-4 py-3">
+                    <p className="font-medium">{imp.title}</p>
+                    {imp.description && <p className="text-xs text-muted-foreground mt-0.5 max-w-xs">{imp.description}</p>}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    {STATION_LABELS_REPORT[imp.station] ?? imp.station}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">{imp.submittedByName ?? "—"}</td>
+                  <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
+                    {imp.createdAt ? format(new Date(imp.createdAt), "d MMM yyyy") : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    {isManager ? (
+                      <select
+                        value={imp.approvalTier ?? ""}
+                        onChange={e => updateField(imp.id, "approvalTier", e.target.value)}
+                        disabled={updating === imp.id}
+                        className="px-2 py-1 border border-border rounded-lg text-xs bg-background disabled:opacity-50"
+                      >
+                        {IMPROVEMENT_TIER_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    ) : (
+                      <span className="text-muted-foreground capitalize">{imp.approvalTier ?? "—"}</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    {isManager ? (
+                      <select
+                        value={imp.progressStatus}
+                        onChange={e => updateField(imp.id, "progressStatus", e.target.value)}
+                        disabled={updating === imp.id}
+                        className={cn("px-2 py-1 border rounded-lg text-xs disabled:opacity-50", statusSelectClass(imp.progressStatus))}
+                      >
+                        {IMPROVEMENT_PROGRESS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    ) : (
+                      <span className={cn("px-2 py-1 rounded-full text-xs", statusBadgeClass(imp.progressStatus))}>
+                        {IMPROVEMENT_PROGRESS_OPTIONS.find(o => o.value === imp.progressStatus)?.label ?? imp.progressStatus}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {isManager ? (
+                      <div className="flex items-start gap-2">
+                        <textarea
+                          value={editNotes[imp.id] !== undefined ? editNotes[imp.id] : (imp.notes ?? "")}
+                          onChange={e => setEditNotes(prev => ({ ...prev, [imp.id]: e.target.value }))}
+                          rows={2}
+                          className="w-full min-w-[180px] px-2 py-1 border border-border rounded-lg text-xs bg-background resize-none"
+                          placeholder="Add notes..."
+                        />
+                        {editNotes[imp.id] !== undefined && editNotes[imp.id] !== (imp.notes ?? "") && (
+                          <button
+                            onClick={() => saveNotes(imp.id)}
+                            disabled={updating === imp.id}
+                            className="text-xs px-2 py-1 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 whitespace-nowrap"
+                          >
+                            Save
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">{imp.notes ?? "—"}</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

@@ -9,6 +9,7 @@ export const improvementProgressStatusEnum = pgEnum("improvement_progress_status
   "approved",
   "testing",
   "complete",
+  "rejected",
 ]);
 
 export const improvementSubmissionsTable = pgTable("improvement_submissions", {
