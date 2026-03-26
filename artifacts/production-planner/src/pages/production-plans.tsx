@@ -20,7 +20,7 @@ import {
   Loader2, RefreshCw, Info, Package, ClipboardList, ExternalLink,
   Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef,
   ArrowRight, GripVertical, AlertTriangle, AlertCircle, BookmarkCheck, ShoppingCart,
-  FlaskConical, Printer, X, ChevronDown, ChevronUp,
+  FlaskConical, Printer, X, ChevronDown, ChevronUp, PoundSterling,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -1531,6 +1531,7 @@ interface RawMaterialsIngredient {
   name: string;
   unit: string;
   quantity: number;
+  estimatedCost?: number | null;
 }
 
 interface RawMaterialsSubRecipe {
@@ -1556,6 +1557,8 @@ interface RawMaterialsData {
   batchNumber: number | null;
   recipes: RawMaterialsRecipe[];
   totals: RawMaterialsIngredient[];
+  totalEstimatedCost: number | null;
+  costIsPartial: boolean;
 }
 
 function fmtQty(qty: number, unit: string): string {
@@ -1649,6 +1652,17 @@ function RawMaterialsManifest({ planId, planName, onClose }: RawMaterialsManifes
                 {data.planName} · {format(parseISO(data.planDate), "EEEE d MMMM yyyy")}
                 {data.batchNumber && <span className="ml-2 font-mono">Batch #{data.batchNumber}</span>}
               </p>
+            )}
+            {data?.totalEstimatedCost != null && (
+              <div className="mt-1.5 inline-flex items-center gap-2 bg-primary/8 border border-primary/20 rounded-lg px-3 py-1.5 print:bg-gray-100 print:border-gray-400">
+                <PoundSterling className="w-3.5 h-3.5 text-primary print:text-black" />
+                <span className="text-sm font-bold text-primary print:text-black">
+                  £{data.totalEstimatedCost.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                <span className="text-xs text-muted-foreground print:text-gray-600">
+                  {data.costIsPartial ? "partial raw material cost — some ingredients missing price data" : "estimated raw material cost"}
+                </span>
+              </div>
             )}
             {showPacked && (
               <p className="text-xs text-primary font-medium mt-0.5 print:block print:text-black hidden">Event mode — Packed column shown</p>
@@ -1815,6 +1829,7 @@ function RawMaterialsManifest({ planId, planName, onClose }: RawMaterialsManifes
                     <tr className="bg-secondary/20 border-b border-border print:border-gray-300">
                       <th className="py-2 px-4 text-left font-medium text-muted-foreground print:text-black">Ingredient</th>
                       <th className="py-2 px-4 text-right font-medium text-muted-foreground print:text-black">Total Required</th>
+                      <th className="py-2 px-4 text-right font-medium text-muted-foreground print:text-black">Est. Cost</th>
                       <th className="py-2 px-2 text-center font-medium text-muted-foreground print:text-black w-14">Ordered</th>
                       <th className="py-2 px-2 text-center font-medium text-muted-foreground print:text-black w-14">Prepped</th>
                       {showPacked && <th className="py-2 px-2 text-center font-medium text-muted-foreground print:text-black w-14">Packed</th>}
@@ -1825,11 +1840,26 @@ function RawMaterialsManifest({ planId, planName, onClose }: RawMaterialsManifes
                       <tr key={ing.ingredientId} className="border-t border-border/40 print:border-gray-200">
                         <td className="py-1.5 px-4 print:text-black">{ing.name}</td>
                         <td className="py-1.5 px-4 text-right font-mono tabular-nums font-medium print:text-black">{fmtQty(ing.quantity, ing.unit)}</td>
+                        <td className="py-1.5 px-4 text-right font-mono tabular-nums text-muted-foreground print:text-black">
+                          {ing.estimatedCost != null ? `£${ing.estimatedCost.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
+                        </td>
                         {cb(`total-i${ing.ingredientId}-ordered`)}
                         {cb(`total-i${ing.ingredientId}-prepped`)}
                         {showPacked && cb(`total-i${ing.ingredientId}-packed`)}
                       </tr>
                     ))}
+                    {data.totalEstimatedCost != null && (
+                      <tr className="border-t-2 border-border print:border-gray-400 bg-primary/5 print:bg-gray-50 font-bold">
+                        <td className="py-2 px-4 print:text-black">Total</td>
+                        <td className="py-2 px-4 print:text-black" />
+                        <td className="py-2 px-4 text-right font-mono tabular-nums text-primary print:text-black">
+                          £{data.totalEstimatedCost.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-2 px-2" />
+                        <td className="py-2 px-2" />
+                        {showPacked && <td className="py-2 px-2" />}
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>

@@ -3808,14 +3808,19 @@ router.get("/:id/raw-materials", async (req, res) => {
   const recipeEntries: RecipeManifestEntry[] = [];
 
   // Aggregate totals across the whole plan
-  const planTotals = new Map<number, { ingredientId: number; name: string; unit: string; quantity: number; category: string | null }>();
+  const planTotals = new Map<number, { ingredientId: number; name: string; unit: string; quantity: number; category: string | null; packWeight: number | null; costPerPack: number | null }>();
 
   function addToTotals(ingredientId: number, name: string, unit: string, quantity: number, category: string | null) {
     const existing = planTotals.get(ingredientId);
     if (existing) {
       existing.quantity += quantity;
     } else {
-      planTotals.set(ingredientId, { ingredientId, name, unit, quantity, category });
+      const ing = ingLookup.get(ingredientId);
+      planTotals.set(ingredientId, {
+        ingredientId, name, unit, quantity, category,
+        packWeight: ing?.packWeight ? Number(ing.packWeight) : null,
+        costPerPack: ing?.costPerPack ? Number(ing.costPerPack) : null,
+      });
     }
   }
 
@@ -3866,13 +3871,31 @@ router.get("/:id/raw-materials", async (req, res) => {
     });
   }
 
+  const totalsArray = Array.from(planTotals.values())
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map(t => {
+      let estimatedCost: number | null = null;
+      if (t.packWeight && t.packWeight > 0 && t.costPerPack != null) {
+        estimatedCost = Math.round((t.quantity / t.packWeight) * t.costPerPack * 100) / 100;
+      }
+      return { ingredientId: t.ingredientId, name: t.name, unit: t.unit, quantity: t.quantity, estimatedCost };
+    });
+
+  const costedItems = totalsArray.filter(t => t.estimatedCost != null);
+  const totalEstimatedCost = costedItems.length > 0
+    ? Math.round(costedItems.reduce((sum, t) => sum + (t.estimatedCost ?? 0), 0) * 100) / 100
+    : null;
+  const costIsPartial = costedItems.length > 0 && costedItems.length < totalsArray.length;
+
   res.json({
     planId: plan.id,
     planDate: plan.planDate,
     planName: plan.name,
     batchNumber: plan.batchNumber,
     recipes: recipeEntries,
-    totals: Array.from(planTotals.values()).sort((a, b) => a.name.localeCompare(b.name)),
+    totals: totalsArray,
+    totalEstimatedCost,
+    costIsPartial,
   });
 });
 
