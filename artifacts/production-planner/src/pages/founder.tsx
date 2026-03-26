@@ -32,7 +32,7 @@ const CUSTOMER_TYPES = [
   { tag: "new-customer", label: "New Customers", icon: UserPlus, color: "text-blue-500", bg: "bg-blue-500/10" },
   { tag: "Subscription Recurring Order", label: "Recurring Subscriptions", icon: Repeat, color: "text-violet-500", bg: "bg-violet-500/10" },
   { tag: "Subscription New Order", label: "New Subscriptions", icon: ShoppingBag, color: "text-emerald-500", bg: "bg-emerald-500/10" },
-  { tag: "Wholesale", label: "Wholesale", icon: Package, color: "text-amber-500", bg: "bg-amber-500/10" },
+  { tag: "wholesale", label: "Wholesale", icon: Package, color: "text-amber-500", bg: "bg-amber-500/10" },
 ] as const;
 
 function formatGBP(amount: number): string {

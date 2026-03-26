@@ -275,7 +275,7 @@ const CUSTOMER_TYPE_TAGS = [
   "new-customer",
   "Subscription Recurring Order",
   "Subscription New Order",
-  "Wholesale",
+  "wholesale",
 ] as const;
 
 router.get("/orders-by-type", requireFounder, async (req, res) => {
@@ -288,9 +288,10 @@ router.get("/orders-by-type", requireFounder, async (req, res) => {
     const allOrders = (await getOrdersByDateRange(from, to)).filter(isCountableOrder);
 
     const groups = CUSTOMER_TYPE_TAGS.map(tag => {
+      const tagLower = tag.toLowerCase();
       const matchingOrders = allOrders.filter(o => {
-        const tags = o.tags.split(",").map(t => t.trim());
-        return tags.includes(tag);
+        const tags = o.tags.split(",").map(t => t.trim().toLowerCase());
+        return tags.includes(tagLower);
       });
       return {
         tag,
@@ -327,9 +328,10 @@ router.get("/tag-summary", requireFounder, async (req, res) => {
   }
   try {
     const allOrders = (await getOrdersByDateRange(from, to)).filter(isCountableOrder);
+    const tagLower = tag.toLowerCase();
     const matching = allOrders.filter(o => {
-      const tags = o.tags.split(",").map(t => t.trim());
-      return tags.includes(tag);
+      const tags = o.tags.split(",").map(t => t.trim().toLowerCase());
+      return tags.includes(tagLower);
     });
     const totalValue = matching.reduce((s, o) => s + parseFloat(o.total_price || "0"), 0);
     res.json({ tag, from, to, count: matching.length, totalValue });
