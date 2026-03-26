@@ -1,9 +1,17 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { getOrdersByTag, getProducts, countProductsByTag, getOrdersByDateRange } from "../services/shopify";
+import { getOrdersByTag, getProducts, countProductsByTag, getOrdersByDateRange, type ShopifyOrder } from "../services/shopify";
 import { db, recipesTable, usersTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+const EXCLUDED_FINANCIAL = new Set(["refunded", "voided"]);
+
+function isCountableOrder(o: ShopifyOrder): boolean {
+  if (o.cancelled_at) return false;
+  if (EXCLUDED_FINANCIAL.has(o.financial_status)) return false;
+  return true;
+}
 
 const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
 
@@ -189,12 +197,13 @@ router.get("/sales-summary", requireFounder, async (req, res) => {
         : getOrdersByDateRange(todayStr, todayStr),
     ]);
 
-    const todayOrdersFinal = todayOrders ?? periodOrders.filter(o => {
-      const d = o.created_at.slice(0, 10);
-      return d === todayStr;
-    });
+    const validPeriod = periodOrders.filter(isCountableOrder);
 
-    const totalRevenue = periodOrders.reduce((sum, o) => sum + parseFloat(o.total_price || "0"), 0);
+    const todayOrdersFinal = todayOrders
+      ? todayOrders.filter(isCountableOrder)
+      : validPeriod.filter(o => o.created_at.slice(0, 10) === todayStr);
+
+    const totalRevenue = validPeriod.reduce((sum, o) => sum + parseFloat(o.total_price || "0"), 0);
     const todayRevenue = todayOrdersFinal.reduce((sum, o) => sum + parseFloat(o.total_price || "0"), 0);
 
     // Calculate days elapsed in the period (from → min(to, today))
@@ -216,7 +225,7 @@ router.get("/sales-summary", requireFounder, async (req, res) => {
       from,
       to,
       totalRevenue: Math.round(totalRevenue * 100) / 100,
-      orderCount: periodOrders.length,
+      orderCount: validPeriod.length,
       dayCount,
       averageDailyRevenue: Math.round(averageDailyRevenue * 100) / 100,
       estimatedMonthlyRevenue: Math.round(estimatedMonthlyRevenue * 100) / 100,
@@ -247,7 +256,7 @@ router.get("/orders-by-type", requireFounder, async (req, res) => {
     return;
   }
   try {
-    const allOrders = await getOrdersByDateRange(from, to);
+    const allOrders = (await getOrdersByDateRange(from, to)).filter(isCountableOrder);
 
     const groups = CUSTOMER_TYPE_TAGS.map(tag => {
       const matchingOrders = allOrders.filter(o => {
@@ -288,7 +297,7 @@ router.get("/tag-summary", requireFounder, async (req, res) => {
     return;
   }
   try {
-    const allOrders = await getOrdersByDateRange(from, to);
+    const allOrders = (await getOrdersByDateRange(from, to)).filter(isCountableOrder);
     const matching = allOrders.filter(o => {
       const tags = o.tags.split(",").map(t => t.trim());
       return tags.includes(tag);

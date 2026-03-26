@@ -140,6 +140,7 @@ export interface ShopifyOrder {
   name: string;
   tags: string;
   created_at: string;
+  cancelled_at: string | null;
   financial_status: string;
   fulfillment_status: string | null;
   total_price: string;
@@ -493,7 +494,7 @@ export async function getOrdersByDateRange(
           created_at_min: min,
           created_at_max: max,
           fields:
-            "id,name,tags,created_at,financial_status,fulfillment_status,total_price,customer",
+            "id,name,tags,created_at,cancelled_at,financial_status,fulfillment_status,total_price,customer",
         };
 
     const res = await shopifyFetchRaw("/orders.json", params);
