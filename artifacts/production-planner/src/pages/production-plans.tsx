@@ -509,38 +509,48 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
     setTotalBatchesOverride(null);
     const capacity = calcData.totalDailyBatches;
     const alloc = allocateBatches(calcData.recipes, capacity);
-    const newItems: PlanItem[] = calcData.recipes.map((r: CalcRecipe, idx: number) => ({
-      id: `calc-${r.recipeId}`,
-      recipeId: r.recipeId,
-      recipeName: r.recipeName,
-      recipeColor: r.color ?? null,
-      included: alloc[idx].suggestedBatches > 0 || r.deficit > 0 || r.isCoreMenu,
-      suggestedBatches: alloc[idx].suggestedBatches,
-      batchesTarget: alloc[idx].suggestedBatches,
-      tinCount: r.tinCount,
-      maxBatchesPerTin: r.maxBatchesPerTin,
-      tinSize: r.tinSize,
-      salesPercent: r.salesPercent,
-      portionsPerBatch: r.portionsPerBatch,
-      packsPerBatch: r.packsPerBatch,
-      sopUrl: r.sopUrl,
-      isFromDpt: true,
-      fridgeStock: r.fridgeStock,
-      prevProduction: r.prevProduction,
-      estimatedFactoryNumber: r.estimatedFactoryNumber,
-      dispatch1Qty: r.dispatch1Qty,
-      dispatch2Qty: r.dispatch2Qty,
-      dispatch3Qty: r.dispatch3Qty,
-      totalDispatchQty: r.totalDispatchQty,
-      deficit: r.deficit,
-      deficitBatches: r.deficitBatches,
-      surplusBatches: alloc[idx].surplusBatches,
-      stockWarning: r.stockWarning,
-      special1Count: r.special1Count ?? 0,
-      special2Count: r.special2Count ?? 0,
-      special3Count: r.special3Count ?? 0,
-      totalSpecialCount: r.totalSpecialCount ?? 0,
-    }));
+    // Capture any manual batch edits the user has already made so we can preserve them
+    const prevItems = itemsRef.current;
+    const newItems: PlanItem[] = calcData.recipes.map((r: CalcRecipe, idx: number) => {
+      const suggested = alloc[idx].suggestedBatches;
+      const prev = prevItems.find(p => p.recipeId === r.recipeId);
+      // If the user has manually changed the batch count away from the previously suggested value,
+      // keep their edit rather than overwriting it on recalculate.
+      const batchesTarget =
+        prev && prev.batchesTarget !== prev.suggestedBatches ? prev.batchesTarget : suggested;
+      return {
+        id: `calc-${r.recipeId}`,
+        recipeId: r.recipeId,
+        recipeName: r.recipeName,
+        recipeColor: r.color ?? null,
+        included: prev ? prev.included : (suggested > 0 || r.deficit > 0 || r.isCoreMenu),
+        suggestedBatches: suggested,
+        batchesTarget,
+        tinCount: r.tinCount,
+        maxBatchesPerTin: r.maxBatchesPerTin,
+        tinSize: r.tinSize,
+        salesPercent: r.salesPercent,
+        portionsPerBatch: r.portionsPerBatch,
+        packsPerBatch: r.packsPerBatch,
+        sopUrl: r.sopUrl,
+        isFromDpt: true,
+        fridgeStock: prev ? prev.fridgeStock : r.fridgeStock,
+        prevProduction: r.prevProduction,
+        estimatedFactoryNumber: r.estimatedFactoryNumber,
+        dispatch1Qty: r.dispatch1Qty,
+        dispatch2Qty: r.dispatch2Qty,
+        dispatch3Qty: r.dispatch3Qty,
+        totalDispatchQty: r.totalDispatchQty,
+        deficit: r.deficit,
+        deficitBatches: r.deficitBatches,
+        surplusBatches: alloc[idx].surplusBatches,
+        stockWarning: r.stockWarning,
+        special1Count: r.special1Count ?? 0,
+        special2Count: r.special2Count ?? 0,
+        special3Count: r.special3Count ?? 0,
+        totalSpecialCount: r.totalSpecialCount ?? 0,
+      };
+    });
     // Apply saved default order: known recipes sorted first, unknowns appended at the end
     if (savedOrder.length > 0) {
       newItems.sort((a, b) => {
