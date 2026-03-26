@@ -478,30 +478,60 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   }, [planDate]);
 
   const allocateBatches = useCallback((recipes: CalcRecipe[], capacity: number): { suggestedBatches: number; surplusBatches: number }[] => {
-    const totalDeficitBatches = recipes.reduce((s, r) => s + r.deficitBatches, 0);
-    const remaining = Math.max(0, capacity - totalDeficitBatches);
-    const totalPacksSold = recipes.reduce((s, r) => s + r.packsSold, 0);
-
-    const rawSurplus = recipes.map(r => {
-      const exact = totalPacksSold > 0 ? (r.salesPercent / 100) * remaining : 0;
-      return { exact, floor: Math.floor(exact) };
-    });
-
-    let leftover = remaining - rawSurplus.reduce((s, r) => s + r.floor, 0);
-    const sorted = rawSurplus
-      .map((r, idx) => ({ idx, remainder: r.exact - r.floor }))
-      .sort((a, b) => b.remainder - a.remainder);
-    const bonusSet = new Set<number>();
-    for (const { idx } of sorted) {
-      if (leftover <= 0) break;
-      bonusSet.add(idx);
-      leftover--;
+    if (capacity <= 0) {
+      return recipes.map(() => ({ suggestedBatches: 0, surplusBatches: 0 }));
     }
 
-    return recipes.map((r, idx) => {
-      const surplusBatches = rawSurplus[idx].floor + (bonusSet.has(idx) ? 1 : 0);
-      return { suggestedBatches: r.deficitBatches + surplusBatches, surplusBatches };
-    });
+    const totalDeficitBatches = recipes.reduce((s, r) => s + r.deficitBatches, 0);
+
+    if (totalDeficitBatches <= capacity) {
+      // Normal case: capacity covers all deficits — distribute remainder as surplus by sales %
+      const remaining = capacity - totalDeficitBatches;
+      const totalPacksSold = recipes.reduce((s, r) => s + r.packsSold, 0);
+
+      const rawSurplus = recipes.map(r => {
+        const exact = totalPacksSold > 0 ? (r.salesPercent / 100) * remaining : 0;
+        return { exact, floor: Math.floor(exact) };
+      });
+
+      let leftover = remaining - rawSurplus.reduce((s, r) => s + r.floor, 0);
+      const sorted = rawSurplus
+        .map((r, idx) => ({ idx, remainder: r.exact - r.floor }))
+        .sort((a, b) => b.remainder - a.remainder);
+      const bonusSet = new Set<number>();
+      for (const { idx } of sorted) {
+        if (leftover <= 0) break;
+        bonusSet.add(idx);
+        leftover--;
+      }
+
+      return recipes.map((r, idx) => {
+        const surplusBatches = rawSurplus[idx].floor + (bonusSet.has(idx) ? 1 : 0);
+        return { suggestedBatches: r.deficitBatches + surplusBatches, surplusBatches };
+      });
+    } else {
+      // Constrained case: capacity < total deficit — scale each recipe down proportionally
+      const rawAlloc = recipes.map(r => {
+        const exact = (r.deficitBatches / totalDeficitBatches) * capacity;
+        return { exact, floor: Math.floor(exact) };
+      });
+
+      let leftover = capacity - rawAlloc.reduce((s, r) => s + r.floor, 0);
+      const sorted = rawAlloc
+        .map((r, idx) => ({ idx, remainder: r.exact - r.floor }))
+        .sort((a, b) => b.remainder - a.remainder);
+      const bonusSet = new Set<number>();
+      for (const { idx } of sorted) {
+        if (leftover <= 0) break;
+        bonusSet.add(idx);
+        leftover--;
+      }
+
+      return recipes.map((r, idx) => {
+        const suggestedBatches = rawAlloc[idx].floor + (bonusSet.has(idx) ? 1 : 0);
+        return { suggestedBatches, surplusBatches: 0 };
+      });
+    }
   }, []);
 
   useEffect(() => {
