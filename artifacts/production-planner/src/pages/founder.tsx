@@ -235,17 +235,20 @@ function OrderTable({
 function OrderTypeCard({
   type,
   count,
+  dayCount,
   isActive,
   onClick,
   loading,
 }: {
   type: (typeof CUSTOMER_TYPES)[number];
   count: number;
+  dayCount: number;
   isActive: boolean;
   onClick: () => void;
   loading?: boolean;
 }) {
   const { label, icon: Icon, color, bg } = type;
+  const dailyAvg = dayCount > 1 ? (count / dayCount).toFixed(1) : null;
   return (
     <button
       onClick={onClick}
@@ -260,7 +263,12 @@ function OrderTypeCard({
         {loading ? (
           <Skeleton className="h-7 w-12 mt-1" />
         ) : (
-          <p className="text-2xl font-display font-bold">{count}</p>
+          <>
+            <p className="text-2xl font-display font-bold">{count}</p>
+            {dailyAvg !== null && (
+              <p className="text-xs text-muted-foreground mt-0.5">Daily avg: {dailyAvg}</p>
+            )}
+          </>
         )}
       </div>
       <ChevronDown
@@ -749,6 +757,7 @@ function FounderDashboard() {
               key={type.tag}
               type={type}
               count={getGroupCount(type.tag)}
+              dayCount={periodSummary?.dayCount ?? 1}
               isActive={activeTab === type.tag && expandedPanel}
               onClick={() => handleTypeClick(type.tag)}
               loading={orderTypesLoading}
