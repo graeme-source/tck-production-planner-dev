@@ -483,17 +483,18 @@ export async function getOrdersByDateRange(
   let pageInfo: string | null = null;
 
   do {
-    const params: Record<string, string> = {
-      limit: "250",
-      status: "any",
-      created_at_min: min,
-      created_at_max: max,
-      fields:
-        "id,name,tags,created_at,financial_status,fulfillment_status,total_price,customer",
-    };
-    if (pageInfo) {
-      params.page_info = pageInfo;
-    }
+    // Shopify cursor pagination: page_info must be the ONLY filter param.
+    // All other filters (status, created_at_min/max, fields) are only sent on the first page.
+    const params: Record<string, string> = pageInfo
+      ? { limit: "250", page_info: pageInfo }
+      : {
+          limit: "250",
+          status: "any",
+          created_at_min: min,
+          created_at_max: max,
+          fields:
+            "id,name,tags,created_at,financial_status,fulfillment_status,total_price,customer",
+        };
 
     const res = await shopifyFetchRaw("/orders.json", params);
     const data = (await res.json()) as { orders: ShopifyOrder[] };
