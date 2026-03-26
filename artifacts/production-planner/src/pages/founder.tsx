@@ -4,7 +4,7 @@ import { Redirect } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
-import { format, startOfMonth, getDaysInMonth } from "date-fns";
+import { format, startOfMonth, getDaysInMonth, subDays, subMonths, endOfMonth } from "date-fns";
 import {
   TrendingUp,
   Calendar,
@@ -475,41 +475,70 @@ export default function FounderView() {
   return <FounderDashboard />;
 }
 
+// Build preset ranges at call time so they're always relative to now
+function buildPresets() {
+  const today = new Date();
+  const todayStr = format(today, "yyyy-MM-dd");
+  return [
+    { label: "Today",          from: todayStr,                                              to: todayStr },
+    { label: "Last 7 days",    from: format(subDays(today, 6), "yyyy-MM-dd"),               to: todayStr },
+    { label: "Month to date",  from: format(startOfMonth(today), "yyyy-MM-dd"),             to: todayStr },
+    { label: "Last month",     from: format(startOfMonth(subMonths(today, 1)), "yyyy-MM-dd"), to: format(endOfMonth(subMonths(today, 1)), "yyyy-MM-dd") },
+    { label: "Last 6 months",  from: format(subMonths(today, 6), "yyyy-MM-dd"),             to: todayStr },
+    { label: "Last 12 months", from: format(subMonths(today, 12), "yyyy-MM-dd"),            to: todayStr },
+  ] as const;
+}
+
+function sectionHeading(text: string) {
+  return (
+    <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-4">
+      {text}
+    </h2>
+  );
+}
+
 function FounderDashboard() {
-  const defaults = useMemo(() => getDefaultDateRange(), []);
-  const [from, setFrom] = useState(defaults.from);
-  const [to, setTo] = useState(defaults.to);
-  const [activeTab, setActiveTab] = useState<string | null>(null);
-  const [expandedPanel, setExpandedPanel] = useState(false);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const queryClient = useQueryClient();
+  const today = new Date();
+  const todayStr = format(today, "yyyy-MM-dd");
+  const monthStart = format(startOfMonth(today), "yyyy-MM-dd");
 
-  const { data: savedPanels = [] } = useQuery({
-    queryKey: ["founder-custom-panels"],
-    queryFn: fetchSavedPanels,
-    staleTime: 60 * 1000,
-  });
-
-  const addMutation = useMutation({
-    mutationFn: ({ tag, label }: { tag: string; label: string }) => createPanel(tag, label),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["founder-custom-panels"] });
-      setShowAddForm(false);
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (id: number) => deletePanel(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["founder-custom-panels"] }),
-  });
-
+  // ── Fixed date range: always this month → today ──────────────────────────
   const {
-    data: summary,
-    isLoading: summaryLoading,
-    error: summaryError,
-    refetch: refetchSummary,
+    data: monthSummary,
+    isLoading: monthLoading,
+    error: monthError,
+    refetch: refetchMonth,
   } = useQuery({
-    queryKey: ["founder-sales-summary", from, to],
+    queryKey: ["founder-month-summary", monthStart, todayStr],
+    queryFn: () => fetchSalesSummary(monthStart, todayStr),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // ── Period state: default to Today ───────────────────────────────────────
+  const [from, setFrom] = useState(todayStr);
+  const [to, setTo]     = useState(todayStr);
+  const [activePreset, setActivePreset] = useState("Today");
+
+  function applyPreset(p: { label: string; from: string; to: string }) {
+    setFrom(p.from);
+    setTo(p.to);
+    setActivePreset(p.label);
+  }
+
+  function handleManualDateChange(field: "from" | "to", val: string) {
+    if (field === "from") setFrom(val);
+    else setTo(val);
+    setActivePreset("custom");
+  }
+
+  // ── Period queries ────────────────────────────────────────────────────────
+  const {
+    data: periodSummary,
+    isLoading: periodLoading,
+    error: periodError,
+    refetch: refetchPeriod,
+  } = useQuery({
+    queryKey: ["founder-period-summary", from, to],
     queryFn: () => fetchSalesSummary(from, to),
     staleTime: 5 * 60 * 1000,
   });
@@ -525,142 +554,181 @@ function FounderDashboard() {
     staleTime: 5 * 60 * 1000,
   });
 
+  // ── Order breakdown expand ────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState<string | null>(null);
+  const [expandedPanel, setExpandedPanel] = useState(false);
+
   function handleTypeClick(tag: string) {
-    if (activeTab === tag && expandedPanel) {
-      setExpandedPanel(false);
-    } else {
-      setActiveTab(tag);
-      setExpandedPanel(true);
-    }
+    if (activeTab === tag && expandedPanel) setExpandedPanel(false);
+    else { setActiveTab(tag); setExpandedPanel(true); }
   }
 
+  // ── Custom panels ─────────────────────────────────────────────────────────
+  const [showAddForm, setShowAddForm] = useState(false);
+  const queryClient = useQueryClient();
+
+  const { data: savedPanels = [] } = useQuery({
+    queryKey: ["founder-custom-panels"],
+    queryFn: fetchSavedPanels,
+    staleTime: 60 * 1000,
+  });
+
+  const addMutation = useMutation({
+    mutationFn: ({ tag, label }: { tag: string; label: string }) => createPanel(tag, label),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["founder-custom-panels"] }); setShowAddForm(false); },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => deletePanel(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["founder-custom-panels"] }),
+  });
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  const isAnyLoading = monthLoading || periodLoading || orderTypesLoading;
+
   function handleRefresh() {
-    refetchSummary();
+    refetchMonth();
+    refetchPeriod();
     refetchOrderTypes();
   }
 
-  const isLoading = summaryLoading || orderTypesLoading;
-
-  function getGroupCount(tag: string): number {
-    if (!orderTypes) return 0;
-    return orderTypes.groups.find((g) => g.tag === tag)?.count ?? 0;
+  function getGroupCount(tag: string) {
+    return orderTypes?.groups.find((g) => g.tag === tag)?.count ?? 0;
   }
-
   function getGroupOrders(tag: string) {
-    if (!orderTypes) return [];
-    return orderTypes.groups.find((g) => g.tag === tag)?.orders ?? [];
+    return orderTypes?.groups.find((g) => g.tag === tag)?.orders ?? [];
   }
 
+  const presets = useMemo(() => buildPresets(), [todayStr]);
+
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-8">
       <PageHeader
         title="Founder View"
-        description="Sales KPIs and order breakdown for the selected period."
+        description="Sales KPIs and order breakdown."
         action={
           <button
             onClick={handleRefresh}
-            disabled={isLoading}
+            disabled={isAnyLoading}
             className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 px-3 py-2 rounded-lg hover:bg-secondary"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${isAnyLoading ? "animate-spin" : ""}`} />
             Refresh
           </button>
         }
       />
 
-      {/* Date Range Picker */}
-      <div className="glass-panel p-4 rounded-2xl flex flex-wrap items-center gap-4">
-        <div className="flex items-center gap-2">
-          <Calendar className="w-4 h-4 text-muted-foreground" />
-          <span className="text-sm font-medium text-muted-foreground">Period</span>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-muted-foreground">From</label>
-            <input
-              type="date"
-              value={from}
-              max={to}
-              onChange={(e) => setFrom(e.target.value)}
-              className="text-sm bg-secondary border border-border rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-muted-foreground">To</label>
-            <input
-              type="date"
-              value={to}
-              min={from}
-              max={format(new Date(), "yyyy-MM-dd")}
-              onChange={(e) => setTo(e.target.value)}
-              className="text-sm bg-secondary border border-border rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-          </div>
-        </div>
-        {summaryError && (
-          <p className="text-destructive text-sm flex items-center gap-1 ml-auto">
-            <AlertCircle className="w-4 h-4" />
-            {(summaryError as Error).message}
-          </p>
-        )}
-      </div>
-
-      {/* Section 1: Sales KPIs */}
+      {/* ── Section 1: Fixed At-a-Glance KPIs (always this month) ──────────── */}
       <section>
-        <h2 className="text-base font-display font-semibold mb-4 text-muted-foreground uppercase tracking-wide text-xs">
-          Sales KPIs
-        </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        {sectionHeading("At a Glance — " + format(today, "MMMM yyyy"))}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <KpiCard
             title="Today's Sales"
-            value={summary ? formatGBP(summary.todayRevenue) : "—"}
-            sub={summary ? `${summary.todayOrderCount} orders today` : undefined}
+            value={monthSummary ? formatGBP(monthSummary.todayRevenue) : "—"}
+            sub={monthSummary ? `${monthSummary.todayOrderCount} order${monthSummary.todayOrderCount !== 1 ? "s" : ""} today` : undefined}
             icon={TrendingUp}
             color="text-primary"
             bg="bg-primary/10"
-            loading={summaryLoading}
-            error={!!summaryError}
+            loading={monthLoading}
+            error={!!monthError}
           />
           <KpiCard
-            title="Sales This Period"
-            value={summary ? formatGBP(summary.totalRevenue) : "—"}
-            sub={summary ? `${summary.orderCount} orders` : undefined}
-            icon={BarChart2}
-            color="text-blue-500"
-            bg="bg-blue-500/10"
-            loading={summaryLoading}
-            error={!!summaryError}
-          />
-          <KpiCard
-            title="Average Daily Sales"
-            value={summary ? formatGBP(summary.averageDailyRevenue) : "—"}
-            sub={summary ? `Over ${summary.dayCount} day${summary.dayCount !== 1 ? "s" : ""}` : undefined}
+            title="Avg Daily Sales This Month"
+            value={monthSummary ? formatGBP(monthSummary.averageDailyRevenue) : "—"}
+            sub={monthSummary ? `Over ${monthSummary.dayCount} day${monthSummary.dayCount !== 1 ? "s" : ""} so far` : undefined}
             icon={Calculator}
             color="text-violet-500"
             bg="bg-violet-500/10"
-            loading={summaryLoading}
-            error={!!summaryError}
+            loading={monthLoading}
+            error={!!monthError}
           />
           <KpiCard
-            title="Est. Monthly Sales"
-            value={summary ? formatGBP(summary.estimatedMonthlyRevenue) : "—"}
-            sub={`Based on ${getDaysInMonth(new Date())}-day month`}
+            title="Est. Monthly Forecast"
+            value={monthSummary ? formatGBP(monthSummary.estimatedMonthlyRevenue) : "—"}
+            sub={`Based on ${getDaysInMonth(today)}-day month`}
             icon={Calendar}
             color="text-amber-500"
             bg="bg-amber-500/10"
-            loading={summaryLoading}
-            error={!!summaryError}
+            loading={monthLoading}
+            error={!!monthError}
           />
         </div>
       </section>
 
-      {/* Section 2: Order Breakdown */}
+      {/* ── Section 2: Period Picker + Period Sales ─────────────────────────── */}
       <section>
-        <h2 className="text-base font-display font-semibold mb-4 text-muted-foreground uppercase tracking-wide text-xs">
-          Order Breakdown
-        </h2>
+        {sectionHeading("Period Analysis")}
+
+        {/* Picker row */}
+        <div className="glass-panel p-4 rounded-2xl space-y-3 mb-5">
+          {/* Preset buttons */}
+          <div className="flex flex-wrap gap-2">
+            {presets.map((p) => (
+              <button
+                key={p.label}
+                onClick={() => applyPreset(p)}
+                className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-all border ${
+                  activePreset === p.label
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary"
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          {/* Custom date inputs */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <Calendar className="w-4 h-4 text-muted-foreground shrink-0" />
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-muted-foreground">From</label>
+              <input
+                type="date"
+                value={from}
+                max={to}
+                onChange={(e) => handleManualDateChange("from", e.target.value)}
+                className="text-sm bg-secondary border border-border rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-muted-foreground">To</label>
+              <input
+                type="date"
+                value={to}
+                min={from}
+                max={todayStr}
+                onChange={(e) => handleManualDateChange("to", e.target.value)}
+                className="text-sm bg-secondary border border-border rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+            {periodError && (
+              <p className="text-destructive text-sm flex items-center gap-1">
+                <AlertCircle className="w-4 h-4" />
+                {(periodError as Error).message}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Period total sales */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+          <KpiCard
+            title={`Total Sales — ${activePreset === "custom" ? `${from} to ${to}` : activePreset}`}
+            value={periodSummary ? formatGBP(periodSummary.totalRevenue) : "—"}
+            sub={periodSummary ? `${periodSummary.orderCount} orders` : undefined}
+            icon={BarChart2}
+            color="text-blue-500"
+            bg="bg-blue-500/10"
+            loading={periodLoading}
+            error={!!periodError}
+          />
+        </div>
+
+        {/* Order breakdown */}
+        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Order Breakdown</h3>
         {orderTypesError && (
-          <div className="glass-panel rounded-2xl p-6 flex items-center gap-3 text-destructive mb-4">
+          <div className="glass-panel rounded-2xl p-5 flex items-center gap-3 text-destructive mb-4">
             <AlertCircle className="w-5 h-5 shrink-0" />
             <p className="text-sm">{(orderTypesError as Error).message}</p>
           </div>
@@ -678,7 +746,6 @@ function FounderDashboard() {
           ))}
         </div>
 
-        {/* Expanded Order Panel */}
         {expandedPanel && activeTab && (
           <div className="glass-panel rounded-2xl mt-4 overflow-hidden">
             <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -716,16 +783,14 @@ function FounderDashboard() {
         )}
       </section>
 
-      {/* Section 3: Custom Tag Panels */}
+      {/* ── Section 3: Custom Tag Panels ────────────────────────────────────── */}
       <section>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-display font-semibold text-muted-foreground uppercase tracking-wide text-xs">
-            Custom Tag Panels
-          </h2>
+          {sectionHeading("Custom Tag Panels")}
           {!showAddForm && (
             <button
               onClick={() => setShowAddForm(true)}
-              className="flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 border border-primary/30 hover:border-primary/60 rounded-lg px-3 py-1.5 transition-colors"
+              className="flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 border border-primary/30 hover:border-primary/60 rounded-lg px-3 py-1.5 transition-colors -mt-4"
             >
               <Plus className="w-3.5 h-3.5" />
               Add Panel
