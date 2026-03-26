@@ -212,13 +212,13 @@ export function NavLinks({
           <button
             onClick={() => setDispatchOpen(o => !o)}
             className={cn(
-              "w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group",
+              "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group",
               isOnDispatchPage
                 ? "text-primary font-semibold"
                 : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
             )}
           >
-            <Truck className={cn("w-5 h-5", isOnDispatchPage ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+            <Truck className={cn("w-4 h-4 flex-shrink-0", isOnDispatchPage ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
             <span className="flex-1 text-left">Dispatches</span>
             <ChevronDown className={cn(
               "w-4 h-4 transition-transform duration-200",
@@ -277,7 +277,7 @@ export function NavLinks({
         href={item.href}
         onClick={onNavigate}
         className={cn(
-          "flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group relative",
+          "flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group relative",
           isActive
             ? "text-primary font-semibold"
             : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
@@ -290,8 +290,8 @@ export function NavLinks({
             transition={{ type: "spring", stiffness: 300, damping: 30 }}
           />
         )}
-        <item.icon className={cn("w-5 h-5 relative z-10", isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
-        <span className="relative z-10">{item.name}</span>
+        <item.icon className={cn("w-4 h-4 flex-shrink-0 relative z-10", isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+        <span className="relative z-10 truncate">{item.name}</span>
       </Link>
     );
   }
@@ -303,7 +303,7 @@ export function NavLinks({
 
   return (
     <>
-      <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
+      <nav className="flex-1 px-3 py-3 space-y-0.5 overflow-y-auto">
         {beforeProduct.map(renderNavItem)}
 
         {visibleProductItems.length > 0 && (
@@ -311,13 +311,13 @@ export function NavLinks({
             <button
               onClick={() => setProductOpen(o => !o)}
               className={cn(
-                "w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group",
+                "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group",
                 isOnProductPage
                   ? "text-primary font-semibold"
                   : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
               )}
             >
-              <ShoppingBag className={cn("w-5 h-5", isOnProductPage ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+              <ShoppingBag className={cn("w-4 h-4 flex-shrink-0", isOnProductPage ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
               <span className="flex-1 text-left">Product</span>
               <ChevronDown className={cn(
                 "w-4 h-4 transition-transform duration-200",
@@ -377,13 +377,13 @@ export function NavLinks({
             <button
               onClick={() => setInventoryOpen(o => !o)}
               className={cn(
-                "w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group",
+                "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group",
                 isOnInventoryPage
                   ? "text-primary font-semibold"
                   : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
               )}
             >
-              <PackageSearch className={cn("w-5 h-5", isOnInventoryPage ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+              <PackageSearch className={cn("w-4 h-4 flex-shrink-0", isOnInventoryPage ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
               <span className="flex-1 text-left">Inventory</span>
               <ChevronDown className={cn(
                 "w-4 h-4 transition-transform duration-200",
@@ -438,7 +438,7 @@ export function NavLinks({
         {afterInventory.map(renderNavItem)}
       </nav>
 
-      <div className="px-4 pb-2">
+      <div className="px-3 pb-2">
         {bottomNavItems.map((item) => {
           const isActive = location === item.href;
           return (
@@ -447,7 +447,7 @@ export function NavLinks({
               href={item.href}
               onClick={onNavigate}
               className={cn(
-                "flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group relative",
+                "flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group relative",
                 isActive
                   ? "text-primary font-semibold"
                   : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
@@ -460,8 +460,8 @@ export function NavLinks({
                   transition={{ type: "spring", stiffness: 300, damping: 30 }}
                 />
               )}
-              <item.icon className={cn("w-5 h-5 relative z-10", isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
-              <span className="relative z-10">{item.name}</span>
+              <item.icon className={cn("w-4 h-4 flex-shrink-0 relative z-10", isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+              <span className="relative z-10 truncate">{item.name}</span>
             </Link>
           );
         })}
@@ -501,9 +501,9 @@ export function Layout({ children }: { children: ReactNode }) {
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
 
       {/* ── Desktop sidebar (md+) ───────────────────────────────────────── */}
-      <aside className="w-64 flex-shrink-0 border-r border-border bg-card/50 backdrop-blur-md flex-col hidden md:flex relative z-10">
-        <div className="px-5 py-4 flex items-center gap-3">
-          <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-primary flex items-center justify-center shadow-lg shadow-primary/20 p-1.5">
+      <aside className="w-52 lg:w-60 xl:w-64 flex-shrink-0 border-r border-border bg-card/50 backdrop-blur-md flex-col hidden md:flex relative z-10">
+        <div className="px-4 py-4 flex items-center gap-2.5">
+          <div className="flex-shrink-0 w-9 h-9 rounded-xl bg-primary flex items-center justify-center shadow-lg shadow-primary/20 p-1.5">
             <img
               src={`${import.meta.env.BASE_URL}tck-logo-short-cream.png`}
               alt="TCK"
@@ -512,7 +512,7 @@ export function Layout({ children }: { children: ReactNode }) {
           </div>
           <div className="flex flex-col min-w-0">
             <span className="font-display font-bold text-sm leading-tight tracking-tight text-foreground truncate">The Calzone Kitchen</span>
-            <span className="text-xs text-muted-foreground">Production Planner</span>
+            <span className="text-xs text-muted-foreground truncate">Production Planner</span>
           </div>
         </div>
 
@@ -525,7 +525,7 @@ export function Layout({ children }: { children: ReactNode }) {
           user={user}
         />
 
-        <div className="p-4 border-t border-border">
+        <div className="p-3 border-t border-border">
           <AccountButton user={user} logout={logout} lockStation={lockStation} />
         </div>
       </aside>
@@ -618,23 +618,23 @@ function TopBar({ onOpenMobile, fallbackTitle }: { onOpenMobile: () => void; fal
   const title = header?.title ?? fallbackTitle;
 
   return (
-    <header className="min-h-[56px] border-b border-border bg-background/80 backdrop-blur-md flex items-center px-4 md:px-8 gap-3 z-10">
+    <header className="min-h-[56px] border-b border-border bg-background/80 backdrop-blur-md flex items-center px-4 md:px-5 xl:px-8 gap-3 z-10 min-w-0">
       <button
         onClick={onOpenMobile}
         className="md:hidden p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors flex-shrink-0"
       >
         <Menu className="w-5 h-5" />
       </button>
-      <h1 className="font-display font-bold text-xl text-foreground tracking-tight truncate">
+      <h1 className="font-display font-bold text-xl text-foreground tracking-tight truncate min-w-0 flex-1">
         {title}
       </h1>
       {header?.description && (
-        <span className="hidden sm:block text-sm text-muted-foreground ml-auto flex-shrink-0">
+        <span className="hidden lg:block text-sm text-muted-foreground flex-shrink-0 truncate max-w-xs">
           {header.description}
         </span>
       )}
       {header?.action && (
-        <div className={cn("flex-shrink-0", header?.description ? "" : "ml-auto")}>
+        <div className="flex-shrink-0">
           {header.action}
         </div>
       )}

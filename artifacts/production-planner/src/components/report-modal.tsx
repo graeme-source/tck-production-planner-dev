@@ -439,7 +439,7 @@ export function ReportButton({ defaultStation, className }: ReportButtonProps) {
       <button
         onClick={() => setOpen(true)}
         className={cn(
-          "fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-3 bg-primary text-primary-foreground rounded-full shadow-lg hover:bg-primary/90 transition-all hover:scale-105 active:scale-95 font-medium text-sm",
+          "fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-3 bg-blue-500 text-white rounded-full shadow-lg shadow-blue-500/30 hover:bg-blue-600 transition-all hover:scale-105 active:scale-95 font-medium text-sm",
           className
         )}
         title="Report an issue or improvement"
