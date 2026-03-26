@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { useListIngredients, useListSuppliers } from "@workspace/api-client-react";
+import { useListIngredients, useListSuppliers, getListRecipesQueryKey, getListSubRecipesQueryKey } from "@workspace/api-client-react";
 import type { Ingredient } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
@@ -560,14 +560,20 @@ export default function Ingredients() {
     kanbanOrderAmount: data.kanbanOrderAmount ?? null,
   });
 
+  function invalidateCostTouchpoints() {
+    queryClient.invalidateQueries({ queryKey: ["/api/ingredients"] });
+    queryClient.invalidateQueries({ queryKey: getListRecipesQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getListSubRecipesQueryKey() });
+  }
+
   const onSubmit = (data: FormValues) => {
     if (editingId !== null) {
       updateIngredient.mutate({ id: editingId, data: buildPayload(data) }, {
-        onSuccess: () => { setIsDialogOpen(false); reset(); setEditingId(null); }
+        onSuccess: () => { setIsDialogOpen(false); reset(); setEditingId(null); invalidateCostTouchpoints(); }
       });
     } else {
       createIngredient.mutate({ data: buildPayload(data) }, {
-        onSuccess: () => { setIsDialogOpen(false); reset(); }
+        onSuccess: () => { setIsDialogOpen(false); reset(); invalidateCostTouchpoints(); }
       });
     }
   };
@@ -1260,7 +1266,7 @@ export default function Ingredients() {
                             <Edit2 className="w-4 h-4" />
                           </button>
                           <button
-                            onClick={() => { if (confirm(`Delete "${item.name}"?`)) deleteIngredient.mutate({ id: item.id }); }}
+                            onClick={() => { if (confirm(`Delete "${item.name}"?`)) deleteIngredient.mutate({ id: item.id }, { onSuccess: invalidateCostTouchpoints }); }}
                             className="p-2 text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
                             title="Delete"
                           >
