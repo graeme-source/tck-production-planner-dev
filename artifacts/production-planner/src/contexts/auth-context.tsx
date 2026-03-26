@@ -137,15 +137,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Manually lock the station — clears pinVerifiedAt server-side.
+  // Manually lock the station — clears pinVerifiedAt server-side and locally.
+  // We lock the UI regardless of the server response (security-first): if the
+  // network is down, staff still can't proceed without PIN entry. The next
+  // successful /pin/verify call will re-sync the server state.
   const lockStation = useCallback(async () => {
     try {
-      await fetch("/api/auth/pin/lock", {
+      const res = await fetch("/api/auth/pin/lock", {
         method: "POST",
         credentials: "include",
       });
+      if (!res.ok) {
+        console.warn("Lock station: server returned non-OK, locking UI anyway");
+      }
     } catch {
-      // Ignore network errors — lock the UI anyway
+      console.warn("Lock station: network error, locking UI anyway");
     }
     setPinLocked(true);
   }, []);

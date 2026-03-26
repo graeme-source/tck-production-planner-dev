@@ -27,18 +27,19 @@ const LoginBody = z.object({
 });
 
 // Returns true if the session needs PIN re-verification.
-// PIN lock resets daily at 5am UTC — staff must re-enter PIN each morning.
+// PIN lock resets daily at 4am UTC. This maps to 4am GMT (winter) / 5am BST (summer),
+// ensuring the reset always happens well before TCK's earliest shift start.
 function isPinRequired(pinVerifiedAt: string | undefined): boolean {
   if (!pinVerifiedAt) return true;
 
   const verified = new Date(pinVerifiedAt);
   const now = new Date();
 
-  // Most recent 5am UTC reset point
+  // Most recent 4am UTC reset point
   const reset = new Date();
-  reset.setUTCHours(5, 0, 0, 0);
+  reset.setUTCHours(4, 0, 0, 0);
   if (now.getTime() < reset.getTime()) {
-    // Before today's 5am — use yesterday's 5am as the cutoff
+    // Before today's 4am — use yesterday's 4am as the cutoff
     reset.setUTCDate(reset.getUTCDate() - 1);
   }
 
