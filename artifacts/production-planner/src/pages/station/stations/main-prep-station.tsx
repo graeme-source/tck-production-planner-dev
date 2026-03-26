@@ -96,6 +96,8 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const [isOnBreak, setIsOnBreak] = useState(false);
   const [presenceData, setPresenceData] = useState<PrepPresenceData>({});
   const activeIngIdRef = useRef<number | null>(null);
+  const stockCheckRef = useRef<HTMLDivElement>(null);
+  const prevNeedsStockCheckRef = useRef(false);
 
   const checkDate = nextPlan?.planDate ?? plan.planDate;
 
@@ -249,6 +251,21 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   }, [ingredients]);
 
   const selectedIngredient = ingredients.find(i => i.ingredientId === selectedIngredientId) ?? null;
+
+  const selectedStatus = selectedIngredient ? ingredientDoneStatus(selectedIngredient) : null;
+  useEffect(() => {
+    prevNeedsStockCheckRef.current = false;
+  }, [selectedIngredientId]);
+
+  useEffect(() => {
+    if (selectedStatus?.needsStockCheck && !selectedStatus.stockSaved && !prevNeedsStockCheckRef.current) {
+      setTimeout(() => {
+        stockCheckRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 100);
+      toast({ title: `Stock check needed for ${selectedIngredient?.ingredientName ?? "this item"}` });
+    }
+    prevNeedsStockCheckRef.current = selectedStatus?.needsStockCheck ?? false;
+  }, [selectedStatus?.needsStockCheck, selectedStatus?.stockSaved, selectedIngredient?.ingredientId]);
 
   const toggleTin = async (ingredientId: number, recipeId: number, tinNumber: number) => {
     if (isOnBreak) return;
@@ -612,7 +629,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
 
                       {/* Stock check */}
                       {status.needsStockCheck && (
-                        <div className="mt-4 bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-xl p-4">
+                        <div ref={stockCheckRef} className="mt-4 bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-xl p-4">
                           <div className="flex items-center gap-2 mb-3">
                             <Package className="w-4 h-4 text-blue-600 animate-pulse" />
                             <p className="text-sm font-bold text-blue-800 dark:text-blue-200">Stock Check</p>
