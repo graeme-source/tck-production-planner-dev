@@ -154,13 +154,13 @@ export default function Orders() {
     },
   });
 
+  const activePlans = (plans ?? []).filter(p => p.status === "active");
+
   useEffect(() => {
-    if (plans && plans.length > 0 && !selectedPlanId) {
-      const activePlans = plans.filter(p => p.status === "active");
-      const bestPlan = activePlans.length > 0 ? activePlans[activePlans.length - 1] : plans[plans.length - 1];
-      setSelectedPlanId(bestPlan.id);
+    if (activePlans.length > 0 && !selectedPlanId) {
+      setSelectedPlanId(activePlans[activePlans.length - 1].id);
     }
-  }, [plans, selectedPlanId, setSelectedPlanId]);
+  }, [activePlans.length, selectedPlanId, setSelectedPlanId]);
 
   const { data: calculated, isLoading: calcLoading, error: calcError } = useQuery<CalculateResponse>({
     queryKey: ["order-calculate", selectedPlanId],
@@ -380,9 +380,10 @@ export default function Orders() {
           value={selectedPlanId ?? ""}
           onChange={e => setSelectedPlanId(Number(e.target.value) || null)}
           className="h-10 px-3 rounded-lg border border-border bg-background text-sm w-full sm:w-auto sm:min-w-[240px]"
+          disabled={activePlans.length === 0}
         >
-          <option value="">Select plan...</option>
-          {plans?.map(p => (
+          <option value="">{activePlans.length === 0 ? "No active plans" : "Select plan..."}</option>
+          {activePlans.map(p => (
             <option key={p.id} value={p.id}>
               {p.name} ({p.planDate})
             </option>
@@ -489,8 +490,18 @@ export default function Orders() {
       )}
 
       {!calcLoading && !selectedPlanId && (
-        <div className="text-center py-12 text-muted-foreground">
-          Select a production plan above to calculate order requirements.
+        <div className="rounded-2xl border border-dashed border-border p-12 text-center">
+          {activePlans.length === 0 ? (
+            <>
+              <ShoppingCart className="w-10 h-10 mx-auto mb-3 opacity-30" />
+              <p className="font-medium text-muted-foreground">No active production plans</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Activate a production plan first — orders can only be placed against active plans.
+              </p>
+            </>
+          ) : (
+            <p className="text-muted-foreground">Select an active production plan above to calculate order requirements.</p>
+          )}
         </div>
       )}
 

@@ -28,13 +28,18 @@ router.get("/calculate", async (req, res) => {
   }
 
   const plan = await db
-    .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate, name: productionPlansTable.name })
+    .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate, name: productionPlansTable.name, status: productionPlansTable.status })
     .from(productionPlansTable)
     .where(eq(productionPlansTable.id, planId))
     .limit(1);
 
   if (plan.length === 0) {
     res.status(404).json({ error: "Production plan not found" });
+    return;
+  }
+
+  if (plan[0].status === "draft") {
+    res.status(403).json({ error: "Orders can only be calculated for active production plans. Activate the plan first." });
     return;
   }
 
