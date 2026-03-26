@@ -1,9 +1,10 @@
 import { Router, type IRouter } from "express";
 import { db, stockEntriesTable, recipesTable, ingredientsTable, storageLocationsTable } from "@workspace/db";
+import { productionPlanItemsTable, productionPlansTable } from "@workspace/db";
+import { desc, eq } from "drizzle-orm";
 
 const router: IRouter = Router();
 
-// Location metadata — matches the `location` field values stored in stock_entries
 const LOCATION_DEFS = [
   { key: "production_fridge",  label: "Production Fridge",  zone: "fridge",   icon: "fridge",   itemTypes: ["recipe"] },
   { key: "production_freezer", label: "Production Freezer", zone: "freezer",  icon: "freezer",  itemTypes: ["recipe"] },
@@ -13,10 +14,20 @@ const LOCATION_DEFS = [
   { key: "dry_store",          label: "Dry Store",          zone: "ambient",  icon: "ambient",  itemTypes: ["ingredient"] },
 ] as const;
 
-// GET /api/stock-control
-// Returns individual stock entries per location with their IDs for edit/delete.
+interface AggItem {
+  stockEntryIds: number[];
+  id: number;
+  name: string;
+  color: string | null;
+  qty: number;
+  unit: string;
+  type: string;
+  recipeId: number | null;
+  ingredientId: number | null;
+  orderPosition: number;
+}
+
 router.get("/", async (_req, res) => {
-  // Fetch all positive stock entries with their IDs
   const rows = await db
     .select({
       id: stockEntriesTable.id,
@@ -29,10 +40,8 @@ router.get("/", async (_req, res) => {
     })
     .from(stockEntriesTable);
 
-  // Filter to positive quantities
   const positiveRows = rows.filter(r => parseFloat(String(r.quantity)) > 0);
 
-  // Build recipe & ingredient name maps
   const recipeIds = [...new Set(positiveRows.filter(r => r.recipeId).map(r => r.recipeId as number))];
   const ingredientIds = [...new Set(positiveRows.filter(r => r.ingredientId).map(r => r.ingredientId as number))];
 
@@ -52,15 +61,25 @@ router.get("/", async (_req, res) => {
     for (const i of ings) ingredientNames.set(i.id, i.name);
   }
 
-  // Fetch all DB locations upfront (both system and user-defined)
+  const recipeOrder = new Map<number, number>();
+  const latestPlans = await db
+    .select({ id: productionPlansTable.id })
+    .from(productionPlansTable)
+    .orderBy(desc(productionPlansTable.planDate))
+    .limit(1);
+  if (latestPlans.length > 0) {
+    const planItems = await db
+      .select({ recipeId: productionPlanItemsTable.recipeId, orderPosition: productionPlanItemsTable.orderPosition })
+      .from(productionPlanItemsTable)
+      .where(eq(productionPlanItemsTable.planId, latestPlans[0].id));
+    for (const pi of planItems) recipeOrder.set(pi.recipeId, pi.orderPosition);
+  }
+
   const allDbLocs = await db.select().from(storageLocationsTable);
   const systemDbLocs = allDbLocs.filter(l => l.isSystem);
   const userDbLocs = allDbLocs.filter(l => !l.isSystem);
-
-  // Build a lookup: normalised default label → DB record (for system locs)
   const systemByLabel = new Map(systemDbLocs.map(l => [l.name.toLowerCase(), l]));
 
-  // Aggregate rows into the location structure
   const locationMap = new Map<string, {
     key: string;
     label: string;
@@ -68,22 +87,10 @@ router.get("/", async (_req, res) => {
     icon: string;
     dbId: number | null;
     totalPacks: number;
-    items: Array<{
-      stockEntryId: number;
-      id: number;
-      name: string;
-      color: string | null;
-      qty: number;
-      unit: string;
-      type: string;
-      recipeId: number | null;
-      ingredientId: number | null;
-    }>;
+    items: AggItem[];
   }>();
 
-  // Pre-populate system (hardcoded) locations
   for (const def of LOCATION_DEFS) {
-    // Allow DB-stored name/zone to override the hardcoded defaults
     const dbLoc = systemByLabel.get(def.label.toLowerCase());
     locationMap.set(def.key, {
       key: def.key,
@@ -96,8 +103,6 @@ router.get("/", async (_req, res) => {
     });
   }
 
-  // Pre-populate user-defined locations so stock rows referencing sl_<id> keys
-  // get correct metadata (label, zone, dbId) rather than an "unknown" placeholder
   for (const ul of userDbLocs) {
     const key = `sl_${ul.id}`;
     locationMap.set(key, {
@@ -111,13 +116,14 @@ router.get("/", async (_req, res) => {
     });
   }
 
+  const aggMap = new Map<string, AggItem>();
+
   for (const row of positiveRows) {
     const qty = parseFloat(String(row.quantity)) || 0;
     if (qty <= 0) continue;
 
     let locEntry = locationMap.get(row.location);
     if (!locEntry) {
-      // Truly unknown location key — add it dynamically as a fallback
       locEntry = {
         key: row.location,
         label: row.location.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
@@ -145,22 +151,36 @@ router.get("/", async (_req, res) => {
     }
 
     locEntry.totalPacks += qty;
-    locEntry.items.push({
-      stockEntryId: row.id,
-      id,
-      name,
-      color,
-      qty,
-      unit: row.unit ?? "packs",
-      type: row.itemType,
-      recipeId: row.recipeId ?? null,
-      ingredientId: row.ingredientId ?? null,
-    });
+
+    const aggKey = `${row.location}|${row.itemType}|${id}`;
+    const existing = aggMap.get(aggKey);
+    if (existing) {
+      existing.qty += qty;
+      existing.stockEntryIds.push(row.id);
+      if (!existing.unit || existing.unit === "packs") {
+        existing.unit = row.unit ?? "packs";
+      }
+    } else {
+      const orderPos = (row.itemType === "recipe" && row.recipeId) ? (recipeOrder.get(row.recipeId) ?? 9999) : 9999;
+      const item: AggItem = {
+        stockEntryIds: [row.id],
+        id,
+        name,
+        color,
+        qty,
+        unit: row.unit ?? "packs",
+        type: row.itemType,
+        recipeId: row.recipeId ?? null,
+        ingredientId: row.ingredientId ?? null,
+        orderPosition: orderPos,
+      };
+      aggMap.set(aggKey, item);
+      locEntry.items.push(item);
+    }
   }
 
-  // Sort items within each location by qty desc
   for (const loc of locationMap.values()) {
-    loc.items.sort((a, b) => b.qty - a.qty);
+    loc.items.sort((a, b) => a.orderPosition - b.orderPosition || a.name.localeCompare(b.name));
   }
 
   const productionFridgeTotal = locationMap.get("production_fridge")?.totalPacks ?? 0;

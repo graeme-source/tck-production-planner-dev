@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface StockItem {
-  stockEntryId: number;
+  stockEntryIds: number[];
   id: number;
   name: string;
   color: string | null;
@@ -16,6 +16,7 @@ interface StockItem {
   type: string;
   recipeId: number | null;
   ingredientId: number | null;
+  orderPosition: number;
 }
 
 interface StockLocation {
@@ -216,7 +217,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
   const enterBulkEdit = () => {
     const initial: Record<number, string> = {};
     for (const item of location.items) {
-      initial[item.stockEntryId] = String(item.qty);
+      initial[item.stockEntryIds[0]] = String(item.qty);
     }
     setBulkValues(initial);
     setBulkEdit(true);
@@ -236,24 +237,46 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
     setBulkSaving(true);
     setStockError(null);
     try {
-      const saves = location.items
-        .filter(item => {
-          const raw = bulkValues[item.stockEntryId];
-          if (raw === undefined) return false;
-          const parsed = parseFloat(raw);
-          return !isNaN(parsed) && parsed >= 0 && parsed !== item.qty;
-        })
-        .map(item =>
-          updateStockEntry(item.stockEntryId, {
-            recipeId: item.recipeId,
-            ingredientId: item.ingredientId,
-            itemType: item.type,
-            quantity: parseFloat(bulkValues[item.stockEntryId]),
-            unit: item.unit,
-            location: location.key,
-          })
-        );
-      await Promise.all(saves);
+      const ops: Promise<void>[] = [];
+      for (const item of location.items) {
+        const primaryId = item.stockEntryIds[0];
+        const raw = bulkValues[primaryId];
+        const parsed = raw !== undefined ? parseFloat(raw) : NaN;
+        const qtyChanged = !isNaN(parsed) && parsed >= 0 && parsed !== item.qty;
+        const hasDuplicates = item.stockEntryIds.length > 1;
+
+        if (qtyChanged) {
+          ops.push(
+            updateStockEntry(primaryId, {
+              recipeId: item.recipeId,
+              ingredientId: item.ingredientId,
+              itemType: item.type,
+              quantity: parsed,
+              unit: item.unit,
+              location: location.key,
+            })
+          );
+        }
+
+        if (hasDuplicates) {
+          if (!qtyChanged) {
+            ops.push(
+              updateStockEntry(primaryId, {
+                recipeId: item.recipeId,
+                ingredientId: item.ingredientId,
+                itemType: item.type,
+                quantity: item.qty,
+                unit: item.unit,
+                location: location.key,
+              })
+            );
+          }
+          for (const extraId of item.stockEntryIds.slice(1)) {
+            ops.push(deleteStockEntry(extraId));
+          }
+        }
+      }
+      await Promise.all(ops);
       invalidate();
       exitBulkEdit();
     } catch (err: unknown) {
@@ -317,7 +340,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
   });
 
   const startEdit = (item: StockItem) => {
-    setEditingEntryId(item.stockEntryId);
+    setEditingEntryId(item.stockEntryIds[0]);
     setEditQty(String(item.qty));
     setEditUnit(item.unit);
     setDeletingEntryId(null);
@@ -328,8 +351,11 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
   const saveEdit = (item: StockItem) => {
     const qty = parseFloat(editQty);
     if (isNaN(qty) || qty < 0) { setStockError("Please enter a valid quantity"); return; }
+    for (const extraId of item.stockEntryIds.slice(1)) {
+      deleteMutation.mutate(extraId);
+    }
     updateMutation.mutate({
-      id: item.stockEntryId,
+      id: item.stockEntryIds[0],
       recipeId: item.recipeId,
       ingredientId: item.ingredientId,
       itemType: item.type,
@@ -370,7 +396,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
               {Math.round(
                 bulkEdit
                   ? location.items.reduce((s, i) => {
-                      const v = parseFloat(bulkValues[i.stockEntryId] ?? String(i.qty));
+                      const v = parseFloat(bulkValues[i.stockEntryIds[0]] ?? String(i.qty));
                       return s + (isNaN(v) ? i.qty : v);
                     }, 0)
                   : totalQty
@@ -510,12 +536,13 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
             {location.items.map((item, idx) => {
               const barWidth = Math.max(3, (item.qty / maxQty) * 100);
               const pct = totalQty > 0 ? Math.round((item.qty / totalQty) * 100) : 0;
-              const isEditing = editingEntryId === item.stockEntryId;
-              const isDeleting = deletingEntryId === item.stockEntryId;
+              const primaryId = item.stockEntryIds[0];
+              const isEditing = editingEntryId === primaryId;
+              const isDeleting = deletingEntryId === primaryId;
 
               if (isDeleting) {
                 return (
-                  <div key={item.stockEntryId} className="px-6 py-4 bg-destructive/5">
+                  <div key={primaryId} className="px-6 py-4 bg-destructive/5">
                     <p className="text-xs font-medium text-destructive mb-1">Remove "{item.name}" from this location?</p>
                     <p className="text-xs text-muted-foreground mb-3">This will delete the stock entry.</p>
                     {stockError && <p className="text-xs text-destructive mb-2">{stockError}</p>}
@@ -526,7 +553,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
                       >Cancel</button>
                       <button
                         disabled={deleteMutation.isPending}
-                        onClick={() => deleteMutation.mutate(item.stockEntryId)}
+                        onClick={() => { for (const eid of item.stockEntryIds) { deleteMutation.mutate(eid); } }}
                         className="flex-1 px-3 py-1.5 text-xs bg-destructive text-destructive-foreground rounded-lg font-medium hover:bg-destructive/90 disabled:opacity-50 flex items-center justify-center gap-1"
                       >
                         {deleteMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
@@ -539,7 +566,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
 
               if (isEditing) {
                 return (
-                  <div key={item.stockEntryId} className="px-6 py-4 bg-secondary/20">
+                  <div key={primaryId} className="px-6 py-4 bg-secondary/20">
                     <div className="flex items-center gap-2 mb-3">
                       <span
                         className="flex-1 font-medium text-sm truncate"
@@ -590,11 +617,11 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
 
               // ── Bulk-edit row ──────────────────────────────────────────
               if (bulkEdit) {
-                const bulkVal = bulkValues[item.stockEntryId] ?? String(item.qty);
+                const bulkVal = bulkValues[primaryId] ?? String(item.qty);
                 const parsed = parseFloat(bulkVal);
                 const changed = !isNaN(parsed) && parsed !== item.qty;
                 return (
-                  <div key={item.stockEntryId} className={cn("px-6 py-3 transition-colors", changed && "bg-primary/5")}>
+                  <div key={primaryId} className={cn("px-6 py-3 transition-colors", changed && "bg-primary/5")}>
                     <div className="flex items-center gap-3">
                       <span className="text-xs font-semibold text-muted-foreground w-5 tabular-nums shrink-0">{idx + 1}</span>
                       <span
@@ -609,7 +636,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
                           min="0"
                           step="any"
                           value={bulkVal}
-                          onChange={e => setBulkValues(v => ({ ...v, [item.stockEntryId]: e.target.value }))}
+                          onChange={e => setBulkValues(v => ({ ...v, [primaryId]: e.target.value }))}
                           onFocus={e => e.target.select()}
                           className={cn(
                             "w-20 px-2 py-1 text-sm font-bold tabular-nums text-right bg-background border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30",
@@ -625,7 +652,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
 
               // ── Normal row ─────────────────────────────────────────────
               return (
-                <div key={item.stockEntryId} className="px-6 py-4 hover:bg-secondary/30 transition-colors group">
+                <div key={primaryId} className="px-6 py-4 hover:bg-secondary/30 transition-colors group">
                   <div className="flex items-center gap-3 mb-2">
                     <span className="text-xs font-semibold text-muted-foreground w-5 tabular-nums shrink-0">
                       {idx + 1}
@@ -650,7 +677,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
                         <Pencil className="w-3.5 h-3.5" />
                       </button>
                       <button
-                        onClick={() => { setDeletingEntryId(item.stockEntryId); setEditingEntryId(null); setAddingStock(false); setStockError(null); }}
+                        onClick={() => { setDeletingEntryId(primaryId); setEditingEntryId(null); setAddingStock(false); setStockError(null); }}
                         className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
                         title="Remove stock entry"
                       >
