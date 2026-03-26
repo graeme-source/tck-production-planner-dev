@@ -3393,6 +3393,7 @@ router.get("/:id/main-prep", async (req, res) => {
       .select({
         ingredientId: recipeIngredientsTable.ingredientId,
         quantity: recipeIngredientsTable.quantity,
+        includeInFillingMix: recipeIngredientsTable.includeInFillingMix,
         ingredientName: ingredientsTable.name,
         unit: ingredientsTable.unit,
         category: ingredientsTable.category,
@@ -3416,14 +3417,18 @@ router.get("/:id/main-prep", async (req, res) => {
 
     for (const row of directIngredients) {
       const cat = row.category ?? "";
+      const rowNameLc = (row.ingredientName ?? "").toLowerCase();
+      const isMozzType = rowNameLc.includes("mozzarella") || rowNameLc.includes("fior di latte");
       if (station === "prep_bases") {
         if (!BASES_CATEGORIES.includes(cat)) continue;
-        const rowNameLc = (row.ingredientName ?? "").toLowerCase();
-        if (rowNameLc.includes("mozzarella") || rowNameLc.includes("fior di latte")) continue;
+        // Mozzarella/fior di latte belongs to filling mix prep, not bases — always exclude here
+        if (isMozzType) continue;
       } else {
         if (MAIN_PREP_EXCLUDED.includes(cat)) continue;
-        const rowNameLc = (row.ingredientName ?? "").toLowerCase();
-        if (rowNameLc.includes("mozzarella") || rowNameLc.includes("fior di latte")) continue;
+        // Mozzarella/fior di latte goes directly to building fridges — exclude from main prep
+        // UNLESS this recipe row is flagged as include_in_filling_mix, in which case it
+        // needs to be portioned as part of the filling and must appear here.
+        if (isMozzType && !row.includeInFillingMix) continue;
       }
 
       const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
