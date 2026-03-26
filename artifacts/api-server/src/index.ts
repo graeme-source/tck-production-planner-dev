@@ -331,6 +331,15 @@ async function runStartupMigrations() {
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `);
+    // Founder custom tag panels (added for custom panel feature)
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS founder_custom_panels (
+        id SERIAL PRIMARY KEY,
+        tag TEXT NOT NULL,
+        label TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
     await seedStorageLocations();
     console.log("Startup migrations OK");
   } catch (err) {

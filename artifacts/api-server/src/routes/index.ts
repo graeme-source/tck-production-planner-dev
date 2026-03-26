@@ -33,6 +33,7 @@ import kanbansRouter from "./kanbans";
 import ordersRouter from "./orders";
 import deliveriesRouter from "./deliveries";
 import stockControlRouter from "./stock-control";
+import founderPanelsRouter from "./founder-panels";
 
 const router: IRouter = Router();
 
@@ -96,5 +97,6 @@ router.use("/kanbans", kanbansRouter);
 router.use("/orders", ordersRouter);
 router.use("/deliveries", deliveriesRouter);
 router.use("/stock-control", stockControlRouter);
+router.use("/founder-panels", founderPanelsRouter);
 
 export default router;

@@ -278,6 +278,30 @@ router.get("/orders-by-type", requireFounder, async (req, res) => {
   }
 });
 
+// ── Founder View: Tag Summary (for custom panels) ─────────────────────────────
+// GET /api/shopify/tag-summary?tag=...&from=YYYY-MM-DD&to=YYYY-MM-DD
+// Returns order count + total value for any single Shopify tag.
+router.get("/tag-summary", requireFounder, async (req, res) => {
+  const { tag, from, to } = req.query as { tag?: string; from?: string; to?: string };
+  if (!tag || !from || !to) {
+    res.status(400).json({ error: "tag, from, and to are required" });
+    return;
+  }
+  try {
+    const allOrders = await getOrdersByDateRange(from, to);
+    const matching = allOrders.filter(o => {
+      const tags = o.tags.split(",").map(t => t.trim());
+      return tags.includes(tag);
+    });
+    const totalValue = matching.reduce((s, o) => s + parseFloat(o.total_price || "0"), 0);
+    res.json({ tag, from, to, count: matching.length, totalValue });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Shopify] tag-summary error:", msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
 // ── Recipe → Shopify variant mapping — bulk read (used by stations) ───────────
 
 // GET /recipe-mappings — all mappings with recipe names (per-recipe CRUD is at /api/recipes/:id/shopify-mapping)

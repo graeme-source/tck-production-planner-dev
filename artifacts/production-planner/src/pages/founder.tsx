@@ -1,7 +1,7 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { useAuth } from "@/contexts/auth-context";
 import { Redirect } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format, startOfMonth, getDaysInMonth } from "date-fns";
@@ -17,6 +17,11 @@ import {
   UserPlus,
   Package,
   AlertCircle,
+  Tag,
+  Plus,
+  Trash2,
+  X,
+  Check,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
@@ -265,6 +270,200 @@ function OrderTypeCard({
   );
 }
 
+// ── Custom Tag Panel types & helpers ──────────────────────────────────────────
+
+interface SavedPanel {
+  id: number;
+  tag: string;
+  label: string;
+  created_at: string;
+}
+
+async function fetchSavedPanels(): Promise<SavedPanel[]> {
+  const res = await fetch(`${BASE}/api/founder-panels`, { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to load custom panels");
+  return res.json();
+}
+
+async function fetchTagSummary(tag: string, from: string, to: string) {
+  const params = new URLSearchParams({ tag, from, to });
+  const res = await fetch(`${BASE}/api/shopify/tag-summary?${params}`, { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to fetch tag summary");
+  return res.json() as Promise<{ count: number; totalValue: number }>;
+}
+
+async function createPanel(tag: string, label: string): Promise<SavedPanel> {
+  const res = await fetch(`${BASE}/api/founder-panels`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tag, label }),
+  });
+  if (!res.ok) throw new Error("Failed to create panel");
+  return res.json();
+}
+
+async function deletePanel(id: number): Promise<void> {
+  const res = await fetch(`${BASE}/api/founder-panels/${id}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error("Failed to delete panel");
+}
+
+// Individual custom panel card — queries its own tag-summary
+function CustomPanelCard({
+  panel,
+  from,
+  to,
+  onDelete,
+}: {
+  panel: SavedPanel;
+  from: string;
+  to: string;
+  onDelete: (id: number) => void;
+}) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["tag-summary", panel.tag, from, to],
+    queryFn: () => fetchTagSummary(panel.tag, from, to),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  function handleDeleteClick() {
+    if (confirmDelete) {
+      if (confirmTimer.current) clearTimeout(confirmTimer.current);
+      onDelete(panel.id);
+    } else {
+      setConfirmDelete(true);
+      confirmTimer.current = setTimeout(() => setConfirmDelete(false), 4000);
+    }
+  }
+
+  return (
+    <div className="glass-panel p-5 rounded-2xl flex flex-col gap-3 group relative">
+      {/* Delete button */}
+      <button
+        onClick={handleDeleteClick}
+        title={confirmDelete ? "Click again to confirm delete" : "Delete panel"}
+        className={`absolute top-3 right-3 flex items-center gap-1 text-xs rounded-lg px-2 py-1 transition-all
+          ${confirmDelete
+            ? "bg-destructive text-destructive-foreground"
+            : "opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+          }`}
+      >
+        {confirmDelete ? (
+          <>
+            <Check className="w-3 h-3" />
+            Confirm
+          </>
+        ) : (
+          <Trash2 className="w-3.5 h-3.5" />
+        )}
+      </button>
+      {confirmDelete && (
+        <button
+          onClick={() => setConfirmDelete(false)}
+          className="absolute top-3 right-20 text-muted-foreground hover:text-foreground opacity-100 p-1"
+          title="Cancel"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      )}
+
+      {/* Header */}
+      <div className="flex items-start gap-3 pr-16">
+        <div className="p-2.5 rounded-xl bg-primary/10 text-primary shrink-0">
+          <Tag className="w-4 h-4" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold leading-tight">{panel.label}</p>
+          <p className="text-xs text-muted-foreground font-mono mt-0.5 truncate">{panel.tag}</p>
+        </div>
+      </div>
+
+      {/* Stats */}
+      {isLoading ? (
+        <div className="space-y-2">
+          <Skeleton className="h-7 w-20" />
+          <Skeleton className="h-4 w-28" />
+        </div>
+      ) : error ? (
+        <p className="text-destructive text-xs flex items-center gap-1">
+          <AlertCircle className="w-3.5 h-3.5" /> Could not load
+        </p>
+      ) : (
+        <div className="space-y-1">
+          <p className="text-2xl font-display font-bold tabular-nums">{data?.count ?? 0}</p>
+          <p className="text-xs text-muted-foreground">
+            {formatGBP(data?.totalValue ?? 0)} total value
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Add-panel inline form
+function AddPanelForm({ onAdd, onCancel }: { onAdd: (tag: string, label: string) => void; onCancel: () => void }) {
+  const [tag, setTag] = useState("");
+  const [label, setLabel] = useState("");
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const t = tag.trim();
+    const l = label.trim() || t;
+    if (!t) return;
+    onAdd(t, l);
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="glass-panel p-5 rounded-2xl border-2 border-primary/30 flex flex-col gap-3">
+      <p className="text-sm font-semibold">Add Custom Tag Panel</p>
+      <div className="space-y-2">
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Shopify Tag <span className="text-destructive">*</span></label>
+          <input
+            autoFocus
+            value={tag}
+            onChange={e => setTag(e.target.value)}
+            placeholder="e.g. new-customer"
+            className="w-full text-sm bg-secondary border border-border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary font-mono"
+            required
+          />
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Display Label <span className="text-muted-foreground">(optional)</span></label>
+          <input
+            value={label}
+            onChange={e => setLabel(e.target.value)}
+            placeholder={tag || "e.g. New Customers"}
+            className="w-full text-sm bg-secondary border border-border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
+          />
+        </div>
+      </div>
+      <div className="flex items-center gap-2 pt-1">
+        <button
+          type="submit"
+          disabled={!tag.trim()}
+          className="flex items-center gap-1.5 text-sm font-medium bg-primary text-primary-foreground px-4 py-2 rounded-lg hover:bg-primary/90 disabled:opacity-40 transition-colors"
+        >
+          <Check className="w-4 h-4" /> Save Panel
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="text-sm text-muted-foreground hover:text-foreground px-3 py-2 rounded-lg hover:bg-secondary transition-colors"
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
 export default function FounderView() {
   const { state } = useAuth();
 
@@ -282,6 +481,27 @@ function FounderDashboard() {
   const [to, setTo] = useState(defaults.to);
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [expandedPanel, setExpandedPanel] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const queryClient = useQueryClient();
+
+  const { data: savedPanels = [] } = useQuery({
+    queryKey: ["founder-custom-panels"],
+    queryFn: fetchSavedPanels,
+    staleTime: 60 * 1000,
+  });
+
+  const addMutation = useMutation({
+    mutationFn: ({ tag, label }: { tag: string; label: string }) => createPanel(tag, label),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["founder-custom-panels"] });
+      setShowAddForm(false);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => deletePanel(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["founder-custom-panels"] }),
+  });
 
   const {
     data: summary,
@@ -494,6 +714,48 @@ function FounderDashboard() {
             </Tabs>
           </div>
         )}
+      </section>
+
+      {/* Section 3: Custom Tag Panels */}
+      <section>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-display font-semibold text-muted-foreground uppercase tracking-wide text-xs">
+            Custom Tag Panels
+          </h2>
+          {!showAddForm && (
+            <button
+              onClick={() => setShowAddForm(true)}
+              className="flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 border border-primary/30 hover:border-primary/60 rounded-lg px-3 py-1.5 transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add Panel
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+          {showAddForm && (
+            <AddPanelForm
+              onAdd={(tag, label) => addMutation.mutate({ tag, label })}
+              onCancel={() => setShowAddForm(false)}
+            />
+          )}
+          {savedPanels.map((panel) => (
+            <CustomPanelCard
+              key={panel.id}
+              panel={panel}
+              from={from}
+              to={to}
+              onDelete={(id) => deleteMutation.mutate(id)}
+            />
+          ))}
+          {!showAddForm && savedPanels.length === 0 && (
+            <div className="sm:col-span-2 xl:col-span-4 glass-panel rounded-2xl p-8 text-center text-muted-foreground">
+              <Tag className="w-8 h-8 mx-auto mb-2 opacity-20" />
+              <p className="text-sm">No custom panels yet. Click <strong>Add Panel</strong> to track any Shopify tag.</p>
+            </div>
+          )}
+        </div>
       </section>
     </div>
   );
