@@ -622,7 +622,7 @@ function FounderDashboard() {
       {/* ── Section 1: Fixed At-a-Glance KPIs (always this month) ──────────── */}
       <section>
         {sectionHeading("At a Glance — " + format(today, "MMMM yyyy"))}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           <KpiCard
             title="Today's Sales"
             value={monthSummary ? formatGBP(monthSummary.todayRevenue) : "—"}
@@ -630,6 +630,16 @@ function FounderDashboard() {
             icon={TrendingUp}
             color="text-primary"
             bg="bg-primary/10"
+            loading={monthLoading}
+            error={!!monthError}
+          />
+          <KpiCard
+            title="This Month to Date"
+            value={monthSummary ? formatGBP(monthSummary.totalRevenue) : "—"}
+            sub={monthSummary ? `${monthSummary.orderCount} orders this month` : undefined}
+            icon={BarChart2}
+            color="text-blue-500"
+            bg="bg-blue-500/10"
             loading={monthLoading}
             error={!!monthError}
           />
