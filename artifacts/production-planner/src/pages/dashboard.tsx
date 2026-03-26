@@ -131,6 +131,7 @@ export default function Dashboard() {
 
   const todayTag = format(today, "yyyy-MM-dd");
   const todayIndex = weeklyOrders?.findIndex(d => d.date === todayTag) ?? -1;
+  const todayShopifyOrderCount = todayIndex >= 0 ? weeklyOrders![todayIndex].orderCount : null;
 
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
@@ -182,7 +183,7 @@ export default function Dashboard() {
         />
         <StatCard
           title="Dispatching Today"
-          value={todayDispatches.length.toString()}
+          value={weeklyLoading ? "…" : (todayShopifyOrderCount ?? todayDispatches.length).toString()}
           icon={Truck}
           color="text-blue-500"
           bg="bg-blue-500/10"

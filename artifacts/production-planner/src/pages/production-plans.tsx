@@ -20,6 +20,7 @@ import {
   Loader2, RefreshCw, Info, Package, ClipboardList, ExternalLink,
   Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef,
   ArrowRight, GripVertical, AlertTriangle, AlertCircle, BookmarkCheck, ShoppingCart,
+  FlaskConical, Printer, X, ChevronDown, ChevronUp,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -1523,6 +1524,290 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Raw Materials Manifest Modal
+// ──────────────────────────────────────────────────────────────────────────────
+interface RawMaterialsIngredient {
+  ingredientId: number;
+  name: string;
+  unit: string;
+  quantity: number;
+}
+
+interface RawMaterialsSubRecipe {
+  subRecipeId: number;
+  name: string;
+  totalWeightRequired: number;
+  unit: string;
+  components: RawMaterialsIngredient[];
+}
+
+interface RawMaterialsRecipe {
+  recipeId: number;
+  recipeName: string;
+  batchesTarget: number;
+  directIngredients: RawMaterialsIngredient[];
+  subRecipes: RawMaterialsSubRecipe[];
+}
+
+interface RawMaterialsData {
+  planId: number;
+  planDate: string;
+  planName: string;
+  batchNumber: number | null;
+  recipes: RawMaterialsRecipe[];
+  totals: RawMaterialsIngredient[];
+}
+
+function fmtQty(qty: number, unit: string): string {
+  const rounded = unit === "g" || unit === "ml" ? Math.round(qty) : Math.round(qty * 100) / 100;
+  return `${rounded.toLocaleString()} ${unit}`;
+}
+
+interface RawMaterialsManifestProps {
+  planId: number;
+  planName: string;
+  onClose: () => void;
+}
+
+function RawMaterialsManifest({ planId, planName, onClose }: RawMaterialsManifestProps) {
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [creatingOrder, setCreatingOrder] = useState(false);
+  const [orderResult, setOrderResult] = useState<{ ordersCreated: number; ordersUpdated: number; orders: Array<{ orderId: number; supplierName: string; lineCount: number; action: string }> } | null>(null);
+
+  const { data, isLoading, error } = useQuery<RawMaterialsData>({
+    queryKey: ["raw-materials", planId],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/production-plans/${planId}/raw-materials`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch raw materials");
+      return res.json();
+    },
+  });
+
+  const toggleExpand = (idx: number) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  };
+
+  const handleCreateOrder = async () => {
+    setCreatingOrder(true);
+    try {
+      const res = await fetch(`${BASE}/api/production-plans/${planId}/raw-materials/create-order`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast({ title: "Order creation failed", description: err.error ?? "Unknown error", variant: "destructive" });
+        return;
+      }
+      const result = await res.json();
+      setOrderResult(result);
+      const parts: string[] = [];
+      if (result.ordersCreated > 0) parts.push(`${result.ordersCreated} created`);
+      if (result.ordersUpdated > 0) parts.push(`${result.ordersUpdated} updated`);
+      toast({ title: `Supplier orders: ${parts.join(", ")}` });
+    } catch {
+      toast({ title: "Network error", description: "Could not create orders", variant: "destructive" });
+    } finally {
+      setCreatingOrder(false);
+    }
+  };
+
+  return (
+    <div data-print-target className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 overflow-y-auto py-6 px-4 print:relative print:bg-transparent print:py-0 print:px-0 print:block print:overflow-visible">
+      <div className="bg-card border border-border rounded-2xl w-full max-w-3xl shadow-2xl print:shadow-none print:border-0 print:rounded-none print:max-w-none">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border print:border-b-2 print:border-black">
+          <div>
+            <h2 className="font-bold text-lg flex items-center gap-2 print:text-xl">
+              <FlaskConical className="w-5 h-5 text-primary print:hidden" />
+              Raw Materials Manifest
+            </h2>
+            {data && (
+              <p className="text-sm text-muted-foreground print:text-black print:text-sm">
+                {data.planName} · {format(parseISO(data.planDate), "EEEE d MMMM yyyy")}
+                {data.batchNumber && <span className="ml-2 font-mono">Batch #{data.batchNumber}</span>}
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-2 print:hidden">
+            <button
+              onClick={() => {
+                document.body.classList.add("printing-manifest");
+                window.print();
+                document.body.classList.remove("printing-manifest");
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-secondary/50 transition-colors"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              Print / Save PDF
+            </button>
+            <button
+              onClick={onClose}
+              className="p-2 rounded-lg hover:bg-secondary/50 transition-colors text-muted-foreground"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="p-6 space-y-6 print:p-4 print:space-y-4">
+          {isLoading && (
+            <div className="flex items-center justify-center py-12 text-muted-foreground">
+              <Loader2 className="w-5 h-5 animate-spin mr-2" />
+              Loading manifest...
+            </div>
+          )}
+
+          {error && (
+            <div className="text-center py-12 text-red-600">
+              Failed to load raw materials. Please try again.
+            </div>
+          )}
+
+          {data && data.recipes.length === 0 && (
+            <div className="text-center py-12 text-muted-foreground">
+              No ingredients found. Make sure the plan has recipes with batch targets set.
+            </div>
+          )}
+
+          {data && data.recipes.length > 0 && (
+            <>
+              {/* Per-recipe breakdown */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground print:text-black">Per Recipe Breakdown</h3>
+                {data.recipes.map((recipe, recipeIdx) => (
+                  <div key={recipe.recipeId} className="border border-border rounded-xl overflow-hidden print:border print:border-black print:rounded-none">
+                    <div className="bg-secondary/30 px-4 py-2.5 flex items-center justify-between print:bg-gray-100">
+                      <span className="font-semibold text-sm">{recipe.recipeName}</span>
+                      <span className="text-xs text-muted-foreground print:text-black">{recipe.batchesTarget} batch{recipe.batchesTarget !== 1 ? "es" : ""}</span>
+                    </div>
+
+                    {/* Direct ingredients */}
+                    {recipe.directIngredients.length > 0 && (
+                      <table className="w-full text-xs">
+                        <tbody>
+                          {recipe.directIngredients.map(ing => (
+                            <tr key={ing.ingredientId} className="border-t border-border/40 print:border-gray-200">
+                              <td className="py-1.5 px-4 text-muted-foreground print:text-black">{ing.name}</td>
+                              <td className="py-1.5 px-4 text-right font-mono tabular-nums print:text-black">{fmtQty(ing.quantity, ing.unit)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+
+                    {/* Sub-recipes */}
+                    {recipe.subRecipes.map((sr, srIdx) => {
+                      const key = recipeIdx * 1000 + srIdx;
+                      const isExpanded = expanded.has(key);
+                      return (
+                        <div key={sr.subRecipeId} className="border-t border-border/40 print:border-gray-200">
+                          <button
+                            onClick={() => toggleExpand(key)}
+                            className="w-full flex items-center justify-between px-4 py-2 bg-amber-50/50 dark:bg-amber-900/10 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors text-left print:pointer-events-none"
+                          >
+                            <span className="text-xs font-medium text-amber-800 dark:text-amber-300 print:text-black">
+                              {sr.name} <span className="font-normal text-muted-foreground print:text-gray-600">(sub-recipe)</span>
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-mono tabular-nums text-amber-700 dark:text-amber-400 print:text-black">{fmtQty(sr.totalWeightRequired, sr.unit)}</span>
+                              <span className="print:hidden">
+                                {isExpanded ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
+                              </span>
+                            </div>
+                          </button>
+                          <div className={cn("overflow-hidden transition-all", isExpanded ? "max-h-screen" : "max-h-0 print:max-h-screen")}>
+                              <table className="w-full text-xs pl-4">
+                                <tbody>
+                                  {sr.components.map(comp => (
+                                    <tr key={comp.ingredientId} className="border-t border-border/30 print:border-gray-100">
+                                      <td className="py-1.5 pl-8 pr-4 text-muted-foreground print:text-gray-700">↳ {comp.name}</td>
+                                      <td className="py-1.5 px-4 text-right font-mono tabular-nums print:text-black">{fmtQty(comp.quantity, comp.unit)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+
+              {/* Grand totals */}
+              <div className="border border-border rounded-xl overflow-hidden print:border print:border-black print:rounded-none">
+                <div className="bg-primary/10 px-4 py-2.5 print:bg-gray-200">
+                  <h3 className="text-sm font-bold">Total Requirements (All Recipes)</h3>
+                </div>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-secondary/20 border-b border-border print:border-gray-300">
+                      <th className="py-2 px-4 text-left font-medium text-muted-foreground print:text-black">Ingredient</th>
+                      <th className="py-2 px-4 text-right font-medium text-muted-foreground print:text-black">Total Required</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.totals.map(ing => (
+                      <tr key={ing.ingredientId} className="border-t border-border/40 print:border-gray-200">
+                        <td className="py-1.5 px-4 print:text-black">{ing.name}</td>
+                        <td className="py-1.5 px-4 text-right font-mono tabular-nums font-medium print:text-black">{fmtQty(ing.quantity, ing.unit)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Create order section */}
+              <div className="print:hidden border border-border rounded-xl p-4 bg-secondary/10 space-y-3">
+                <div>
+                  <p className="text-sm font-semibold">Create Full Supplier Order</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Generates purchase orders for every ingredient above at the full required quantity — bypasses stock levels and kanban settings entirely.
+                  </p>
+                </div>
+
+                {orderResult ? (
+                  <div className="rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-900/40 p-3 space-y-1">
+                    <p className="text-sm font-medium text-emerald-800 dark:text-emerald-300">
+                      {orderResult.ordersCreated > 0 && <>{orderResult.ordersCreated} order{orderResult.ordersCreated !== 1 ? "s" : ""} created</>}
+                      {orderResult.ordersCreated > 0 && orderResult.ordersUpdated > 0 && ", "}
+                      {orderResult.ordersUpdated > 0 && <>{orderResult.ordersUpdated} order{orderResult.ordersUpdated !== 1 ? "s" : ""} updated</>}
+                    </p>
+                    {orderResult.orders.map(o => (
+                      <p key={o.orderId} className="text-xs text-emerald-700 dark:text-emerald-400">
+                        PO #{o.orderId} — {o.supplierName} ({o.lineCount} line{o.lineCount !== 1 ? "s" : ""}) [{o.action}]
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleCreateOrder}
+                    disabled={creatingOrder}
+                    className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground text-sm font-medium rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
+                  >
+                    {creatingOrder ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShoppingCart className="w-4 h-4" />}
+                    {creatingOrder ? "Creating Orders…" : "Create Full Order"}
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Plan Detail View
 // ──────────────────────────────────────────────────────────────────────────────
 const STATION_BUTTONS = [
@@ -1551,6 +1836,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const { updatePlan, deletePlan } = useAppMutations();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isEditingDraft, setIsEditingDraft] = useState(false);
+  const [showManifest, setShowManifest] = useState(false);
   const [, navigate] = useLocation();
   const { data: stationActivity } = useGetStationActivity(planId, {
     query: { queryKey: getGetStationActivityQueryKey(planId), refetchInterval: 10000 },
@@ -1642,6 +1928,13 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
               Mark Complete
             </button>
           )}
+          <button
+            onClick={() => setShowManifest(true)}
+            className="px-3 py-1.5 text-xs border border-border bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-colors font-medium flex items-center gap-1"
+          >
+            <FlaskConical className="w-3.5 h-3.5" />
+            Raw Materials
+          </button>
           <button
             onClick={() => navigate(`/orders?planId=${planId}`)}
             className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors font-medium flex items-center gap-1"
@@ -1892,6 +2185,14 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
             setIsEditingDraft(false);
             refetch();
           }}
+        />
+      )}
+
+      {showManifest && (
+        <RawMaterialsManifest
+          planId={planId}
+          planName={plan.name}
+          onClose={() => setShowManifest(false)}
         />
       )}
     </div>

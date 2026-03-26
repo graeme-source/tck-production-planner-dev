@@ -182,3 +182,23 @@
     @apply hover:-translate-y-0.5 hover:shadow-md transition-all duration-300 ease-out;
   }
 }
+
+/* Print styles — only active when body has .printing-manifest class */
+@media print {
+  body.printing-manifest *:not([data-print-target]):not([data-print-target] *) {
+    visibility: hidden !important;
+    position: absolute !important;
+    overflow: hidden !important;
+  }
+  body.printing-manifest [data-print-target],
+  body.printing-manifest [data-print-target] * {
+    visibility: visible !important;
+    position: static !important;
+  }
+  body.printing-manifest [data-print-target] {
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+  }
+}

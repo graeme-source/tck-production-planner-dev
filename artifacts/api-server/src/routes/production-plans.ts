@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, dptSettingsTable } from "@workspace/db";
+import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable } from "@workspace/db";
 import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as drizzleSum, ne, isNotNull, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
@@ -3664,6 +3664,446 @@ router.get("/:id/mozzarella-load", async (req, res) => {
     totalQty,
     bagWeight,
     bags,
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// GET /:id/raw-materials
+// Returns a full raw-materials manifest for a plan, recursively expanding
+// sub-recipes into their constituent raw ingredients.
+// Ingredients with category = 'seasoning' are excluded.
+// ──────────────────────────────────────────────────────────────────────────────
+router.get("/:id/raw-materials", async (req, res) => {
+  const planId = Number(req.params.id);
+  if (isNaN(planId)) { res.status(400).json({ error: "Invalid plan id" }); return; }
+
+  const [plan] = await db
+    .select({
+      id: productionPlansTable.id,
+      planDate: productionPlansTable.planDate,
+      name: productionPlansTable.name,
+      batchNumber: productionPlansTable.batchNumber,
+    })
+    .from(productionPlansTable)
+    .where(eq(productionPlansTable.id, planId))
+    .limit(1);
+
+  if (!plan) { res.status(404).json({ error: "Plan not found" }); return; }
+
+  const planItems = await db
+    .select({
+      recipeId: productionPlanItemsTable.recipeId,
+      batchesTarget: productionPlanItemsTable.batchesTarget,
+      recipeName: recipesTable.name,
+      portionsPerBatch: recipesTable.portionsPerBatch,
+    })
+    .from(productionPlanItemsTable)
+    .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(eq(productionPlanItemsTable.planId, planId));
+
+  // Collect all ingredient details up front to avoid N+1
+  const allIngredients = await db
+    .select({
+      id: ingredientsTable.id,
+      name: ingredientsTable.name,
+      unit: ingredientsTable.unit,
+      category: ingredientsTable.category,
+      processingRatio: ingredientsTable.processingRatio,
+      supplierId: ingredientsTable.supplierId,
+      packWeight: ingredientsTable.packWeight,
+      costPerPack: ingredientsTable.costPerPack,
+      supplierPartNumber: ingredientsTable.supplierPartNumber,
+    })
+    .from(ingredientsTable);
+  const ingLookup = new Map(allIngredients.map(i => [i.id, i]));
+
+  // Collect all sub-recipe info up front
+  const allSubRecipes = await db.select().from(subRecipesTable);
+  const srLookup = new Map(allSubRecipes.map(s => [s.id, s]));
+
+  const allSRI = await db.select().from(subRecipeIngredientsTable);
+  const srIngMap = new Map<number, typeof allSRI>();
+  for (const row of allSRI) {
+    if (!srIngMap.has(row.subRecipeId)) srIngMap.set(row.subRecipeId, []);
+    srIngMap.get(row.subRecipeId)!.push(row);
+  }
+
+  const allSRSR = await db.select().from(subRecipeSubRecipesTable);
+  const srSrMap = new Map<number, typeof allSRSR>();
+  for (const row of allSRSR) {
+    if (!srSrMap.has(row.subRecipeId)) srSrMap.set(row.subRecipeId, []);
+    srSrMap.get(row.subRecipeId)!.push(row);
+  }
+
+  const allRSR = await db.select().from(recipeSubRecipesTable);
+  const rSrMap = new Map<number, typeof allRSR>();
+  for (const row of allRSR) {
+    if (!rSrMap.has(row.recipeId)) rSrMap.set(row.recipeId, []);
+    rSrMap.get(row.recipeId)!.push(row);
+  }
+
+  const allRI = await db.select().from(recipeIngredientsTable);
+  const rIngMap = new Map<number, typeof allRI>();
+  for (const row of allRI) {
+    if (!rIngMap.has(row.recipeId)) rIngMap.set(row.recipeId, []);
+    rIngMap.get(row.recipeId)!.push(row);
+  }
+
+  // Recursively explode a sub-recipe into raw ingredients (excluding seasonings)
+  // Returns list of { ingredientId, name, unit, quantity (already scaled), category }
+  function explodeSubRecipe(
+    subRecipeId: number,
+    scale: number,
+    ancestors: Set<number>,
+  ): Array<{ ingredientId: number; name: string; unit: string; quantity: number; category: string | null }> {
+    if (ancestors.has(subRecipeId)) return [];
+    const sr = srLookup.get(subRecipeId);
+    if (!sr) return [];
+    const yieldVal = Number(sr.yield) || 0;
+    if (yieldVal === 0) return [];
+    const effectiveScale = scale / yieldVal;
+
+    const results: Array<{ ingredientId: number; name: string; unit: string; quantity: number; category: string | null }> = [];
+
+    for (const sri of srIngMap.get(subRecipeId) ?? []) {
+      const ing = ingLookup.get(sri.ingredientId);
+      if (!ing) continue;
+      if (ing.category === "seasoning") continue;
+      const cookedQty = Number(sri.quantity) * effectiveScale;
+      const pRatio = ing.processingRatio ? Number(ing.processingRatio) : null;
+      const rawQty = pRatio && pRatio > 0 ? cookedQty / pRatio : cookedQty;
+      results.push({
+        ingredientId: ing.id,
+        name: ing.name,
+        unit: ing.unit,
+        quantity: rawQty,
+        category: ing.category,
+      });
+    }
+
+    const newAncestors = new Set(ancestors).add(subRecipeId);
+    for (const srsr of srSrMap.get(subRecipeId) ?? []) {
+      const nested = explodeSubRecipe(srsr.componentSubRecipeId, Number(srsr.quantity) * effectiveScale, newAncestors);
+      results.push(...nested);
+    }
+    return results;
+  }
+
+  interface SubRecipeEntry {
+    subRecipeId: number;
+    name: string;
+    totalWeightRequired: number;
+    unit: string;
+    components: Array<{ ingredientId: number; name: string; unit: string; quantity: number }>;
+  }
+
+  interface RecipeManifestEntry {
+    recipeId: number;
+    recipeName: string;
+    batchesTarget: number;
+    directIngredients: Array<{ ingredientId: number; name: string; unit: string; quantity: number }>;
+    subRecipes: SubRecipeEntry[];
+  }
+
+  const recipeEntries: RecipeManifestEntry[] = [];
+
+  // Aggregate totals across the whole plan
+  const planTotals = new Map<number, { ingredientId: number; name: string; unit: string; quantity: number; category: string | null }>();
+
+  function addToTotals(ingredientId: number, name: string, unit: string, quantity: number, category: string | null) {
+    const existing = planTotals.get(ingredientId);
+    if (existing) {
+      existing.quantity += quantity;
+    } else {
+      planTotals.set(ingredientId, { ingredientId, name, unit, quantity, category });
+    }
+  }
+
+  for (const item of planItems) {
+    if (!item.recipeId || !item.recipeName) continue;
+    const batchesTarget = Number(item.batchesTarget) || 0;
+    if (batchesTarget === 0) continue;
+
+    const portionsPerBatch = Number(item.portionsPerBatch) || 10;
+    const scale = batchesTarget * portionsPerBatch;
+
+    const directIngredients: Array<{ ingredientId: number; name: string; unit: string; quantity: number }> = [];
+    for (const ri of rIngMap.get(item.recipeId) ?? []) {
+      const ing = ingLookup.get(ri.ingredientId);
+      if (!ing) continue;
+      if (ing.category === "seasoning") continue;
+      const cookedQty = Number(ri.quantity) * scale;
+      const pRatio = ing.processingRatio ? Number(ing.processingRatio) : null;
+      const rawQty = pRatio && pRatio > 0 ? cookedQty / pRatio : cookedQty;
+      directIngredients.push({ ingredientId: ing.id, name: ing.name, unit: ing.unit, quantity: rawQty });
+      addToTotals(ing.id, ing.name, ing.unit, rawQty, ing.category);
+    }
+
+    const subRecipeEntries: SubRecipeEntry[] = [];
+    for (const rsr of rSrMap.get(item.recipeId) ?? []) {
+      const sr = srLookup.get(rsr.subRecipeId);
+      if (!sr) continue;
+      const srQtyRequired = Number(rsr.quantity) * scale;
+      const components = explodeSubRecipe(rsr.subRecipeId, srQtyRequired, new Set());
+      subRecipeEntries.push({
+        subRecipeId: rsr.subRecipeId,
+        name: sr.name,
+        totalWeightRequired: srQtyRequired,
+        unit: sr.yieldUnit,
+        components: components.map(c => ({ ingredientId: c.ingredientId, name: c.name, unit: c.unit, quantity: c.quantity })),
+      });
+      for (const c of components) {
+        addToTotals(c.ingredientId, c.name, c.unit, c.quantity, c.category);
+      }
+    }
+
+    recipeEntries.push({
+      recipeId: item.recipeId,
+      recipeName: item.recipeName,
+      batchesTarget,
+      directIngredients,
+      subRecipes: subRecipeEntries,
+    });
+  }
+
+  res.json({
+    planId: plan.id,
+    planDate: plan.planDate,
+    planName: plan.name,
+    batchNumber: plan.batchNumber,
+    recipes: recipeEntries,
+    totals: Array.from(planTotals.values()).sort((a, b) => a.name.localeCompare(b.name)),
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// POST /:id/raw-materials/create-order
+// Generates supplier purchase orders for every ingredient in the raw-materials
+// manifest at full required quantity — no stock or kanban checks.
+// ──────────────────────────────────────────────────────────────────────────────
+router.post("/:id/raw-materials/create-order", async (req, res) => {
+  const planId = Number(req.params.id);
+  if (isNaN(planId)) { res.status(400).json({ error: "Invalid plan id" }); return; }
+
+  const [plan] = await db
+    .select({ id: productionPlansTable.id, name: productionPlansTable.name })
+    .from(productionPlansTable)
+    .where(eq(productionPlansTable.id, planId))
+    .limit(1);
+
+  if (!plan) { res.status(404).json({ error: "Plan not found" }); return; }
+
+  // Inline resolve of raw-materials totals (same logic as GET endpoint, just totals)
+  const planItems = await db
+    .select({
+      recipeId: productionPlanItemsTable.recipeId,
+      batchesTarget: productionPlanItemsTable.batchesTarget,
+      portionsPerBatch: recipesTable.portionsPerBatch,
+    })
+    .from(productionPlanItemsTable)
+    .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(eq(productionPlanItemsTable.planId, planId));
+
+  const allIngredients = await db
+    .select({
+      id: ingredientsTable.id,
+      name: ingredientsTable.name,
+      unit: ingredientsTable.unit,
+      category: ingredientsTable.category,
+      processingRatio: ingredientsTable.processingRatio,
+      supplierId: ingredientsTable.supplierId,
+      packWeight: ingredientsTable.packWeight,
+      costPerPack: ingredientsTable.costPerPack,
+      supplierPartNumber: ingredientsTable.supplierPartNumber,
+    })
+    .from(ingredientsTable);
+  const ingLookup = new Map(allIngredients.map(i => [i.id, i]));
+
+  const allSubRecipes = await db.select().from(subRecipesTable);
+  const srLookup = new Map(allSubRecipes.map(s => [s.id, s]));
+
+  const allSRI = await db.select().from(subRecipeIngredientsTable);
+  const srIngMap = new Map<number, typeof allSRI>();
+  for (const row of allSRI) {
+    if (!srIngMap.has(row.subRecipeId)) srIngMap.set(row.subRecipeId, []);
+    srIngMap.get(row.subRecipeId)!.push(row);
+  }
+
+  const allSRSR = await db.select().from(subRecipeSubRecipesTable);
+  const srSrMap = new Map<number, typeof allSRSR>();
+  for (const row of allSRSR) {
+    if (!srSrMap.has(row.subRecipeId)) srSrMap.set(row.subRecipeId, []);
+    srSrMap.get(row.subRecipeId)!.push(row);
+  }
+
+  const allRSR = await db.select().from(recipeSubRecipesTable);
+  const rSrMap = new Map<number, typeof allRSR>();
+  for (const row of allRSR) {
+    if (!rSrMap.has(row.recipeId)) rSrMap.set(row.recipeId, []);
+    rSrMap.get(row.recipeId)!.push(row);
+  }
+
+  const allRI = await db.select().from(recipeIngredientsTable);
+  const rIngMap = new Map<number, typeof allRI>();
+  for (const row of allRI) {
+    if (!rIngMap.has(row.recipeId)) rIngMap.set(row.recipeId, []);
+    rIngMap.get(row.recipeId)!.push(row);
+  }
+
+  function explodeSubRecipeForOrder(
+    subRecipeId: number,
+    scale: number,
+    ancestors: Set<number>,
+  ): Array<{ ingredientId: number; quantity: number }> {
+    if (ancestors.has(subRecipeId)) return [];
+    const sr = srLookup.get(subRecipeId);
+    if (!sr) return [];
+    const yieldVal = Number(sr.yield) || 0;
+    if (yieldVal === 0) return [];
+    const effectiveScale = scale / yieldVal;
+
+    const results: Array<{ ingredientId: number; quantity: number }> = [];
+    for (const sri of srIngMap.get(subRecipeId) ?? []) {
+      const ing = ingLookup.get(sri.ingredientId);
+      if (!ing || ing.category === "seasoning") continue;
+      const cookedQty = Number(sri.quantity) * effectiveScale;
+      const pRatio = ing.processingRatio ? Number(ing.processingRatio) : null;
+      const rawQty = pRatio && pRatio > 0 ? cookedQty / pRatio : cookedQty;
+      results.push({ ingredientId: ing.id, quantity: rawQty });
+    }
+    const newAncestors = new Set(ancestors).add(subRecipeId);
+    for (const srsr of srSrMap.get(subRecipeId) ?? []) {
+      const nested = explodeSubRecipeForOrder(srsr.componentSubRecipeId, Number(srsr.quantity) * effectiveScale, newAncestors);
+      results.push(...nested);
+    }
+    return results;
+  }
+
+  const totals = new Map<number, number>();
+
+  for (const item of planItems) {
+    if (!item.recipeId) continue;
+    const batchesTarget = Number(item.batchesTarget) || 0;
+    if (batchesTarget === 0) continue;
+    const portionsPerBatch = Number(item.portionsPerBatch) || 10;
+    const scale = batchesTarget * portionsPerBatch;
+
+    for (const ri of rIngMap.get(item.recipeId) ?? []) {
+      const ing = ingLookup.get(ri.ingredientId);
+      if (!ing || ing.category === "seasoning") continue;
+      const cookedQty = Number(ri.quantity) * scale;
+      const pRatio = ing.processingRatio ? Number(ing.processingRatio) : null;
+      const rawQty = pRatio && pRatio > 0 ? cookedQty / pRatio : cookedQty;
+      totals.set(ri.ingredientId, (totals.get(ri.ingredientId) ?? 0) + rawQty);
+    }
+
+    for (const rsr of rSrMap.get(item.recipeId) ?? []) {
+      const srQty = Number(rsr.quantity) * scale;
+      const components = explodeSubRecipeForOrder(rsr.subRecipeId, srQty, new Set());
+      for (const c of components) {
+        totals.set(c.ingredientId, (totals.get(c.ingredientId) ?? 0) + c.quantity);
+      }
+    }
+  }
+
+  // Group by supplier
+  const supplierOrderMap = new Map<number, Array<{ ingredientId: number; name: string; unit: string; quantity: number; packWeight: number; costPerPack: number; supplierPartNumber: string | null }>>();
+
+  for (const [ingredientId, quantity] of totals) {
+    const ing = ingLookup.get(ingredientId);
+    if (!ing || !ing.supplierId) continue;
+    if (!supplierOrderMap.has(ing.supplierId)) supplierOrderMap.set(ing.supplierId, []);
+    supplierOrderMap.get(ing.supplierId)!.push({
+      ingredientId,
+      name: ing.name,
+      unit: ing.unit,
+      quantity,
+      packWeight: Number(ing.packWeight) || 1,
+      costPerPack: Number(ing.costPerPack) || 0,
+      supplierPartNumber: ing.supplierPartNumber ?? null,
+    });
+  }
+
+  const createdOrders: Array<{ orderId: number; supplierId: number; supplierName: string; lineCount: number; action: "created" | "updated" }> = [];
+
+  for (const [supplierId, lines] of supplierOrderMap) {
+    if (lines.length === 0) continue;
+
+    const [supplierRow] = await db
+      .select({ id: suppliersTable.id, name: suppliersTable.name })
+      .from(suppliersTable)
+      .where(eq(suppliersTable.id, supplierId))
+      .limit(1);
+
+    const existingDrafts = await db
+      .select({ id: purchaseOrdersTable.id })
+      .from(purchaseOrdersTable)
+      .where(and(
+        eq(purchaseOrdersTable.supplierId, supplierId),
+        eq(purchaseOrdersTable.planId, planId),
+        eq(purchaseOrdersTable.status, "draft"),
+      ))
+      .limit(1);
+
+    let order: { id: number };
+    let action: "created" | "updated";
+
+    if (existingDrafts.length > 0) {
+      order = existingDrafts[0];
+      action = "updated";
+      await db.delete(purchaseOrderLinesTable)
+        .where(eq(purchaseOrderLinesTable.purchaseOrderId, order.id));
+      await db.update(purchaseOrdersTable)
+        .set({ notes: `Full-plan raw materials order for: ${plan.name}` })
+        .where(eq(purchaseOrdersTable.id, order.id));
+    } else {
+      const [newOrder] = await db.insert(purchaseOrdersTable).values({
+        supplierId,
+        planId,
+        status: "draft",
+        notes: `Full-plan raw materials order for: ${plan.name}`,
+      }).returning();
+      order = newOrder;
+      action = "created";
+    }
+
+    const lineValues = lines.map(l => {
+      const packWeight = l.packWeight;
+      const packsToOrder = packWeight > 0 ? Math.ceil(l.quantity / packWeight) : 1;
+      const orderQty = packsToOrder * packWeight;
+      return {
+        purchaseOrderId: order.id,
+        ingredientId: l.ingredientId,
+        quantityRequired: String(Math.round(l.quantity * 100) / 100),
+        quantityOrdered: String(Math.round(orderQty * 100) / 100),
+        quantityReceived: "0",
+        unit: l.unit,
+        unitPrice: l.costPerPack > 0 ? String(l.costPerPack) : null,
+        checkedOff: false,
+        notes: null,
+      };
+    });
+
+    await db.insert(purchaseOrderLinesTable).values(lineValues);
+
+    createdOrders.push({
+      orderId: order.id,
+      supplierId,
+      supplierName: supplierRow?.name ?? `Supplier #${supplierId}`,
+      lineCount: lines.length,
+      action,
+    });
+  }
+
+  const ordersCreatedCount = createdOrders.filter(o => o.action === "created").length;
+  const ordersUpdatedCount = createdOrders.filter(o => o.action === "updated").length;
+
+  res.status(201).json({
+    planId,
+    planName: plan.name,
+    ordersCreated: ordersCreatedCount,
+    ordersUpdated: ordersUpdatedCount,
+    orders: createdOrders,
   });
 });
 
