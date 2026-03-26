@@ -1570,6 +1570,7 @@ interface RawMaterialsManifestProps {
 }
 
 function RawMaterialsManifest({ planId, planName, onClose }: RawMaterialsManifestProps) {
+  const [, navigate] = useLocation();
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [creatingOrder, setCreatingOrder] = useState(false);
   const [orderResult, setOrderResult] = useState<{ ordersCreated: number; ordersUpdated: number; orders: Array<{ orderId: number; supplierName: string; lineCount: number; action: string }> } | null>(null);
@@ -1636,6 +1637,13 @@ function RawMaterialsManifest({ planId, planName, onClose }: RawMaterialsManifes
             )}
           </div>
           <div className="flex items-center gap-2 print:hidden">
+            <button
+              onClick={() => { onClose(); navigate(`/orders?planId=${planId}`); }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors font-medium"
+            >
+              <ShoppingCart className="w-3.5 h-3.5" />
+              Create Orders
+            </button>
             <button
               onClick={() => {
                 document.body.classList.add("printing-manifest");
@@ -1934,13 +1942,6 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
           >
             <FlaskConical className="w-3.5 h-3.5" />
             Raw Materials
-          </button>
-          <button
-            onClick={() => navigate(`/orders?planId=${planId}`)}
-            className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors font-medium flex items-center gap-1"
-          >
-            <ShoppingCart className="w-3.5 h-3.5" />
-            Create Orders
           </button>
           {plan.status !== "complete" && (
             <button
