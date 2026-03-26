@@ -456,6 +456,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
 
   const handleDateChange = (raw: string) => {
     if (!raw) return;
+    isDirty.current = true;
     let fixed = toNextWeekdayIfWeekend(raw);
     const warnings: string[] = [];
     if (fixed !== raw) warnings.push("Weekends are not production days — date moved to the next Monday.");

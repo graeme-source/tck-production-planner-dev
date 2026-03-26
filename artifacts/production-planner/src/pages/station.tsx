@@ -37,7 +37,7 @@ import {
 import { format, parseISO, differenceInMinutes, differenceInSeconds, addDays } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
-import { withRetry } from "@/lib/with-retry";
+import { withRetry, ClientError } from "@/lib/with-retry";
 import {
   DndContext,
   closestCenter,
@@ -1013,7 +1013,9 @@ function MixingStation({ plan }: MixingStationProps) {
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          throw new Error(data.error || `Server error ${res.status}`);
+          const msg = data.error || `Server error ${res.status}`;
+          if (res.status >= 400 && res.status < 500) throw new ClientError(res.status, msg);
+          throw new Error(msg);
         }
       });
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
@@ -1041,7 +1043,9 @@ function MixingStation({ plan }: MixingStationProps) {
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          throw new Error(data.error || `Server error ${res.status}`);
+          const msg = data.error || `Server error ${res.status}`;
+          if (res.status >= 400 && res.status < 500) throw new ClientError(res.status, msg);
+          throw new Error(msg);
         }
       });
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
@@ -7228,7 +7232,11 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ complete }),
         });
-        if (!res.ok) throw new Error(`Server error ${res.status}`);
+        if (!res.ok) {
+          const msg = `Server error ${res.status}`;
+          if (res.status >= 400 && res.status < 500) throw new ClientError(res.status, msg);
+          throw new Error(msg);
+        }
         return res.json() as Promise<{ wonkyFrozen?: number; shopifyProductTitle?: string | null; shopifyNewQty?: number | null; shopifyError?: string | null }>;
       });
       if (complete) {
@@ -7286,7 +7294,11 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ complete }),
         });
-        if (!res.ok) throw new Error(`Server error ${res.status}`);
+        if (!res.ok) {
+          const msg = `Server error ${res.status}`;
+          if (res.status >= 400 && res.status < 500) throw new ClientError(res.status, msg);
+          throw new Error(msg);
+        }
       });
     } catch {}
   };
@@ -7304,7 +7316,11 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ qty }),
         });
-        if (!res.ok) throw new Error(`Server error ${res.status}`);
+        if (!res.ok) {
+          const msg = `Server error ${res.status}`;
+          if (res.status >= 400 && res.status < 500) throw new ClientError(res.status, msg);
+          throw new Error(msg);
+        }
       });
       const net = netPacks(item);
       const currentStored = STORAGE_LOCATIONS.reduce((s, l) => s + getStorageQty(item, l.key), 0);
@@ -7336,7 +7352,11 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ qty }),
         });
-        if (!res.ok) throw new Error(`Server error ${res.status}`);
+        if (!res.ok) {
+          const msg = `Server error ${res.status}`;
+          if (res.status >= 400 && res.status < 500) throw new ClientError(res.status, msg);
+          throw new Error(msg);
+        }
       });
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
       toast({ title: `−${qty} packs from ${loc.label}`, description: `${item.recipeName ?? "Recipe"}` });
