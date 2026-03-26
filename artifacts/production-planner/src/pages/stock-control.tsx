@@ -1,18 +1,21 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
-import { Thermometer, Snowflake, Package, RefreshCw, ChevronRight, Settings2, Plus, Pencil, Trash2, X, Save, Loader2, Lock } from "lucide-react";
+import { Thermometer, Snowflake, Package, RefreshCw, ChevronRight, Settings2, Plus, Pencil, Trash2, X, Save, Loader2, Lock, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface StockItem {
+  stockEntryId: number;
   id: number;
   name: string;
   color: string | null;
   qty: number;
   unit: string;
   type: string;
+  recipeId: number | null;
+  ingredientId: number | null;
 }
 
 interface StockLocation {
@@ -37,6 +40,17 @@ interface StorageLocation {
   isSystem: boolean;
   createdAt: string;
   racks: { id: number; locationId: number; label: string }[];
+}
+
+interface Recipe {
+  id: number;
+  name: string;
+  color?: string | null;
+}
+
+interface Ingredient {
+  id: number;
+  name: string;
 }
 
 async function fetchStorageLocations(): Promise<StorageLocation[]> {
@@ -86,6 +100,69 @@ async function fetchStockControl(): Promise<StockControlData> {
   return res.json();
 }
 
+async function fetchRecipes(): Promise<Recipe[]> {
+  const res = await fetch(`${BASE}/api/recipes`, { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to fetch recipes");
+  return res.json();
+}
+
+async function fetchIngredients(): Promise<Ingredient[]> {
+  const res = await fetch(`${BASE}/api/ingredients`, { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to fetch ingredients");
+  return res.json();
+}
+
+async function updateStockEntry(id: number, data: {
+  recipeId?: number | null;
+  ingredientId?: number | null;
+  itemType: string;
+  quantity: number;
+  unit: string;
+  location: string;
+}): Promise<void> {
+  const res = await fetch(`${BASE}/api/stock/${id}`, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({}));
+    throw new Error((json as { error?: string }).error ?? "Failed to update stock entry");
+  }
+}
+
+async function deleteStockEntry(id: number): Promise<void> {
+  const res = await fetch(`${BASE}/api/stock/${id}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({}));
+    throw new Error((json as { error?: string }).error ?? "Failed to delete stock entry");
+  }
+}
+
+async function createStockEntry(data: {
+  recipeId?: number | null;
+  ingredientId?: number | null;
+  itemType: string;
+  quantity: number;
+  unit: string;
+  location: string;
+}): Promise<void> {
+  const res = await fetch(`${BASE}/api/stock`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({}));
+    throw new Error((json as { error?: string }).error ?? "Failed to create stock entry");
+  }
+}
+
 function ZoneIcon({ zone, className }: { zone: string; className?: string }) {
   if (zone === "freezer") return <Snowflake className={className} />;
   if (zone === "fridge") return <Thermometer className={className} />;
@@ -109,10 +186,115 @@ function EmptyState({ label }: { label: string }) {
   );
 }
 
-function FocusPanel({ location }: { location: StockLocation }) {
+interface FocusPanelProps {
+  location: StockLocation;
+  onRefresh: () => void;
+}
+
+function FocusPanel({ location, onRefresh }: FocusPanelProps) {
+  const queryClient = useQueryClient();
   const colors = zoneColors(location.zone);
   const totalQty = location.items.reduce((s, i) => s + i.qty, 0);
   const maxQty = location.items[0]?.qty ?? 1;
+
+  const [editingEntryId, setEditingEntryId] = useState<number | null>(null);
+  const [editQty, setEditQty] = useState("");
+  const [editUnit, setEditUnit] = useState("");
+  const [deletingEntryId, setDeletingEntryId] = useState<number | null>(null);
+  const [addingStock, setAddingStock] = useState(false);
+  const [addItemType, setAddItemType] = useState<"recipe" | "ingredient">("recipe");
+  const [addSelectedId, setAddSelectedId] = useState<number | null>(null);
+  const [addQty, setAddQty] = useState("");
+  const [addUnit, setAddUnit] = useState("packs");
+  const [stockError, setStockError] = useState<string | null>(null);
+
+  // Reset state when location changes
+  useEffect(() => {
+    setEditingEntryId(null);
+    setDeletingEntryId(null);
+    setAddingStock(false);
+    setStockError(null);
+  }, [location.key]);
+
+  const { data: recipes } = useQuery<Recipe[]>({
+    queryKey: ["recipes"],
+    queryFn: fetchRecipes,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: ingredients } = useQuery<Ingredient[]>({
+    queryKey: ["ingredients"],
+    queryFn: fetchIngredients,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["stock-control"] });
+    onRefresh();
+  };
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, ...data }: { id: number; recipeId?: number | null; ingredientId?: number | null; itemType: string; quantity: number; unit: string; location: string }) =>
+      updateStockEntry(id, data),
+    onSuccess: () => { invalidate(); setEditingEntryId(null); setStockError(null); },
+    onError: (err: unknown) => setStockError(err instanceof Error ? err.message : String(err)),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteStockEntry,
+    onSuccess: () => { invalidate(); setDeletingEntryId(null); setStockError(null); },
+    onError: (err: unknown) => setStockError(err instanceof Error ? err.message : String(err)),
+  });
+
+  const createMutation = useMutation({
+    mutationFn: createStockEntry,
+    onSuccess: () => {
+      invalidate();
+      setAddingStock(false);
+      setAddSelectedId(null);
+      setAddQty("");
+      setAddUnit("packs");
+      setStockError(null);
+    },
+    onError: (err: unknown) => setStockError(err instanceof Error ? err.message : String(err)),
+  });
+
+  const startEdit = (item: StockItem) => {
+    setEditingEntryId(item.stockEntryId);
+    setEditQty(String(item.qty));
+    setEditUnit(item.unit);
+    setDeletingEntryId(null);
+    setAddingStock(false);
+    setStockError(null);
+  };
+
+  const saveEdit = (item: StockItem) => {
+    const qty = parseFloat(editQty);
+    if (isNaN(qty) || qty < 0) { setStockError("Please enter a valid quantity"); return; }
+    updateMutation.mutate({
+      id: item.stockEntryId,
+      recipeId: item.recipeId,
+      ingredientId: item.ingredientId,
+      itemType: item.type,
+      quantity: qty,
+      unit: editUnit.trim() || item.unit,
+      location: location.key,
+    });
+  };
+
+  const handleAddStock = () => {
+    const qty = parseFloat(addQty);
+    if (isNaN(qty) || qty <= 0) { setStockError("Please enter a valid quantity"); return; }
+    if (!addSelectedId) { setStockError("Please select an item"); return; }
+    createMutation.mutate({
+      recipeId: addItemType === "recipe" ? addSelectedId : null,
+      ingredientId: addItemType === "ingredient" ? addSelectedId : null,
+      itemType: addItemType,
+      quantity: qty,
+      unit: addUnit.trim() || "packs",
+      location: location.key,
+    });
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -125,15 +307,91 @@ function FocusPanel({ location }: { location: StockLocation }) {
           <h2 className="font-display font-bold text-xl leading-tight">{location.label}</h2>
           <p className="text-xs text-muted-foreground capitalize mt-0.5">{location.zone} storage</p>
         </div>
-        <div className="text-right shrink-0">
-          <p className="text-3xl font-display font-bold tabular-nums leading-none">
-            {Math.round(totalQty).toLocaleString()}
-          </p>
-          <p className="text-xs text-muted-foreground mt-1">
-            {location.items.length} {location.items.length === 1 ? "item" : "items"}
-          </p>
+        <div className="flex items-center gap-3">
+          <div className="text-right shrink-0">
+            <p className="text-3xl font-display font-bold tabular-nums leading-none">
+              {Math.round(totalQty).toLocaleString()}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {location.items.length} {location.items.length === 1 ? "item" : "items"}
+            </p>
+          </div>
+          <button
+            onClick={() => { setAddingStock(a => !a); setEditingEntryId(null); setDeletingEntryId(null); setStockError(null); }}
+            className={cn(
+              "flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border transition-colors",
+              addingStock
+                ? "bg-primary/10 text-primary border-primary/30"
+                : "text-muted-foreground hover:text-foreground border-border hover:bg-secondary"
+            )}
+            title="Add stock entry"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Add Stock
+          </button>
         </div>
       </div>
+
+      {/* Add Stock Form */}
+      {addingStock && (
+        <div className="px-6 py-4 border-b border-border bg-secondary/20 space-y-3">
+          <p className="text-xs font-semibold text-primary">Add Stock Entry</p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => { setAddItemType("recipe"); setAddSelectedId(null); }}
+              className={cn("px-3 py-1.5 text-xs rounded-lg border transition-colors", addItemType === "recipe" ? "bg-primary text-primary-foreground border-transparent" : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary")}
+            >Recipe</button>
+            <button
+              onClick={() => { setAddItemType("ingredient"); setAddSelectedId(null); }}
+              className={cn("px-3 py-1.5 text-xs rounded-lg border transition-colors", addItemType === "ingredient" ? "bg-primary text-primary-foreground border-transparent" : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary")}
+            >Ingredient</button>
+          </div>
+          <select
+            className="w-full px-2.5 py-1.5 text-xs bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
+            value={addSelectedId ?? ""}
+            onChange={e => setAddSelectedId(e.target.value ? Number(e.target.value) : null)}
+          >
+            <option value="">Select {addItemType}…</option>
+            {addItemType === "recipe"
+              ? (recipes ?? []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)
+              : (ingredients ?? []).map(i => <option key={i.id} value={i.id}>{i.name}</option>)
+            }
+          </select>
+          <div className="flex gap-2">
+            <input
+              type="number"
+              min="0"
+              step="any"
+              placeholder="Quantity"
+              className="flex-1 px-2.5 py-1.5 text-xs bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
+              value={addQty}
+              onChange={e => setAddQty(e.target.value)}
+            />
+            <input
+              type="text"
+              placeholder="Unit"
+              className="w-24 px-2.5 py-1.5 text-xs bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
+              value={addUnit}
+              onChange={e => setAddUnit(e.target.value)}
+            />
+          </div>
+          {stockError && <p className="text-xs text-destructive">{stockError}</p>}
+          <div className="flex gap-2 justify-end">
+            <button
+              onClick={() => { setAddingStock(false); setStockError(null); }}
+              className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg"
+            >Cancel</button>
+            <button
+              disabled={!addSelectedId || !addQty || createMutation.isPending}
+              onClick={handleAddStock}
+              className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5"
+            >
+              {createMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+              Save
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Item list */}
       <div className="flex-1 overflow-y-auto">
@@ -144,8 +402,86 @@ function FocusPanel({ location }: { location: StockLocation }) {
             {location.items.map((item, idx) => {
               const barWidth = Math.max(3, (item.qty / maxQty) * 100);
               const pct = totalQty > 0 ? Math.round((item.qty / totalQty) * 100) : 0;
+              const isEditing = editingEntryId === item.stockEntryId;
+              const isDeleting = deletingEntryId === item.stockEntryId;
+
+              if (isDeleting) {
+                return (
+                  <div key={item.stockEntryId} className="px-6 py-4 bg-destructive/5">
+                    <p className="text-xs font-medium text-destructive mb-1">Remove "{item.name}" from this location?</p>
+                    <p className="text-xs text-muted-foreground mb-3">This will delete the stock entry.</p>
+                    {stockError && <p className="text-xs text-destructive mb-2">{stockError}</p>}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { setDeletingEntryId(null); setStockError(null); }}
+                        className="flex-1 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg"
+                      >Cancel</button>
+                      <button
+                        disabled={deleteMutation.isPending}
+                        onClick={() => deleteMutation.mutate(item.stockEntryId)}
+                        className="flex-1 px-3 py-1.5 text-xs bg-destructive text-destructive-foreground rounded-lg font-medium hover:bg-destructive/90 disabled:opacity-50 flex items-center justify-center gap-1"
+                      >
+                        {deleteMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+
+              if (isEditing) {
+                return (
+                  <div key={item.stockEntryId} className="px-6 py-4 bg-secondary/20">
+                    <div className="flex items-center gap-2 mb-3">
+                      <span
+                        className="flex-1 font-medium text-sm truncate"
+                        style={item.color ? { color: item.color } : undefined}
+                      >
+                        {item.name}
+                      </span>
+                    </div>
+                    <div className="flex gap-2 mb-2">
+                      <input
+                        autoFocus
+                        type="number"
+                        min="0"
+                        step="any"
+                        className="flex-1 px-2.5 py-1.5 text-xs bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
+                        value={editQty}
+                        onChange={e => setEditQty(e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter") saveEdit(item); if (e.key === "Escape") setEditingEntryId(null); }}
+                      />
+                      <input
+                        type="text"
+                        className="w-24 px-2.5 py-1.5 text-xs bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
+                        value={editUnit}
+                        onChange={e => setEditUnit(e.target.value)}
+                        placeholder="Unit"
+                      />
+                    </div>
+                    {stockError && <p className="text-xs text-destructive mb-2">{stockError}</p>}
+                    <div className="flex gap-2 justify-end">
+                      <button
+                        onClick={() => { setEditingEntryId(null); setStockError(null); }}
+                        className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg flex items-center gap-1"
+                      >
+                        <X className="w-3 h-3" /> Cancel
+                      </button>
+                      <button
+                        disabled={updateMutation.isPending}
+                        onClick={() => saveEdit(item)}
+                        className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1"
+                      >
+                        {updateMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                        Save
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+
               return (
-                <div key={`${item.type}-${item.id}`} className="px-6 py-4 hover:bg-secondary/30 transition-colors">
+                <div key={item.stockEntryId} className="px-6 py-4 hover:bg-secondary/30 transition-colors group">
                   <div className="flex items-center gap-3 mb-2">
                     <span className="text-xs font-semibold text-muted-foreground w-5 tabular-nums shrink-0">
                       {idx + 1}
@@ -161,6 +497,22 @@ function FocusPanel({ location }: { location: StockLocation }) {
                       <span className="text-xs font-normal text-muted-foreground ml-1">{item.unit}</span>
                     </span>
                     <span className="text-xs text-muted-foreground w-9 text-right shrink-0">{pct}%</span>
+                    <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => startEdit(item)}
+                        className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary/60 rounded-lg transition-colors"
+                        title="Edit quantity"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => { setDeletingEntryId(item.stockEntryId); setEditingEntryId(null); setAddingStock(false); setStockError(null); }}
+                        className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
+                        title="Remove stock entry"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                   <div className="ml-8 h-2 bg-secondary rounded-full overflow-hidden">
                     <div
@@ -468,7 +820,10 @@ export default function StockControl() {
           {/* ── RIGHT — focus panel ──────────────────────────────── */}
           <div className="flex-1 glass-panel rounded-2xl overflow-hidden min-w-0">
             {selectedLocation ? (
-              <FocusPanel location={selectedLocation} />
+              <FocusPanel
+                location={selectedLocation}
+                onRefresh={() => queryClient.invalidateQueries({ queryKey: ["stock-control"] })}
+              />
             ) : (
               <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
                 Select a location to view its stock
