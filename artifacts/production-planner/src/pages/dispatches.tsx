@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
-import { ShoppingBag, Package, RefreshCw, AlertCircle, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight, Scan, Tag, CheckCircle2, XCircle, RotateCcw, Loader2, SlidersHorizontal } from "lucide-react";
+import { ShoppingBag, Package, RefreshCw, AlertCircle, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight, Scan, Tag, CheckCircle2, XCircle, RotateCcw, Loader2, SlidersHorizontal, MapPin, ShieldCheck } from "lucide-react";
 import { format, startOfWeek, addWeeks, isSameWeek, parseISO } from "date-fns";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { useLocation } from "wouter";
@@ -101,6 +101,14 @@ interface TagResult {
   error?: string;
 }
 
+interface PostcodeIssue {
+  shopify_order_id: string;
+  order_number: string;
+  postcode: string;
+  reason: string | null;
+  service_code: string | null;
+}
+
 export default function Dispatches() {
   const [, navigate] = useLocation();
   const today = new Date();
@@ -157,6 +165,8 @@ export default function Dispatches() {
 
   const [dateTag, setDateTag] = useState(format(new Date(), "yyyy-MM-dd"));
   const [queryTag, setQueryTag] = useState<string | null>(null);
+  const [postcodeIssues, setPostcodeIssues] = useState<PostcodeIssue[] | null>(null);
+  const [postcodeLoading, setPostcodeLoading] = useState(false);
   const [sortCol, setSortCol] = useState<SortCol>("qty");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [variantFilter, setVariantFilter] = useState("2 Pack");
@@ -185,6 +195,23 @@ export default function Dispatches() {
   function handleBarClick(entry: WeeklyOrderDay) {
     setDateTag(entry.deliveryDate);
     setQueryTag(entry.deliveryDate);
+    setPostcodeIssues(null);
+  }
+
+  async function validatePostcodes() {
+    const tag = dateTag.trim();
+    if (!tag) return;
+    setPostcodeLoading(true);
+    setPostcodeIssues(null);
+    try {
+      const res = await fetch(`${BASE}/api/fulfilment/postcode-validations?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
+      const data: PostcodeIssue[] = res.ok ? await res.json() : [];
+      setPostcodeIssues(data);
+    } catch {
+      setPostcodeIssues([]);
+    } finally {
+      setPostcodeLoading(false);
+    }
   }
 
   const { data: shopifyData, isLoading: shopifyLoading, error: shopifyError, refetch } = useQuery({
@@ -528,14 +555,52 @@ export default function Dispatches() {
                 </p>
               </div>
               <button
-                onClick={() => setQueryTag(dateTag)}
+                onClick={() => { setQueryTag(dateTag); setPostcodeIssues(null); }}
                 disabled={shopifyLoading}
                 className="px-5 py-2 bg-primary text-primary-foreground rounded-xl font-medium flex items-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-60"
               >
                 {shopifyLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShoppingBag className="w-4 h-4" />}
                 Fetch Orders
               </button>
+              <button
+                onClick={validatePostcodes}
+                disabled={postcodeLoading || !dateTag.trim()}
+                className="px-5 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-xl font-medium flex items-center gap-2 transition-colors disabled:opacity-60"
+              >
+                {postcodeLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <MapPin className="w-4 h-4" />}
+                Validate Orders
+              </button>
             </div>
+
+            {postcodeIssues !== null && (
+              <div className={`rounded-xl border p-4 ${postcodeIssues.length === 0 ? "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800" : "bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800"}`}>
+                {postcodeIssues.length === 0 ? (
+                  <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300">
+                    <ShieldCheck className="w-4 h-4 flex-shrink-0" />
+                    <span className="text-sm font-medium">All postcodes valid — no APC delivery issues for <span className="font-mono">{dateTag}</span></span>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 text-red-700 dark:text-red-300">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                      <span className="text-sm font-semibold">{postcodeIssues.length} postcode issue{postcodeIssues.length !== 1 ? "s" : ""} found for <span className="font-mono">{dateTag}</span></span>
+                    </div>
+                    <div className="divide-y divide-red-200 dark:divide-red-800">
+                      {postcodeIssues.map((issue) => (
+                        <div key={issue.shopify_order_id} className="flex items-start gap-3 py-2">
+                          <MapPin className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
+                          <div className="min-w-0">
+                            <span className="text-sm font-medium text-red-700 dark:text-red-300">{issue.order_number}</span>
+                            <span className="text-xs text-muted-foreground ml-2 font-mono">{issue.postcode || "no postcode"}</span>
+                            {issue.reason && <p className="text-xs text-muted-foreground mt-0.5">{issue.reason}</p>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="pt-1 border-t border-border/50">
               <button
