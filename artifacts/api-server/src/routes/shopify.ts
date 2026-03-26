@@ -234,7 +234,7 @@ router.get("/sales-summary", requireFounder, async (req, res) => {
 // GET /api/shopify/orders-by-type?from=YYYY-MM-DD&to=YYYY-MM-DD
 // Returns counts + order lists grouped by the four customer-type tags.
 const CUSTOMER_TYPE_TAGS = [
-  "New Customer",
+  "new-customer",
   "Subscription Recurring Order",
   "Subscription New Order",
   "Wholesale",
