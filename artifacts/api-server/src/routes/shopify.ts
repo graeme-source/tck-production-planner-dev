@@ -197,10 +197,39 @@ router.get("/sales-summary", requireFounder, async (req, res) => {
         : getOrdersByDateRange(todayStr, todayStr),
     ]);
 
-    const validPeriod = periodOrders.filter(isCountableOrder);
+    // ── Diagnostics ──
+    const uniqueIds = new Set(periodOrders.map(o => o.id));
+    const dupeCount = periodOrders.length - uniqueIds.size;
+    const statusBreakdown: Record<string, number> = {};
+    const financialBreakdown: Record<string, number> = {};
+    for (const o of periodOrders) {
+      const cancelled = o.cancelled_at ? "cancelled" : "active";
+      statusBreakdown[cancelled] = (statusBreakdown[cancelled] ?? 0) + 1;
+      financialBreakdown[o.financial_status] = (financialBreakdown[o.financial_status] ?? 0) + 1;
+    }
+    console.log(`[sales-summary] Raw orders: ${periodOrders.length}, unique IDs: ${uniqueIds.size}, duplicates: ${dupeCount}`);
+    console.log(`[sales-summary] Status breakdown:`, JSON.stringify(statusBreakdown));
+    console.log(`[sales-summary] Financial breakdown:`, JSON.stringify(financialBreakdown));
+
+    // Deduplicate by order ID in case pagination returns duplicates
+    const deduped = [...new Map(periodOrders.map(o => [o.id, o])).values()];
+    const validPeriod = deduped.filter(isCountableOrder);
+
+    console.log(`[sales-summary] After dedup+filter: ${validPeriod.length} orders`);
+    const rawTotal = periodOrders.reduce((s, o) => s + parseFloat(o.total_price || "0"), 0);
+    const filteredTotal = validPeriod.reduce((s, o) => s + parseFloat(o.total_price || "0"), 0);
+    const subtotalSum = validPeriod.reduce((s, o) => s + parseFloat((o as Record<string, string>).subtotal_price || "0"), 0);
+    console.log(`[sales-summary] Raw total: £${rawTotal.toFixed(2)}, Filtered total_price: £${filteredTotal.toFixed(2)}, Filtered subtotal_price: £${subtotalSum.toFixed(2)}`);
+    // Date range sanity check
+    const dates = validPeriod.map(o => o.created_at.slice(0, 10)).sort();
+    console.log(`[sales-summary] Date range of orders: ${dates[0]} → ${dates[dates.length - 1]}`);
+    // Sample first 3 orders
+    for (const o of validPeriod.slice(0, 3)) {
+      console.log(`[sales-summary] Sample: ${o.name} created=${o.created_at.slice(0,10)} total_price=${o.total_price} financial=${o.financial_status}`);
+    }
 
     const todayOrdersFinal = todayOrders
-      ? todayOrders.filter(isCountableOrder)
+      ? [...new Map(todayOrders.map(o => [o.id, o])).values()].filter(isCountableOrder)
       : validPeriod.filter(o => o.created_at.slice(0, 10) === todayStr);
 
     const totalRevenue = validPeriod.reduce((sum, o) => sum + parseFloat(o.total_price || "0"), 0);
