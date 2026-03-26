@@ -59,12 +59,22 @@ router.get("/", async (_req, res) => {
     for (const i of ings) ingredientNames.set(i.id, i.name);
   }
 
+  // Fetch system locations from DB so we can pick up any name/zone edits
+  const systemDbLocs = await db
+    .select()
+    .from(storageLocationsTable)
+    .where(eq(storageLocationsTable.isSystem, true));
+
+  // Build a lookup: normalised default label → DB record
+  const systemByLabel = new Map(systemDbLocs.map(l => [l.name.toLowerCase(), l]));
+
   // Aggregate rows into the location structure
   const locationMap = new Map<string, {
     key: string;
     label: string;
     zone: string;
     icon: string;
+    dbId: number | null;
     totalPacks: number;
     items: Array<{
       id: number;
@@ -77,11 +87,14 @@ router.get("/", async (_req, res) => {
   }>();
 
   for (const def of LOCATION_DEFS) {
+    // Allow DB-stored name/zone to override the hardcoded defaults
+    const dbLoc = systemByLabel.get(def.label.toLowerCase());
     locationMap.set(def.key, {
       key: def.key,
-      label: def.label,
-      zone: def.zone,
+      label: dbLoc?.name ?? def.label,
+      zone: dbLoc?.zone ?? def.zone,
       icon: def.icon,
+      dbId: dbLoc?.id ?? null,
       totalPacks: 0,
       items: [],
     });
@@ -99,6 +112,7 @@ router.get("/", async (_req, res) => {
         label: row.location.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
         zone: "unknown",
         icon: "ambient",
+        dbId: null,
         totalPacks: 0,
         items: [],
       };
@@ -149,6 +163,7 @@ router.get("/", async (_req, res) => {
         label: ul.name,
         zone: ul.zone,
         icon: ul.zone === "freezer" ? "freezer" : ul.zone === "fridge" ? "fridge" : "ambient",
+        dbId: ul.id,
         totalPacks: 0,
         items: [],
       });

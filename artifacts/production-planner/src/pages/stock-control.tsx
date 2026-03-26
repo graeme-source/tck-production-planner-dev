@@ -20,6 +20,7 @@ interface StockLocation {
   label: string;
   zone: string;
   icon: string;
+  dbId: number | null;
   totalPacks: number;
   items: StockItem[];
 }
@@ -333,9 +334,9 @@ export default function StockControl() {
                 const qty = Math.round(loc.items.reduce((s, i) => s + i.qty, 0));
                 const isSelected = loc.key === selectedKey;
                 const isUserLoc = loc.key.startsWith("sl_");
-                const locId = isUserLoc ? Number(loc.key.replace("sl_", "")) : null;
-                const isEditing = managing && editingId !== null && editingId === locId;
-                const isDeleting = managing && deleteId !== null && deleteId === locId;
+                const locDbId = loc.dbId;
+                const isEditing = managing && editingId !== null && editingId === locDbId;
+                const isDeleting = managing && deleteId !== null && deleteId === locDbId;
 
                 if (isEditing) {
                   return (
@@ -380,7 +381,7 @@ export default function StockControl() {
                         <button onClick={() => { setDeleteId(null); setMutationError(null); }} className="flex-1 px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg">Cancel</button>
                         <button
                           disabled={deleteMutation.isPending}
-                          onClick={() => deleteMutation.mutate(locId!)}
+                          onClick={() => deleteMutation.mutate(locDbId!)}
                           className="flex-1 px-2.5 py-1 text-xs bg-destructive text-destructive-foreground rounded-lg font-medium hover:bg-destructive/90 disabled:opacity-50 flex items-center justify-center gap-1"
                         >
                           {deleteMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
@@ -432,25 +433,27 @@ export default function StockControl() {
 
                     {managing && (
                       <div className="flex items-center gap-1 shrink-0">
-                        {isUserLoc ? (
+                        {locDbId !== null ? (
                           <>
                             <button
-                              onClick={() => { setEditingId(locId); setEditForm({ name: loc.label, zone: loc.zone }); setAddingLoc(false); setDeleteId(null); setMutationError(null); }}
+                              onClick={() => { setEditingId(locDbId); setEditForm({ name: loc.label, zone: loc.zone }); setAddingLoc(false); setDeleteId(null); setMutationError(null); }}
                               className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary/60 rounded-lg transition-colors"
                               title="Edit"
                             >
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
-                            <button
-                              onClick={() => { setDeleteId(locId); setEditingId(null); setAddingLoc(false); setMutationError(null); }}
-                              className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
-                              title="Delete"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            {isUserLoc && (
+                              <button
+                                onClick={() => { setDeleteId(locDbId); setEditingId(null); setAddingLoc(false); setMutationError(null); }}
+                                className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
+                                title="Delete"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                           </>
                         ) : (
-                          <span title="System location — cannot be edited" className="p-1.5 text-muted-foreground/40">
+                          <span title="No database record for this location" className="p-1.5 text-muted-foreground/40">
                             <Lock className="w-3.5 h-3.5" />
                           </span>
                         )}

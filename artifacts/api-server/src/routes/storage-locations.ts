@@ -44,7 +44,6 @@ router.put("/:id", validate(UpdateLocationBody), async (req, res) => {
   const id = Number(req.params.id);
   const existing = await db.select().from(storageLocationsTable).where(eq(storageLocationsTable.id, id));
   if (!existing.length) { res.status(404).json({ error: "Not found" }); return; }
-  if (existing[0].isSystem) { res.status(400).json({ error: "Cannot edit system storage locations" }); return; }
   const { name, zone } = req.body;
   const [row] = await db.update(storageLocationsTable).set({ name, zone }).where(eq(storageLocationsTable.id, id)).returning();
   const racks = await db.select().from(storageRacksTable).where(eq(storageRacksTable.locationId, id));
