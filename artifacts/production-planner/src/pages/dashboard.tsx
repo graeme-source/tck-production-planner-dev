@@ -365,14 +365,14 @@ export default function Dashboard() {
 
 function StatCard({ title, value, icon: Icon, color, bg, href }: any) {
   return (
-    <Link href={href}>
-      <div className="glass-panel p-6 rounded-2xl hover-lift cursor-pointer group">
-        <div className="flex items-center gap-4">
-          <div className={`p-4 rounded-2xl ${bg} ${color} transition-transform group-hover:scale-110`}>
+    <Link href={href} className="h-full">
+      <div className="glass-panel p-6 rounded-2xl hover-lift cursor-pointer group h-full flex flex-col justify-between min-h-[110px]">
+        <div className="flex items-start gap-4">
+          <div className={`p-4 rounded-2xl ${bg} ${color} transition-transform group-hover:scale-110 shrink-0`}>
             <Icon className="w-6 h-6" />
           </div>
-          <div>
-            <p className="text-sm font-medium text-muted-foreground mb-1">{title}</p>
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-muted-foreground leading-snug mb-2">{title}</p>
             <h3 className="text-3xl font-display font-bold">{value}</h3>
           </div>
         </div>
