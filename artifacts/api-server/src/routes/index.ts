@@ -34,6 +34,8 @@ import ordersRouter from "./orders";
 import deliveriesRouter from "./deliveries";
 import stockControlRouter from "./stock-control";
 import founderPanelsRouter from "./founder-panels";
+import improvementsRouter from "./improvements";
+import andonRouter from "./andon";
 
 const router: IRouter = Router();
 
@@ -98,5 +100,7 @@ router.use("/orders", ordersRouter);
 router.use("/deliveries", deliveriesRouter);
 router.use("/stock-control", stockControlRouter);
 router.use("/founder-panels", founderPanelsRouter);
+router.use("/improvements", improvementsRouter);
+router.use("/andon", andonRouter);
 
 export default router;

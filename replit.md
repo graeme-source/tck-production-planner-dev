@@ -11,6 +11,8 @@ Key capabilities include:
 - **Sales & Dispatch:** Logging sales data and managing upcoming dispatch orders.
 - **Operational Stations:** A 9-station workflow system (Mixing, Building, Prep Hub, Dough Prep, Ovens, Wrapping, Packing) with cascading completion logic to guide production.
 - **Reporting & Settings:** Dashboard overview, user management, category cost defaults, and production target settings.
+- **Improvements System (Kaizen):** A Kaizen-style improvement tracking system. Team members submit ideas via a persistent floating "Report" button (visible on all pages). Managers can manage submissions (tier, status, notes) in the Analytics → Improvements tab. A link card on the Lean Cave page directs users to the report.
+- **Andon Issue Reporting:** Real-time issue alerting. Team members flag equipment/safety/production/product issues with yellow (minor) or red (serious) severity. Station headers show traffic-light badges. The Dashboard shows a banner for unacknowledged issues. Analytics → Andon Log shows all issues with filter/acknowledge/resolve controls.
 
 The project envisions empowering food businesses with a robust, integrated platform to manage their entire production lifecycle, from raw materials to final dispatch, with a focus on profitability and efficiency.
 

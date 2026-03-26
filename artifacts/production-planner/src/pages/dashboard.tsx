@@ -1,12 +1,133 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useListProductionPlans, useListDispatchOrders, useGetProductionPlan } from "@workspace/api-client-react";
 import { PageHeader } from "@/components/page-header";
 import { format, isToday, startOfWeek, addWeeks } from "date-fns";
-import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer } from "lucide-react";
+import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X } from "lucide-react";
 import { Link } from "wouter";
 import { useAuth } from "@/contexts/auth-context";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { useQuery } from "@tanstack/react-query";
+import { cn } from "@/lib/utils";
+
+interface AndonIssueSummary {
+  id: number;
+  category: string;
+  severity: "yellow" | "red";
+  description: string | null;
+  station: string;
+  reportedByName: string | null;
+  acknowledgedAt: string | null;
+  createdAt: string;
+}
+
+const STATION_LABELS: Record<string, string> = {
+  dough_prep: "Dough Prep",
+  dough_sheeting: "Dough Sheeting",
+  prep: "Prep",
+  main_prep: "Main Prep",
+  prep_bases: "Bases & Sauces",
+  prep_meat: "Raw Meat Prep",
+  mixing: "Mixing & Cooking",
+  building_1: "Building Table 1",
+  building_2: "Building Table 2",
+  ovens: "Ovens",
+  wrapping: "Wrapping",
+  packing: "Packing",
+  general: "General",
+};
+
+function AndonBanner({ userRole }: { userRole?: string }) {
+  const [issues, setIssues] = useState<AndonIssueSummary[]>([]);
+  const [acknowledging, setAcknowledging] = useState<number | null>(null);
+
+  async function fetchIssues() {
+    try {
+      const res = await fetch(`${BASE}/api/andon?open=true`, { credentials: "include" });
+      if (!res.ok) return;
+      const all: AndonIssueSummary[] = await res.json();
+      const unacked = all.filter((i) => !i.acknowledgedAt);
+      unacked.sort((a, b) => {
+        if (a.severity === "red" && b.severity !== "red") return -1;
+        if (b.severity === "red" && a.severity !== "red") return 1;
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
+      setIssues(unacked);
+    } catch {}
+  }
+
+  useEffect(() => {
+    fetchIssues();
+    const interval = setInterval(fetchIssues, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  async function acknowledge(id: number) {
+    setAcknowledging(id);
+    try {
+      await fetch(`${BASE}/api/andon/${id}/acknowledge`, { method: "PATCH", credentials: "include" });
+      await fetchIssues();
+    } catch {}
+    setAcknowledging(null);
+  }
+
+  if (issues.length === 0) return null;
+
+  const isManager = userRole === "admin" || userRole === "manager";
+
+  return (
+    <div className="sticky top-0 z-20 -mx-6 px-6 pb-2 pt-0 bg-background/80 backdrop-blur-sm">
+      <div className="rounded-xl border border-border bg-card overflow-hidden shadow-sm">
+        <div className="flex items-center gap-2 px-4 py-2.5 bg-destructive/10 border-b border-destructive/20">
+          <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0" />
+          <span className="text-sm font-semibold text-destructive">
+            {issues.length} unacknowledged issue{issues.length !== 1 ? "s" : ""}
+          </span>
+        </div>
+        <div className="divide-y divide-border/50">
+          {issues.map(issue => (
+            <div key={issue.id} className={cn(
+              "flex items-center gap-3 px-4 py-2.5",
+              issue.severity === "red" ? "bg-red-50/50 dark:bg-red-950/20" : "bg-yellow-50/50 dark:bg-yellow-950/20"
+            )}>
+              <span className={cn(
+                "w-2.5 h-2.5 rounded-full flex-shrink-0",
+                issue.severity === "red" ? "bg-red-500" : "bg-yellow-400"
+              )} />
+              <div className="flex-1 min-w-0">
+                <span className="text-sm font-medium capitalize">{issue.category}</span>
+                <span className="text-xs text-muted-foreground ml-2">
+                  {STATION_LABELS[issue.station] ?? issue.station}
+                  {issue.reportedByName ? ` · ${issue.reportedByName}` : ""}
+                </span>
+                {issue.description && (
+                  <p className="text-xs text-muted-foreground truncate mt-0.5">{issue.description}</p>
+                )}
+              </div>
+              <span className={cn(
+                "text-xs font-bold px-2 py-0.5 rounded-full flex-shrink-0",
+                issue.severity === "red"
+                  ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300"
+                  : "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300"
+              )}>
+                {issue.severity === "red" ? "Serious" : "Minor"}
+              </span>
+              {isManager && (
+                <button
+                  onClick={() => acknowledge(issue.id)}
+                  disabled={acknowledging === issue.id}
+                  className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 border border-border rounded-lg hover:bg-secondary transition-colors disabled:opacity-50 flex-shrink-0"
+                >
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  {acknowledging === issue.id ? "..." : "Acknowledge"}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function TodayPlanRecipes({ planId }: { planId: number }) {
   const { data: plan, isLoading } = useGetProductionPlan(planId) as { data: any; isLoading: boolean };
@@ -171,6 +292,8 @@ export default function Dashboard() {
           ) : undefined
         }
       />
+
+      <AndonBanner userRole={state.status === "authenticated" ? state.user.role : undefined} />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard

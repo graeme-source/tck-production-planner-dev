@@ -1,6 +1,7 @@
 import React, { ReactNode, useState, useEffect, useRef } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
+import { ReportButton } from "@/components/report-modal";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { usePageHeaderValue } from "@/contexts/page-header-context";
@@ -606,6 +607,8 @@ export function Layout({ children }: { children: ReactNode }) {
           </motion.div>
         </div>
       </main>
+
+      <ReportButton />
     </div>
   );
 }

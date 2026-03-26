@@ -1,4 +1,5 @@
-import { Lightbulb, BookOpen, Play, ExternalLink } from "lucide-react";
+import { Lightbulb, BookOpen, Play, ExternalLink, ArrowRight, TrendingUp } from "lucide-react";
+import { Link } from "wouter";
 
 const glossaryTerms = [
   {
@@ -101,6 +102,25 @@ export default function LeanCave() {
           Your daily dose of Lean thinking. Browse key concepts, watch short videos, and build the mindset that drives continuous improvement.
         </p>
       </div>
+
+      <Link href="/reports?tab=improvements">
+        <div className="bg-gradient-to-r from-primary/10 to-amber-500/10 border border-primary/20 rounded-2xl p-6 cursor-pointer hover:from-primary/15 hover:to-amber-500/15 transition-all group">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-primary/10 rounded-xl">
+                <TrendingUp className="w-6 h-6 text-primary" />
+              </div>
+              <div>
+                <h3 className="font-bold text-lg">Improvements Report</h3>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  View all team improvement ideas, track their progress, and take action on Kaizen submissions.
+                </p>
+              </div>
+            </div>
+            <ArrowRight className="w-5 h-5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+          </div>
+        </div>
+      </Link>
 
       <section>
         <div className="flex items-center gap-2 mb-4">

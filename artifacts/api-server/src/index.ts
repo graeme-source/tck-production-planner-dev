@@ -341,6 +341,64 @@ async function runStartupMigrations() {
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `);
+    // Improvements (Kaizen) and Andon issue tracking
+    await db.execute(sql`
+      DO $$ BEGIN
+        CREATE TYPE improvement_approval_tier AS ENUM ('minor', 'medium', 'major');
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END $$
+    `);
+    await db.execute(sql`
+      DO $$ BEGIN
+        CREATE TYPE improvement_progress_status AS ENUM ('submitted_for_review', 'approved', 'testing', 'complete');
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END $$
+    `);
+    await db.execute(sql`
+      DO $$ BEGIN
+        CREATE TYPE andon_severity AS ENUM ('yellow', 'red');
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END $$
+    `);
+    await db.execute(sql`
+      DO $$ BEGIN
+        CREATE TYPE andon_category AS ENUM ('equipment', 'safety', 'production', 'product', 'other');
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END $$
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS improvement_submissions (
+        id SERIAL PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        station TEXT NOT NULL,
+        submitted_by INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        submitted_by_name TEXT,
+        approval_tier improvement_approval_tier,
+        progress_status improvement_progress_status NOT NULL DEFAULT 'submitted_for_review',
+        notes TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS andon_issues (
+        id SERIAL PRIMARY KEY,
+        category andon_category NOT NULL,
+        severity andon_severity NOT NULL,
+        description TEXT,
+        station TEXT NOT NULL,
+        reported_by INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        reported_by_name TEXT,
+        acknowledged_by INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        acknowledged_by_name TEXT,
+        acknowledged_at TIMESTAMP,
+        resolved_by INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        resolved_by_name TEXT,
+        resolved_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
     await seedStorageLocations();
     console.log("Startup migrations OK");
   } catch (err) {

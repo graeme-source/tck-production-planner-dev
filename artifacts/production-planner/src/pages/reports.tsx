@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useSearch, useLocation } from "wouter";
 import { PageHeader } from "@/components/page-header";
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, subWeeks, subMonths } from "date-fns";
 import {
@@ -7,8 +8,10 @@ import {
   TrendingUp, TrendingDown, Activity, Layers, Target, Timer,
   ChevronDown, ChevronRight, Thermometer, ShieldCheck,
   Package, Zap, CalendarDays, Trophy, Snail, Hourglass,
+  Lightbulb, AlertTriangle, CheckCircle, Filter,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/auth-context";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -137,7 +140,34 @@ interface PackingSpeedData {
   source?: string;
 }
 
-type TabId = "kpis" | "breaks" | "temperature" | "packing-speed";
+type TabId = "kpis" | "breaks" | "temperature" | "packing-speed" | "improvements" | "andon";
+
+interface ImprovementRecord {
+  id: number;
+  title: string;
+  description: string;
+  station: string;
+  submittedByName: string | null;
+  approvalTier: "minor" | "medium" | "major" | null;
+  progressStatus: "submitted_for_review" | "approved" | "testing" | "complete";
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface AndonIssueRecord {
+  id: number;
+  category: "equipment" | "safety" | "production" | "product" | "other";
+  severity: "yellow" | "red";
+  description: string | null;
+  station: string;
+  reportedByName: string | null;
+  acknowledgedByName: string | null;
+  acknowledgedAt: string | null;
+  resolvedByName: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+}
 
 // ── Date shortcut presets ──────────────────────────────────────────────────
 const DATE_PRESETS = [
@@ -189,12 +219,28 @@ function DateShortcutsDropdown({ onSelect }: { onSelect: (from: string, to: stri
   );
 }
 
+const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "packing-speed", "improvements", "andon"];
+
 export default function Reports() {
-  const [activeTab, setActiveTab] = useState<TabId>("kpis");
+  const search = useSearch();
+  const [, navigate] = useLocation();
+  const queryTab = new URLSearchParams(search).get("tab") as TabId | null;
+  const initialTab: TabId = queryTab && VALID_TABS.includes(queryTab) ? queryTab : "kpis";
+  const [activeTab, setActiveTab] = useState<TabId>(initialTab);
+  const { state } = useAuth();
+  const userRole = state.status === "authenticated" ? state.user.role : "viewer";
+
+  function switchTab(tab: TabId) {
+    setActiveTab(tab);
+    const newSearch = tab === "kpis" ? "" : `?tab=${tab}`;
+    navigate(`/reports${newSearch}`, { replace: true });
+  }
 
   const todayStr = format(new Date(), "yyyy-MM-dd");
   const [fromDate, setFromDate] = useState(todayStr);
   const [toDate, setToDate] = useState(todayStr);
+
+  const showDatePicker = activeTab !== "packing-speed" && activeTab !== "improvements" && activeTab !== "andon";
 
   return (
     <div className="space-y-6">
@@ -205,20 +251,26 @@ export default function Reports() {
 
       <div className="flex items-center gap-4 flex-wrap">
         <div className="flex items-center gap-1 bg-secondary/30 rounded-xl p-1 flex-wrap">
-          <TabButton active={activeTab === "kpis"} onClick={() => setActiveTab("kpis")}>
+          <TabButton active={activeTab === "kpis"} onClick={() => switchTab("kpis")}>
             <TrendingUp className="w-4 h-4" /> Production KPIs
           </TabButton>
-          <TabButton active={activeTab === "breaks"} onClick={() => setActiveTab("breaks")}>
+          <TabButton active={activeTab === "breaks"} onClick={() => switchTab("breaks")}>
             <Coffee className="w-4 h-4" /> Breaks & Lunches
           </TabButton>
-          <TabButton active={activeTab === "temperature"} onClick={() => setActiveTab("temperature")}>
+          <TabButton active={activeTab === "temperature"} onClick={() => switchTab("temperature")}>
             <Thermometer className="w-4 h-4" /> Temperature Log
           </TabButton>
-          <TabButton active={activeTab === "packing-speed"} onClick={() => setActiveTab("packing-speed")}>
+          <TabButton active={activeTab === "packing-speed"} onClick={() => switchTab("packing-speed")}>
             <Zap className="w-4 h-4" /> Packing Speed
           </TabButton>
+          <TabButton active={activeTab === "improvements"} onClick={() => switchTab("improvements")}>
+            <Lightbulb className="w-4 h-4" /> Improvements
+          </TabButton>
+          <TabButton active={activeTab === "andon"} onClick={() => switchTab("andon")}>
+            <AlertTriangle className="w-4 h-4" /> Andon Log
+          </TabButton>
         </div>
-        {activeTab !== "packing-speed" && (
+        {showDatePicker && (
           <div className="flex items-center gap-2 ml-auto flex-wrap">
             <DateShortcutsDropdown onSelect={(f, t) => { setFromDate(f); setToDate(t); }} />
             <div className="flex items-center gap-2">
@@ -247,6 +299,8 @@ export default function Reports() {
       {activeTab === "breaks" && <BreaksTab fromDate={fromDate} toDate={toDate} />}
       {activeTab === "temperature" && <TemperatureRecordsTab fromDate={fromDate} toDate={toDate} />}
       {activeTab === "packing-speed" && <PackingSpeedTab />}
+      {activeTab === "improvements" && <ImprovementsTab userRole={userRole} />}
+      {activeTab === "andon" && <AndonLogTab userRole={userRole} />}
     </div>
   );
 }
@@ -1162,6 +1216,386 @@ function SummaryCard({ icon, label, value, sub, highlight }: {
         )}>
           {sub}
         </p>
+      )}
+    </div>
+  );
+}
+
+const STATION_LABELS_REPORT: Record<string, string> = {
+  dough_prep: "Dough Prep",
+  dough_sheeting: "Dough Sheeting",
+  prep: "Prep",
+  main_prep: "Main Prep",
+  prep_bases: "Bases & Sauces",
+  prep_meat: "Raw Meat Prep",
+  mixing: "Mixing & Cooking",
+  building_1: "Building Table 1",
+  building_2: "Building Table 2",
+  ovens: "Ovens",
+  wrapping: "Wrapping",
+  packing: "Packing",
+  general: "General / Other",
+};
+
+const IMPROVEMENT_PROGRESS_OPTIONS = [
+  { value: "submitted_for_review", label: "Submitted for Review" },
+  { value: "approved", label: "Approved" },
+  { value: "testing", label: "Testing" },
+  { value: "complete", label: "Complete" },
+];
+
+const IMPROVEMENT_TIER_OPTIONS = [
+  { value: "", label: "— None —" },
+  { value: "minor", label: "Minor" },
+  { value: "medium", label: "Medium" },
+  { value: "major", label: "Major" },
+];
+
+function ImprovementsTab({ userRole }: { userRole: string }) {
+  const [improvements, setImprovements] = useState<ImprovementRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [updating, setUpdating] = useState<number | null>(null);
+  const [editNotes, setEditNotes] = useState<Record<number, string>>({});
+
+  const isManager = userRole === "admin" || userRole === "manager";
+
+  async function load() {
+    setLoading(true);
+    try {
+      const res = await fetch(`${BASE}/api/improvements`, { credentials: "include" });
+      if (res.ok) setImprovements(await res.json());
+    } catch {}
+    setLoading(false);
+  }
+
+  useEffect(() => { load(); }, []);
+
+  async function updateField(id: number, field: string, value: string) {
+    setUpdating(id);
+    try {
+      await fetch(`${BASE}/api/improvements/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ [field]: value || null }),
+      });
+      await load();
+    } catch {}
+    setUpdating(null);
+  }
+
+  async function saveNotes(id: number) {
+    await updateField(id, "notes", editNotes[id] ?? "");
+  }
+
+  if (loading) return <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+
+  if (improvements.length === 0) {
+    return (
+      <div className="rounded-2xl border border-dashed border-border p-12 text-center">
+        <Lightbulb className="w-10 h-10 mx-auto mb-3 opacity-30" />
+        <p className="font-medium text-muted-foreground">No improvement submissions yet</p>
+        <p className="text-sm text-muted-foreground mt-1">Team members can submit ideas from the Report button on any page.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-border bg-card overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-secondary/30 text-muted-foreground text-xs">
+            <tr>
+              <th className="px-4 py-3 font-medium text-left">Title</th>
+              <th className="px-4 py-3 font-medium text-left">Station</th>
+              <th className="px-4 py-3 font-medium text-left">Submitted by</th>
+              <th className="px-4 py-3 font-medium text-left">Date</th>
+              <th className="px-4 py-3 font-medium text-center">Tier</th>
+              <th className="px-4 py-3 font-medium text-center">Status</th>
+              <th className="px-4 py-3 font-medium text-left">Notes</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/50">
+            {improvements.map(imp => (
+              <tr key={imp.id} className="hover:bg-secondary/10 transition-colors align-top">
+                <td className="px-4 py-3">
+                  <p className="font-medium">{imp.title}</p>
+                  {imp.description && <p className="text-xs text-muted-foreground mt-0.5 max-w-xs">{imp.description}</p>}
+                </td>
+                <td className="px-4 py-3 text-muted-foreground">
+                  {STATION_LABELS_REPORT[imp.station] ?? imp.station}
+                </td>
+                <td className="px-4 py-3 text-muted-foreground">{imp.submittedByName ?? "—"}</td>
+                <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
+                  {imp.createdAt ? format(new Date(imp.createdAt), "d MMM yyyy") : "—"}
+                </td>
+                <td className="px-4 py-3 text-center">
+                  {isManager ? (
+                    <select
+                      value={imp.approvalTier ?? ""}
+                      onChange={e => updateField(imp.id, "approvalTier", e.target.value)}
+                      disabled={updating === imp.id}
+                      className="px-2 py-1 border border-border rounded-lg text-xs bg-background disabled:opacity-50"
+                    >
+                      {IMPROVEMENT_TIER_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  ) : (
+                    <span className="text-muted-foreground capitalize">{imp.approvalTier ?? "—"}</span>
+                  )}
+                </td>
+                <td className="px-4 py-3 text-center">
+                  {isManager ? (
+                    <select
+                      value={imp.progressStatus}
+                      onChange={e => updateField(imp.id, "progressStatus", e.target.value)}
+                      disabled={updating === imp.id}
+                      className={cn(
+                        "px-2 py-1 border rounded-lg text-xs disabled:opacity-50",
+                        imp.progressStatus === "complete"
+                          ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-700"
+                          : imp.progressStatus === "testing"
+                          ? "border-blue-300 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-700"
+                          : imp.progressStatus === "approved"
+                          ? "border-violet-300 bg-violet-50 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400 dark:border-violet-700"
+                          : "border-border bg-background"
+                      )}
+                    >
+                      {IMPROVEMENT_PROGRESS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  ) : (
+                    <span className={cn(
+                      "px-2 py-1 rounded-full text-xs",
+                      imp.progressStatus === "complete" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                        : imp.progressStatus === "testing" ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                        : imp.progressStatus === "approved" ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400"
+                        : "bg-secondary text-muted-foreground"
+                    )}>
+                      {IMPROVEMENT_PROGRESS_OPTIONS.find(o => o.value === imp.progressStatus)?.label ?? imp.progressStatus}
+                    </span>
+                  )}
+                </td>
+                <td className="px-4 py-3">
+                  {isManager ? (
+                    <div className="flex items-start gap-2">
+                      <textarea
+                        value={editNotes[imp.id] !== undefined ? editNotes[imp.id] : (imp.notes ?? "")}
+                        onChange={e => setEditNotes(prev => ({ ...prev, [imp.id]: e.target.value }))}
+                        rows={2}
+                        className="w-full min-w-[180px] px-2 py-1 border border-border rounded-lg text-xs bg-background resize-none"
+                        placeholder="Add notes..."
+                      />
+                      {editNotes[imp.id] !== undefined && editNotes[imp.id] !== (imp.notes ?? "") && (
+                        <button
+                          onClick={() => saveNotes(imp.id)}
+                          disabled={updating === imp.id}
+                          className="text-xs px-2 py-1 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 whitespace-nowrap"
+                        >
+                          Save
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">{imp.notes ?? "—"}</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+const ANDON_CATEGORY_LABELS: Record<string, string> = {
+  equipment: "Equipment",
+  safety: "Safety",
+  production: "Production",
+  product: "Product",
+  other: "Other",
+};
+
+function AndonLogTab({ userRole }: { userRole: string }) {
+  const [issues, setIssues] = useState<AndonIssueRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [actioningId, setActioningId] = useState<number | null>(null);
+  const [stationFilter, setStationFilter] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [severityFilter, setSeverityFilter] = useState("");
+
+  const isManager = userRole === "admin" || userRole === "manager";
+
+  async function load() {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (stationFilter) params.set("station", stationFilter);
+      if (categoryFilter) params.set("category", categoryFilter);
+      if (severityFilter) params.set("severity", severityFilter);
+      const res = await fetch(`${BASE}/api/andon?${params.toString()}`, { credentials: "include" });
+      if (res.ok) setIssues(await res.json());
+    } catch {}
+    setLoading(false);
+  }
+
+  useEffect(() => { load(); }, [stationFilter, categoryFilter, severityFilter]);
+
+  async function acknowledge(id: number) {
+    setActioningId(id);
+    try {
+      await fetch(`${BASE}/api/andon/${id}/acknowledge`, { method: "PATCH", credentials: "include" });
+      await load();
+    } catch {}
+    setActioningId(null);
+  }
+
+  async function resolve(id: number) {
+    setActioningId(id);
+    try {
+      await fetch(`${BASE}/api/andon/${id}/resolve`, { method: "PATCH", credentials: "include" });
+      await load();
+    } catch {}
+    setActioningId(null);
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-3 items-center">
+        <div className="flex items-center gap-2">
+          <Filter className="w-4 h-4 text-muted-foreground" />
+          <span className="text-sm text-muted-foreground">Filter:</span>
+        </div>
+        <select
+          value={stationFilter}
+          onChange={e => setStationFilter(e.target.value)}
+          className="px-3 py-1.5 border border-border rounded-lg text-sm bg-background"
+        >
+          <option value="">All Stations</option>
+          {Object.entries(STATION_LABELS_REPORT).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+        <select
+          value={categoryFilter}
+          onChange={e => setCategoryFilter(e.target.value)}
+          className="px-3 py-1.5 border border-border rounded-lg text-sm bg-background"
+        >
+          <option value="">All Categories</option>
+          {Object.entries(ANDON_CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+        <select
+          value={severityFilter}
+          onChange={e => setSeverityFilter(e.target.value)}
+          className="px-3 py-1.5 border border-border rounded-lg text-sm bg-background"
+        >
+          <option value="">All Severities</option>
+          <option value="yellow">Yellow (Minor)</option>
+          <option value="red">Red (Serious)</option>
+        </select>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+      ) : issues.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-border p-12 text-center">
+          <AlertTriangle className="w-10 h-10 mx-auto mb-3 opacity-30" />
+          <p className="font-medium text-muted-foreground">No Andon issues found</p>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-border bg-card overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-secondary/30 text-muted-foreground text-xs">
+              <tr>
+                <th className="px-4 py-3 font-medium text-left">Severity</th>
+                <th className="px-4 py-3 font-medium text-left">Category</th>
+                <th className="px-4 py-3 font-medium text-left">Station</th>
+                <th className="px-4 py-3 font-medium text-left">Description</th>
+                <th className="px-4 py-3 font-medium text-left">Reported by</th>
+                <th className="px-4 py-3 font-medium text-left">Submitted</th>
+                <th className="px-4 py-3 font-medium text-left">Acknowledged</th>
+                <th className="px-4 py-3 font-medium text-left">Resolved</th>
+                {isManager && <th className="px-4 py-3 font-medium text-center">Actions</th>}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/50">
+              {issues.map(issue => (
+                <tr key={issue.id} className="hover:bg-secondary/10 transition-colors align-top">
+                  <td className="px-4 py-3">
+                    <span className={cn(
+                      "flex items-center gap-1.5 text-xs font-bold",
+                      issue.severity === "red" ? "text-red-600 dark:text-red-400" : "text-yellow-600 dark:text-yellow-400"
+                    )}>
+                      <span className={cn("w-2 h-2 rounded-full", issue.severity === "red" ? "bg-red-500" : "bg-yellow-400")} />
+                      {issue.severity === "red" ? "Serious" : "Minor"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground capitalize">
+                    {ANDON_CATEGORY_LABELS[issue.category] ?? issue.category}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    {STATION_LABELS_REPORT[issue.station] ?? issue.station}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground max-w-[200px] truncate">
+                    {issue.description ?? "—"}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">{issue.reportedByName ?? "—"}</td>
+                  <td className="px-4 py-3 text-muted-foreground whitespace-nowrap text-xs">
+                    {issue.createdAt ? format(new Date(issue.createdAt), "d MMM HH:mm") : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-xs">
+                    {issue.acknowledgedAt ? (
+                      <div>
+                        <p className="text-emerald-600 dark:text-emerald-400 font-medium">Acknowledged</p>
+                        <p className="text-muted-foreground">{issue.acknowledgedByName ?? ""}</p>
+                        <p className="text-muted-foreground">{format(new Date(issue.acknowledgedAt), "d MMM HH:mm")}</p>
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-xs">
+                    {issue.resolvedAt ? (
+                      <div>
+                        <p className="text-emerald-600 dark:text-emerald-400 font-medium">Resolved</p>
+                        <p className="text-muted-foreground">{issue.resolvedByName ?? ""}</p>
+                        <p className="text-muted-foreground">{format(new Date(issue.resolvedAt), "d MMM HH:mm")}</p>
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">Open</span>
+                    )}
+                  </td>
+                  {isManager && (
+                    <td className="px-4 py-3 text-center">
+                      <div className="flex flex-col gap-1.5 items-center">
+                        {!issue.acknowledgedAt && (
+                          <button
+                            onClick={() => acknowledge(issue.id)}
+                            disabled={actioningId === issue.id}
+                            className="flex items-center gap-1 text-xs px-2.5 py-1.5 border border-border rounded-lg hover:bg-secondary transition-colors disabled:opacity-50 whitespace-nowrap"
+                          >
+                            <CheckCircle className="w-3 h-3" />
+                            {actioningId === issue.id ? "..." : "Acknowledge"}
+                          </button>
+                        )}
+                        {!issue.resolvedAt && (
+                          <button
+                            onClick={() => resolve(issue.id)}
+                            disabled={actioningId === issue.id}
+                            className="flex items-center gap-1 text-xs px-2.5 py-1.5 border border-emerald-500 text-emerald-600 dark:text-emerald-400 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors disabled:opacity-50 whitespace-nowrap"
+                          >
+                            <CheckCircle className="w-3 h-3" />
+                            {actioningId === issue.id ? "..." : "Resolve"}
+                          </button>
+                        )}
+                        {issue.resolvedAt && (
+                          <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">Resolved</span>
+                        )}
+                      </div>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

@@ -1,8 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useLocation, useSearch } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ChevronLeft, BarChart2, ClipboardList, Layers, Beef, Menu, X,
+  ChevronLeft, BarChart2, ClipboardList, Layers, Beef, Menu, X, AlertTriangle,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -17,6 +17,40 @@ import {
 } from "@/components/layout";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
+import { ReportModal } from "@/components/report-modal";
+
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+interface AndonIssueBadge {
+  severity: "yellow" | "red";
+}
+
+function useAndonBadge(stationKey: string) {
+  const [severity, setSeverity] = useState<"green" | "yellow" | "red">("green");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchAndon() {
+      try {
+        const res = await fetch(`${BASE}/api/andon?open=true&station=${encodeURIComponent(stationKey)}`, { credentials: "include" });
+        if (!res.ok || cancelled) return;
+        const issues: AndonIssueBadge[] = await res.json();
+        if (issues.length === 0) {
+          setSeverity("green");
+        } else if (issues.some((i) => i.severity === "red")) {
+          setSeverity("red");
+        } else {
+          setSeverity("yellow");
+        }
+      } catch {}
+    }
+    fetchAndon();
+    const interval = setInterval(fetchAndon, 30000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [stationKey]);
+
+  return severity;
+}
 
 interface StationLayoutProps {
   planId: number;
@@ -29,8 +63,10 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
   const [location, navigate] = useLocation();
   const search = useSearch();
   const [navOpen, setNavOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const { state, logout, lockStation } = useAuth();
   const { canAccess } = usePagePermissions();
+  const andonBadge = useAndonBadge(stationType);
 
   const user = state.status === "authenticated" ? state.user : null;
 
@@ -147,7 +183,16 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
               <div className="flex items-center gap-2 min-w-0">
                 <StationIcon className={cn("w-5 h-5 flex-shrink-0", meta.color)} />
                 <div className="min-w-0">
-                  <h1 className="font-semibold truncate">{meta.label}</h1>
+                  <div className="flex items-center gap-2">
+                    <h1 className="font-semibold truncate">{meta.label}</h1>
+                    <span
+                      title={andonBadge === "green" ? "No open issues" : andonBadge === "yellow" ? "Minor issue open" : "Serious issue open"}
+                      className={cn(
+                        "w-2.5 h-2.5 rounded-full flex-shrink-0",
+                        andonBadge === "red" ? "bg-red-500" : andonBadge === "yellow" ? "bg-yellow-400" : "bg-emerald-500"
+                      )}
+                    />
+                  </div>
                   {plan && (
                     <p className="text-xs text-muted-foreground truncate">
                       Batch #{plan.batchNumber ?? ""} · {format(parseISO(plan.planDate), "EEEE d MMM yyyy")}
@@ -182,6 +227,14 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
                 })}
               </div>
 
+              <button
+                onClick={() => setReportOpen(true)}
+                className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors border border-border rounded-lg px-3 py-1.5 hover:bg-secondary/50"
+              >
+                <AlertTriangle className="w-4 h-4" />
+                <span className="hidden sm:inline">Report</span>
+              </button>
+
               {(() => {
                 const prepSubKeys = ["main_prep", "prep_bases", "prep_meat"] as const;
                 const isInPrepSub = (prepSubKeys as readonly string[]).includes(stationType);
@@ -203,6 +256,8 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
       <div className="max-w-7xl mx-auto px-4 py-6">
         {children}
       </div>
+
+      <ReportModal open={reportOpen} onClose={() => setReportOpen(false)} defaultStation={stationType} />
     </div>
   );
 }
