@@ -96,3 +96,30 @@ The application is structured as a pnpm workspace monorepo using TypeScript, com
 - **Frontend Frameworks/Libraries:** React, Vite, Tailwind CSS, shadcn/ui, React Query, react-hook-form, recharts, date-fns, framer-motion
 - **Sales Data Integration:** Shopify (for fetching sales data for production planning)
 
+
+# Code Backup — GitHub
+
+All code is mirrored to a **private GitHub repository**:
+- **Repo:** `https://github.com/graeme-source/tck-production-planner` (private)
+- **Account:** `graeme-source`
+- **Connected via:** Replit GitHub integration (OAuth, no PAT required)
+
+## Syncing code to GitHub
+
+Run the following from the workspace root whenever you want to push the latest code:
+
+```bash
+pnpm github:sync
+```
+
+This uses `scripts/github-sync.mjs` which:
+1. Reads all git-tracked files (381+)
+2. Creates blobs and a new tree via GitHub's Git Data API
+3. Creates a timestamped commit on `main`
+4. Updates the branch ref
+
+Run this manually after any significant batch of changes. The sync takes ~60 seconds.
+
+## Recovery
+
+If the Replit project is lost, the entire codebase can be restored from GitHub. The database would need restoring separately from a production backup or pg_dump.
