@@ -2,6 +2,7 @@ import app from "./app";
 import { db, usersTable } from "@workspace/db";
 import { sql, count } from "drizzle-orm";
 import bcrypt from "bcryptjs";
+import { startBackupScheduler } from "./lib/backup";
 
 const rawPort = process.env["PORT"];
 
@@ -383,6 +384,7 @@ async function startup() {
   try {
     await runStartupMigrations();
     await seedAdminIfNeeded();
+    startBackupScheduler();
   } catch (err) {
     console.error(
       "Background startup tasks failed:",
