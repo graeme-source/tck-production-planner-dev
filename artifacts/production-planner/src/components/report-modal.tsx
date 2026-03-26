@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { X, Lightbulb, AlertTriangle, CheckCircle, Loader2, ChevronDown } from "lucide-react";
+import { X, Lightbulb, AlertTriangle, CheckCircle, Loader2, ChevronDown, CircleDot } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 
@@ -444,7 +444,7 @@ export function ReportButton({ defaultStation, className }: ReportButtonProps) {
         )}
         title="Submit a quick idea or report an issue"
       >
-        <AlertTriangle className="w-4 h-4" />
+        <CircleDot className="w-4 h-4" />
         Quick Idea
       </button>
       <ReportModal open={open} onClose={() => setOpen(false)} defaultStation={defaultStation} />
