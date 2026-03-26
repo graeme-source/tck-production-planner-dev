@@ -12,7 +12,7 @@ import {
   dispatchOrdersTable,
 } from "@workspace/db";
 import { eq, and, gte, lte, sql, isNotNull, inArray } from "drizzle-orm";
-import { getFulfilledOrdersForDateRange } from "../services/shopify";
+import { getOrdersByTag } from "../services/shopify";
 
 const router: IRouter = Router();
 
@@ -387,9 +387,18 @@ router.get("/production-kpis", async (req, res) => {
 
 // ── Packing Speed ──────────────────────────────────────────────────────────
 // GET /reports/packing-speed?from=YYYY-MM-DD&to=YYYY-MM-DD
-// Uses Shopify fulfilled orders. For each day finds the first and last
-// fulfillment timestamp to compute the actual packing window, then calculates
-// orders per hour based on that real duration.
+// Uses the same tag-based Shopify query as the weekly-orders bar chart
+// (orders tagged by delivery date = dispatch day + 1), so both views agree.
+// For each dispatch day finds fulfilled orders, extracts fulfillment
+// timestamps to compute the packing window, then calculates orders/hour.
+
+function toDateTag(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 router.get("/packing-speed", async (req, res) => {
   const from = req.query.from ? String(req.query.from) : null;
   const to = req.query.to ? String(req.query.to) : null;
@@ -399,128 +408,146 @@ router.get("/packing-speed", async (req, res) => {
     return;
   }
 
-  let orders;
   try {
-    orders = await getFulfilledOrdersForDateRange(from, to);
-  } catch (err) {
-    console.error("Packing speed: Shopify fetch failed:", err);
-    res.status(502).json({ error: "Unable to fetch fulfillment data from Shopify. Check your Shopify credentials." });
-    return;
-  }
+    const fromDate = new Date(from + "T00:00:00");
+    const toDate = new Date(to + "T00:00:00");
+    const dayCount = Math.max(1, Math.round((toDate.getTime() - fromDate.getTime()) / 86_400_000) + 1);
 
-  // Collect all fulfillment timestamps across all orders, grouped by calendar day (UTC)
-  interface DayData {
-    date: string;
-    count: number;
-    timestamps: number[]; // ms epoch for each fulfillment
-    orderNames: string[];
-  }
-  const byDay: Record<string, DayData> = {};
-
-  for (const order of orders) {
-    const fuls = order.fulfillments ?? [];
-    // If no fulfillment records attached, fall back to the order's created_at date
-    const successFuls = fuls.filter(f => f.status === "success" || f.status === "fulfilled");
-    const timestamps = successFuls.length > 0
-      ? successFuls.map(f => new Date(f.created_at).getTime())
-      : [new Date(order.created_at).getTime()];
-
-    for (const ts of timestamps) {
-      const day = new Date(ts).toISOString().slice(0, 10);
-      if (!byDay[day]) byDay[day] = { date: day, count: 0, timestamps: [], orderNames: [] };
-      byDay[day].timestamps.push(ts);
+    interface DayData {
+      date: string;
+      count: number;
+      timestamps: number[];
+      orderNames: string[];
     }
-    // Count the order once per day it has activity
-    const orderDays = new Set(timestamps.map(ts => new Date(ts).toISOString().slice(0, 10)));
-    for (const day of orderDays) {
-      if (!byDay[day]) byDay[day] = { date: day, count: 0, timestamps: [], orderNames: [] };
-      byDay[day].count += 1;
-      byDay[day].orderNames.push(order.name);
-    }
-  }
+    const byDay: Record<string, DayData> = {};
 
-  const IDLE_THRESHOLD_MS = 5 * 60 * 1000;
-
-  const dailyRows = Object.values(byDay)
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .map(day => {
-      const sortedTs = [...day.timestamps].sort((a, b) => a - b);
-      const firstTs = sortedTs[0];
-      const lastTs = sortedTs[sortedTs.length - 1];
-      const windowMs = lastTs - firstTs;
-
-      let idleMs = 0;
-      let idleBreaks = 0;
-      for (let i = 1; i < sortedTs.length; i++) {
-        const gap = sortedTs[i] - sortedTs[i - 1];
-        if (gap > IDLE_THRESHOLD_MS) {
-          idleMs += gap;
-          idleBreaks++;
-        }
-      }
-
-      const activeMs = Math.max(0, windowMs - idleMs);
-      const activeHours = activeMs > 60_000 ? activeMs / 3_600_000 : null;
-      const ordersPerHour = activeHours != null
-        ? Math.round((day.count / activeHours) * 10) / 10
-        : null;
-
-      return {
-        date: day.date,
-        count: day.count,
-        firstFulfilledAt: firstTs ? new Date(firstTs).toISOString() : null,
-        lastFulfilledAt: lastTs ? new Date(lastTs).toISOString() : null,
-        windowMinutes: windowMs > 0 ? Math.round(windowMs / 60_000) : null,
-        activeMinutes: activeMs > 0 ? Math.round(activeMs / 60_000) : null,
-        idleMinutes: idleMs > 0 ? Math.round(idleMs / 60_000) : null,
-        idleBreaks,
-        ordersPerHour,
-      };
+    const tagFetches = Array.from({ length: dayCount }, (_, i) => {
+      const dispatchDay = new Date(fromDate);
+      dispatchDay.setDate(fromDate.getDate() + i);
+      const deliveryDay = new Date(dispatchDay);
+      deliveryDay.setDate(dispatchDay.getDate() + 1);
+      const dispatchStr = toDateTag(dispatchDay);
+      const deliveryTag = toDateTag(deliveryDay);
+      return { dispatchStr, deliveryTag };
     });
 
-  const totalOrders = dailyRows.reduce((s, d) => s + d.count, 0);
-  const totalDays = dailyRows.length;
-  const avgPerDay = totalDays > 0 ? Math.round(totalOrders / totalDays) : 0;
+    const results = await Promise.all(
+      tagFetches.map(async ({ dispatchStr, deliveryTag }) => {
+        const orders = await getOrdersByTag(deliveryTag);
+        const fulfilled = orders.filter(o => o.fulfillment_status === "fulfilled");
+        return { dispatchStr, fulfilled };
+      })
+    );
 
-  const totalActiveHours = dailyRows.reduce((s, d) => {
-    if (d.activeMinutes && d.activeMinutes > 1) return s + d.activeMinutes / 60;
-    return s;
-  }, 0);
-  const overallOrdersPerHour = totalActiveHours > 0
-    ? Math.round((totalOrders / totalActiveHours) * 10) / 10
-    : 0;
-  const totalIdleMinutes = dailyRows.reduce((s, d) => s + (d.idleMinutes ?? 0), 0);
+    for (const { dispatchStr, fulfilled } of results) {
+      if (fulfilled.length === 0) continue;
+      if (!byDay[dispatchStr]) {
+        byDay[dispatchStr] = { date: dispatchStr, count: 0, timestamps: [], orderNames: [] };
+      }
+      const day = byDay[dispatchStr];
+      day.count += fulfilled.length;
 
-  const busiestDay = dailyRows.reduce<{ date: string; count: number } | null>(
-    (best, d) => (!best || d.count > best.count ? { date: d.date, count: d.count } : best),
-    null,
-  );
+      for (const order of fulfilled) {
+        day.orderNames.push(order.name);
+        const fuls = order.fulfillments ?? [];
+        const successFuls = fuls.filter(f => f.status === "success" || f.status === "fulfilled");
+        if (successFuls.length > 0) {
+          for (const f of successFuls) {
+            day.timestamps.push(new Date(f.created_at).getTime());
+          }
+        } else {
+          day.timestamps.push(new Date(order.created_at).getTime());
+        }
+      }
+    }
 
-  const rowsWithSpeed = dailyRows.filter(d => d.ordersPerHour != null);
-  const fastestDay = rowsWithSpeed.reduce<{ date: string; ordersPerHour: number } | null>(
-    (best, d) => (!best || (d.ordersPerHour ?? 0) > best.ordersPerHour ? { date: d.date, ordersPerHour: d.ordersPerHour! } : best),
-    null,
-  );
-  const slowestDay = rowsWithSpeed.reduce<{ date: string; ordersPerHour: number } | null>(
-    (worst, d) => (!worst || (d.ordersPerHour ?? Infinity) < worst.ordersPerHour ? { date: d.date, ordersPerHour: d.ordersPerHour! } : worst),
-    null,
-  );
+    const IDLE_THRESHOLD_MS = 5 * 60 * 1000;
 
-  const totalActiveMinutes = dailyRows.reduce((s, d) => s + (d.activeMinutes ?? 0), 0);
+    const dailyRows = Object.values(byDay)
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map(day => {
+        const sortedTs = [...day.timestamps].sort((a, b) => a - b);
+        const firstTs = sortedTs[0];
+        const lastTs = sortedTs[sortedTs.length - 1];
+        const windowMs = lastTs - firstTs;
 
-  res.json({
-    totalOrders,
-    totalDays,
-    ordersPerHour: overallOrdersPerHour,
-    avgPerDay,
-    busiestDay,
-    fastestDay,
-    slowestDay,
-    totalIdleMinutes,
-    totalActiveMinutes,
-    dailyRows,
-    source: "shopify",
-  });
+        let idleMs = 0;
+        let idleBreaks = 0;
+        for (let i = 1; i < sortedTs.length; i++) {
+          const gap = sortedTs[i] - sortedTs[i - 1];
+          if (gap > IDLE_THRESHOLD_MS) {
+            idleMs += gap;
+            idleBreaks++;
+          }
+        }
+
+        const activeMs = Math.max(0, windowMs - idleMs);
+        const activeHours = activeMs > 60_000 ? activeMs / 3_600_000 : null;
+        const ordersPerHour = activeHours != null
+          ? Math.round((day.count / activeHours) * 10) / 10
+          : null;
+
+        return {
+          date: day.date,
+          count: day.count,
+          firstFulfilledAt: firstTs ? new Date(firstTs).toISOString() : null,
+          lastFulfilledAt: lastTs ? new Date(lastTs).toISOString() : null,
+          windowMinutes: windowMs > 0 ? Math.round(windowMs / 60_000) : null,
+          activeMinutes: activeMs > 0 ? Math.round(activeMs / 60_000) : null,
+          idleMinutes: idleMs > 0 ? Math.round(idleMs / 60_000) : null,
+          idleBreaks,
+          ordersPerHour,
+        };
+      });
+
+    const totalOrders = dailyRows.reduce((s, d) => s + d.count, 0);
+    const totalDays = dailyRows.length;
+    const avgPerDay = totalDays > 0 ? Math.round(totalOrders / totalDays) : 0;
+
+    const totalActiveHours = dailyRows.reduce((s, d) => {
+      if (d.activeMinutes && d.activeMinutes > 1) return s + d.activeMinutes / 60;
+      return s;
+    }, 0);
+    const overallOrdersPerHour = totalActiveHours > 0
+      ? Math.round((totalOrders / totalActiveHours) * 10) / 10
+      : 0;
+    const totalIdleMinutes = dailyRows.reduce((s, d) => s + (d.idleMinutes ?? 0), 0);
+
+    const busiestDay = dailyRows.reduce<{ date: string; count: number } | null>(
+      (best, d) => (!best || d.count > best.count ? { date: d.date, count: d.count } : best),
+      null,
+    );
+
+    const rowsWithSpeed = dailyRows.filter(d => d.ordersPerHour != null);
+    const fastestDay = rowsWithSpeed.reduce<{ date: string; ordersPerHour: number } | null>(
+      (best, d) => (!best || (d.ordersPerHour ?? 0) > best.ordersPerHour ? { date: d.date, ordersPerHour: d.ordersPerHour! } : best),
+      null,
+    );
+    const slowestDay = rowsWithSpeed.reduce<{ date: string; ordersPerHour: number } | null>(
+      (worst, d) => (!worst || (d.ordersPerHour ?? Infinity) < worst.ordersPerHour ? { date: d.date, ordersPerHour: d.ordersPerHour! } : worst),
+      null,
+    );
+
+    const totalActiveMinutes = dailyRows.reduce((s, d) => s + (d.activeMinutes ?? 0), 0);
+
+    res.json({
+      totalOrders,
+      totalDays,
+      ordersPerHour: overallOrdersPerHour,
+      avgPerDay,
+      busiestDay,
+      fastestDay,
+      slowestDay,
+      totalIdleMinutes,
+      totalActiveMinutes,
+      dailyRows,
+      source: "shopify",
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("Packing speed error:", msg);
+    res.status(502).json({ error: "Unable to fetch fulfillment data from Shopify." });
+  }
 });
 
 export default router;

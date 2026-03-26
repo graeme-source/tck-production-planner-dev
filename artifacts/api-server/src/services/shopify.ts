@@ -192,7 +192,7 @@ export async function getOrdersByTag(tag: string): Promise<ShopifyOrder[]> {
       limit,
       status: "any",
       fields:
-        "id,name,tags,created_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,total_weight,customer,shipping_address,line_items,note",
+        "id,name,tags,created_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,total_weight,customer,shipping_address,line_items,note,fulfillments",
     };
     if (pageInfo) {
       params.page_info = pageInfo;
