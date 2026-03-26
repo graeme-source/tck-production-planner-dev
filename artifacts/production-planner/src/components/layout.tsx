@@ -3,6 +3,7 @@ import { Link, useLocation, useSearch } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
+import { usePageHeaderValue } from "@/contexts/page-header-context";
 import { 
   LayoutDashboard, 
   ChefHat, 
@@ -592,18 +593,7 @@ export function Layout({ children }: { children: ReactNode }) {
 
       {/* ── Main content ────────────────────────────────────────────────── */}
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">
-        <header className="h-16 border-b border-border bg-background/80 backdrop-blur-md flex items-center px-4 md:px-8 gap-3 z-10">
-          <button
-            onClick={() => setMobileOpen(true)}
-            className="md:hidden p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors flex-shrink-0"
-          >
-            <Menu className="w-5 h-5" />
-          </button>
-          <h2 className="font-display font-semibold text-lg text-muted-foreground capitalize">
-            {currentPageName}
-          </h2>
-        </header>
-
+        <TopBar onOpenMobile={() => setMobileOpen(true)} fallbackTitle={currentPageName} />
         <div className="flex-1 overflow-y-auto p-4 md:p-8 relative">
           <motion.div
             key={location}
@@ -617,5 +607,34 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
       </main>
     </div>
+  );
+}
+
+function TopBar({ onOpenMobile, fallbackTitle }: { onOpenMobile: () => void; fallbackTitle: string }) {
+  const header = usePageHeaderValue();
+  const title = header?.title ?? fallbackTitle;
+
+  return (
+    <header className="min-h-[56px] border-b border-border bg-background/80 backdrop-blur-md flex items-center px-4 md:px-8 gap-3 z-10">
+      <button
+        onClick={onOpenMobile}
+        className="md:hidden p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors flex-shrink-0"
+      >
+        <Menu className="w-5 h-5" />
+      </button>
+      <h1 className="font-display font-bold text-xl text-foreground tracking-tight truncate">
+        {title}
+      </h1>
+      {header?.description && (
+        <span className="hidden sm:block text-sm text-muted-foreground ml-auto flex-shrink-0">
+          {header.description}
+        </span>
+      )}
+      {header?.action && (
+        <div className={cn("flex-shrink-0", header?.description ? "" : "ml-auto")}>
+          {header.action}
+        </div>
+      )}
+    </header>
   );
 }

@@ -907,6 +907,7 @@ export default function Fulfilment() {
     const customerName = activeOrder.shipping_address?.name ?? `${activeOrder.customer?.first_name} ${activeOrder.customer?.last_name}`;
     return (
       <div className="space-y-4">
+        <PageHeader title={activeOrder.name} description={customerName} />
         {isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
 
         <div className="flex items-center gap-3">
@@ -914,7 +915,6 @@ export default function Fulfilment() {
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div className="flex-1">
-            <h1 className="font-display font-bold text-xl">{activeOrder.name}</h1>
             <p className="text-sm text-muted-foreground">{customerName}</p>
           </div>
           <button onClick={goBack} className="text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg border border-border hover:bg-secondary/50 transition-colors">
@@ -1165,6 +1165,10 @@ export default function Fulfilment() {
     const isTestMode = configStatus?.testMode ?? false;
     return (
       <div className="space-y-4">
+        <PageHeader
+          title={activeOrder.name}
+          description={activeOrder.shipping_address?.name ?? `${activeOrder.customer?.first_name} ${activeOrder.customer?.last_name}`}
+        />
         {pendingPickOrder && (
           <ShopifyConfirmDialog
             title={`Ship order ${pendingPickOrder.name}?`}
@@ -1181,7 +1185,6 @@ export default function Fulfilment() {
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div className="flex-1">
-            <h1 className="font-display font-bold text-xl">{activeOrder.name}</h1>
             <p className="text-sm text-muted-foreground">
               {activeOrder.shipping_address?.name ?? `${activeOrder.customer?.first_name} ${activeOrder.customer?.last_name}`}
               {activeOrder.shipping_address && ` — ${activeOrder.shipping_address.city}, ${activeOrder.shipping_address.zip}`}
@@ -1518,17 +1521,20 @@ export default function Fulfilment() {
     return (
       <div className="space-y-6">
         {isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
-        <div className="flex items-center justify-between">
-          <PageHeader title="Order Packing Live" description="Select a dispatch date to start picking." />
-          <button
-            onClick={() => refetchTags()}
-            disabled={tagsLoading}
-            className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
-            title="Refresh"
-          >
-            <RefreshCw className={`w-4 h-4 ${tagsLoading ? "animate-spin" : ""}`} />
-          </button>
-        </div>
+        <PageHeader
+          title="Order Packing Live"
+          description="Select a dispatch date to start picking."
+          action={
+            <button
+              onClick={() => refetchTags()}
+              disabled={tagsLoading}
+              className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw className={`w-4 h-4 ${tagsLoading ? "animate-spin" : ""}`} />
+            </button>
+          }
+        />
 
         {tagsError && (
           <div className="flex items-center gap-3 p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive">
@@ -1752,6 +1758,40 @@ export default function Fulfilment() {
         />
       )}
 
+      <PageHeader
+        title="Order Packing Live"
+        description={(() => {
+          try {
+            const packingDay = format(addDays(parseISO(queryTag), -1), "EEEE d MMM");
+            const deliveryDay = format(parseISO(queryTag), "EEEE d MMM");
+            return `Packing ${packingDay} · Delivery ${deliveryDay}`;
+          } catch {
+            return `Orders tagged ${queryTag}`;
+          }
+        })()}
+        action={
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => refetch()}
+              disabled={isLoading}
+              className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
+            </button>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={includeAll}
+                onChange={e => setIncludeAll(e.target.checked)}
+                className="rounded accent-primary"
+              />
+              Show fulfilled
+            </label>
+          </div>
+        }
+      />
+
       <div className="flex items-center gap-3">
         <button onClick={() => {
           if (urlTag) {
@@ -1761,36 +1801,8 @@ export default function Fulfilment() {
           }
         }} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
           <ArrowLeft className="w-5 h-5" />
+          <span className="sr-only">Back</span>
         </button>
-        <PageHeader
-          title="Order Packing Live"
-          description={(() => {
-            try {
-              const packingDay = format(addDays(parseISO(queryTag), -1), "EEEE d MMM");
-              const deliveryDay = format(parseISO(queryTag), "EEEE d MMM");
-              return <strong className="font-semibold text-foreground">Packing {packingDay} · For delivery {deliveryDay}</strong>;
-            } catch {
-              return `Orders tagged ${queryTag}`;
-            }
-          })()}
-        />
-        <button
-          onClick={() => refetch()}
-          disabled={isLoading}
-          className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors ml-auto"
-          title="Refresh"
-        >
-          <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
-        </button>
-        <label className="flex items-center gap-2 text-sm cursor-pointer">
-          <input
-            type="checkbox"
-            checked={includeAll}
-            onChange={e => setIncludeAll(e.target.checked)}
-            className="rounded accent-primary"
-          />
-          Show fulfilled
-        </label>
       </div>
 
       {error && (
