@@ -8,6 +8,7 @@ import {
   getGetStationActivityQueryKey,
   getGetDptCalculatorQueryKey,
   getListRecipesQueryKey,
+  getListProductionPlansQueryKey,
 } from "@workspace/api-client-react";
 import type { DptSuggestion, ProductionPlanDetail, Recipe } from "@workspace/api-client-react";
 type PlanStatus = "draft" | "active" | "prep" | "building" | "complete";
@@ -21,7 +22,7 @@ import {
   ArrowRight, GripVertical, AlertTriangle, AlertCircle, BookmarkCheck, ShoppingCart,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, addDays, parseISO, isWeekend, isToday, startOfWeek, isSameDay } from "date-fns";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -366,9 +367,92 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   const effectiveTotalBatches = totalBatchesOverride ?? calcData?.totalDailyBatches ?? 0;
 
   const { data: allRecipes } = useListRecipes({ query: { queryKey: getListRecipesQueryKey(), enabled: open } });
-  const { createPlan } = useAppMutations();
+  const { createPlan, updatePlan } = useAppMutations();
+  const queryClient = useQueryClient();
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  // ── Auto-save state ──────────────────────────────────────────────────────────
+  const isDirty = useRef(false);
+  const autoSavedPlanId = useRef<number | null>(null);
+  const [autoSavedAt, setAutoSavedAt] = useState<Date | null>(null);
+  const autoSavedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Shadow refs so the 30s interval always reads current form values
+  const itemsRef = useRef(items);
+  const planDateRef = useRef(planDate);
+  const planNameRef = useRef(planName);
+  const notesRef = useRef(notes);
+  useEffect(() => { itemsRef.current = items; }, [items]);
+  useEffect(() => { planDateRef.current = planDate; }, [planDate]);
+  useEffect(() => { planNameRef.current = planName; }, [planName]);
+  useEffect(() => { notesRef.current = notes; }, [notes]);
+
+  // Reset dirty state when dialog closes
+  useEffect(() => {
+    if (!open) {
+      isDirty.current = false;
+      autoSavedPlanId.current = null;
+      setAutoSavedAt(null);
+      if (autoSavedTimerRef.current) {
+        clearTimeout(autoSavedTimerRef.current);
+        autoSavedTimerRef.current = null;
+      }
+    }
+  }, [open]);
+
+  // Auto-save: every 30s, silently create or update a draft if the form is dirty
+  useEffect(() => {
+    if (!open) return;
+    const interval = setInterval(async () => {
+      if (!isDirty.current) return;
+      const currentItems = itemsRef.current.filter(it => it.included);
+      if (currentItems.length === 0) return;
+      const payload = {
+        planDate: planDateRef.current,
+        name: planNameRef.current || `Plan ${planDateRef.current}`,
+        notes: notesRef.current || undefined,
+        status: "draft" as const,
+        items: currentItems.map((it, i) => ({
+          recipeId: it.recipeId,
+          orderPosition: i + 1,
+          batchesTarget: it.batchesTarget,
+          tinSize: it.tinSize ?? undefined,
+          maxBatchesPerTin: it.maxBatchesPerTin ?? undefined,
+          sopUrl: it.sopUrl ?? undefined,
+        })),
+      };
+      try {
+        if (autoSavedPlanId.current === null) {
+          const res = await fetch(`${BASE}/api/production-plans`, {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok) return;
+          const created = await res.json();
+          autoSavedPlanId.current = created.id;
+          queryClient.invalidateQueries({ queryKey: getListProductionPlansQueryKey() });
+        } else {
+          const res = await fetch(`${BASE}/api/production-plans/${autoSavedPlanId.current}`, {
+            method: "PUT",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok) return;
+        }
+        isDirty.current = false;
+        setAutoSavedAt(new Date());
+        if (autoSavedTimerRef.current) clearTimeout(autoSavedTimerRef.current);
+        autoSavedTimerRef.current = setTimeout(() => setAutoSavedAt(null), 2000);
+      } catch {
+        // silent fail — will retry on next tick
+      }
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [open]);
 
   const handleDateChange = (raw: string) => {
     if (!raw) return;
@@ -470,6 +554,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   }, [calcData, allocateBatches, savedOrder]);
 
   const handleTotalBatchesChange = useCallback((newTotal: number) => {
+    isDirty.current = true;
     setTotalBatchesOverride(newTotal);
     if (!calcData?.recipes) return;
     const alloc = allocateBatches(calcData.recipes, newTotal);
@@ -495,6 +580,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   };
 
   const updateItem = (id: string, updates: Partial<PlanItem>) => {
+    isDirty.current = true;
     setItems(prev =>
       prev.map(it => {
         if (it.id !== id) return it;
@@ -548,6 +634,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
+      isDirty.current = true;
       setItems(prev => {
         const oldIdx = prev.findIndex(it => it.id === active.id);
         const newIdx = prev.findIndex(it => it.id === over.id);
@@ -610,6 +697,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
       special3Count: 0,
       totalSpecialCount: 0,
     };
+    isDirty.current = true;
     setItems(prev => [...prev, newItem]);
     setAddRecipeId("");
   };
@@ -635,16 +723,31 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
         })),
       };
 
-      createPlan.mutate(
-        { data },
-        {
-          onSuccess: (plan) => {
-            onClose();
-            onCreated?.(plan.id);
-          },
-          onSettled: () => setIsSubmitting(false),
-        }
-      );
+      if (autoSavedPlanId.current !== null) {
+        updatePlan.mutate(
+          { id: autoSavedPlanId.current, data },
+          {
+            onSuccess: (plan) => {
+              isDirty.current = false;
+              autoSavedPlanId.current = null;
+              onClose();
+              onCreated?.(plan.id);
+            },
+            onSettled: () => setIsSubmitting(false),
+          }
+        );
+      } else {
+        createPlan.mutate(
+          { data },
+          {
+            onSuccess: (plan) => {
+              onClose();
+              onCreated?.(plan.id);
+            },
+            onSettled: () => setIsSubmitting(false),
+          }
+        );
+      }
     } catch {
       setIsSubmitting(false);
     }
@@ -687,7 +790,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
               <label className="text-sm font-medium mb-1 block text-muted-foreground">Plan Name</label>
               <input
                 value={planName}
-                onChange={e => setPlanName(e.target.value)}
+                onChange={e => { isDirty.current = true; setPlanName(e.target.value); }}
                 className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
                 placeholder="Auto-generated from date"
               />
@@ -696,7 +799,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
               <label className="text-sm font-medium mb-1 block text-muted-foreground">Notes</label>
               <textarea
                 value={notes}
-                onChange={e => setNotes(e.target.value)}
+                onChange={e => { isDirty.current = true; setNotes(e.target.value); }}
                 rows={2}
                 className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring resize-none"
                 placeholder="Optional notes for this plan..."
@@ -753,7 +856,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                               <input
                                 type="checkbox"
                                 checked={items.every(it => it.included)}
-                                onChange={e => setItems(prev => prev.map(it => ({ ...it, included: e.target.checked })))}
+                                onChange={e => { isDirty.current = true; setItems(prev => prev.map(it => ({ ...it, included: e.target.checked }))); }}
                                 className="rounded border-border"
                               />
                             </th>
@@ -786,7 +889,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                               onToggle={(id) => updateItem(id, { included: !it.included })}
                               onBatchChange={(id, val) => updateItem(id, { batchesTarget: val })}
                               onFridgeStockChange={(id, val) => handleFridgeStockOverride(id, val)}
-                              onRemove={(id) => setItems(prev => prev.filter(i => i.id !== id))}
+                              onRemove={(id) => { isDirty.current = true; setItems(prev => prev.filter(i => i.id !== id)); }}
                             />
                           ))}
                         </tbody>
@@ -907,7 +1010,12 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
               {effectiveTotalBatches}
             </span>
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-3">
+            {autoSavedAt && (
+              <span className="text-xs flex items-center gap-1 text-emerald-600 dark:text-emerald-400 animate-in fade-in duration-200">
+                <BookmarkCheck className="w-3 h-3" /> Auto-saved
+              </span>
+            )}
             <button
               onClick={onClose}
               className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-xl transition-colors"
@@ -996,12 +1104,82 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
 
   const { data: allRecipes } = useListRecipes({ query: { queryKey: getListRecipesQueryKey(), enabled: open } });
   const { updatePlan } = useAppMutations();
+  const queryClient = useQueryClient();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  // ── Auto-save state ──────────────────────────────────────────────────────────
+  const isDirty = useRef(false);
+  const [autoSavedAt, setAutoSavedAt] = useState<Date | null>(null);
+  const autoSavedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Shadow refs so the 30s interval always reads current form values
+  const itemsRef = useRef(items);
+  const planDateRef = useRef(planDate);
+  const planNameRef = useRef(planName);
+  const notesRef = useRef(notes);
+  useEffect(() => { itemsRef.current = items; }, [items]);
+  useEffect(() => { planDateRef.current = planDate; }, [planDate]);
+  useEffect(() => { planNameRef.current = planName; }, [planName]);
+  useEffect(() => { notesRef.current = notes; }, [notes]);
+
+  // Reset dirty state when dialog closes
+  useEffect(() => {
+    if (!open) {
+      isDirty.current = false;
+      setAutoSavedAt(null);
+      if (autoSavedTimerRef.current) {
+        clearTimeout(autoSavedTimerRef.current);
+        autoSavedTimerRef.current = null;
+      }
+    }
+  }, [open]);
+
+  // Auto-save: every 30s, silently update the draft if the form is dirty
+  useEffect(() => {
+    if (!open) return;
+    const interval = setInterval(async () => {
+      if (!isDirty.current) return;
+      const currentItems = itemsRef.current.filter(it => it.included);
+      if (currentItems.length === 0) return;
+      const payload = {
+        planDate: planDateRef.current,
+        name: planNameRef.current || plan.name,
+        notes: notesRef.current || undefined,
+        status: "draft" as const,
+        items: currentItems.map((it, i) => ({
+          recipeId: it.recipeId,
+          orderPosition: i + 1,
+          batchesTarget: it.batchesTarget,
+          tinSize: it.tinSize ?? undefined,
+          maxBatchesPerTin: it.maxBatchesPerTin ?? undefined,
+          sopUrl: it.sopUrl ?? undefined,
+        })),
+      };
+      try {
+        const res = await fetch(`${BASE}/api/production-plans/${plan.id}`, {
+          method: "PUT",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) return;
+        isDirty.current = false;
+        queryClient.invalidateQueries({ queryKey: getListProductionPlansQueryKey() });
+        setAutoSavedAt(new Date());
+        if (autoSavedTimerRef.current) clearTimeout(autoSavedTimerRef.current);
+        autoSavedTimerRef.current = setTimeout(() => setAutoSavedAt(null), 2000);
+      } catch {
+        // silent fail — will retry on next tick
+      }
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [open]);
 
   const editMinPlanDate = getMinPlanDate();
 
   const handleDateChange = (raw: string) => {
     if (!raw) return;
+    isDirty.current = true;
     let fixed = toNextWeekdayIfWeekend(raw);
     const warnings: string[] = [];
     if (fixed !== raw) warnings.push("Weekends are not production days — date moved to the next Monday.");
@@ -1016,6 +1194,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
+      isDirty.current = true;
       setItems(prev => {
         const oldIdx = prev.findIndex(it => it.id === active.id);
         const newIdx = prev.findIndex(it => it.id === over.id);
@@ -1030,6 +1209,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   };
 
   const updateItem = (id: string, updates: Partial<PlanItem>) => {
+    isDirty.current = true;
     setItems(prev =>
       prev.map(it => {
         if (it.id !== id) return it;
@@ -1087,6 +1267,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
     const recipe = (allRecipes as Recipe[] | undefined)?.find(r => r.id === recipeId);
     if (!recipe) return;
     const ppb = recipe.portionsPerBatch ?? 10;
+    isDirty.current = true;
     setItems(prev => [...prev, {
       id: `add-${recipeId}`,
       recipeId,
@@ -1186,7 +1367,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
               <label className="text-sm font-medium mb-1 block text-muted-foreground">Plan Name</label>
               <input
                 value={planName}
-                onChange={e => setPlanName(e.target.value)}
+                onChange={e => { isDirty.current = true; setPlanName(e.target.value); }}
                 className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
               />
             </div>
@@ -1194,7 +1375,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
               <label className="text-sm font-medium mb-1 block text-muted-foreground">Notes</label>
               <textarea
                 value={notes}
-                onChange={e => setNotes(e.target.value)}
+                onChange={e => { isDirty.current = true; setNotes(e.target.value); }}
                 rows={2}
                 className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring resize-none"
                 placeholder="Optional notes..."
@@ -1227,7 +1408,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
                           <input
                             type="checkbox"
                             checked={items.every(it => it.included)}
-                            onChange={e => setItems(prev => prev.map(it => ({ ...it, included: e.target.checked })))}
+                            onChange={e => { isDirty.current = true; setItems(prev => prev.map(it => ({ ...it, included: e.target.checked }))); }}
                             className="rounded border-border"
                           />
                         </th>
@@ -1252,7 +1433,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
                           onToggle={(id) => updateItem(id, { included: !it.included })}
                           onBatchChange={(id, val) => updateItem(id, { batchesTarget: val })}
                           onFridgeStockChange={(id, val) => handleFridgeStockOverride(id, val)}
-                          onRemove={(id) => setItems(prev => prev.filter(i => i.id !== id))}
+                          onRemove={(id) => { isDirty.current = true; setItems(prev => prev.filter(i => i.id !== id)); }}
                         />
                       ))}
                     </tbody>
@@ -1290,7 +1471,12 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
           <div className="text-sm text-muted-foreground">
             Julian batch: <span className="font-mono font-semibold text-foreground">{julianBatchNumber(planDate)}</span>
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-3">
+            {autoSavedAt && (
+              <span className="text-xs flex items-center gap-1 text-emerald-600 dark:text-emerald-400 animate-in fade-in duration-200">
+                <BookmarkCheck className="w-3 h-3" /> Auto-saved
+              </span>
+            )}
             <button
               onClick={onClose}
               className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-xl transition-colors"

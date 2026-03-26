@@ -37,6 +37,7 @@ import {
 import { format, parseISO, differenceInMinutes, differenceInSeconds, addDays } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { withRetry } from "@/lib/with-retry";
 import {
   DndContext,
   closestCenter,
@@ -1003,16 +1004,18 @@ function MixingStation({ plan }: MixingStationProps) {
     const batchesToAdd = batchesAfterNextTin - mixed;
     if (batchesToAdd <= 0) return false;
     try {
-      const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planItemId: item.id, stationType: "mixing", count: batchesToAdd }),
+      await withRetry(async () => {
+        const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ planItemId: item.id, stationType: "mixing", count: batchesToAdd }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || `Server error ${res.status}`);
+        }
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `Server error ${res.status}`);
-      }
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
       return true;
     } catch (err) {
@@ -1029,16 +1032,18 @@ function MixingStation({ plan }: MixingStationProps) {
     const batchesToRemove = mixed - prevTinThreshold;
     if (batchesToRemove <= 0) return;
     try {
-      const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
-        method: "DELETE",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planItemId: item.id, stationType: "mixing", count: batchesToRemove }),
+      await withRetry(async () => {
+        const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
+          method: "DELETE",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ planItemId: item.id, stationType: "mixing", count: batchesToRemove }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || `Server error ${res.status}`);
+        }
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `Server error ${res.status}`);
-      }
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
     } catch (err) {
       toast({ title: "Undo failed", description: err instanceof Error ? err.message : "Could not undo tin. Please try again.", variant: "destructive" });
@@ -7216,14 +7221,16 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const sendWrappingComplete = async (item: ProductionPlanItem, complete: boolean) => {
     setWrappingLoading(item.id);
     try {
-      const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/wrapping-complete`, {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ complete }),
+      const data = await withRetry(async () => {
+        const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/wrapping-complete`, {
+          method: "PATCH",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ complete }),
+        });
+        if (!res.ok) throw new Error(`Server error ${res.status}`);
+        return res.json() as Promise<{ wonkyFrozen?: number; shopifyProductTitle?: string | null; shopifyNewQty?: number | null; shopifyError?: string | null }>;
       });
-      if (!res.ok) throw new Error(`Server error ${res.status}`);
-      const data = await res.json() as { wonkyFrozen?: number; shopifyProductTitle?: string | null; shopifyNewQty?: number | null; shopifyError?: string | null };
       if (complete) {
         if (data.wonkyFrozen && data.wonkyFrozen > 0) {
           toast({ title: `${data.wonkyFrozen} wonky pack${data.wonkyFrozen !== 1 ? "s" : ""} → Production Freezer`, description: `Auto-frozen for ${item.recipeName ?? "recipe"}` });
@@ -7272,11 +7279,14 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
 
   const markWrappingComplete = async (itemId: number, complete: boolean) => {
     try {
-      await fetch(`/api/production-plans/${plan.id}/items/${itemId}/wrapping-complete`, {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ complete }),
+      await withRetry(async () => {
+        const res = await fetch(`/api/production-plans/${plan.id}/items/${itemId}/wrapping-complete`, {
+          method: "PATCH",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ complete }),
+        });
+        if (!res.ok) throw new Error(`Server error ${res.status}`);
       });
     } catch {}
   };
@@ -7287,13 +7297,15 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
     if (!loc) return;
     setStorageLoading(item.id);
     try {
-      const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/${loc.endpoint}`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ qty }),
+      await withRetry(async () => {
+        const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/${loc.endpoint}`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ qty }),
+        });
+        if (!res.ok) throw new Error(`Server error ${res.status}`);
       });
-      if (!res.ok) throw new Error(`Server error ${res.status}`);
       const net = netPacks(item);
       const currentStored = STORAGE_LOCATIONS.reduce((s, l) => s + getStorageQty(item, l.key), 0);
       const newRemaining = net - currentStored - qty;
@@ -7317,13 +7329,15 @@ function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
     if (!loc) return;
     setStorageLoading(item.id);
     try {
-      const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/${loc.endpoint}`, {
-        method: "DELETE",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ qty }),
+      await withRetry(async () => {
+        const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/${loc.endpoint}`, {
+          method: "DELETE",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ qty }),
+        });
+        if (!res.ok) throw new Error(`Server error ${res.status}`);
       });
-      if (!res.ok) throw new Error(`Server error ${res.status}`);
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
       toast({ title: `−${qty} packs from ${loc.label}`, description: `${item.recipeName ?? "Recipe"}` });
     } catch (err) {
