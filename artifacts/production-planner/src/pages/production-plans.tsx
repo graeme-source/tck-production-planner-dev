@@ -843,7 +843,19 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                 <div className="text-center py-8 text-muted-foreground bg-secondary/20 rounded-xl mb-3">
                   <Info className="w-8 h-8 mx-auto mb-2 opacity-40" />
                   <p className="text-sm">No active DPT settings found.</p>
-                  <p className="text-xs mt-1">Add recipes below or configure DPT settings in Admin Settings.</p>
+                  <p className="text-xs mt-1">
+                    Add recipes below or{" "}
+                    <a
+                      href={`${BASE}/settings?section=production&sub=dpt`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline font-medium inline-flex items-center gap-0.5"
+                    >
+                      configure DPT settings
+                      <ExternalLink className="w-3 h-3 ml-0.5" />
+                    </a>
+                    {" "}in Production Settings.
+                  </p>
                 </div>
               ) : (
                 <div className="border border-border rounded-xl overflow-x-auto mb-3">

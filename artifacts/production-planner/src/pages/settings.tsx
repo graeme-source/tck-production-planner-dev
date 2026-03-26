@@ -21,7 +21,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { UserAvatar } from "@/components/user-avatar";
 import { PinNumpad } from "@/components/pin-numpad";
 import { AvatarCropModal } from "@/components/avatar-crop-modal";
-import { useSearch } from "wouter";
+import { useSearch, useLocation } from "wouter";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -422,36 +422,36 @@ function PinSection() {
   );
 }
 
-export default function Settings() {
-  const { data: users, isLoading } = useListUsers();
+type SettingsSection = "profile" | "team" | "production" | "storage";
+
+const NAV_ITEMS: { id: SettingsSection; label: string; icon: typeof User }[] = [
+  { id: "profile", label: "My Profile", icon: User },
+  { id: "team", label: "Team & Access", icon: Users },
+  { id: "production", label: "Production", icon: BarChart2 },
+  { id: "storage", label: "Storage & Inventory", icon: Warehouse },
+];
+
+function TeamAccessContent({
+  users,
+  isLoading,
+  user,
+}: {
+  users: AppUser[] | undefined;
+  isLoading: boolean;
+  user: { role: string } | null;
+}) {
   const { createUser, updateUser, deleteUser } = useAppMutations();
-  const { state } = useAuth();
-  const user = state.status === "authenticated" ? state.user : null;
-  const search = useSearch();
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<AppUser | null>(null);
-
-  useEffect(() => {
-    const params = new URLSearchParams(search);
-    const tab = params.get("tab");
-    if (tab === "profile") {
-      document.getElementById("profile-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    } else if (tab === "pin") {
-      document.getElementById("pin-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-  }, [search]);
-
-  const createDefaults: CreateValues = {
-    name: "", email: "", password: "", role: "viewer", isActive: true,
-  };
-
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"admin" | "manager" | "viewer">("viewer");
   const [inviteSending, setInviteSending] = useState(false);
   const [inviteResult, setInviteResult] = useState<{ url: string; email: string } | null>(null);
 
-  const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const createDefaults: CreateValues = {
+    name: "", email: "", password: "", role: "viewer", isActive: true,
+  };
 
   const sendInvite = async () => {
     setInviteSending(true);
@@ -474,17 +474,6 @@ export default function Settings() {
 
   return (
     <div className="space-y-8">
-      <PageHeader
-        title="Settings"
-        description="Manage user accounts and access levels for your team."
-      />
-
-      {/* Profile & Avatar */}
-      <ProfileSection />
-
-      {/* PIN */}
-      <PinSection />
-
       {/* Access Level Reference */}
       <div>
         <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
@@ -677,22 +666,22 @@ export default function Settings() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/50">
-                {users?.map((user) => (
-                  <tr key={user.id} className="hover:bg-secondary/10 transition-colors">
+                {users?.map((u) => (
+                  <tr key={u.id} className="hover:bg-secondary/10 transition-colors">
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-primary/15 text-primary flex items-center justify-center text-xs font-bold flex-shrink-0">
-                          {user.name.charAt(0).toUpperCase()}
+                          {u.name.charAt(0).toUpperCase()}
                         </div>
-                        <span className="font-medium">{user.name}</span>
+                        <span className="font-medium">{u.name}</span>
                       </div>
                     </td>
-                    <td className="px-5 py-3.5 text-muted-foreground">{user.email}</td>
+                    <td className="px-5 py-3.5 text-muted-foreground">{u.email}</td>
                     <td className="px-5 py-3.5">
-                      <RoleBadge role={user.role as Role} />
+                      <RoleBadge role={u.role as Role} />
                     </td>
                     <td className="px-5 py-3.5">
-                      {user.isActive ? (
+                      {u.isActive ? (
                         <span className="inline-flex items-center gap-1.5 text-xs font-medium text-green-600">
                           <CheckCircle2 className="w-3.5 h-3.5" /> Active
                         </span>
@@ -703,12 +692,12 @@ export default function Settings() {
                       )}
                     </td>
                     <td className="px-5 py-3.5 text-muted-foreground text-xs">
-                      {new Date(user.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                      {new Date(u.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
                     </td>
                     <td className="px-5 py-3.5 text-right">
                       <div className="flex items-center justify-end gap-1">
                         <button
-                          onClick={() => setEditingUser(user as AppUser)}
+                          onClick={() => setEditingUser(u as AppUser)}
                           className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
                           title="Edit user"
                         >
@@ -716,8 +705,8 @@ export default function Settings() {
                         </button>
                         <button
                           onClick={() => {
-                            if (confirm(`Delete user "${user.name}"? This cannot be undone.`)) {
-                              deleteUser.mutate({ id: user.id });
+                            if (confirm(`Delete user "${u.name}"? This cannot be undone.`)) {
+                              deleteUser.mutate({ id: u.id });
                             }
                           }}
                           className="p-2 text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
@@ -735,25 +724,112 @@ export default function Settings() {
         )}
       </div>
 
-      {/* Category Defaults Section */}
-      <CategoryDefaultsSection />
-
-      {/* Storage Locations — admin only */}
-      {user?.role === "admin" && <StorageLocationsSection />}
-      {user?.role === "admin" && <IngredientStorageAssignmentsSection />}
-
-      {/* DPT Settings & Timing Standards — admin only */}
-      {user?.role === "admin" && <DptSettingsSection />}
-      {user?.role === "admin" && <TimingStandardsSection />}
-      {user?.role === "admin" && <MixerCapacitySection />}
-      {user?.role === "admin" && <ProductionExtrasSection />}
-      {user?.role === "admin" && <BreakDefaultsSection />}
-
-      {/* APC Fulfilment — admin only */}
-      {user?.role === "admin" && <ApcServiceCodesSection />}
-
       {/* Access Control — admin only */}
       {user?.role === "admin" && <AccessControlSection />}
+    </div>
+  );
+}
+
+export default function Settings() {
+  const { data: users, isLoading } = useListUsers();
+  const { state } = useAuth();
+  const user = state.status === "authenticated" ? state.user : null;
+  const search = useSearch();
+  const [, navigate] = useLocation();
+
+  const params = new URLSearchParams(search);
+  const sectionParam = params.get("section") as SettingsSection | null;
+  const validSections: SettingsSection[] = ["profile", "team", "production", "storage"];
+  const activeSection: SettingsSection = sectionParam && validSections.includes(sectionParam) ? sectionParam : "profile";
+
+  const setSection = (s: SettingsSection) => {
+    navigate(`/settings?section=${s}`, { replace: true });
+  };
+
+  const dptRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const sub = params.get("sub");
+    if (activeSection === "production" && sub === "dpt" && dptRef.current) {
+      setTimeout(() => {
+        dptRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 100);
+    }
+  }, [activeSection, search]);
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Settings"
+        description="Manage your profile, team, production targets, and storage."
+      />
+
+      <div className="flex gap-6 items-start">
+        {/* Left nav */}
+        <nav className="w-52 flex-shrink-0 sticky top-6">
+          <ul className="space-y-1">
+            {NAV_ITEMS.map((item) => {
+              const Icon = item.icon;
+              const active = activeSection === item.id;
+              return (
+                <li key={item.id}>
+                  <button
+                    onClick={() => setSection(item.id)}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors text-left",
+                      active
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
+                    )}
+                  >
+                    <Icon className="w-4 h-4 flex-shrink-0" />
+                    {item.label}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+
+        {/* Right content */}
+        <div className="flex-1 min-w-0 space-y-8">
+          {activeSection === "profile" && (
+            <>
+              <ProfileSection />
+              <PinSection />
+            </>
+          )}
+
+          {activeSection === "team" && (
+            <TeamAccessContent
+              users={users as AppUser[] | undefined}
+              isLoading={isLoading}
+              user={user}
+            />
+          )}
+
+          {activeSection === "production" && (
+            <div className="space-y-8">
+              <div ref={dptRef}>
+                {user?.role === "admin" && <DptSettingsSection />}
+              </div>
+              {user?.role === "admin" && <TimingStandardsSection />}
+              {user?.role === "admin" && <MixerCapacitySection />}
+              {user?.role === "admin" && <ProductionExtrasSection />}
+              {user?.role === "admin" && <BreakDefaultsSection />}
+              {user?.role === "admin" && <ApcServiceCodesSection />}
+            </div>
+          )}
+
+          {activeSection === "storage" && (
+            <div className="space-y-8">
+              <CategoryDefaultsSection />
+              {user?.role === "admin" && <StorageLocationsSection />}
+              {user?.role === "admin" && <IngredientStorageAssignmentsSection />}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
