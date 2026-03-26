@@ -1652,6 +1652,18 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       }
     }
 
+    // Build a map of filling-mix-only quantity per ingredient (from direct recipe rows).
+    // This is used to show only the filling quantity for mozzarella/fior di latte.
+    const fillingMixQtyPerBatch = new Map<number, number>();
+    for (const r of resolved) {
+      if (r.includeInFillingMix) {
+        fillingMixQtyPerBatch.set(
+          r.ingredientId,
+          (fillingMixQtyPerBatch.get(r.ingredientId) ?? 0) + r.quantityPerBatch,
+        );
+      }
+    }
+
     for (const [, ing] of agg) {
       // Work out how much of this ingredient is marinade-only vs. base usage
       const marinadeOnlyPerBatch = (marinadeQtyPerPortion.get(ing.ingredientId) ?? 0) * portionsPerBatch;
@@ -1667,14 +1679,23 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       if (!isMainStation) continue;
 
       // Mozzarella / Fior Di Latte is loaded directly to the building fridges — exclude from all prep stations
+      // unless the ingredient is flagged as part of the filling mix for this recipe.
       const ingNameLc = (ing.ingredientName ?? "").toLowerCase();
-      if (ingNameLc.includes("mozzarella") || ingNameLc.includes("fior di latte")) continue;
+      const isMozzType = ingNameLc.includes("mozzarella") || ingNameLc.includes("fior di latte");
+      if (isMozzType && !ing.includeInFillingMix) continue;
 
       hasRelevantIngredients = true;
       // At non-prep_meat stations use only the non-marinade portion of the quantity.
       // At prep_meat the ingredient won't appear as a direct row anyway (category filter
       // ensures only raw_meat shows there), so this path is safe either way.
-      const effectiveQtyPerBatch = station === "prep_meat" ? ing.quantityPerBatch : nonMarinadePerBatch;
+      // For mozzarella/fior di latte flagged as filling mix, use only the filling-mix quantity
+      // (not the full aggregated total, which may include non-filling usage).
+      let effectiveQtyPerBatch: number;
+      if (isMozzType && ing.includeInFillingMix) {
+        effectiveQtyPerBatch = fillingMixQtyPerBatch.get(ing.ingredientId) ?? 0;
+      } else {
+        effectiveQtyPerBatch = station === "prep_meat" ? ing.quantityPerBatch : nonMarinadePerBatch;
+      }
       const cookedQty = effectiveQtyPerBatch * batchesTarget;
       const rawQty = ing.processingRatio ? cookedQty / ing.processingRatio : cookedQty;
 

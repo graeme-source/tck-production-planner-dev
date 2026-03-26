@@ -22,6 +22,7 @@ export interface ResolvedIngredient {
   steamPct: number | null;
   stockCheckEnabled: boolean;
   quantityPerBatch: number;
+  includeInFillingMix: boolean;
 }
 
 async function resolveSubRecipeIngredients(
@@ -74,6 +75,7 @@ async function resolveSubRecipeIngredients(
     steamPct: row.steamPct ?? null,
     stockCheckEnabled: row.stockCheckEnabled ?? false,
     quantityPerBatch: Number(row.quantity) * effectiveScale,
+    includeInFillingMix: false,
   }));
 
   const nestedSubRecipes = await db
@@ -107,6 +109,7 @@ export async function resolveRecipeIngredients(
     .select({
       ingredientId: recipeIngredientsTable.ingredientId,
       quantity: recipeIngredientsTable.quantity,
+      includeInFillingMix: recipeIngredientsTable.includeInFillingMix,
       ingredientName: ingredientsTable.name,
       unit: ingredientsTable.unit,
       category: ingredientsTable.category,
@@ -135,6 +138,7 @@ export async function resolveRecipeIngredients(
     steamPct: row.steamPct ?? null,
     stockCheckEnabled: row.stockCheckEnabled ?? false,
     quantityPerBatch: Number(row.quantity) * portionsPerBatch,
+    includeInFillingMix: row.includeInFillingMix ?? false,
   }));
 
   const recipeSubRecipes = await db
@@ -166,6 +170,7 @@ export function aggregateIngredients(
     const existing = map.get(ing.ingredientId);
     if (existing) {
       existing.quantityPerBatch += ing.quantityPerBatch;
+      if (ing.includeInFillingMix) existing.includeInFillingMix = true;
     } else {
       map.set(ing.ingredientId, { ...ing });
     }
