@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
+import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { Thermometer, Snowflake, Package, RefreshCw, ChevronRight, Settings2, Plus, Pencil, Trash2, X, Save, Loader2, Lock, LockOpen, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -711,6 +712,7 @@ const ZONE_OPTIONS = [
 ];
 
 export default function StockControl() {
+  const stockRefresh = useRefreshSpin();
   const queryClient = useQueryClient();
 
   const { data, isLoading, error, refetch, isFetching } = useQuery({
@@ -770,11 +772,11 @@ export default function StockControl() {
           description="Current stock levels across all storage locations"
           action={
             <button
-              onClick={() => refetch()}
+              onClick={() => { stockRefresh.triggerSpin(); refetch(); }}
               disabled={isFetching}
               className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-2 hover:bg-secondary transition-colors disabled:opacity-50"
             >
-              <RefreshCw className={cn("w-3.5 h-3.5", isFetching && "animate-spin")} />
+              <RefreshCw className={cn("w-3.5 h-3.5", (isFetching || stockRefresh.spinning) && "animate-spin")} />
               Refresh
             </button>
           }

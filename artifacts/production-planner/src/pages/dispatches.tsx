@@ -1,7 +1,8 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
 import { ShoppingBag, Package, RefreshCw, AlertCircle, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight, Scan, Tag, CheckCircle2, XCircle, RotateCcw, Loader2, SlidersHorizontal, MapPin, ShieldCheck } from "lucide-react";
+import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { format, startOfWeek, addWeeks, isSameWeek, parseISO } from "date-fns";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { useLocation } from "wouter";
@@ -115,6 +116,8 @@ export default function Dispatches() {
   const currentMonday = getMonday(today);
 
   const [activeTab, setActiveTab] = useState<"schedule" | "tag">("schedule");
+  const weeklyRefresh = useRefreshSpin();
+  const ordersRefresh = useRefreshSpin();
 
   const [weekOffset, setWeekOffset] = useState<number>(getDefaultWeekOffset);
   const selectedMonday = addWeeks(currentMonday, weekOffset);
@@ -430,11 +433,11 @@ export default function Dispatches() {
             </div>
           </div>
           <button
-            onClick={() => refetchWeekly()}
+            onClick={() => { weeklyRefresh.triggerSpin(); refetchWeekly(); }}
             disabled={weeklyLoading}
             className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${weeklyLoading ? "animate-spin" : ""}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${weeklyLoading || weeklyRefresh.spinning ? "animate-spin" : ""}`} />
             Refresh
           </button>
         </div>
@@ -680,10 +683,10 @@ export default function Dispatches() {
                   Start Packing
                 </button>
                 <button
-                  onClick={() => refetch()}
+                  onClick={() => { ordersRefresh.triggerSpin(); refetch(); }}
                   className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  <RefreshCw className="w-4 h-4" /> Refresh
+                  <RefreshCw className={`w-4 h-4 ${ordersRefresh.spinning ? "animate-spin" : ""}`} /> Refresh
                 </button>
               </div>
             </div>

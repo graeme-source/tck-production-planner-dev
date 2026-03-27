@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useListProductionPlans, useListDispatchOrders, useGetProductionPlan } from "@workspace/api-client-react";
 import { PageHeader } from "@/components/page-header";
+import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { format, isToday, startOfWeek, addWeeks } from "date-fns";
 import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X } from "lucide-react";
 import { Link } from "wouter";
@@ -206,6 +207,7 @@ async function fetchTodayDeliveriesCount(): Promise<number> {
 const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
 
 export default function Dashboard() {
+  const dashRefresh = useRefreshSpin();
   const { state } = useAuth();
   const isFounder = state.status === "authenticated" && state.user.email === FOUNDER_EMAIL;
   const { data: plans } = useListProductionPlans();
@@ -410,11 +412,11 @@ export default function Dashboard() {
               </div>
             </div>
             <button
-              onClick={() => refetch()}
+              onClick={() => { dashRefresh.triggerSpin(); refetch(); }}
               disabled={weeklyLoading}
               className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${weeklyLoading ? "animate-spin" : ""}`} />
+              <RefreshCw className={`w-3.5 h-3.5 ${weeklyLoading || dashRefresh.spinning ? "animate-spin" : ""}`} />
               Refresh
             </button>
           </div>

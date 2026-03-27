@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/page-header";
+import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 import { format, addDays, parseISO } from "date-fns";
 import { useLocation } from "wouter";
@@ -395,6 +396,8 @@ function DispatchProgressHeader({ progress }: { progress: DispatchProgress }) {
 }
 
 export default function Fulfilment() {
+  const tagsRefresh = useRefreshSpin();
+  const ordersRefresh = useRefreshSpin();
   const today = format(new Date(), "yyyy-MM-dd");
   const urlParams = new URLSearchParams(window.location.search);
   const urlTag = urlParams.get("tag");
@@ -1526,12 +1529,12 @@ export default function Fulfilment() {
           description="Select a dispatch date to start picking."
           action={
             <button
-              onClick={() => refetchTags()}
+              onClick={() => { tagsRefresh.triggerSpin(); refetchTags(); }}
               disabled={tagsLoading}
               className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
               title="Refresh"
             >
-              <RefreshCw className={`w-4 h-4 ${tagsLoading ? "animate-spin" : ""}`} />
+              <RefreshCw className={`w-4 h-4 ${tagsLoading || tagsRefresh.spinning ? "animate-spin" : ""}`} />
             </button>
           }
         />
@@ -1772,12 +1775,12 @@ export default function Fulfilment() {
         action={
           <div className="flex items-center gap-2">
             <button
-              onClick={() => refetch()}
+              onClick={() => { ordersRefresh.triggerSpin(); refetch(); }}
               disabled={isLoading}
               className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
               title="Refresh"
             >
-              <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
+              <RefreshCw className={`w-4 h-4 ${isLoading || ordersRefresh.spinning ? "animate-spin" : ""}`} />
             </button>
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input

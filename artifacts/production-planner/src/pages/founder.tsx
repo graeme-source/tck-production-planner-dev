@@ -4,6 +4,7 @@ import { Redirect } from "wouter";
 import { useQuery, useMutation, useQueryClient, useIsFetching } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { format, startOfMonth, getDaysInMonth, subDays, subMonths, endOfMonth, formatDistanceToNow } from "date-fns";
 import {
   TrendingUp,
@@ -506,6 +507,7 @@ function sectionHeading(text: string) {
 }
 
 function FounderDashboard() {
+  const founderRefresh = useRefreshSpin();
   const today = new Date();
   const todayStr = format(today, "yyyy-MM-dd");
   const monthStart = format(startOfMonth(today), "yyyy-MM-dd");
@@ -647,11 +649,11 @@ function FounderDashboard() {
               </span>
             )}
             <button
-              onClick={handleRefresh}
+              onClick={() => { founderRefresh.triggerSpin(); handleRefresh(); }}
               disabled={isAnyFetching}
               className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 active:scale-95 transition-all disabled:opacity-60 disabled:pointer-events-none"
             >
-              <RefreshCw className={`w-4 h-4 ${isAnyFetching ? "animate-spin" : ""}`} />
+              <RefreshCw className={`w-4 h-4 ${isAnyFetching || founderRefresh.spinning ? "animate-spin" : ""}`} />
               {isAnyFetching ? "Refreshing…" : "Refresh"}
             </button>
           </div>
