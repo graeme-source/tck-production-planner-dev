@@ -18,21 +18,20 @@ import {
   X,
   LayoutGrid,
   Plus,
+  ChevronLeft,
+  ChevronRight,
+  Calendar,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  nextBusinessDay,
+  calcExpectedDeliveryDate,
+  formatDeliveryDate,
+  toISODate,
+} from "@workspace/business-days";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
-
-function calcExpectedDelivery(leadTimeDays = 1, cutoffTime = "17:00"): string {
-  const now = new Date();
-  const [cutH, cutM] = cutoffTime.split(":").map(Number);
-  const isBeforeCutoff = now.getHours() < cutH || (now.getHours() === cutH && now.getMinutes() < cutM);
-  const days = isBeforeCutoff ? leadTimeDays : leadTimeDays + 1;
-  const d = new Date(now);
-  d.setDate(d.getDate() + days);
-  return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
-}
 
 type OrderLine = {
   ingredientId: number;
@@ -130,6 +129,7 @@ export default function Orders() {
   const [selectedPlanId, setSelectedPlanIdRaw] = useState<number | null>(initialPlanId);
   const setSelectedPlanId = useCallback((id: number | null) => {
     setSelectedPlanIdRaw(id);
+    setDeliveryDates({});
     if (id) {
       sessionStorage.setItem("orders_selectedPlanId", String(id));
     } else {
@@ -139,7 +139,8 @@ export default function Orders() {
   const [viewFilter, setViewFilter] = useState<"pending" | "placed">("pending");
   const [expandedSuppliers, setExpandedSuppliers] = useState<Set<number>>(new Set());
   const [editableLines, setEditableLines] = useState<Record<number, EditableLine[]>>({});
-  const [confirmDialog, setConfirmDialog] = useState<{ supplierId: number; supplierName: string } | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ supplierId: number; supplierName: string; deliveryDate: string } | null>(null);
+  const [deliveryDates, setDeliveryDates] = useState<Record<number, Date>>({});
 
   const [kanbanSearchOpen, setKanbanSearchOpen] = useState(false);
   const [kanbanSearch, setKanbanSearch] = useState("");
@@ -274,7 +275,7 @@ export default function Orders() {
   };
 
   const placeMutation = useMutation({
-    mutationFn: async ({ supplierId, lines }: { supplierId: number; lines: EditableLine[] }) => {
+    mutationFn: async ({ supplierId, lines, deliveryDate }: { supplierId: number; lines: EditableLine[]; deliveryDate?: string }) => {
       const createRes = await fetch(`${BASE}/api/orders/purchase-orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -299,7 +300,9 @@ export default function Orders() {
 
       const placeRes = await fetch(`${BASE}/api/orders/purchase-orders/${order.id}/place`, {
         method: "PATCH",
+        headers: { "Content-Type": "application/json" },
         credentials: "include",
+        body: JSON.stringify({ expectedDeliveryDate: deliveryDate }),
       });
       if (!placeRes.ok) throw new Error("Failed to place order");
       return placeRes.json();
@@ -340,17 +343,26 @@ export default function Orders() {
     });
   }, []);
 
-  const handlePlaceOrder = (supplierId: number, supplierName: string) => {
-    setConfirmDialog({ supplierId, supplierName });
+  const getDeliveryDateForSupplier = useCallback((supplierId: number, leadTimeDays?: number, cutoffTime?: string): Date => {
+    if (deliveryDates[supplierId]) return deliveryDates[supplierId];
+    return calcExpectedDeliveryDate(leadTimeDays, cutoffTime);
+  }, [deliveryDates]);
+
+  const suppliers = calculated?.suppliers ?? [];
+
+  const handlePlaceOrder = (supplierId: number, supplierName: string, leadTimeDays?: number, cutoffTime?: string) => {
+    const date = getDeliveryDateForSupplier(supplierId, leadTimeDays, cutoffTime);
+    setConfirmDialog({ supplierId, supplierName, deliveryDate: formatDeliveryDate(date) });
   };
 
   const confirmPlaceOrder = () => {
     if (!confirmDialog) return;
     const lines = editableLines[confirmDialog.supplierId] || [];
-    placeMutation.mutate({ supplierId: confirmDialog.supplierId, lines });
+    const supplier = suppliers.find(s => s.supplier.id === confirmDialog.supplierId);
+    const date = getDeliveryDateForSupplier(confirmDialog.supplierId, supplier?.supplier.leadTimeDays, supplier?.supplier.cutoffTime);
+    const deliveryDateStr = toISODate(date);
+    placeMutation.mutate({ supplierId: confirmDialog.supplierId, lines, deliveryDate: deliveryDateStr });
   };
-
-  const suppliers = calculated?.suppliers ?? [];
   const placedForPlan = placedOrders.filter(o => o.status === "placed" && o.planId === selectedPlanId);
   const placedSupplierIds = new Set(placedForPlan.map(o => o.supplierId));
   const dptPendingSuppliers = suppliers.filter(s => !placedSupplierIds.has(s.supplier.id));
@@ -539,7 +551,7 @@ export default function Orders() {
                   </p>
                   <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
                     <Truck className="w-3 h-3 inline shrink-0" />
-                    Est. delivery: {calcExpectedDelivery(so.supplier.leadTimeDays, so.supplier.cutoffTime)}
+                    Est. delivery: {formatDeliveryDate(getDeliveryDateForSupplier(so.supplier.id, so.supplier.leadTimeDays, so.supplier.cutoffTime))}
                   </p>
                 </div>
               </div>
@@ -649,6 +661,64 @@ export default function Orders() {
                   </table>
                 </div>
 
+                <div className="px-4 py-3 border-t border-border bg-secondary/5 flex items-center gap-3 flex-wrap">
+                  <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span>Delivery date:</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => {
+                        const current = getDeliveryDateForSupplier(so.supplier.id, so.supplier.leadTimeDays, so.supplier.cutoffTime);
+                        const prev = nextBusinessDay(current, -1);
+                        const today = new Date();
+                        today.setHours(0, 0, 0, 0);
+                        if (prev >= today) {
+                          setDeliveryDates(d => ({ ...d, [so.supplier.id]: prev }));
+                        }
+                      }}
+                      className="p-1 rounded hover:bg-secondary transition-colors"
+                      title="Previous business day"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <input
+                      type="date"
+                      value={toISODate(getDeliveryDateForSupplier(so.supplier.id, so.supplier.leadTimeDays, so.supplier.cutoffTime))}
+                      min={toISODate(new Date())}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val) {
+                          const parts = val.split("-").map(Number);
+                          let chosen = new Date(parts[0], parts[1] - 1, parts[2]);
+                          const today = new Date();
+                          today.setHours(0, 0, 0, 0);
+                          if (chosen < today) return;
+                          if (chosen.getDay() === 0 || chosen.getDay() === 6) {
+                            chosen = nextBusinessDay(chosen, 1);
+                          }
+                          setDeliveryDates(d => ({ ...d, [so.supplier.id]: chosen }));
+                        }
+                      }}
+                      className="px-2 py-1 text-sm border border-border rounded-md bg-background w-[140px]"
+                    />
+                    <button
+                      onClick={() => {
+                        const current = getDeliveryDateForSupplier(so.supplier.id, so.supplier.leadTimeDays, so.supplier.cutoffTime);
+                        const nxt = nextBusinessDay(current, 1);
+                        setDeliveryDates(d => ({ ...d, [so.supplier.id]: nxt }));
+                      }}
+                      className="p-1 rounded hover:bg-secondary transition-colors"
+                      title="Next business day"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <span className="text-xs text-muted-foreground">
+                    {formatDeliveryDate(getDeliveryDateForSupplier(so.supplier.id, so.supplier.leadTimeDays, so.supplier.cutoffTime))}
+                  </span>
+                </div>
+
                 <div className="p-4 flex items-center justify-between border-t border-border bg-secondary/10">
                   <div className="text-sm text-muted-foreground">
                     {checkedCount === lines.length ? (
@@ -660,7 +730,7 @@ export default function Orders() {
                     )}
                   </div>
                   <button
-                    onClick={() => handlePlaceOrder(so.supplier.id, so.supplier.name)}
+                    onClick={() => handlePlaceOrder(so.supplier.id, so.supplier.name, so.supplier.leadTimeDays, so.supplier.cutoffTime)}
                     disabled={!allChecked || placeMutation.isPending}
                     className={cn(
                       "px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2",
@@ -871,6 +941,11 @@ export default function Orders() {
               <p className="text-sm text-muted-foreground">
                 Are you sure you want to mark the order for <span className="font-semibold text-foreground">{confirmDialog.supplierName}</span> as placed?
               </p>
+              <div className="flex items-center gap-2 text-sm bg-secondary/30 rounded-lg px-3 py-2">
+                <Truck className="w-4 h-4 text-muted-foreground shrink-0" />
+                <span className="text-muted-foreground">Expected delivery:</span>
+                <span className="font-medium">{confirmDialog.deliveryDate}</span>
+              </div>
               {editableLines[confirmDialog.supplierId] && (
                 <div className="rounded-lg border border-border p-3 space-y-1 text-sm max-h-60 overflow-y-auto">
                   {editableLines[confirmDialog.supplierId].map(l => (

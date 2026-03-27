@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { calcExpectedDeliveryDate, toISODate } from "@workspace/business-days";
 import {
   db,
   productionPlansTable,
@@ -532,17 +533,42 @@ router.patch("/purchase-orders/:id/place", async (req, res) => {
     .from(suppliersTable)
     .where(eq(suppliersTable.id, existing.supplierId));
 
-  const leadTimeDays = supplier?.leadTimeDays ?? 1;
-  const cutoffTime = supplier?.cutoffTime ?? "17:00";
+  const overrideDate = req.body?.expectedDeliveryDate;
+  let expectedDeliveryDate: string;
 
-  const now = new Date();
-  const [cutH, cutM] = cutoffTime.split(":").map(Number);
-  const isBeforeCutoff = now.getHours() < cutH || (now.getHours() === cutH && now.getMinutes() < cutM);
-  const baseDays = isBeforeCutoff ? leadTimeDays : leadTimeDays + 1;
+  if (overrideDate && typeof overrideDate === "string" && !/^\d{4}-\d{2}-\d{2}$/.test(overrideDate)) {
+    res.status(400).json({ error: "Invalid delivery date format, expected YYYY-MM-DD" });
+    return;
+  }
 
-  const deliveryDate = new Date(now);
-  deliveryDate.setDate(deliveryDate.getDate() + baseDays);
-  const expectedDeliveryDate = deliveryDate.toISOString().split("T")[0];
+  if (overrideDate && typeof overrideDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(overrideDate)) {
+    const parts = overrideDate.split("-").map(Number);
+    const overrideParsed = new Date(parts[0], parts[1] - 1, parts[2]);
+    if (isNaN(overrideParsed.getTime()) ||
+        overrideParsed.getFullYear() !== parts[0] ||
+        overrideParsed.getMonth() !== parts[1] - 1 ||
+        overrideParsed.getDate() !== parts[2]) {
+      res.status(400).json({ error: "Invalid calendar date" });
+      return;
+    }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (overrideParsed < today) {
+      res.status(400).json({ error: "Delivery date cannot be in the past" });
+      return;
+    }
+    if (overrideParsed.getDay() === 0 || overrideParsed.getDay() === 6) {
+      while (overrideParsed.getDay() === 0 || overrideParsed.getDay() === 6) {
+        overrideParsed.setDate(overrideParsed.getDate() + 1);
+      }
+    }
+    expectedDeliveryDate = toISODate(overrideParsed);
+  } else {
+    const leadTimeDays = supplier?.leadTimeDays ?? 1;
+    const cutoffTime = supplier?.cutoffTime ?? "17:00";
+    const deliveryDate = calcExpectedDeliveryDate(leadTimeDays, cutoffTime);
+    expectedDeliveryDate = toISODate(deliveryDate);
+  }
 
   const [updated] = await db
     .update(purchaseOrdersTable)
