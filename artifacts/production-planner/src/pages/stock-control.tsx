@@ -196,7 +196,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
   const queryClient = useQueryClient();
   const colors = zoneColors(location.zone);
   const totalQty = location.items.reduce((s, i) => s + i.qty, 0);
-  const maxQty = location.items[0]?.qty ?? 1;
+  const maxQty = Math.max(1, ...location.items.map(i => i.qty));
 
   const [editingEntryId, setEditingEntryId] = useState<number | null>(null);
   const [editQty, setEditQty] = useState("");
