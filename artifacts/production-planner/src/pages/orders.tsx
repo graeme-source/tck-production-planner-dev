@@ -47,6 +47,7 @@ type OrderLine = {
   orderQty: number;
   packsToOrder: number;
   isKanban: boolean;
+  orderingUrl: string | null;
 };
 
 type SupplierOrder = {
@@ -83,6 +84,7 @@ type PurchaseOrder = {
     id: number;
     ingredientId: number;
     ingredientName: string | null;
+    orderingUrl: string | null;
     quantityRequired: string;
     quantityOrdered: string;
     unit: string;
@@ -593,7 +595,14 @@ export default function Orders() {
                             />
                           </td>
                           <td className="p-3">
-                            <div className="font-medium">{line.ingredientName}</div>
+                            <div className="font-medium">
+                              {line.orderingUrl ? (
+                                <a href={line.orderingUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-1">
+                                  {line.ingredientName}
+                                  <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                                </a>
+                              ) : line.ingredientName}
+                            </div>
                             {line.supplierPartNumber && (
                               <div className="text-xs text-muted-foreground">#{line.supplierPartNumber}</div>
                             )}
@@ -714,7 +723,14 @@ export default function Orders() {
                   <tbody>
                     {order.lines.map(line => (
                       <tr key={line.id} className="border-b border-green-500/10">
-                        <td className="p-3 font-medium">{line.ingredientName}</td>
+                        <td className="p-3 font-medium">
+                          {line.orderingUrl ? (
+                            <a href={line.orderingUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-1">
+                              {line.ingredientName}
+                              <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                            </a>
+                          ) : line.ingredientName}
+                        </td>
                         <td className="p-3 text-right tabular-nums">{Number(line.quantityOrdered).toLocaleString()}</td>
                         <td className="p-3 text-right">{line.unit}</td>
                       </tr>
@@ -859,7 +875,14 @@ export default function Orders() {
                 <div className="rounded-lg border border-border p-3 space-y-1 text-sm max-h-60 overflow-y-auto">
                   {editableLines[confirmDialog.supplierId].map(l => (
                     <div key={l.ingredientId} className="flex justify-between">
-                      <span>{l.ingredientName}</span>
+                      <span>
+                        {l.orderingUrl ? (
+                          <a href={l.orderingUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-1">
+                            {l.ingredientName}
+                            <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                          </a>
+                        ) : l.ingredientName}
+                      </span>
                       <span className="tabular-nums font-medium">
                         {(l.unit === "packs" || l.unit === "bottles")
                           ? `${l.editedPacks} ${l.unit} (${l.packWeight} kg each)`

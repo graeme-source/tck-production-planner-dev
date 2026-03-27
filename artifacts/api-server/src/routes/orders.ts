@@ -106,6 +106,7 @@ router.get("/calculate", async (req, res) => {
       surplusPercent: ingredientsTable.surplusPercent,
       kanbanQuantity: ingredientsTable.kanbanQuantity,
       kanbanUnit: ingredientsTable.kanbanUnit,
+      orderingUrl: ingredientsTable.orderingUrl,
     })
     .from(ingredientsTable)
     .where(inArray(ingredientsTable.id, ingredientIds));
@@ -200,6 +201,7 @@ router.get("/calculate", async (req, res) => {
       orderQty: number;
       packsToOrder: number;
       isKanban: boolean;
+      orderingUrl: string | null;
     }>;
   }> = {};
 
@@ -271,6 +273,7 @@ router.get("/calculate", async (req, res) => {
       orderQty: Math.round(orderQty * 100) / 100,
       packsToOrder,
       isKanban,
+      orderingUrl: detail.orderingUrl ?? null,
     });
   }
 
@@ -291,6 +294,7 @@ router.get("/calculate", async (req, res) => {
           kanbanQuantity: ingredientsTable.kanbanQuantity,
           kanbanOrderAmount: ingredientsTable.kanbanOrderAmount,
           kanbanUnit: ingredientsTable.kanbanUnit,
+          orderingUrl: ingredientsTable.orderingUrl,
         })
         .from(ingredientsTable)
         .where(eq(ingredientsTable.id, kanban.ingredientId))
@@ -340,6 +344,7 @@ router.get("/calculate", async (req, res) => {
         orderQty,
         packsToOrder,
         isKanban: true,
+        orderingUrl: d.orderingUrl ?? null,
       });
     }
   }
@@ -405,6 +410,7 @@ router.get("/purchase-orders", async (req, res) => {
     id: number;
     ingredientId: number;
     ingredientName: string | null;
+    orderingUrl: string | null;
     quantityRequired: string;
     quantityOrdered: string;
     quantityReceived: string;
@@ -421,6 +427,7 @@ router.get("/purchase-orders", async (req, res) => {
         purchaseOrderId: purchaseOrderLinesTable.purchaseOrderId,
         ingredientId: purchaseOrderLinesTable.ingredientId,
         ingredientName: ingredientsTable.name,
+        orderingUrl: ingredientsTable.orderingUrl,
         quantityRequired: purchaseOrderLinesTable.quantityRequired,
         quantityOrdered: purchaseOrderLinesTable.quantityOrdered,
         quantityReceived: purchaseOrderLinesTable.quantityReceived,
@@ -439,6 +446,7 @@ router.get("/purchase-orders", async (req, res) => {
         id: line.id,
         ingredientId: line.ingredientId,
         ingredientName: line.ingredientName,
+        orderingUrl: line.orderingUrl ?? null,
         quantityRequired: line.quantityRequired,
         quantityOrdered: line.quantityOrdered,
         quantityReceived: line.quantityReceived,
