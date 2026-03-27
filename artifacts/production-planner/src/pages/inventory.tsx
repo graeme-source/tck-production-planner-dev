@@ -125,6 +125,7 @@ const schema = z.object({
   carbohydrate: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
   sugars: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
   protein: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
+  fibre: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
   salt: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
   labelDeclaration: z.string().optional(),
   allergens: z.array(z.string()).optional(),
@@ -143,7 +144,7 @@ function emptyDefaults(mode: TabType): FormValues {
     stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "",
     surplusPercent: 10, shelfLifeDays: null,
     kanbanEnabled: false, kanbanQuantity: 0, kanbanUnit: "weight" as const, kanbanOrderAmount: null,
-    energyKj: null, energyKcal: null, fat: null, saturates: null, carbohydrate: null, sugars: null, protein: null, salt: null, labelDeclaration: "", allergens: [],
+    energyKj: null, energyKcal: null, fat: null, saturates: null, carbohydrate: null, sugars: null, protein: null, fibre: null, salt: null, labelDeclaration: "", allergens: [],
   };
 }
 
@@ -412,6 +413,7 @@ function ItemFormDialog({
       carbohydrate: (item as Record<string, unknown>).carbohydrate != null ? Number((item as Record<string, unknown>).carbohydrate) : null,
       sugars: (item as Record<string, unknown>).sugars != null ? Number((item as Record<string, unknown>).sugars) : null,
       protein: (item as Record<string, unknown>).protein != null ? Number((item as Record<string, unknown>).protein) : null,
+      fibre: (item as Record<string, unknown>).fibre != null ? Number((item as Record<string, unknown>).fibre) : null,
       salt: (item as Record<string, unknown>).salt != null ? Number((item as Record<string, unknown>).salt) : null,
       labelDeclaration: ((item as Record<string, unknown>).labelDeclaration as string) ?? "",
       allergens: ((item as Record<string, unknown>).allergens as string[]) ?? [],
@@ -747,6 +749,7 @@ function ItemFormDialog({
                       { field: "carbohydrate", label: "Carbs (g)" },
                       { field: "sugars", label: "Sugars (g)" },
                       { field: "protein", label: "Protein (g)" },
+                      { field: "fibre", label: "Fibre (g)" },
                       { field: "salt", label: "Salt (g)" },
                     ] as const).map(({ field, label }) => (
                       <div key={field}>
@@ -839,6 +842,7 @@ function buildPayload(data: FormValues) {
     carbohydrate: data.carbohydrate ?? null,
     sugars: data.sugars ?? null,
     protein: data.protein ?? null,
+    fibre: data.fibre ?? null,
     salt: data.salt ?? null,
     labelDeclaration: data.labelDeclaration || null,
     allergens: data.allergens ?? [],

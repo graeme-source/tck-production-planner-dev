@@ -456,6 +456,7 @@ const schema = z.object({
   carbohydrate: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
   sugars: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
   protein: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
+  fibre: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
   salt: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
   labelDeclaration: z.string().optional(),
   allergens: z.array(z.string()).optional(),
@@ -467,7 +468,7 @@ const emptyDefaults: FormValues = {
   name: "", unit: "kg", packWeight: 0, costPerPack: 0,
   brand: "", supplierPartNumber: "", supplierId: 0, secondarySupplierId: 0,
   orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null, estimatedCookTimeMin: null, ovenTempC: null, steamPct: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "", surplusPercent: 10, shelfLifeDays: null, kanbanEnabled: false, kanbanQuantity: 0, kanbanUnit: "weight" as const, kanbanOrderAmount: null,
-  energyKj: null, energyKcal: null, fat: null, saturates: null, carbohydrate: null, sugars: null, protein: null, salt: null, labelDeclaration: "", allergens: [],
+  energyKj: null, energyKcal: null, fat: null, saturates: null, carbohydrate: null, sugars: null, protein: null, fibre: null, salt: null, labelDeclaration: "", allergens: [],
 };
 
 export default function Ingredients() {
@@ -563,6 +564,7 @@ export default function Ingredients() {
       carbohydrate: (item as Record<string, unknown>).carbohydrate != null ? Number((item as Record<string, unknown>).carbohydrate) : null,
       sugars: (item as Record<string, unknown>).sugars != null ? Number((item as Record<string, unknown>).sugars) : null,
       protein: (item as Record<string, unknown>).protein != null ? Number((item as Record<string, unknown>).protein) : null,
+      fibre: (item as Record<string, unknown>).fibre != null ? Number((item as Record<string, unknown>).fibre) : null,
       salt: (item as Record<string, unknown>).salt != null ? Number((item as Record<string, unknown>).salt) : null,
       labelDeclaration: ((item as Record<string, unknown>).labelDeclaration as string) ?? "",
       allergens: ((item as Record<string, unknown>).allergens as string[]) ?? [],
@@ -604,6 +606,7 @@ export default function Ingredients() {
     carbohydrate: data.carbohydrate ?? null,
     sugars: data.sugars ?? null,
     protein: data.protein ?? null,
+    fibre: data.fibre ?? null,
     salt: data.salt ?? null,
     labelDeclaration: data.labelDeclaration || null,
     allergens: data.allergens ?? [],
@@ -1178,6 +1181,10 @@ export default function Ingredients() {
                     <div>
                       <label className="text-xs font-medium mb-1 block">Protein (g)</label>
                       <input type="number" step="0.01" {...register("protein")} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium mb-1 block">Fibre (g)</label>
+                      <input type="number" step="0.01" {...register("fibre")} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
                     </div>
                     <div>
                       <label className="text-xs font-medium mb-1 block">Salt (g)</label>

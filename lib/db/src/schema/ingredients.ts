@@ -40,6 +40,7 @@ export const ingredientsTable = pgTable("ingredients", {
   carbohydrate: numeric("carbohydrate", { precision: 10, scale: 2 }),
   sugars: numeric("sugars", { precision: 10, scale: 2 }),
   protein: numeric("protein", { precision: 10, scale: 2 }),
+  fibre: numeric("fibre", { precision: 10, scale: 2 }),
   salt: numeric("salt", { precision: 10, scale: 2 }),
   labelDeclaration: text("label_declaration"),
   allergens: jsonb("allergens").$type<string[]>().default([]),

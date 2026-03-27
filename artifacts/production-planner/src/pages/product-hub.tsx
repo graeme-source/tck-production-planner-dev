@@ -39,7 +39,7 @@ type RecipeItem = { id: number; name: string };
 
 const NUTRIENT_LABELS: Record<string, string> = {
   energyKj: "Energy (kJ)", energyKcal: "Energy (kcal)", fat: "Fat", saturates: "  of which saturates",
-  carbohydrate: "Carbohydrate", sugars: "  of which sugars", protein: "Protein", salt: "Salt",
+  carbohydrate: "Carbohydrate", sugars: "  of which sugars", protein: "Protein", fibre: "Fibre", salt: "Salt",
 };
 
 function NutritionalsPanel({ recipe }: { recipe: RecipeItem }) {

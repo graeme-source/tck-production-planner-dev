@@ -415,6 +415,17 @@ async function runStartupMigrations() {
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `);
+    await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS energy_kj NUMERIC(10,2)`);
+    await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS energy_kcal NUMERIC(10,2)`);
+    await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS fat NUMERIC(10,2)`);
+    await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS saturates NUMERIC(10,2)`);
+    await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS carbohydrate NUMERIC(10,2)`);
+    await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS sugars NUMERIC(10,2)`);
+    await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS protein NUMERIC(10,2)`);
+    await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS fibre NUMERIC(10,2)`);
+    await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS salt NUMERIC(10,2)`);
+    await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS label_declaration TEXT`);
+    await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS allergens JSONB DEFAULT '[]'`);
     await seedStorageLocations();
     console.log("Startup migrations OK");
   } catch (err) {

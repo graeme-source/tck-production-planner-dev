@@ -559,7 +559,7 @@ router.delete("/:id/shopify-mapping", async (req, res) => {
   }
 });
 
-const NUTRIENT_KEYS = ["energyKj", "energyKcal", "fat", "saturates", "carbohydrate", "sugars", "protein", "salt"] as const;
+const NUTRIENT_KEYS = ["energyKj", "energyKcal", "fat", "saturates", "carbohydrate", "sugars", "fibre", "protein", "salt"] as const;
 type NutrientKey = typeof NUTRIENT_KEYS[number];
 
 interface IngredientNutrientRow {
@@ -599,6 +599,7 @@ async function gatherRecipeIngredients(recipeId: number): Promise<{
       carbohydrate: ingredientsTable.carbohydrate,
       sugars: ingredientsTable.sugars,
       protein: ingredientsTable.protein,
+      fibre: ingredientsTable.fibre,
       salt: ingredientsTable.salt,
     })
     .from(recipeIngredientsTable)
@@ -618,6 +619,7 @@ async function gatherRecipeIngredients(recipeId: number): Promise<{
       saturates: i.saturates != null ? Number(i.saturates) : null,
       carbohydrate: i.carbohydrate != null ? Number(i.carbohydrate) : null,
       sugars: i.sugars != null ? Number(i.sugars) : null,
+      fibre: i.fibre != null ? Number(i.fibre) : null,
       protein: i.protein != null ? Number(i.protein) : null,
       salt: i.salt != null ? Number(i.salt) : null,
     },
@@ -652,6 +654,7 @@ async function gatherRecipeIngredients(recipeId: number): Promise<{
         carbohydrate: ingredientsTable.carbohydrate,
         sugars: ingredientsTable.sugars,
         protein: ingredientsTable.protein,
+        fibre: ingredientsTable.fibre,
         salt: ingredientsTable.salt,
       })
       .from(subRecipeIngredientsTable)
@@ -680,6 +683,7 @@ async function gatherRecipeIngredients(recipeId: number): Promise<{
             saturates: si.saturates != null ? Number(si.saturates) : null,
             carbohydrate: si.carbohydrate != null ? Number(si.carbohydrate) : null,
             sugars: si.sugars != null ? Number(si.sugars) : null,
+            fibre: si.fibre != null ? Number(si.fibre) : null,
             protein: si.protein != null ? Number(si.protein) : null,
             salt: si.salt != null ? Number(si.salt) : null,
           },
@@ -714,7 +718,7 @@ router.get("/:id/nutritionals", async (req, res) => {
 
     const per100g: Record<NutrientKey, number | null> = {
       energyKj: null, energyKcal: null, fat: null, saturates: null,
-      carbohydrate: null, sugars: null, protein: null, salt: null,
+      carbohydrate: null, sugars: null, fibre: null, protein: null, salt: null,
     };
 
     if (totalWeightG > 0) {
