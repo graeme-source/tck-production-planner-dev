@@ -664,7 +664,10 @@ function DoughMixingView({
             {completedMixes.size} of {mixCount} mixes done
           </p>
           <p className="text-xs text-muted-foreground">
-            {(doughData.flourPerMix ?? 0).toFixed(1)} kg flour → ~{(doughData.doughPerMix ?? 0).toFixed(1)} kg dough
+            {(doughData.flourPerMix ?? 0).toFixed(1)} kg flour → ~{(doughData.doughPerMix ?? 0).toFixed(1)} kg dough per mix
+          </p>
+          <p className="text-xs text-muted-foreground font-medium">
+            Day total: {doughData.totalDoughKg.toFixed(1)} kg dough ({mixCount} mixes)
           </p>
         </div>
       </div>
