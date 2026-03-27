@@ -13,16 +13,20 @@ function isCountableOrder(o: ShopifyOrder): boolean {
   return true;
 }
 
-function getNetRevenue(o: ShopifyOrder): number {
-  const total = parseFloat(o.total_price || "0");
-  if (!o.refunds || o.refunds.length === 0) return total;
-  const refundTotal = o.refunds.reduce((sum, r) => {
+function getRefundTotal(o: ShopifyOrder): number {
+  if (!o.refunds || o.refunds.length === 0) return 0;
+  return o.refunds.reduce((sum, r) => {
     if (!r.transactions) return sum;
     return sum + r.transactions
       .filter(t => t.kind === "refund" && t.status === "success")
       .reduce((s, t) => s + parseFloat(t.amount || "0"), 0);
   }, 0);
-  return total - refundTotal;
+}
+
+function getNetRevenue(o: ShopifyOrder): number {
+  const subtotal = parseFloat(o.subtotal_price || "0");
+  const refunds = getRefundTotal(o);
+  return subtotal - refunds;
 }
 
 const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
@@ -221,10 +225,10 @@ router.get("/sales-summary", requireFounder, async (req, res) => {
     const todayRevenue = todayOrdersFinal.reduce((sum, o) => sum + getNetRevenue(o), 0);
 
     // ── Diagnostics ──
-    const grossTotal = validPeriod.reduce((s, o) => s + parseFloat(o.total_price || "0"), 0);
-    const totalRefunds = grossTotal - totalRevenue;
+    const grossSubtotal = validPeriod.reduce((s, o) => s + parseFloat(o.subtotal_price || "0"), 0);
+    const totalRefundAmt = validPeriod.reduce((s, o) => s + getRefundTotal(o), 0);
     const partiallyRefundedCount = validPeriod.filter(o => o.financial_status === "partially_refunded").length;
-    console.log(`[sales-summary] ${from}→${to}: ${validPeriod.length} orders, gross £${grossTotal.toFixed(2)}, refunds -£${totalRefunds.toFixed(2)}, net £${totalRevenue.toFixed(2)}, partially_refunded: ${partiallyRefundedCount}`);
+    console.log(`[sales-summary] ${from}→${to}: ${validPeriod.length} orders, subtotal £${grossSubtotal.toFixed(2)}, refunds -£${totalRefundAmt.toFixed(2)}, net £${totalRevenue.toFixed(2)}, partially_refunded: ${partiallyRefundedCount}`);
 
     // Calculate days elapsed in the period (from → min(to, today))
     const fromDate = new Date(from + "T00:00:00Z");
