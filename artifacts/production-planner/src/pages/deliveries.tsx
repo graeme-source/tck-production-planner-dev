@@ -4,7 +4,7 @@ import { PageHeader } from "@/components/page-header";
 import {
   Truck, ChevronLeft, ChevronRight, Calendar, Package, Thermometer,
   Check, AlertTriangle, Loader2, ClipboardCheck, X,
-  CheckCircle2, AlertCircle, PackageCheck,
+  CheckCircle2, AlertCircle, PackageCheck, ArrowRightLeft,
 } from "lucide-react";
 import { format, startOfWeek, addDays, isSameDay, parseISO, isToday } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -484,6 +484,7 @@ function ReceivingDialog({
 
 export default function Deliveries() {
   const { state } = useAuth();
+  const queryClient = useQueryClient();
   const canEdit = state.status === "authenticated" && (state.user.role === "admin" || state.user.role === "manager");
 
   const [currentDate, setCurrentDate] = useState(() => new Date());
@@ -499,6 +500,33 @@ export default function Deliveries() {
   const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null);
   const { data: orderDetail } = useDeliveryDetail(selectedOrderId);
   const [receivingOpen, setReceivingOpen] = useState(false);
+
+  const [movingOrderId, setMovingOrderId] = useState<number | null>(null);
+  const moveMutation = useMutation({
+    mutationFn: async ({ orderId, newDate }: { orderId: number; newDate: string }) => {
+      const res = await fetch(`${BASE}/api/deliveries/${orderId}/move`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ expectedDeliveryDate: newDate }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to move delivery");
+      }
+      return res.json();
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deliveries/weekly"] });
+      setMovingOrderId(null);
+      const newDateObj = parseISO(variables.newDate);
+      const newWeekStart = startOfWeek(newDateObj, { weekStartsOn: 1 });
+      if (format(newWeekStart, "yyyy-MM-dd") !== weekOfStr) {
+        setCurrentDate(newDateObj);
+      }
+      setSelectedDate(newDateObj);
+    },
+  });
 
   const ordersByDay = useMemo(() => {
     const map: Record<string, DeliveryOrder[]> = {};
@@ -681,13 +709,44 @@ export default function Deliveries() {
                     </div>
 
                     {canEdit && !isReceived && (
-                      <button
-                        onClick={() => openReceiving(order.id)}
-                        className="shrink-0 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors flex items-center gap-2"
-                      >
-                        <PackageCheck className="w-4 h-4" />
-                        Receive Goods
-                      </button>
+                      <div className="shrink-0 flex items-center gap-2">
+                        {movingOrderId === order.id ? (
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="date"
+                              className="px-2 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+                              defaultValue={order.expectedDeliveryDate || ""}
+                              onChange={(e) => {
+                                if (e.target.value && e.target.value !== order.expectedDeliveryDate) {
+                                  moveMutation.mutate({ orderId: order.id, newDate: e.target.value });
+                                }
+                              }}
+                              autoFocus
+                            />
+                            <button
+                              onClick={() => setMovingOrderId(null)}
+                              className="p-1.5 rounded-lg hover:bg-secondary/50 text-muted-foreground"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setMovingOrderId(order.id)}
+                            className="p-2 rounded-xl border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
+                            title="Move to another day"
+                          >
+                            <ArrowRightLeft className="w-4 h-4" />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => openReceiving(order.id)}
+                          className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors flex items-center gap-2"
+                        >
+                          <PackageCheck className="w-4 h-4" />
+                          Receive Goods
+                        </button>
+                      </div>
                     )}
                     {isReceived && (
                       <span className="shrink-0 flex items-center gap-1.5 text-sm text-green-600 dark:text-green-400 font-medium">

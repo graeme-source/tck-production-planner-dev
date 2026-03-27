@@ -115,6 +115,44 @@ router.get("/weekly", async (req, res) => {
   res.json({ weekOf: mondayStr, orders: result });
 });
 
+router.patch("/:id/move", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { expectedDeliveryDate } = req.body;
+    if (!expectedDeliveryDate || !/^\d{4}-\d{2}-\d{2}$/.test(expectedDeliveryDate)) {
+      res.status(400).json({ error: "Valid expectedDeliveryDate (YYYY-MM-DD) is required" });
+      return;
+    }
+    const role = req.session.userRole;
+    if (role !== "admin" && role !== "manager") {
+      res.status(403).json({ error: "Admin or manager role required" });
+      return;
+    }
+    const [order] = await db
+      .select({ id: purchaseOrdersTable.id, status: purchaseOrdersTable.status })
+      .from(purchaseOrdersTable)
+      .where(eq(purchaseOrdersTable.id, id));
+    if (!order) {
+      res.status(404).json({ error: "Purchase order not found" });
+      return;
+    }
+    if (order.status === "received") {
+      res.status(400).json({ error: "Cannot move a delivery that has already been received" });
+      return;
+    }
+    const [updated] = await db
+      .update(purchaseOrdersTable)
+      .set({ expectedDeliveryDate })
+      .where(eq(purchaseOrdersTable.id, id))
+      .returning();
+    res.json({ id: updated.id, expectedDeliveryDate: updated.expectedDeliveryDate });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Deliveries] move error:", msg);
+    res.status(500).json({ error: msg });
+  }
+});
+
 router.get("/expiry-warnings", async (_req, res) => {
   try {
     const entries = await db
