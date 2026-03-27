@@ -75,6 +75,7 @@ const schema = z.object({
   orderingUrl: z.string().optional(),
   notes: z.string().optional(),
   category: z.string().optional(),
+  prepWeightMode: z.enum(["raw", "processed"]).optional(),
   palletSize: z.preprocess(
     (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
     z.number().int().positive().nullable().optional()
@@ -138,7 +139,7 @@ function emptyDefaults(mode: TabType): FormValues {
     formMode: mode === "supplies" ? "supply" : "ingredient",
     name: "", unit: mode === "supplies" ? "each" : "kg", packWeight: 0, costPerPack: 0,
     brand: "", supplierPartNumber: "", supplierId: 0, secondarySupplierId: 0,
-    orderingUrl: "", notes: "", category: "", palletSize: null,
+    orderingUrl: "", notes: "", category: "", prepWeightMode: "raw" as const, palletSize: null,
     processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null,
     estimatedCookTimeMin: null, ovenTempC: null, steamPct: null,
     stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "",
@@ -390,6 +391,7 @@ function ItemFormDialog({
       orderingUrl: item.orderingUrl ?? "",
       notes: item.notes ?? "",
       category: item.category ?? "",
+      prepWeightMode: ((item as Record<string, unknown>).prepWeightMode as "raw" | "processed") ?? "raw",
       palletSize: (item as Record<string, unknown>).palletSize != null ? Number((item as Record<string, unknown>).palletSize) : null,
       processingRatioPct: item.processingRatio != null ? parseFloat((Number(item.processingRatio) * 100).toFixed(4)) : null,
       rawMeatTrayCapacityKg: item.rawMeatTrayCapacityKg != null ? Number(item.rawMeatTrayCapacityKg) : null,
@@ -578,6 +580,19 @@ function ItemFormDialog({
                 <p className="text-xs text-muted-foreground mt-1">Leave blank for 100% (no loss). Adjusts sub-recipe yield.</p>
                 {errors.processingRatioPct && <span className="text-destructive text-xs">{String(errors.processingRatioPct.message)}</span>}
               </div>
+
+              {watchedProcessingRatioPct != null && watchedProcessingRatioPct < 100 && (
+                <div className="pl-4 border-l-2 border-primary/20">
+                  <label className="text-sm font-medium mb-1 block">Prep Weighing Point</label>
+                  <select {...register("prepWeightMode")} className={cn(numInputClass, "max-w-[280px]")}>
+                    <option value="raw">Raw weight (weigh before processing)</option>
+                    <option value="processed">Processed weight (weigh after processing)</option>
+                  </select>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Controls which weight the prep station shows. Use "processed" for ingredients where staff chop/pick then weigh the exact amount (e.g. basil, fresh veg).
+                  </p>
+                </div>
+              )}
 
               <div>
                 <label className="text-sm font-medium mb-1 block">Shelf Life <span className="text-xs font-normal text-muted-foreground">(days)</span></label>
@@ -820,6 +835,7 @@ function buildPayload(data: FormValues) {
     category: data.category || null,
     perishable: data.formMode === "ingredient",
     palletSize: data.palletSize ?? null,
+    prepWeightMode: data.prepWeightMode ?? "raw",
     processingRatio: data.processingRatioPct != null ? data.processingRatioPct / 100 : null,
     rawMeatTrayCapacityKg: data.rawMeatTrayCapacityKg ?? null,
     minCookingTempC: data.minCookingTempC ?? null,

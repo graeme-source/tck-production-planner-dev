@@ -429,6 +429,19 @@ async function runStartupMigrations() {
     await db.execute(sql`ALTER TABLE sub_recipes ADD COLUMN IF NOT EXISTS label_declaration TEXT`);
     await db.execute(sql`ALTER TABLE recipe_ingredients ADD COLUMN IF NOT EXISTS quid BOOLEAN NOT NULL DEFAULT FALSE`);
     await db.execute(sql`ALTER TABLE recipe_sub_recipes ADD COLUMN IF NOT EXISTS quid BOOLEAN NOT NULL DEFAULT FALSE`);
+    await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS prep_weight_mode TEXT NOT NULL DEFAULT 'raw'`);
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS _migrations_done (key TEXT PRIMARY KEY, done_at TIMESTAMP DEFAULT NOW())`);
+    await db.execute(sql`
+      INSERT INTO _migrations_done (key)
+      SELECT 'prep_weight_mode_backfill'
+      WHERE NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'prep_weight_mode_backfill')
+    `);
+    {
+      const [{ cnt }] = await db.execute(sql`SELECT count(*)::int as cnt FROM _migrations_done WHERE key = 'prep_weight_mode_backfill' AND done_at > NOW() - INTERVAL '5 seconds'`);
+      if (Number(cnt) > 0) {
+        await db.execute(sql`UPDATE ingredients SET prep_weight_mode = 'processed' WHERE category IN ('vegetable', 'herb') AND prep_weight_mode = 'raw'`);
+      }
+    }
     await seedStorageLocations();
     console.log("Startup migrations OK");
   } catch (err) {

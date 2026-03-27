@@ -1518,9 +1518,11 @@ router.get("/:id/prep-requirements", async (req, res) => {
     unit: string;
     category: string | null;
     processingRatio: number | null;
+    prepWeightMode: "raw" | "processed";
     rawMeatTrayCapacityKg: number | null;
     totalCookedQty: number;
     totalRawQty: number;
+    prepQty: number;
     trayCount: number | null;
     recipes: string[];
   }> = {};
@@ -1544,9 +1546,11 @@ router.get("/:id/prep-requirements", async (req, res) => {
           unit: ing.unit,
           category: ing.category,
           processingRatio: ing.processingRatio,
+          prepWeightMode: ing.prepWeightMode,
           rawMeatTrayCapacityKg: ing.rawMeatTrayCapacityKg,
           totalCookedQty: 0,
           totalRawQty: 0,
+          prepQty: 0,
           trayCount: null,
           recipes: [],
         };
@@ -1566,6 +1570,7 @@ router.get("/:id/prep-requirements", async (req, res) => {
     }
     item.totalCookedQty = roundByUnit(item.totalCookedQty, item.unit);
     item.totalRawQty = roundByUnit(item.totalRawQty, item.unit);
+    item.prepQty = item.prepWeightMode === "processed" ? item.totalCookedQty : item.totalRawQty;
   }
 
   let items = Object.values(aggregated);
@@ -1645,6 +1650,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       unit: string;
       category: string | null;
       processingRatio: number | null;
+      prepWeightMode: "raw" | "processed";
       rawMeatTrayCapacityKg: number | null;
       minCookingTempC: number | null;
       estimatedCookTimeMin: number | null;
@@ -1652,6 +1658,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       steamPct: number | null;
       cookedQty: number;
       rawQty: number;
+      prepQty: number;
       isRawMeat: boolean;
       isSeasoning: boolean;
       trayCount: number | null;
@@ -1732,19 +1739,23 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       const cookedQty = effectiveQtyPerBatch * batchesTarget;
       const rawQty = ing.processingRatio ? cookedQty / ing.processingRatio : cookedQty;
 
+      const roundedCooked = roundByUnit(cookedQty, ing.unit);
+      const roundedRaw = roundByUnit(rawQty, ing.unit);
       ingredients.push({
         ingredientId: ing.ingredientId,
         ingredientName: ing.ingredientName,
         unit: ing.unit,
         category,
         processingRatio: ing.processingRatio,
+        prepWeightMode: ing.prepWeightMode,
         rawMeatTrayCapacityKg: ing.rawMeatTrayCapacityKg,
         minCookingTempC: ing.minCookingTempC,
         estimatedCookTimeMin: ing.estimatedCookTimeMin,
         ovenTempC: ing.ovenTempC,
         steamPct: ing.steamPct,
-        cookedQty: roundByUnit(cookedQty, ing.unit),
-        rawQty: roundByUnit(rawQty, ing.unit),
+        cookedQty: roundedCooked,
+        rawQty: roundedRaw,
+        prepQty: ing.prepWeightMode === "processed" ? roundedCooked : roundedRaw,
         isRawMeat: category === "raw_meat",
         isSeasoning: false,
         trayCount: null,
@@ -2279,9 +2290,11 @@ router.get("/:id/ingredient-requirements", async (req, res) => {
     unit: string;
     category: string | null;
     processingRatio: number | null;
+    prepWeightMode: "raw" | "processed";
     rawMeatTrayCapacityKg: number | null;
     totalCookedQty: number;
     totalRawQty: number;
+    prepQty: number;
     trayCount: number | null;
     recipes: Array<{ recipeId: number; recipeName: string; batchesTarget: number; cookedQty: number; rawQty: number }>;
   }> = {};
@@ -2308,9 +2321,11 @@ router.get("/:id/ingredient-requirements", async (req, res) => {
           unit: ing.unit,
           category: ing.category,
           processingRatio: ing.processingRatio,
+          prepWeightMode: ing.prepWeightMode,
           rawMeatTrayCapacityKg: ing.rawMeatTrayCapacityKg,
           totalCookedQty: 0,
           totalRawQty: 0,
+          prepQty: 0,
           trayCount: null,
           recipes: [],
         };
@@ -2344,6 +2359,7 @@ router.get("/:id/ingredient-requirements", async (req, res) => {
     }
     item.totalCookedQty = roundByUnit(item.totalCookedQty, item.unit);
     item.totalRawQty = roundByUnit(item.totalRawQty, item.unit);
+    item.prepQty = item.prepWeightMode === "processed" ? item.totalCookedQty : item.totalRawQty;
     for (const r of item.recipes) {
       r.cookedQty = roundByUnit(r.cookedQty, item.unit);
       r.rawQty = roundByUnit(r.rawQty, item.unit);

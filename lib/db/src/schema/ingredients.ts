@@ -17,6 +17,7 @@ export const ingredientsTable = pgTable("ingredients", {
   notes: text("notes"),
   category: text("category"),
   processingRatio: numeric("processing_ratio", { precision: 5, scale: 4 }),
+  prepWeightMode: text("prep_weight_mode").notNull().default("raw"),
   rawMeatTrayCapacityKg: numeric("raw_meat_tray_capacity_kg", { precision: 10, scale: 4 }),
   minCookingTempC: numeric("min_cooking_temp_c", { precision: 5, scale: 2 }),
   estimatedCookTimeMin: integer("estimated_cook_time_min"),

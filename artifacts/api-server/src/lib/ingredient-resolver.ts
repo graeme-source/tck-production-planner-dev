@@ -15,6 +15,7 @@ export interface ResolvedIngredient {
   unit: string;
   category: string | null;
   processingRatio: number | null;
+  prepWeightMode: "raw" | "processed";
   rawMeatTrayCapacityKg: number | null;
   minCookingTempC: number | null;
   estimatedCookTimeMin: number | null;
@@ -51,6 +52,7 @@ async function resolveSubRecipeIngredients(
       unit: ingredientsTable.unit,
       category: ingredientsTable.category,
       processingRatio: ingredientsTable.processingRatio,
+      prepWeightMode: ingredientsTable.prepWeightMode,
       rawMeatTrayCapacityKg: ingredientsTable.rawMeatTrayCapacityKg,
       minCookingTempC: ingredientsTable.minCookingTempC,
       estimatedCookTimeMin: ingredientsTable.estimatedCookTimeMin,
@@ -68,6 +70,7 @@ async function resolveSubRecipeIngredients(
     unit: row.unit ?? "g",
     category: row.category ?? null,
     processingRatio: row.processingRatio ? Number(row.processingRatio) : null,
+    prepWeightMode: (row.prepWeightMode === "processed" ? "processed" : "raw") as "raw" | "processed",
     rawMeatTrayCapacityKg: row.rawMeatTrayCapacityKg ? Number(row.rawMeatTrayCapacityKg) : null,
     minCookingTempC: row.minCookingTempC ? Number(row.minCookingTempC) : null,
     estimatedCookTimeMin: row.estimatedCookTimeMin ?? null,
@@ -114,6 +117,7 @@ export async function resolveRecipeIngredients(
       unit: ingredientsTable.unit,
       category: ingredientsTable.category,
       processingRatio: ingredientsTable.processingRatio,
+      prepWeightMode: ingredientsTable.prepWeightMode,
       rawMeatTrayCapacityKg: ingredientsTable.rawMeatTrayCapacityKg,
       minCookingTempC: ingredientsTable.minCookingTempC,
       estimatedCookTimeMin: ingredientsTable.estimatedCookTimeMin,
@@ -131,6 +135,7 @@ export async function resolveRecipeIngredients(
     unit: row.unit ?? "g",
     category: row.category ?? null,
     processingRatio: row.processingRatio ? Number(row.processingRatio) : null,
+    prepWeightMode: (row.prepWeightMode === "processed" ? "processed" : "raw") as "raw" | "processed",
     rawMeatTrayCapacityKg: row.rawMeatTrayCapacityKg ? Number(row.rawMeatTrayCapacityKg) : null,
     minCookingTempC: row.minCookingTempC ? Number(row.minCookingTempC) : null,
     estimatedCookTimeMin: row.estimatedCookTimeMin ?? null,
