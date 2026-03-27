@@ -4,7 +4,7 @@ import { useAppMutations } from "@/hooks/use-mutations";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
-import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList } from "lucide-react";
+import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy } from "lucide-react";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -1375,7 +1375,7 @@ function RecipeIngredientDeckDialog({ id, open, onOpenChange }: { id: number; op
   );
 }
 
-function RecipeCard({ recipe, onEdit, onDelete, onBreakdown }: { recipe: RecipeItem; onEdit: () => void; onDelete: () => void; onBreakdown: () => void }) {
+function RecipeCard({ recipe, onEdit, onDelete, onBreakdown, onDuplicate }: { recipe: RecipeItem; onEdit: () => void; onDelete: () => void; onBreakdown: () => void; onDuplicate: () => void }) {
   const margin = recipe.grossMargin;
   const recipeColor = (recipe as any).color as string | null;
   const [nutritionalsOpen, setNutritionalsOpen] = useState(false);
@@ -1403,6 +1403,7 @@ function RecipeCard({ recipe, onEdit, onDelete, onBreakdown }: { recipe: RecipeI
             <button onClick={() => setDeckOpen(true)} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-[#919b5f] transition-colors shadow-sm" title="Ingredient Deck"><ClipboardList className="w-3 h-3" /></button>
             <button onClick={onBreakdown} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur flex items-center justify-center hover:text-white transition-colors shadow-sm" style={recipeColor ? { color: recipeColor } : undefined} title="Cost Breakdown"><BarChart2 className="w-3 h-3" /></button>
             <button onClick={onEdit} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-foreground transition-colors shadow-sm" title="Edit"><Edit2 className="w-3 h-3" /></button>
+            <button onClick={onDuplicate} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-foreground transition-colors shadow-sm" title="Duplicate"><Copy className="w-3 h-3" /></button>
             <button onClick={onDelete} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-destructive flex items-center justify-center hover:bg-destructive hover:text-white transition-colors shadow-sm" title="Delete"><Trash2 className="w-3 h-3" /></button>
           </div>
         </div>
@@ -1468,6 +1469,41 @@ export default function Recipes() {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [breakdownId, setBreakdownId] = useState<number | null>(null);
+  const [duplicatingId, setDuplicatingId] = useState<number | null>(null);
+  const [duplicateDefaults, setDuplicateDefaults] = useState<FormValues | null>(null);
+
+  const { data: duplicateDetail } = useGetRecipe(duplicatingId!, { query: { enabled: duplicatingId !== null } });
+
+  useEffect(() => {
+    if (duplicatingId !== null && duplicateDetail && duplicateDetail.id === duplicatingId) {
+      const vals: FormValues = {
+        name: `Copy of ${duplicateDetail.name}`,
+        category: duplicateDetail.category ?? "",
+        description: duplicateDetail.description ?? "",
+        servings: Number(duplicateDetail.servings),
+        servingUnit: duplicateDetail.servingUnit,
+        notes: duplicateDetail.notes ?? "",
+        packSize: Number(duplicateDetail.packSize) || 1,
+        rrp: Number(duplicateDetail.rrp) || 0,
+        packagingCost: Number(duplicateDetail.packagingCost) || 0,
+        labourCost: Number(duplicateDetail.labourCost) || 0,
+        portionsPerBatch: Number(duplicateDetail.portionsPerBatch) || 10,
+        shelfLifeDays: duplicateDetail.shelfLifeDays != null ? Number(duplicateDetail.shelfLifeDays) : undefined,
+        tinSize: duplicateDetail.tinSize ?? "",
+        maxBatchesPerTin: duplicateDetail.maxBatchesPerTin != null ? Number(duplicateDetail.maxBatchesPerTin) : null,
+        sopUrl: duplicateDetail.sopUrl ?? "",
+        isCoreMenu: duplicateDetail.isCoreMenu ?? false,
+        isCurrentSpecial: false,
+        color: duplicateDetail.color ?? "",
+        cookingLossPercent: (duplicateDetail as Record<string, unknown>).cookingLossPercent != null ? Number((duplicateDetail as Record<string, unknown>).cookingLossPercent) : 3,
+        ingredients: (duplicateDetail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false })),
+        subRecipes: (duplicateDetail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false })),
+      };
+      setDuplicateDefaults(vals);
+      setIsAddOpen(true);
+      setDuplicatingId(null);
+    }
+  }, [duplicatingId, duplicateDetail]);
 
   const ingredientList: IngredientOption[] = (ingredients ?? []).map(i => ({
     id: i.id,
@@ -1516,17 +1552,18 @@ export default function Recipes() {
       </div>
 
       {/* Add dialog */}
-      <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
+      <Dialog open={isAddOpen} onOpenChange={(v) => { setIsAddOpen(v); if (!v) setDuplicateDefaults(null); }}>
         <DialogContent className="sm:max-w-[720px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle className="font-display text-xl">New Final Product</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="font-display text-xl">{duplicateDefaults ? "Duplicate Final Product" : "New Final Product"}</DialogTitle></DialogHeader>
           <RecipeForm
-            defaultValues={addDefaults}
+            key={duplicateDefaults ? "duplicate" : "new"}
+            defaultValues={duplicateDefaults ?? addDefaults}
             isEdit={false}
             isPending={createRecipe.isPending}
             ingredients={ingredientList}
             subRecipes={subRecipeList}
             categoryDefaults={catDefaults}
-            onSubmit={(data) => createRecipe.mutate({ data }, { onSuccess: () => setIsAddOpen(false) })}
+            onSubmit={(data) => createRecipe.mutate({ data }, { onSuccess: () => { setIsAddOpen(false); setDuplicateDefaults(null); } })}
           />
         </DialogContent>
       </Dialog>
@@ -1570,6 +1607,7 @@ export default function Recipes() {
             onEdit={() => setEditingId(recipe.id)}
             onDelete={() => { if (confirm(`Delete "${recipe.name}"?`)) deleteRecipe.mutate({ id: recipe.id }); }}
             onBreakdown={() => setBreakdownId(recipe.id)}
+            onDuplicate={() => setDuplicatingId(recipe.id)}
           />
         ))}
       </div>
