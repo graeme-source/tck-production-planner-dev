@@ -1,10 +1,10 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useAuth } from "@/contexts/auth-context";
 import { Redirect } from "wouter";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, useIsFetching } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
-import { format, startOfMonth, getDaysInMonth, subDays, subMonths, endOfMonth } from "date-fns";
+import { format, startOfMonth, getDaysInMonth, subDays, subMonths, endOfMonth, formatDistanceToNow } from "date-fns";
 import {
   TrendingUp,
   Calendar,
@@ -514,8 +514,10 @@ function FounderDashboard() {
   const {
     data: monthSummary,
     isLoading: monthLoading,
+    isFetching: monthFetching,
     error: monthError,
     refetch: refetchMonth,
+    dataUpdatedAt: monthUpdatedAt,
   } = useQuery({
     queryKey: ["founder-month-summary", monthStart, todayStr],
     queryFn: () => fetchSalesSummary(monthStart, todayStr),
@@ -543,8 +545,10 @@ function FounderDashboard() {
   const {
     data: periodSummary,
     isLoading: periodLoading,
+    isFetching: periodFetching,
     error: periodError,
     refetch: refetchPeriod,
+    dataUpdatedAt: periodUpdatedAt,
   } = useQuery({
     queryKey: ["founder-period-summary", from, to],
     queryFn: () => fetchSalesSummary(from, to),
@@ -554,8 +558,10 @@ function FounderDashboard() {
   const {
     data: orderTypes,
     isLoading: orderTypesLoading,
+    isFetching: orderTypesFetching,
     error: orderTypesError,
     refetch: refetchOrderTypes,
+    dataUpdatedAt: orderTypesUpdatedAt,
   } = useQuery({
     queryKey: ["founder-orders-by-type", from, to],
     queryFn: () => fetchOrdersByType(from, to),
@@ -593,12 +599,30 @@ function FounderDashboard() {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const isAnyLoading = monthLoading || periodLoading || orderTypesLoading;
+  const tagSummaryFetching = useIsFetching({ queryKey: ["tag-summary"] });
+  const customPanelsFetching = useIsFetching({ queryKey: ["founder-custom-panels"] });
+  const isAnyFetching = monthFetching || periodFetching || orderTypesFetching || tagSummaryFetching > 0 || customPanelsFetching > 0;
+  const [, setTick] = useState(0);
 
-  function handleRefresh() {
-    refetchMonth();
-    refetchPeriod();
-    refetchOrderTypes();
-  }
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const latestDataUpdate = useMemo(() => {
+    const timestamps = [monthUpdatedAt, periodUpdatedAt, orderTypesUpdatedAt].filter(Boolean);
+    return timestamps.length > 0 ? new Date(Math.max(...timestamps)) : null;
+  }, [monthUpdatedAt, periodUpdatedAt, orderTypesUpdatedAt]);
+
+  const handleRefresh = useCallback(async () => {
+    await Promise.all([
+      refetchMonth(),
+      refetchPeriod(),
+      refetchOrderTypes(),
+      queryClient.invalidateQueries({ queryKey: ["tag-summary"] }),
+      queryClient.invalidateQueries({ queryKey: ["founder-custom-panels"] }),
+    ]);
+  }, [refetchMonth, refetchPeriod, refetchOrderTypes, queryClient]);
 
   function getGroupCount(tag: string) {
     return orderTypes?.groups.find((g) => g.tag === tag)?.count ?? 0;
@@ -616,14 +640,21 @@ function FounderDashboard() {
         title="Founder View"
         description="Sales KPIs and order breakdown."
         action={
-          <button
-            onClick={handleRefresh}
-            disabled={isAnyLoading}
-            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 px-3 py-2 rounded-lg hover:bg-secondary"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isAnyLoading ? "animate-spin" : ""}`} />
-            Refresh
-          </button>
+          <div className="flex items-center gap-3">
+            {latestDataUpdate && (
+              <span className="text-xs text-muted-foreground hidden sm:inline">
+                Last updated {formatDistanceToNow(latestDataUpdate, { addSuffix: true })}
+              </span>
+            )}
+            <button
+              onClick={handleRefresh}
+              disabled={isAnyFetching}
+              className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 active:scale-95 transition-all disabled:opacity-60 disabled:pointer-events-none"
+            >
+              <RefreshCw className={`w-4 h-4 ${isAnyFetching ? "animate-spin" : ""}`} />
+              {isAnyFetching ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
         }
       />
 
