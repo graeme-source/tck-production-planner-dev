@@ -166,6 +166,11 @@ export interface ShopifyOrder {
   line_items: ShopifyLineItem[];
   note: string | null;
   fulfillments?: ShopifyFulfillment[];
+  refunds?: Array<{
+    id: number;
+    created_at: string;
+    transactions: Array<{ amount: string; kind: string; status: string }>;
+  }>;
 }
 
 export interface ShopifyProduct {
@@ -494,7 +499,7 @@ export async function getOrdersByDateRange(
           created_at_min: min,
           created_at_max: max,
           fields:
-            "id,name,tags,created_at,cancelled_at,financial_status,fulfillment_status,total_price,customer",
+            "id,name,tags,created_at,cancelled_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,customer,refunds",
         };
 
     const res = await shopifyFetchRaw("/orders.json", params);

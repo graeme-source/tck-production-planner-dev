@@ -13,6 +13,18 @@ function isCountableOrder(o: ShopifyOrder): boolean {
   return true;
 }
 
+function getNetRevenue(o: ShopifyOrder): number {
+  const total = parseFloat(o.total_price || "0");
+  if (!o.refunds || o.refunds.length === 0) return total;
+  const refundTotal = o.refunds.reduce((sum, r) => {
+    if (!r.transactions) return sum;
+    return sum + r.transactions
+      .filter(t => t.kind === "refund" && t.status === "success")
+      .reduce((s, t) => s + parseFloat(t.amount || "0"), 0);
+  }, 0);
+  return total - refundTotal;
+}
+
 const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
 
 async function requireFounder(req: Request, res: Response, next: NextFunction) {
@@ -197,43 +209,22 @@ router.get("/sales-summary", requireFounder, async (req, res) => {
         : getOrdersByDateRange(todayStr, todayStr),
     ]);
 
-    // ── Diagnostics ──
-    const uniqueIds = new Set(periodOrders.map(o => o.id));
-    const dupeCount = periodOrders.length - uniqueIds.size;
-    const statusBreakdown: Record<string, number> = {};
-    const financialBreakdown: Record<string, number> = {};
-    for (const o of periodOrders) {
-      const cancelled = o.cancelled_at ? "cancelled" : "active";
-      statusBreakdown[cancelled] = (statusBreakdown[cancelled] ?? 0) + 1;
-      financialBreakdown[o.financial_status] = (financialBreakdown[o.financial_status] ?? 0) + 1;
-    }
-    console.log(`[sales-summary] Raw orders: ${periodOrders.length}, unique IDs: ${uniqueIds.size}, duplicates: ${dupeCount}`);
-    console.log(`[sales-summary] Status breakdown:`, JSON.stringify(statusBreakdown));
-    console.log(`[sales-summary] Financial breakdown:`, JSON.stringify(financialBreakdown));
-
     // Deduplicate by order ID in case pagination returns duplicates
     const deduped = [...new Map(periodOrders.map(o => [o.id, o])).values()];
     const validPeriod = deduped.filter(isCountableOrder);
-
-    console.log(`[sales-summary] After dedup+filter: ${validPeriod.length} orders`);
-    const rawTotal = periodOrders.reduce((s, o) => s + parseFloat(o.total_price || "0"), 0);
-    const filteredTotal = validPeriod.reduce((s, o) => s + parseFloat(o.total_price || "0"), 0);
-    const subtotalSum = validPeriod.reduce((s, o) => s + parseFloat((o as Record<string, string>).subtotal_price || "0"), 0);
-    console.log(`[sales-summary] Raw total: £${rawTotal.toFixed(2)}, Filtered total_price: £${filteredTotal.toFixed(2)}, Filtered subtotal_price: £${subtotalSum.toFixed(2)}`);
-    // Date range sanity check
-    const dates = validPeriod.map(o => o.created_at.slice(0, 10)).sort();
-    console.log(`[sales-summary] Date range of orders: ${dates[0]} → ${dates[dates.length - 1]}`);
-    // Sample first 3 orders
-    for (const o of validPeriod.slice(0, 3)) {
-      console.log(`[sales-summary] Sample: ${o.name} created=${o.created_at.slice(0,10)} total_price=${o.total_price} financial=${o.financial_status}`);
-    }
 
     const todayOrdersFinal = todayOrders
       ? [...new Map(todayOrders.map(o => [o.id, o])).values()].filter(isCountableOrder)
       : validPeriod.filter(o => o.created_at.slice(0, 10) === todayStr);
 
-    const totalRevenue = validPeriod.reduce((sum, o) => sum + parseFloat(o.total_price || "0"), 0);
-    const todayRevenue = todayOrdersFinal.reduce((sum, o) => sum + parseFloat(o.total_price || "0"), 0);
+    const totalRevenue = validPeriod.reduce((sum, o) => sum + getNetRevenue(o), 0);
+    const todayRevenue = todayOrdersFinal.reduce((sum, o) => sum + getNetRevenue(o), 0);
+
+    // ── Diagnostics ──
+    const grossTotal = validPeriod.reduce((s, o) => s + parseFloat(o.total_price || "0"), 0);
+    const totalRefunds = grossTotal - totalRevenue;
+    const partiallyRefundedCount = validPeriod.filter(o => o.financial_status === "partially_refunded").length;
+    console.log(`[sales-summary] ${from}→${to}: ${validPeriod.length} orders, gross £${grossTotal.toFixed(2)}, refunds -£${totalRefunds.toFixed(2)}, net £${totalRevenue.toFixed(2)}, partially_refunded: ${partiallyRefundedCount}`);
 
     // Calculate days elapsed in the period (from → min(to, today))
     const fromDate = new Date(from + "T00:00:00Z");
@@ -303,7 +294,7 @@ router.get("/orders-by-type", requireFounder, async (req, res) => {
             ? `${o.customer.first_name} ${o.customer.last_name}`.trim()
             : "Guest",
           date: o.created_at.slice(0, 10),
-          total: parseFloat(o.total_price || "0"),
+          total: getNetRevenue(o),
           fulfillmentStatus: o.fulfillment_status ?? "unfulfilled",
         })),
       };
@@ -333,7 +324,7 @@ router.get("/tag-summary", requireFounder, async (req, res) => {
       const tags = o.tags.split(",").map(t => t.trim().toLowerCase());
       return tags.includes(tagLower);
     });
-    const totalValue = matching.reduce((s, o) => s + parseFloat(o.total_price || "0"), 0);
+    const totalValue = matching.reduce((s, o) => s + getNetRevenue(o), 0);
     res.json({ tag, from, to, count: matching.length, totalValue });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
