@@ -75,6 +75,11 @@ async function runStartupMigrations() {
       ON CONFLICT (key) DO NOTHING
     `);
     await db.execute(sql`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES ('admin_plan_date_override', 'false', NOW())
+      ON CONFLICT (key) DO NOTHING
+    `);
+    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS postcode_validations (
         id SERIAL PRIMARY KEY,
         shopify_order_id BIGINT NOT NULL,

@@ -270,6 +270,14 @@ router.get("/calculate", async (req, res) => {
     return;
   }
 
+  if (!isAtLeast2WorkingDaysAhead(planDate)) {
+    const overrideEnabled = await isAdminDateOverrideEnabled(req);
+    if (!overrideEnabled) {
+      res.status(400).json({ error: "Production plans must be scheduled at least 2 working days in advance." });
+      return;
+    }
+  }
+
   function getPreviousWorkingDay(fromDate: string): string {
     const d = new Date(`${fromDate}T12:00:00Z`);
     do {
