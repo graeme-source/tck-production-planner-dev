@@ -18,6 +18,7 @@ const KNOWN_PAGES = [
   { pageKey: "/dispatch-tag", label: "Dispatch Tagging" },
   { pageKey: "/reports", label: "Reports" },
   { pageKey: "/kanbans", label: "Kanbans" },
+  { pageKey: "/product-hub", label: "Product Hub" },
 ];
 
 const DEFAULT_PERMISSIONS: Record<string, string> = {

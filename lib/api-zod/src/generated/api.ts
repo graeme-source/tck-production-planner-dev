@@ -233,6 +233,12 @@ export const ListIngredientsResponse = zod.array(ListIngredientsResponseItem);
 /**
  * @summary Create an ingredient
  */
+export const UK14_ALLERGENS = [
+  "celery", "cereals_containing_gluten", "crustaceans", "eggs", "fish",
+  "lupin", "milk", "molluscs", "mustard", "nuts", "peanuts",
+  "sesame", "soybeans", "sulphur_dioxide",
+] as const;
+
 export const CreateIngredientBody = zod.object({
   name: zod.string(),
   unit: zod.string(),
@@ -262,6 +268,16 @@ export const CreateIngredientBody = zod.object({
   kanbanOrderAmount: zod.number().nullish(),
   perishable: zod.boolean().optional(),
   palletSize: zod.number().nullish(),
+  energyKj: zod.number().nullish(),
+  energyKcal: zod.number().nullish(),
+  fat: zod.number().nullish(),
+  saturates: zod.number().nullish(),
+  carbohydrate: zod.number().nullish(),
+  sugars: zod.number().nullish(),
+  protein: zod.number().nullish(),
+  salt: zod.number().nullish(),
+  labelDeclaration: zod.string().nullish(),
+  allergens: zod.array(zod.string()).optional(),
 });
 
 /**
@@ -341,6 +357,16 @@ export const UpdateIngredientBody = zod.object({
   kanbanOrderAmount: zod.number().nullish(),
   perishable: zod.boolean().optional(),
   palletSize: zod.number().nullish(),
+  energyKj: zod.number().nullish(),
+  energyKcal: zod.number().nullish(),
+  fat: zod.number().nullish(),
+  saturates: zod.number().nullish(),
+  carbohydrate: zod.number().nullish(),
+  sugars: zod.number().nullish(),
+  protein: zod.number().nullish(),
+  salt: zod.number().nullish(),
+  labelDeclaration: zod.string().nullish(),
+  allergens: zod.array(zod.string()).optional(),
 });
 
 export const UpdateIngredientResponse = zod.object({
@@ -618,6 +644,7 @@ export const CreateRecipeBody = zod.object({
   color: zod.string().nullish(),
   isCoreMenu: zod.boolean().optional(),
   isCurrentSpecial: zod.boolean().optional(),
+  cookingLossPercent: zod.number().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -759,6 +786,7 @@ export const UpdateRecipeBody = zod.object({
   color: zod.string().nullish(),
   isCoreMenu: zod.boolean().optional(),
   isCurrentSpecial: zod.boolean().optional(),
+  cookingLossPercent: zod.number().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),

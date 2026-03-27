@@ -28,6 +28,7 @@ export const recipesTable = pgTable("recipes", {
   isCoreMenu: boolean("is_core_menu").notNull().default(false),
   isCurrentSpecial: boolean("is_current_special").notNull().default(false),
   color: text("color"),
+  cookingLossPercent: numeric("cooking_loss_percent", { precision: 5, scale: 2 }).notNull().default("3"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

@@ -25,6 +25,16 @@ function mapRow(r: typeof ingredientsTable.$inferSelect) {
     kanbanOrderAmount: r.kanbanOrderAmount != null ? Number(r.kanbanOrderAmount) : null,
     perishable: r.perishable ?? true,
     palletSize: r.palletSize ?? null,
+    energyKj: r.energyKj != null ? Number(r.energyKj) : null,
+    energyKcal: r.energyKcal != null ? Number(r.energyKcal) : null,
+    fat: r.fat != null ? Number(r.fat) : null,
+    saturates: r.saturates != null ? Number(r.saturates) : null,
+    carbohydrate: r.carbohydrate != null ? Number(r.carbohydrate) : null,
+    sugars: r.sugars != null ? Number(r.sugars) : null,
+    protein: r.protein != null ? Number(r.protein) : null,
+    salt: r.salt != null ? Number(r.salt) : null,
+    labelDeclaration: r.labelDeclaration ?? null,
+    allergens: (r.allergens as string[] | null) ?? [],
     createdAt: r.createdAt.toISOString(),
   };
 }
@@ -46,7 +56,7 @@ function validateProcessingRatio(value: unknown): string | null {
 }
 
 router.post("/", validate(CreateIngredientBody), async (req, res) => {
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, salt, labelDeclaration, allergens } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const [row] = await db.insert(ingredientsTable).values({
@@ -78,6 +88,16 @@ router.post("/", validate(CreateIngredientBody), async (req, res) => {
     kanbanOrderAmount: kanbanOrderAmount != null ? String(kanbanOrderAmount) : null,
     perishable: perishable !== false,
     palletSize: palletSize != null ? Number(palletSize) : null,
+    energyKj: energyKj != null ? String(energyKj) : null,
+    energyKcal: energyKcal != null ? String(energyKcal) : null,
+    fat: fat != null ? String(fat) : null,
+    saturates: saturates != null ? String(saturates) : null,
+    carbohydrate: carbohydrate != null ? String(carbohydrate) : null,
+    sugars: sugars != null ? String(sugars) : null,
+    protein: protein != null ? String(protein) : null,
+    salt: salt != null ? String(salt) : null,
+    labelDeclaration: labelDeclaration || null,
+    allergens: allergens ?? [],
   }).returning();
   res.status(201).json(mapRow(row));
 });
@@ -91,7 +111,7 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, salt, labelDeclaration, allergens } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const [row] = await db.update(ingredientsTable).set({
@@ -123,6 +143,16 @@ router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
     ...(kanbanOrderAmount !== undefined ? { kanbanOrderAmount: kanbanOrderAmount != null ? String(kanbanOrderAmount) : null } : {}),
     ...(perishable !== undefined ? { perishable } : {}),
     ...(palletSize !== undefined ? { palletSize: palletSize != null ? Number(palletSize) : null } : {}),
+    ...(energyKj !== undefined ? { energyKj: energyKj != null ? String(energyKj) : null } : {}),
+    ...(energyKcal !== undefined ? { energyKcal: energyKcal != null ? String(energyKcal) : null } : {}),
+    ...(fat !== undefined ? { fat: fat != null ? String(fat) : null } : {}),
+    ...(saturates !== undefined ? { saturates: saturates != null ? String(saturates) : null } : {}),
+    ...(carbohydrate !== undefined ? { carbohydrate: carbohydrate != null ? String(carbohydrate) : null } : {}),
+    ...(sugars !== undefined ? { sugars: sugars != null ? String(sugars) : null } : {}),
+    ...(protein !== undefined ? { protein: protein != null ? String(protein) : null } : {}),
+    ...(salt !== undefined ? { salt: salt != null ? String(salt) : null } : {}),
+    ...(labelDeclaration !== undefined ? { labelDeclaration: labelDeclaration || null } : {}),
+    ...(allergens !== undefined ? { allergens: allergens ?? [] } : {}),
   }).where(eq(ingredientsTable.id, id)).returning();
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   res.json(mapRow(row));

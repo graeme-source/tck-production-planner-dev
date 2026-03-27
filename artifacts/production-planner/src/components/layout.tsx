@@ -32,6 +32,7 @@ import {
   KeyRound,
   User,
   LockKeyhole,
+  Beaker,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/user-avatar";
@@ -61,6 +62,7 @@ export const productNavItems: NavItem[] = [
   { name: "Recipes", href: "/recipes", icon: ChefHat },
   { name: "Sub-Recipes", href: "/sub-recipes", icon: ClipboardList },
   { name: "Ingredients", href: "/inventory?tab=ingredients", icon: Carrot },
+  { name: "Product Hub", href: "/product-hub", icon: Beaker },
 ];
 
 export const bottomNavItems: NavItem[] = [
@@ -68,7 +70,7 @@ export const bottomNavItems: NavItem[] = [
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
-const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory"];
+const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory", "/product-hub"];
 const DISPATCH_PATHS = ["/dispatches", "/locations"];
 
 type AccountButtonUser = { name?: string; role?: string; avatarUrl?: string | null } | null;

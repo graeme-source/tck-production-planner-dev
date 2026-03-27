@@ -48,6 +48,8 @@ The application is structured as a pnpm workspace monorepo using TypeScript, com
     - **Station Cascade System:** Enforces a production flow where downstream stations can only complete items that have been completed by upstream stations. API validation prevents out-of-order completions (409 Conflict).
     - **Marinade System:** Flexible assignment of marinades/seasonings to raw meat ingredients within recipes, ensuring accurate cost accounting.
     - **API Routes:** Comprehensive RESTful API for CRUD operations across all entities (ingredients, recipes, production plans, stock, sales, dispatch, orders, deliveries) and specialized endpoints for station-specific data.
+    - **Nutritionals & Labelling:** Ingredients store per-100g nutritional data (energy kJ/kcal, fat, saturates, carbohydrate, sugars, protein, salt), label declarations, and UK14 allergen tags. Recipe endpoints calculate aggregate nutritionals per 100g and per portion with cooking loss adjustment. Ingredient deck generation produces ordered ingredient lists with allergen bolding in `**bold**` markdown format.
+    - **Product Hub:** Centralized page (`/product-hub`) with tabs for Ingredient Decks, Nutritionals, and Labels (placeholder). Includes a global "may contain" statement editor stored in `app_settings`. Accessible under the Product navigation group.
     - **Settings:** Global application settings managed via key-value store in `app_settings` table.
 
 **Shared Components (`lib/`):**

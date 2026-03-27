@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import {
   Search, Plus, Trash2, Edit2, Loader2, ExternalLink, Upload,
   FileText, CheckCircle2, XCircle, AlertTriangle, RefreshCw,
-  Carrot, Box,
+  Carrot, Box, ChevronDown,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
@@ -43,6 +43,23 @@ const SUPPLY_CATEGORIES = [
   { value: "cleaning", label: "Cleaning Supplies" },
   { value: "trays", label: "Trays & Bakeware" },
   { value: "other", label: "Other" },
+] as const;
+
+const UK14_ALLERGENS = [
+  { value: "celery", label: "Celery" },
+  { value: "cereals_containing_gluten", label: "Cereals containing Gluten" },
+  { value: "crustaceans", label: "Crustaceans" },
+  { value: "eggs", label: "Eggs" },
+  { value: "fish", label: "Fish" },
+  { value: "lupin", label: "Lupin" },
+  { value: "milk", label: "Milk" },
+  { value: "molluscs", label: "Molluscs" },
+  { value: "mustard", label: "Mustard" },
+  { value: "nuts", label: "Nuts" },
+  { value: "peanuts", label: "Peanuts" },
+  { value: "sesame", label: "Sesame" },
+  { value: "soybeans", label: "Soybeans" },
+  { value: "sulphur_dioxide", label: "Sulphur Dioxide" },
 ] as const;
 
 const schema = z.object({
@@ -101,6 +118,16 @@ const schema = z.object({
     (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
     z.number().min(0).nullable().optional()
   ),
+  energyKj: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
+  energyKcal: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
+  fat: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
+  saturates: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
+  carbohydrate: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
+  sugars: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
+  protein: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
+  salt: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
+  labelDeclaration: z.string().optional(),
+  allergens: z.array(z.string()).optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -116,6 +143,7 @@ function emptyDefaults(mode: TabType): FormValues {
     stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "",
     surplusPercent: 10, shelfLifeDays: null,
     kanbanEnabled: false, kanbanQuantity: 0, kanbanUnit: "weight" as const, kanbanOrderAmount: null,
+    energyKj: null, energyKcal: null, fat: null, saturates: null, carbohydrate: null, sugars: null, protein: null, salt: null, labelDeclaration: "", allergens: [],
   };
 }
 
@@ -377,16 +405,33 @@ function ItemFormDialog({
       kanbanQuantity: (item as Record<string, unknown>).kanbanQuantity != null ? Number((item as Record<string, unknown>).kanbanQuantity) : 0,
       kanbanUnit: ((item as Record<string, unknown>).kanbanUnit as "weight" | "pack" | "bottle") ?? "weight",
       kanbanOrderAmount: (item as Record<string, unknown>).kanbanOrderAmount != null ? Number((item as Record<string, unknown>).kanbanOrderAmount) : null,
+      energyKj: (item as Record<string, unknown>).energyKj != null ? Number((item as Record<string, unknown>).energyKj) : null,
+      energyKcal: (item as Record<string, unknown>).energyKcal != null ? Number((item as Record<string, unknown>).energyKcal) : null,
+      fat: (item as Record<string, unknown>).fat != null ? Number((item as Record<string, unknown>).fat) : null,
+      saturates: (item as Record<string, unknown>).saturates != null ? Number((item as Record<string, unknown>).saturates) : null,
+      carbohydrate: (item as Record<string, unknown>).carbohydrate != null ? Number((item as Record<string, unknown>).carbohydrate) : null,
+      sugars: (item as Record<string, unknown>).sugars != null ? Number((item as Record<string, unknown>).sugars) : null,
+      protein: (item as Record<string, unknown>).protein != null ? Number((item as Record<string, unknown>).protein) : null,
+      salt: (item as Record<string, unknown>).salt != null ? Number((item as Record<string, unknown>).salt) : null,
+      labelDeclaration: ((item as Record<string, unknown>).labelDeclaration as string) ?? "",
+      allergens: ((item as Record<string, unknown>).allergens as string[]) ?? [],
     });
   };
 
   const [initialized, setInitialized] = useState(false);
+  const [nutritionOpen, setNutritionOpen] = useState(false);
   if (open && !initialized) { populateForm(editingItem, defaultMode); setInitialized(true); }
-  if (!open && initialized) setInitialized(false);
+  if (!open && initialized) { setInitialized(false); setNutritionOpen(false); }
 
   const switchMode = (mode: "ingredient" | "supply") => {
     setValue("formMode", mode);
     setValue("category", "");
+  };
+
+  const watchedAllergens = watch("allergens") ?? [];
+  const toggleAllergen = (val: string) => {
+    const cur = watchedAllergens;
+    setValue("allergens", cur.includes(val) ? cur.filter((a: string) => a !== val) : [...cur, val]);
   };
 
   const onSubmit = (data: FormValues) => {
@@ -680,6 +725,66 @@ function ItemFormDialog({
             </div>
           )}
 
+          {isIngredient && (
+            <div className="border border-amber-300/50 rounded-xl overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setNutritionOpen(!nutritionOpen)}
+                className="w-full flex items-center justify-between px-4 py-3 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors"
+              >
+                <span className="text-sm font-semibold text-amber-800 dark:text-amber-300">Nutritionals &amp; Labelling</span>
+                <ChevronDown className={cn("w-4 h-4 text-amber-600 transition-transform", nutritionOpen && "rotate-180")} />
+              </button>
+              {nutritionOpen && (
+                <div className="px-4 py-4 space-y-4 bg-card">
+                  <p className="text-xs text-muted-foreground">All values per 100 g as supplied.</p>
+                  <div className="grid grid-cols-4 gap-3">
+                    {([
+                      { field: "energyKj", label: "Energy (kJ)" },
+                      { field: "energyKcal", label: "Energy (kcal)" },
+                      { field: "fat", label: "Fat (g)" },
+                      { field: "saturates", label: "Saturates (g)" },
+                      { field: "carbohydrate", label: "Carbs (g)" },
+                      { field: "sugars", label: "Sugars (g)" },
+                      { field: "protein", label: "Protein (g)" },
+                      { field: "salt", label: "Salt (g)" },
+                    ] as const).map(({ field, label }) => (
+                      <div key={field}>
+                        <label className="text-xs font-medium mb-1 block">{label}</label>
+                        <input type="number" step="0.01" min="0" {...register(field)} className={numInputClass} placeholder="0.00" />
+                      </div>
+                    ))}
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium mb-1 block">Label Declaration</label>
+                    <textarea {...register("labelDeclaration")} rows={2} className={cn(inputClass, "resize-none")} placeholder='e.g. "Wheat Flour (Wheat, Calcium Carbonate, Iron, Niacin, Thiamin)"' />
+                    <p className="text-xs text-muted-foreground mt-1">How this ingredient appears in the product ingredient deck.</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium mb-1 block">Allergens (UK14)</label>
+                    <div className="flex flex-wrap gap-1.5 mt-1">
+                      {UK14_ALLERGENS.map(a => (
+                        <button
+                          key={a.value}
+                          type="button"
+                          onClick={() => toggleAllergen(a.value)}
+                          className={cn(
+                            "px-2.5 py-1 rounded-full text-xs font-medium border transition-colors",
+                            watchedAllergens.includes(a.value)
+                              ? "bg-red-100 border-red-300 text-red-800 dark:bg-red-900/40 dark:border-red-700 dark:text-red-300"
+                              : "bg-secondary/40 border-border text-muted-foreground hover:bg-secondary"
+                          )}
+                        >
+                          {a.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div>
             <label className="text-sm font-medium mb-1 block">Notes</label>
             <textarea {...register("notes")} rows={2} className={cn(inputClass, "resize-none")} placeholder="Any additional notes..." />
@@ -727,6 +832,16 @@ function buildPayload(data: FormValues) {
     kanbanQuantity: data.kanbanQuantity ?? 0,
     kanbanUnit: data.kanbanUnit ?? "weight",
     kanbanOrderAmount: data.kanbanOrderAmount ?? null,
+    energyKj: data.energyKj ?? null,
+    energyKcal: data.energyKcal ?? null,
+    fat: data.fat ?? null,
+    saturates: data.saturates ?? null,
+    carbohydrate: data.carbohydrate ?? null,
+    sugars: data.sugars ?? null,
+    protein: data.protein ?? null,
+    salt: data.salt ?? null,
+    labelDeclaration: data.labelDeclaration || null,
+    allergens: data.allergens ?? [],
   };
 }
 

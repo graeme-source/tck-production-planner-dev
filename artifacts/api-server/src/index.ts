@@ -80,6 +80,11 @@ async function runStartupMigrations() {
       ON CONFLICT (key) DO NOTHING
     `);
     await db.execute(sql`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES ('may_contain_statement', 'May also contain traces of nuts, peanuts, egg, soya, celery, sulphites, mustard, wheat and milk', NOW())
+      ON CONFLICT (key) DO NOTHING
+    `);
+    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS postcode_validations (
         id SERIAL PRIMARY KEY,
         shopify_order_id BIGINT NOT NULL,

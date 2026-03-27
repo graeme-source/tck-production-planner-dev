@@ -29,6 +29,7 @@ import Orders from "@/pages/orders";
 import Deliveries from "@/pages/deliveries";
 import FounderView from "@/pages/founder";
 import StockControl from "@/pages/stock-control";
+import ProductHub from "@/pages/product-hub";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import AcceptInvite from "@/pages/accept-invite";
@@ -77,6 +78,7 @@ function Router() {
               <Route path="/kanbans">{() => <ProtectedRoute component={Kanbans} pageKey="/kanbans" />}</Route>
               <Route path="/deliveries" component={Deliveries} />
               <Route path="/stock-control" component={StockControl} />
+              <Route path="/product-hub" component={ProductHub} />
               <Route path="/founder" component={FounderView} />
               <Route path="/reports">{() => <ProtectedRoute component={Reports} pageKey="/reports" />}</Route>
               <Route path="/lean-cave" component={LeanCave} />

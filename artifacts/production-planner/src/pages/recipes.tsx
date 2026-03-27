@@ -4,7 +4,7 @@ import { useAppMutations } from "@/hooks/use-mutations";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
-import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2 } from "lucide-react";
+import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList } from "lucide-react";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -31,6 +31,7 @@ const schema = z.object({
   isCoreMenu: z.boolean().optional(),
   isCurrentSpecial: z.boolean().optional(),
   color: z.string().optional(),
+  cookingLossPercent: z.preprocess(v => (v === "" || v == null ? null : Number(v)), z.number().min(0).max(50).nullable().optional()),
   ingredients: z.array(z.object({
     ingredientId: z.coerce.number().min(1, "Select ingredient"),
     quantity: z.coerce.number().min(0.001, "Must be > 0"),
@@ -320,6 +321,11 @@ function RecipeForm({
             <label className="text-sm font-medium mb-1 block">Shelf Life (days)</label>
             <input type="number" step="1" min="0" {...register("shelfLifeDays")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="e.g. 3" />
             {errors.shelfLifeDays && <span className="text-destructive text-xs">{errors.shelfLifeDays.message}</span>}
+          </div>
+          <div>
+            <label className="text-sm font-medium mb-1 block">Cooking Loss %</label>
+            <input type="number" step="0.5" min="0" max="50" {...register("cookingLossPercent")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="3" />
+            <p className="text-xs text-muted-foreground mt-0.5">Weight lost during cooking (default 3%)</p>
           </div>
           <div>
             <label className="text-sm font-medium mb-1 block">Tin Size</label>
@@ -793,10 +799,11 @@ function EditRecipeDialog({
         isCoreMenu: detail.isCoreMenu ?? false,
         isCurrentSpecial: detail.isCurrentSpecial ?? false,
         color: detail.color ?? "",
+        cookingLossPercent: (detail as Record<string, unknown>).cookingLossPercent != null ? Number((detail as Record<string, unknown>).cookingLossPercent) : 3,
         ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false })),
         subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false })),
       }
-    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", ingredients: [], subRecipes: [] };
+    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", cookingLossPercent: 3, ingredients: [], subRecipes: [] };
 
   return (
     <>
@@ -1170,9 +1177,209 @@ type RecipeItem = {
   totalPackCost: number; grossMargin: number | null;
 };
 
+interface NutritionalsData {
+  totalRawWeightG: number;
+  cookingLossPercent: number;
+  cookedWeightG: number;
+  portionsPerBatch: number;
+  portionWeightG: number;
+  per100g: Record<string, number | null>;
+  perPortion: Record<string, number | null>;
+  completeness: { totalIngredients: number; missingNutritionals: string[]; missingDeclarations: string[]; isComplete: boolean };
+}
+
+interface DeckData {
+  ingredients: { ingredientId: number; name: string; declaration: string; percentage: number; allergens: string[] }[];
+  deckText: string;
+  allergens: string[];
+  mayContainStatement: string | null;
+  missingDeclarations: string[];
+  isComplete: boolean;
+}
+
+const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+function RecipeNutritionalsDialog({ id, open, onOpenChange }: { id: number; open: boolean; onOpenChange: (v: boolean) => void }) {
+  const [data, setData] = useState<NutritionalsData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    setError(null);
+    fetch(`${BASE_URL}/api/recipes/${id}/nutritionals`, { credentials: "include" })
+      .then(r => r.json())
+      .then(d => { if (d.error) throw new Error(d.error); setData(d); })
+      .catch(e => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false));
+  }, [open, id]);
+
+  const nutrientLabels: Record<string, string> = {
+    energyKj: "Energy (kJ)", energyKcal: "Energy (kcal)", fat: "Fat", saturates: "  of which saturates",
+    carbohydrate: "Carbohydrate", sugars: "  of which sugars", protein: "Protein", salt: "Salt",
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[520px] bg-card border-border rounded-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="font-display text-xl flex items-center gap-2"><Beaker className="w-5 h-5" /> Nutritional Information</DialogTitle>
+        </DialogHeader>
+        {loading && <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>}
+        {error && <p className="text-destructive text-sm py-4">{error}</p>}
+        {data && (
+          <div className="space-y-4 mt-2">
+            <div className="grid grid-cols-3 gap-3 text-sm">
+              <div className="bg-secondary/30 rounded-lg p-3 text-center">
+                <p className="text-xs text-muted-foreground">Raw Weight</p>
+                <p className="font-bold">{data.totalRawWeightG}g</p>
+              </div>
+              <div className="bg-secondary/30 rounded-lg p-3 text-center">
+                <p className="text-xs text-muted-foreground">Cooked Weight</p>
+                <p className="font-bold">{data.cookedWeightG}g</p>
+                <p className="text-[10px] text-muted-foreground">(-{data.cookingLossPercent}% loss)</p>
+              </div>
+              <div className="bg-secondary/30 rounded-lg p-3 text-center">
+                <p className="text-xs text-muted-foreground">Portion Weight</p>
+                <p className="font-bold">{data.portionWeightG}g</p>
+                <p className="text-[10px] text-muted-foreground">({data.portionsPerBatch} portions)</p>
+              </div>
+            </div>
+
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="text-left py-1.5 font-semibold">Nutrient</th>
+                  <th className="text-right py-1.5 font-semibold">Per 100g</th>
+                  <th className="text-right py-1.5 font-semibold">Per portion ({data.portionWeightG}g)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(nutrientLabels).map(([key, label]) => (
+                  <tr key={key} className="border-b border-border/50">
+                    <td className={`py-1.5 ${label.startsWith("  ") ? "pl-4 text-muted-foreground text-xs" : "font-medium"}`}>{label.trim()}</td>
+                    <td className="text-right py-1.5">{data.per100g[key] != null ? data.per100g[key] : "—"}{data.per100g[key] != null && (key.startsWith("energy") ? "" : "g")}</td>
+                    <td className="text-right py-1.5">{data.perPortion[key] != null ? data.perPortion[key] : "—"}{data.perPortion[key] != null && (key.startsWith("energy") ? "" : "g")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {!data.completeness.isComplete && (
+              <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 space-y-1">
+                <p className="text-sm font-medium text-amber-800 dark:text-amber-200 flex items-center gap-1"><AlertTriangle className="w-4 h-4" /> Incomplete Data</p>
+                {data.completeness.missingNutritionals.length > 0 && (
+                  <p className="text-xs text-amber-700 dark:text-amber-300">Missing nutritionals: {data.completeness.missingNutritionals.join(", ")}</p>
+                )}
+                {data.completeness.missingDeclarations.length > 0 && (
+                  <p className="text-xs text-amber-700 dark:text-amber-300">Missing label declarations: {data.completeness.missingDeclarations.join(", ")}</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function RecipeIngredientDeckDialog({ id, open, onOpenChange }: { id: number; open: boolean; onOpenChange: (v: boolean) => void }) {
+  const [data, setData] = useState<DeckData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    setError(null);
+    fetch(`${BASE_URL}/api/recipes/${id}/ingredient-deck`, { credentials: "include" })
+      .then(r => r.json())
+      .then(d => { if (d.error) throw new Error(d.error); setData(d); })
+      .catch(e => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false));
+  }, [open, id]);
+
+  const copyDeck = () => {
+    if (!data) return;
+    const plain = data.deckText.replace(/\*\*/g, "");
+    navigator.clipboard.writeText(plain);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[560px] bg-card border-border rounded-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="font-display text-xl flex items-center gap-2"><ClipboardList className="w-5 h-5" /> Ingredient Deck</DialogTitle>
+        </DialogHeader>
+        {loading && <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>}
+        {error && <p className="text-destructive text-sm py-4">{error}</p>}
+        {data && (
+          <div className="space-y-4 mt-2">
+            <div className="bg-secondary/20 rounded-lg p-4 border border-border">
+              <p className="text-sm leading-relaxed" dangerouslySetInnerHTML={{
+                __html: data.deckText.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+              }} />
+              <button onClick={copyDeck} className="mt-2 text-xs text-primary hover:underline">Copy to clipboard</button>
+            </div>
+
+            {data.allergens.length > 0 && (
+              <div>
+                <p className="text-sm font-semibold mb-1">Allergens Present</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {data.allergens.map(a => (
+                    <span key={a} className="px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300">{a}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {data.mayContainStatement && (
+              <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
+                <p className="text-xs font-medium text-amber-800 dark:text-amber-200">{data.mayContainStatement}</p>
+              </div>
+            )}
+
+            <div>
+              <p className="text-sm font-semibold mb-1">Breakdown by Weight</p>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left py-1">Ingredient</th>
+                    <th className="text-right py-1">%</th>
+                    <th className="text-right py-1">Allergens</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.ingredients.map((ing, idx) => (
+                    <tr key={idx} className="border-b border-border/30">
+                      <td className="py-1">{ing.name}</td>
+                      <td className="text-right py-1 font-medium">{ing.percentage}%</td>
+                      <td className="text-right py-1 text-xs">{ing.allergens.length > 0 ? ing.allergens.join(", ") : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {!data.isComplete && (
+              <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
+                <p className="text-sm font-medium text-amber-800 dark:text-amber-200 flex items-center gap-1"><AlertTriangle className="w-4 h-4" /> Missing Declarations</p>
+                <p className="text-xs text-amber-700 dark:text-amber-300">{data.missingDeclarations.join(", ")}</p>
+              </div>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function RecipeCard({ recipe, onEdit, onDelete, onBreakdown }: { recipe: RecipeItem; onEdit: () => void; onDelete: () => void; onBreakdown: () => void }) {
   const margin = recipe.grossMargin;
   const recipeColor = (recipe as any).color as string | null;
+  const [nutritionalsOpen, setNutritionalsOpen] = useState(false);
+  const [deckOpen, setDeckOpen] = useState(false);
 
   const borderStyle: React.CSSProperties = recipeColor
     ? { borderColor: recipeColor + "60" }
@@ -1192,6 +1399,8 @@ function RecipeCard({ recipe, onEdit, onDelete, onBreakdown }: { recipe: RecipeI
         </div>
         <div className="flex items-center justify-end">
           <div className="flex items-center gap-1">
+            <button onClick={() => setNutritionalsOpen(true)} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-[#919b5f] transition-colors shadow-sm" title="Nutritionals"><Beaker className="w-3 h-3" /></button>
+            <button onClick={() => setDeckOpen(true)} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-[#919b5f] transition-colors shadow-sm" title="Ingredient Deck"><ClipboardList className="w-3 h-3" /></button>
             <button onClick={onBreakdown} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur flex items-center justify-center hover:text-white transition-colors shadow-sm" style={recipeColor ? { color: recipeColor } : undefined} title="Cost Breakdown"><BarChart2 className="w-3 h-3" /></button>
             <button onClick={onEdit} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-foreground transition-colors shadow-sm" title="Edit"><Edit2 className="w-3 h-3" /></button>
             <button onClick={onDelete} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-destructive flex items-center justify-center hover:bg-destructive hover:text-white transition-colors shadow-sm" title="Delete"><Trash2 className="w-3 h-3" /></button>
@@ -1244,6 +1453,8 @@ function RecipeCard({ recipe, onEdit, onDelete, onBreakdown }: { recipe: RecipeI
           <MarginBadge margin={margin} />
         </div>
       </div>
+      <RecipeNutritionalsDialog id={recipe.id} open={nutritionalsOpen} onOpenChange={setNutritionalsOpen} />
+      <RecipeIngredientDeckDialog id={recipe.id} open={deckOpen} onOpenChange={setDeckOpen} />
     </div>
   );
 }
@@ -1282,7 +1493,7 @@ export default function Recipes() {
   const addDefaults: FormValues = {
     name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "",
     packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined,
-    tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", ingredients: [], subRecipes: [],
+    tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", cookingLossPercent: 3, ingredients: [], subRecipes: [],
   };
 
   return (

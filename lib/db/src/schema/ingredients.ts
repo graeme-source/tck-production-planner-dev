@@ -1,4 +1,4 @@
-import { pgTable, serial, text, numeric, integer, timestamp, boolean } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, numeric, integer, timestamp, boolean, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { suppliersTable } from "./suppliers";
@@ -33,6 +33,16 @@ export const ingredientsTable = pgTable("ingredients", {
   kanbanOrderAmount: numeric("kanban_order_amount", { precision: 10, scale: 4 }),
   perishable: boolean("perishable").notNull().default(true),
   palletSize: integer("pallet_size"),
+  energyKj: numeric("energy_kj", { precision: 10, scale: 2 }),
+  energyKcal: numeric("energy_kcal", { precision: 10, scale: 2 }),
+  fat: numeric("fat", { precision: 10, scale: 2 }),
+  saturates: numeric("saturates", { precision: 10, scale: 2 }),
+  carbohydrate: numeric("carbohydrate", { precision: 10, scale: 2 }),
+  sugars: numeric("sugars", { precision: 10, scale: 2 }),
+  protein: numeric("protein", { precision: 10, scale: 2 }),
+  salt: numeric("salt", { precision: 10, scale: 2 }),
+  labelDeclaration: text("label_declaration"),
+  allergens: jsonb("allergens").$type<string[]>().default([]),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

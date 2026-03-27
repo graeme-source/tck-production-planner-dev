@@ -4,7 +4,7 @@ import type { Ingredient } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
-import { Search, Plus, Trash2, Edit2, Loader2, ExternalLink, Upload, FileText, CheckCircle2, XCircle, AlertTriangle, RefreshCw } from "lucide-react";
+import { Search, Plus, Trash2, Edit2, Loader2, ExternalLink, Upload, FileText, CheckCircle2, XCircle, AlertTriangle, RefreshCw, ChevronDown } from "lucide-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -18,6 +18,23 @@ import Papa from "papaparse";
 import { useQueryClient } from "@tanstack/react-query";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+const UK14_ALLERGENS = [
+  { value: "celery", label: "Celery" },
+  { value: "cereals_containing_gluten", label: "Cereals containing Gluten" },
+  { value: "crustaceans", label: "Crustaceans" },
+  { value: "eggs", label: "Eggs" },
+  { value: "fish", label: "Fish" },
+  { value: "lupin", label: "Lupin" },
+  { value: "milk", label: "Milk" },
+  { value: "molluscs", label: "Molluscs" },
+  { value: "mustard", label: "Mustard" },
+  { value: "nuts", label: "Nuts" },
+  { value: "peanuts", label: "Peanuts" },
+  { value: "sesame", label: "Sesame" },
+  { value: "soybeans", label: "Soybeans" },
+  { value: "sulphur_dioxide", label: "Sulphur Dioxide" },
+] as const;
 
 const CSV_COLUMNS = ["name","unit","pack_weight","cost_per_pack","brand","supplier_name","secondary_supplier_name","supplier_part_number","ordering_url","notes","processing_ratio_percent"];
 const CSV_EXAMPLE = ["Caputo Flour","kg","15","16.00","Caputo","Brakes Food Service","","BRK-FLOUR-15","https://brakes.co.uk/flour","00 pizza flour",""];
@@ -432,6 +449,16 @@ const schema = z.object({
     (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
     z.number().min(0).nullable().optional()
   ),
+  energyKj: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
+  energyKcal: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
+  fat: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
+  saturates: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
+  carbohydrate: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
+  sugars: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
+  protein: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
+  salt: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
+  labelDeclaration: z.string().optional(),
+  allergens: z.array(z.string()).optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -440,6 +467,7 @@ const emptyDefaults: FormValues = {
   name: "", unit: "kg", packWeight: 0, costPerPack: 0,
   brand: "", supplierPartNumber: "", supplierId: 0, secondarySupplierId: 0,
   orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null, estimatedCookTimeMin: null, ovenTempC: null, steamPct: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "", surplusPercent: 10, shelfLifeDays: null, kanbanEnabled: false, kanbanQuantity: 0, kanbanUnit: "weight" as const, kanbanOrderAmount: null,
+  energyKj: null, energyKcal: null, fat: null, saturates: null, carbohydrate: null, sugars: null, protein: null, salt: null, labelDeclaration: "", allergens: [],
 };
 
 export default function Ingredients() {
@@ -454,6 +482,7 @@ export default function Ingredients() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [nutritionalsOpen, setNutritionalsOpen] = useState(false);
 
   const filtered = ingredients?.filter(i => {
     const matchesSearch =
@@ -527,6 +556,16 @@ export default function Ingredients() {
       kanbanQuantity: (item as Record<string, unknown>).kanbanQuantity != null ? Number((item as Record<string, unknown>).kanbanQuantity) : 0,
       kanbanUnit: ((item as Record<string, unknown>).kanbanUnit as "weight" | "pack" | "bottle") ?? "weight",
       kanbanOrderAmount: (item as Record<string, unknown>).kanbanOrderAmount != null ? Number((item as Record<string, unknown>).kanbanOrderAmount) : null,
+      energyKj: (item as Record<string, unknown>).energyKj != null ? Number((item as Record<string, unknown>).energyKj) : null,
+      energyKcal: (item as Record<string, unknown>).energyKcal != null ? Number((item as Record<string, unknown>).energyKcal) : null,
+      fat: (item as Record<string, unknown>).fat != null ? Number((item as Record<string, unknown>).fat) : null,
+      saturates: (item as Record<string, unknown>).saturates != null ? Number((item as Record<string, unknown>).saturates) : null,
+      carbohydrate: (item as Record<string, unknown>).carbohydrate != null ? Number((item as Record<string, unknown>).carbohydrate) : null,
+      sugars: (item as Record<string, unknown>).sugars != null ? Number((item as Record<string, unknown>).sugars) : null,
+      protein: (item as Record<string, unknown>).protein != null ? Number((item as Record<string, unknown>).protein) : null,
+      salt: (item as Record<string, unknown>).salt != null ? Number((item as Record<string, unknown>).salt) : null,
+      labelDeclaration: ((item as Record<string, unknown>).labelDeclaration as string) ?? "",
+      allergens: ((item as Record<string, unknown>).allergens as string[]) ?? [],
     });
     setIsDialogOpen(true);
   };
@@ -558,6 +597,16 @@ export default function Ingredients() {
     kanbanQuantity: data.kanbanQuantity ?? 0,
     kanbanUnit: data.kanbanUnit ?? "weight",
     kanbanOrderAmount: data.kanbanOrderAmount ?? null,
+    energyKj: data.energyKj ?? null,
+    energyKcal: data.energyKcal ?? null,
+    fat: data.fat ?? null,
+    saturates: data.saturates ?? null,
+    carbohydrate: data.carbohydrate ?? null,
+    sugars: data.sugars ?? null,
+    protein: data.protein ?? null,
+    salt: data.salt ?? null,
+    labelDeclaration: data.labelDeclaration || null,
+    allergens: data.allergens ?? [],
   });
 
   function invalidateCostTouchpoints() {
@@ -1088,13 +1137,106 @@ export default function Ingredients() {
               />
             </div>
 
+            {/* Nutritionals & Labelling - Collapsible */}
+            <div className="border border-[#919b5f]/30 rounded-xl overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setNutritionalsOpen(!nutritionalsOpen)}
+                className="w-full flex items-center justify-between px-4 py-3 bg-[#919b5f]/10 hover:bg-[#919b5f]/15 transition-colors"
+              >
+                <span className="text-sm font-semibold text-[#3b4317]">Nutritionals &amp; Labelling</span>
+                <ChevronDown className={cn("w-4 h-4 text-[#3b4317] transition-transform", nutritionalsOpen && "rotate-180")} />
+              </button>
+              {nutritionalsOpen && (
+                <div className="p-4 space-y-4">
+                  <p className="text-xs text-muted-foreground">All nutritional values are per 100g as stated on supplier packaging.</p>
+                  <div className="grid grid-cols-4 gap-3">
+                    <div>
+                      <label className="text-xs font-medium mb-1 block">Energy (kJ)</label>
+                      <input type="number" step="0.01" {...register("energyKj")} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium mb-1 block">Energy (kcal)</label>
+                      <input type="number" step="0.01" {...register("energyKcal")} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium mb-1 block">Fat (g)</label>
+                      <input type="number" step="0.01" {...register("fat")} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium mb-1 block">Saturates (g)</label>
+                      <input type="number" step="0.01" {...register("saturates")} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium mb-1 block">Carbs (g)</label>
+                      <input type="number" step="0.01" {...register("carbohydrate")} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium mb-1 block">Sugars (g)</label>
+                      <input type="number" step="0.01" {...register("sugars")} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium mb-1 block">Protein (g)</label>
+                      <input type="number" step="0.01" {...register("protein")} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium mb-1 block">Salt (g)</label>
+                      <input type="number" step="0.01" {...register("salt")} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-sm font-medium mb-1 block">Label Declaration</label>
+                    <textarea
+                      {...register("labelDeclaration")}
+                      className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[48px] resize-none"
+                      placeholder="How this ingredient appears on the label, e.g. 'Wheat Flour (Wheat Flour, Calcium Carbonate, Iron, Niacin, Thiamin)'"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">Used in the ingredient deck on product labels</p>
+                  </div>
+
+                  <div>
+                    <label className="text-sm font-medium mb-1 block">Allergens (UK14)</label>
+                    <div className="flex flex-wrap gap-2 mt-1">
+                      {UK14_ALLERGENS.map(a => {
+                        const selected = watch("allergens") ?? [];
+                        const isSelected = selected.includes(a.value);
+                        return (
+                          <button
+                            key={a.value}
+                            type="button"
+                            onClick={() => {
+                              const current = watch("allergens") ?? [];
+                              setValue("allergens",
+                                isSelected
+                                  ? current.filter(v => v !== a.value)
+                                  : [...current, a.value]
+                              );
+                            }}
+                            className={cn(
+                              "px-2.5 py-1 rounded-full text-xs font-medium border transition-colors",
+                              isSelected
+                                ? "bg-[#919b5f] text-white border-[#919b5f]"
+                                : "bg-background border-border text-muted-foreground hover:border-[#919b5f]/50"
+                            )}
+                          >
+                            {a.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Notes */}
             <div>
               <label className="text-sm font-medium mb-1 block">Notes</label>
               <textarea
                 {...register("notes")}
                 className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[64px] resize-none"
-                placeholder="Allergens, storage, quality notes..."
+                placeholder="Storage, quality notes..."
               />
             </div>
 

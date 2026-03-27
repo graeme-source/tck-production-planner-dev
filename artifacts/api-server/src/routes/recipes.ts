@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, recipesTable, recipeIngredientsTable, recipeSubRecipesTable, recipeMeatMarinadesTable, ingredientsTable, subRecipesTable, subRecipeIngredientsTable } from "@workspace/db";
+import { db, recipesTable, recipeIngredientsTable, recipeSubRecipesTable, recipeMeatMarinadesTable, ingredientsTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, appSettingsTable } from "@workspace/db";
 import { eq, inArray, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
@@ -35,6 +35,7 @@ function mapRecipe(r: typeof recipesTable.$inferSelect) {
     isCoreMenu: r.isCoreMenu ?? false,
     isCurrentSpecial: r.isCurrentSpecial ?? false,
     color: r.color ?? null,
+    cookingLossPercent: r.cookingLossPercent != null ? Number(r.cookingLossPercent) : 3,
     createdAt: r.createdAt.toISOString(),
   };
 }
@@ -146,7 +147,7 @@ function validateMarinades(marinades: MarinadeInput[], recipeIngredientIds: numb
 }
 
 router.post("/", validate(CreateRecipeBody), async (req, res) => {
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, ingredients, subRecipes, marinades } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, ingredients, subRecipes, marinades } = req.body;
 
   if (marinades?.length) {
     const recipeIngIds = (ingredients ?? []).map(i => i.ingredientId);
@@ -178,6 +179,7 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
     isCoreMenu: isCoreMenu ?? false,
     isCurrentSpecial: isCurrentSpecial ?? false,
     color: color ?? null,
+    cookingLossPercent: cookingLossPercent != null ? String(cookingLossPercent) : "3",
   };
 
   const [recipe] = await db.transaction(async (tx) => {
@@ -366,7 +368,7 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, ingredients, subRecipes, marinades } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, ingredients, subRecipes, marinades } = req.body;
 
   if (marinades?.length) {
     const recipeIngIds = (ingredients ?? []).map(i => i.ingredientId);
@@ -397,6 +399,7 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
     baseWeightGrams: baseWeightGrams != null ? String(baseWeightGrams) : null,
     isCoreMenu: isCoreMenu ?? false,
     color: color ?? null,
+    cookingLossPercent: cookingLossPercent != null ? String(cookingLossPercent) : "3",
     ...(isCurrentSpecial !== undefined ? { isCurrentSpecial } : {}),
   };
 
@@ -552,6 +555,285 @@ router.delete("/:id/shopify-mapping", async (req, res) => {
     res.json({ ok: true });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: msg });
+  }
+});
+
+const NUTRIENT_KEYS = ["energyKj", "energyKcal", "fat", "saturates", "carbohydrate", "sugars", "protein", "salt"] as const;
+type NutrientKey = typeof NUTRIENT_KEYS[number];
+
+interface IngredientNutrientRow {
+  ingredientId: number;
+  name: string;
+  quantityG: number;
+  labelDeclaration: string | null;
+  allergens: string[];
+  nutrients: Record<NutrientKey, number | null>;
+}
+
+async function gatherRecipeIngredients(recipeId: number): Promise<{
+  items: IngredientNutrientRow[];
+  totalWeightG: number;
+  cookingLossPercent: number;
+  portionsPerBatch: number;
+  missingNutritionals: string[];
+  missingDeclarations: string[];
+}> {
+  const [recipe] = await db.select().from(recipesTable).where(eq(recipesTable.id, recipeId));
+  if (!recipe) throw new Error("Recipe not found");
+
+  const cookingLossPercent = Number(recipe.cookingLossPercent) || 3;
+  const portionsPerBatch = recipe.portionsPerBatch ?? 10;
+
+  const directIngs = await db
+    .select({
+      ingredientId: recipeIngredientsTable.ingredientId,
+      quantity: recipeIngredientsTable.quantity,
+      name: ingredientsTable.name,
+      labelDeclaration: ingredientsTable.labelDeclaration,
+      allergens: ingredientsTable.allergens,
+      energyKj: ingredientsTable.energyKj,
+      energyKcal: ingredientsTable.energyKcal,
+      fat: ingredientsTable.fat,
+      saturates: ingredientsTable.saturates,
+      carbohydrate: ingredientsTable.carbohydrate,
+      sugars: ingredientsTable.sugars,
+      protein: ingredientsTable.protein,
+      salt: ingredientsTable.salt,
+    })
+    .from(recipeIngredientsTable)
+    .innerJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
+    .where(eq(recipeIngredientsTable.recipeId, recipeId));
+
+  const items: IngredientNutrientRow[] = directIngs.map(i => ({
+    ingredientId: i.ingredientId,
+    name: i.name,
+    quantityG: Number(i.quantity),
+    labelDeclaration: i.labelDeclaration,
+    allergens: (i.allergens as string[] | null) ?? [],
+    nutrients: {
+      energyKj: i.energyKj != null ? Number(i.energyKj) : null,
+      energyKcal: i.energyKcal != null ? Number(i.energyKcal) : null,
+      fat: i.fat != null ? Number(i.fat) : null,
+      saturates: i.saturates != null ? Number(i.saturates) : null,
+      carbohydrate: i.carbohydrate != null ? Number(i.carbohydrate) : null,
+      sugars: i.sugars != null ? Number(i.sugars) : null,
+      protein: i.protein != null ? Number(i.protein) : null,
+      salt: i.salt != null ? Number(i.salt) : null,
+    },
+  }));
+
+  const subRecipeLinks = await db
+    .select({
+      subRecipeId: recipeSubRecipesTable.subRecipeId,
+      quantity: recipeSubRecipesTable.quantity,
+    })
+    .from(recipeSubRecipesTable)
+    .where(eq(recipeSubRecipesTable.recipeId, recipeId));
+
+  for (const sr of subRecipeLinks) {
+    const srQuantityG = Number(sr.quantity);
+    const [subRecipe] = await db.select().from(subRecipesTable).where(eq(subRecipesTable.id, sr.subRecipeId));
+    if (!subRecipe) continue;
+
+    const srYield = Number(subRecipe.yield) || 1;
+
+    const srIngs = await db
+      .select({
+        ingredientId: subRecipeIngredientsTable.ingredientId,
+        quantity: subRecipeIngredientsTable.quantity,
+        name: ingredientsTable.name,
+        labelDeclaration: ingredientsTable.labelDeclaration,
+        allergens: ingredientsTable.allergens,
+        energyKj: ingredientsTable.energyKj,
+        energyKcal: ingredientsTable.energyKcal,
+        fat: ingredientsTable.fat,
+        saturates: ingredientsTable.saturates,
+        carbohydrate: ingredientsTable.carbohydrate,
+        sugars: ingredientsTable.sugars,
+        protein: ingredientsTable.protein,
+        salt: ingredientsTable.salt,
+      })
+      .from(subRecipeIngredientsTable)
+      .innerJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
+      .where(eq(subRecipeIngredientsTable.subRecipeId, sr.subRecipeId));
+
+    const scaleFactor = srQuantityG / srYield;
+
+    for (const si of srIngs) {
+      const existingIdx = items.findIndex(it => it.ingredientId === si.ingredientId);
+      const scaledQty = Number(si.quantity) * scaleFactor;
+
+      if (existingIdx >= 0) {
+        items[existingIdx].quantityG += scaledQty;
+      } else {
+        items.push({
+          ingredientId: si.ingredientId,
+          name: si.name,
+          quantityG: scaledQty,
+          labelDeclaration: si.labelDeclaration,
+          allergens: (si.allergens as string[] | null) ?? [],
+          nutrients: {
+            energyKj: si.energyKj != null ? Number(si.energyKj) : null,
+            energyKcal: si.energyKcal != null ? Number(si.energyKcal) : null,
+            fat: si.fat != null ? Number(si.fat) : null,
+            saturates: si.saturates != null ? Number(si.saturates) : null,
+            carbohydrate: si.carbohydrate != null ? Number(si.carbohydrate) : null,
+            sugars: si.sugars != null ? Number(si.sugars) : null,
+            protein: si.protein != null ? Number(si.protein) : null,
+            salt: si.salt != null ? Number(si.salt) : null,
+          },
+        });
+      }
+    }
+  }
+
+  const totalWeightG = items.reduce((sum, i) => sum + i.quantityG, 0);
+
+  const missingNutritionals = items
+    .filter(i => NUTRIENT_KEYS.every(k => i.nutrients[k] === null))
+    .map(i => i.name);
+
+  const missingDeclarations = items
+    .filter(i => !i.labelDeclaration)
+    .map(i => i.name);
+
+  return { items, totalWeightG, cookingLossPercent, portionsPerBatch, missingNutritionals, missingDeclarations };
+}
+
+router.get("/:id/nutritionals", async (req, res) => {
+  const parsed = RecipeIdParams.safeParse({ id: req.params.id });
+  if (!parsed.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
+
+  try {
+    const { items, totalWeightG, cookingLossPercent, portionsPerBatch, missingNutritionals, missingDeclarations } =
+      await gatherRecipeIngredients(parsed.data.id);
+
+    const cookedWeightG = totalWeightG * (1 - cookingLossPercent / 100);
+    const portionWeightG = Math.round(cookedWeightG / portionsPerBatch);
+
+    const per100g: Record<NutrientKey, number | null> = {
+      energyKj: null, energyKcal: null, fat: null, saturates: null,
+      carbohydrate: null, sugars: null, protein: null, salt: null,
+    };
+
+    if (totalWeightG > 0) {
+      for (const key of NUTRIENT_KEYS) {
+        let total = 0;
+        let allNull = true;
+        for (const item of items) {
+          const val = item.nutrients[key];
+          if (val !== null) {
+            allNull = false;
+            total += (val / 100) * item.quantityG;
+          }
+        }
+        if (!allNull) {
+          per100g[key] = Math.round((total / totalWeightG) * 100 * 100) / 100;
+        }
+      }
+    }
+
+    const perPortion: Record<NutrientKey, number | null> = { ...per100g };
+    if (portionWeightG > 0) {
+      for (const key of NUTRIENT_KEYS) {
+        if (per100g[key] !== null) {
+          perPortion[key] = Math.round((per100g[key]! / 100) * portionWeightG * 100) / 100;
+        }
+      }
+    }
+
+    res.json({
+      totalRawWeightG: Math.round(totalWeightG),
+      cookingLossPercent,
+      cookedWeightG: Math.round(cookedWeightG),
+      portionsPerBatch,
+      portionWeightG,
+      per100g,
+      perPortion,
+      completeness: {
+        totalIngredients: items.length,
+        missingNutritionals,
+        missingDeclarations,
+        isComplete: missingNutritionals.length === 0 && missingDeclarations.length === 0,
+      },
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg === "Recipe not found") { res.status(404).json({ error: msg }); return; }
+    res.status(500).json({ error: msg });
+  }
+});
+
+const ALLERGEN_DISPLAY: Record<string, string> = {
+  celery: "Celery",
+  cereals_containing_gluten: "Cereals containing Gluten",
+  crustaceans: "Crustaceans",
+  eggs: "Eggs",
+  fish: "Fish",
+  lupin: "Lupin",
+  milk: "Milk",
+  molluscs: "Molluscs",
+  mustard: "Mustard",
+  nuts: "Nuts",
+  peanuts: "Peanuts",
+  sesame: "Sesame",
+  soybeans: "Soybeans",
+  sulphur_dioxide: "Sulphur Dioxide",
+};
+
+router.get("/:id/ingredient-deck", async (req, res) => {
+  const parsed = RecipeIdParams.safeParse({ id: req.params.id });
+  if (!parsed.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
+
+  try {
+    const { items, totalWeightG, missingDeclarations } = await gatherRecipeIngredients(parsed.data.id);
+
+    const sorted = [...items].sort((a, b) => b.quantityG - a.quantityG);
+
+    const deckItems = sorted.map(item => {
+      const pct = totalWeightG > 0 ? Math.round((item.quantityG / totalWeightG) * 1000) / 10 : 0;
+      const declaration = item.labelDeclaration || item.name;
+
+      let boldedDeclaration = declaration;
+      for (const allergen of item.allergens) {
+        const displayName = ALLERGEN_DISPLAY[allergen] || allergen;
+        const regex = new RegExp(`\\b(${displayName})\\b`, "gi");
+        boldedDeclaration = boldedDeclaration.replace(regex, "**$1**");
+      }
+
+      return {
+        ingredientId: item.ingredientId,
+        name: item.name,
+        declaration: boldedDeclaration,
+        percentage: pct,
+        allergens: item.allergens.map(a => ALLERGEN_DISPLAY[a] || a),
+      };
+    });
+
+    const allAllergens = [...new Set(items.flatMap(i => i.allergens))].sort();
+    const allergenDisplayList = allAllergens.map(a => ALLERGEN_DISPLAY[a] || a);
+
+    const deckText = deckItems.map(d => d.declaration).join(", ") + ".";
+
+    const [mayContainRow] = await db
+      .select({ value: appSettingsTable.value })
+      .from(appSettingsTable)
+      .where(eq(appSettingsTable.key, "may_contain_statement"));
+
+    const mayContainStatement = mayContainRow?.value || null;
+
+    res.json({
+      ingredients: deckItems,
+      deckText,
+      allergens: allergenDisplayList,
+      mayContainStatement,
+      missingDeclarations,
+      isComplete: missingDeclarations.length === 0,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg === "Recipe not found") { res.status(404).json({ error: msg }); return; }
     res.status(500).json({ error: msg });
   }
 });
