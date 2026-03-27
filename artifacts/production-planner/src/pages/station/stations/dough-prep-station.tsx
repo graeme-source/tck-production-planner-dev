@@ -736,7 +736,8 @@ function DoughMixingView({
                   )}>
                     {fmtDoughQty(ing.qtyPerMix, ing.unit, ing.ingredientName)}
                   </p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-[10px] text-muted-foreground/70">per mix</p>
+                  <p className="text-xs text-muted-foreground font-medium">
                     Day total: {fmtDoughQty(ing.totalQty, ing.unit, ing.ingredientName)}
                   </p>
                 </div>

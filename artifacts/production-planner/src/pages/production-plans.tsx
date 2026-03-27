@@ -21,7 +21,7 @@ import {
   Loader2, RefreshCw, Info, Package, ClipboardList, ExternalLink,
   Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef,
   ArrowRight, GripVertical, AlertTriangle, AlertCircle, BookmarkCheck, ShoppingCart,
-  FlaskConical, Printer, X, ChevronDown, ChevronUp, PoundSterling,
+  FlaskConical, Printer, X, ChevronDown, ChevronUp, PoundSterling, ShieldCheck,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -1995,6 +1995,43 @@ const STATION_BUTTONS = [
   { key: "packing", label: "Packing", icon: Box, color: "text-indigo-500 bg-indigo-50 dark:bg-indigo-900/20" },
 ] as const;
 
+interface ValidationWarning {
+  level: "error" | "warning" | "info";
+  recipe: string;
+  field: string;
+  message: string;
+  expected?: number | string;
+  actual?: number | string;
+}
+
+interface ValidationRecipeBreakdown {
+  recipeName: string;
+  batchesTarget: number;
+  portionsPerBatch: number;
+  packSize: number;
+  totalPortions: number;
+  totalPacks: number;
+  ingredients: Array<{
+    ingredientName: string;
+    recipeQtyPerPortion: number;
+    qtyPerBatch: number;
+    totalQtyForPlan: number;
+    unit: string;
+  }>;
+}
+
+interface ValidationResult {
+  planId: number;
+  planName: string;
+  totalBatches: number;
+  totalPortions: number;
+  totalPacks: number;
+  recipeBreakdowns: ValidationRecipeBreakdown[];
+  ingredientTotals: Array<{ ingredientName: string; unit: string; totalQty: number; recipes: string[] }>;
+  warnings: ValidationWarning[];
+  valid: boolean;
+}
+
 interface PlanDetailProps {
   planId: number;
   onBack: () => void;
@@ -2010,6 +2047,9 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isEditingDraft, setIsEditingDraft] = useState(false);
   const [showManifest, setShowManifest] = useState(false);
+  const [showValidation, setShowValidation] = useState(false);
+  const [validationData, setValidationData] = useState<ValidationResult | null>(null);
+  const [validationLoading, setValidationLoading] = useState(false);
   const [, navigate] = useLocation();
   const { data: stationActivity } = useGetStationActivity(planId, {
     query: { queryKey: getGetStationActivityQueryKey(planId), refetchInterval: 10000 },
@@ -2041,6 +2081,24 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const totalBatchesComplete = plan.items?.reduce((s, it) => s + (it.batchesComplete ?? 0), 0) ?? 0;
   const totalPacks = plan.items?.reduce((s, it) => s + (it.batchesTarget ?? 0) * (it.portionsPerBatch ?? 10) / (it.packSize ?? 2), 0) ?? 0;
   const progress = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
+
+  const handleValidate = async () => {
+    setValidationLoading(true);
+    try {
+      const resp = await fetch(`/api/production-plans/${planId}/validate`, { credentials: "include" });
+      if (!resp.ok) {
+        const errBody = await resp.json().catch(() => null);
+        throw new Error(errBody?.detail ?? errBody?.error ?? `Validation failed (${resp.status})`);
+      }
+      const data: ValidationResult = await resp.json();
+      setValidationData(data);
+      setShowValidation(true);
+    } catch (err) {
+      toast({ title: "Validation failed", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+    } finally {
+      setValidationLoading(false);
+    }
+  };
 
   const handleStatusChange = (newStatus: string) => {
     updatePlan.mutate({ id: planId, data: { status: newStatus as PlanStatus } });
@@ -2108,6 +2166,14 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
             <FlaskConical className="w-3.5 h-3.5" />
             Raw Materials
           </button>
+          <button
+            onClick={handleValidate}
+            disabled={validationLoading}
+            className="px-3 py-1.5 text-xs border border-border bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-colors font-medium flex items-center gap-1"
+          >
+            {validationLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+            Validate
+          </button>
           {plan.status !== "complete" && (
             <button
               onClick={() => setConfirmDelete(true)}
@@ -2136,6 +2202,123 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
               )}
               style={{ width: `${Math.min(progress, 100)}%` }}
             />
+          </div>
+        </div>
+      )}
+
+      {/* Validation results */}
+      {showValidation && validationData && (
+        <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+            <h2 className="font-semibold text-sm flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-primary" />
+              Plan Validation
+            </h2>
+            <button onClick={() => setShowValidation(false)} className="text-muted-foreground hover:text-foreground">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="p-4 space-y-4">
+            {validationData.valid && validationData.warnings.length === 0 ? (
+              <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
+                <CheckCircle2 className="w-5 h-5" />
+                <span className="font-medium text-sm">All checks passed — quantities are consistent with recipes.</span>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {validationData.warnings.map((w, i) => (
+                  <div key={i} className={cn(
+                    "flex items-start gap-2 text-sm p-2 rounded-lg border",
+                    w.level === "error" ? "bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800 text-red-800 dark:text-red-200" :
+                    "bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200"
+                  )}>
+                    {w.level === "error" ? <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />}
+                    <div>
+                      <span className="font-medium">{w.recipe}</span>
+                      <span className="mx-1">·</span>
+                      <span>{w.message}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="bg-secondary/30 rounded-xl p-3">
+              <h3 className="font-semibold text-xs text-muted-foreground uppercase tracking-wider mb-2">Plan Totals</h3>
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div>
+                  <p className="text-lg font-bold tabular-nums">{validationData.totalBatches}</p>
+                  <p className="text-xs text-muted-foreground">Batches</p>
+                </div>
+                <div>
+                  <p className="text-lg font-bold tabular-nums">{validationData.totalPortions}</p>
+                  <p className="text-xs text-muted-foreground">Portions</p>
+                </div>
+                <div>
+                  <p className="text-lg font-bold tabular-nums">{validationData.totalPacks}</p>
+                  <p className="text-xs text-muted-foreground">Packs</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <h3 className="font-semibold text-xs text-muted-foreground uppercase tracking-wider">Recipe Breakdown</h3>
+              <div className="bg-card border border-border rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-secondary/30 border-b border-border text-xs text-muted-foreground">
+                      <th className="py-2 px-3 text-left font-medium">Recipe</th>
+                      <th className="py-2 px-3 text-center font-medium">Batches</th>
+                      <th className="py-2 px-3 text-center font-medium">× Portions</th>
+                      <th className="py-2 px-3 text-center font-medium">= Total Portions</th>
+                      <th className="py-2 px-3 text-center font-medium">÷ Pack Size</th>
+                      <th className="py-2 px-3 text-center font-medium">= Packs</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {validationData.recipeBreakdowns.map((rb, i) => (
+                      <tr key={i} className="border-b border-border/50 last:border-0">
+                        <td className="py-2 px-3 font-medium">{rb.recipeName}</td>
+                        <td className="py-2 px-3 text-center tabular-nums">{rb.batchesTarget}</td>
+                        <td className="py-2 px-3 text-center tabular-nums">{rb.portionsPerBatch}</td>
+                        <td className="py-2 px-3 text-center tabular-nums font-medium">{rb.totalPortions}</td>
+                        <td className="py-2 px-3 text-center tabular-nums">{rb.packSize}</td>
+                        <td className="py-2 px-3 text-center tabular-nums font-medium">{rb.totalPacks}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <h3 className="font-semibold text-xs text-muted-foreground uppercase tracking-wider">Ingredient Totals (cooked/recipe weight)</h3>
+              <div className="bg-card border border-border rounded-lg overflow-hidden max-h-64 overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-card">
+                    <tr className="bg-secondary/30 border-b border-border text-xs text-muted-foreground">
+                      <th className="py-2 px-3 text-left font-medium">Ingredient</th>
+                      <th className="py-2 px-3 text-right font-medium">Total Qty</th>
+                      <th className="py-2 px-3 text-left font-medium">Used By</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {validationData.ingredientTotals
+                      .sort((a, b) => a.ingredientName.localeCompare(b.ingredientName))
+                      .map((ing, i) => (
+                      <tr key={i} className="border-b border-border/50 last:border-0">
+                        <td className="py-1.5 px-3 font-medium">{ing.ingredientName}</td>
+                        <td className="py-1.5 px-3 text-right tabular-nums">
+                          {ing.unit === "g" && ing.totalQty >= 1000 ? `${(ing.totalQty / 1000).toFixed(2)} kg` : `${ing.totalQty.toFixed(ing.unit === "kg" ? 2 : 1)} ${ing.unit}`}
+                        </td>
+                        <td className="py-1.5 px-3 text-xs text-muted-foreground">{[...new Set(ing.recipes)].join(", ")}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
       )}

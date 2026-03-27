@@ -4167,4 +4167,238 @@ router.post("/:id/raw-materials/create-order", async (req, res) => {
   });
 });
 
+// ──────────────────────────────────────────────────────────────────────────────
+// GET /:id/validate — validate production plan quantities against recipes
+// ──────────────────────────────────────────────────────────────────────────────
+router.get("/:id/validate", async (req, res) => {
+  try {
+  const planId = Number(req.params.id);
+  const [plan] = await db.select().from(productionPlansTable).where(eq(productionPlansTable.id, planId));
+  if (!plan) { res.status(404).json({ error: "Not found" }); return; }
+
+  const planItems = await db
+    .select({
+      id: productionPlanItemsTable.id,
+      recipeId: productionPlanItemsTable.recipeId,
+      batchesTarget: productionPlanItemsTable.batchesTarget,
+      recipeName: recipesTable.name,
+      portionsPerBatch: recipesTable.portionsPerBatch,
+      packSize: recipesTable.packSize,
+    })
+    .from(productionPlanItemsTable)
+    .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(eq(productionPlanItemsTable.planId, planId))
+    .orderBy(productionPlanItemsTable.orderPosition);
+
+  interface ValidationWarning {
+    level: "error" | "warning" | "info";
+    recipe: string;
+    field: string;
+    message: string;
+    expected?: number | string;
+    actual?: number | string;
+  }
+
+  const warnings: ValidationWarning[] = [];
+
+  let totalPortions = 0;
+  let totalPacks = 0;
+
+  interface RecipeBreakdown {
+    recipeName: string;
+    batchesTarget: number;
+    portionsPerBatch: number;
+    packSize: number;
+    totalPortions: number;
+    totalPacks: number;
+    ingredients: Array<{
+      ingredientName: string;
+      recipeQtyPerPortion: number;
+      qtyPerBatch: number;
+      totalQtyForPlan: number;
+      unit: string;
+    }>;
+  }
+
+  const recipeBreakdowns: RecipeBreakdown[] = [];
+
+  for (const item of planItems) {
+    if (!item.recipeId) continue;
+    const batches = Number(item.batchesTarget) || 0;
+    const rawPpb = item.portionsPerBatch != null ? Number(item.portionsPerBatch) : null;
+    const portionsPerBatch = rawPpb != null && rawPpb > 0 ? rawPpb : 10;
+    const rawPs = item.packSize != null ? Number(item.packSize) : null;
+    const packSize = rawPs != null && rawPs > 0 ? rawPs : 2;
+    const recipeName = item.recipeName ?? `Recipe #${item.recipeId}`;
+
+    if (portionsPerBatch <= 0) {
+      warnings.push({
+        level: "error",
+        recipe: recipeName,
+        field: "portionsPerBatch",
+        message: "Portions per batch is zero or negative",
+        actual: portionsPerBatch,
+      });
+    }
+
+    if (packSize <= 0) {
+      warnings.push({
+        level: "error",
+        recipe: recipeName,
+        field: "packSize",
+        message: "Pack size is zero or negative",
+        actual: packSize,
+      });
+    }
+
+    if (portionsPerBatch % packSize !== 0) {
+      warnings.push({
+        level: "warning",
+        recipe: recipeName,
+        field: "portionsPerBatch",
+        message: `Portions per batch (${portionsPerBatch}) is not evenly divisible by pack size (${packSize})`,
+        expected: `Multiple of ${packSize}`,
+        actual: portionsPerBatch,
+      });
+    }
+
+    const itemPortions = batches * portionsPerBatch;
+    const itemPacks = packSize > 0 ? itemPortions / packSize : 0;
+    totalPortions += itemPortions;
+    totalPacks += itemPacks;
+
+    const directIngs = await db
+      .select({
+        ingredientId: recipeIngredientsTable.ingredientId,
+        quantity: recipeIngredientsTable.quantity,
+        ingredientName: ingredientsTable.name,
+        unit: ingredientsTable.unit,
+      })
+      .from(recipeIngredientsTable)
+      .innerJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
+      .where(eq(recipeIngredientsTable.recipeId, item.recipeId));
+
+    const ingredientDetails: RecipeBreakdown["ingredients"] = [];
+
+    for (const ing of directIngs) {
+      const qtyPerPortion = Number(ing.quantity) || 0;
+      const qtyPerBatch = qtyPerPortion * portionsPerBatch;
+      const totalQty = qtyPerBatch * batches;
+      ingredientDetails.push({
+        ingredientName: ing.ingredientName ?? `Ingredient #${ing.ingredientId}`,
+        recipeQtyPerPortion: qtyPerPortion,
+        qtyPerBatch,
+        totalQtyForPlan: totalQty,
+        unit: ing.unit ?? "g",
+      });
+    }
+
+    const subRecipeLinks = await db
+      .select({
+        subRecipeId: recipeSubRecipesTable.subRecipeId,
+        quantity: recipeSubRecipesTable.quantity,
+        subRecipeName: subRecipesTable.name,
+        subRecipeYield: subRecipesTable.yield,
+      })
+      .from(recipeSubRecipesTable)
+      .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
+      .where(eq(recipeSubRecipesTable.recipeId, item.recipeId));
+
+    for (const sr of subRecipeLinks) {
+      const srQtyPerPortion = Number(sr.quantity) || 0;
+      const qtyPerBatch = srQtyPerPortion * portionsPerBatch;
+      const totalQty = qtyPerBatch * batches;
+      ingredientDetails.push({
+        ingredientName: `[Sub-recipe] ${sr.subRecipeName ?? "Unknown"}`,
+        recipeQtyPerPortion: srQtyPerPortion,
+        qtyPerBatch,
+        totalQtyForPlan: totalQty,
+        unit: "kg",
+      });
+    }
+
+    recipeBreakdowns.push({
+      recipeName,
+      batchesTarget: batches,
+      portionsPerBatch,
+      packSize,
+      totalPortions: itemPortions,
+      totalPacks: itemPacks,
+      ingredients: ingredientDetails,
+    });
+  }
+
+  const resolved = await Promise.all(
+    planItems
+      .filter(item => item.recipeId && (Number(item.batchesTarget) || 0) > 0)
+      .map(async (item) => {
+        const portionsPerBatch = (item.portionsPerBatch != null && Number(item.portionsPerBatch) > 0) ? Number(item.portionsPerBatch) : 10;
+        const batches = Number(item.batchesTarget) || 0;
+        const ingredients = await resolveRecipeIngredients(item.recipeId!, portionsPerBatch);
+        const agg = aggregateIngredients(ingredients);
+        return { recipeName: item.recipeName, batches, agg };
+      })
+  );
+
+  const prepTotals: Record<number, { name: string; unit: string; totalQty: number; recipes: string[] }> = {};
+  for (const r of resolved) {
+    for (const [iid, ing] of r.agg) {
+      const totalCookedQty = ing.quantityPerBatch * r.batches;
+      if (!prepTotals[iid]) {
+        prepTotals[iid] = { name: ing.ingredientName, unit: ing.unit, totalQty: 0, recipes: [] };
+      }
+      prepTotals[iid].totalQty += totalCookedQty;
+      prepTotals[iid].recipes.push(r.recipeName ?? "Unknown");
+    }
+  }
+
+  const recipeDirectTotals: Record<string, number> = {};
+  for (const rb of recipeBreakdowns) {
+    for (const ing of rb.ingredients) {
+      if (ing.ingredientName.startsWith("[Sub-recipe]")) continue;
+      const key = ing.ingredientName;
+      recipeDirectTotals[key] = (recipeDirectTotals[key] || 0) + ing.totalQtyForPlan;
+    }
+  }
+
+  for (const [, prepIng] of Object.entries(prepTotals)) {
+    const directTotal = recipeDirectTotals[prepIng.name];
+    if (directTotal !== undefined) {
+      const diff = Math.abs(prepIng.totalQty - directTotal);
+      const pctDiff = directTotal > 0 ? (diff / directTotal) * 100 : 0;
+      if (pctDiff > 1) {
+        warnings.push({
+          level: "warning",
+          recipe: prepIng.recipes.join(", "),
+          field: prepIng.name,
+          message: `Prep total (${prepIng.totalQty.toFixed(2)}${prepIng.unit}) differs from recipe calculation (${directTotal.toFixed(2)}${prepIng.unit}) by ${pctDiff.toFixed(1)}%`,
+          expected: directTotal,
+          actual: prepIng.totalQty,
+        });
+      }
+    }
+  }
+
+  res.json({
+    planId,
+    planName: plan.name,
+    totalBatches: planItems.reduce((s, it) => s + (Number(it.batchesTarget) || 0), 0),
+    totalPortions,
+    totalPacks,
+    recipeBreakdowns,
+    ingredientTotals: Object.values(prepTotals).map(p => ({
+      ingredientName: p.name,
+      unit: p.unit,
+      totalQty: Math.round(p.totalQty * 100) / 100,
+      recipes: p.recipes,
+    })),
+    warnings,
+    valid: warnings.filter(w => w.level === "error").length === 0,
+  });
+  } catch (err) {
+    console.error("[validate] Error:", err instanceof Error ? err.message : String(err));
+    res.status(500).json({ error: "Validation failed", detail: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 export default router;
