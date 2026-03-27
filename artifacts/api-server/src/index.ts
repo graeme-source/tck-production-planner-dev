@@ -426,6 +426,9 @@ async function runStartupMigrations() {
     await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS salt NUMERIC(10,2)`);
     await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS label_declaration TEXT`);
     await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS allergens JSONB DEFAULT '[]'`);
+    await db.execute(sql`ALTER TABLE sub_recipes ADD COLUMN IF NOT EXISTS label_declaration TEXT`);
+    await db.execute(sql`ALTER TABLE recipe_ingredients ADD COLUMN IF NOT EXISTS quid BOOLEAN NOT NULL DEFAULT FALSE`);
+    await db.execute(sql`ALTER TABLE recipe_sub_recipes ADD COLUMN IF NOT EXISTS quid BOOLEAN NOT NULL DEFAULT FALSE`);
     await seedStorageLocations();
     console.log("Startup migrations OK");
   } catch (err) {

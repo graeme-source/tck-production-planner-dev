@@ -39,6 +39,7 @@ export const recipeIngredientsTable = pgTable("recipe_ingredients", {
   quantity: numeric("quantity", { precision: 10, scale: 4 }).notNull(),
   marinadeForIngredientId: integer("marinade_for_ingredient_id").references(() => ingredientsTable.id, { onDelete: "set null" }),
   includeInFillingMix: boolean("include_in_filling_mix").notNull().default(false),
+  quid: boolean("quid").notNull().default(false),
 });
 
 export const recipeSubRecipesTable = pgTable("recipe_sub_recipes", {
@@ -48,6 +49,7 @@ export const recipeSubRecipesTable = pgTable("recipe_sub_recipes", {
   quantity: numeric("quantity", { precision: 10, scale: 4 }).notNull(),
   marinadeForIngredientId: integer("marinade_for_ingredient_id").references(() => ingredientsTable.id, { onDelete: "set null" }),
   includeInFillingMix: boolean("include_in_filling_mix").notNull().default(false),
+  quid: boolean("quid").notNull().default(false),
 });
 
 export const recipeMeatMarinadesTable = pgTable("recipe_meat_marinades", {

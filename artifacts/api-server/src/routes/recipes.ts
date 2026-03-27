@@ -191,19 +191,21 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
 
   if (ingredients?.length) {
     await db.insert(recipeIngredientsTable).values(
-      ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean }) => ({
+      ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean; quid?: boolean }) => ({
         recipeId: recipe.id, ingredientId: i.ingredientId, quantity: String(i.quantity),
         marinadeForIngredientId: i.marinadeForIngredientId ?? null,
         includeInFillingMix: i.includeInFillingMix ?? false,
+        quid: i.quid ?? false,
       }))
     );
   }
   if (subRecipes?.length) {
     await db.insert(recipeSubRecipesTable).values(
-      subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean }) => ({
+      subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean; quid?: boolean }) => ({
         recipeId: recipe.id, subRecipeId: s.subRecipeId, quantity: String(s.quantity),
         marinadeForIngredientId: s.marinadeForIngredientId ?? null,
         includeInFillingMix: s.includeInFillingMix ?? false,
+        quid: s.quid ?? false,
       }))
     );
   }
@@ -243,6 +245,7 @@ router.get("/:id", async (req, res) => {
       processingRatio: ingredientsTable.processingRatio,
       marinadeForIngredientId: recipeIngredientsTable.marinadeForIngredientId,
       includeInFillingMix: recipeIngredientsTable.includeInFillingMix,
+      quid: recipeIngredientsTable.quid,
     })
     .from(recipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -258,6 +261,7 @@ router.get("/:id", async (req, res) => {
       subYield: subRecipesTable.yield,
       marinadeForIngredientId: recipeSubRecipesTable.marinadeForIngredientId,
       includeInFillingMix: recipeSubRecipesTable.includeInFillingMix,
+      quid: recipeSubRecipesTable.quid,
     })
     .from(recipeSubRecipesTable)
     .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
@@ -296,6 +300,7 @@ router.get("/:id", async (req, res) => {
       lineCostPortion,
       marinadeForIngredientId: i.marinadeForIngredientId ?? null,
       includeInFillingMix: i.includeInFillingMix,
+      quid: i.quid ?? false,
     };
   });
 
@@ -320,6 +325,7 @@ router.get("/:id", async (req, res) => {
       lineCostPortion,
       marinadeForIngredientId: s.marinadeForIngredientId ?? null,
       includeInFillingMix: s.includeInFillingMix,
+      quid: s.quid ?? false,
     };
   });
 
@@ -429,19 +435,21 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
 
   if (ingredients?.length) {
     await db.insert(recipeIngredientsTable).values(
-      ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean }) => ({
+      ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean; quid?: boolean }) => ({
         recipeId: id, ingredientId: i.ingredientId, quantity: String(i.quantity),
         marinadeForIngredientId: i.marinadeForIngredientId ?? null,
         includeInFillingMix: i.includeInFillingMix ?? false,
+        quid: i.quid ?? false,
       }))
     );
   }
   if (subRecipes?.length) {
     await db.insert(recipeSubRecipesTable).values(
-      subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean }) => ({
+      subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean; quid?: boolean }) => ({
         recipeId: id, subRecipeId: s.subRecipeId, quantity: String(s.quantity),
         marinadeForIngredientId: s.marinadeForIngredientId ?? null,
         includeInFillingMix: s.includeInFillingMix ?? false,
+        quid: s.quid ?? false,
       }))
     );
   }
@@ -786,39 +794,252 @@ const ALLERGEN_DISPLAY: Record<string, string> = {
   sulphur_dioxide: "Sulphur Dioxide",
 };
 
+function boldAllergens(text: string, allergens: string[]): string {
+  let result = text;
+  for (const allergen of allergens) {
+    const displayName = ALLERGEN_DISPLAY[allergen] || allergen;
+    const escaped = displayName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(`\\b(${escaped})\\b`, "gi");
+    result = result.replace(regex, "**$1**");
+  }
+  return result;
+}
+
+interface DeckEntry {
+  type: "ingredient" | "compound";
+  name: string;
+  declaration: string;
+  percentage: number;
+  allergens: string[];
+  isQuid: boolean;
+  ingredientId?: number;
+  subRecipeId?: number;
+  subIngredients?: Array<{
+    ingredientId: number;
+    name: string;
+    declaration: string;
+    percentage: number;
+    allergens: string[];
+  }>;
+}
+
 router.get("/:id/ingredient-deck", async (req, res) => {
   const parsed = RecipeIdParams.safeParse({ id: req.params.id });
   if (!parsed.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
 
   try {
-    const { items, totalWeightG, missingDeclarations } = await gatherRecipeIngredients(parsed.data.id);
+    const recipeId = parsed.data.id;
+    const [recipe] = await db.select().from(recipesTable).where(eq(recipesTable.id, recipeId));
+    if (!recipe) { res.status(404).json({ error: "Recipe not found" }); return; }
 
-    const sorted = [...items].sort((a, b) => b.quantityG - a.quantityG);
+    const directIngs = await db
+      .select({
+        ingredientId: recipeIngredientsTable.ingredientId,
+        quantity: recipeIngredientsTable.quantity,
+        quid: recipeIngredientsTable.quid,
+        name: ingredientsTable.name,
+        labelDeclaration: ingredientsTable.labelDeclaration,
+        allergens: ingredientsTable.allergens,
+      })
+      .from(recipeIngredientsTable)
+      .innerJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
+      .where(eq(recipeIngredientsTable.recipeId, recipeId));
 
-    const deckItems = sorted.map(item => {
+    const subRecipeLinks = await db
+      .select({
+        subRecipeId: recipeSubRecipesTable.subRecipeId,
+        quantity: recipeSubRecipesTable.quantity,
+        quid: recipeSubRecipesTable.quid,
+      })
+      .from(recipeSubRecipesTable)
+      .where(eq(recipeSubRecipesTable.recipeId, recipeId));
+
+    const directItems: Array<{
+      ingredientId: number;
+      name: string;
+      quantityG: number;
+      labelDeclaration: string | null;
+      allergens: string[];
+      isQuid: boolean;
+    }> = directIngs.map(i => ({
+      ingredientId: i.ingredientId,
+      name: i.name,
+      quantityG: Number(i.quantity),
+      labelDeclaration: i.labelDeclaration,
+      allergens: (i.allergens as string[] | null) ?? [],
+      isQuid: i.quid ?? false,
+    }));
+
+    interface SubRecipeGroup {
+      subRecipeId: number;
+      name: string;
+      labelDeclaration: string | null;
+      totalQuantityG: number;
+      isQuid: boolean;
+      ingredients: Array<{
+        ingredientId: number;
+        name: string;
+        quantityG: number;
+        labelDeclaration: string | null;
+        allergens: string[];
+      }>;
+    }
+
+    const subRecipeGroups: SubRecipeGroup[] = [];
+
+    for (const sr of subRecipeLinks) {
+      const srQuantityG = Number(sr.quantity);
+      const [subRecipe] = await db.select().from(subRecipesTable).where(eq(subRecipesTable.id, sr.subRecipeId));
+      if (!subRecipe) continue;
+
+      const srYield = Number(subRecipe.yield) || 1;
+      const scaleFactor = srQuantityG / srYield;
+
+      const srIngs = await db
+        .select({
+          ingredientId: subRecipeIngredientsTable.ingredientId,
+          quantity: subRecipeIngredientsTable.quantity,
+          name: ingredientsTable.name,
+          labelDeclaration: ingredientsTable.labelDeclaration,
+          allergens: ingredientsTable.allergens,
+        })
+        .from(subRecipeIngredientsTable)
+        .innerJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
+        .where(eq(subRecipeIngredientsTable.subRecipeId, sr.subRecipeId));
+
+      subRecipeGroups.push({
+        subRecipeId: sr.subRecipeId,
+        name: subRecipe.name,
+        labelDeclaration: subRecipe.labelDeclaration ?? null,
+        totalQuantityG: srQuantityG,
+        isQuid: sr.quid ?? false,
+        ingredients: srIngs.map(si => ({
+          ingredientId: si.ingredientId,
+          name: si.name,
+          quantityG: Number(si.quantity) * scaleFactor,
+          labelDeclaration: si.labelDeclaration,
+          allergens: (si.allergens as string[] | null) ?? [],
+        })),
+      });
+    }
+
+    const totalWeightG = directItems.reduce((s, i) => s + i.quantityG, 0)
+      + subRecipeGroups.reduce((s, g) => s + g.totalQuantityG, 0);
+
+    const deckEntries: DeckEntry[] = [];
+
+    for (const item of directItems) {
       const pct = totalWeightG > 0 ? Math.round((item.quantityG / totalWeightG) * 1000) / 10 : 0;
       const declaration = item.labelDeclaration || item.name;
+      const bolded = boldAllergens(declaration, item.allergens);
 
-      let boldedDeclaration = declaration;
-      for (const allergen of item.allergens) {
-        const displayName = ALLERGEN_DISPLAY[allergen] || allergen;
-        const regex = new RegExp(`\\b(${displayName})\\b`, "gi");
-        boldedDeclaration = boldedDeclaration.replace(regex, "**$1**");
-      }
-
-      return {
-        ingredientId: item.ingredientId,
+      deckEntries.push({
+        type: "ingredient",
         name: item.name,
-        declaration: boldedDeclaration,
+        declaration: item.isQuid ? `${bolded} (${pct}%)` : bolded,
         percentage: pct,
         allergens: item.allergens.map(a => ALLERGEN_DISPLAY[a] || a),
-      };
-    });
+        isQuid: item.isQuid,
+        ingredientId: item.ingredientId,
+      });
+    }
 
-    const allAllergens = [...new Set(items.flatMap(i => i.allergens))].sort();
+    for (const group of subRecipeGroups) {
+      const pct = totalWeightG > 0 ? Math.round((group.totalQuantityG / totalWeightG) * 1000) / 10 : 0;
+
+      if (pct >= 25) {
+        const sortedSubIngs = [...group.ingredients].sort((a, b) => b.quantityG - a.quantityG);
+        const subIngTotalG = sortedSubIngs.reduce((s, i) => s + i.quantityG, 0);
+
+        const subIngEntries = sortedSubIngs.map(si => {
+          const siPct = subIngTotalG > 0 ? Math.round((si.quantityG / subIngTotalG) * 1000) / 10 : 0;
+          const dec = si.labelDeclaration || si.name;
+          return {
+            ingredientId: si.ingredientId,
+            name: si.name,
+            declaration: boldAllergens(dec, si.allergens),
+            percentage: siPct,
+            allergens: si.allergens.map(a => ALLERGEN_DISPLAY[a] || a),
+          };
+        });
+
+        const compoundName = group.labelDeclaration || group.name;
+        const allGroupAllergens = group.ingredients.flatMap(i => i.allergens);
+        const boldedName = boldAllergens(compoundName, allGroupAllergens);
+        const subDeclarations = subIngEntries.map(s => s.declaration).join(", ");
+        const compoundDeclaration = group.isQuid
+          ? `${boldedName} (${pct}%) (${subDeclarations})`
+          : `${boldedName} (${subDeclarations})`;
+
+        deckEntries.push({
+          type: "compound",
+          name: group.name,
+          declaration: compoundDeclaration,
+          percentage: pct,
+          allergens: [...new Set(allGroupAllergens)].map(a => ALLERGEN_DISPLAY[a] || a),
+          isQuid: group.isQuid,
+          subRecipeId: group.subRecipeId,
+          subIngredients: subIngEntries,
+        });
+      } else {
+        for (const si of group.ingredients) {
+          const siGlobalPct = totalWeightG > 0 ? Math.round((si.quantityG / totalWeightG) * 1000) / 10 : 0;
+          const dec = si.labelDeclaration || si.name;
+          const bolded = boldAllergens(dec, si.allergens);
+
+          const existingIdx = deckEntries.findIndex(
+            e => e.type === "ingredient" && e.ingredientId === si.ingredientId
+          );
+          if (existingIdx >= 0) {
+            const existing = deckEntries[existingIdx];
+            const combinedQtyG = (existing.percentage / 100 * totalWeightG) + si.quantityG;
+            const combinedPct = totalWeightG > 0 ? Math.round((combinedQtyG / totalWeightG) * 1000) / 10 : 0;
+            existing.percentage = combinedPct;
+            const mergedAllergens = [...new Set([...existing.allergens, ...si.allergens.map(a => ALLERGEN_DISPLAY[a] || a)])];
+            existing.allergens = mergedAllergens;
+            const rawAllergens = [...new Set([
+              ...(directItems.find(d => d.ingredientId === si.ingredientId)?.allergens ?? []),
+              ...si.allergens,
+            ])];
+            const baseDeclaration = dec;
+            existing.declaration = existing.isQuid
+              ? `${boldAllergens(baseDeclaration, rawAllergens)} (${combinedPct}%)`
+              : boldAllergens(baseDeclaration, rawAllergens);
+          } else {
+            deckEntries.push({
+              type: "ingredient",
+              name: si.name,
+              declaration: bolded,
+              percentage: siGlobalPct,
+              allergens: si.allergens.map(a => ALLERGEN_DISPLAY[a] || a),
+              isQuid: false,
+              ingredientId: si.ingredientId,
+            });
+          }
+        }
+      }
+    }
+
+    const aboveThreshold = deckEntries
+      .filter(e => e.percentage >= 2)
+      .sort((a, b) => b.percentage - a.percentage);
+    const belowThreshold = deckEntries
+      .filter(e => e.percentage < 2)
+      .sort((a, b) => b.percentage - a.percentage);
+    const sortedEntries = [...aboveThreshold, ...belowThreshold];
+
+    const allAllergens = [...new Set([
+      ...directItems.flatMap(i => i.allergens),
+      ...subRecipeGroups.flatMap(g => g.ingredients.flatMap(i => i.allergens)),
+    ])].sort();
     const allergenDisplayList = allAllergens.map(a => ALLERGEN_DISPLAY[a] || a);
 
-    const deckText = deckItems.map(d => d.declaration).join(", ") + ".";
+    const deckText = sortedEntries.map(d => d.declaration).join(", ") + ".";
+
+    const missingDeclarations = [
+      ...directItems.filter(i => !i.labelDeclaration).map(i => i.name),
+      ...subRecipeGroups.flatMap(g => g.ingredients.filter(i => !i.labelDeclaration).map(i => i.name)),
+    ];
 
     const [mayContainRow] = await db
       .select({ value: appSettingsTable.value })
@@ -828,11 +1049,11 @@ router.get("/:id/ingredient-deck", async (req, res) => {
     const mayContainStatement = mayContainRow?.value || null;
 
     res.json({
-      ingredients: deckItems,
+      ingredients: sortedEntries,
       deckText,
       allergens: allergenDisplayList,
       mayContainStatement,
-      missingDeclarations,
+      missingDeclarations: [...new Set(missingDeclarations)],
       isComplete: missingDeclarations.length === 0,
     });
   } catch (err: unknown) {

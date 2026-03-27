@@ -18,6 +18,7 @@ const schema = z.object({
   notes: z.string().optional(),
   shelfLifeDays: z.coerce.number().int().nonnegative().optional(),
   isBase: z.boolean().optional(),
+  labelDeclaration: z.string().optional(),
   ingredients: z.array(z.object({
     ingredientId: z.coerce.number().min(1, "Select an ingredient"),
     quantity: z.coerce.number().min(0.001, "Must be > 0"),
@@ -418,6 +419,16 @@ function SubRecipeForm({
           </div>
         </div>
 
+        <div>
+          <label className="text-sm font-medium">Label Declaration Name</label>
+          <input
+            {...register("labelDeclaration")}
+            placeholder="e.g. Tomato Sauce — used as compound ingredient name on labels"
+            className="w-full mt-1 px-3 py-2 bg-background border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+          <p className="text-xs text-muted-foreground mt-1">If set, this name appears in the ingredient deck when this sub-recipe is listed as a compound ingredient.</p>
+        </div>
+
         <div className="border-t border-border pt-4">
           <div className="flex items-center justify-between mb-3">
             <label className="text-sm font-bold">Ingredients</label>
@@ -640,6 +651,7 @@ function EditSubRecipeDialog({
         notes: detail.notes ?? "",
         shelfLifeDays: detail.shelfLifeDays != null ? Number(detail.shelfLifeDays) : undefined,
         isBase: detail.isBase ?? false,
+        labelDeclaration: (detail as Record<string, unknown>).labelDeclaration as string ?? "",
         ingredients: (detail.ingredients ?? []).map(i => ({
           ingredientId: i.ingredientId,
           quantity: Number(i.quantity),
@@ -649,7 +661,7 @@ function EditSubRecipeDialog({
           quantity: Number(c.quantity),
         })),
       }
-    : { name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, ingredients: [], subRecipeComponents: [] };
+    : { name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, labelDeclaration: "", ingredients: [], subRecipeComponents: [] };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -960,7 +972,7 @@ export default function SubRecipes() {
   }));
 
   const addDefaults: FormValues = {
-    name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false,
+    name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, labelDeclaration: "",
     ingredients: [],
     subRecipeComponents: [],
   };
