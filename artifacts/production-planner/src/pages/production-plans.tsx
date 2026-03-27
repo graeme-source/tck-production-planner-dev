@@ -2039,7 +2039,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const StatusIcon = statusConfig.icon;
   const totalBatchesTarget = plan.items?.reduce((s, it) => s + (it.batchesTarget ?? 0), 0) ?? 0;
   const totalBatchesComplete = plan.items?.reduce((s, it) => s + (it.batchesComplete ?? 0), 0) ?? 0;
-  const totalPacks = plan.items?.reduce((s, it) => s + (it.batchesTarget ?? 0) * (it.portionsPerBatch ?? 10), 0) ?? 0;
+  const totalPacks = plan.items?.reduce((s, it) => s + (it.batchesTarget ?? 0) * (it.portionsPerBatch ?? 10) / (it.packSize ?? 2), 0) ?? 0;
   const progress = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
 
   const handleStatusChange = (newStatus: string) => {
@@ -2252,7 +2252,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                   </td>
                   <td className="py-3 px-4 text-center font-medium">{item.batchesTarget ?? 0}</td>
                   <td className="py-3 px-4 text-center font-mono text-muted-foreground">
-                    {((item.batchesTarget ?? 0) * (item.portionsPerBatch ?? 10)).toLocaleString()}
+                    {((item.batchesTarget ?? 0) * (item.portionsPerBatch ?? 10) / (item.packSize ?? 2)).toLocaleString()}
                   </td>
                   <td className="py-3 px-4 text-center">{item.batchesComplete ?? 0}</td>
                   <td className="py-3 px-4 text-center">
