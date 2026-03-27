@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { db, ingredientsTable, suppliersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, ingredientsTable, suppliersTable, recipeIngredientsTable, subRecipeIngredientsTable } from "@workspace/db";
+import { eq, sql, inArray } from "drizzle-orm";
 import { CreateIngredientBody, UpdateIngredientBody } from "@workspace/api-zod";
 import { validate } from "../middleware/validate";
 
@@ -46,7 +46,34 @@ router.get("/", async (req, res) => {
   if (perishable === "true") query = query.where(eq(ingredientsTable.perishable, true));
   else if (perishable === "false") query = query.where(eq(ingredientsTable.perishable, false));
   const rows = await query;
-  res.json(rows.map(mapRow));
+
+  const recipeUsage = await db
+    .select({ ingredientId: recipeIngredientsTable.ingredientId, cnt: sql<number>`count(distinct ${recipeIngredientsTable.recipeId})` })
+    .from(recipeIngredientsTable)
+    .groupBy(recipeIngredientsTable.ingredientId);
+  const subRecipeUsage = await db
+    .select({ ingredientId: subRecipeIngredientsTable.ingredientId, cnt: sql<number>`count(distinct ${subRecipeIngredientsTable.subRecipeId})` })
+    .from(subRecipeIngredientsTable)
+    .groupBy(subRecipeIngredientsTable.ingredientId);
+
+  const usageMap: Record<number, { recipes: number; subRecipes: number }> = {};
+  for (const r of recipeUsage) {
+    if (!usageMap[r.ingredientId]) usageMap[r.ingredientId] = { recipes: 0, subRecipes: 0 };
+    usageMap[r.ingredientId].recipes = Number(r.cnt);
+  }
+  for (const s of subRecipeUsage) {
+    if (!usageMap[s.ingredientId]) usageMap[s.ingredientId] = { recipes: 0, subRecipes: 0 };
+    usageMap[s.ingredientId].subRecipes = Number(s.cnt);
+  }
+
+  res.json(rows.map(r => {
+    const usage = usageMap[r.id];
+    return {
+      ...mapRow(r),
+      usedInRecipes: usage ? usage.recipes : 0,
+      usedInSubRecipes: usage ? usage.subRecipes : 0,
+    };
+  }));
 });
 
 function validateProcessingRatio(value: unknown): string | null {

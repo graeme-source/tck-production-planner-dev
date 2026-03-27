@@ -862,6 +862,7 @@ export default function Inventory() {
 
   const [search, setSearch] = useState("");
   const [filterCategory, setFilterCategory] = useState("all");
+  const [filterUsage, setFilterUsage] = useState<"all" | "used" | "unused">("all");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Ingredient | null>(null);
@@ -883,9 +884,14 @@ export default function Inventory() {
       const matchesCategory =
         filterCategory === "all" ||
         (filterCategory === "uncategorised" ? !i.category : i.category === filterCategory);
-      return matchesSearch && matchesCategory;
+      const rec = i as Record<string, unknown>;
+      const totalUsage = (Number(rec.usedInRecipes) || 0) + (Number(rec.usedInSubRecipes) || 0);
+      const matchesUsage =
+        filterUsage === "all" ||
+        (filterUsage === "used" ? totalUsage > 0 : totalUsage === 0);
+      return matchesSearch && matchesCategory && matchesUsage;
     });
-  }, [tabItems, search, filterCategory]);
+  }, [tabItems, search, filterCategory, filterUsage]);
 
   const supplierMap = Object.fromEntries((suppliers ?? []).map(s => [s.id, s.name]));
   const categoryOptions = activeTab === "ingredients" ? INGREDIENT_CATEGORIES : SUPPLY_CATEGORIES;
@@ -995,6 +1001,15 @@ export default function Inventory() {
             <option key={c.value} value={c.value}>{c.label}</option>
           ))}
         </select>
+        <select
+          value={filterUsage}
+          onChange={e => setFilterUsage(e.target.value as "all" | "used" | "unused")}
+          className="px-3 py-2 bg-card border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+        >
+          <option value="all">All usage</option>
+          <option value="used">Used in recipes</option>
+          <option value="unused">Not used</option>
+        </select>
       </div>
 
       {isLoading ? (
@@ -1027,6 +1042,7 @@ export default function Inventory() {
                 {activeTab === "supplies" && <th className="text-right py-3 px-3 font-medium text-muted-foreground">Pallet</th>}
                 <th className="text-right py-3 px-3 font-medium text-muted-foreground">Cost/Pack</th>
                 <th className="text-left py-3 px-3 font-medium text-muted-foreground">Supplier</th>
+                <th className="text-center py-3 px-3 font-medium text-muted-foreground">Used In</th>
                 <th className="text-center py-3 px-3 font-medium text-muted-foreground">Kanban</th>
                 <th className="py-3 px-3" />
               </tr>
@@ -1068,6 +1084,19 @@ export default function Inventory() {
                       {item.supplierId ? supplierMap[item.supplierId] ?? "—" : <span className="opacity-40">—</span>}
                     </td>
                     <td className="py-3 px-3 text-center">
+                      {(() => {
+                        const rec = item as Record<string, unknown>;
+                        const r = Number(rec.usedInRecipes) || 0;
+                        const s = Number(rec.usedInSubRecipes) || 0;
+                        const total = r + s;
+                        if (total === 0) return <span className="text-muted-foreground opacity-40 text-xs">—</span>;
+                        const parts: string[] = [];
+                        if (r > 0) parts.push(`${r} recipe${r > 1 ? "s" : ""}`);
+                        if (s > 0) parts.push(`${s} sub-recipe${s > 1 ? "s" : ""}`);
+                        return <span className="text-xs text-primary font-medium" title={parts.join(", ")}>{total}</span>;
+                      })()}
+                    </td>
+                    <td className="py-3 px-3 text-center">
                       {(item as Record<string, unknown>).kanbanEnabled ? (
                         <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary">Active</span>
                       ) : (
@@ -1090,7 +1119,7 @@ export default function Inventory() {
             </tbody>
             <tfoot className="border-t border-border bg-secondary/10">
               <tr>
-                <td colSpan={activeTab === "supplies" ? 9 : 8} className="py-2 px-4 text-xs text-muted-foreground">
+                <td colSpan={activeTab === "supplies" ? 10 : 9} className="py-2 px-4 text-xs text-muted-foreground">
                   {filtered.length} {filtered.length === 1 ? "item" : "items"}
                   {filtered.length !== tabItems.length && ` (filtered from ${tabItems.length})`}
                 </td>
