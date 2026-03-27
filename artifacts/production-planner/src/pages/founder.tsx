@@ -663,7 +663,7 @@ function FounderDashboard() {
       {/* ── Section 1: Fixed At-a-Glance KPIs (always this month) ──────────── */}
       <section>
         {sectionHeading("At a Glance — " + format(today, "MMMM yyyy"))}
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
           <KpiCard
             title="Today's Sales"
             value={monthSummary ? formatGBP(monthSummary.todayRevenue) : "—"}
@@ -701,6 +701,16 @@ function FounderDashboard() {
             icon={Calendar}
             color="text-amber-500"
             bg="bg-amber-500/10"
+            loading={monthLoading}
+            error={!!monthError}
+          />
+          <KpiCard
+            title="Today's AOV"
+            value={monthSummary && monthSummary.todayOrderCount > 0 ? formatGBP(monthSummary.todayRevenue / monthSummary.todayOrderCount) : "—"}
+            sub={monthSummary && monthSummary.todayOrderCount > 0 ? `Across ${monthSummary.todayOrderCount} order${monthSummary.todayOrderCount !== 1 ? "s" : ""}` : "No orders yet today"}
+            icon={ShoppingBag}
+            color="text-emerald-500"
+            bg="bg-emerald-500/10"
             loading={monthLoading}
             error={!!monthError}
           />
@@ -763,7 +773,7 @@ function FounderDashboard() {
         </div>
 
         {/* Period total sales */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
           <KpiCard
             title={`Total Sales — ${activePreset === "custom" ? `${from} to ${to}` : activePreset}`}
             value={periodSummary ? formatGBP(periodSummary.totalRevenue) : "—"}
@@ -771,6 +781,16 @@ function FounderDashboard() {
             icon={BarChart2}
             color="text-blue-500"
             bg="bg-blue-500/10"
+            loading={periodLoading}
+            error={!!periodError}
+          />
+          <KpiCard
+            title={`AOV — ${activePreset === "custom" ? `${from} to ${to}` : activePreset}`}
+            value={periodSummary && periodSummary.orderCount > 0 ? formatGBP(periodSummary.totalRevenue / periodSummary.orderCount) : "—"}
+            sub={periodSummary && periodSummary.orderCount > 0 ? `Across ${periodSummary.orderCount} order${periodSummary.orderCount !== 1 ? "s" : ""}` : "No orders in this period"}
+            icon={ShoppingBag}
+            color="text-emerald-500"
+            bg="bg-emerald-500/10"
             loading={periodLoading}
             error={!!periodError}
           />

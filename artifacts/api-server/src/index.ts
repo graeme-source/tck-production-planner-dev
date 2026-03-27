@@ -437,8 +437,8 @@ async function runStartupMigrations() {
       WHERE NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'prep_weight_mode_backfill')
     `);
     {
-      const [{ cnt }] = await db.execute(sql`SELECT count(*)::int as cnt FROM _migrations_done WHERE key = 'prep_weight_mode_backfill' AND done_at > NOW() - INTERVAL '5 seconds'`);
-      if (Number(cnt) > 0) {
+      const result = await db.execute<{ cnt: number }>(sql`SELECT count(*)::int as cnt FROM _migrations_done WHERE key = 'prep_weight_mode_backfill' AND done_at > NOW() - INTERVAL '5 seconds'`);
+      if (Number(result.rows[0]?.cnt) > 0) {
         await db.execute(sql`UPDATE ingredients SET prep_weight_mode = 'processed' WHERE category IN ('vegetable', 'herb') AND prep_weight_mode = 'raw'`);
       }
     }
