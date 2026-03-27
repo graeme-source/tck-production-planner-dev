@@ -3045,7 +3045,11 @@ router.get("/:id/dough-prep", async (req, res) => {
       .limit(1);
     if (nextPlans.length > 0) nextPlan = nextPlans[0];
 
-    targetPlanId = nextPlan?.id ?? planId;
+    if (!nextPlan) {
+      res.json({ ingredients: [], recipes: [], totalDoughKg: 0, mixerCapacityKg: 25, mixCount: 0, nextPlan: null, noFuturePlan: true });
+      return;
+    }
+    targetPlanId = nextPlan.id;
   }
 
   // ── 2. Get mixer capacity + daily extra ball settings ──

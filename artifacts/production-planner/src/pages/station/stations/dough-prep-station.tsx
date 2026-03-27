@@ -48,6 +48,7 @@ interface DoughPrepData {
     doughSubRecipeName: string;
   }>;
   nextPlan: { id: number; planDate: string; name: string } | null;
+  noFuturePlan?: boolean;
   extraBalls?: {
     extraPack: { count: number; weightG: number };
     snack: { count: number; weightG: number };
@@ -269,6 +270,19 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
       <div className="flex items-center justify-center py-16 text-muted-foreground">
         <Loader2 className="w-6 h-6 animate-spin mr-3" />
         <span className="text-lg">Loading dough data…</span>
+      </div>
+    );
+  }
+
+  if (doughData?.noFuturePlan) {
+    return (
+      <div className="bg-card border border-border rounded-xl p-8 text-center">
+        <Layers className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-50" />
+        <h2 className="font-semibold text-lg mb-1">No future production plan</h2>
+        <p className="text-muted-foreground text-sm">
+          There is no upcoming active production plan to prep dough for.
+          Create and activate a future plan to see dough requirements here.
+        </p>
       </div>
     );
   }
