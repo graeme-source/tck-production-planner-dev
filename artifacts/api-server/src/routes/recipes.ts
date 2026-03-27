@@ -838,6 +838,7 @@ router.get("/:id/ingredient-deck", async (req, res) => {
         quantity: recipeIngredientsTable.quantity,
         quid: recipeIngredientsTable.quid,
         name: ingredientsTable.name,
+        unit: ingredientsTable.unit,
         labelDeclaration: ingredientsTable.labelDeclaration,
         allergens: ingredientsTable.allergens,
       })
@@ -854,6 +855,14 @@ router.get("/:id/ingredient-deck", async (req, res) => {
       .from(recipeSubRecipesTable)
       .where(eq(recipeSubRecipesTable.recipeId, recipeId));
 
+    function toGrams(qty: number, unit: string): number {
+      const u = unit.toLowerCase().trim();
+      if (u === "kg") return qty * 1000;
+      if (u === "l" || u === "litre" || u === "litres" || u === "liter" || u === "liters") return qty * 1000;
+      if (u === "ml") return qty;
+      return qty;
+    }
+
     const directItems: Array<{
       ingredientId: number;
       name: string;
@@ -864,7 +873,7 @@ router.get("/:id/ingredient-deck", async (req, res) => {
     }> = directIngs.map(i => ({
       ingredientId: i.ingredientId,
       name: i.name,
-      quantityG: Number(i.quantity),
+      quantityG: toGrams(Number(i.quantity), i.unit ?? "g"),
       labelDeclaration: i.labelDeclaration,
       allergens: (i.allergens as string[] | null) ?? [],
       isQuid: i.quid ?? false,
@@ -888,18 +897,17 @@ router.get("/:id/ingredient-deck", async (req, res) => {
     const subRecipeGroups: SubRecipeGroup[] = [];
 
     for (const sr of subRecipeLinks) {
-      const srQuantityG = Number(sr.quantity);
       const [subRecipe] = await db.select().from(subRecipesTable).where(eq(subRecipesTable.id, sr.subRecipeId));
       if (!subRecipe) continue;
 
-      const srYield = Number(subRecipe.yield) || 1;
-      const scaleFactor = srQuantityG / srYield;
+      const srUsedG = toGrams(Number(sr.quantity), subRecipe.yieldUnit ?? "g");
 
       const srIngs = await db
         .select({
           ingredientId: subRecipeIngredientsTable.ingredientId,
           quantity: subRecipeIngredientsTable.quantity,
           name: ingredientsTable.name,
+          unit: ingredientsTable.unit,
           labelDeclaration: ingredientsTable.labelDeclaration,
           allergens: ingredientsTable.allergens,
         })
@@ -907,19 +915,30 @@ router.get("/:id/ingredient-deck", async (req, res) => {
         .innerJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
         .where(eq(subRecipeIngredientsTable.subRecipeId, sr.subRecipeId));
 
+      const srIngNormalized = srIngs.map(si => ({
+        ingredientId: si.ingredientId,
+        name: si.name,
+        quantityG: toGrams(Number(si.quantity), si.unit ?? "g"),
+        labelDeclaration: si.labelDeclaration,
+        allergens: (si.allergens as string[] | null) ?? [],
+      }));
+
+      const srTotalIngWeightG = srIngNormalized.reduce((s, i) => s + i.quantityG, 0);
+
+      const scaledIngs = srIngNormalized.map(si => ({
+        ...si,
+        quantityG: srTotalIngWeightG > 0
+          ? (si.quantityG / srTotalIngWeightG) * srUsedG
+          : 0,
+      }));
+
       subRecipeGroups.push({
         subRecipeId: sr.subRecipeId,
         name: subRecipe.name,
         labelDeclaration: subRecipe.labelDeclaration ?? null,
-        totalQuantityG: srQuantityG,
+        totalQuantityG: srUsedG,
         isQuid: sr.quid ?? false,
-        ingredients: srIngs.map(si => ({
-          ingredientId: si.ingredientId,
-          name: si.name,
-          quantityG: Number(si.quantity) * scaleFactor,
-          labelDeclaration: si.labelDeclaration,
-          allergens: (si.allergens as string[] | null) ?? [],
-        })),
+        ingredients: scaledIngs,
       });
     }
 
