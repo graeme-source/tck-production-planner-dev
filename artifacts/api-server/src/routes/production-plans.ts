@@ -76,6 +76,23 @@ function julianBatchNumber(date: Date): number {
   return year * 1000 + dayOfYear;
 }
 
+async function isAdminDateOverrideEnabled(req: import("express").Request): Promise<boolean> {
+  let role = req.session.userRole;
+  if (!role && req.session.userId) {
+    const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
+    if (user) {
+      role = user.role as "admin" | "manager" | "viewer";
+      req.session.userRole = role;
+    }
+  }
+  if (role !== "admin") return false;
+  const [row] = await db
+    .select({ value: appSettingsTable.value })
+    .from(appSettingsTable)
+    .where(eq(appSettingsTable.key, "admin_plan_date_override"));
+  return row?.value === "true";
+}
+
 /** Returns true if `planDateStr` is at least 2 working days from today (UTC). */
 function isAtLeast2WorkingDaysAhead(planDateStr: string): boolean {
   const todayUTC = new Date();
@@ -204,10 +221,13 @@ router.post("/", validate(CreatePlanBody), async (req, res) => {
     res.status(400).json({ error: "Production plans can only be scheduled on weekdays (Monday–Friday)." });
     return;
   }
-  // Enforce 2 working-day minimum lead time
+  // Enforce 2 working-day minimum lead time (admin override available)
   if (!isAtLeast2WorkingDaysAhead(planDate)) {
-    res.status(400).json({ error: "Production plans must be scheduled at least 2 working days in advance." });
-    return;
+    const overrideEnabled = await isAdminDateOverrideEnabled(req);
+    if (!overrideEnabled) {
+      res.status(400).json({ error: "Production plans must be scheduled at least 2 working days in advance." });
+      return;
+    }
   }
   const batchNumber = julianBatchNumber(dateObj);
 
@@ -829,8 +849,11 @@ router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
       return;
     }
     if (!isAtLeast2WorkingDaysAhead(planDate)) {
-      res.status(400).json({ error: "Production plans must be scheduled at least 2 working days in advance." });
-      return;
+      const overrideEnabled = await isAdminDateOverrideEnabled(req);
+      if (!overrideEnabled) {
+        res.status(400).json({ error: "Production plans must be scheduled at least 2 working days in advance." });
+        return;
+      }
     }
   }
 

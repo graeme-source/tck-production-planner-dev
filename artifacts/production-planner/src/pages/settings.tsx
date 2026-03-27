@@ -810,6 +810,7 @@ export default function Settings() {
 
           {activeSection === "production" && (
             <div className="space-y-8">
+              {user?.role === "admin" && <AdminDateOverrideSection />}
               <div ref={dptRef}>
                 {user?.role === "admin" && <DptSettingsSection />}
               </div>
@@ -1306,6 +1307,80 @@ function TimingStandardsSection() {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+function AdminDateOverrideSection() {
+  const [enabled, setEnabled] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch(`${BASE}/api/app-settings/admin_plan_date_override`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.value === "true") setEnabled(true); setLoaded(true); })
+      .catch(() => setLoaded(true));
+  }, []);
+
+  const toggle = async () => {
+    const newVal = !enabled;
+    setSaving(true);
+    try {
+      const res = await fetch(`${BASE}/api/app-settings/admin_plan_date_override`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: newVal ? "true" : "false" }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      setEnabled(newVal);
+      toast({ title: newVal ? "Admin date override enabled" : "Admin date override disabled" });
+    } catch {
+      toast({ title: "Failed to save setting", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!loaded) return null;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-base font-semibold flex items-center gap-2">
+          <Lock className="w-4 h-4 text-primary" /> Admin Date Override
+        </h2>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          When enabled, admin users can create production plans for any weekday — including today and past dates. Non-admin users are unaffected.
+        </p>
+      </div>
+      <div className="rounded-2xl border border-border bg-card p-5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-medium">Override lead-time restriction</span>
+            {enabled && (
+              <span className="text-xs font-semibold text-amber-600 bg-amber-50 dark:bg-amber-900/30 dark:text-amber-400 px-2 py-0.5 rounded-full">Active</span>
+            )}
+          </div>
+          <button
+            onClick={toggle}
+            disabled={saving}
+            className={cn(
+              "relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30",
+              enabled ? "bg-primary" : "bg-gray-300 dark:bg-gray-600",
+              saving && "opacity-50 cursor-not-allowed"
+            )}
+          >
+            <span
+              className={cn(
+                "inline-block h-4 w-4 rounded-full bg-white transition-transform",
+                enabled ? "translate-x-6" : "translate-x-1"
+              )}
+            />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
