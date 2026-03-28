@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { db, recipesTable, recipeIngredientsTable, recipeSubRecipesTable, recipeMeatMarinadesTable, ingredientsTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, appSettingsTable, kanbanItemsTable } from "@workspace/db";
-import { eq, inArray, ne, and } from "drizzle-orm";
+import { db, recipesTable, recipeIngredientsTable, recipeSubRecipesTable, recipeMeatMarinadesTable, ingredientsTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, appSettingsTable, kanbanItemsTable, productionPlansTable, productionPlanItemsTable } from "@workspace/db";
+import { eq, inArray, ne, and, gte } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { CreateRecipeBody, UpdateRecipeBody } from "@workspace/api-zod";
@@ -464,6 +464,27 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
         gramsPerKg: String(m.gramsPerKg),
       }))
     );
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const draftPlansWithRecipe = await db
+    .select({ itemId: productionPlanItemsTable.id })
+    .from(productionPlanItemsTable)
+    .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
+    .where(and(
+      eq(productionPlanItemsTable.recipeId, id),
+      eq(productionPlansTable.status, "draft"),
+      gte(productionPlansTable.planDate, today),
+    ));
+
+  if (draftPlansWithRecipe.length > 0) {
+    await db.update(productionPlanItemsTable)
+      .set({
+        tinSize: updated.tinSize ?? null,
+        maxBatchesPerTin: updated.maxBatchesPerTin ?? null,
+        sopUrl: updated.sopUrl ?? null,
+      })
+      .where(inArray(productionPlanItemsTable.id, draftPlansWithRecipe.map(r => r.itemId)));
   }
 
   const mapped = mapRecipe(updated);

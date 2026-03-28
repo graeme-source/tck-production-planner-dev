@@ -4417,4 +4417,147 @@ router.get("/:id/validate", async (req, res) => {
   }
 });
 
+async function requireManagerOrAdmin(req: import("express").Request, res: import("express").Response): Promise<boolean> {
+  let role = req.session.userRole;
+  if (!role && req.session.userId) {
+    const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
+    if (user) {
+      role = user.role as "admin" | "manager" | "viewer";
+      req.session.userRole = role;
+    }
+  }
+  if (role !== "admin" && role !== "manager") {
+    res.status(403).json({ error: "Only managers and admins can perform this action." });
+    return false;
+  }
+  return true;
+}
+
+router.post("/:id/resync", async (req, res) => {
+  try {
+    if (!(await requireManagerOrAdmin(req, res))) return;
+
+    const planId = Number(req.params.id);
+    const { confirmed } = req.body as { confirmed?: boolean };
+
+    const [plan] = await db.select().from(productionPlansTable).where(eq(productionPlansTable.id, planId));
+    if (!plan) { res.status(404).json({ error: "Not found" }); return; }
+
+    if (plan.status === "complete") {
+      res.status(400).json({ error: "Completed plans cannot be resynced." });
+      return;
+    }
+
+    const planItems = await db
+      .select({
+        itemId: productionPlanItemsTable.id,
+        recipeId: productionPlanItemsTable.recipeId,
+      })
+      .from(productionPlanItemsTable)
+      .where(eq(productionPlanItemsTable.planId, planId));
+
+    if (planItems.length === 0) {
+      res.json({ message: "No items to resync", updated: 0 });
+      return;
+    }
+
+    if (plan.status !== "draft" && !confirmed) {
+      res.status(409).json({
+        error: "This plan is active. Resyncing will overwrite tin size, max batches per tin, and SOP URL for all items with the latest recipe data. Send { confirmed: true } to proceed.",
+        requiresConfirmation: true,
+      });
+      return;
+    }
+
+    const recipeIds = [...new Set(planItems.map(i => i.recipeId))];
+    const recipes = await db
+      .select({ id: recipesTable.id, tinSize: recipesTable.tinSize, maxBatchesPerTin: recipesTable.maxBatchesPerTin, sopUrl: recipesTable.sopUrl })
+      .from(recipesTable)
+      .where(inArray(recipesTable.id, recipeIds));
+    const recipeMap = Object.fromEntries(recipes.map(r => [r.id, r]));
+
+    const updatedCount = await db.transaction(async (tx) => {
+      let count = 0;
+      for (const item of planItems) {
+        const recipe = recipeMap[item.recipeId];
+        if (!recipe) continue;
+        await tx.update(productionPlanItemsTable)
+          .set({
+            tinSize: recipe.tinSize ?? null,
+            maxBatchesPerTin: recipe.maxBatchesPerTin ?? null,
+            sopUrl: recipe.sopUrl ?? null,
+          })
+          .where(eq(productionPlanItemsTable.id, item.itemId));
+        count++;
+      }
+      return count;
+    });
+
+    res.json({ message: `Resynced ${updatedCount} item(s) with latest recipe data.`, updated: updatedCount });
+  } catch (err) {
+    console.error("[resync] Error:", err instanceof Error ? err.message : String(err));
+    res.status(500).json({ error: "Resync failed", detail: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+router.post("/:id/reset", async (req, res) => {
+  try {
+    if (!(await requireManagerOrAdmin(req, res))) return;
+
+    const planId = Number(req.params.id);
+    const { confirmed } = req.body as { confirmed?: boolean };
+
+    const [plan] = await db.select().from(productionPlansTable).where(eq(productionPlansTable.id, planId));
+    if (!plan) { res.status(404).json({ error: "Not found" }); return; }
+
+    if (plan.status === "complete") {
+      res.status(400).json({ error: "Completed plans cannot be reset." });
+      return;
+    }
+
+    if (!confirmed) {
+      res.status(409).json({
+        error: "Resetting this plan will zero all batch completions, prep completions, station breaks, temperature records, oven events, and set the plan back to draft. This cannot be undone. Send { confirmed: true } to proceed.",
+        requiresConfirmation: true,
+      });
+      return;
+    }
+
+    await db.transaction(async (tx) => {
+      await tx.delete(batchCompletionsTable).where(
+        inArray(batchCompletionsTable.planItemId,
+          db.select({ id: productionPlanItemsTable.id }).from(productionPlanItemsTable).where(eq(productionPlanItemsTable.planId, planId))
+        )
+      );
+
+      await tx.delete(prepCompletionsTable).where(eq(prepCompletionsTable.planId, planId));
+      await tx.delete(stationBreaksTable).where(eq(stationBreaksTable.planId, planId));
+      await tx.execute(sql`DELETE FROM temperature_records WHERE plan_id = ${planId}`);
+      await tx.execute(sql`DELETE FROM oven_events WHERE plan_id = ${planId}`);
+
+      await tx.update(productionPlanItemsTable)
+        .set({
+          batchesComplete: 0,
+          wonlyCount: 0,
+          wrappingComplete: false,
+          fridgeQty: 0,
+          freezerQty: 0,
+          prepFridgeQty: 0,
+          extraPacksBuilt: 0,
+          status: "pending",
+        })
+        .where(eq(productionPlanItemsTable.planId, planId));
+
+      await tx.update(productionPlansTable)
+        .set({ status: "draft" })
+        .where(eq(productionPlansTable.id, planId));
+    });
+
+    res.json({ message: "Production plan has been reset to draft with all progress cleared." });
+  } catch (err) {
+    console.error("[reset] Error:", err instanceof Error ? err.message : String(err));
+    res.status(500).json({ error: "Reset failed", detail: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 export default router;

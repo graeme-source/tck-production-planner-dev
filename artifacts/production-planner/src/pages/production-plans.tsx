@@ -21,7 +21,7 @@ import {
   Loader2, RefreshCw, Info, Package, ClipboardList, ExternalLink,
   Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef,
   ArrowRight, GripVertical, AlertTriangle, AlertCircle, BookmarkCheck, ShoppingCart,
-  FlaskConical, Printer, X, ChevronDown, ChevronUp, PoundSterling, ShieldCheck,
+  FlaskConical, Printer, X, ChevronDown, ChevronUp, PoundSterling, ShieldCheck, RotateCcw,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -2045,6 +2045,10 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   };
   const { updatePlan, deletePlan } = useAppMutations();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmResync, setConfirmResync] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [resyncLoading, setResyncLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
   const [isEditingDraft, setIsEditingDraft] = useState(false);
   const [showManifest, setShowManifest] = useState(false);
   const [showValidation, setShowValidation] = useState(false);
@@ -2102,6 +2106,48 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
 
   const handleStatusChange = (newStatus: string) => {
     updatePlan.mutate({ id: planId, data: { status: newStatus as PlanStatus } });
+  };
+
+  const handleResync = async () => {
+    setResyncLoading(true);
+    try {
+      const resp = await fetch(`/api/production-plans/${planId}/resync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ confirmed: true }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error ?? "Resync failed");
+      toast({ title: "Resync complete", description: data.message });
+      refetch();
+    } catch (err) {
+      toast({ title: "Resync failed", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+    } finally {
+      setResyncLoading(false);
+      setConfirmResync(false);
+    }
+  };
+
+  const handleReset = async () => {
+    setResetLoading(true);
+    try {
+      const resp = await fetch(`/api/production-plans/${planId}/reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ confirmed: true }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error ?? "Reset failed");
+      toast({ title: "Plan reset", description: data.message });
+      refetch();
+    } catch (err) {
+      toast({ title: "Reset failed", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+    } finally {
+      setResetLoading(false);
+      setConfirmReset(false);
+    }
   };
 
   return (
@@ -2174,6 +2220,24 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
             {validationLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
             Validate
           </button>
+          {plan.status !== "complete" && (
+            <button
+              onClick={() => setConfirmResync(true)}
+              className="px-3 py-1.5 text-xs border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors font-medium flex items-center gap-1"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Resync Recipes
+            </button>
+          )}
+          {plan.status !== "complete" && (
+            <button
+              onClick={() => setConfirmReset(true)}
+              className="px-3 py-1.5 text-xs text-orange-600 hover:text-orange-700 border border-orange-200 dark:border-orange-900/40 rounded-lg hover:bg-orange-50 dark:hover:bg-orange-900/20 transition-colors font-medium flex items-center gap-1"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Reset Plan
+            </button>
+          )}
           {plan.status !== "complete" && (
             <button
               onClick={() => setConfirmDelete(true)}
@@ -2493,6 +2557,84 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
         <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-900/30 rounded-xl p-4 text-sm">
           <p className="font-medium text-amber-800 dark:text-amber-300 mb-1">Notes</p>
           <p className="text-amber-700 dark:text-amber-400">{plan.notes}</p>
+        </div>
+      )}
+
+      {/* Resync confirmation */}
+      {confirmResync && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-card border border-border rounded-2xl p-6 max-w-md w-full mx-4">
+            <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
+              <RefreshCw className="w-5 h-5 text-amber-600" />
+              Resync Recipes?
+            </h3>
+            <p className="text-muted-foreground text-sm mb-2">
+              This will update <strong>tin size</strong>, <strong>max batches per tin</strong>, and <strong>SOP URL</strong> for all items in this plan to match the latest recipe data.
+            </p>
+            {plan.status !== "draft" && (
+              <p className="text-amber-600 text-sm font-medium mb-4">
+                This plan is currently {plan.status}. Resyncing may affect in-progress work.
+              </p>
+            )}
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setConfirmResync(false)}
+                className="px-4 py-2 text-sm border border-border rounded-xl hover:bg-secondary/50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleResync}
+                disabled={resyncLoading}
+                className="px-4 py-2 text-sm bg-amber-600 text-white rounded-xl hover:bg-amber-700 transition-colors flex items-center gap-1"
+              >
+                {resyncLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                Resync
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset confirmation */}
+      {confirmReset && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-card border border-border rounded-2xl p-6 max-w-md w-full mx-4">
+            <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
+              <RotateCcw className="w-5 h-5 text-orange-600" />
+              Reset Production Plan?
+            </h3>
+            <p className="text-muted-foreground text-sm mb-2">
+              This will <strong>zero all progress</strong> on "{plan.name}":
+            </p>
+            <ul className="text-sm text-muted-foreground list-disc ml-5 mb-2 space-y-0.5">
+              <li>All batch completions deleted</li>
+              <li>All prep completions deleted</li>
+              <li>Station breaks, temperature records, and oven events deleted</li>
+              <li>Fridge, freezer, and prep fridge counts zeroed</li>
+              <li>Wonky counts and extra packs zeroed</li>
+              <li>Plan set back to Draft</li>
+            </ul>
+            <p className="text-orange-600 text-sm font-semibold mb-4">
+              This cannot be undone.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setConfirmReset(false)}
+                className="px-4 py-2 text-sm border border-border rounded-xl hover:bg-secondary/50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReset}
+                disabled={resetLoading}
+                className="px-4 py-2 text-sm bg-orange-600 text-white rounded-xl hover:bg-orange-700 transition-colors flex items-center gap-1"
+              >
+                {resetLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                Reset Plan
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
