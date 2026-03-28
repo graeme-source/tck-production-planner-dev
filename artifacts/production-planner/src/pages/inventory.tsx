@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import {
   Search, Plus, Trash2, Edit2, Loader2, ExternalLink, Upload,
   FileText, CheckCircle2, XCircle, AlertTriangle, RefreshCw,
-  Carrot, Box, ChevronDown,
+  Carrot, Box, ChevronDown, Printer,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
@@ -167,6 +167,41 @@ function downloadTemplate() {
   const a = document.createElement("a");
   a.href = url; a.download = "ingredients_template.csv"; a.click();
   URL.revokeObjectURL(url);
+}
+
+function escapeHtml(str: string): string {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+async function printQrCode(ingredientId: number, ingredientName: string) {
+  const qrUrl = `${BASE}/api/qr/ingredient/${ingredientId}`;
+  const resp = await fetch(qrUrl, { credentials: "include" });
+  if (!resp.ok) return;
+  const blob = await resp.blob();
+  const dataUrl = await new Promise<string>((resolve) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.readAsDataURL(blob);
+  });
+  const safeName = escapeHtml(ingredientName);
+  const w = window.open("", "_blank", "width=400,height=500");
+  if (!w) return;
+  w.document.write(`<!DOCTYPE html><html><head><title>QR — ${safeName}</title>
+<style>
+  body { font-family: system-ui, sans-serif; text-align: center; padding: 40px 20px; margin: 0; }
+  img { width: 240px; height: 240px; margin: 20px auto; display: block; }
+  h2 { font-size: 18px; margin: 0 0 4px; }
+  p { font-size: 13px; color: #666; margin: 0 0 8px; }
+  .label { font-size: 11px; color: #999; margin-top: 12px; }
+  @media print { .no-print { display: none; } body { padding: 20px; } }
+</style></head><body>
+  <h2>${safeName}</h2>
+  <p>Ingredient #${ingredientId}</p>
+  <img src="${dataUrl}" alt="QR Code" />
+  <p class="label">Scan to pull kanban</p>
+  <button class="no-print" onclick="window.print()" style="margin-top:16px;padding:8px 24px;font-size:14px;cursor:pointer;border:1px solid #ccc;border-radius:8px;background:#f5f5f5;">Print</button>
+</body></html>`);
+  w.document.close();
 }
 
 interface ImportResult {
@@ -1121,6 +1156,11 @@ export default function Inventory() {
                     </td>
                     <td className="py-3 px-3">
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity justify-end">
+                        {activeTab === "ingredients" && (item as Record<string, unknown>).qrCodeUrl && (
+                          <button onClick={() => printQrCode(item.id, item.name)} className="p-1.5 text-muted-foreground hover:text-primary transition-colors rounded-lg hover:bg-primary/10" title="Print QR Code">
+                            <Printer className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         <button onClick={() => openEdit(item)} className="p-1.5 text-muted-foreground hover:text-primary transition-colors rounded-lg hover:bg-primary/10" title="Edit">
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>

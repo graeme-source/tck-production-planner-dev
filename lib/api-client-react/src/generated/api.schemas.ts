@@ -50,6 +50,7 @@ export interface Ingredient {
   rawMeatTrayCapacityKg?: number | null;
   kanbanEnabled?: boolean;
   kanbanQuantity?: number;
+  qrCodeUrl?: string | null;
   createdAt: string;
 }
 
