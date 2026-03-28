@@ -443,6 +443,15 @@ async function runStartupMigrations() {
       }
     }
     await db.execute(sql`ALTER TABLE improvement_submissions ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'improvement'`);
+    await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS qr_code_url TEXT`);
+    await db.execute(sql`ALTER TABLE kanban_items ALTER COLUMN ingredient_id DROP NOT NULL`);
+    await db.execute(sql`ALTER TABLE kanban_items ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'ingredient'`);
+    await db.execute(sql`ALTER TABLE kanban_items ADD COLUMN IF NOT EXISTS recipe_id INTEGER REFERENCES recipes(id) ON DELETE CASCADE`);
+    await db.execute(sql`ALTER TABLE kanban_items ADD COLUMN IF NOT EXISTS sub_recipe_id INTEGER REFERENCES sub_recipes(id) ON DELETE CASCADE`);
+    await db.execute(sql`ALTER TABLE kanban_items ADD COLUMN IF NOT EXISTS qr_code_url TEXT`);
+    await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS kanban_items_recipe_unique ON kanban_items (recipe_id) WHERE source_type = 'recipe' AND recipe_id IS NOT NULL`);
+    await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS kanban_items_sub_recipe_unique ON kanban_items (sub_recipe_id) WHERE source_type = 'sub_recipe' AND sub_recipe_id IS NOT NULL`);
+    await db.execute(sql`DO $$ BEGIN ALTER TABLE kanban_items ADD CONSTRAINT kanban_items_source_type_check CHECK (source_type IN ('ingredient', 'recipe', 'sub_recipe')); EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
     await seedStorageLocations();
     console.log("Startup migrations OK");
   } catch (err) {

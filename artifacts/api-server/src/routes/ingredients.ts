@@ -1,8 +1,9 @@
 import { Router, type IRouter } from "express";
 import { db, ingredientsTable, suppliersTable, recipeIngredientsTable, subRecipeIngredientsTable } from "@workspace/db";
-import { eq, sql, inArray } from "drizzle-orm";
+import { eq, sql, inArray, isNull } from "drizzle-orm";
 import { CreateIngredientBody, UpdateIngredientBody } from "@workspace/api-zod";
 import { validate } from "../middleware/validate";
+import { generateQrCode } from "../lib/qr-code";
 
 const router: IRouter = Router();
 
@@ -129,7 +130,34 @@ router.post("/", validate(CreateIngredientBody), async (req, res) => {
     labelDeclaration: labelDeclaration || null,
     allergens: allergens ?? [],
   }).returning();
+
+  generateQrCode("ingredient", row.id)
+    .then(async (qrUrl) => {
+      await db.update(ingredientsTable).set({ qrCodeUrl: qrUrl }).where(eq(ingredientsTable.id, row.id));
+    })
+    .catch((err) => console.error(`QR code generation failed for ingredient ${row.id}:`, err));
+
   res.status(201).json(mapRow(row));
+});
+
+router.post("/backfill-qr", async (_req, res) => {
+  const rows = await db.select({ id: ingredientsTable.id })
+    .from(ingredientsTable)
+    .where(isNull(ingredientsTable.qrCodeUrl));
+
+  let success = 0;
+  let failed = 0;
+  for (const row of rows) {
+    try {
+      const qrUrl = await generateQrCode("ingredient", row.id);
+      await db.update(ingredientsTable).set({ qrCodeUrl: qrUrl }).where(eq(ingredientsTable.id, row.id));
+      success++;
+    } catch (err) {
+      console.error(`QR backfill failed for ingredient ${row.id}:`, err);
+      failed++;
+    }
+  }
+  res.json({ total: rows.length, success, failed });
 });
 
 router.get("/:id", async (req, res) => {

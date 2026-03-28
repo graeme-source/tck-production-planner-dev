@@ -4,7 +4,7 @@ import type { Ingredient, SubRecipeDetail, SubRecipe } from "@workspace/api-clie
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
-import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2, RotateCcw, FlaskConical, Info, Layers, Eye, Target, Minus } from "lucide-react";
+import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2, RotateCcw, FlaskConical, Info, Layers, Eye, Target, Minus, QrCode } from "lucide-react";
 import { useForm, useFieldArray } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -1071,6 +1071,20 @@ export default function SubRecipes() {
                   title="Edit"
                 >
                   <Edit2 className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={async () => {
+                    try {
+                      const res = await fetch(`/api/sub-recipes/${recipe.id}/create-kanban`, { method: "POST", credentials: "include" });
+                      if (res.status === 409) { alert("A kanban already exists for this sub-recipe."); return; }
+                      if (!res.ok) throw new Error("Failed");
+                      alert("Kanban created with QR code!");
+                    } catch { alert("Failed to create kanban."); }
+                  }}
+                  className="p-2 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-colors"
+                  title="Create Kanban"
+                >
+                  <QrCode className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => { if (confirm(`Delete "${recipe.name}"?`)) deleteSubRecipe.mutate({ id: recipe.id }); }}

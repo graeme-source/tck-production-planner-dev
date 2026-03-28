@@ -2,6 +2,8 @@ import { pgTable, serial, text, numeric, integer, timestamp, boolean, date } fro
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { ingredientsTable } from "./ingredients";
+import { recipesTable } from "./recipes";
+import { subRecipesTable } from "./sub_recipes";
 import { suppliersTable } from "./suppliers";
 import { usersTable } from "./users";
 import { productionPlansTable } from "./production_plans";
@@ -98,7 +100,11 @@ export const deliveryCheckResultsTable = pgTable("delivery_check_results", {
 
 export const kanbanItemsTable = pgTable("kanban_items", {
   id: serial("id").primaryKey(),
-  ingredientId: integer("ingredient_id").notNull().references(() => ingredientsTable.id, { onDelete: "cascade" }),
+  ingredientId: integer("ingredient_id").references(() => ingredientsTable.id, { onDelete: "cascade" }),
+  sourceType: text("source_type").notNull().default("ingredient"),
+  recipeId: integer("recipe_id").references(() => recipesTable.id, { onDelete: "cascade" }),
+  subRecipeId: integer("sub_recipe_id").references(() => subRecipesTable.id, { onDelete: "cascade" }),
+  qrCodeUrl: text("qr_code_url"),
   supplierId: integer("supplier_id").references(() => suppliersTable.id, { onDelete: "set null" }),
   status: text("status").notNull().default("active"),
   pulledAt: timestamp("pulled_at"),

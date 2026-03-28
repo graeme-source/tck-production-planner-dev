@@ -45,6 +45,7 @@ export const ingredientsTable = pgTable("ingredients", {
   salt: numeric("salt", { precision: 10, scale: 2 }),
   labelDeclaration: text("label_declaration"),
   allergens: jsonb("allergens").$type<string[]>().default([]),
+  qrCodeUrl: text("qr_code_url"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

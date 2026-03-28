@@ -8,7 +8,11 @@ const router: IRouter = Router();
 function mapRow(r: any) {
   return {
     id: r.id,
-    ingredientId: r.ingredientId,
+    ingredientId: r.ingredientId ?? null,
+    sourceType: r.sourceType ?? "ingredient",
+    recipeId: r.recipeId ?? null,
+    subRecipeId: r.subRecipeId ?? null,
+    qrCodeUrl: r.qrCodeUrl ?? null,
     ingredientName: r.ingredientName ?? null,
     ingredientUnit: r.ingredientUnit ?? null,
     kanbanQuantity: r.kanbanQuantity != null ? Number(r.kanbanQuantity) : null,
@@ -34,6 +38,10 @@ router.get("/", async (_req, res) => {
     .select({
       id: kanbanItemsTable.id,
       ingredientId: kanbanItemsTable.ingredientId,
+      sourceType: kanbanItemsTable.sourceType,
+      recipeId: kanbanItemsTable.recipeId,
+      subRecipeId: kanbanItemsTable.subRecipeId,
+      qrCodeUrl: kanbanItemsTable.qrCodeUrl,
       ingredientName: ingredientsTable.name,
       ingredientUnit: ingredientsTable.unit,
       kanbanQuantity: ingredientsTable.kanbanQuantity,
@@ -77,6 +85,10 @@ router.post("/", async (req, res) => {
     .select({
       id: kanbanItemsTable.id,
       ingredientId: kanbanItemsTable.ingredientId,
+      sourceType: kanbanItemsTable.sourceType,
+      recipeId: kanbanItemsTable.recipeId,
+      subRecipeId: kanbanItemsTable.subRecipeId,
+      qrCodeUrl: kanbanItemsTable.qrCodeUrl,
       ingredientName: ingredientsTable.name,
       ingredientUnit: ingredientsTable.unit,
       kanbanQuantity: ingredientsTable.kanbanQuantity,
@@ -209,6 +221,10 @@ router.post("/:id/pull", async (req, res) => {
     .select({
       id: kanbanItemsTable.id,
       ingredientId: kanbanItemsTable.ingredientId,
+      sourceType: kanbanItemsTable.sourceType,
+      recipeId: kanbanItemsTable.recipeId,
+      subRecipeId: kanbanItemsTable.subRecipeId,
+      qrCodeUrl: kanbanItemsTable.qrCodeUrl,
       ingredientName: ingredientsTable.name,
       ingredientUnit: ingredientsTable.unit,
       kanbanQuantity: ingredientsTable.kanbanQuantity,
@@ -250,6 +266,10 @@ router.post("/:id/order", async (req, res) => {
     .select({
       id: kanbanItemsTable.id,
       ingredientId: kanbanItemsTable.ingredientId,
+      sourceType: kanbanItemsTable.sourceType,
+      recipeId: kanbanItemsTable.recipeId,
+      subRecipeId: kanbanItemsTable.subRecipeId,
+      qrCodeUrl: kanbanItemsTable.qrCodeUrl,
       ingredientName: ingredientsTable.name,
       ingredientUnit: ingredientsTable.unit,
       kanbanQuantity: ingredientsTable.kanbanQuantity,

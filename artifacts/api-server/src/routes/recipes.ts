@@ -1,11 +1,12 @@
 import { Router, type IRouter } from "express";
-import { db, recipesTable, recipeIngredientsTable, recipeSubRecipesTable, recipeMeatMarinadesTable, ingredientsTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, appSettingsTable } from "@workspace/db";
-import { eq, inArray, ne } from "drizzle-orm";
+import { db, recipesTable, recipeIngredientsTable, recipeSubRecipesTable, recipeMeatMarinadesTable, ingredientsTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, appSettingsTable, kanbanItemsTable } from "@workspace/db";
+import { eq, inArray, ne, and } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { CreateRecipeBody, UpdateRecipeBody } from "@workspace/api-zod";
 import { validate } from "../middleware/validate";
 import { computeSubRecipeCosts } from "../lib/sub-recipe-costs";
+import { generateQrCode } from "../lib/qr-code";
 import * as z from "zod";
 
 const RecipeIdParams = z.object({ id: z.coerce.number().int().positive() });
@@ -1079,6 +1080,34 @@ router.get("/:id/ingredient-deck", async (req, res) => {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg === "Recipe not found") { res.status(404).json({ error: msg }); return; }
     res.status(500).json({ error: msg });
+  }
+});
+
+router.post("/:id/create-kanban", async (req, res) => {
+  const id = Number(req.params.id);
+  const [recipe] = await db.select({ id: recipesTable.id, name: recipesTable.name }).from(recipesTable).where(eq(recipesTable.id, id));
+  if (!recipe) { res.status(404).json({ error: "Recipe not found" }); return; }
+
+  const [existing] = await db.select({ id: kanbanItemsTable.id })
+    .from(kanbanItemsTable)
+    .where(and(eq(kanbanItemsTable.sourceType, "recipe"), eq(kanbanItemsTable.recipeId, id)));
+  if (existing) {
+    res.status(409).json({ error: "A kanban already exists for this recipe" });
+    return;
+  }
+
+  try {
+    const qrUrl = await generateQrCode("recipe", id);
+    const [kanban] = await db.insert(kanbanItemsTable).values({
+      sourceType: "recipe",
+      recipeId: id,
+      qrCodeUrl: qrUrl,
+      status: "active",
+    }).returning();
+    res.status(201).json({ kanbanId: kanban.id, qrCodeUrl: qrUrl, recipeName: recipe.name });
+  } catch (err) {
+    console.error(`Failed to create kanban for recipe ${id}:`, err);
+    res.status(500).json({ error: "Failed to create kanban" });
   }
 });
 

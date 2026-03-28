@@ -4,7 +4,7 @@ import { useAppMutations } from "@/hooks/use-mutations";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
-import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy } from "lucide-react";
+import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, QrCode } from "lucide-react";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -1380,6 +1380,7 @@ function RecipeCard({ recipe, onEdit, onDelete, onBreakdown, onDuplicate }: { re
   const recipeColor = (recipe as any).color as string | null;
   const [nutritionalsOpen, setNutritionalsOpen] = useState(false);
   const [deckOpen, setDeckOpen] = useState(false);
+  const [kanbanCreating, setKanbanCreating] = useState(false);
 
   const borderStyle: React.CSSProperties = recipeColor
     ? { borderColor: recipeColor + "60" }
@@ -1404,6 +1405,23 @@ function RecipeCard({ recipe, onEdit, onDelete, onBreakdown, onDuplicate }: { re
             <button onClick={onBreakdown} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur flex items-center justify-center hover:text-white transition-colors shadow-sm" style={recipeColor ? { color: recipeColor } : undefined} title="Cost Breakdown"><BarChart2 className="w-3 h-3" /></button>
             <button onClick={onEdit} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-foreground transition-colors shadow-sm" title="Edit"><Edit2 className="w-3 h-3" /></button>
             <button onClick={onDuplicate} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-foreground transition-colors shadow-sm" title="Duplicate"><Copy className="w-3 h-3" /></button>
+            <button
+              disabled={kanbanCreating}
+              onClick={async () => {
+                setKanbanCreating(true);
+                try {
+                  const res = await fetch(`/api/recipes/${recipe.id}/create-kanban`, { method: "POST", credentials: "include" });
+                  if (res.status === 409) { alert("A kanban already exists for this recipe."); return; }
+                  if (!res.ok) throw new Error("Failed");
+                  alert("Kanban created with QR code!");
+                } catch { alert("Failed to create kanban."); }
+                finally { setKanbanCreating(false); }
+              }}
+              className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-primary transition-colors shadow-sm"
+              title="Create Kanban"
+            >
+              {kanbanCreating ? <Loader2 className="w-3 h-3 animate-spin" /> : <QrCode className="w-3 h-3" />}
+            </button>
             <button onClick={onDelete} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-destructive flex items-center justify-center hover:bg-destructive hover:text-white transition-colors shadow-sm" title="Delete"><Trash2 className="w-3 h-3" /></button>
           </div>
         </div>

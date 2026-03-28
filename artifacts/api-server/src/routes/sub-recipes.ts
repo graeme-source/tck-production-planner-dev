@@ -1,9 +1,10 @@
 import { Router, type IRouter } from "express";
-import { db, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, ingredientsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, ingredientsTable, kanbanItemsTable } from "@workspace/db";
+import { eq, and } from "drizzle-orm";
 import { CreateSubRecipeBody, UpdateSubRecipeBody } from "@workspace/api-zod";
 import { validate } from "../middleware/validate";
 import { computeSubRecipeCosts, getCyclicIds, wouldCreateCycle } from "../lib/sub-recipe-costs";
+import { generateQrCode } from "../lib/qr-code";
 
 const router: IRouter = Router();
 
@@ -190,6 +191,34 @@ router.delete("/:id", async (req, res) => {
   const id = Number(req.params.id);
   await db.delete(subRecipesTable).where(eq(subRecipesTable.id, id));
   res.status(204).send();
+});
+
+router.post("/:id/create-kanban", async (req, res) => {
+  const id = Number(req.params.id);
+  const [subRecipe] = await db.select({ id: subRecipesTable.id, name: subRecipesTable.name }).from(subRecipesTable).where(eq(subRecipesTable.id, id));
+  if (!subRecipe) { res.status(404).json({ error: "Sub-recipe not found" }); return; }
+
+  const [existing] = await db.select({ id: kanbanItemsTable.id })
+    .from(kanbanItemsTable)
+    .where(and(eq(kanbanItemsTable.sourceType, "sub_recipe"), eq(kanbanItemsTable.subRecipeId, id)));
+  if (existing) {
+    res.status(409).json({ error: "A kanban already exists for this sub-recipe" });
+    return;
+  }
+
+  try {
+    const qrUrl = await generateQrCode("sub_recipe", id);
+    const [kanban] = await db.insert(kanbanItemsTable).values({
+      sourceType: "sub_recipe",
+      subRecipeId: id,
+      qrCodeUrl: qrUrl,
+      status: "active",
+    }).returning();
+    res.status(201).json({ kanbanId: kanban.id, qrCodeUrl: qrUrl, subRecipeName: subRecipe.name });
+  } catch (err) {
+    console.error(`Failed to create kanban for sub-recipe ${id}:`, err);
+    res.status(500).json({ error: "Failed to create kanban" });
+  }
 });
 
 export default router;

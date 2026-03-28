@@ -36,6 +36,7 @@ import stockControlRouter from "./stock-control";
 import founderPanelsRouter from "./founder-panels";
 import improvementsRouter from "./improvements";
 import andonRouter from "./andon";
+import qrRouter from "./qr";
 
 const router: IRouter = Router();
 
@@ -102,5 +103,6 @@ router.use("/stock-control", stockControlRouter);
 router.use("/founder-panels", founderPanelsRouter);
 router.use("/improvements", improvementsRouter);
 router.use("/andon", andonRouter);
+router.use("/qr", qrRouter);
 
 export default router;
