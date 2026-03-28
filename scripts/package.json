@@ -5,10 +5,19 @@
   "type": "module",
   "scripts": {
     "hello": "tsx ./src/hello.ts",
+    "import-kanbans": "tsx ./src/import-kanbans.ts",
+    "import-kanbans:commit": "tsx ./src/import-kanbans.ts --commit",
+    "push-kanban-import": "tsx ./src/push-kanban-import.ts",
+    "push-kanban-import:prod": "tsx ./src/push-kanban-import.ts --production",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@types/node": "catalog:",
     "tsx": "catalog:"
+  },
+  "dependencies": {
+    "@types/pg": "^8.18.0",
+    "pg": "^8.20.0",
+    "xlsx": "^0.18.5"
   }
 }

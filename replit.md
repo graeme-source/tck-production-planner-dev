@@ -62,7 +62,13 @@ The application is structured as a pnpm workspace monorepo using TypeScript, com
 **Monorepo Structure:**
 - `artifacts/`: Deployable applications (`api-server`, `production-planner`).
 - `lib/`: Shared libraries (`api-spec`, `api-client-react`, `api-zod`, `db`, `object-storage-web`).
-- `scripts/`: Utility scripts.
+- `scripts/`: Utility scripts (kanban import, production push, GitHub sync, nutritional population).
+
+**Scripts:**
+- `pnpm --filter @workspace/scripts run import-kanbans` — Dry-run kanban Excel import (reads `attached_assets/kanbans-*.xlsx`, classifies items as ingredients or stock_items, normalises suppliers).
+- `pnpm --filter @workspace/scripts run import-kanbans:commit` — Commit mode (writes to DB within a transaction).
+- `pnpm --filter @workspace/scripts run push-kanban-import` — Production push wrapper (runs migration, dry-run report, then commit with confirmation).
+- `pnpm --filter @workspace/scripts run push-kanban-import:prod` — Same with `--production` flag for explicit production targeting.
 
 # Authentication & User Features
 

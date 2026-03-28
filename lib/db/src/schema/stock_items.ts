@@ -24,6 +24,10 @@ export const stockItemsTable = pgTable("stock_items", {
   stockCheckFrequency: text("stock_check_frequency").notNull().default("daily"),
   stockCheckDay: text("stock_check_day"),
   notes: text("notes"),
+  kanbanEnabled: boolean("kanban_enabled").notNull().default(false),
+  kanbanQuantity: numeric("kanban_quantity", { precision: 10, scale: 4 }).notNull().default("0"),
+  kanbanUnit: text("kanban_unit").notNull().default("weight"),
+  kanbanOrderAmount: numeric("kanban_order_amount", { precision: 10, scale: 4 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
