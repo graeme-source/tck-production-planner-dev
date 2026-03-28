@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, kanbanItemsTable, ingredientsTable, suppliersTable, usersTable } from "@workspace/db";
+import { db, kanbanItemsTable, ingredientsTable, suppliersTable, usersTable, recipesTable, subRecipesTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { computeNextOrderDay, formatOrderDayTarget, getOrderDayLabel, isDueToday } from "../lib/order-day-scheduler";
 
@@ -145,6 +145,168 @@ router.get("/ingredients", async (_req, res) => {
     supplierId: r.supplierId,
     supplierName: r.supplierName ?? null,
   })));
+});
+
+router.get("/lookup", async (req, res) => {
+  const { type, id } = req.query;
+  if (!type || !id) {
+    res.status(400).json({ error: "type and id query parameters are required" });
+    return;
+  }
+
+  const itemId = Number(id);
+  if (isNaN(itemId)) {
+    res.status(400).json({ error: "id must be a number" });
+    return;
+  }
+
+  const supportedTypes = ["ingredient", "recipe", "sub-recipe", "sub_recipe"];
+  if (!supportedTypes.includes(type as string)) {
+    res.status(400).json({ error: `Unsupported type. Supported: ${supportedTypes.join(", ")}` });
+    return;
+  }
+
+  const kanbanSelect = {
+    id: kanbanItemsTable.id,
+    ingredientId: kanbanItemsTable.ingredientId,
+    ingredientName: ingredientsTable.name,
+    ingredientUnit: ingredientsTable.unit,
+    kanbanQuantity: ingredientsTable.kanbanQuantity,
+    kanbanUnit: ingredientsTable.kanbanUnit,
+    sourceType: kanbanItemsTable.sourceType,
+    recipeId: kanbanItemsTable.recipeId,
+    subRecipeId: kanbanItemsTable.subRecipeId,
+    supplierId: kanbanItemsTable.supplierId,
+    supplierName: suppliersTable.name,
+    orderFrequency: suppliersTable.orderFrequency,
+    orderDays: suppliersTable.orderDays,
+    status: kanbanItemsTable.status,
+    pulledAt: kanbanItemsTable.pulledAt,
+    pulledByUserId: kanbanItemsTable.pulledByUserId,
+    pulledByName: usersTable.name,
+    orderDayTarget: kanbanItemsTable.orderDayTarget,
+    notes: kanbanItemsTable.notes,
+    createdAt: kanbanItemsTable.createdAt,
+  };
+
+  const kanbanQuery = () =>
+    db
+      .select(kanbanSelect)
+      .from(kanbanItemsTable)
+      .leftJoin(ingredientsTable, eq(kanbanItemsTable.ingredientId, ingredientsTable.id))
+      .leftJoin(suppliersTable, eq(kanbanItemsTable.supplierId, suppliersTable.id))
+      .leftJoin(usersTable, eq(kanbanItemsTable.pulledByUserId, usersTable.id));
+
+  if (type === "ingredient") {
+    const rows = await kanbanQuery().where(
+      and(
+        eq(kanbanItemsTable.sourceType, "ingredient"),
+        eq(kanbanItemsTable.ingredientId, itemId)
+      )
+    );
+    const activeKanban = rows.find(r => r.status === "active");
+
+    if (!activeKanban) {
+      const ingredientRows = await db
+        .select({ id: ingredientsTable.id, name: ingredientsTable.name })
+        .from(ingredientsTable)
+        .where(eq(ingredientsTable.id, itemId));
+
+      if (ingredientRows.length === 0) {
+        res.status(404).json({ error: "Ingredient not found", found: false });
+        return;
+      }
+
+      res.json({
+        found: false,
+        ingredientName: ingredientRows[0].name,
+        message: "No active kanban found for this ingredient",
+        allKanbans: rows.map(mapRow),
+      });
+      return;
+    }
+
+    res.json({ found: true, kanban: mapRow(activeKanban) });
+    return;
+  }
+
+  if (type === "recipe") {
+    const [recipe] = await db
+      .select({ id: recipesTable.id, name: recipesTable.name })
+      .from(recipesTable)
+      .where(eq(recipesTable.id, itemId));
+
+    if (!recipe) {
+      res.status(404).json({ error: "Recipe not found", found: false });
+      return;
+    }
+
+    const rows = await kanbanQuery().where(
+      and(
+        eq(kanbanItemsTable.sourceType, "recipe"),
+        eq(kanbanItemsTable.recipeId, itemId)
+      )
+    );
+    const activeKanban = rows.find(r => r.status === "active");
+
+    if (!activeKanban) {
+      res.json({
+        found: false,
+        sourceType: "recipe",
+        sourceName: recipe.name,
+        message: "No active kanban found for this recipe",
+        allKanbans: rows.map(mapRow),
+      });
+      return;
+    }
+
+    res.json({
+      found: true,
+      sourceType: "recipe",
+      sourceName: recipe.name,
+      kanban: mapRow(activeKanban),
+    });
+    return;
+  }
+
+  if (type === "sub-recipe" || type === "sub_recipe") {
+    const [subRecipe] = await db
+      .select({ id: subRecipesTable.id, name: subRecipesTable.name })
+      .from(subRecipesTable)
+      .where(eq(subRecipesTable.id, itemId));
+
+    if (!subRecipe) {
+      res.status(404).json({ error: "Sub-recipe not found", found: false });
+      return;
+    }
+
+    const rows = await kanbanQuery().where(
+      and(
+        eq(kanbanItemsTable.sourceType, "sub_recipe"),
+        eq(kanbanItemsTable.subRecipeId, itemId)
+      )
+    );
+    const activeKanban = rows.find(r => r.status === "active");
+
+    if (!activeKanban) {
+      res.json({
+        found: false,
+        sourceType: "sub-recipe",
+        sourceName: subRecipe.name,
+        message: "No active kanban found for this sub-recipe",
+        allKanbans: rows.map(mapRow),
+      });
+      return;
+    }
+
+    res.json({
+      found: true,
+      sourceType: "sub-recipe",
+      sourceName: subRecipe.name,
+      kanban: mapRow(activeKanban),
+    });
+    return;
+  }
 });
 
 router.post("/sync", async (_req, res) => {

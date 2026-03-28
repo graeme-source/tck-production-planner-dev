@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useListKanbans, useListIngredients, useListSuppliers } from "@workspace/api-client-react";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
@@ -17,6 +17,10 @@ import {
   Building2,
   AlertCircle,
   RefreshCw,
+  ScanLine,
+  Package,
+  CheckCircle,
+  AlertTriangle,
 } from "lucide-react";
 import {
   Dialog,
@@ -25,6 +29,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { format } from "date-fns";
+import { QrScanner } from "@/components/qr-scanner";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -47,6 +52,32 @@ type KanbanItemData = {
   isDueToday: boolean;
   notes: string | null;
   createdAt: string | null;
+};
+
+type ScanKanbanInfo = {
+  id: number;
+  ingredientId: number;
+  ingredientName: string | null;
+  ingredientUnit: string | null;
+  kanbanQuantity: number | null;
+  supplierId: number | null;
+  supplierName: string | null;
+  status: string;
+  pulledAt: string | null;
+  pulledByName: string | null;
+  orderDayLabel: string;
+  isDueToday: boolean;
+  notes: string | null;
+};
+
+type ScanResult = {
+  found: boolean;
+  kanban?: ScanKanbanInfo;
+  kanbans?: ScanKanbanInfo[];
+  ingredientName?: string;
+  sourceName?: string;
+  sourceType?: string;
+  message?: string;
 };
 
 function StatusBadge({ status, orderDayLabel, isDueToday }: { status: string; orderDayLabel: string; isDueToday: boolean }) {
@@ -92,6 +123,11 @@ export default function Kanbans() {
   const [newIngredientId, setNewIngredientId] = useState<number>(0);
   const [newSupplierId, setNewSupplierId] = useState<number>(0);
   const [newNotes, setNewNotes] = useState("");
+
+  const [isScanOpen, setIsScanOpen] = useState(false);
+  const [scanStep, setScanStep] = useState<"scanning" | "loading" | "result" | "pulling" | "done" | "error">("scanning");
+  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
 
   const kanbanIngredients = useMemo(() => {
     return (ingredients ?? []).filter((i: any) => i.kanbanEnabled);
@@ -190,6 +226,84 @@ export default function Kanbans() {
     onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
+  const parseQrData = useCallback((raw: string): { type: string; id: number } | null => {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed.type && parsed.id) return { type: parsed.type, id: Number(parsed.id) };
+    } catch {}
+    const urlMatch = raw.match(/[?&]type=([\w-]+)&id=(\d+)/);
+    if (urlMatch) return { type: urlMatch[1].replace(/-/g, "_"), id: Number(urlMatch[2]) };
+    const simpleMatch = raw.match(/^([\w-]+):(\d+)$/);
+    if (simpleMatch) return { type: simpleMatch[1].replace(/-/g, "_"), id: Number(simpleMatch[2]) };
+    const numOnly = raw.match(/^(\d+)$/);
+    if (numOnly) return { type: "ingredient", id: Number(numOnly[1]) };
+    return null;
+  }, []);
+
+  const handleScanQr = useCallback(async (data: string) => {
+    setScanStep("loading");
+    setScanError(null);
+    const parsed = parseQrData(data);
+    if (!parsed) {
+      setScanStep("error");
+      setScanError(`Could not parse QR code data: "${data}"`);
+      return;
+    }
+    try {
+      const res = await fetch(`${BASE}/api/kanbans/lookup?type=${parsed.type}&id=${parsed.id}`, { credentials: "include" });
+      if (res.status === 404) {
+        const errData = await res.json().catch(() => ({}));
+        setScanStep("error");
+        setScanError(errData.error || "Item not found");
+        return;
+      }
+      if (!res.ok) {
+        setScanStep("error");
+        setScanError("Failed to look up kanban");
+        return;
+      }
+      const result = await res.json();
+      setScanResult(result);
+      setScanStep("result");
+    } catch {
+      setScanStep("error");
+      setScanError("Network error");
+    }
+  }, [parseQrData]);
+
+  const handleScanPull = useCallback(async (kanbanId: number) => {
+    setScanStep("pulling");
+    try {
+      const res = await fetch(`${BASE}/api/kanbans/${kanbanId}/pull`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        setScanStep("error");
+        setScanError(errData.error || "Failed to pull kanban");
+        return;
+      }
+      setScanStep("done");
+      queryClient.invalidateQueries({ queryKey: ["/api/kanbans"] });
+    } catch {
+      setScanStep("error");
+      setScanError("Network error");
+    }
+  }, [queryClient]);
+
+  const handleScanReset = useCallback(() => {
+    setScanStep("scanning");
+    setScanResult(null);
+    setScanError(null);
+  }, []);
+
+  const openScanDialog = useCallback(() => {
+    handleScanReset();
+    setIsScanOpen(true);
+  }, [handleScanReset]);
+
   const filtered = useMemo(() => {
     let items = (kanbans ?? []) as KanbanItemData[];
     if (search) {
@@ -239,25 +353,34 @@ export default function Kanbans() {
         title="Kanbans"
         description="Track kanban pulls and order scheduling. Pull a kanban when stock runs low, and it will queue for ordering on the supplier's next order day."
         action={
-          canEdit ? (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => syncMutation.mutate()}
-                disabled={syncMutation.isPending}
-                className="px-4 py-2.5 bg-secondary text-foreground border border-border rounded-xl font-medium flex items-center gap-2 hover:bg-secondary/80 transition-colors disabled:opacity-50"
-                title="Create kanban cards for all kanban-enabled ingredients that don't have one yet"
-              >
-                {syncMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                Sync from Ingredients
-              </button>
-              <button
-                onClick={() => setIsAddOpen(true)}
-                className="px-5 py-2.5 bg-primary text-primary-foreground rounded-xl font-medium shadow-md shadow-primary/20 flex items-center gap-2 hover:bg-primary/90 transition-colors"
-              >
-                <Plus className="w-5 h-5" /> New Kanban
-              </button>
-            </div>
-          ) : undefined
+          <div className="flex items-center gap-2">
+            <button
+              onClick={openScanDialog}
+              className="px-4 py-2.5 bg-blue-500 text-white border border-blue-500 rounded-xl font-medium flex items-center gap-2 hover:bg-blue-600 transition-colors shadow-md shadow-blue-500/20"
+            >
+              <ScanLine className="w-4 h-4" />
+              Scan & Pull
+            </button>
+            {canEdit && (
+              <>
+                <button
+                  onClick={() => syncMutation.mutate()}
+                  disabled={syncMutation.isPending}
+                  className="px-4 py-2.5 bg-secondary text-foreground border border-border rounded-xl font-medium flex items-center gap-2 hover:bg-secondary/80 transition-colors disabled:opacity-50"
+                  title="Create kanban cards for all kanban-enabled ingredients that don't have one yet"
+                >
+                  {syncMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  Sync from Ingredients
+                </button>
+                <button
+                  onClick={() => setIsAddOpen(true)}
+                  className="px-5 py-2.5 bg-primary text-primary-foreground rounded-xl font-medium shadow-md shadow-primary/20 flex items-center gap-2 hover:bg-primary/90 transition-colors"
+                >
+                  <Plus className="w-5 h-5" /> New Kanban
+                </button>
+              </>
+            )}
+          </div>
         }
       />
 
@@ -462,6 +585,170 @@ export default function Kanbans() {
               {createMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
               {createMutation.isPending ? "Creating..." : "Create Kanban"}
             </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isScanOpen} onOpenChange={(v) => { setIsScanOpen(v); if (!v) handleScanReset(); }}>
+        <DialogContent className="sm:max-w-[480px] bg-card border-border rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="font-display text-xl flex items-center gap-2">
+              <ScanLine className="w-5 h-5" />
+              Scan & Pull Kanban
+            </DialogTitle>
+          </DialogHeader>
+          <div className="mt-2">
+            {scanStep === "scanning" && (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground text-center">
+                  Scan an ingredient QR code to pull its kanban
+                </p>
+                <QrScanner onScan={handleScanQr} active={isScanOpen && scanStep === "scanning"} />
+              </div>
+            )}
+
+            {scanStep === "loading" && (
+              <div className="flex flex-col items-center gap-3 py-12">
+                <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                <p className="text-sm text-muted-foreground">Looking up kanban...</p>
+              </div>
+            )}
+
+            {scanStep === "result" && scanResult && (
+              <div className="space-y-4">
+                {scanResult.found && scanResult.kanban ? (
+                  <>
+                    <div className="rounded-xl border border-border bg-secondary/20 p-4 space-y-3">
+                      <div className="flex items-center gap-2">
+                        <Package className="w-5 h-5 text-primary" />
+                        <h3 className="font-semibold text-base">
+                          {scanResult.kanban.ingredientName ?? `Ingredient #${scanResult.kanban.ingredientId}`}
+                        </h3>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-sm">
+                        <div>
+                          <span className="text-muted-foreground">Quantity:</span>{" "}
+                          <span className="font-medium">
+                            {scanResult.kanban.kanbanQuantity != null
+                              ? `${scanResult.kanban.kanbanQuantity} ${scanResult.kanban.ingredientUnit ?? ""}`
+                              : "—"}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Supplier:</span>{" "}
+                          <span className="font-medium">{scanResult.kanban.supplierName ?? "—"}</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Status:</span>{" "}
+                          <span className={cn(
+                            "font-medium",
+                            scanResult.kanban.status === "active" ? "text-emerald-600" : "text-blue-600"
+                          )}>
+                            {scanResult.kanban.status.charAt(0).toUpperCase() + scanResult.kanban.status.slice(1)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    {scanResult.kanban.status === "active" ? (
+                      <button
+                        onClick={() => handleScanPull(scanResult.kanban.id)}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:bg-primary/90 transition-colors shadow-md"
+                      >
+                        <ArrowDownCircle className="w-5 h-5" />
+                        Pull Kanban
+                      </button>
+                    ) : (
+                      <p className="text-sm text-amber-600 font-medium text-center py-2">
+                        This kanban has already been pulled
+                      </p>
+                    )}
+                    <button
+                      onClick={handleScanReset}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground rounded-lg border border-border hover:bg-secondary/50 transition-colors"
+                    >
+                      <ScanLine className="w-4 h-4" />
+                      Scan Another
+                    </button>
+                  </>
+                ) : (
+                  <div className="text-center py-6 space-y-3">
+                    <AlertTriangle className="w-10 h-10 text-amber-500 mx-auto" />
+                    <p className="font-medium">
+                      {scanResult.sourceName
+                        ? `No active kanban for "${scanResult.sourceName}"`
+                        : scanResult.ingredientName
+                        ? `No active kanban for "${scanResult.ingredientName}"`
+                        : "No active kanban found"}
+                    </p>
+                    <p className="text-sm text-muted-foreground">{scanResult.message || "This ingredient does not have an active kanban card."}</p>
+                    <button
+                      onClick={handleScanReset}
+                      className="flex items-center justify-center gap-2 mx-auto px-4 py-2 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                    >
+                      <ScanLine className="w-4 h-4" />
+                      Scan Again
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {scanStep === "pulling" && (
+              <div className="flex flex-col items-center gap-3 py-12">
+                <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                <p className="text-sm text-muted-foreground">Pulling kanban...</p>
+              </div>
+            )}
+
+            {scanStep === "done" && (
+              <div className="flex flex-col items-center gap-4 py-10">
+                <div className="w-16 h-16 rounded-full bg-emerald-500/10 flex items-center justify-center">
+                  <CheckCircle className="w-8 h-8 text-emerald-500" />
+                </div>
+                <div className="text-center">
+                  <p className="font-semibold text-lg">Kanban Pulled!</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {scanResult?.kanban?.ingredientName ?? "Ingredient"} has been pulled successfully.
+                  </p>
+                </div>
+                <div className="flex gap-3 mt-2">
+                  <button
+                    onClick={handleScanReset}
+                    className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-border hover:bg-secondary/50 transition-colors"
+                  >
+                    <ScanLine className="w-4 h-4" />
+                    Scan Another
+                  </button>
+                  <button
+                    onClick={() => setIsScanOpen(false)}
+                    className="px-4 py-2 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {scanStep === "error" && (
+              <div className="flex flex-col items-center gap-4 py-8">
+                <div className="w-14 h-14 rounded-full bg-destructive/10 flex items-center justify-center">
+                  <AlertTriangle className="w-7 h-7 text-destructive" />
+                </div>
+                <div className="text-center">
+                  <p className="font-medium text-destructive">Error</p>
+                  <p className="text-sm text-muted-foreground mt-1 max-w-[300px]">
+                    {scanError || "Something went wrong"}
+                  </p>
+                </div>
+                <button
+                  onClick={handleScanReset}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                >
+                  <ScanLine className="w-4 h-4" />
+                  Try Again
+                </button>
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { X, Lightbulb, AlertTriangle, CheckCircle, Loader2, ChevronDown, CircleDot, HandHelping } from "lucide-react";
+import { X, Lightbulb, AlertTriangle, CheckCircle, Loader2, ChevronDown, CircleDot, HandHelping, ScanLine, ArrowDownCircle, Package } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
+import { QrScanner } from "./qr-scanner";
 
 interface ImprovementSummary {
   id: number;
@@ -53,7 +54,33 @@ const TIER_LABELS: Record<string, string> = {
   major: "Major",
 };
 
-type Tab = "improvements" | "struggle" | "andon";
+type Tab = "pullKanban" | "improvements" | "struggle" | "andon";
+
+interface KanbanInfo {
+  id: number;
+  ingredientId: number;
+  ingredientName: string | null;
+  ingredientUnit: string | null;
+  kanbanQuantity: number | null;
+  supplierId: number | null;
+  supplierName: string | null;
+  status: string;
+  pulledAt: string | null;
+  pulledByName: string | null;
+  orderDayLabel: string;
+  isDueToday: boolean;
+  notes: string | null;
+}
+
+interface KanbanLookupResult {
+  found: boolean;
+  kanban?: KanbanInfo;
+  kanbans?: KanbanInfo[];
+  ingredientName?: string;
+  sourceType?: string;
+  sourceName?: string;
+  message?: string;
+}
 
 interface ReportModalProps {
   open: boolean;
@@ -62,7 +89,12 @@ interface ReportModalProps {
 }
 
 export function ReportModal({ open, onClose, defaultStation }: ReportModalProps) {
-  const [activeTab, setActiveTab] = useState<Tab>("improvements");
+  const [activeTab, setActiveTab] = useState<Tab>("pullKanban");
+
+  const [scanActive, setScanActive] = useState(false);
+  const [scanStep, setScanStep] = useState<"scanning" | "loading" | "result" | "pulling" | "done" | "error">("scanning");
+  const [lookupResult, setLookupResult] = useState<KanbanLookupResult | null>(null);
+  const [pullError, setPullError] = useState<string | null>(null);
 
   const [impTitle, setImpTitle] = useState("");
   const [impDescription, setImpDescription] = useState("");
@@ -88,6 +120,117 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
 
   const [recentImprovements, setRecentImprovements] = useState<ImprovementSummary[]>([]);
   const [impListLoading, setImpListLoading] = useState(false);
+
+  useEffect(() => {
+    if (open && activeTab === "pullKanban") {
+      setScanActive(true);
+      setScanStep("scanning");
+      setLookupResult(null);
+      setPullError(null);
+    } else {
+      setScanActive(false);
+    }
+  }, [open, activeTab]);
+
+  useEffect(() => {
+    if (open) {
+      setActiveTab("pullKanban");
+    } else {
+      setScanActive(false);
+      setScanStep("scanning");
+      setLookupResult(null);
+      setPullError(null);
+    }
+  }, [open]);
+
+  const parseQrData = useCallback((raw: string): { type: string; id: number } | null => {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed.type && parsed.id) return { type: parsed.type, id: Number(parsed.id) };
+    } catch {}
+
+    const urlMatch = raw.match(/[?&]type=([\w-]+)&id=(\d+)/);
+    if (urlMatch) return { type: urlMatch[1].replace(/-/g, "_"), id: Number(urlMatch[2]) };
+
+    const simpleMatch = raw.match(/^([\w-]+):(\d+)$/);
+    if (simpleMatch) return { type: simpleMatch[1].replace(/-/g, "_"), id: Number(simpleMatch[2]) };
+
+    const numOnly = raw.match(/^(\d+)$/);
+    if (numOnly) return { type: "ingredient", id: Number(numOnly[1]) };
+
+    return null;
+  }, []);
+
+  const handleQrScan = useCallback(async (data: string) => {
+    setScanActive(false);
+    setScanStep("loading");
+    setPullError(null);
+
+    const parsed = parseQrData(data);
+    if (!parsed) {
+      setScanStep("error");
+      setPullError(`Could not parse QR code data: "${data}"`);
+      return;
+    }
+
+    try {
+      const res = await fetch(`${BASE}/api/kanbans/lookup?type=${parsed.type}&id=${parsed.id}`, {
+        credentials: "include",
+      });
+
+      if (res.status === 404) {
+        const errData = await res.json().catch(() => ({}));
+        setScanStep("error");
+        setPullError(errData.error || "Item not found");
+        return;
+      }
+
+      if (!res.ok) {
+        setScanStep("error");
+        setPullError("Failed to look up kanban information");
+        return;
+      }
+
+      const result: KanbanLookupResult = await res.json();
+      setLookupResult(result);
+      setScanStep("result");
+    } catch {
+      setScanStep("error");
+      setPullError("Network error. Please check your connection and try again.");
+    }
+  }, [parseQrData]);
+
+  const handlePullKanban = useCallback(async (kanbanId: number) => {
+    setScanStep("pulling");
+    setPullError(null);
+
+    try {
+      const res = await fetch(`${BASE}/api/kanbans/${kanbanId}/pull`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        setScanStep("error");
+        setPullError(errData.error || "Failed to pull kanban");
+        return;
+      }
+
+      setScanStep("done");
+    } catch {
+      setScanStep("error");
+      setPullError("Network error. Please try again.");
+    }
+  }, []);
+
+  const handleScanReset = useCallback(() => {
+    setScanStep("scanning");
+    setLookupResult(null);
+    setPullError(null);
+    setScanActive(true);
+  }, []);
 
   useEffect(() => {
     if (open && (activeTab === "improvements" || activeTab === "struggle")) {
@@ -221,46 +364,225 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
               </button>
             </div>
 
-            <div className="flex items-center gap-1 p-3 border-b border-border bg-secondary/20 flex-shrink-0">
+            <div className="flex items-center gap-1 p-3 border-b border-border bg-secondary/20 flex-shrink-0 overflow-x-auto">
+              <button
+                onClick={() => setActiveTab("pullKanban")}
+                className={cn(
+                  "flex items-center gap-1.5 flex-1 justify-center px-2.5 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all whitespace-nowrap min-w-0",
+                  activeTab === "pullKanban"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <ScanLine className="w-4 h-4 shrink-0" />
+                Pull Kanban
+              </button>
               <button
                 onClick={() => setActiveTab("improvements")}
                 className={cn(
-                  "flex items-center gap-2 flex-1 justify-center px-3 py-2 rounded-lg text-sm font-medium transition-all",
+                  "flex items-center gap-1.5 flex-1 justify-center px-2.5 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all whitespace-nowrap min-w-0",
                   activeTab === "improvements"
                     ? "bg-background text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
-                <Lightbulb className="w-4 h-4" />
-                Improvement Idea
+                <Lightbulb className="w-4 h-4 shrink-0" />
+                <span className="hidden sm:inline">Improvement</span> Idea
               </button>
               <button
                 onClick={() => setActiveTab("struggle")}
                 className={cn(
-                  "flex items-center gap-2 flex-1 justify-center px-3 py-2 rounded-lg text-sm font-medium transition-all",
+                  "flex items-center gap-1.5 flex-1 justify-center px-2.5 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all whitespace-nowrap min-w-0",
                   activeTab === "struggle"
                     ? "bg-background text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
-                <HandHelping className="w-4 h-4" />
+                <HandHelping className="w-4 h-4 shrink-0" />
                 Struggle
               </button>
               <button
                 onClick={() => setActiveTab("andon")}
                 className={cn(
-                  "flex items-center gap-2 flex-1 justify-center px-3 py-2 rounded-lg text-sm font-medium transition-all",
+                  "flex items-center gap-1.5 flex-1 justify-center px-2.5 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all whitespace-nowrap min-w-0",
                   activeTab === "andon"
                     ? "bg-background text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
-                <AlertTriangle className="w-4 h-4" />
+                <AlertTriangle className="w-4 h-4 shrink-0" />
                 Issue
               </button>
             </div>
 
             <div className="flex-1 overflow-y-auto">
+              {activeTab === "pullKanban" && (
+                <div className="p-5">
+                  {scanStep === "scanning" && (
+                    <div className="space-y-3">
+                      <p className="text-sm text-muted-foreground text-center">
+                        Scan an ingredient QR code to pull its kanban
+                      </p>
+                      <QrScanner
+                        onScan={handleQrScan}
+                        active={scanActive}
+                      />
+                    </div>
+                  )}
+
+                  {scanStep === "loading" && (
+                    <div className="flex flex-col items-center gap-3 py-12">
+                      <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                      <p className="text-sm text-muted-foreground">Looking up kanban...</p>
+                    </div>
+                  )}
+
+                  {scanStep === "result" && lookupResult && (
+                    <div className="space-y-4">
+                      {lookupResult.found && lookupResult.kanban ? (
+                        <>
+                          <div className="rounded-xl border border-border bg-secondary/20 p-4 space-y-3">
+                            <div className="flex items-center gap-2">
+                              <Package className="w-5 h-5 text-primary" />
+                              <h3 className="font-semibold text-base">
+                                {lookupResult.kanban.ingredientName ?? `Ingredient #${lookupResult.kanban.ingredientId}`}
+                              </h3>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 text-sm">
+                              <div>
+                                <span className="text-muted-foreground">Quantity:</span>{" "}
+                                <span className="font-medium">
+                                  {lookupResult.kanban.kanbanQuantity != null
+                                    ? `${lookupResult.kanban.kanbanQuantity} ${lookupResult.kanban.ingredientUnit ?? ""}`
+                                    : "—"}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-muted-foreground">Supplier:</span>{" "}
+                                <span className="font-medium">{lookupResult.kanban.supplierName ?? "—"}</span>
+                              </div>
+                              <div>
+                                <span className="text-muted-foreground">Status:</span>{" "}
+                                <span className={cn(
+                                  "font-medium",
+                                  lookupResult.kanban.status === "active" ? "text-emerald-600" : "text-blue-600"
+                                )}>
+                                  {lookupResult.kanban.status.charAt(0).toUpperCase() + lookupResult.kanban.status.slice(1)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {lookupResult.kanban.status === "active" ? (
+                            <button
+                              onClick={() => handlePullKanban(lookupResult.kanban!.id)}
+                              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:bg-primary/90 transition-colors shadow-md"
+                            >
+                              <ArrowDownCircle className="w-5 h-5" />
+                              Pull Kanban
+                            </button>
+                          ) : (
+                            <div className="text-center py-2">
+                              <p className="text-sm text-amber-600 font-medium">
+                                This kanban has already been pulled
+                              </p>
+                            </div>
+                          )}
+
+                          <button
+                            onClick={handleScanReset}
+                            className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground rounded-lg border border-border hover:bg-secondary/50 transition-colors"
+                          >
+                            <ScanLine className="w-4 h-4" />
+                            Scan Another
+                          </button>
+                        </>
+                      ) : (
+                        <div className="text-center py-6 space-y-3">
+                          <AlertTriangle className="w-10 h-10 text-amber-500 mx-auto" />
+                          <div>
+                            <p className="font-medium">
+                              {lookupResult.sourceName
+                                ? `No active kanban for "${lookupResult.sourceName}"`
+                                : lookupResult.ingredientName
+                                ? `No active kanban for "${lookupResult.ingredientName}"`
+                                : "No active kanban found"}
+                            </p>
+                            <p className="text-sm text-muted-foreground mt-1">
+                              {lookupResult.message || "This ingredient does not have an active kanban card."}
+                            </p>
+                          </div>
+                          <button
+                            onClick={handleScanReset}
+                            className="flex items-center justify-center gap-2 mx-auto px-4 py-2 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                          >
+                            <ScanLine className="w-4 h-4" />
+                            Scan Again
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {scanStep === "pulling" && (
+                    <div className="flex flex-col items-center gap-3 py-12">
+                      <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                      <p className="text-sm text-muted-foreground">Pulling kanban...</p>
+                    </div>
+                  )}
+
+                  {scanStep === "done" && (
+                    <div className="flex flex-col items-center gap-4 py-10">
+                      <div className="w-16 h-16 rounded-full bg-emerald-500/10 flex items-center justify-center">
+                        <CheckCircle className="w-8 h-8 text-emerald-500" />
+                      </div>
+                      <div className="text-center">
+                        <p className="font-semibold text-lg">Kanban Pulled!</p>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          {lookupResult?.kanban?.ingredientName ?? "Ingredient"} has been pulled successfully.
+                        </p>
+                      </div>
+                      <div className="flex gap-3 mt-2">
+                        <button
+                          onClick={handleScanReset}
+                          className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-border hover:bg-secondary/50 transition-colors"
+                        >
+                          <ScanLine className="w-4 h-4" />
+                          Scan Another
+                        </button>
+                        <button
+                          onClick={onClose}
+                          className="px-4 py-2 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                        >
+                          Done
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {scanStep === "error" && (
+                    <div className="flex flex-col items-center gap-4 py-8">
+                      <div className="w-14 h-14 rounded-full bg-destructive/10 flex items-center justify-center">
+                        <AlertTriangle className="w-7 h-7 text-destructive" />
+                      </div>
+                      <div className="text-center">
+                        <p className="font-medium text-destructive">Error</p>
+                        <p className="text-sm text-muted-foreground mt-1 max-w-[300px]">
+                          {pullError || "Something went wrong"}
+                        </p>
+                      </div>
+                      <button
+                        onClick={handleScanReset}
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                      >
+                        <ScanLine className="w-4 h-4" />
+                        Try Again
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {activeTab === "improvements" && (
                 <div className="p-5 space-y-5">
                   <form onSubmit={handleImprovementSubmit} className="space-y-4">
