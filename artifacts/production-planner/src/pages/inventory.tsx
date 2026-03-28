@@ -173,33 +173,131 @@ function escapeHtml(str: string): string {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-async function printQrCode(ingredientId: number, ingredientName: string) {
-  const qrUrl = `${BASE}/api/qr/ingredient/${ingredientId}`;
-  const resp = await fetch(qrUrl, { credentials: "include" });
-  if (!resp.ok) return;
-  const blob = await resp.blob();
-  const dataUrl = await new Promise<string>((resolve) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result as string);
-    reader.readAsDataURL(blob);
-  });
-  const safeName = escapeHtml(ingredientName);
-  const w = window.open("", "_blank", "width=400,height=500");
+interface KanbanCardData {
+  id: number;
+  name: string;
+  unit: string;
+  packWeight: number;
+  kanbanQuantity: number;
+  kanbanUnit: string;
+  kanbanOrderAmount: number | null;
+  supplier: string | null;
+  location: string | null;
+  qrCodeUrl: string | null;
+}
+
+async function printKanban(ingredientId: number) {
+  const [cardResp, qrResp] = await Promise.all([
+    fetch(`${BASE}/api/ingredients/${ingredientId}/kanban-card`, { credentials: "include" }),
+    fetch(`${BASE}/api/qr/ingredient/${ingredientId}`, { credentials: "include" }),
+  ]);
+  if (!cardResp.ok) return;
+  const card: KanbanCardData = await cardResp.json();
+
+  let qrDataUrl = "";
+  if (qrResp.ok) {
+    const blob = await qrResp.blob();
+    qrDataUrl = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  const safeName = escapeHtml(card.name);
+  const pullQty = card.kanbanQuantity > 0
+    ? `${card.kanbanQuantity} ${card.kanbanUnit === "packs" ? "pack" + (card.kanbanQuantity > 1 ? "s" : "") : card.unit}`
+    : "Not set";
+  const orderAmt = card.kanbanOrderAmount
+    ? `${card.kanbanOrderAmount} ${card.kanbanUnit === "packs" ? "pack" + (card.kanbanOrderAmount > 1 ? "s" : "") : card.unit}`
+    : "Not set";
+  const supplier = escapeHtml(card.supplier ?? "Not assigned");
+  const location = escapeHtml(card.location ?? "Not assigned");
+
+  const w = window.open("", "_blank", "width=600,height=900");
   if (!w) return;
-  w.document.write(`<!DOCTYPE html><html><head><title>QR — ${safeName}</title>
+  w.document.write(`<!DOCTYPE html><html><head><title>Kanban — ${safeName}</title>
 <style>
-  body { font-family: system-ui, sans-serif; text-align: center; padding: 40px 20px; margin: 0; }
-  img { width: 240px; height: 240px; margin: 20px auto; display: block; }
-  h2 { font-size: 18px; margin: 0 0 4px; }
-  p { font-size: 13px; color: #666; margin: 0 0 8px; }
-  .label { font-size: 11px; color: #999; margin-top: 12px; }
-  @media print { .no-print { display: none; } body { padding: 20px; } }
+  @page { size: A6 landscape; margin: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 0; }
+
+  .page { width: 148mm; height: 105mm; position: relative; page-break-after: always; overflow: hidden; }
+
+  /* === FRONT SIDE === */
+  .front { background: #fffdf0; border: 2px solid #919b5f; }
+  .front .header { background: #919b5f; color: white; padding: 6mm 8mm 5mm; }
+  .front .header h1 { font-size: 16pt; font-weight: 700; letter-spacing: 0.5px; }
+  .front .header .subtitle { font-size: 8pt; opacity: 0.85; margin-top: 1mm; text-transform: uppercase; letter-spacing: 1px; }
+  .front .body { display: flex; padding: 5mm 8mm 4mm; gap: 6mm; }
+  .front .fields { flex: 1; display: flex; flex-direction: column; gap: 3.5mm; }
+  .front .field { border-bottom: 1px solid #d6c38c; padding-bottom: 2.5mm; }
+  .front .field-label { font-size: 7pt; text-transform: uppercase; letter-spacing: 0.8px; color: #919b5f; font-weight: 600; margin-bottom: 1mm; }
+  .front .field-value { font-size: 11pt; font-weight: 600; color: #3b4317; }
+  .front .qr-section { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 34mm; }
+  .front .qr-section img { width: 30mm; height: 30mm; }
+  .front .qr-label { font-size: 6pt; color: #919b5f; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2mm; text-align: center; }
+  .front .footer { position: absolute; bottom: 0; left: 0; right: 0; background: #3b4317; color: #fffdf0; text-align: center; padding: 2.5mm; font-size: 7pt; letter-spacing: 1px; text-transform: uppercase; }
+
+  /* === BACK SIDE (flipped for fold) === */
+  .back { background: #ffbe23; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; transform: rotate(180deg); }
+  .back .alert-icon { font-size: 36pt; margin-bottom: 4mm; }
+  .back .alert-title { font-size: 20pt; font-weight: 800; color: #3b4317; text-transform: uppercase; letter-spacing: 1.5px; line-height: 1.2; }
+  .back .alert-subtitle { font-size: 10pt; color: #3b4317; margin-top: 3mm; font-weight: 500; }
+  .back .item-name { font-size: 13pt; font-weight: 700; color: #3b4317; margin-top: 5mm; padding: 2mm 6mm; background: rgba(255,255,255,0.4); border-radius: 3mm; }
+
+  .no-print { text-align: center; padding: 16px; background: #f5f5f5; }
+  .no-print button { padding: 10px 32px; font-size: 14px; cursor: pointer; border: 1px solid #ccc; border-radius: 8px; background: white; margin: 0 8px; }
+  .no-print button:hover { background: #eee; }
+  @media print { .no-print { display: none; } }
 </style></head><body>
-  <h2>${safeName}</h2>
-  <p>Ingredient #${ingredientId}</p>
-  <img src="${dataUrl}" alt="QR Code" />
-  <p class="label">Scan to pull kanban</p>
-  <button class="no-print" onclick="window.print()" style="margin-top:16px;padding:8px 24px;font-size:14px;cursor:pointer;border:1px solid #ccc;border-radius:8px;background:#f5f5f5;">Print</button>
+
+<div class="no-print">
+  <button onclick="window.print()">Print Kanban Card</button>
+  <button onclick="window.close()">Close</button>
+</div>
+
+<!-- FRONT SIDE -->
+<div class="page front">
+  <div class="header">
+    <h1>${safeName}</h1>
+    <div class="subtitle">Kanban Card — The Calzone Kitchen</div>
+  </div>
+  <div class="body">
+    <div class="fields">
+      <div class="field">
+        <div class="field-label">Pull When Using Last</div>
+        <div class="field-value">${escapeHtml(pullQty)}</div>
+      </div>
+      <div class="field">
+        <div class="field-label">Order Amount</div>
+        <div class="field-value">${escapeHtml(orderAmt)}</div>
+      </div>
+      <div class="field">
+        <div class="field-label">Location</div>
+        <div class="field-value">${location}</div>
+      </div>
+      <div class="field">
+        <div class="field-label">Supplier</div>
+        <div class="field-value">${supplier}</div>
+      </div>
+    </div>
+    <div class="qr-section">
+      ${qrDataUrl ? `<img src="${qrDataUrl}" alt="QR Code" />` : '<div style="width:30mm;height:30mm;border:1px dashed #ccc;display:flex;align-items:center;justify-content:center;font-size:8pt;color:#999;">No QR</div>'}
+      <div class="qr-label">Scan to pull</div>
+    </div>
+  </div>
+  <div class="footer">Pull — Scan QR or notify manager</div>
+</div>
+
+<!-- BACK SIDE (rotated 180° so when folded it reads correctly) -->
+<div class="page back">
+  <div class="alert-icon">\u26A0\uFE0F</div>
+  <div class="alert-title">Kanban Pulled</div>
+  <div class="alert-subtitle">Item on Order</div>
+  <div class="item-name">${safeName}</div>
+</div>
+
 </body></html>`);
   w.document.close();
 }
@@ -1156,8 +1254,8 @@ export default function Inventory() {
                     </td>
                     <td className="py-3 px-3">
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity justify-end">
-                        {activeTab === "ingredients" && (item as Record<string, unknown>).qrCodeUrl && (
-                          <button onClick={() => printQrCode(item.id, item.name)} className="p-1.5 text-muted-foreground hover:text-primary transition-colors rounded-lg hover:bg-primary/10" title="Print QR Code">
+                        {activeTab === "ingredients" && (
+                          <button onClick={() => printKanban(item.id)} className="p-1.5 text-muted-foreground hover:text-primary transition-colors rounded-lg hover:bg-primary/10" title="Print Kanban">
                             <Printer className="w-3.5 h-3.5" />
                           </button>
                         )}

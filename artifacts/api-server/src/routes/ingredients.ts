@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, ingredientsTable, suppliersTable, recipeIngredientsTable, subRecipeIngredientsTable } from "@workspace/db";
+import { db, ingredientsTable, suppliersTable, recipeIngredientsTable, subRecipeIngredientsTable, ingredientStorageLocationsTable, storageLocationsTable } from "@workspace/db";
 import { eq, sql, inArray, isNull } from "drizzle-orm";
 import { CreateIngredientBody, UpdateIngredientBody } from "@workspace/api-zod";
 import { validate } from "../middleware/validate";
@@ -158,6 +158,38 @@ router.post("/backfill-qr", async (_req, res) => {
     }
   }
   res.json({ total: rows.length, success, failed });
+});
+
+router.get("/:id/kanban-card", async (req, res) => {
+  const id = Number(req.params.id);
+  const [row] = await db.select().from(ingredientsTable).where(eq(ingredientsTable.id, id));
+  if (!row) { res.status(404).json({ error: "Not found" }); return; }
+
+  let supplierName: string | null = null;
+  if (row.supplierId) {
+    const [sup] = await db.select({ name: suppliersTable.name }).from(suppliersTable).where(eq(suppliersTable.id, row.supplierId));
+    if (sup) supplierName = sup.name;
+  }
+
+  const locRows = await db
+    .select({ name: storageLocationsTable.name })
+    .from(ingredientStorageLocationsTable)
+    .innerJoin(storageLocationsTable, eq(ingredientStorageLocationsTable.locationId, storageLocationsTable.id))
+    .where(eq(ingredientStorageLocationsTable.ingredientId, id));
+  const location = locRows.map(l => l.name).join(", ") || null;
+
+  res.json({
+    id: row.id,
+    name: row.name,
+    unit: row.unit,
+    packWeight: Number(row.packWeight),
+    kanbanQuantity: Number(row.kanbanQuantity ?? 0),
+    kanbanUnit: row.kanbanUnit ?? "weight",
+    kanbanOrderAmount: row.kanbanOrderAmount != null ? Number(row.kanbanOrderAmount) : null,
+    supplier: supplierName,
+    location,
+    qrCodeUrl: row.qrCodeUrl,
+  });
 });
 
 router.get("/:id", async (req, res) => {
