@@ -2228,15 +2228,6 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
           </button>
           {plan.status !== "complete" && (
             <button
-              onClick={() => setConfirmResync(true)}
-              className="px-3 py-1.5 text-xs border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors font-medium flex items-center gap-1"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              Resync Recipes
-            </button>
-          )}
-          {plan.status !== "complete" && (
-            <button
               onClick={() => setConfirmReset(true)}
               className="px-3 py-1.5 text-xs text-orange-600 hover:text-orange-700 border border-orange-200 dark:border-orange-900/40 rounded-lg hover:bg-orange-50 dark:hover:bg-orange-900/20 transition-colors font-medium flex items-center gap-1"
             >
