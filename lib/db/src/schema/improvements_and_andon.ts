@@ -17,6 +17,7 @@ export const improvementSubmissionsTable = pgTable("improvement_submissions", {
   title: text("title").notNull(),
   description: text("description").notNull(),
   station: text("station").notNull(),
+  type: text("type").notNull().default("improvement"),
   submittedBy: integer("submitted_by").references(() => usersTable.id, { onDelete: "set null" }),
   submittedByName: text("submitted_by_name"),
   approvalTier: improvementApprovalTierEnum("approval_tier"),

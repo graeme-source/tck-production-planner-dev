@@ -147,6 +147,7 @@ interface ImprovementRecord {
   title: string;
   description: string;
   station: string;
+  type: "improvement" | "struggle";
   submittedByName: string | null;
   approvalTier: "minor" | "medium" | "major" | null;
   progressStatus: "submitted_for_review" | "approved" | "testing" | "complete" | "rejected";
@@ -1291,6 +1292,7 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
   const [filterStation, setFilterStation] = useState("");
   const [filterTier, setFilterTier] = useState("");
   const [filterSearch, setFilterSearch] = useState("");
+  const [filterType, setFilterType] = useState("");
 
   const isManager = userRole === "admin" || userRole === "manager";
 
@@ -1328,6 +1330,7 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
     if (filterStatus && imp.progressStatus !== filterStatus) return false;
     if (filterStation && imp.station !== filterStation) return false;
     if (filterTier && (imp.approvalTier ?? "") !== filterTier) return false;
+    if (filterType && (imp.type ?? "improvement") !== filterType) return false;
     if (filterSearch) {
       const q = filterSearch.toLowerCase();
       if (!imp.title.toLowerCase().includes(q) && !imp.description.toLowerCase().includes(q)) return false;
@@ -1396,9 +1399,20 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
           {IMPROVEMENT_TIER_OPTIONS.filter(o => o.value).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
 
-        {(filterSearch || filterStatus || filterStation || filterTier) && (
+        {/* Type filter */}
+        <select
+          value={filterType}
+          onChange={e => setFilterType(e.target.value)}
+          className="px-3 py-2 border border-border rounded-xl text-sm bg-background focus-ring"
+        >
+          <option value="">All types</option>
+          <option value="improvement">Improvement</option>
+          <option value="struggle">Struggle</option>
+        </select>
+
+        {(filterSearch || filterStatus || filterStation || filterTier || filterType) && (
           <button
-            onClick={() => { setFilterSearch(""); setFilterStatus(""); setFilterStation(""); setFilterTier(""); }}
+            onClick={() => { setFilterSearch(""); setFilterStatus(""); setFilterStation(""); setFilterTier(""); setFilterType(""); }}
             className="text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
           >
             Clear filters
@@ -1426,6 +1440,7 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
             <thead className="bg-secondary/30 text-muted-foreground text-xs">
               <tr>
                 <th className="px-4 py-3 font-medium text-left">Title</th>
+                <th className="px-4 py-3 font-medium text-center">Type</th>
                 <th className="px-4 py-3 font-medium text-left">Station</th>
                 <th className="px-4 py-3 font-medium text-left">Submitted by</th>
                 <th className="px-4 py-3 font-medium text-left">Date</th>
@@ -1440,6 +1455,16 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
                   <td className="px-4 py-3">
                     <p className="font-medium">{imp.title}</p>
                     {imp.description && <p className="text-xs text-muted-foreground mt-0.5 max-w-xs">{imp.description}</p>}
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <span className={cn(
+                      "px-2 py-0.5 rounded-full text-xs font-medium",
+                      (imp.type ?? "improvement") === "struggle"
+                        ? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
+                        : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                    )}>
+                      {(imp.type ?? "improvement") === "struggle" ? "Struggle" : "Improvement"}
+                    </span>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
                     {STATION_LABELS_REPORT[imp.station] ?? imp.station}

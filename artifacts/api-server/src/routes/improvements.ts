@@ -20,11 +20,13 @@ router.get("/", async (req: Request, res: Response) => {
 
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { title, description, station } = req.body;
+    const { title, description, station, type } = req.body;
     if (!title || !description || !station) {
       res.status(400).json({ error: "title, description, and station are required" });
       return;
     }
+
+    const submissionType = type === "struggle" ? "struggle" : "improvement";
 
     const userId = req.session.userId;
     let submittedByName: string | null = null;
@@ -39,6 +41,7 @@ router.post("/", async (req: Request, res: Response) => {
         title,
         description,
         station,
+        type: submissionType,
         submittedBy: userId ?? null,
         submittedByName,
       })

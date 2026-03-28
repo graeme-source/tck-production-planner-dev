@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { X, Lightbulb, AlertTriangle, CheckCircle, Loader2, ChevronDown, CircleDot } from "lucide-react";
+import { X, Lightbulb, AlertTriangle, CheckCircle, Loader2, ChevronDown, CircleDot, HandHelping } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 
@@ -8,6 +8,7 @@ interface ImprovementSummary {
   id: number;
   title: string;
   station: string;
+  type: string;
   submittedByName: string | null;
   progressStatus: string;
   createdAt: string;
@@ -52,7 +53,7 @@ const TIER_LABELS: Record<string, string> = {
   major: "Major",
 };
 
-type Tab = "improvements" | "andon";
+type Tab = "improvements" | "struggle" | "andon";
 
 interface ReportModalProps {
   open: boolean;
@@ -70,6 +71,13 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
   const [impSuccess, setImpSuccess] = useState(false);
   const [impError, setImpError] = useState<string | null>(null);
 
+  const [struggleTitle, setStruggleTitle] = useState("");
+  const [struggleDescription, setStruggleDescription] = useState("");
+  const [struggleStation, setStruggleStation] = useState(defaultStation || "general");
+  const [struggleSubmitting, setStruggleSubmitting] = useState(false);
+  const [struggleSuccess, setStruggleSuccess] = useState(false);
+  const [struggleError, setStruggleError] = useState<string | null>(null);
+
   const [andonCategory, setAndonCategory] = useState("equipment");
   const [andonSeverity, setAndonSeverity] = useState<"yellow" | "red">("yellow");
   const [andonDescription, setAndonDescription] = useState("");
@@ -82,7 +90,7 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
   const [impListLoading, setImpListLoading] = useState(false);
 
   useEffect(() => {
-    if (open && activeTab === "improvements") {
+    if (open && (activeTab === "improvements" || activeTab === "struggle")) {
       loadRecentImprovements();
     }
   }, [open, activeTab]);
@@ -109,7 +117,7 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ title: impTitle.trim(), description: impDescription.trim(), station: impStation }),
+        body: JSON.stringify({ title: impTitle.trim(), description: impDescription.trim(), station: impStation, type: "improvement" }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -125,6 +133,34 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
       setImpError("Network error, please try again");
     }
     setImpSubmitting(false);
+  }
+
+  async function handleStruggleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!struggleTitle.trim() || !struggleDescription.trim()) return;
+    setStruggleSubmitting(true);
+    setStruggleError(null);
+    try {
+      const res = await fetch(`${BASE}/api/improvements`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ title: struggleTitle.trim(), description: struggleDescription.trim(), station: struggleStation, type: "struggle" }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setStruggleError(data.error ?? "Failed to submit struggle");
+      } else {
+        setStruggleSuccess(true);
+        setStruggleTitle("");
+        setStruggleDescription("");
+        loadRecentImprovements();
+        setTimeout(() => setStruggleSuccess(false), 3000);
+      }
+    } catch {
+      setStruggleError("Network error, please try again");
+    }
+    setStruggleSubmitting(false);
   }
 
   async function handleAndonSubmit(e: React.FormEvent) {
@@ -196,7 +232,19 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
                 )}
               >
                 <Lightbulb className="w-4 h-4" />
-                Improvements
+                Improvement Idea
+              </button>
+              <button
+                onClick={() => setActiveTab("struggle")}
+                className={cn(
+                  "flex items-center gap-2 flex-1 justify-center px-3 py-2 rounded-lg text-sm font-medium transition-all",
+                  activeTab === "struggle"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <HandHelping className="w-4 h-4" />
+                Struggle
               </button>
               <button
                 onClick={() => setActiveTab("andon")}
@@ -208,7 +256,7 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
                 )}
               >
                 <AlertTriangle className="w-4 h-4" />
-                Report an Issue
+                Issue
               </button>
             </div>
 
@@ -284,7 +332,17 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
                             <div key={imp.id} className="bg-secondary/20 rounded-lg p-3">
                               <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0">
-                                  <p className="text-sm font-medium truncate">{imp.title}</p>
+                                  <div className="flex items-center gap-1.5">
+                                    <p className="text-sm font-medium truncate">{imp.title}</p>
+                                    <span className={cn(
+                                      "px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 leading-none",
+                                      (imp.type ?? "improvement") === "struggle"
+                                        ? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
+                                        : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                                    )}>
+                                      {(imp.type ?? "improvement") === "struggle" ? "Struggle" : "Idea"}
+                                    </span>
+                                  </div>
                                   <p className="text-xs text-muted-foreground mt-0.5">
                                     {imp.submittedByName ?? "Anonymous"} · {STATIONS.find(s => s.key === imp.station)?.label ?? imp.station}
                                     {imp.createdAt ? ` · ${format(new Date(imp.createdAt), "d MMM")}` : ""}
@@ -309,6 +367,66 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
                       )}
                     </div>
                   )}
+                </div>
+              )}
+
+              {activeTab === "struggle" && (
+                <div className="p-5 space-y-5">
+                  <form onSubmit={handleStruggleSubmit} className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1.5">Title <span className="text-destructive">*</span></label>
+                      <input
+                        type="text"
+                        value={struggleTitle}
+                        onChange={e => setStruggleTitle(e.target.value)}
+                        placeholder="Brief summary of the struggle"
+                        className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1.5">Description <span className="text-destructive">*</span></label>
+                      <textarea
+                        value={struggleDescription}
+                        onChange={e => setStruggleDescription(e.target.value)}
+                        placeholder="Describe the difficulty you're facing on the floor..."
+                        rows={3}
+                        className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1.5">Station</label>
+                      <select
+                        value={struggleStation}
+                        onChange={e => setStruggleStation(e.target.value)}
+                        className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      >
+                        {STATIONS.map(s => (
+                          <option key={s.key} value={s.key}>{s.label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {struggleError && (
+                      <p className="text-sm text-destructive">{struggleError}</p>
+                    )}
+                    {struggleSuccess && (
+                      <div className="flex items-center gap-2 text-sm text-emerald-600">
+                        <CheckCircle className="w-4 h-4" />
+                        Struggle submitted successfully!
+                      </div>
+                    )}
+
+                    <button
+                      type="submit"
+                      disabled={struggleSubmitting || !struggleTitle.trim() || !struggleDescription.trim()}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 disabled:opacity-50 transition-colors"
+                    >
+                      {struggleSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <HandHelping className="w-4 h-4" />}
+                      Submit Struggle
+                    </button>
+                  </form>
                 </div>
               )}
 

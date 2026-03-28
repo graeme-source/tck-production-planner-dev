@@ -442,6 +442,7 @@ async function runStartupMigrations() {
         await db.execute(sql`UPDATE ingredients SET prep_weight_mode = 'processed' WHERE category IN ('vegetable', 'herb') AND prep_weight_mode = 'raw'`);
       }
     }
+    await db.execute(sql`ALTER TABLE improvement_submissions ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'improvement'`);
     await seedStorageLocations();
     console.log("Startup migrations OK");
   } catch (err) {
