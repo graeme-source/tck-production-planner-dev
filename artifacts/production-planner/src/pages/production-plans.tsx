@@ -2044,6 +2044,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
     refetch: () => void;
   };
   const { updatePlan, deletePlan } = useAppMutations();
+  const queryClient = useQueryClient();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmResync, setConfirmResync] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -2119,8 +2120,13 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error ?? "Resync failed");
-      toast({ title: "Resync complete", description: data.message });
+      queryClient.invalidateQueries({ predicate: (query) => {
+        const key = query.queryKey;
+        return Array.isArray(key) && typeof key[0] === "string" && key[0].includes(`/api/production-plans/${planId}`);
+      }});
+      queryClient.invalidateQueries({ queryKey: getListProductionPlansQueryKey() });
       refetch();
+      toast({ title: "Resync complete", description: `${data.message} All station ingredient weights have been recalculated from the latest recipe data.` });
     } catch (err) {
       toast({ title: "Resync failed", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
     } finally {
@@ -2569,8 +2575,13 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
               Resync Recipes?
             </h3>
             <p className="text-muted-foreground text-sm mb-2">
-              This will update <strong>tin size</strong>, <strong>max batches per tin</strong>, and <strong>SOP URL</strong> for all items in this plan to match the latest recipe data.
+              This will refresh all recipe data for this plan:
             </p>
+            <ul className="text-sm text-muted-foreground list-disc ml-5 mb-2 space-y-0.5">
+              <li>Update tin size, max batches per tin, and SOP URL</li>
+              <li>Recalculate ingredient weights for all stations (prep, filling mix, assembly, dough, packing)</li>
+              <li>Refresh raw material requirements</li>
+            </ul>
             {plan.status !== "draft" && (
               <p className="text-amber-600 text-sm font-medium mb-4">
                 This plan is currently {plan.status}. Resyncing may affect in-progress work.
