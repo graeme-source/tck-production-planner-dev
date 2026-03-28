@@ -453,6 +453,22 @@ async function runStartupMigrations() {
     await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS kanban_items_sub_recipe_unique ON kanban_items (sub_recipe_id) WHERE source_type = 'sub_recipe' AND sub_recipe_id IS NOT NULL`);
     await db.execute(sql`DO $$ BEGIN ALTER TABLE kanban_items ADD CONSTRAINT kanban_items_source_type_check CHECK (source_type IN ('ingredient', 'recipe', 'sub_recipe')); EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
     await seedStorageLocations();
+
+    const kanbanBackfillResult = await db.execute(sql`
+      INSERT INTO kanban_items (ingredient_id, supplier_id, status, source_type)
+      SELECT i.id, i.supplier_id, 'active', 'ingredient'
+      FROM ingredients i
+      WHERE i.kanban_enabled = true
+        AND NOT EXISTS (
+          SELECT 1 FROM kanban_items k
+          WHERE k.ingredient_id = i.id AND k.source_type = 'ingredient'
+        )
+    `);
+    const kanbanBackfillCount = kanbanBackfillResult.rowCount ?? 0;
+    if (kanbanBackfillCount > 0) {
+      console.log(`[kanban backfill] Created ${kanbanBackfillCount} kanban item(s) for kanban-enabled ingredients`);
+    }
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);
