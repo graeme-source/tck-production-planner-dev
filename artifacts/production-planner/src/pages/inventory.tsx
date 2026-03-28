@@ -234,8 +234,8 @@ async function printKanban(ingredientId: number) {
   .front .field { border-bottom: 1px solid #d6c38c; padding-bottom: 2.5mm; }
   .front .field-label { font-size: 7pt; text-transform: uppercase; letter-spacing: 0.8px; color: #919b5f; font-weight: 600; margin-bottom: 1mm; }
   .front .field-value { font-size: 11pt; font-weight: 600; color: #3b4317; }
-  .front .qr-section { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 34mm; }
-  .front .qr-section img { width: 30mm; height: 30mm; }
+  .front .qr-section { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 64mm; }
+  .front .qr-section img { width: 60mm; height: 60mm; }
   .front .qr-label { font-size: 6pt; color: #919b5f; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2mm; text-align: center; }
   .front .footer { position: absolute; bottom: 0; left: 0; right: 0; background: #3b4317; color: #fffdf0; text-align: center; padding: 2.5mm; font-size: 7pt; letter-spacing: 1px; text-transform: uppercase; }
 
@@ -283,7 +283,7 @@ async function printKanban(ingredientId: number) {
       </div>
     </div>
     <div class="qr-section">
-      ${qrDataUrl ? `<img src="${qrDataUrl}" alt="QR Code" />` : '<div style="width:30mm;height:30mm;border:1px dashed #ccc;display:flex;align-items:center;justify-content:center;font-size:8pt;color:#999;">No QR</div>'}
+      ${qrDataUrl ? `<img src="${qrDataUrl}" alt="QR Code" />` : '<div style="width:60mm;height:60mm;border:1px dashed #ccc;display:flex;align-items:center;justify-content:center;font-size:8pt;color:#999;">No QR</div>'}
       <div class="qr-label">Scan to pull</div>
     </div>
   </div>

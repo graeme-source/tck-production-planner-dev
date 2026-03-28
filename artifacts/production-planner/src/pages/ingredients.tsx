@@ -1352,7 +1352,7 @@ export default function Ingredients() {
                   <th className="px-5 py-3 font-medium">Supplier</th>
                   <th className="px-5 py-3 font-medium">2nd Supplier</th>
                   <th className="px-5 py-3 font-medium">Order</th>
-                  <th className="px-5 py-3 font-medium text-right">Actions</th>
+                  <th className="px-5 py-3 font-medium text-right sticky right-0 bg-secondary/30 z-10">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/50">
@@ -1405,7 +1405,7 @@ export default function Ingredients() {
                           <span className="text-border">—</span>
                         )}
                       </td>
-                      <td className="px-5 py-3 text-right">
+                      <td className="px-5 py-3 text-right sticky right-0 bg-background z-10">
                         <div className="flex items-center justify-end gap-1">
                           <button
                             onClick={() => openEdit(item)}
