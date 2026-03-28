@@ -2296,9 +2296,11 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                   )}>
                     {w.level === "error" ? <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />}
                     <div>
-                      <span className="font-medium">{w.recipe}</span>
-                      <span className="mx-1">·</span>
-                      <span>{w.message}</span>
+                      {w.field && w.field !== w.recipe && (
+                        <span className="font-semibold block">{w.field}</span>
+                      )}
+                      <span className="text-xs opacity-75">Used in: {w.recipe}</span>
+                      <span className="block mt-0.5">{w.message}</span>
                     </div>
                   </div>
                 ))}

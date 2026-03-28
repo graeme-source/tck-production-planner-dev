@@ -4387,7 +4387,7 @@ router.get("/:id/validate", async (req, res) => {
           level: "warning",
           recipe: prepIng.recipes.join(", "),
           field: prepIng.name,
-          message: `Prep total (${prepIng.totalQty.toFixed(2)}${prepIng.unit}) differs from recipe calculation (${directTotal.toFixed(2)}${prepIng.unit}) by ${pctDiff.toFixed(1)}%`,
+          message: `Resolved total (${prepIng.totalQty.toFixed(2)}${prepIng.unit}) differs from direct recipe calculation (${directTotal.toFixed(2)}${prepIng.unit}) — ${pctDiff.toFixed(1)}% difference`,
           expected: directTotal,
           actual: prepIng.totalQty,
         });
