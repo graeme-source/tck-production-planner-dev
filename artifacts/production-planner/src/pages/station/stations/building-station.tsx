@@ -16,7 +16,7 @@ import { useAuth } from "@/contexts/auth-context";
 import {
   Plus, Minus, CheckCircle2, Loader2, Package, ChevronRight, RotateCcw,
   BarChart2, BookOpen, Target, Scale, GripVertical, Check, ExternalLink,
-  ClipboardList, CheckSquare, Square, AlertCircle, Trophy,
+  ClipboardList, CheckSquare, Square, AlertCircle, Trophy, Eye, X,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -118,6 +118,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   const [checkedItems, setCheckedItems] = useState<Record<string, boolean>>({});
   const [checklistLockedForItem, setChecklistLockedForItem] = useState<number | null>(null);
   const prevRecipeIdRef = useRef<number | null>(null);
+  const [viewingItemId, setViewingItemId] = useState<number | null>(null);
 
   // Mozzarella closing check — total to load to building fridges (in 2kg bags)
   type MozzarellaLoad = { name: string; unit: string; totalQty: number; bagWeight: number; bags: number };
@@ -581,10 +582,103 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
         </button>
       </div>
 
+      {/* Viewing panel — read-only assembly/filling info for any selected recipe */}
+      {(() => {
+        const viewItem = viewingItemId != null ? items.find(it => it.id === viewingItemId) : null;
+        if (!viewItem) return null;
+        const asm = assemblyMap[viewItem.id];
+        const hasFilling = asm && asm.fillingWeightPerBatch > 0;
+        const hasItems = asm && asm.assemblyItems.length > 0;
+        const viewBuildCount = getCombinedBuildCount(viewItem);
+        const viewIsDone = viewBuildCount >= (viewItem.batchesTarget ?? 0);
+        const viewMixing = getStationCount(viewItem, "mixing");
+
+        return (
+          <div className="bg-card border-2 border-blue-300 dark:border-blue-700 rounded-2xl overflow-hidden">
+            <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-700">
+              <Eye className="w-5 h-5 text-blue-500 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-lg leading-tight truncate">
+                  {viewItem.recipeName ?? `Recipe #${viewItem.recipeId}`}
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  {viewBuildCount} / {viewItem.batchesTarget ?? 0} built · {viewMixing} mixed
+                  {viewIsDone ? " · Complete" : ""}
+                </p>
+              </div>
+              <button
+                onClick={() => setViewingItemId(null)}
+                className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-blue-100 dark:hover:bg-blue-800/40 text-blue-500 transition-colors flex-shrink-0"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4">
+              {!asm || (!hasFilling && !hasItems) ? (
+                <p className="text-sm text-muted-foreground text-center py-4">No assembly items for this recipe.</p>
+              ) : (
+                <div className="bg-slate-50 dark:bg-slate-900/30 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
+                  <div className="px-3 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
+                    <ClipboardList className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400">
+                      Assembly Items
+                    </span>
+                  </div>
+                  <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {hasFilling && (
+                      <div className="flex items-center gap-3 px-3 py-3">
+                        <span className="text-base font-semibold text-blue-700 dark:text-blue-400 flex-1">Filling</span>
+                        <div className="text-right flex-shrink-0">
+                          <span className="text-lg font-bold font-mono tabular-nums">{Math.round(asm.fillingWeightPerBatch)}g</span>
+                          <span className="block text-xs text-muted-foreground font-mono tabular-nums">{Math.round(asm.fillingWeightHalfBatch)}g half</span>
+                        </div>
+                      </div>
+                    )}
+                    {hasItems && asm.assemblyItems.map((ai, i) => (
+                      <div key={i} className="flex items-center gap-3 px-3 py-3">
+                        <span className="text-base font-semibold flex-1">{ai.name}</span>
+                        <div className="text-right flex-shrink-0">
+                          <span className="text-lg font-bold font-mono tabular-nums">{Math.round(ai.weightPerBatch)}g</span>
+                          <span className="block text-xs text-muted-foreground font-mono tabular-nums">{Math.round(ai.weightHalfBatch)}g half</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center gap-2 mt-3 text-xs text-muted-foreground">
+                {viewItem.tinSize && (
+                  <span className="bg-secondary/50 rounded px-1.5 py-0.5">{viewItem.tinSize} tin</span>
+                )}
+                {viewItem.portionsPerBatch > 0 && (
+                  <span className="bg-secondary/50 rounded px-1.5 py-0.5">{viewItem.portionsPerBatch}/batch</span>
+                )}
+                {viewItem.sopUrl && (
+                  <a
+                    href={viewItem.sopUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 rounded px-1.5 py-0.5 font-medium hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
+                  >
+                    SOP <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
+                {viewItem.notes && (
+                  <span className="italic">{viewItem.notes}</span>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Production Queue */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
           <h3 className="font-semibold text-sm">Production Queue — Line {lineNumber}</h3>
+          <p className="text-xs text-muted-foreground">Tap a recipe to view its filling mix</p>
         </div>
         <table className="w-full text-sm">
           <thead>
@@ -603,18 +697,27 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
               const rem = Math.max(0, (item.batchesTarget ?? 0) - stCount);
               const isCurrent = item.id === currentItem?.id;
               const isDone = stCount >= (item.batchesTarget ?? 0);
+              const isViewing = viewingItemId === item.id;
               return (
                 <tr
                   key={item.id}
+                  onClick={() => setViewingItemId(isViewing ? null : item.id)}
                   className={cn(
-                    "border-b border-border/50 last:border-0",
-                    isCurrent ? "bg-primary/5" : ""
+                    "border-b border-border/50 last:border-0 cursor-pointer transition-colors",
+                    isViewing
+                      ? "bg-blue-50 dark:bg-blue-900/20"
+                      : isCurrent
+                        ? "bg-primary/5 hover:bg-primary/10"
+                        : "hover:bg-secondary/30"
                   )}
                 >
                   <td className="py-2.5 px-4 text-muted-foreground">{item.orderPosition}</td>
                   <td className={cn("py-2.5 px-4 font-medium", isDone ? "line-through text-muted-foreground" : "")}>
-                    {item.recipeName ?? `Recipe #${item.recipeId}`}
-                    {isCurrent && <span className="ml-2 text-xs text-primary font-normal">← now</span>}
+                    <div className="flex items-center gap-1.5">
+                      {item.recipeName ?? `Recipe #${item.recipeId}`}
+                      {isCurrent && <span className="text-xs text-primary font-normal">← now</span>}
+                      {isViewing && <Eye className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />}
+                    </div>
                   </td>
                   <td className="py-2.5 px-4 text-center">{item.batchesTarget ?? 0}</td>
                   <td className="py-2.5 px-4 text-center font-medium">{stCount}</td>
