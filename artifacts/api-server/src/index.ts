@@ -345,6 +345,9 @@ async function runStartupMigrations() {
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `);
+    await db.execute(sql`ALTER TABLE recipe_shopify_mappings ADD COLUMN IF NOT EXISTS wonky_variant_id TEXT`);
+    await db.execute(sql`ALTER TABLE recipe_shopify_mappings ADD COLUMN IF NOT EXISTS wonky_product_title TEXT`);
+    await db.execute(sql`ALTER TABLE recipe_shopify_mappings ADD COLUMN IF NOT EXISTS wonky_variant_title TEXT`);
     // Founder custom tag panels (added for custom panel feature)
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS founder_custom_panels (

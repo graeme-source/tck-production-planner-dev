@@ -640,6 +640,9 @@ interface ShopifyMapping {
   shopify_variant_id: string;
   shopify_product_title: string | null;
   shopify_variant_title: string | null;
+  wonky_variant_id: string | null;
+  wonky_product_title: string | null;
+  wonky_variant_title: string | null;
 }
 
 function EditRecipeDialog({
@@ -671,6 +674,9 @@ function EditRecipeDialog({
   const [shopifySearch, setShopifySearch] = useState("");
   const [selectedVariant, setSelectedVariant] = useState<ShopifyVariantOption | null>(null);
   const [shopifyError, setShopifyError] = useState<string | null>(null);
+  const [wonkySearch, setWonkySearch] = useState("");
+  const [selectedWonkyVariant, setSelectedWonkyVariant] = useState<ShopifyVariantOption | null>(null);
+  const [shopifyEditing, setShopifyEditing] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -687,6 +693,14 @@ function EditRecipeDialog({
           display: data.shopify_variant_title
             ? `${data.shopify_product_title ?? ""} – ${data.shopify_variant_title}`
             : (data.shopify_product_title ?? ""),
+        } : null);
+        setSelectedWonkyVariant(data?.wonky_variant_id ? {
+          variantId: data.wonky_variant_id,
+          productTitle: data.wonky_product_title ?? "",
+          variantTitle: data.wonky_variant_title ?? null,
+          display: data.wonky_variant_title
+            ? `${data.wonky_product_title ?? ""} – ${data.wonky_variant_title}`
+            : (data.wonky_product_title ?? ""),
         } : null);
       })
       .catch(() => setShopifyMapping(null))
@@ -729,11 +743,15 @@ function EditRecipeDialog({
           shopifyVariantId: selectedVariant.variantId,
           shopifyProductTitle: selectedVariant.productTitle,
           shopifyVariantTitle: selectedVariant.variantTitle,
+          wonkyVariantId: selectedWonkyVariant?.variantId ?? null,
+          wonkyProductTitle: selectedWonkyVariant?.productTitle ?? null,
+          wonkyVariantTitle: selectedWonkyVariant?.variantTitle ?? null,
         }),
       });
       if (!res.ok) throw new Error((await res.json()).error ?? "Failed to save");
       const saved = await res.json() as ShopifyMapping;
       setShopifyMapping(saved);
+      setShopifyEditing(false);
     } catch (err) {
       setShopifyError(err instanceof Error ? err.message : "Failed to save mapping");
     } finally {
@@ -748,6 +766,9 @@ function EditRecipeDialog({
       await fetch(`/api/recipes/${id}/shopify-mapping`, { method: "DELETE", credentials: "include" });
       setShopifyMapping(null);
       setSelectedVariant(null);
+      setSelectedWonkyVariant(null);
+      setShopifySearch("");
+      setWonkySearch("");
     } catch (err) {
       setShopifyError(err instanceof Error ? err.message : "Failed to remove mapping");
     } finally {
@@ -763,6 +784,7 @@ function EditRecipeDialog({
     if (!v && formIsDirty) {
       setConfirmOpen(true);
     } else {
+      if (!v) setShopifyEditing(false);
       onOpenChange(v);
     }
   }
@@ -864,76 +886,155 @@ function EditRecipeDialog({
                   {shopifyLoading && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
                 </div>
 
-                {shopifyMapping ? (
-                  <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3 space-y-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="text-sm font-medium text-emerald-900 dark:text-emerald-100">
-                          {shopifyMapping.shopify_product_title ?? "Shopify product"}
-                          {shopifyMapping.shopify_variant_title && (
-                            <span className="text-emerald-700 dark:text-emerald-300 font-normal"> – {shopifyMapping.shopify_variant_title}</span>
-                          )}
-                        </p>
-                        <p className="text-xs text-muted-foreground">Variant ID: {shopifyMapping.shopify_variant_id}</p>
+                {shopifyMapping && !shopifyEditing ? (
+                  <div className="space-y-3">
+                    <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3 space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 mb-0.5">Main Product</p>
+                          <p className="text-sm font-medium text-emerald-900 dark:text-emerald-100">
+                            {shopifyMapping.shopify_product_title ?? "Shopify product"}
+                            {shopifyMapping.shopify_variant_title && (
+                              <span className="text-emerald-700 dark:text-emerald-300 font-normal"> – {shopifyMapping.shopify_variant_title}</span>
+                            )}
+                          </p>
+                          <p className="text-xs text-muted-foreground">Variant ID: {shopifyMapping.shopify_variant_id}</p>
+                        </div>
+                        {canEditShopify && (
+                          <div className="flex gap-1.5 flex-shrink-0">
+                            <button
+                              onClick={() => setShopifyEditing(true)}
+                              className="text-xs px-2.5 py-1.5 rounded-lg border border-border text-foreground hover:bg-secondary/50 transition-colors"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={removeShopifyMapping}
+                              disabled={shopifySaving}
+                              className="text-xs px-2.5 py-1.5 rounded-lg border border-destructive/50 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
+                            >
+                              {shopifySaving ? <Loader2 className="w-3 h-3 animate-spin inline" /> : "Remove"}
+                            </button>
+                          </div>
+                        )}
                       </div>
-                      {canEditShopify && (
-                        <button
-                          onClick={removeShopifyMapping}
-                          disabled={shopifySaving}
-                          className="text-xs px-2.5 py-1.5 rounded-lg border border-destructive/50 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50 flex-shrink-0"
-                        >
-                          {shopifySaving ? <Loader2 className="w-3 h-3 animate-spin inline" /> : "Remove"}
-                        </button>
-                      )}
+                      <p className="text-xs text-emerald-700 dark:text-emerald-300">Net packs → Shopify inventory when wrapping completes.</p>
                     </div>
-                    <p className="text-xs text-emerald-700 dark:text-emerald-300">When wrapping is marked complete, Shopify inventory will be adjusted by the net pack count.</p>
+                    {shopifyMapping.wonky_variant_id ? (
+                      <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-3 space-y-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400 mb-0.5">Wonky / F2F Product</p>
+                            <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
+                              {shopifyMapping.wonky_product_title ?? "Shopify product"}
+                              {shopifyMapping.wonky_variant_title && (
+                                <span className="text-amber-700 dark:text-amber-300 font-normal"> – {shopifyMapping.wonky_variant_title}</span>
+                              )}
+                            </p>
+                            <p className="text-xs text-muted-foreground">Variant ID: {shopifyMapping.wonky_variant_id}</p>
+                          </div>
+                        </div>
+                        <p className="text-xs text-amber-700 dark:text-amber-300">Wonky packs → this F2F product when transferred to freezer.</p>
+                      </div>
+                    ) : canEditShopify ? (
+                      <p className="text-xs text-muted-foreground italic">No wonky/F2F product linked. <button type="button" onClick={() => setShopifyEditing(true)} className="underline hover:text-foreground">Add one</button></p>
+                    ) : null}
                   </div>
-                ) : canEditShopify ? (
-                  <div className="space-y-2">
-                    <p className="text-xs text-muted-foreground">Link this recipe to a Shopify product variant. Inventory will auto-sync when wrapping is completed.</p>
+                ) : canEditShopify || shopifyEditing ? (
+                  <div className="space-y-3">
+                    {shopifyEditing && shopifyMapping && (
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-medium text-foreground">Editing Shopify links</p>
+                        <button type="button" onClick={() => setShopifyEditing(false)} className="text-xs text-muted-foreground hover:text-foreground underline">Cancel</button>
+                      </div>
+                    )}
+                    <p className="text-xs text-muted-foreground">{shopifyEditing ? "Update the Shopify product links for this recipe." : "Link this recipe to Shopify products. Inventory will auto-sync when wrapping is completed."}</p>
                     {shopifyProductsLoading ? (
                       <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
                         <Loader2 className="w-3 h-3 animate-spin" /> Loading Shopify products…
                       </div>
                     ) : (
-                      <div className="space-y-2">
-                        <div className="relative">
-                          <input
-                            type="text"
-                            placeholder="Search Shopify products…"
-                            value={shopifySearch}
-                            onChange={e => setShopifySearch(e.target.value)}
-                            className="w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
-                          />
-                          {shopifySearch && (
-                            <div className="absolute top-full left-0 right-0 z-10 bg-card border border-border rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
-                              {shopifyVariants
-                                .filter(v => v.display.toLowerCase().includes(shopifySearch.toLowerCase()))
-                                .slice(0, 20)
-                                .map(v => (
-                                  <button
-                                    key={v.variantId}
-                                    type="button"
-                                    onClick={() => { setSelectedVariant(v); setShopifySearch(""); }}
-                                    className="w-full text-left px-3 py-2 text-sm hover:bg-secondary/50 transition-colors"
-                                  >
-                                    {v.display}
-                                  </button>
-                                ))}
-                              {shopifyVariants.filter(v => v.display.toLowerCase().includes(shopifySearch.toLowerCase())).length === 0 && (
-                                <p className="px-3 py-2 text-sm text-muted-foreground italic">No products found</p>
-                              )}
+                      <div className="space-y-3">
+                        <div>
+                          <p className="text-xs font-semibold text-foreground mb-1">Main Product</p>
+                          <div className="relative">
+                            <input
+                              type="text"
+                              placeholder="Search Shopify products…"
+                              value={shopifySearch}
+                              onChange={e => setShopifySearch(e.target.value)}
+                              className="w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
+                            />
+                            {shopifySearch && (
+                              <div className="absolute top-full left-0 right-0 z-10 bg-card border border-border rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
+                                {shopifyVariants
+                                  .filter(v => v.display.toLowerCase().includes(shopifySearch.toLowerCase()))
+                                  .slice(0, 20)
+                                  .map(v => (
+                                    <button
+                                      key={v.variantId}
+                                      type="button"
+                                      onClick={() => { setSelectedVariant(v); setShopifySearch(""); }}
+                                      className="w-full text-left px-3 py-2 text-sm hover:bg-secondary/50 transition-colors"
+                                    >
+                                      {v.display}
+                                    </button>
+                                  ))}
+                                {shopifyVariants.filter(v => v.display.toLowerCase().includes(shopifySearch.toLowerCase())).length === 0 && (
+                                  <p className="px-3 py-2 text-sm text-muted-foreground italic">No products found</p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          {selectedVariant && (
+                            <div className="flex items-center gap-2 p-2 bg-secondary/30 rounded-lg text-sm mt-1">
+                              <span className="flex-1 font-medium truncate">{selectedVariant.display}</span>
+                              <button type="button" onClick={() => setSelectedVariant(null)} className="text-muted-foreground hover:text-foreground">
+                                <X className="w-3.5 h-3.5" />
+                              </button>
                             </div>
                           )}
                         </div>
-                        {selectedVariant && (
-                          <div className="flex items-center gap-2 p-2 bg-secondary/30 rounded-lg text-sm">
-                            <span className="flex-1 font-medium truncate">{selectedVariant.display}</span>
-                            <button type="button" onClick={() => setSelectedVariant(null)} className="text-muted-foreground hover:text-foreground">
-                              <X className="w-3.5 h-3.5" />
-                            </button>
+                        <div>
+                          <p className="text-xs font-semibold text-foreground mb-1">Wonky / F2F Product <span className="font-normal text-muted-foreground">(optional)</span></p>
+                          <div className="relative">
+                            <input
+                              type="text"
+                              placeholder="Search F2F products…"
+                              value={wonkySearch}
+                              onChange={e => setWonkySearch(e.target.value)}
+                              className="w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-300/30"
+                            />
+                            {wonkySearch && (
+                              <div className="absolute top-full left-0 right-0 z-10 bg-card border border-border rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
+                                {shopifyVariants
+                                  .filter(v => v.display.toLowerCase().includes(wonkySearch.toLowerCase()))
+                                  .slice(0, 20)
+                                  .map(v => (
+                                    <button
+                                      key={v.variantId}
+                                      type="button"
+                                      onClick={() => { setSelectedWonkyVariant(v); setWonkySearch(""); }}
+                                      className="w-full text-left px-3 py-2 text-sm hover:bg-secondary/50 transition-colors"
+                                    >
+                                      {v.display}
+                                    </button>
+                                  ))}
+                                {shopifyVariants.filter(v => v.display.toLowerCase().includes(wonkySearch.toLowerCase())).length === 0 && (
+                                  <p className="px-3 py-2 text-sm text-muted-foreground italic">No products found</p>
+                                )}
+                              </div>
+                            )}
                           </div>
-                        )}
+                          {selectedWonkyVariant && (
+                            <div className="flex items-center gap-2 p-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg text-sm mt-1">
+                              <span className="flex-1 font-medium truncate">{selectedWonkyVariant.display}</span>
+                              <button type="button" onClick={() => setSelectedWonkyVariant(null)} className="text-muted-foreground hover:text-foreground">
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
                         <button
                           type="button"
                           onClick={saveShopifyMapping}
@@ -941,7 +1042,7 @@ function EditRecipeDialog({
                           className="w-full py-2 px-4 rounded-xl bg-[#96bf48] text-white text-sm font-medium hover:bg-[#7da33c] transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
                         >
                           {shopifySaving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                          {shopifySaving ? "Saving…" : "Link to Shopify"}
+                          {shopifySaving ? "Saving…" : shopifyEditing ? "Update Shopify Links" : "Link to Shopify"}
                         </button>
                       </div>
                     )}

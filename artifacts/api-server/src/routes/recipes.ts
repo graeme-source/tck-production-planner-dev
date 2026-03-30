@@ -12,8 +12,11 @@ import * as z from "zod";
 const RecipeIdParams = z.object({ id: z.coerce.number().int().positive() });
 const ShopifyMappingBody = z.object({
   shopifyVariantId: z.string().min(1, "shopifyVariantId is required"),
-  shopifyProductTitle: z.string().optional(),
-  shopifyVariantTitle: z.string().optional(),
+  shopifyProductTitle: z.string().nullish(),
+  shopifyVariantTitle: z.string().nullish(),
+  wonkyVariantId: z.string().nullish(),
+  wonkyProductTitle: z.string().nullish(),
+  wonkyVariantTitle: z.string().nullish(),
 });
 
 const router: IRouter = Router();
@@ -554,17 +557,20 @@ router.put("/:id/shopify-mapping", async (req, res) => {
     return;
   }
   const recipeId = parsedParams.data.id;
-  const { shopifyVariantId, shopifyProductTitle, shopifyVariantTitle } = parsedBody.data;
+  const { shopifyVariantId, shopifyProductTitle, shopifyVariantTitle, wonkyVariantId, wonkyProductTitle, wonkyVariantTitle } = parsedBody.data;
   try {
     const [recipe] = await db.select({ id: recipesTable.id }).from(recipesTable).where(eq(recipesTable.id, recipeId));
     if (!recipe) { res.status(404).json({ error: "Recipe not found" }); return; }
     await db.execute(sql`
-      INSERT INTO recipe_shopify_mappings (recipe_id, shopify_variant_id, shopify_product_title, shopify_variant_title)
-      VALUES (${recipeId}, ${shopifyVariantId}, ${shopifyProductTitle ?? null}, ${shopifyVariantTitle ?? null})
+      INSERT INTO recipe_shopify_mappings (recipe_id, shopify_variant_id, shopify_product_title, shopify_variant_title, wonky_variant_id, wonky_product_title, wonky_variant_title)
+      VALUES (${recipeId}, ${shopifyVariantId}, ${shopifyProductTitle ?? null}, ${shopifyVariantTitle ?? null}, ${wonkyVariantId ?? null}, ${wonkyProductTitle ?? null}, ${wonkyVariantTitle ?? null})
       ON CONFLICT (recipe_id) DO UPDATE SET
         shopify_variant_id    = EXCLUDED.shopify_variant_id,
         shopify_product_title = EXCLUDED.shopify_product_title,
-        shopify_variant_title = EXCLUDED.shopify_variant_title
+        shopify_variant_title = EXCLUDED.shopify_variant_title,
+        wonky_variant_id      = EXCLUDED.wonky_variant_id,
+        wonky_product_title   = EXCLUDED.wonky_product_title,
+        wonky_variant_title   = EXCLUDED.wonky_variant_title
     `);
     const saved = await db.execute(sql`SELECT * FROM recipe_shopify_mappings WHERE recipe_id = ${recipeId}`);
     res.json(saved.rows[0]);
