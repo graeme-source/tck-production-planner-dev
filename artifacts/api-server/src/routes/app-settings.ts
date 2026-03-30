@@ -5,8 +5,13 @@ import * as z from "zod";
 
 const router: IRouter = Router();
 
-async function requireAdminForWrite(req: Request, res: Response, next: NextFunction) {
+const STATION_KEY_PREFIXES = ["mozz_load_confirmed_", "checklist_done_"];
+
+async function requireAuthForWrite(req: Request, res: Response, next: NextFunction) {
   if (req.method === "GET") { next(); return; }
+  const key = req.params.key ?? "";
+  const isStationKey = STATION_KEY_PREFIXES.some(p => key.startsWith(p));
+  if (isStationKey && req.session.userId) { next(); return; }
   if (req.session.userRole === "admin") { next(); return; }
   if (req.session.userId && !req.session.userRole) {
     const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
@@ -18,7 +23,7 @@ async function requireAdminForWrite(req: Request, res: Response, next: NextFunct
   res.status(403).json({ error: "Admin access required" });
 }
 
-router.use(requireAdminForWrite);
+router.use(requireAuthForWrite);
 
 router.get("/", async (_req, res) => {
   const rows = await db.select().from(appSettingsTable);

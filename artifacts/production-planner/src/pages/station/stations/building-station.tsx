@@ -117,8 +117,11 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
 
   const [checkedItems, setCheckedItems] = useState<Record<string, boolean>>({});
   const [checklistLockedForItem, setChecklistLockedForItem] = useState<number | null>(null);
+  const [checklistLoadedForItem, setChecklistLoadedForItem] = useState<number | null>(null);
   const prevRecipeIdRef = useRef<number | null>(null);
   const [viewingItemId, setViewingItemId] = useState<number | null>(null);
+
+  const checklistKey = (itemId: number) => `checklist_done_${plan.id}_${stationType}_${itemId}`;
 
   // Mozzarella closing check — total to load to building fridges (in 2kg bags)
   type MozzarellaLoad = { name: string; unit: string; totalQty: number; bagWeight: number; bags: number };
@@ -139,18 +142,18 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   }, [plan.id]);
   const confirmMozz = async () => {
     setMozzConfirmed(true);
-    await fetch("/api/app-settings", {
-      method: "POST", credentials: "include",
+    await fetch(`/api/app-settings/${MOZZ_KEY}`, {
+      method: "PUT", credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key: MOZZ_KEY, value: "true" }),
+      body: JSON.stringify({ value: "true" }),
     }).catch(() => {});
   };
   const unconfirmMozz = async () => {
     setMozzConfirmed(false);
-    await fetch("/api/app-settings", {
-      method: "POST", credentials: "include",
+    await fetch(`/api/app-settings/${MOZZ_KEY}`, {
+      method: "PUT", credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key: MOZZ_KEY, value: "false" }),
+      body: JSON.stringify({ value: "false" }),
     }).catch(() => {});
   };
 
@@ -172,12 +175,27 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   const allDone = items.length > 0 && !currentItem;
 
   useEffect(() => {
+    if (!currentItem) return;
+    if (checklistLoadedForItem === currentItem.id) return;
+    fetch(`/api/app-settings/${checklistKey(currentItem.id)}`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.value === "true") {
+          setChecklistLockedForItem(currentItem.id);
+        }
+        setChecklistLoadedForItem(currentItem.id);
+      })
+      .catch(() => setChecklistLoadedForItem(currentItem.id));
+  }, [currentItem?.id, stationType]);
+
+  useEffect(() => {
     const curId = currentItem?.id ?? null;
     if (curId === null) return;
     if (curId !== prevRecipeIdRef.current) {
       prevRecipeIdRef.current = curId;
       setCheckedItems({});
       setChecklistLockedForItem(null);
+      setChecklistLoadedForItem(null);
     }
   }, [currentItem?.id]);
 
@@ -190,6 +208,11 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     asm.assemblyItems.forEach((_, i) => allKeys.push(`item-${i}`));
     if (allKeys.length > 0 && allKeys.every(k => checkedItems[k])) {
       setChecklistLockedForItem(currentItem.id);
+      fetch(`/api/app-settings/${checklistKey(currentItem.id)}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: "true" }),
+      }).catch(() => {});
     }
   }, [checkedItems, currentItem?.id, assemblyMap, checklistLockedForItem]);
 
