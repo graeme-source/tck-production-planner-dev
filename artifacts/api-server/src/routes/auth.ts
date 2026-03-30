@@ -13,11 +13,11 @@ const router: IRouter = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
+  windowMs: 10 * 60 * 1000,
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: "Too many login attempts, please try again in 15 minutes." },
+  message: { error: "Too many login attempts, please try again in 10 minutes." },
   skipSuccessfulRequests: true,
 });
 
