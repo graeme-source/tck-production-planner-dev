@@ -477,7 +477,7 @@ function RecipeForm({
                               <div className="flex gap-0.5 items-stretch">
                                 <input
                                   type="number"
-                                  step={displayUnit === "g" ? "1" : "0.001"}
+                                  step="any"
                                   min="0"
                                   value={storedKg === 0 ? "" : displayUnit === "g" ? Math.round(storedKg * 10000) / 10 : storedKg}
                                   onChange={e => {
@@ -561,7 +561,7 @@ function RecipeForm({
                               <div className="flex gap-0.5 items-stretch">
                                 <input
                                   type="number"
-                                  step={displayUnit === "g" ? "1" : "0.001"}
+                                  step="any"
                                   min="0"
                                   value={storedKg === 0 ? "" : displayUnit === "g" ? Math.round(storedKg * 10000) / 10 : storedKg}
                                   onChange={e => {
