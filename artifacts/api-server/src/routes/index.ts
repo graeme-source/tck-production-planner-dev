@@ -37,6 +37,7 @@ import founderPanelsRouter from "./founder-panels";
 import improvementsRouter from "./improvements";
 import andonRouter from "./andon";
 import qrRouter from "./qr";
+import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
 
@@ -104,5 +105,12 @@ router.use("/founder-panels", founderPanelsRouter);
 router.use("/improvements", improvementsRouter);
 router.use("/andon", andonRouter);
 router.use("/qr", qrRouter);
+
+router.post("/backup/trigger", requireAdmin, (_req: Request, res: Response) => {
+  res.json({ status: "started", message: "Backup triggered" });
+  runBackup().catch((err) => {
+    console.error("[backup] Manual trigger failed:", err instanceof Error ? err.message : String(err));
+  });
+});
 
 export default router;

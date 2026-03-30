@@ -2,7 +2,7 @@ import app from "./app";
 import { db, usersTable } from "@workspace/db";
 import { sql, count } from "drizzle-orm";
 import bcrypt from "bcryptjs";
-import { startBackupScheduler } from "./lib/backup";
+import { startBackupScheduler, runBackup } from "./lib/backup";
 
 const rawPort = process.env["PORT"];
 

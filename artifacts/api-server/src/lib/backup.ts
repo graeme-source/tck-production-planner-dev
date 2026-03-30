@@ -40,7 +40,8 @@ async function backupDatabase(): Promise<void> {
   if (!dbUrl) throw new Error("DATABASE_URL not set — cannot backup database");
 
   const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-  const filePath = `backups/${today}.sql.gz`;
+  const env = process.env.NODE_ENV === "development" ? "dev" : "prod";
+  const filePath = `backups/${env}/${today}.sql.gz`;
 
   console.log(`[backup] Running pg_dump → ${filePath}`);
 
