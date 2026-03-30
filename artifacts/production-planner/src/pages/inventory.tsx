@@ -1253,16 +1253,16 @@ export default function Inventory() {
                       )}
                     </td>
                     <td className="py-3 px-3">
-                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity justify-end">
+                      <div className="flex items-center gap-1 justify-end">
                         {activeTab === "ingredients" && (
-                          <button onClick={() => printKanban(item.id)} className="p-1.5 text-muted-foreground hover:text-primary transition-colors rounded-lg hover:bg-primary/10" title="Print Kanban">
+                          <button onClick={() => printKanban(item.id)} className="p-1.5 text-foreground bg-secondary/30 hover:bg-secondary/60 transition-colors rounded-lg" title="Print Kanban">
                             <Printer className="w-3.5 h-3.5" />
                           </button>
                         )}
-                        <button onClick={() => openEdit(item)} className="p-1.5 text-muted-foreground hover:text-primary transition-colors rounded-lg hover:bg-primary/10" title="Edit">
+                        <button onClick={() => openEdit(item)} className="p-1.5 text-foreground bg-secondary/30 hover:bg-secondary/60 transition-colors rounded-lg" title="Edit">
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
-                        <button onClick={() => setDeleteTarget({ id: item.id, name: item.name })} className="p-1.5 text-muted-foreground hover:text-destructive transition-colors rounded-lg hover:bg-destructive/10" title="Delete">
+                        <button onClick={() => setDeleteTarget({ id: item.id, name: item.name })} className="p-1.5 text-destructive bg-destructive/10 hover:bg-destructive/20 transition-colors rounded-lg" title="Delete">
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
