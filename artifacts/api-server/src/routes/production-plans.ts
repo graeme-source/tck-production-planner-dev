@@ -3451,6 +3451,7 @@ router.get("/:id/main-prep", async (req, res) => {
         unit: ingredientsTable.unit,
         category: ingredientsTable.category,
         processingRatio: ingredientsTable.processingRatio,
+        prepWeightMode: ingredientsTable.prepWeightMode,
         stockCheckEnabled: ingredientsTable.stockCheckEnabled,
         stockCheckFrequency: ingredientsTable.stockCheckFrequency,
         stockCheckDay: ingredientsTable.stockCheckDay,
@@ -3490,7 +3491,9 @@ router.get("/:id/main-prep", async (req, res) => {
       const ratio = row.processingRatio ? Number(row.processingRatio) : null;
       const rawQty = ratio ? cookedQty / ratio : cookedQty;
       const unit = row.unit ?? "g";
-      const roundedQty = roundByUnit(rawQty, unit);
+      const mode = row.prepWeightMode ?? "raw";
+      const effectiveQty = mode === "processed" ? cookedQty : rawQty;
+      const roundedQty = roundByUnit(effectiveQty, unit);
       if (roundedQty <= 0) continue;
       const qtyPerTin = tinCount > 0 ? roundByUnit(roundedQty / tinCount, unit) : roundedQty;
 
