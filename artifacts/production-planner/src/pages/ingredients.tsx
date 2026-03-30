@@ -1409,14 +1409,14 @@ export default function Ingredients() {
                         <div className="flex items-center justify-end gap-1">
                           <button
                             onClick={() => openEdit(item)}
-                            className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
+                            className="p-2 text-foreground bg-secondary/30 hover:bg-secondary/60 rounded-lg transition-colors"
                             title="Edit"
                           >
                             <Edit2 className="w-4 h-4" />
                           </button>
                           <button
                             onClick={() => { if (confirm(`Delete "${item.name}"?`)) deleteIngredient.mutate({ id: item.id }, { onSuccess: invalidateCostTouchpoints }); }}
-                            className="p-2 text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
+                            className="p-2 text-destructive bg-destructive/10 hover:bg-destructive/20 rounded-lg transition-colors"
                             title="Delete"
                           >
                             <Trash2 className="w-4 h-4" />
