@@ -2373,7 +2373,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                       <tr key={i} className="border-b border-border/50 last:border-0">
                         <td className="py-1.5 px-3 font-medium">{ing.ingredientName}</td>
                         <td className="py-1.5 px-3 text-right tabular-nums">
-                          {ing.unit === "g" && ing.totalQty >= 1000 ? `${(ing.totalQty / 1000).toFixed(2)} kg` : `${ing.totalQty.toFixed(ing.unit === "kg" ? 2 : 1)} ${ing.unit}`}
+                          {ing.unit === "g" && ing.totalQty >= 1000 ? `${(ing.totalQty / 1000).toFixed(3)} kg` : `${ing.totalQty.toFixed(ing.unit === "kg" ? 3 : 1)} ${ing.unit}`}
                         </td>
                         <td className="py-1.5 px-3 text-xs text-muted-foreground">{[...new Set(ing.recipes)].join(", ")}</td>
                       </tr>

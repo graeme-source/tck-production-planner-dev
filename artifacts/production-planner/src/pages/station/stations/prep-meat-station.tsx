@@ -284,9 +284,9 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                 </div>
                 <div className="h-8 w-px bg-rose-200 dark:bg-rose-700" />
                 <div>
-                  <p className="text-sm font-semibold tabular-nums">{selTotalRawKg.toFixed(2)} kg raw meat</p>
+                  <p className="text-sm font-semibold tabular-nums">{selTotalRawKg.toFixed(3)} kg raw meat</p>
                   {selTotalMarinadeG > 0 && (
-                    <p className="text-xs text-muted-foreground">+ {selTotalMarinadeG >= 1000 ? `${(selTotalMarinadeG / 1000).toFixed(2)} kg` : `${selTotalMarinadeG}g`} marinade</p>
+                    <p className="text-xs text-muted-foreground">+ {selTotalMarinadeG >= 1000 ? `${(selTotalMarinadeG / 1000).toFixed(3)} kg` : `${selTotalMarinadeG}g`} marinade</p>
                   )}
                   {selRawMeat.length > 1 && <p className="text-xs text-rose-600 dark:text-rose-400 font-medium mt-0.5">across {selRawMeat.length} meat types</p>}
                 </div>
@@ -300,7 +300,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                   <div className="text-center">
                     <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Raw Meat</p>
                     <p className="text-5xl font-bold font-display tabular-nums text-rose-600 dark:text-rose-400">
-                      {selTotalRawKg.toFixed(2)}
+                      {selTotalRawKg.toFixed(3)}
                       <span className="text-2xl font-normal ml-1 text-muted-foreground">kg</span>
                     </p>
                   </div>
@@ -308,7 +308,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                     <div className="text-center">
                       <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Marinade</p>
                       <p className="text-3xl font-bold font-display tabular-nums text-orange-500">
-                        {selTotalMarinadeG >= 1000 ? `${(selTotalMarinadeG / 1000).toFixed(2)}` : selTotalMarinadeG}
+                        {selTotalMarinadeG >= 1000 ? `${(selTotalMarinadeG / 1000).toFixed(3)}` : selTotalMarinadeG}
                         <span className="text-xl font-normal ml-1 text-muted-foreground">{selTotalMarinadeG >= 1000 ? "kg" : "g"}</span>
                       </p>
                     </div>
@@ -358,19 +358,19 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                               <p className={cn("font-semibold", ingAllDone && "line-through text-muted-foreground")}>{ing.ingredientName}</p>
                             </div>
                             <p className="text-xs text-muted-foreground tabular-nums">
-                              {ingKgTotal.toFixed(2)} kg total
+                              {ingKgTotal.toFixed(3)} kg total
                               {ing.rawMeatTrayCapacityKg && ` · ${ing.rawMeatTrayCapacityKg} kg cap`}
                             </p>
                           </div>
                           <div className="text-right">
-                            <p className="text-xl font-bold tabular-nums text-rose-700 dark:text-rose-300 leading-none">{perTrayKg!.toFixed(2)} kg</p>
+                            <p className="text-xl font-bold tabular-nums text-rose-700 dark:text-rose-300 leading-none">{perTrayKg!.toFixed(3)} kg</p>
                             <p className="text-xs text-muted-foreground mt-0.5">per tray</p>
                           </div>
                         </>
                       ) : (
                         <div className="flex-1 flex items-center justify-between">
                           <p className="font-semibold">{ing.ingredientName}</p>
-                          <p className="tabular-nums font-bold text-base text-rose-600 dark:text-rose-400">{ingKgTotal.toFixed(2)} kg</p>
+                          <p className="tabular-nums font-bold text-base text-rose-600 dark:text-rose-400">{ingKgTotal.toFixed(3)} kg</p>
                         </div>
                       )}
                     </div>
@@ -429,7 +429,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                                 </div>
                                 {perTrayKg != null && (
                                   <span className={cn("text-lg font-bold tabular-nums", done ? "text-rose-600 dark:text-rose-300" : "text-foreground")}>
-                                    {perTrayKg.toFixed(2)} kg
+                                    {perTrayKg.toFixed(3)} kg
                                   </span>
                                 )}
                                 {done && completion && (

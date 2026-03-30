@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   useListTimingStandards,
   useGetStationKpi,
@@ -8,7 +8,7 @@ import {
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Loader2, Plus, Minus, CheckCircle2, Snowflake, AlertCircle, Gift,
+  Loader2, Plus, Minus, CheckCircle2, Snowflake, AlertCircle, Gift, Flame,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -18,7 +18,6 @@ import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
 import { getStationCount, getAvailableFromPrev } from "../shared/constants";
 
-// ── Shopify confirm dialog for wrapping-complete ──────────────────────────────
 interface ShopifyWrapConfirmState {
   item: ProductionPlanItem;
   productTitle: string;
@@ -26,8 +25,9 @@ interface ShopifyWrapConfirmState {
   displayDelta: number;
 }
 
-// Per-recipe pack count display (read from oven completions) + wrapping-complete toggle
-// ──────────────────────────────────────────────────────────────────────────────
+type PostOvenItem = { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number };
+type PostOvenMap = Record<number, PostOvenItem[]>;
+
 export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const queryClient = useQueryClient();
   const [wrappingLoading, setWrappingLoading] = useState<number | null>(null);
@@ -43,6 +43,25 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
     transferred: Array<{ recipeName: string | null; qty: number }>;
     totalQty: number;
   } | null>(null);
+  const [postOvenMap, setPostOvenMap] = useState<PostOvenMap>({});
+  const addingRef = useRef(false);
+
+  useEffect(() => {
+    fetch(`/api/production-plans/${plan.id}/assembly-items`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.items) {
+          const map: PostOvenMap = {};
+          for (const it of d.items) {
+            if (it.postOvenItems && it.postOvenItems.length > 0) {
+              map[it.itemId] = it.postOvenItems;
+            }
+          }
+          setPostOvenMap(map);
+        }
+      })
+      .catch(() => {});
+  }, [plan.id]);
 
   const addWonly = async (item: ProductionPlanItem) => {
     setWonlyLoading(item.id);
@@ -104,15 +123,11 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const netPacks = (item: ProductionPlanItem) =>
     Math.max(0, grossPacks(item) - (item.wonlyCount ?? 0)) + (item.extraPacksBuilt ?? 0);
 
-  const totalGross = items.reduce((s, it) => s + grossPacks(it), 0);
   const totalWonly = items.reduce((s, it) => s + (it.wonlyCount ?? 0), 0);
   const totalNet = items.reduce((s, it) => s + netPacks(it), 0);
-  const totalExtraPacks = items.reduce((s, it) => s + (it.extraPacksBuilt ?? 0), 0);
-  const totalFridge = items.reduce((s, it) => s + (it.fridgeQty ?? 0), 0);
   const wrappedCount = items.filter(it => it.wrappingComplete).length;
   const allWrapped = items.length > 0 && items.every(it => it.wrappingComplete);
 
-  // Load all recipe→Shopify mappings so we can show the confirm dialog
   const [shopifyMappings, setShopifyMappings] = useState<Record<number, { productTitle: string; variantTitle: string | null; variantId: string }>>({});
   useEffect(() => {
     fetch("/api/shopify/recipe-mappings", { credentials: "include" })
@@ -213,9 +228,10 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   };
 
   const addToStorage = async (item: ProductionPlanItem, qty: number, storageKey: string) => {
-    if (isOnBreak || qty < 1) return;
+    if (isOnBreak || qty < 1 || addingRef.current) return;
     const loc = STORAGE_LOCATIONS.find(l => l.key === storageKey);
     if (!loc) return;
+    addingRef.current = true;
     setStorageLoading(item.id);
     try {
       await withRetry(async () => {
@@ -237,7 +253,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
       if (newRemaining <= 0 && !item.wrappingComplete) {
         await markWrappingComplete(item.id, true);
       }
-      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+      await queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
       setCustomAmounts(prev => ({ ...prev, [item.id]: "" }));
       setShowCustom(prev => ({ ...prev, [item.id]: false }));
       toast({ title: `+${qty} packs → ${loc.label}`, description: `${item.recipeName ?? "Recipe"}` });
@@ -245,6 +261,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
       toast({ title: "Error", description: err instanceof Error ? err.message : `Could not add to ${loc.label}.`, variant: "destructive" });
     } finally {
       setStorageLoading(null);
+      addingRef.current = false;
     }
   };
 
@@ -298,6 +315,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
           onCancel={() => setShopifyConfirm(null)}
         />
       )}
+
       {/* Session summary */}
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center gap-3 mb-3">
@@ -327,11 +345,10 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
         <BreakTracker planId={plan.id} stationType="wrapping" onBreakActiveChange={setIsOnBreak} />
       </div>
 
-      {/* Per-recipe wrapping cards */}
+      {/* ── Top: Net production cards (no wonky counts or freezer transfers here) ── */}
       <div className="space-y-2">
         {items.map(item => {
           const gross = grossPacks(item);
-          const wonlys = item.wonlyCount ?? 0;
           const net = netPacks(item);
           const fridge = item.fridgeQty ?? 0;
           const freezer = item.freezerQty ?? 0;
@@ -343,6 +360,8 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
           const isCustomOpen = showCustom[item.id] ?? false;
           const customVal = customAmounts[item.id] ?? "";
           const customNum = parseInt(customVal, 10);
+          const postOvenItems = postOvenMap[item.id] ?? [];
+
           return (
             <div
               key={item.id}
@@ -355,6 +374,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                     : "border-border"
               )}
             >
+              {/* Recipe header + wrapping toggle */}
               <div className="flex items-center gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1.5">
@@ -403,7 +423,28 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                 </button>
               </div>
 
-              {/* Storage controls — tabbed for Production Fridge / Product Freezer */}
+              {/* Post-oven items (garlic butter) */}
+              {postOvenItems.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-amber-200 dark:border-amber-800">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Flame className="w-4 h-4 text-amber-500" />
+                    <span className="text-xs font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">After Oven</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {postOvenItems.map((poi, idx) => (
+                      <div key={idx} className="flex items-center justify-between bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+                        <span className="text-sm font-medium text-amber-800 dark:text-amber-200">{poi.name}</span>
+                        <div className="text-right">
+                          <span className="text-base font-bold tabular-nums text-amber-700 dark:text-amber-300">{Math.round(poi.weightPerBatch)}g</span>
+                          <span className="text-xs text-muted-foreground ml-1">/ batch</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Storage controls */}
               <div className="mt-3 pt-3 border-t border-border/40">
                 <div className="flex gap-1 mb-2">
                   {STORAGE_LOCATIONS.map(loc => {
@@ -411,7 +452,6 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                     const colorMap: Record<string, string> = {
                       blue: "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-700",
                       cyan: "bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300 border-cyan-300 dark:border-cyan-700",
-                      teal: "bg-teal-100 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300 border-teal-300 dark:border-teal-700",
                     };
                     const inactiveColor = "bg-secondary/30 text-muted-foreground border-border";
                     const isActive = activeStorage === loc.key;
@@ -433,7 +473,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                   {remaining > 0 && (
                   <button
                     onClick={() => addToStorage(item, Math.min(STACK_SIZE, remaining), activeStorage)}
-                    disabled={isStorageLoading || isOnBreak}
+                    disabled={isStorageLoading || isOnBreak || addingRef.current}
                     className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
                   >
                     {isStorageLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
@@ -462,7 +502,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                       />
                       <button
                         onClick={() => { if (customNum > 0) addToStorage(item, customNum, activeStorage); }}
-                        disabled={isStorageLoading || !(customNum > 0) || isOnBreak}
+                        disabled={isStorageLoading || !(customNum > 0) || isOnBreak || addingRef.current}
                         className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
                       >
                         Add
@@ -495,91 +535,88 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
             </div>
           );
         })}
+      </div>
 
-        {/* ── Wonky Rack dedicated card ── */}
-        <div className="rounded-xl border-2 border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/30 overflow-hidden">
-          {/* Header */}
-          <div className="flex items-center gap-3 px-4 py-3 bg-red-100 dark:bg-red-900/40 border-b border-red-200 dark:border-red-800">
-            <div className="w-9 h-9 rounded-full bg-red-500 text-white flex items-center justify-center flex-shrink-0">
-              <AlertCircle className="w-5 h-5" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="font-bold text-red-800 dark:text-red-200">Wonky Rack</p>
-              <p className="text-xs text-red-600 dark:text-red-400">Bottom of rack 1 — rejected packs by recipe</p>
-            </div>
-            <div className="text-right">
-              <p className="text-2xl font-bold tabular-nums text-red-600 dark:text-red-400">{totalWonly}</p>
-              <p className="text-[10px] text-red-500 dark:text-red-500">total wonky</p>
-            </div>
+      {/* ── Bottom: Wonky Rack dedicated panel ── */}
+      <div className="rounded-xl border-2 border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/30 overflow-hidden">
+        <div className="flex items-center gap-3 px-4 py-3 bg-red-100 dark:bg-red-900/40 border-b border-red-200 dark:border-red-800">
+          <div className="w-9 h-9 rounded-full bg-red-500 text-white flex items-center justify-center flex-shrink-0">
+            <AlertCircle className="w-5 h-5" />
           </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-red-800 dark:text-red-200">Wonky Rack</p>
+            <p className="text-xs text-red-600 dark:text-red-400">Bottom of rack 1 — rejected packs by recipe</p>
+          </div>
+          <div className="text-right">
+            <p className="text-2xl font-bold tabular-nums text-red-600 dark:text-red-400">{totalWonly}</p>
+            <p className="text-[10px] text-red-500 dark:text-red-500">total wonky</p>
+          </div>
+        </div>
 
-          {/* Per-recipe rows */}
-          <div className="divide-y divide-red-200 dark:divide-red-800">
-            {items.map(item => {
-              const wonlys = item.wonlyCount ?? 0;
-              return (
-                <div key={item.id} className="flex items-center gap-3 px-4 py-2.5">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-foreground truncate">{item.recipeName}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => removeWonly(item)}
-                      disabled={wonlyLoading === item.id || wonlys <= 0 || isOnBreak || !!wonkyTransferResult}
-                      className="w-7 h-7 flex items-center justify-center rounded-full border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 disabled:opacity-40 transition-colors"
-                    >
-                      <Minus className="w-3 h-3" />
-                    </button>
-                    <span className={cn(
-                      "text-lg font-bold tabular-nums w-7 text-center",
-                      wonlys > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground"
-                    )}>
-                      {wonlyLoading === item.id
-                        ? <Loader2 className="w-3.5 h-3.5 animate-spin mx-auto" />
-                        : wonlys}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => addWonly(item)}
-                      disabled={wonlyLoading === item.id || isOnBreak || !!wonkyTransferResult}
-                      className="w-7 h-7 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-40 transition-colors"
-                    >
-                      <Plus className="w-3 h-3" />
-                    </button>
-                  </div>
+        <div className="divide-y divide-red-200 dark:divide-red-800">
+          {items.map(item => {
+            const wonlys = item.wonlyCount ?? 0;
+            return (
+              <div key={item.id} className="flex items-center gap-3 px-4 py-2.5">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-foreground truncate">{item.recipeName}</p>
                 </div>
-              );
-            })}
-          </div>
-
-          {/* Transfer action */}
-          <div className="px-4 py-3 border-t border-red-200 dark:border-red-800">
-            {wonkyTransferResult ? (
-              <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300">
-                <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
-                <div>
-                  <p className="text-sm font-semibold">{wonkyTransferResult.totalQty} packs transferred to Product Freezer</p>
-                  <p className="text-xs text-muted-foreground">
-                    {wonkyTransferResult.transferred.map(t => `${t.recipeName ?? "Recipe"}: ${t.qty}`).join(" · ")}
-                  </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => removeWonly(item)}
+                    disabled={wonlyLoading === item.id || wonlys <= 0 || isOnBreak || !!wonkyTransferResult}
+                    className="w-7 h-7 flex items-center justify-center rounded-full border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 disabled:opacity-40 transition-colors"
+                  >
+                    <Minus className="w-3 h-3" />
+                  </button>
+                  <span className={cn(
+                    "text-lg font-bold tabular-nums w-7 text-center",
+                    wonlys > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground"
+                  )}>
+                    {wonlyLoading === item.id
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin mx-auto" />
+                      : wonlys}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => addWonly(item)}
+                    disabled={wonlyLoading === item.id || isOnBreak || !!wonkyTransferResult}
+                    className="w-7 h-7 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-40 transition-colors"
+                  >
+                    <Plus className="w-3 h-3" />
+                  </button>
                 </div>
               </div>
-            ) : (
-              <button
-                onClick={wonkyToFreezer}
-                disabled={wonkyTransferLoading || totalWonly === 0 || isOnBreak}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-medium text-sm disabled:opacity-50 transition-colors"
-              >
-                {wonkyTransferLoading
-                  ? <Loader2 className="w-4 h-4 animate-spin" />
-                  : <Snowflake className="w-4 h-4" />}
-                {totalWonly === 0
-                  ? "No wonky packs to transfer"
-                  : `Transfer ${totalWonly} wonky pack${totalWonly !== 1 ? "s" : ""} to Product Freezer`}
-              </button>
-            )}
-          </div>
+            );
+          })}
+        </div>
+
+        <div className="px-4 py-3 border-t border-red-200 dark:border-red-800">
+          {wonkyTransferResult ? (
+            <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300">
+              <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-semibold">{wonkyTransferResult.totalQty} packs transferred to Product Freezer</p>
+                <p className="text-xs text-muted-foreground">
+                  {wonkyTransferResult.transferred.map(t => `${t.recipeName ?? "Recipe"}: ${t.qty}`).join(" · ")}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={wonkyToFreezer}
+              disabled={wonkyTransferLoading || totalWonly === 0 || isOnBreak}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-medium text-sm disabled:opacity-50 transition-colors"
+            >
+              {wonkyTransferLoading
+                ? <Loader2 className="w-4 h-4 animate-spin" />
+                : <Snowflake className="w-4 h-4" />}
+              {totalWonly === 0
+                ? "No wonky packs to transfer"
+                : `Transfer ${totalWonly} wonky pack${totalWonly !== 1 ? "s" : ""} to Product Freezer`}
+            </button>
+          )}
         </div>
       </div>
     </div>

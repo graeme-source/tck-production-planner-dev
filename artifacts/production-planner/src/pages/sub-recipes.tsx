@@ -787,7 +787,7 @@ function BatchMultiplierControl({
           </div>
         </div>
         <div className="ml-auto bg-primary/10 text-primary rounded-xl px-3.5 py-1.5 text-sm font-semibold">
-          Total yield: {totalYield % 1 === 0 ? totalYield : totalYield.toFixed(2)} {yieldUnit}
+          Total yield: {totalYield % 1 === 0 ? totalYield : totalYield.toFixed(3)} {yieldUnit}
         </div>
       </div>
     </div>

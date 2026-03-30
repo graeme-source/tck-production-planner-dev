@@ -100,7 +100,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   }, [plan.id, stationType, sessionBatches]);
 
   type AssemblyItemData = { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number };
-  type AssemblyData = { itemId: number; fillingWeightPerBatch: number; fillingWeightHalfBatch: number; assemblyItems: AssemblyItemData[] };
+  type AssemblyData = { itemId: number; fillingWeightPerBatch: number; fillingWeightHalfBatch: number; assemblyItems: AssemblyItemData[]; postOvenItems?: AssemblyItemData[] };
   const [assemblyMap, setAssemblyMap] = useState<Record<number, AssemblyData>>({});
   useEffect(() => {
     fetch(`/api/production-plans/${plan.id}/assembly-items`, { credentials: "include" })
@@ -172,6 +172,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
 
   useEffect(() => {
     const curId = currentItem?.id ?? null;
+    if (curId === null) return;
     if (curId !== prevRecipeIdRef.current) {
       prevRecipeIdRef.current = curId;
       setCheckedItems({});

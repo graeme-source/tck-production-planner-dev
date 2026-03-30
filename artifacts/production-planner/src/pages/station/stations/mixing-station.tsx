@@ -34,7 +34,7 @@ import type { PrepRecipeDetail } from "./prep-hub";
 
 function formatMixQty(qty: number, unit: string | null) {
   if (qty >= 1000 && (unit === "g" || unit === "ml")) {
-    return `${(qty / 1000).toFixed(2)} ${unit === "g" ? "kg" : "L"}`;
+    return `${(qty / 1000).toFixed(3)} ${unit === "g" ? "kg" : "L"}`;
   }
   return `${qty % 1 === 0 ? qty : qty.toFixed(1)} ${unit ?? ""}`;
 }

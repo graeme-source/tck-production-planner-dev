@@ -2164,7 +2164,6 @@ router.get("/:id/assembly-items", async (req, res) => {
       LEFT JOIN sub_recipes s ON rs.sub_recipe_id = s.id
       WHERE rs.recipe_id IN (${sql.join(recipeIds.map(id => sql`${id}`), sql`, `)})
         AND rs.include_in_filling_mix = true
-        AND (s.is_base = false OR s.is_base IS NULL)
     `);
 
     const nonFillingIngRows = await db.execute(sql`
@@ -2216,26 +2215,29 @@ router.get("/:id/assembly-items", async (req, res) => {
       const fillingWeightHalfBatch = fillingWeightPerBatch / 2;
 
       const assemblyItems: Array<{ name: string; unit: string; weightPerBatch: number; weightHalfBatch: number }> = [];
+      const postOvenItems: Array<{ name: string; unit: string; weightPerBatch: number; weightHalfBatch: number }> = [];
+
+      const isPostOven = (name: string) => /garlic[\s\-]*butter/i.test(name);
 
       for (const row of nfiRows.filter(r => r.recipeId === item.recipeId)) {
         const wt = toGrams(Number(row.quantity), row.unit) * ppb;
-        assemblyItems.push({
-          name: row.ingredientName,
-          unit: "g",
-          weightPerBatch: wt,
-          weightHalfBatch: wt / 2,
-        });
+        const entry = { name: row.ingredientName, unit: "g", weightPerBatch: wt, weightHalfBatch: wt / 2 };
+        if (isPostOven(row.ingredientName)) {
+          postOvenItems.push(entry);
+        } else {
+          assemblyItems.push(entry);
+        }
       }
 
       for (const row of nfsRows.filter(r => r.recipeId === item.recipeId)) {
         if (row.isBase) continue;
         const wt = toGrams(Number(row.quantity), row.unit) * ppb;
-        assemblyItems.push({
-          name: row.subRecipeName,
-          unit: "g",
-          weightPerBatch: wt,
-          weightHalfBatch: wt / 2,
-        });
+        const entry = { name: row.subRecipeName, unit: "g", weightPerBatch: wt, weightHalfBatch: wt / 2 };
+        if (isPostOven(row.subRecipeName)) {
+          postOvenItems.push(entry);
+        } else {
+          assemblyItems.push(entry);
+        }
       }
 
       return {
@@ -2245,6 +2247,7 @@ router.get("/:id/assembly-items", async (req, res) => {
         fillingWeightPerBatch,
         fillingWeightHalfBatch,
         assemblyItems,
+        postOvenItems,
       };
     });
 

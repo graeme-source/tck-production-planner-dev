@@ -592,12 +592,12 @@ function fmtDoughQty(qty: number, unit: string, name: string): string {
       const g = qty * 1000;
       return isYeast ? `${g.toFixed(1)}g` : `${Math.round(g)}g`;
     }
-    return `${qty.toFixed(2)} kg`;
+    return `${qty.toFixed(3)} kg`;
   }
   if (unit === "g") {
     return isYeast ? `${qty.toFixed(1)}g` : `${Math.round(qty)}g`;
   }
-  return `${qty.toFixed(2)} ${unit}`;
+  return `${qty.toFixed(3)} ${unit}`;
 }
 
 function DoughMixingView({

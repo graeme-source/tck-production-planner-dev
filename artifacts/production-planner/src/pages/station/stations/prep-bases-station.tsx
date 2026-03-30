@@ -45,7 +45,7 @@ interface SubRecipePlanRequirement {
 function fmtScaledQty(qty: number, unit: string, batches: number): string {
   const scaled = qty * batches;
   if (unit === "g" && scaled >= 1000) return `${(scaled / 1000).toFixed(3)} kg`;
-  if (unit === "ml" && scaled >= 1000) return `${(scaled / 1000).toFixed(2)} l`;
+  if (unit === "ml" && scaled >= 1000) return `${(scaled / 1000).toFixed(3)} l`;
   return `${scaled % 1 === 0 ? scaled : scaled.toFixed(3)} ${unit}`;
 }
 
@@ -255,7 +255,7 @@ export function SubRecipeMakeFlow({
         <div className="text-center">
           <h3 className="font-bold text-2xl">{sr?.subRecipeName} Complete!</h3>
           <p className="text-muted-foreground mt-1">
-            {state.batches} batch{state.batches !== 1 ? "es" : ""} made · {(yieldPerBatch * state.batches).toFixed(2)} {sr?.yieldUnit} ready
+            {state.batches} batch{state.batches !== 1 ? "es" : ""} made · {(yieldPerBatch * state.batches).toFixed(3)} {sr?.yieldUnit} ready
           </p>
         </div>
         <div className="flex gap-3">
@@ -282,7 +282,7 @@ export function SubRecipeMakeFlow({
           <div className="flex-1">
             <h3 className="font-bold text-xl">{sr?.subRecipeName}</h3>
             <p className="text-sm text-muted-foreground">
-              {state.batches} batch{state.batches !== 1 ? "es" : ""} · Total yield: {(yieldPerBatch * state.batches).toFixed(2)} {sr?.yieldUnit}
+              {state.batches} batch{state.batches !== 1 ? "es" : ""} · Total yield: {(yieldPerBatch * state.batches).toFixed(3)} {sr?.yieldUnit}
             </p>
           </div>
           <div className={cn(
@@ -346,11 +346,11 @@ export function SubRecipeMakeFlow({
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-secondary/30 rounded-xl px-4 py-3">
               <p className="text-xs text-muted-foreground mb-1">Required by plan</p>
-              <p className="text-2xl font-bold tabular-nums">{sr.totalRequired.toFixed(2)} <span className="text-base font-medium text-muted-foreground">{sr.yieldUnit}</span></p>
+              <p className="text-2xl font-bold tabular-nums">{sr.totalRequired.toFixed(3)} <span className="text-base font-medium text-muted-foreground">{sr.yieldUnit}</span></p>
             </div>
             <div className="bg-secondary/30 rounded-xl px-4 py-3">
               <p className="text-xs text-muted-foreground mb-1">Yield per batch</p>
-              <p className="text-2xl font-bold tabular-nums">{yieldPerBatch.toFixed(2)} <span className="text-base font-medium text-muted-foreground">{sr.yieldUnit}</span></p>
+              <p className="text-2xl font-bold tabular-nums">{yieldPerBatch.toFixed(3)} <span className="text-base font-medium text-muted-foreground">{sr.yieldUnit}</span></p>
             </div>
           </div>
 
@@ -379,7 +379,7 @@ export function SubRecipeMakeFlow({
                   : "bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800"
               )}>
                 <span className="text-sm font-medium">Net needed</span>
-                <span className="text-xl font-bold tabular-nums">{net.toFixed(2)} {sr.yieldUnit}</span>
+                <span className="text-xl font-bold tabular-nums">{net.toFixed(3)} {sr.yieldUnit}</span>
               </div>
               {batchCount !== null && (
                 <div className={cn(
@@ -390,7 +390,7 @@ export function SubRecipeMakeFlow({
                 )}>
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">Batches to make</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">⌈{net.toFixed(2)} ÷ {yieldPerBatch.toFixed(2)}⌉ = {batchCount}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">⌈{net.toFixed(3)} ÷ {yieldPerBatch.toFixed(3)}⌉ = {batchCount}</p>
                   </div>
                   <span className="text-4xl font-bold tabular-nums text-primary">{batchCount}</span>
                 </div>
@@ -434,7 +434,7 @@ export function SubRecipeMakeFlow({
         <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
           <div className="bg-secondary/30 rounded-xl px-4 py-3">
             <p className="text-xs text-muted-foreground mb-1">Yield per batch</p>
-            <p className="text-xl font-bold tabular-nums">{yieldPerBatch.toFixed(2)} {sr.yieldUnit}</p>
+            <p className="text-xl font-bold tabular-nums">{yieldPerBatch.toFixed(3)} {sr.yieldUnit}</p>
           </div>
 
           <div>
@@ -493,7 +493,7 @@ export function SubRecipeMakeFlow({
             )}
 
             <div className="mt-3 bg-primary/10 rounded-xl px-4 py-2.5">
-              <p className="text-sm font-semibold text-primary">Total yield: {totalYield.toFixed(2)} {sr.yieldUnit}</p>
+              <p className="text-sm font-semibold text-primary">Total yield: {totalYield.toFixed(3)} {sr.yieldUnit}</p>
             </div>
           </div>
 
@@ -555,8 +555,8 @@ export function SubRecipeMakeFlow({
               <div className="flex-1 min-w-0">
                 <p className="font-semibold text-base truncate">{sr.subRecipeName}</p>
                 <p className="text-sm text-muted-foreground">
-                  {sr.yield.toFixed(2)} {sr.yieldUnit} per batch
-                  {mode === "plan" && sr.totalRequired > 0 && ` · ${sr.totalRequired.toFixed(2)} ${sr.yieldUnit} required`}
+                  {sr.yield.toFixed(3)} {sr.yieldUnit} per batch
+                  {mode === "plan" && sr.totalRequired > 0 && ` · ${sr.totalRequired.toFixed(3)} ${sr.yieldUnit} required`}
                 </p>
               </div>
               {batchsNeeded !== null && (
