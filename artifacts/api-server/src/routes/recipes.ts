@@ -428,9 +428,7 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
   await db.delete(recipeIngredientsTable).where(eq(recipeIngredientsTable.recipeId, id));
   await db.delete(recipeSubRecipesTable).where(eq(recipeSubRecipesTable.recipeId, id));
 
-  const hasInlineMarinades = (ingredients ?? []).some((i: any) => i.marinadeForIngredientId) ||
-    (subRecipes ?? []).some((s: any) => s.marinadeForIngredientId);
-  if (marinades !== undefined || hasInlineMarinades) {
+  if (marinades !== undefined) {
     await db.delete(recipeMeatMarinadesTable).where(eq(recipeMeatMarinadesTable.recipeId, id));
   }
 
