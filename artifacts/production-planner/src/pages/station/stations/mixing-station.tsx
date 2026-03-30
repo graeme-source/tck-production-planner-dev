@@ -38,7 +38,9 @@ function formatMixQty(qty: number, unit: string | null) {
   }
   if (unit === "kg") return `${qty.toFixed(3)} kg`;
   if (unit === "l" || unit === "L") return `${qty.toFixed(3)} L`;
-  return `${qty % 1 === 0 ? qty : qty.toFixed(1)} ${unit ?? ""}`;
+  if (unit === "g") return `${qty.toFixed(0)} g`;
+  if (unit === "ml") return `${qty.toFixed(0)} ml`;
+  return `${qty % 1 === 0 ? qty : qty.toFixed(3)} ${unit ?? ""}`;
 }
 
 interface FillingMixItem {

@@ -664,10 +664,10 @@ function DoughMixingView({
             {completedMixes.size} of {mixCount} mixes done
           </p>
           <p className="text-xs text-muted-foreground">
-            {(doughData.flourPerMix ?? 0).toFixed(1)} kg flour → ~{(doughData.doughPerMix ?? 0).toFixed(1)} kg dough per mix
+            {(doughData.flourPerMix ?? 0).toFixed(3)} kg flour → ~{(doughData.doughPerMix ?? 0).toFixed(3)} kg dough per mix
           </p>
           <p className="text-xs text-muted-foreground font-medium">
-            Day total: {doughData.totalDoughKg.toFixed(1)} kg dough ({mixCount} mixes)
+            Day total: {doughData.totalDoughKg.toFixed(3)} kg dough ({mixCount} mixes)
           </p>
         </div>
       </div>
@@ -1150,15 +1150,15 @@ function DoughOverview({
         <div className="grid grid-cols-4 gap-3">
           <div className="text-center">
             <p className="text-xs text-amber-700 dark:text-amber-300">Total Dough</p>
-            <p className="text-lg font-bold text-amber-800 dark:text-amber-200">{doughData.totalDoughKg.toFixed(1)} kg</p>
+            <p className="text-lg font-bold text-amber-800 dark:text-amber-200">{doughData.totalDoughKg.toFixed(3)} kg</p>
           </div>
           <div className="text-center">
             <p className="text-xs text-amber-700 dark:text-amber-300">Total Flour</p>
-            <p className="text-lg font-bold text-amber-800 dark:text-amber-200">{(doughData.totalFlourKg ?? 0).toFixed(1)} kg</p>
+            <p className="text-lg font-bold text-amber-800 dark:text-amber-200">{(doughData.totalFlourKg ?? 0).toFixed(3)} kg</p>
           </div>
           <div className="text-center">
             <p className="text-xs text-amber-700 dark:text-amber-300">Flour/Mix</p>
-            <p className="text-lg font-bold text-amber-800 dark:text-amber-200">{(doughData.flourPerMix ?? 0).toFixed(1)} kg</p>
+            <p className="text-lg font-bold text-amber-800 dark:text-amber-200">{(doughData.flourPerMix ?? 0).toFixed(3)} kg</p>
           </div>
           <div className="text-center">
             <p className="text-xs text-amber-700 dark:text-amber-300">Mixes</p>
