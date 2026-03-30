@@ -840,9 +840,9 @@ function CategoryDefaultsSection() {
   const { createCategoryDefault, updateCategoryDefault, deleteCategoryDefault } = useAppMutations();
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [form, setForm] = useState({ category: "", defaultPackagingCost: "", defaultLabourCost: "" });
+  const [form, setForm] = useState({ category: "", defaultPackagingCost: "", defaultLabourCost: "", defaultPackSize: "" });
 
-  const resetForm = () => setForm({ category: "", defaultPackagingCost: "", defaultLabourCost: "" });
+  const resetForm = () => setForm({ category: "", defaultPackagingCost: "", defaultLabourCost: "", defaultPackSize: "" });
 
   const handleAdd = () => {
     createCategoryDefault.mutate({
@@ -850,6 +850,7 @@ function CategoryDefaultsSection() {
         category: form.category,
         defaultPackagingCost: Number(form.defaultPackagingCost) || 0,
         defaultLabourCost: Number(form.defaultLabourCost) || 0,
+        defaultPackSize: Number(form.defaultPackSize) || 1,
       }
     }, { onSuccess: () => { setAdding(false); resetForm(); } });
   };
@@ -861,13 +862,14 @@ function CategoryDefaultsSection() {
         category: form.category,
         defaultPackagingCost: Number(form.defaultPackagingCost) || 0,
         defaultLabourCost: Number(form.defaultLabourCost) || 0,
+        defaultPackSize: Number(form.defaultPackSize) || 1,
       }
     }, { onSuccess: () => { setEditingId(null); resetForm(); } });
   };
 
-  const startEdit = (d: { id: number; category: string; defaultPackagingCost: number; defaultLabourCost: number }) => {
+  const startEdit = (d: { id: number; category: string; defaultPackagingCost: number; defaultLabourCost: number; defaultPackSize?: number }) => {
     setEditingId(d.id);
-    setForm({ category: d.category, defaultPackagingCost: String(d.defaultPackagingCost), defaultLabourCost: String(d.defaultLabourCost) });
+    setForm({ category: d.category, defaultPackagingCost: String(d.defaultPackagingCost), defaultLabourCost: String(d.defaultLabourCost), defaultPackSize: String(d.defaultPackSize ?? 1) });
     setAdding(false);
   };
 
@@ -877,9 +879,9 @@ function CategoryDefaultsSection() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold flex items-center gap-2"><Package className="w-5 h-5 text-primary" /> Category Cost Defaults</h2>
+          <h2 className="text-lg font-semibold flex items-center gap-2"><Package className="w-5 h-5 text-primary" /> Category Defaults</h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            When a recipe's category matches, packaging and labour costs are auto-filled in the recipe form.
+            When a recipe's category matches, pack size, packaging and labour costs are auto-filled in the recipe form.
           </p>
         </div>
         {!adding && (
@@ -895,10 +897,14 @@ function CategoryDefaultsSection() {
       {adding && (
         <div className="bg-card border border-primary/30 rounded-2xl p-5 space-y-3">
           <h3 className="text-sm font-semibold text-primary">New Category Default</h3>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-4 gap-3">
             <div>
               <label className="text-xs font-medium mb-1 block text-muted-foreground">Category Name</label>
-              <input className={inputCls} placeholder="e.g. Bread" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} />
+              <input className={inputCls} placeholder="e.g. Calzones" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} />
+            </div>
+            <div>
+              <label className="text-xs font-medium mb-1 block text-muted-foreground">Pack Size</label>
+              <input type="number" step="1" min="1" className={`${inputCls} w-full`} placeholder="1" value={form.defaultPackSize} onChange={e => setForm(f => ({ ...f, defaultPackSize: e.target.value }))} />
             </div>
             <div>
               <label className="text-xs font-medium mb-1 block text-muted-foreground">Default Packaging (£/pack)</label>
@@ -935,7 +941,7 @@ function CategoryDefaultsSection() {
         <div className="rounded-2xl border border-dashed border-border p-10 text-center text-muted-foreground">
           <Package className="w-8 h-8 mx-auto mb-2 opacity-30" />
           <p className="font-medium text-sm">No category defaults yet</p>
-          <p className="text-xs mt-1">Add one to auto-populate packaging and labour costs in recipes.</p>
+          <p className="text-xs mt-1">Add one to auto-populate pack size, packaging and labour costs in recipes.</p>
         </div>
       ) : (
         <div className="rounded-2xl border border-border bg-card overflow-hidden">
@@ -943,6 +949,7 @@ function CategoryDefaultsSection() {
             <thead className="bg-secondary/30 text-muted-foreground text-xs">
               <tr>
                 <th className="px-5 py-3 font-medium text-left">Category</th>
+                <th className="px-5 py-3 font-medium text-right">Pack Size</th>
                 <th className="px-5 py-3 font-medium text-right">Default Packaging</th>
                 <th className="px-5 py-3 font-medium text-right">Default Labour</th>
                 <th className="px-5 py-3 font-medium text-right">Actions</th>
@@ -955,6 +962,11 @@ function CategoryDefaultsSection() {
                     <>
                       <td className="px-4 py-2.5">
                         <input className={inputCls} value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} />
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <div className="flex justify-end">
+                          <input type="number" step="1" min="1" className={`${inputCls} w-20 text-right`} value={form.defaultPackSize} onChange={e => setForm(f => ({ ...f, defaultPackSize: e.target.value }))} />
+                        </div>
                       </td>
                       <td className="px-4 py-2.5">
                         <div className="relative flex justify-end">
@@ -984,6 +996,7 @@ function CategoryDefaultsSection() {
                   ) : (
                     <>
                       <td className="px-5 py-3.5 font-medium">{d.category}</td>
+                      <td className="px-5 py-3.5 text-right">{(d as Record<string, unknown>).defaultPackSize as number ?? 1}</td>
                       <td className="px-5 py-3.5 text-right">£{d.defaultPackagingCost.toFixed(2)}</td>
                       <td className="px-5 py-3.5 text-right">£{d.defaultLabourCost.toFixed(2)}</td>
                       <td className="px-5 py-3.5 text-right">

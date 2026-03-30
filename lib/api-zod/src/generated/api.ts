@@ -1776,6 +1776,7 @@ export const CreateCategoryDefaultBody = zod.object({
   category: zod.string(),
   defaultPackagingCost: zod.number(),
   defaultLabourCost: zod.number(),
+  defaultPackSize: zod.number().optional(),
 });
 
 /**
@@ -1789,6 +1790,7 @@ export const UpdateCategoryDefaultBody = zod.object({
   category: zod.string(),
   defaultPackagingCost: zod.number(),
   defaultLabourCost: zod.number(),
+  defaultPackSize: zod.number().optional(),
 });
 
 export const UpdateCategoryDefaultResponse = zod.object({
@@ -1796,6 +1798,7 @@ export const UpdateCategoryDefaultResponse = zod.object({
   category: zod.string(),
   defaultPackagingCost: zod.number(),
   defaultLabourCost: zod.number(),
+  defaultPackSize: zod.number(),
   createdAt: zod.string(),
 });
 

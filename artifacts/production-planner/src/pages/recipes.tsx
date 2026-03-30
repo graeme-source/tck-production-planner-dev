@@ -230,6 +230,7 @@ function RecipeForm({
     setValue("category", cat);
     const def = categoryDefaults.find(d => d.category.toLowerCase() === cat.toLowerCase());
     if (def) {
+      setValue("packSize", (def as Record<string, unknown>).defaultPackSize as number ?? 1);
       setValue("packagingCost", def.defaultPackagingCost);
       setValue("labourCost", def.defaultLabourCost);
     }
@@ -301,7 +302,7 @@ function RecipeForm({
               {categoryDefaults.map(d => <option key={d.category} value={d.category} />)}
             </datalist>
             {categoryDefaults.length > 0 && watchedCategory && categoryDefaults.find(d => d.category.toLowerCase() === watchedCategory.toLowerCase()) && (
-              <p className="text-xs text-primary mt-0.5">Default costs applied from category preset.</p>
+              <p className="text-xs text-primary mt-0.5">Defaults applied from category preset.</p>
             )}
           </div>
           <div>

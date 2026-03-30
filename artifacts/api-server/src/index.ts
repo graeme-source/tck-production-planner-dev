@@ -142,6 +142,9 @@ async function runStartupMigrations() {
       ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS cutoff_time TEXT NOT NULL DEFAULT '17:00'
     `);
     await db.execute(sql`
+      ALTER TABLE category_defaults ADD COLUMN IF NOT EXISTS default_pack_size INTEGER NOT NULL DEFAULT 1
+    `);
+    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS storage_locations (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
