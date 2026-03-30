@@ -514,6 +514,8 @@ async function startup() {
   try {
     await runStartupMigrations();
     await seedAdminIfNeeded();
+    const { guardMarinadeSettings } = await import("./lib/seed-guard");
+    await guardMarinadeSettings();
     startBackupScheduler();
   } catch (err) {
     console.error(
