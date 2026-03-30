@@ -431,15 +431,18 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                     <span className="text-xs font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">After Oven</span>
                   </div>
                   <div className="space-y-1.5">
-                    {postOvenItems.map((poi, idx) => (
-                      <div key={idx} className="flex items-center justify-between bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
-                        <span className="text-sm font-medium text-amber-800 dark:text-amber-200">{poi.name}</span>
-                        <div className="text-right">
-                          <span className="text-base font-bold tabular-nums text-amber-700 dark:text-amber-300">{Math.round(poi.weightPerBatch)}g</span>
-                          <span className="text-xs text-muted-foreground ml-1">/ batch</span>
+                    {postOvenItems.map((poi, idx) => {
+                      const totalWeight = poi.weightPerBatch * (item.batchesTarget ?? 0);
+                      return (
+                        <div key={idx} className="flex items-center justify-between bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+                          <span className="text-sm font-medium text-amber-800 dark:text-amber-200">{poi.name}</span>
+                          <div className="text-right">
+                            <span className="text-base font-bold tabular-nums text-amber-700 dark:text-amber-300">{Math.round(totalWeight)}g</span>
+                            <span className="text-xs text-muted-foreground ml-1">total</span>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
