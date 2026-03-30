@@ -36,6 +36,8 @@ function formatMixQty(qty: number, unit: string | null) {
   if (qty >= 1000 && (unit === "g" || unit === "ml")) {
     return `${(qty / 1000).toFixed(3)} ${unit === "g" ? "kg" : "L"}`;
   }
+  if (unit === "kg") return `${qty.toFixed(3)} kg`;
+  if (unit === "l" || unit === "L") return `${qty.toFixed(3)} L`;
   return `${qty % 1 === 0 ? qty : qty.toFixed(1)} ${unit ?? ""}`;
 }
 
@@ -613,7 +615,7 @@ export function MixingStation({ plan }: MixingStationProps) {
                                 <p className={cn("font-semibold", allIngDone && "line-through text-muted-foreground")}>{ing.ingredientName}</p>
                                 {perTrayKg && (
                                   <p className="text-xs text-muted-foreground tabular-nums">
-                                    {perTrayKg.toFixed(2)} kg / tray · {toKg(ing.rawQty, ing.unit).toFixed(2)} kg total
+                                    {perTrayKg.toFixed(3)} kg / tray · {toKg(ing.rawQty, ing.unit).toFixed(3)} kg total
                                   </p>
                                 )}
                               </div>

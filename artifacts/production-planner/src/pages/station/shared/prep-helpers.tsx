@@ -7,7 +7,9 @@ import type { PrepRequirementItem } from "@workspace/api-client-react";
 
 export function fmtQty(q: number, unit: string): string {
   if (unit === "g" && q >= 1000) return `${(q / 1000).toFixed(3)} kg`;
-  if (unit === "ml" && q >= 1000) return `${(q / 1000).toFixed(2)} l`;
+  if (unit === "ml" && q >= 1000) return `${(q / 1000).toFixed(3)} l`;
+  if (unit === "kg") return `${q.toFixed(3)} kg`;
+  if (unit === "l" || unit === "L") return `${q.toFixed(3)} l`;
   return `${q % 1 === 0 ? q : q.toFixed(2)} ${unit}`;
 }
 
