@@ -337,9 +337,9 @@ async function fetchCalculation(planDate: string): Promise<CalcResponse> {
 function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   const { state: authState } = useAuth();
   const userRole = authState.status === "authenticated" ? authState.user.role : undefined;
+  const isAdmin = userRole === "admin";
   const minPlanDate = getMinPlanDate();
-  const [adminDateOverride, setAdminDateOverride] = useState(false);
-  const [planDate, setPlanDate] = useState(toLocalDateStr(minPlanDate));
+  const [planDate, setPlanDate] = useState(isAdmin ? toLocalDateStr(new Date()) : toLocalDateStr(minPlanDate));
   const [planName, setPlanName] = useState("");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<PlanItem[]>([]);
@@ -349,14 +349,6 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   const [totalBatchesOverride, setTotalBatchesOverride] = useState<number | null>(null);
   const [savedOrder, setSavedOrder] = useState<number[]>([]);
   const [orderSaved, setOrderSaved] = useState(false);
-
-  useEffect(() => {
-    if (!open || userRole !== "admin") return;
-    fetch(`${BASE}/api/app-settings/admin_plan_date_override`, { credentials: "include" })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => setAdminDateOverride(d?.value === "true"))
-      .catch(() => setAdminDateOverride(false));
-  }, [open, userRole]);
 
   // Fetch stored production order on open
   useEffect(() => {
@@ -467,22 +459,18 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
     return () => clearInterval(interval);
   }, [open]);
 
-  const canOverrideDate = adminDateOverride && userRole === "admin";
-
   const handleDateChange = (raw: string) => {
     if (!raw) return;
     isDirty.current = true;
     let fixed = toNextWeekdayIfWeekend(raw);
     const warnings: string[] = [];
     if (fixed !== raw) warnings.push("Weekends are not production days — date moved to the next Monday.");
-    if (!canOverrideDate) {
+    if (!isAdmin) {
       const min = getMinPlanDate();
       if (parseISO(fixed) < min) {
         fixed = toLocalDateStr(min);
         warnings.push("Plans must be created at least 2 working days in advance.");
       }
-    } else if (parseISO(fixed) < getMinPlanDate()) {
-      warnings.push("Admin override: creating a plan inside the normal 2-day lead time.");
     }
     setDateWarning(warnings.length ? warnings.join(" ") : null);
     setPlanDate(fixed);
@@ -835,7 +823,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
               <input
                 type="date"
                 value={planDate}
-                min={canOverrideDate ? undefined : toLocalDateStr(minPlanDate)}
+                min={isAdmin ? undefined : toLocalDateStr(minPlanDate)}
                 onChange={e => handleDateChange(e.target.value)}
                 className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
               />
@@ -1133,21 +1121,13 @@ interface EditDraftDialogProps {
 function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps) {
   const { state: editAuthState } = useAuth();
   const editUserRole = editAuthState.status === "authenticated" ? editAuthState.user.role : undefined;
-  const [editAdminDateOverride, setEditAdminDateOverride] = useState(false);
+  const editIsAdmin = editUserRole === "admin";
   const [planDate, setPlanDate] = useState(plan.planDate);
   const [planName, setPlanName] = useState(plan.name);
   const [notes, setNotes] = useState(plan.notes ?? "");
   const [dateWarning, setDateWarning] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [addRecipeId, setAddRecipeId] = useState<string>("");
-
-  useEffect(() => {
-    if (!open || editUserRole !== "admin") return;
-    fetch(`${BASE}/api/app-settings/admin_plan_date_override`, { credentials: "include" })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => setEditAdminDateOverride(d?.value === "true"))
-      .catch(() => setEditAdminDateOverride(false));
-  }, [open, editUserRole]);
 
   const [items, setItems] = useState<PlanItem[]>(() =>
     (plan.items ?? []).map(it => ({
@@ -1259,7 +1239,6 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   }, [open]);
 
   const editMinPlanDate = getMinPlanDate();
-  const editCanOverrideDate = editAdminDateOverride && editUserRole === "admin";
 
   const handleDateChange = (raw: string) => {
     if (!raw) return;
@@ -1267,13 +1246,11 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
     let fixed = toNextWeekdayIfWeekend(raw);
     const warnings: string[] = [];
     if (fixed !== raw) warnings.push("Weekends are not production days — date moved to the next Monday.");
-    if (!editCanOverrideDate) {
+    if (!editIsAdmin) {
       if (parseISO(fixed) < editMinPlanDate) {
         fixed = toLocalDateStr(editMinPlanDate);
         warnings.push("Plans must be created at least 2 working days in advance.");
       }
-    } else if (parseISO(fixed) < editMinPlanDate) {
-      warnings.push("Admin override: editing plan date inside the normal 2-day lead time.");
     }
     setDateWarning(warnings.length ? warnings.join(" ") : null);
     setPlanDate(fixed);
@@ -1440,7 +1417,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
               <input
                 type="date"
                 value={planDate}
-                min={editCanOverrideDate ? undefined : toLocalDateStr(editMinPlanDate)}
+                min={editIsAdmin ? undefined : toLocalDateStr(editMinPlanDate)}
                 onChange={e => handleDateChange(e.target.value)}
                 className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
               />
