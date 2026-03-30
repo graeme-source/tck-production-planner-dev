@@ -52,9 +52,9 @@ export default function StationPage() {
       case "mixing":
         return <MixingStation plan={plan} />;
       case "building_1":
-        return <BuildingStation plan={plan} lineNumber={1} />;
+        return <BuildingStation key="building_1" plan={plan} lineNumber={1} />;
       case "building_2":
-        return <BuildingStation plan={plan} lineNumber={2} />;
+        return <BuildingStation key="building_2" plan={plan} lineNumber={2} />;
       case "ovens":
         return <OvensStation plan={plan} />;
       case "wrapping":
