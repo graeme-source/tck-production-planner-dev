@@ -480,7 +480,7 @@ function RecipeForm({
                                   type="number"
                                   step="any"
                                   min="0"
-                                  value={storedKg === 0 ? "" : displayUnit === "g" ? Math.round(storedKg * 10000) / 10 : storedKg}
+                                  value={storedKg === 0 ? "" : displayUnit === "g" ? Math.round(storedKg * 1000 * 100) / 100 : storedKg}
                                   onChange={e => {
                                     const v = e.target.value === "" ? 0 : Number(e.target.value);
                                     setValue(`ingredients.${index}.quantity`, displayUnit === "g" ? v / 1000 : v, { shouldValidate: true });
@@ -564,7 +564,7 @@ function RecipeForm({
                                   type="number"
                                   step="any"
                                   min="0"
-                                  value={storedKg === 0 ? "" : displayUnit === "g" ? Math.round(storedKg * 10000) / 10 : storedKg}
+                                  value={storedKg === 0 ? "" : displayUnit === "g" ? Math.round(storedKg * 1000 * 100) / 100 : storedKg}
                                   onChange={e => {
                                     const v = e.target.value === "" ? 0 : Number(e.target.value);
                                     setValue(`subRecipes.${index}.quantity`, displayUnit === "g" ? v / 1000 : v, { shouldValidate: true });
