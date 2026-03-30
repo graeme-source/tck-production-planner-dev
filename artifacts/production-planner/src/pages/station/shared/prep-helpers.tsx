@@ -148,11 +148,11 @@ export function PrepDateBanner({
 
   return (
     <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-xl px-4 py-3 flex items-center gap-3">
-      <CalendarCheck className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0" />
+      <CalendarCheck className="w-6 h-6 text-green-600 dark:text-green-400 flex-shrink-0" />
       <div className="min-w-0">
         {currentFormatted ? (
           <>
-            <p className="font-bold text-green-900 dark:text-green-100 text-base leading-snug">
+            <p className="font-bold text-green-900 dark:text-green-100 text-lg leading-snug">
               {activityLabel} on {currentFormatted}
             </p>
             <p className="text-sm text-green-700 dark:text-green-300 leading-snug">
@@ -165,7 +165,6 @@ export function PrepDateBanner({
             <p className="font-bold text-green-900 dark:text-green-100 text-lg leading-tight">{targetFormatted}</p>
           </>
         )}
-        {targetPlanName && <p className="text-xs text-green-700 dark:text-green-400 mt-0.5">{targetPlanName}</p>}
       </div>
     </div>
   );
