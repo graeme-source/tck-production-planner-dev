@@ -260,6 +260,7 @@ export interface PrepRecipeDetail {
 // ──────────────────────────────────────────────────────────────────────────────
 export function usePrepByRecipe(station: string, currentPlanId: number, afterDate?: string) {
   const { data: nextPlan, isLoading: isPlanLoading } = useNextActivePlan(afterDate) as { data: NextActivePlan | null; isLoading: boolean };
+  const targetPlanId = nextPlan?.planId ?? currentPlanId;
   const [recipes, setRecipes] = useState<PrepRecipeDetail[]>([]);
   const [isPrepLoading, setIsPrepLoading] = useState(false);
   const initialLoadDone = useRef(false);
@@ -267,31 +268,32 @@ export function usePrepByRecipe(station: string, currentPlanId: number, afterDat
   const abortRef = useRef<AbortController | null>(null);
 
   const doFetch = useCallback(() => {
-    if (!currentPlanId) { setRecipes([]); return; }
+    if (!targetPlanId) { setRecipes([]); return; }
     abortRef.current?.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     if (!initialLoadDone.current) setIsPrepLoading(true);
-    fetch(`/api/production-plans/${currentPlanId}/prep-requirements-by-recipe?station=${station}`, { credentials: "include", signal: ctrl.signal })
+    fetch(`/api/production-plans/${targetPlanId}/prep-requirements-by-recipe?station=${station}`, { credentials: "include", signal: ctrl.signal })
       .then(r => r.json())
       .then((json: { recipes?: PrepRecipeDetail[] }) => {
         setRecipes(json.recipes ?? []); initialLoadDone.current = true; setIsPrepLoading(false);
       })
       .catch((e) => { if (e.name !== "AbortError") { initialLoadDone.current = true; setIsPrepLoading(false); } });
-  }, [currentPlanId, station]);
+  }, [targetPlanId, station]);
 
   useEffect(() => {
     initialLoadDone.current = false;
     doFetch();
-    if (!currentPlanId) return;
+    if (!targetPlanId) return;
     const interval = setInterval(doFetch, 5000);
     return () => { clearInterval(interval); abortRef.current?.abort(); };
-  }, [doFetch, currentPlanId]);
+  }, [doFetch, targetPlanId]);
 
   return {
     recipes,
-    isLoading: isPlanLoading || (!!currentPlanId && isPrepLoading),
+    isLoading: isPlanLoading || (!!targetPlanId && isPrepLoading),
     nextPlan,
+    targetPlanId,
   };
 }
 

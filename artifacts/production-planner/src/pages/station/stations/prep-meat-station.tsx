@@ -54,8 +54,8 @@ function usePrepMeatCompletions(planId: number) {
 export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
   const [isOnBreak, setIsOnBreak] = useState(false);
   const [selectedRecipeId, setSelectedRecipeId] = useState<number | null>(null);
-  const { recipes, isLoading, nextPlan } = usePrepByRecipe("prep_meat", plan.id, plan.planDate);
-  const { completions, refetch } = usePrepMeatCompletions(plan.id);
+  const { recipes, isLoading, nextPlan, targetPlanId } = usePrepByRecipe("prep_meat", plan.id, plan.planDate);
+  const { completions, refetch } = usePrepMeatCompletions(targetPlanId);
 
   const totalTrays = recipes.reduce((sum, r) => sum + (r.trayCount ?? 0), 0);
 
@@ -88,14 +88,14 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
     if (isOnBreak) return;
     const existing = getCompletion(ingredientId, recipeId, trayNum);
     if (existing) {
-      await fetch(`/api/production-plans/${plan.id}/prep-completions/by-tin`, {
+      await fetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
         method: "DELETE",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ingredientId, recipeId, tinNumber: trayNum }),
       });
     } else {
-      await fetch(`/api/production-plans/${plan.id}/prep-completions`, {
+      await fetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -145,7 +145,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
     <div className="space-y-4">
       <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
 
-      <PrepSubNav planId={plan.id} current="prep_meat" />
+      <PrepSubNav planId={targetPlanId} current="prep_meat" />
 
       {/* Summary bar */}
       <div className="bg-card border border-border rounded-xl p-4">
@@ -168,7 +168,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
           />
         </div>
         <div className="pt-3 border-t border-border/50 mt-3">
-          <BreakTracker planId={plan.id} stationType="prep_meat" onBreakActiveChange={setIsOnBreak} />
+          <BreakTracker planId={targetPlanId} stationType="prep_meat" onBreakActiveChange={setIsOnBreak} />
         </div>
       </div>
 
