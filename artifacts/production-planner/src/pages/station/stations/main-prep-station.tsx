@@ -353,7 +353,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
         isLoading={false}
       />
 
-      <PrepSubNav planId={plan.id} current="main_prep" />
+      <PrepSubNav planId={targetPlanId} current="main_prep" />
 
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">

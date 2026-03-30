@@ -599,7 +599,10 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
   const [isOnBreak, setIsOnBreak] = useState(false);
   const [selectedItem, setSelectedItem] = useState<"tomato_base" | number>("tomato_base");
   const [completedSubRecipeIds, setCompletedSubRecipeIds] = useState<Set<number>>(new Set());
-  const { subRecipes: planSubRecipes, loading: subRecipesLoading } = usePlanSubRecipeRequirements(plan.id);
+  const { data: nextPlanData, isLoading: isNextPlanLoading } = useNextActivePlan(plan.planDate);
+  const nextPlan = nextPlanData as NextActivePlan | null;
+  const targetPlanId = nextPlan?.planId ?? plan.id;
+  const { subRecipes: planSubRecipes, loading: subRecipesLoading } = usePlanSubRecipeRequirements(targetPlanId);
   const { data: allSubRecipesData } = useListSubRecipes();
   const allSubRecipes = (allSubRecipesData ?? []) as SubRecipe[];
 
@@ -610,10 +613,6 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
   // Tomato Base is "done" when every base sub-recipe in the plan has been completed
   const baseSubRecipes = planSubRecipes.filter(r => r.isBase !== false);
   const tomatoBaseDone = baseSubRecipes.length > 0 && baseSubRecipes.every(r => completedSubRecipeIds.has(r.subRecipeId));
-
-  const { data: nextPlanData, isLoading: isNextPlanLoading } = useNextActivePlan(plan.planDate);
-  const nextPlan = nextPlanData as NextActivePlan | null;
-  const targetPlanId = nextPlan?.planId ?? plan.id;
   const { data, loading, refetch } = useMainPrepData(targetPlanId, "prep_bases");
 
   // "Normal Base" is represented by the top-level Tomato Base item — exclude from sauce list
@@ -719,7 +718,7 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
     <div className="space-y-4">
       <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
 
-      <PrepSubNav planId={plan.id} current="prep_bases" />
+      <PrepSubNav planId={targetPlanId} current="prep_bases" />
 
       {/* Sauce progress bar (excludes Tomato Base which tracks via sub-recipe) */}
       <div className="bg-card border border-border rounded-xl p-4">
@@ -742,7 +741,7 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
           />
         </div>
         <div className="pt-3 border-t border-border/50">
-          <BreakTracker planId={plan.id} stationType="prep_bases" onBreakActiveChange={setIsOnBreak} />
+          <BreakTracker planId={targetPlanId} stationType="prep_bases" onBreakActiveChange={setIsOnBreak} />
         </div>
       </div>
 
