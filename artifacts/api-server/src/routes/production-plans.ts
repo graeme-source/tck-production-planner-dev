@@ -222,10 +222,14 @@ router.post("/", validate(CreatePlanBody), async (req, res) => {
     res.status(400).json({ error: "Production plans can only be scheduled on weekdays (Monday–Friday)." });
     return;
   }
-  // Enforce 2 working-day minimum lead time (admin override available)
+  // Enforce 2 working-day minimum lead time (admins exempt)
   if (!isAtLeast2WorkingDaysAhead(planDate)) {
-    const overrideEnabled = await isAdminDateOverrideEnabled(req);
-    if (!overrideEnabled) {
+    let role = req.session.userRole;
+    if (!role && req.session.userId) {
+      const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
+      if (user) { role = user.role as "admin" | "manager" | "viewer"; req.session.userRole = role; }
+    }
+    if (role !== "admin") {
       res.status(400).json({ error: "Production plans must be scheduled at least 2 working days in advance." });
       return;
     }
