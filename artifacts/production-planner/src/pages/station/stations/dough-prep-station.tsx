@@ -131,9 +131,11 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   });
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
-  const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
   const totalComplete = items.reduce((s, it) => s + getStationCount(it, "dough_prep"), 0);
-  const overallPct = totalBatchesTarget > 0 ? Math.round((totalComplete / totalBatchesTarget) * 100) : 0;
+  // Ball TARGET comes from the next day's plan (via doughData), not today's plan.
+  // Today's plan items are used only for tracking completions.
+  const totalBallsNeeded = doughData ? doughData.recipes.reduce((s, r) => s + r.ballCount, 0) : 0;
+  const overallPct = totalBallsNeeded > 0 ? Math.round((totalComplete / totalBallsNeeded) * 100) : 0;
   const mixCount = doughData?.mixCount ?? 0;
 
   const hasServerProgress = totalComplete > 0;
@@ -184,7 +186,6 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const isMixComplete = completedMixes.has(activeMix);
   const allMixesDone = mixCount > 0 && completedMixes.size >= mixCount;
 
-  const totalBallsNeeded = totalBatchesTarget;
   const ballCount = totalComplete;
   const allBallingDone = ballCount >= totalBallsNeeded;
   const totalTraysNeeded = totalBallsNeeded / BALLS_PER_TRAY;
@@ -365,7 +366,6 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
           totalBallsNeeded={totalBallsNeeded}
           overallPct={overallPct}
           totalComplete={totalComplete}
-          totalBatchesTarget={totalBatchesTarget}
         />
       ) : activeView === "mixing" ? (
         <>
@@ -1094,7 +1094,7 @@ function DoughBallingView({
 
 function DoughOverview({
   doughData, items, completedMixes, mixCount,
-  ballCount, totalBallsNeeded, overallPct, totalComplete, totalBatchesTarget,
+  ballCount, totalBallsNeeded, overallPct, totalComplete,
 }: {
   doughData: DoughPrepData;
   items: ProductionPlanItem[];
@@ -1104,7 +1104,6 @@ function DoughOverview({
   totalBallsNeeded: number;
   overallPct: number;
   totalComplete: number;
-  totalBatchesTarget: number;
 }) {
   return (
     <div className="space-y-4">
@@ -1115,7 +1114,7 @@ function DoughOverview({
             <div>
               <h2 className="font-semibold text-base">Day Overview</h2>
               <p className="text-xs text-muted-foreground">
-                {totalComplete} of {totalBatchesTarget} recipe batches
+                {totalComplete} of {totalBallsNeeded} balls
               </p>
             </div>
           </div>
