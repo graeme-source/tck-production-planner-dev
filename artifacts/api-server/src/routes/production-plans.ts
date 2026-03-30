@@ -1186,10 +1186,6 @@ router.delete("/:id/batch-completions/bulk", async (req, res) => {
     res.status(400).json({ error: "count must be between 1 and 50" });
     return;
   }
-  const sessionUserId = (req.session as { userId?: number }).userId ?? null;
-  const sessionUserRole = (req.session as { userRole?: string }).userRole ?? null;
-  const isAdmin = sessionUserRole === "admin";
-
   const [planItem] = await db.select({ id: productionPlanItemsTable.id, batchesComplete: productionPlanItemsTable.batchesComplete })
     .from(productionPlanItemsTable)
     .where(and(eq(productionPlanItemsTable.id, Number(planItemId)), eq(productionPlanItemsTable.planId, planId)));
@@ -1200,7 +1196,6 @@ router.delete("/:id/batch-completions/bulk", async (req, res) => {
 
   const bulkUndoConditions = [eq(batchCompletionsTable.planItemId, Number(planItemId))];
   if (stationType) bulkUndoConditions.push(eq(batchCompletionsTable.stationType, stationType));
-  if (!isAdmin && sessionUserId) bulkUndoConditions.push(eq(batchCompletionsTable.userId, sessionUserId));
 
   const isBulkUndoWrapping = stationType === "wrapping";
 
@@ -1272,10 +1267,6 @@ router.get("/:id/batch-completions/pace", async (req, res) => {
 router.delete("/:id/batch-completions/last", async (req, res) => {
   const planId = Number(req.params.id);
   const { planItemId, stationType } = req.body;
-  const sessionUserId = (req.session as { userId?: number }).userId ?? null;
-  const sessionUserRole = (req.session as { userRole?: string }).userRole ?? null;
-  const isAdmin = sessionUserRole === "admin";
-
   // Verify planItemId belongs to this plan
   const [planItem] = await db.select({ id: productionPlanItemsTable.id, batchesComplete: productionPlanItemsTable.batchesComplete })
     .from(productionPlanItemsTable)
@@ -1284,10 +1275,8 @@ router.delete("/:id/batch-completions/last", async (req, res) => {
     res.status(400).json({ error: "planItemId does not belong to this plan" });
     return;
   }
-  // Build ownership filter: non-admins can only undo their own completions
   const conditions = [eq(batchCompletionsTable.planItemId, Number(planItemId))];
   if (stationType) conditions.push(eq(batchCompletionsTable.stationType, stationType));
-  if (!isAdmin && sessionUserId) conditions.push(eq(batchCompletionsTable.userId, sessionUserId));
 
   // Only decrement batches_complete when undoing a wrapping completion
   const isUndoWrapping = stationType === "wrapping";
