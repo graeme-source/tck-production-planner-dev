@@ -1895,8 +1895,10 @@ router.get("/:id/sub-recipe-requirements", async (req, res) => {
     .select({
       recipeId: productionPlanItemsTable.recipeId,
       batchesTarget: productionPlanItemsTable.batchesTarget,
+      portionsPerBatch: recipesTable.portionsPerBatch,
     })
     .from(productionPlanItemsTable)
+    .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
     .where(eq(productionPlanItemsTable.planId, planId));
 
   const subRecipeTotals = new Map<number, number>();
@@ -1905,6 +1907,7 @@ router.get("/:id/sub-recipe-requirements", async (req, res) => {
     if (!item.recipeId) continue;
     const batches = Number(item.batchesTarget) || 0;
     if (batches === 0) continue;
+    const portionsPerBatch = Number(item.portionsPerBatch) || 10;
 
     const srRows = await db
       .select({
@@ -1916,7 +1919,7 @@ router.get("/:id/sub-recipe-requirements", async (req, res) => {
 
     for (const sr of srRows) {
       if (sr.subRecipeId == null) continue;
-      const qty = Number(sr.quantity) * batches;
+      const qty = Number(sr.quantity) * portionsPerBatch * batches;
       subRecipeTotals.set(sr.subRecipeId, (subRecipeTotals.get(sr.subRecipeId) ?? 0) + qty);
     }
   }
