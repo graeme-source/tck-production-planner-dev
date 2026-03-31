@@ -360,8 +360,8 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
           <div className="flex items-center gap-3">
             <ClipboardList className="w-6 h-6 text-emerald-600" />
             <div>
-              <h2 className="font-semibold text-base">Main Prep</h2>
-              <p className="text-xs text-muted-foreground">{completedTins} of {totalTins} tins completed</p>
+              <h2 className="font-semibold text-lg">Main Prep</h2>
+              <p className="text-sm text-muted-foreground">{completedTins} of {totalTins} tins completed</p>
             </div>
           </div>
           <span className="text-2xl font-bold font-display">{overallPct}%</span>
@@ -387,17 +387,17 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
           <div className="lg:w-80 xl:w-96 flex-shrink-0">
             <div className="bg-card border border-border rounded-xl overflow-hidden">
               <div className="px-4 py-2.5 bg-secondary/30 border-b border-border">
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Ingredients by Recipe</p>
+                <p className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Ingredients by Recipe</p>
               </div>
               <div className="max-h-[calc(100vh-280px)] overflow-y-auto">
                 {leftGroups.map((group, gi) => (
                   <div key={group.recipeId} className={cn(gi > 0 && "border-t border-border")}>
                     {/* Recipe section header */}
                     <div className="px-4 py-2 bg-emerald-50/60 dark:bg-emerald-950/20 flex items-center justify-between">
-                      <p className="text-xs font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300 truncate">
+                      <p className="text-sm font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300 truncate">
                         {group.recipeName}
                       </p>
-                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 ml-2 whitespace-nowrap">
+                      <span className="text-xs text-emerald-600 dark:text-emerald-400 ml-2 whitespace-nowrap">
                         {group.batchesTarget} batch{group.batchesTarget !== 1 ? "es" : ""}
                       </span>
                     </div>
@@ -442,15 +442,15 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                           </div>
                           <div className="min-w-0 flex-1">
                             <p className={cn(
-                              "text-sm font-medium truncate",
+                              "text-base font-medium truncate",
                               isSelected && "font-semibold",
                               rStatus.allDone && "line-through text-muted-foreground"
                             )}>
                               {ing.ingredientName}
-                              {presence.length > 0 && <span className="ml-1 text-[10px] text-blue-500">👁</span>}
+                              {presence.length > 0 && <span className="ml-1 text-xs text-blue-500">👁</span>}
                             </p>
                             {ing.recipes.length > 1 && (
-                              <p className="text-xs text-muted-foreground"><span className="text-amber-500">shared</span></p>
+                              <p className="text-sm text-muted-foreground"><span className="text-amber-500">shared</span></p>
                             )}
                           </div>
                           <div className="flex items-center gap-1 flex-shrink-0">

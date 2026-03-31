@@ -338,12 +338,12 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
           <div>
-            <h2 className="font-semibold">Today's Production</h2>
-            <p className="text-sm text-muted-foreground">
+            <h2 className="font-semibold text-lg">Today's Production</h2>
+            <p className="text-base text-muted-foreground">
               {totalBatchesDone} / {totalBatchesTarget} batches complete · Line {lineNumber}
             </p>
           </div>
-          <span className="text-2xl font-bold font-display">{overallProgress}%</span>
+          <span className="text-3xl font-bold font-display">{overallProgress}%</span>
         </div>
         <div className="w-full h-3 bg-secondary rounded-full overflow-hidden">
           <div
@@ -401,7 +401,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                   <div className="bg-slate-50 dark:bg-slate-900/30 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
                     <div className="px-3 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
                       <ClipboardList className="w-4 h-4 text-slate-500 dark:text-slate-400" />
-                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400">
+                      <span className="text-sm font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400">
                         {isLocked ? "Ready" : "Items needed"}
                       </span>
                       {isLocked && <Check className="w-4 h-4 text-emerald-500 ml-auto" />}
@@ -420,10 +420,10 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                           {isLocked || checkedItems["filling"]
                             ? <CheckSquare className="w-6 h-6 text-emerald-500 flex-shrink-0" />
                             : <Square className="w-6 h-6 text-slate-400 flex-shrink-0" />}
-                          <span className="text-base font-semibold text-blue-700 dark:text-blue-400 flex-1">Filling</span>
+                          <span className="text-lg font-semibold text-blue-700 dark:text-blue-400 flex-1">Filling</span>
                           <div className="text-right flex-shrink-0">
-                            <span className="text-lg font-bold font-mono tabular-nums">{Math.round(asm.fillingWeightPerBatch)}g</span>
-                            <span className="block text-xs text-muted-foreground font-mono tabular-nums">{Math.round(asm.fillingWeightHalfBatch)}g half</span>
+                            <span className="text-xl font-bold font-mono tabular-nums">{Math.round(asm.fillingWeightPerBatch)}g</span>
+                            <span className="block text-sm text-muted-foreground font-mono tabular-nums">{Math.round(asm.fillingWeightHalfBatch)}g half</span>
                           </div>
                         </button>
                       )}
@@ -443,10 +443,10 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                             {isLocked || checkedItems[key]
                               ? <CheckSquare className="w-6 h-6 text-emerald-500 flex-shrink-0" />
                               : <Square className="w-6 h-6 text-slate-400 flex-shrink-0" />}
-                            <span className="text-base font-semibold flex-1">{ai.name}</span>
+                            <span className="text-lg font-semibold flex-1">{ai.name}</span>
                             <div className="text-right flex-shrink-0">
-                              <span className="text-lg font-bold font-mono tabular-nums">{Math.round(ai.weightPerBatch)}g</span>
-                              <span className="block text-xs text-muted-foreground font-mono tabular-nums">{Math.round(ai.weightHalfBatch)}g half</span>
+                              <span className="text-xl font-bold font-mono tabular-nums">{Math.round(ai.weightPerBatch)}g</span>
+                              <span className="block text-sm text-muted-foreground font-mono tabular-nums">{Math.round(ai.weightHalfBatch)}g half</span>
                             </div>
                           </button>
                         );
@@ -457,7 +457,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
               })()}
 
               {/* Compact meta row */}
-              <div className="flex flex-wrap items-center gap-2 mt-2 text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-2 mt-2 text-sm text-muted-foreground">
                 {currentItem.tinSize && (
                   <span className="bg-secondary/50 rounded px-1.5 py-0.5">{currentItem.tinSize} tin</span>
                 )}
@@ -504,14 +504,14 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                     style={{ width: `${Math.min(pct, 100)}%` }}
                   />
                 </div>
-                <p className="text-[10px] text-muted-foreground text-center mt-0.5">{remaining} left</p>
+                <p className="text-xs text-muted-foreground text-center mt-0.5">{remaining} left</p>
               </div>
 
               {/* Waiting badge */}
               {available <= 0 && (
                 <div className="w-full flex items-center justify-center gap-1 px-2 py-1.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg mb-2">
                   <AlertCircle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-                  <p className="text-[10px] font-medium text-amber-700 dark:text-amber-300 leading-tight">Waiting for Mixing</p>
+                  <p className="text-xs font-medium text-amber-700 dark:text-amber-300 leading-tight">Waiting for Mixing</p>
                 </div>
               )}
 
@@ -551,7 +551,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
               {buildingCount > 0 && !isOnBreak && (
                 <button
                   onClick={handleUndo}
-                  className="mt-1.5 w-full py-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg transition-colors"
+                  className="mt-1.5 w-full py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg transition-colors"
                 >
                   Undo
                 </button>
@@ -624,7 +624,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                 <h3 className="font-bold text-lg leading-tight truncate">
                   {viewItem.recipeName ?? `Recipe #${viewItem.recipeId}`}
                 </h3>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-sm text-muted-foreground">
                   {viewBuildCount} / {viewItem.batchesTarget ?? 0} built · {viewMixing} mixed
                   {viewIsDone ? " · Complete" : ""}
                 </p>
@@ -700,8 +700,8 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
       {/* Production Queue */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
-          <h3 className="font-semibold text-sm">Production Queue — Line {lineNumber}</h3>
-          <p className="text-xs text-muted-foreground">Tap a recipe to view its filling mix</p>
+          <h3 className="font-semibold text-base">Production Queue — Line {lineNumber}</h3>
+          <p className="text-sm text-muted-foreground">Tap a recipe to view its filling mix</p>
         </div>
         <table className="w-full text-sm">
           <thead>

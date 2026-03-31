@@ -145,8 +145,8 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
       {/* Overall progress + breaks */}
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
-          <p className="text-sm font-medium">Daily Progress — {totalOvenComplete} / {totalTarget} batches</p>
-          <span className="text-lg font-bold">{overallPct}%</span>
+          <p className="text-base font-medium">Daily Progress — {totalOvenComplete} / {totalTarget} batches</p>
+          <span className="text-2xl font-bold">{overallPct}%</span>
         </div>
         <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
           <div
@@ -164,17 +164,17 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
         <div className="bg-card border-2 border-red-400 dark:border-red-600 rounded-xl p-5">
           <div className="flex items-start gap-3 mb-3">
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold uppercase tracking-wider text-red-600 dark:text-red-400 mb-1">
+              <p className="text-sm font-semibold uppercase tracking-wider text-red-600 dark:text-red-400 mb-1">
                 In Ovens Now
               </p>
-              <h2 className="font-display text-2xl font-bold leading-tight">
+              <h2 className="font-display text-3xl font-bold leading-tight">
                 {currentItem.recipeName ?? `Recipe #${currentItem.recipeId}`}
               </h2>
             </div>
             {/* Built from building station — context only */}
             <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg px-3 py-1.5 text-center flex-shrink-0">
-              <p className="text-xs text-blue-600 dark:text-blue-400 font-medium">Built</p>
-              <p className="text-2xl font-bold text-blue-600 dark:text-blue-400 tabular-nums">
+              <p className="text-sm text-blue-600 dark:text-blue-400 font-medium">Built</p>
+              <p className="text-3xl font-bold text-blue-600 dark:text-blue-400 tabular-nums">
                 {getPrevStationCount(currentItem, "ovens")}
               </p>
             </div>
@@ -183,7 +183,7 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
           {getAvailableFromPrev(currentItem, "ovens") <= 0 && (
             <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg mb-3">
               <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
-              <p className="text-sm text-amber-700 dark:text-amber-300">Waiting for Building to complete more batches</p>
+              <p className="text-base text-amber-700 dark:text-amber-300">Waiting for Building to complete more batches</p>
             </div>
           )}
 
@@ -205,7 +205,7 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
                   / {currentItem.batchesTarget ?? 0}
                 </span>
               </div>
-              <p className="text-sm text-muted-foreground mt-1.5 font-medium">batches</p>
+              <p className="text-base text-muted-foreground mt-1.5 font-medium">batches</p>
             </div>
             <button
               onClick={() => addBatch(currentItem)}
@@ -226,15 +226,15 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
           {/* Secondary: net packs + chiller trays */}
           <div className="flex items-center justify-center gap-6 pb-4 border-b border-border/50 mb-3">
             <div className="text-center">
-              <p className="text-xs text-muted-foreground font-medium mb-0.5">Net Packs</p>
-              <p className="text-2xl font-bold tabular-nums text-indigo-600 dark:text-indigo-400">
+              <p className="text-sm text-muted-foreground font-medium mb-0.5">Net Packs</p>
+              <p className="text-3xl font-bold tabular-nums text-indigo-600 dark:text-indigo-400">
                 {netPacks(currentItem)}
               </p>
             </div>
             <div className="w-px h-8 bg-border/60" />
             <div className="text-center">
-              <p className="text-xs text-muted-foreground font-medium mb-0.5">Chiller Trays</p>
-              <p className="text-2xl font-bold tabular-nums text-cyan-600 dark:text-cyan-400">
+              <p className="text-sm text-muted-foreground font-medium mb-0.5">Chiller Trays</p>
+              <p className="text-3xl font-bold tabular-nums text-cyan-600 dark:text-cyan-400">
                 {chillerTrays(currentItem)}
               </p>
             </div>
@@ -242,8 +242,8 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
               <>
                 <div className="w-px h-8 bg-border/60" />
                 <div className="text-center">
-                  <p className="text-xs text-muted-foreground font-medium mb-0.5">Wonky</p>
-                  <p className="text-2xl font-bold tabular-nums text-red-500">{currentItem.wonlyCount}</p>
+                  <p className="text-sm text-muted-foreground font-medium mb-0.5">Wonky</p>
+                  <p className="text-3xl font-bold tabular-nums text-red-500">{currentItem.wonlyCount}</p>
                 </div>
               </>
             )}
@@ -252,26 +252,26 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
           {/* Wonky quality rejects */}
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs font-semibold text-muted-foreground">Quality Rejects (Wonky)</p>
-              <p className="text-xs text-muted-foreground">Not counted in output</p>
+              <p className="text-sm font-semibold text-muted-foreground">Quality Rejects (Wonky)</p>
+              <p className="text-sm text-muted-foreground">Not counted in output</p>
             </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => undoWonly(currentItem)}
                 disabled={(currentItem.wonlyCount ?? 0) === 0 || wonlyLoading === currentItem.id || isOnBreak}
-                className="w-8 h-8 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
+                className="w-10 h-10 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
               >
-                <Minus className="w-3.5 h-3.5" />
+                <Minus className="w-4 h-4" />
               </button>
-              <span className="text-xl font-bold tabular-nums w-8 text-center text-red-600 dark:text-red-400">
+              <span className="text-2xl font-bold tabular-nums w-9 text-center text-red-600 dark:text-red-400">
                 {wonlyLoading === currentItem.id ? "…" : (currentItem.wonlyCount ?? 0)}
               </span>
               <button
                 onClick={() => addWonly(currentItem)}
                 disabled={wonlyLoading === currentItem.id || isOnBreak}
-                className="w-8 h-8 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
+                className="w-10 h-10 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
               >
-                <Plus className="w-3.5 h-3.5" />
+                <Plus className="w-4 h-4" />
               </button>
             </div>
           </div>
@@ -279,31 +279,31 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
       ) : (
         <div className="bg-card border border-border rounded-xl p-8 text-center">
           <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
-          <h2 className="font-semibold text-lg mb-1">All ovens done!</h2>
-          <p className="text-muted-foreground text-sm">All recipes through the ovens for today.</p>
+          <h2 className="font-semibold text-xl mb-1">All ovens done!</h2>
+          <p className="text-muted-foreground text-base">All recipes through the ovens for today.</p>
         </div>
       )}
 
       {/* Session totals */}
       <div className="grid grid-cols-4 gap-2">
         <div className="bg-card border border-border rounded-xl p-3 text-center">
-          <p className="text-xs text-muted-foreground mb-1">Gross Packs</p>
-          <p className="text-xl font-bold tabular-nums">{sessionGrossPacks}</p>
+          <p className="text-sm text-muted-foreground mb-1">Gross Packs</p>
+          <p className="text-2xl font-bold tabular-nums">{sessionGrossPacks}</p>
         </div>
         <div className="bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-xl p-3 text-center">
-          <p className="text-xs text-red-700 dark:text-red-300 mb-1">Wonky</p>
-          <p className="text-xl font-bold tabular-nums text-red-600 dark:text-red-400">{sessionWonly}</p>
+          <p className="text-sm text-red-700 dark:text-red-300 mb-1">Wonky</p>
+          <p className="text-2xl font-bold tabular-nums text-red-600 dark:text-red-400">{sessionWonly}</p>
         </div>
         <div className="bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3 text-center">
-          <p className="text-xs text-emerald-700 dark:text-emerald-300 mb-1">Net Packs</p>
-          <p className="text-xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{sessionNetPacks}</p>
+          <p className="text-sm text-emerald-700 dark:text-emerald-300 mb-1">Net Packs</p>
+          <p className="text-2xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{sessionNetPacks}</p>
           {sessionExtraPacks > 0 && (
-            <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">+{sessionExtraPacks} extra</p>
+            <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">+{sessionExtraPacks} extra</p>
           )}
         </div>
         <div className="bg-cyan-50 dark:bg-cyan-950/20 border border-cyan-200 dark:border-cyan-800 rounded-xl p-3 text-center">
-          <p className="text-xs text-cyan-700 dark:text-cyan-300 mb-1">Trays</p>
-          <p className="text-xl font-bold tabular-nums text-cyan-600 dark:text-cyan-400">{sessionTotalTrays}</p>
+          <p className="text-sm text-cyan-700 dark:text-cyan-300 mb-1">Trays</p>
+          <p className="text-2xl font-bold tabular-nums text-cyan-600 dark:text-cyan-400">{sessionTotalTrays}</p>
         </div>
       </div>
 
@@ -313,11 +313,11 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
       {/* Per-recipe summary table */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
-          <h3 className="font-semibold text-sm">Oven Queue</h3>
+          <h3 className="font-semibold text-base">Oven Queue</h3>
         </div>
-        <table className="w-full text-sm">
+        <table className="w-full text-base">
           <thead>
-            <tr className="bg-secondary/20 border-b border-border text-xs text-muted-foreground">
+            <tr className="bg-secondary/20 border-b border-border text-sm text-muted-foreground">
               <th className="py-2 px-3 text-left font-medium">Recipe</th>
               <th className="py-2 px-3 text-center font-medium">Batches</th>
               <th className="py-2 px-3 text-center font-medium">Packs</th>
@@ -342,7 +342,7 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
                   isCurrentRow ? "bg-red-50/40 dark:bg-red-900/10" :
                   item.status === "complete" ? "bg-emerald-50/30 dark:bg-emerald-900/10" : ""
                 )}>
-                  <td className={cn("py-2 px-3 font-medium text-xs", item.status === "complete" ? "line-through text-muted-foreground" : "")}>
+                  <td className={cn("py-2 px-3 font-medium text-sm", item.status === "complete" ? "line-through text-muted-foreground" : "")}>
                     <div className="flex items-center gap-1.5">
                       {trays > 0 && (
                         <div className="w-2.5 h-2.5 rounded-[2px] flex-shrink-0" style={{ backgroundColor: recipeColour }} />
@@ -350,11 +350,11 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
                       {item.recipeName ?? `Recipe #${item.recipeId}`}
                     </div>
                   </td>
-                  <td className="py-2 px-3 text-center tabular-nums text-xs font-medium">
+                  <td className="py-2 px-3 text-center tabular-nums text-sm font-medium">
                     {getStationCount(item, "ovens")}/{item.batchesTarget ?? 0}
                   </td>
-                  <td className="py-2 px-3 text-center tabular-nums text-xs">{gPacks > 0 ? gPacks : "—"}</td>
-                  <td className="py-2 px-3 text-center tabular-nums text-xs">
+                  <td className="py-2 px-3 text-center tabular-nums text-sm">{gPacks > 0 ? gPacks : "—"}</td>
+                  <td className="py-2 px-3 text-center tabular-nums text-sm">
                     <div className="flex items-center justify-center gap-1">
                       <span className={cn(wonlys > 0 ? "text-red-600 dark:text-red-400 font-semibold" : "text-muted-foreground")}>
                         {wonlys}
@@ -370,13 +370,13 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
                       )}
                     </div>
                   </td>
-                  <td className="py-2 px-3 text-center tabular-nums text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+                  <td className="py-2 px-3 text-center tabular-nums text-sm font-semibold text-indigo-600 dark:text-indigo-400">
                     {nPacks > 0 ? nPacks : "—"}
                     {(item.extraPacksBuilt ?? 0) > 0 && (
                       <span className="ml-1 text-amber-500" title={`Includes ${item.extraPacksBuilt} extra`}>●</span>
                     )}
                   </td>
-                  <td className="py-2 px-3 text-center tabular-nums text-xs font-semibold text-cyan-600 dark:text-cyan-400">
+                  <td className="py-2 px-3 text-center tabular-nums text-sm font-semibold text-cyan-600 dark:text-cyan-400">
                     {trays > 0 ? trays : "—"}
                   </td>
                 </tr>

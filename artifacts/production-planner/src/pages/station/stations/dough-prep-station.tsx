@@ -644,7 +644,7 @@ function DoughMixingView({
                 key={n}
                 onClick={() => setActiveMix(n)}
                 className={cn(
-                  "w-10 h-10 rounded-full text-sm font-bold transition-all",
+                  "w-14 h-14 rounded-full text-lg font-bold transition-all",
                   activeMix === n
                     ? done
                       ? "bg-emerald-500 text-white ring-2 ring-emerald-300"
@@ -654,19 +654,19 @@ function DoughMixingView({
                       : "bg-secondary text-muted-foreground hover:bg-secondary/80"
                 )}
               >
-                {done ? <Check className="w-4 h-4 mx-auto" /> : n}
+                {done ? <Check className="w-5 h-5 mx-auto" /> : n}
               </button>
             );
           })}
         </div>
         <div className="text-right">
-          <p className="text-xs text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             {completedMixes.size} of {mixCount} mixes done
           </p>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             {(doughData.flourPerMix ?? 0).toFixed(3)} kg flour → ~{(doughData.doughPerMix ?? 0).toFixed(3)} kg dough per mix
           </p>
-          <p className="text-xs text-muted-foreground font-medium">
+          <p className="text-sm text-muted-foreground font-semibold">
             Day total: {doughData.totalDoughKg.toFixed(3)} kg dough ({mixCount} mixes)
           </p>
         </div>
@@ -685,8 +685,8 @@ function DoughMixingView({
             : "bg-primary/5 dark:bg-primary/10"
         )}>
           <div>
-            <h2 className="font-display text-xl font-bold">Mix {activeMix}</h2>
-            <p className="text-sm text-muted-foreground">
+            <h2 className="font-display text-2xl font-bold">Mix {activeMix}</h2>
+            <p className="text-base text-muted-foreground">
               {checkedForMix.size} of {doughData.ingredients.length} ingredients added
             </p>
           </div>
@@ -711,33 +711,33 @@ function DoughMixingView({
                 )}
               >
                 <div className={cn(
-                  "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-all border-2",
+                  "w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 transition-all border-2",
                   isChecked
                     ? "bg-emerald-500 border-emerald-500 text-white"
                     : "border-border bg-background"
                 )}>
-                  {isChecked && <Check className="w-5 h-5" />}
+                  {isChecked && <Check className="w-6 h-6" />}
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className={cn(
-                    "font-semibold text-base",
+                    "font-semibold text-lg",
                     isChecked && "line-through text-muted-foreground"
                   )}>
                     {ing.ingredientName}
                   </p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-sm text-muted-foreground">
                     {ing.pctOfDough > 0 ? `${ing.pctOfDough}%` : "<0.1%"} of dough
                   </p>
                 </div>
                 <div className="text-right flex-shrink-0">
                   <p className={cn(
-                    "text-xl font-bold tabular-nums",
+                    "text-2xl font-bold tabular-nums",
                     isChecked ? "text-emerald-700 dark:text-emerald-300" : "text-foreground"
                   )}>
                     {fmtDoughQty(ing.qtyPerMix, ing.unit, ing.ingredientName)}
                   </p>
-                  <p className="text-[10px] text-muted-foreground/70">per mix</p>
-                  <p className="text-xs text-muted-foreground font-medium">
+                  <p className="text-xs text-muted-foreground/70">per mix</p>
+                  <p className="text-sm text-muted-foreground font-medium">
                     Day total: {fmtDoughQty(ing.totalQty, ing.unit, ing.ingredientName)}
                   </p>
                 </div>
@@ -833,28 +833,28 @@ function DoughBallingView({
       )}>
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
-            <p className="text-xs text-muted-foreground mb-1">Balls</p>
+            <p className="text-sm text-muted-foreground mb-1">Balls</p>
             <p className={cn(
               "font-display text-5xl font-bold tabular-nums",
               allBallingDone ? "text-emerald-600" : "text-foreground"
             )}>
               {ballCount}
             </p>
-            <p className="text-sm text-muted-foreground">of {totalBallsNeeded}</p>
+            <p className="text-base text-muted-foreground">of {totalBallsNeeded}</p>
           </div>
           <div>
-            <p className="text-xs text-muted-foreground mb-1">Trays</p>
+            <p className="text-sm text-muted-foreground mb-1">Trays</p>
             <p className={cn(
               "font-display text-5xl font-bold tabular-nums",
               allBallingDone ? "text-emerald-600" : "text-foreground"
             )}>
               {fmtTrays(traysDone)}
             </p>
-            <p className="text-sm text-muted-foreground">of {fmtTrays(totalTraysNeeded)}</p>
+            <p className="text-base text-muted-foreground">of {fmtTrays(totalTraysNeeded)}</p>
           </div>
         </div>
 
-        <p className="text-xs text-muted-foreground mb-3">
+        <p className="text-sm text-muted-foreground mb-3">
           Each ball = {doughData.recipes[0]?.ballWeightG ?? 0}g · {ballsPerTray} balls per tray
         </p>
 
@@ -900,15 +900,15 @@ function DoughBallingView({
                 <button
                   onClick={undoBall}
                   disabled={ballCount === 0 || isOnBreak}
-                  className="w-10 h-10 flex items-center justify-center rounded-xl border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
+                  className="w-12 h-12 flex items-center justify-center rounded-xl border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
                 >
-                  <Minus className="w-4 h-4" />
+                  <Minus className="w-5 h-5" />
                 </button>
                 <button
                   onClick={() => addBalls(1)}
                   disabled={isOnBreak}
                   className={cn(
-                    "h-10 px-4 rounded-xl text-sm font-semibold border transition-all",
+                    "h-12 px-5 rounded-xl text-base font-bold border transition-all",
                     isOnBreak
                       ? "border-border bg-background text-muted-foreground opacity-50"
                       : "border-border bg-background hover:bg-secondary/60 active:scale-95"
@@ -917,7 +917,7 @@ function DoughBallingView({
                   + 1 Ball
                 </button>
               </div>
-              <span className="text-[10px] text-muted-foreground">single ball</span>
+              <span className="text-xs text-muted-foreground">single ball</span>
             </div>
 
             {/* Extra ball type controls */}
@@ -932,7 +932,7 @@ function DoughBallingView({
                         onClick={() => addExtraType(extraPackItems)}
                         disabled={isOnBreak || extraPackDone >= extraPackItems.length}
                         className={cn(
-                          "h-10 px-3 rounded-xl text-xs font-semibold border transition-all",
+                          "h-12 px-4 rounded-xl text-sm font-bold border transition-all",
                           extraPackDone >= extraPackItems.length
                             ? "border-emerald-300 bg-emerald-50/50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400"
                             : isOnBreak
@@ -945,12 +945,12 @@ function DoughBallingView({
                       <button
                         onClick={() => removeExtraType(extraPackItems)}
                         disabled={extraPackDone === 0 || isOnBreak}
-                        className="w-8 h-8 flex items-center justify-center rounded-lg border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
+                        className="w-10 h-10 flex items-center justify-center rounded-lg border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
                       >
-                        <Minus className="w-3 h-3" />
+                        <Minus className="w-4 h-4" />
                       </button>
                     </div>
-                    <span className="text-[10px] text-muted-foreground">
+                    <span className="text-xs text-muted-foreground">
                       {extraPackDone} of {extraPackItems.length}
                     </span>
                   </div>
@@ -963,7 +963,7 @@ function DoughBallingView({
                         onClick={() => addExtraType(snackItems)}
                         disabled={isOnBreak || snackDone >= snackItems.length}
                         className={cn(
-                          "h-10 px-3 rounded-xl text-xs font-semibold border transition-all",
+                          "h-12 px-4 rounded-xl text-sm font-bold border transition-all",
                           snackDone >= snackItems.length
                             ? "border-emerald-300 bg-emerald-50/50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400"
                             : isOnBreak
@@ -976,12 +976,12 @@ function DoughBallingView({
                       <button
                         onClick={() => removeExtraType(snackItems)}
                         disabled={snackDone === 0 || isOnBreak}
-                        className="w-8 h-8 flex items-center justify-center rounded-lg border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
+                        className="w-10 h-10 flex items-center justify-center rounded-lg border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
                       >
-                        <Minus className="w-3 h-3" />
+                        <Minus className="w-4 h-4" />
                       </button>
                     </div>
-                    <span className="text-[10px] text-muted-foreground">
+                    <span className="text-xs text-muted-foreground">
                       {snackDone} of {snackItems.length}
                     </span>
                   </div>
@@ -1017,13 +1017,13 @@ function DoughBallingView({
             >
               <div className="flex items-center justify-between mb-1.5">
                 <div className="flex items-center gap-2">
-                  <span className={cn("font-semibold text-sm", done && "text-muted-foreground line-through")}>
+                  <span className={cn("font-semibold text-base", done && "text-muted-foreground line-through")}>
                     {r.recipeName}
                   </span>
-                  {done && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+                  {done && <CheckCircle2 className="w-5 h-5 text-emerald-500" />}
                 </div>
                 <div className="text-right">
-                  <span className="text-sm tabular-nums">
+                  <span className="text-base tabular-nums">
                     <span className="font-bold">{r.ballsDone}</span>
                     <span className="text-muted-foreground"> / {r.ballCount} balls</span>
                   </span>
@@ -1037,9 +1037,9 @@ function DoughBallingView({
                   />
                 </div>
               </div>
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <div className="flex items-center justify-between text-sm text-muted-foreground">
                 <span>{r.ballWeightG}g per ball</span>
-                <span className="font-medium text-primary">
+                <span className="font-semibold text-primary">
                   {fmtTrays(recipeTraysDone)} / {fmtTrays(recipeTrays)} trays
                 </span>
               </div>
@@ -1056,8 +1056,8 @@ function DoughBallingView({
         )}>
           <div className="flex items-center justify-between mb-1">
             <div className="flex items-center gap-2">
-              <Package className="w-4 h-4 text-muted-foreground" />
-              <span className="text-sm font-semibold text-muted-foreground">Daily Extras</span>
+              <Package className="w-5 h-5 text-muted-foreground" />
+              <span className="text-base font-semibold text-muted-foreground">Daily Extras</span>
             </div>
             {allExtraTicked && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
           </div>
@@ -1073,17 +1073,17 @@ function DoughBallingView({
               )}
             >
               <div className={cn(
-                "w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all",
+                "w-7 h-7 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all",
                 extraTicks[item.key]
                   ? "bg-emerald-500 border-emerald-500"
                   : "border-border bg-background"
               )}>
-                {extraTicks[item.key] && <Check className="w-3 h-3 text-white" />}
+                {extraTicks[item.key] && <Check className="w-4 h-4 text-white" />}
               </div>
-              <span className={cn("text-sm font-medium flex-1", extraTicks[item.key] && "line-through text-muted-foreground")}>
+              <span className={cn("text-base font-medium flex-1", extraTicks[item.key] && "line-through text-muted-foreground")}>
                 {item.label}
               </span>
-              <span className="text-xs text-muted-foreground">{item.weightG}g</span>
+              <span className="text-sm text-muted-foreground">{item.weightG}g</span>
             </button>
           ))}
         </div>
@@ -1112,13 +1112,13 @@ function DoughOverview({
           <div className="flex items-center gap-3">
             <Layers className="w-6 h-6 text-amber-600" />
             <div>
-              <h2 className="font-semibold text-base">Day Overview</h2>
-              <p className="text-xs text-muted-foreground">
+              <h2 className="font-semibold text-lg">Day Overview</h2>
+              <p className="text-sm text-muted-foreground">
                 {totalComplete} of {totalBallsNeeded} balls
               </p>
             </div>
           </div>
-          <span className="text-2xl font-bold font-display">{overallPct}%</span>
+          <span className="text-3xl font-bold font-display">{overallPct}%</span>
         </div>
         <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden">
           <div
@@ -1130,50 +1130,50 @@ function DoughOverview({
 
       <div className="grid grid-cols-3 gap-3">
         <div className="bg-card border border-border rounded-xl p-4 text-center">
-          <p className="text-xs text-muted-foreground mb-1">Mixes</p>
-          <p className="text-2xl font-bold tabular-nums">{completedMixes.size} / {mixCount}</p>
+          <p className="text-sm text-muted-foreground mb-1">Mixes</p>
+          <p className="text-3xl font-bold tabular-nums">{completedMixes.size} / {mixCount}</p>
         </div>
         <div className="bg-card border border-border rounded-xl p-4 text-center">
-          <p className="text-xs text-muted-foreground mb-1">Balls</p>
-          <p className="text-2xl font-bold tabular-nums">{ballCount} / {totalBallsNeeded}</p>
+          <p className="text-sm text-muted-foreground mb-1">Balls</p>
+          <p className="text-3xl font-bold tabular-nums">{ballCount} / {totalBallsNeeded}</p>
         </div>
         <div className="bg-card border border-border rounded-xl p-4 text-center">
-          <p className="text-xs text-muted-foreground mb-1">Trays</p>
-          <p className="text-2xl font-bold tabular-nums">
+          <p className="text-sm text-muted-foreground mb-1">Trays</p>
+          <p className="text-3xl font-bold tabular-nums">
             {(ballCount / 4).toFixed(ballCount % 4 === 0 ? 0 : 1)} / {(totalBallsNeeded / 4).toFixed(totalBallsNeeded % 4 === 0 ? 0 : 1)}
           </p>
         </div>
       </div>
 
       <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-xl p-4">
-        <h3 className="font-semibold text-amber-900 dark:text-amber-100 mb-2 text-sm">Dough Requirements</h3>
+        <h3 className="font-semibold text-amber-900 dark:text-amber-100 mb-2 text-base">Dough Requirements</h3>
         <div className="grid grid-cols-4 gap-3">
           <div className="text-center">
-            <p className="text-xs text-amber-700 dark:text-amber-300">Total Dough</p>
-            <p className="text-lg font-bold text-amber-800 dark:text-amber-200">{doughData.totalDoughKg.toFixed(3)} kg</p>
+            <p className="text-sm text-amber-700 dark:text-amber-300">Total Dough</p>
+            <p className="text-xl font-bold text-amber-800 dark:text-amber-200">{doughData.totalDoughKg.toFixed(3)} kg</p>
           </div>
           <div className="text-center">
-            <p className="text-xs text-amber-700 dark:text-amber-300">Total Flour</p>
-            <p className="text-lg font-bold text-amber-800 dark:text-amber-200">{(doughData.totalFlourKg ?? 0).toFixed(3)} kg</p>
+            <p className="text-sm text-amber-700 dark:text-amber-300">Total Flour</p>
+            <p className="text-xl font-bold text-amber-800 dark:text-amber-200">{(doughData.totalFlourKg ?? 0).toFixed(3)} kg</p>
           </div>
           <div className="text-center">
-            <p className="text-xs text-amber-700 dark:text-amber-300">Flour/Mix</p>
-            <p className="text-lg font-bold text-amber-800 dark:text-amber-200">{(doughData.flourPerMix ?? 0).toFixed(3)} kg</p>
+            <p className="text-sm text-amber-700 dark:text-amber-300">Flour/Mix</p>
+            <p className="text-xl font-bold text-amber-800 dark:text-amber-200">{(doughData.flourPerMix ?? 0).toFixed(3)} kg</p>
           </div>
           <div className="text-center">
-            <p className="text-xs text-amber-700 dark:text-amber-300">Mixes</p>
-            <p className="text-lg font-bold text-amber-800 dark:text-amber-200">{doughData.mixCount}</p>
+            <p className="text-sm text-amber-700 dark:text-amber-300">Mixes</p>
+            <p className="text-xl font-bold text-amber-800 dark:text-amber-200">{doughData.mixCount}</p>
           </div>
         </div>
       </div>
 
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
-          <h3 className="font-semibold text-sm">Recipe Breakdown</h3>
+          <h3 className="font-semibold text-base">Recipe Breakdown</h3>
         </div>
-        <table className="w-full text-sm">
+        <table className="w-full text-base">
           <thead>
-            <tr className="bg-secondary/20 border-b border-border text-xs text-muted-foreground">
+            <tr className="bg-secondary/20 border-b border-border text-sm text-muted-foreground">
               <th className="py-2 px-4 text-left font-medium">Recipe</th>
               <th className="py-2 px-4 text-center font-medium">Balls</th>
               <th className="py-2 px-4 text-center font-medium">Trays</th>
@@ -1218,17 +1218,17 @@ function DoughOverview({
 
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
-          <h3 className="font-semibold text-sm">Dough Recipe (per mix)</h3>
+          <h3 className="font-semibold text-base">Dough Recipe (per mix)</h3>
         </div>
         <div className="divide-y divide-border/40">
           {doughData.ingredients.map(ing => (
             <div key={ing.ingredientId ?? ing.ingredientName} className="flex items-center justify-between px-4 py-2.5">
-              <span className="text-sm font-medium">{ing.ingredientName}</span>
+              <span className="text-base font-medium">{ing.ingredientName}</span>
               <div className="flex items-center gap-4 text-right">
-                <span className="text-sm font-bold tabular-nums">
+                <span className="text-base font-bold tabular-nums">
                   {ing.unit === "g" ? `${ing.qtyPerMix.toFixed(0)}g` : `${ing.qtyPerMix.toFixed(2)} ${ing.unit}`}
                 </span>
-                <span className="text-xs text-muted-foreground w-20 text-right">
+                <span className="text-sm text-muted-foreground w-20 text-right">
                   ({ing.pctOfDough > 0 ? `${ing.pctOfDough}%` : "<0.1%"})
                 </span>
               </div>

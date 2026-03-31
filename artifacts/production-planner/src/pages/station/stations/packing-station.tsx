@@ -157,15 +157,15 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
     return (
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-sm font-semibold">{label}</span>
-          <span className={cn("text-xs font-medium px-2 py-0.5 rounded-full", remaining === 0 ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300")}>
+          <span className="text-base font-semibold">{label}</span>
+          <span className={cn("text-sm font-medium px-2 py-0.5 rounded-full", remaining === 0 ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300")}>
             {remaining === 0 ? "Done" : `${remaining} left`}
           </span>
         </div>
         <div className="flex items-baseline gap-1 mb-2">
-          <span className="text-2xl font-bold tabular-nums">{cat.fulfilled}</span>
-          <span className="text-muted-foreground text-sm">/ {cat.total}</span>
-          <span className="text-xs text-muted-foreground ml-auto">{pct}%</span>
+          <span className="text-3xl font-bold tabular-nums">{cat.fulfilled}</span>
+          <span className="text-muted-foreground text-base">/ {cat.total}</span>
+          <span className="text-sm text-muted-foreground ml-auto">{pct}%</span>
         </div>
         <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
           <div className={`h-full rounded-full transition-all duration-500 ${color}`} style={{ width: `${pct}%` }} />
@@ -182,8 +182,8 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
           <div className="flex items-center gap-3">
             <Box className="w-6 h-6 text-indigo-500" />
             <div>
-              <h2 className="font-semibold text-base">Packing on {packingLabel}</h2>
-              <p className="text-xs text-muted-foreground">
+              <h2 className="font-semibold text-lg">Packing on {packingLabel}</h2>
+              <p className="text-sm text-muted-foreground">
                 Dispatch {packingLabel}
                 <span className="mx-1.5 text-border">·</span>
                 <Truck className="w-3 h-3 inline mb-0.5 mr-0.5 text-muted-foreground/70" />
@@ -239,13 +239,13 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
         <div className="bg-red-50 dark:bg-red-950/20 border border-red-300 dark:border-red-700 rounded-xl overflow-hidden">
           <div className="flex items-center gap-2 px-4 py-3 bg-red-100 dark:bg-red-900/30 border-b border-red-300 dark:border-red-700">
             <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 flex-shrink-0" />
-            <p className="text-sm font-semibold text-red-700 dark:text-red-300">Hard Shortfall — not enough even after production</p>
+            <p className="text-base font-semibold text-red-700 dark:text-red-300">Hard Shortfall — not enough even after production</p>
           </div>
           <div className="divide-y divide-red-200 dark:divide-red-800">
             {redShortfalls.map(s => (
               <div key={s.recipeId ?? s.recipeName} className="px-4 py-3">
-                <p className="text-sm font-semibold text-red-800 dark:text-red-200 mb-1">{s.recipeName}</p>
-                <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-red-700 dark:text-red-300">
+                <p className="text-base font-semibold text-red-800 dark:text-red-200 mb-1">{s.recipeName}</p>
+                <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-sm text-red-700 dark:text-red-300">
                   <span>{s.fridgeQty} in fridge</span>
                   <span>dispatching {s.totalDispatch}</span>
                   <span>making {s.plannedPacks} today</span>
@@ -261,13 +261,13 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
         <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-300 dark:border-amber-700 rounded-xl overflow-hidden">
           <div className="flex items-center gap-2 px-4 py-3 bg-amber-100 dark:bg-amber-900/30 border-b border-amber-300 dark:border-amber-700">
             <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
-            <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">Stock Warning — ok after today's production completes</p>
+            <p className="text-base font-semibold text-amber-700 dark:text-amber-300">Stock Warning — ok after today's production completes</p>
           </div>
           <div className="divide-y divide-amber-200 dark:divide-amber-800">
             {yellowShortfalls.map(s => (
               <div key={s.recipeId ?? s.recipeName} className="px-4 py-3">
-                <p className="text-sm font-semibold text-amber-800 dark:text-amber-200 mb-1">{s.recipeName}</p>
-                <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-amber-700 dark:text-amber-300">
+                <p className="text-base font-semibold text-amber-800 dark:text-amber-200 mb-1">{s.recipeName}</p>
+                <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-sm text-amber-700 dark:text-amber-300">
                   <span>{s.fridgeQty} in fridge</span>
                   <span>dispatching {s.totalDispatch}</span>
                   <span>making {s.plannedPacks} today</span>
@@ -283,8 +283,8 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
         <>
           <div className="bg-card border border-border rounded-xl p-4">
             <div className="flex items-center justify-between mb-2">
-              <span className="font-semibold text-sm">Overall Progress</span>
-              <div className="flex items-center gap-2 text-sm">
+              <span className="font-semibold text-base">Overall Progress</span>
+              <div className="flex items-center gap-2 text-base">
                 <span className="font-bold text-primary tabular-nums">{progress.totalFulfilled}/{progress.totalOrders}</span>
                 {progress.totalOrders - progress.totalFulfilled > 0 ? (
                   <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-medium">
@@ -323,17 +323,17 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
           <div className="px-4 py-3 border-b border-border/50 bg-pink-50/50 dark:bg-pink-900/10">
             <div className="flex items-center gap-2">
               <span className="text-lg">🍰</span>
-              <h3 className="font-semibold text-sm">Desserts Report</h3>
-              <span className="text-xs text-muted-foreground ml-auto">{desserts.totalQuantity} units total</span>
+              <h3 className="font-semibold text-base">Desserts Report</h3>
+              <span className="text-sm text-muted-foreground ml-auto">{desserts.totalQuantity} units total</span>
             </div>
           </div>
           <div className="divide-y divide-border/50">
             {desserts.products.map(p => (
               <div key={p.title} className="flex items-center justify-between px-4 py-2.5">
-                <span className="text-sm">{p.title}</span>
+                <span className="text-base">{p.title}</span>
                 <div className="flex items-center gap-3">
-                  <span className="text-xs text-muted-foreground">{p.orderCount} orders</span>
-                  <span className="font-bold tabular-nums text-sm bg-pink-100 dark:bg-pink-900/30 px-2.5 py-0.5 rounded-lg text-pink-800 dark:text-pink-200">{p.quantity}</span>
+                  <span className="text-sm text-muted-foreground">{p.orderCount} orders</span>
+                  <span className="font-bold tabular-nums text-base bg-pink-100 dark:bg-pink-900/30 px-2.5 py-0.5 rounded-lg text-pink-800 dark:text-pink-200">{p.quantity}</span>
                 </div>
               </div>
             ))}
@@ -348,7 +348,7 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
         >
           <Scan className="w-5 h-5" />
           Pack &amp; Dispatch Orders
-          <span className="text-sm font-normal opacity-80">
+          <span className="text-base font-normal opacity-80">
             ({progress.totalOrders - progress.totalFulfilled} remaining)
           </span>
         </button>

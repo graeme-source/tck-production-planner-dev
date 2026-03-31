@@ -500,12 +500,12 @@ export function MixingStation({ plan }: MixingStationProps) {
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
           <div>
-            <h2 className="font-semibold">Today's Production</h2>
-            <p className="text-sm text-muted-foreground">
+            <h2 className="font-semibold text-lg">Today's Production</h2>
+            <p className="text-base text-muted-foreground">
               {totalTinsComplete} of {totalTinsTarget} tins complete · {totalBatchesDone} / {totalBatchesTarget} batches
             </p>
           </div>
-          <span className="text-2xl font-bold font-display">{overallProgress}%</span>
+          <span className="text-3xl font-bold font-display">{overallProgress}%</span>
         </div>
         <div className="w-full h-3 bg-secondary rounded-full overflow-hidden">
           <div
@@ -572,18 +572,18 @@ export function MixingStation({ plan }: MixingStationProps) {
                     {/* Recipe header */}
                     <div className={cn("flex items-center justify-between px-4 py-3 border-b border-border", recipeAllDone ? "bg-green-50 dark:bg-green-900/20" : "bg-secondary/30")}>
                       <div>
-                        <p className="font-semibold">{recipe.recipeName}</p>
+                        <p className="font-semibold text-lg">{recipe.recipeName}</p>
                         <div className="flex items-baseline gap-2 mt-0.5">
-                          <span className="text-xs text-muted-foreground">{recipe.batchesTarget} batches</span>
-                          <span className="text-lg font-extrabold tabular-nums leading-none">
+                          <span className="text-sm text-muted-foreground">{recipe.batchesTarget} batches</span>
+                          <span className="text-xl font-extrabold tabular-nums leading-none">
                             {totalTraysForRecipe}
-                            <span className="text-xs font-semibold text-muted-foreground ml-0.5">tray{totalTraysForRecipe !== 1 ? "s" : ""}</span>
+                            <span className="text-sm font-semibold text-muted-foreground ml-0.5">tray{totalTraysForRecipe !== 1 ? "s" : ""}</span>
                           </span>
                         </div>
                       </div>
                       <div className="text-right">
                         {recipeAllDone ? (
-                          <span className="text-green-600 dark:text-green-400 font-bold text-sm">✓ All done</span>
+                          <span className="text-green-600 dark:text-green-400 font-bold text-base">✓ All done</span>
                         ) : (
                           <div className="flex items-baseline gap-0.5 justify-end">
                             <span className="text-2xl font-extrabold tabular-nums leading-none">{totalDoneForRecipe}</span>
@@ -610,15 +610,15 @@ export function MixingStation({ plan }: MixingStationProps) {
                             {/* Ingredient name + weight info */}
                             <div className="flex items-center justify-between">
                               <div>
-                                <p className={cn("font-semibold", allIngDone && "line-through text-muted-foreground")}>{ing.ingredientName}</p>
+                                <p className={cn("font-semibold text-lg", allIngDone && "line-through text-muted-foreground")}>{ing.ingredientName}</p>
                                 {perTrayKg && (
-                                  <p className="text-xs text-muted-foreground tabular-nums">
+                                  <p className="text-sm text-muted-foreground tabular-nums">
                                     {perTrayKg.toFixed(3)} kg / tray · {toKg(ing.rawQty, ing.unit).toFixed(3)} kg total
                                   </p>
                                 )}
                               </div>
                               {inOvenCount > 0 && (
-                                <p className="text-xs font-semibold text-orange-600 dark:text-orange-400">{inOvenCount} in oven</p>
+                                <p className="text-sm font-semibold text-orange-600 dark:text-orange-400">{inOvenCount} in oven</p>
                               )}
                             </div>
 
@@ -630,7 +630,7 @@ export function MixingStation({ plan }: MixingStationProps) {
                                   "text-2xl font-extrabold tabular-nums leading-none",
                                   allIngDone ? "text-green-600 dark:text-green-400" : "text-foreground"
                                 )}>{ingTrays}</span>
-                                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide leading-tight mt-0.5">
+                                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide leading-tight mt-0.5">
                                   {ingTrays === 1 ? "tray" : "trays"}
                                 </span>
                               </div>
@@ -652,14 +652,14 @@ export function MixingStation({ plan }: MixingStationProps) {
                                       <button
                                         onClick={() => advanceTray(recipe.recipeId, recipe.recipeName, ing.ingredientId, ing.ingredientName, idx, plan.id, plan.name ?? "")}
                                         className={cn(
-                                          "flex flex-col items-center justify-center py-2.5 font-semibold text-sm w-full",
+                                          "flex flex-col items-center justify-center py-3 font-semibold text-base w-full",
                                           st === 2 ? "bg-green-500 text-white"
                                           : st === 1 ? "bg-orange-500 text-white"
                                           : "bg-card text-muted-foreground hover:text-foreground"
                                         )}
                                       >
-                                        <span className="text-base leading-none">{st === 2 ? "✓" : st === 1 ? "🔥" : idx + 1}</span>
-                                        <span className="text-[10px] opacity-80 mt-0.5">{st === 2 ? "done" : st === 1 ? "in oven" : "tray"}</span>
+                                        <span className="text-lg leading-none">{st === 2 ? "✓" : st === 1 ? "🔥" : idx + 1}</span>
+                                        <span className="text-xs opacity-80 mt-0.5">{st === 2 ? "done" : st === 1 ? "in oven" : "tray"}</span>
                                       </button>
                                       {/* Bottom — pack count: tap to toggle 1 ↔ 2 */}
                                       <button
@@ -696,8 +696,8 @@ export function MixingStation({ plan }: MixingStationProps) {
             return (
               <div className="bg-card border border-border rounded-xl overflow-hidden">
                 <div className="px-4 py-3 border-b border-border bg-secondary/30">
-                  <p className="font-semibold">Cooking Times</p>
-                  <p className="text-xs text-muted-foreground">Actual oven times recorded today</p>
+                  <p className="font-semibold text-lg">Cooking Times</p>
+                  <p className="text-sm text-muted-foreground">Actual oven times recorded today</p>
                 </div>
                 <div className="divide-y divide-border/50">
                   {completed.map(ev => {
@@ -711,14 +711,14 @@ export function MixingStation({ plan }: MixingStationProps) {
                     return (
                       <div key={ev.id} className="px-4 py-3 flex items-center justify-between gap-3">
                         <div className="flex-1 min-w-0">
-                          <p className="font-medium text-sm truncate">{ev.recipeName}</p>
-                          <p className="text-xs text-muted-foreground truncate">
+                          <p className="font-medium text-base truncate">{ev.recipeName}</p>
+                          <p className="text-sm text-muted-foreground truncate">
                             {ev.ingredientName} — Tray {ev.trayIndex + 1}
                           </p>
                         </div>
                         <div className="text-right flex-shrink-0">
-                          <p className="font-bold text-sm tabular-nums">{durationStr}</p>
-                          <p className="text-xs text-muted-foreground tabular-nums">
+                          <p className="font-bold text-base tabular-nums">{durationStr}</p>
+                          <p className="text-sm text-muted-foreground tabular-nums">
                             {formatTime(inTime)} → {formatTime(outTime)}
                           </p>
                         </div>
@@ -734,7 +734,7 @@ export function MixingStation({ plan }: MixingStationProps) {
 
       {mixingTab === "tins" && (
       <div>
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 px-1">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground mb-2 px-1">
           {activeItemId ? "All Recipes" : "Click a recipe to start mixing"}
         </h3>
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -862,7 +862,7 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
       <div className="p-4">
         <div className="flex items-start gap-3">
           <div className="flex flex-col items-center gap-0.5 flex-shrink-0 pt-1">
-            <span className="text-xs font-mono text-muted-foreground w-6 text-center leading-tight">
+            <span className="text-sm font-mono text-muted-foreground w-6 text-center leading-tight">
               {item.orderPosition}
             </span>
             {isDraggable ? (
@@ -889,12 +889,12 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
             onClick={hasFillingItems && !isComplete ? onActivate : undefined}
           >
             <div className="flex items-center gap-2 mb-1">
-              <h3 className={cn("font-semibold", isComplete ? "line-through text-muted-foreground" : "")}>
+              <h3 className={cn("font-semibold text-lg", isComplete ? "line-through text-muted-foreground" : "")}>
                 {item.recipeName ?? `Recipe #${item.recipeId}`}
               </h3>
-              {isComplete && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
-              {item.status === "in-progress" && !isComplete && <PlayCircle className="w-4 h-4 text-blue-500 flex-shrink-0" />}
-              {isActive && <ChevronUp className="w-4 h-4 text-primary flex-shrink-0" />}
+              {isComplete && <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />}
+              {item.status === "in-progress" && !isComplete && <PlayCircle className="w-5 h-5 text-blue-500 flex-shrink-0" />}
+              {isActive && <ChevronUp className="w-5 h-5 text-primary flex-shrink-0" />}
             </div>
 
             <div className="flex items-center gap-2 mb-2">
@@ -906,7 +906,7 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
               </div>
             </div>
 
-            <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
+            <div className="flex items-center gap-3 text-sm text-muted-foreground flex-wrap">
               {item.tinSize && <span>{item.tinSize}</span>}
 
               <span>{mixingCount} / {target} batches total</span>
@@ -917,19 +917,19 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
             <button
               onClick={onRemove}
               disabled={tinsComplete === 0 || isOnBreak}
-              className="w-9 h-9 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
+              className="w-11 h-11 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
             >
-              <Minus className="w-4 h-4" />
+              <Minus className="w-5 h-5" />
             </button>
-            <div className="w-14 text-center">
-              <span className="text-xl font-bold">{tinsComplete}</span>
-              <span className="text-xs text-muted-foreground block leading-tight">/ {tinsTarget} tin{tinsTarget !== 1 ? "s" : ""}</span>
+            <div className="w-16 text-center">
+              <span className="text-2xl font-bold">{tinsComplete}</span>
+              <span className="text-sm text-muted-foreground block leading-tight">/ {tinsTarget} tin{tinsTarget !== 1 ? "s" : ""}</span>
             </div>
             <button
               onClick={onAdd}
               disabled={(allTinsDone && !isAdmin) || isOnBreak}
               className={cn(
-                "w-9 h-9 flex items-center justify-center rounded-full transition-colors",
+                "w-11 h-11 flex items-center justify-center rounded-full transition-colors",
                 isOnBreak
                   ? "border border-amber-300 bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 opacity-60"
                   : allTinsDone
@@ -946,34 +946,34 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
       {isActive && hasFillingItems && !isComplete && filling && (
         <div className="border-t border-primary/20 bg-primary/5">
           <div className="px-4 py-2 flex items-center justify-between">
-            <p className="text-xs font-medium text-primary">
+            <p className="text-sm font-medium text-primary">
               Filling Mix — Tin {tinsComplete + 1} of {tinsTarget}
             </p>
           </div>
           <div className="px-4 pb-3 space-y-0.5">
             {filling.fillingIngredients.map((fi, idx) => (
               <div key={`ing-${idx}`} className="flex items-center gap-3 py-2 px-3 rounded-lg">
-                <span className="flex-1 text-base">
+                <span className="flex-1 text-lg">
                   {fi.name ?? `Ingredient #${fi.ingredientId}`}
                 </span>
                 <div className="flex flex-col items-end">
-                  <span className="text-base font-mono tabular-nums font-medium text-foreground">
+                  <span className="text-lg font-mono tabular-nums font-bold text-foreground">
                     {formatMixQty(fi.qtyPerBatch * batchesPerTinEqual, fi.unit)}
                   </span>
-                  <span className="text-xs text-muted-foreground leading-none mt-0.5">per tin</span>
+                  <span className="text-sm text-muted-foreground leading-none mt-0.5">per tin</span>
                 </div>
               </div>
             ))}
             {filling.fillingSubRecipes.map((fs, idx) => (
               <div key={`sub-${idx}`} className="flex items-center gap-3 py-2 px-3 rounded-lg">
-                <span className="flex-1 text-base">
+                <span className="flex-1 text-lg">
                   {fs.name ?? `Sub-recipe #${fs.subRecipeId}`}
                 </span>
                 <div className="flex flex-col items-end">
-                  <span className="text-base font-mono tabular-nums font-medium text-foreground">
+                  <span className="text-lg font-mono tabular-nums font-bold text-foreground">
                     {formatMixQty(fs.qtyPerBatch * batchesPerTinEqual, fs.unit)}
                   </span>
-                  <span className="text-xs text-muted-foreground leading-none mt-0.5">per tin</span>
+                  <span className="text-sm text-muted-foreground leading-none mt-0.5">per tin</span>
                 </div>
               </div>
             ))}
@@ -983,9 +983,9 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
             <div className="px-4 pb-3">
               <button
                 onClick={onAutoComplete}
-                className="w-full py-2.5 rounded-lg bg-emerald-600 text-white font-semibold text-sm hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2"
+                className="w-full py-3.5 rounded-lg bg-emerald-600 text-white font-bold text-base hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2"
               >
-                <Check className="w-4 h-4" />
+                <Check className="w-5 h-5" />
                 Complete Tin {tinsComplete + 1}
               </button>
             </div>

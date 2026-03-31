@@ -321,8 +321,8 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
         <div className="flex items-center gap-3 mb-3">
           <Gift className="w-6 h-6 text-purple-500" />
           <div>
-            <h2 className="font-semibold text-base">Wrapping Station</h2>
-            <p className="text-xs text-muted-foreground">
+            <h2 className="font-semibold text-lg">Wrapping Station</h2>
+            <p className="text-sm text-muted-foreground">
               {wrappedCount} of {items.length} recipes wrapped · {totalNet} net packs
             </p>
           </div>
@@ -378,32 +378,32 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
               <div className="flex items-center gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1.5">
-                    <h3 className={cn("font-semibold", isWrapped ? "line-through text-muted-foreground" : "")}>
+                    <h3 className={cn("font-semibold text-lg", isWrapped ? "line-through text-muted-foreground" : "")}>
                       {item.recipeName ?? `Recipe #${item.recipeId}`}
                     </h3>
-                    {isWrapped && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
+                    {isWrapped && <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />}
                   </div>
-                  <div className="flex items-center gap-3 text-sm">
+                  <div className="flex items-center gap-3 text-base">
                     <div className="text-center">
-                      <span className="text-xs text-muted-foreground block">Gross</span>
+                      <span className="text-sm text-muted-foreground block">Gross</span>
                       <span className="font-semibold tabular-nums">{gross}</span>
                     </div>
                     <div className="text-center">
-                      <span className="text-xs text-purple-600 dark:text-purple-400 block">Net</span>
+                      <span className="text-sm text-purple-600 dark:text-purple-400 block">Net</span>
                       <span className="text-xl font-bold tabular-nums text-purple-700 dark:text-purple-300">{net}</span>
                     </div>
                     <div className="text-center border-l border-border/50 pl-3">
-                      <span className="text-xs text-blue-600 dark:text-blue-400 block">Stored</span>
+                      <span className="text-sm text-blue-600 dark:text-blue-400 block">Stored</span>
                       <span className="text-xl font-bold tabular-nums text-blue-700 dark:text-blue-300">{totalStored}</span>
                     </div>
                     {remaining > 0 && (
                       <div className="text-center">
-                        <span className="text-xs text-amber-600 dark:text-amber-400 block">Left</span>
+                        <span className="text-sm text-amber-600 dark:text-amber-400 block">Left</span>
                         <span className="font-semibold tabular-nums text-amber-600 dark:text-amber-400">{remaining}</span>
                       </div>
                     )}
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1">
+                  <p className="text-sm text-muted-foreground mt-1">
                     {getStationCount(item, "ovens")} / {item.batchesTarget ?? 0} oven loads
                     {totalStored > 0 && ` · ${fridge} fridge · ${freezer} freezer`}
                   </p>
@@ -428,17 +428,17 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                 <div className="mt-3 pt-3 border-t border-amber-200 dark:border-amber-800">
                   <div className="flex items-center gap-2 mb-2">
                     <Flame className="w-4 h-4 text-amber-500" />
-                    <span className="text-xs font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">After Oven</span>
+                    <span className="text-sm font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">After Oven</span>
                   </div>
                   <div className="space-y-1.5">
                     {postOvenItems.map((poi, idx) => {
                       const totalWeight = poi.weightPerBatch * (item.batchesTarget ?? 0);
                       return (
                         <div key={idx} className="flex items-center justify-between bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
-                          <span className="text-sm font-medium text-amber-800 dark:text-amber-200">{poi.name}</span>
+                          <span className="text-base font-medium text-amber-800 dark:text-amber-200">{poi.name}</span>
                           <div className="text-right">
-                            <span className="text-base font-bold tabular-nums text-amber-700 dark:text-amber-300">{Math.round(totalWeight)}g</span>
-                            <span className="text-xs text-muted-foreground ml-1">total</span>
+                            <span className="text-lg font-bold tabular-nums text-amber-700 dark:text-amber-300">{Math.round(totalWeight)}g</span>
+                            <span className="text-sm text-muted-foreground ml-1">total</span>
                           </div>
                         </div>
                       );
@@ -463,7 +463,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                         key={loc.key}
                         onClick={() => setActiveStorage(loc.key)}
                         className={cn(
-                          "flex-1 px-2 py-1.5 rounded-lg text-xs font-medium border transition-colors",
+                          "flex-1 px-2 py-1.5 rounded-lg text-sm font-medium border transition-colors",
                           isActive ? colorMap[loc.color] : inactiveColor
                         )}
                       >
@@ -487,7 +487,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                   {!isCustomOpen ? (
                     <button
                       onClick={() => setShowCustom(prev => ({ ...prev, [item.id]: true }))}
-                      className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:bg-secondary/50 transition-colors"
+                      className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-border text-base text-muted-foreground hover:bg-secondary/50 transition-colors"
                     >
                       Custom
                     </button>
@@ -500,19 +500,19 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                         value={customVal}
                         onChange={e => setCustomAmounts(prev => ({ ...prev, [item.id]: e.target.value }))}
                         onKeyDown={e => { if (e.key === "Enter" && customNum > 0) addToStorage(item, customNum, activeStorage); }}
-                        className="w-20 h-9 rounded-lg border border-border bg-background px-2 text-sm tabular-nums text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-20 h-10 rounded-lg border border-border bg-background px-2 text-base tabular-nums text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
                         autoFocus
                       />
                       <button
                         onClick={() => { if (customNum > 0) addToStorage(item, customNum, activeStorage); }}
                         disabled={isStorageLoading || !(customNum > 0) || isOnBreak || addingRef.current}
-                        className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                        className="px-3 py-2 rounded-lg bg-blue-600 text-white text-base font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
                       >
                         Add
                       </button>
                       <button
                         onClick={() => { setShowCustom(prev => ({ ...prev, [item.id]: false })); setCustomAmounts(prev => ({ ...prev, [item.id]: "" })); }}
-                        className="px-2 py-2 rounded-lg text-muted-foreground hover:bg-secondary/50 text-sm transition-colors"
+                        className="px-2 py-2 rounded-lg text-muted-foreground hover:bg-secondary/50 text-base transition-colors"
                       >
                         ✕
                       </button>
@@ -526,7 +526,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                     <button
                       onClick={() => undoStorage(item, undoAmt, activeStorage)}
                       disabled={isStorageLoading}
-                      className="ml-auto inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm hover:bg-red-50 dark:hover:bg-red-950/20 disabled:opacity-50 transition-colors"
+                      className="ml-auto inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-base hover:bg-red-50 dark:hover:bg-red-950/20 disabled:opacity-50 transition-colors"
                     >
                       <Minus className="w-3.5 h-3.5" />
                       Undo {undoAmt}
@@ -547,12 +547,12 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
             <AlertCircle className="w-5 h-5" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="font-bold text-red-800 dark:text-red-200">Wonky Rack</p>
-            <p className="text-xs text-red-600 dark:text-red-400">Bottom of rack 1 — rejected packs by recipe</p>
+            <p className="font-bold text-lg text-red-800 dark:text-red-200">Wonky Rack</p>
+            <p className="text-sm text-red-600 dark:text-red-400">Bottom of rack 1 — rejected packs by recipe</p>
           </div>
           <div className="text-right">
-            <p className="text-2xl font-bold tabular-nums text-red-600 dark:text-red-400">{totalWonly}</p>
-            <p className="text-[10px] text-red-500 dark:text-red-500">total wonky</p>
+            <p className="text-3xl font-bold tabular-nums text-red-600 dark:text-red-400">{totalWonly}</p>
+            <p className="text-xs text-red-500 dark:text-red-500">total wonky</p>
           </div>
         </div>
 
@@ -562,19 +562,19 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
             return (
               <div key={item.id} className="flex items-center gap-3 px-4 py-2.5">
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-foreground truncate">{item.recipeName}</p>
+                  <p className="text-base font-medium text-foreground truncate">{item.recipeName}</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => removeWonly(item)}
                     disabled={wonlyLoading === item.id || wonlys <= 0 || isOnBreak || !!wonkyTransferResult}
-                    className="w-7 h-7 flex items-center justify-center rounded-full border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 disabled:opacity-40 transition-colors"
+                    className="w-9 h-9 flex items-center justify-center rounded-full border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 disabled:opacity-40 transition-colors"
                   >
-                    <Minus className="w-3 h-3" />
+                    <Minus className="w-4 h-4" />
                   </button>
                   <span className={cn(
-                    "text-lg font-bold tabular-nums w-7 text-center",
+                    "text-xl font-bold tabular-nums w-8 text-center",
                     wonlys > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground"
                   )}>
                     {wonlyLoading === item.id
@@ -585,9 +585,9 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                     type="button"
                     onClick={() => addWonly(item)}
                     disabled={wonlyLoading === item.id || isOnBreak || !!wonkyTransferResult}
-                    className="w-7 h-7 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-40 transition-colors"
+                    className="w-9 h-9 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-40 transition-colors"
                   >
-                    <Plus className="w-3 h-3" />
+                    <Plus className="w-4 h-4" />
                   </button>
                 </div>
               </div>
