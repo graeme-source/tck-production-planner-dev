@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { addDeviceUserId } from "@/lib/device-users";
 
 export type AuthUser = {
@@ -56,6 +56,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     checkSession();
   }, [checkSession]);
+
+  const hiddenAtRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        hiddenAtRef.current = Date.now();
+      } else if (document.visibilityState === "visible" && hiddenAtRef.current !== null) {
+        hiddenAtRef.current = null;
+        if (state.status === "authenticated" && state.user.hasPin && !pinLocked) {
+          setPinLocked(true);
+          fetch("/api/auth/pin/lock", { method: "POST", credentials: "include" }).catch(() => {});
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [state, pinLocked]);
 
   const refreshUser = useCallback(async () => {
     await checkSession();
