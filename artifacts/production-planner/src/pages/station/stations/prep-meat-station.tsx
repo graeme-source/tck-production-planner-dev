@@ -154,7 +154,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
             <Beef className="w-6 h-6 text-rose-500" />
             <div>
               <h2 className="font-semibold text-base">Raw Meat Prep</h2>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 {completedTrays} of {totalTrays} tray{totalTrays !== 1 ? "s" : ""} completed
               </p>
             </div>
@@ -179,7 +179,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
         <div className="lg:w-72 xl:w-80 flex-shrink-0">
           <div className="bg-card border border-border rounded-xl overflow-hidden">
             <div className="px-4 py-2.5 bg-secondary/30 border-b border-border">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Recipes</p>
+              <p className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Recipes</p>
             </div>
             <div className="divide-y divide-border/50 max-h-[calc(100vh-320px)] overflow-y-auto">
               {recipes.map(recipe => {
@@ -220,7 +220,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className={cn(
-                        "text-sm font-medium truncate",
+                        "text-base font-medium truncate",
                         isSelected && "font-semibold",
                         rAllDone && "line-through text-muted-foreground"
                       )}>
@@ -230,7 +230,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                       {rTotal > 0 && (
                         <span className={cn(
-                          "text-xs tabular-nums",
+                          "text-sm tabular-nums",
                           rAllDone ? "text-rose-600 font-semibold" : "text-muted-foreground"
                         )}>
                           {rDone}/{rTotal}
@@ -255,7 +255,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
 
             {/* Header */}
             <div className="mb-5">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Currently Prepping</p>
+              <p className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-1">Currently Prepping</p>
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-2">
                   {selAllDone && <CheckCircle2 className="w-6 h-6 text-rose-500 flex-shrink-0" />}
@@ -265,12 +265,12 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                 </div>
                 {selected.sopUrl && (
                   <a href={selected.sopUrl} target="_blank" rel="noopener noreferrer"
-                    className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline flex-shrink-0 mt-1">
+                    className="flex items-center gap-1 text-sm text-blue-600 dark:text-blue-400 hover:underline flex-shrink-0 mt-1">
                     SOP <ExternalLink className="w-3 h-3" />
                   </a>
                 )}
               </div>
-              <p className="text-sm text-muted-foreground mt-1">{selected.batchesTarget} batch{selected.batchesTarget !== 1 ? "es" : ""}</p>
+              <p className="text-base text-muted-foreground mt-1">{selected.batchesTarget} batch{selected.batchesTarget !== 1 ? "es" : ""}</p>
             </div>
 
             {/* Summary bar — total trays */}
@@ -280,15 +280,15 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                   <p className="text-4xl font-bold font-display tabular-nums text-rose-600 dark:text-rose-400 leading-none">
                     {selCompletedTrays}<span className="text-2xl text-muted-foreground font-normal">/{selTotalTrays}</span>
                   </p>
-                  <p className="text-xs font-medium text-rose-700 dark:text-rose-300 mt-0.5">tray{selTotalTrays !== 1 ? "s" : ""} done</p>
+                  <p className="text-sm font-medium text-rose-700 dark:text-rose-300 mt-0.5">tray{selTotalTrays !== 1 ? "s" : ""} done</p>
                 </div>
                 <div className="h-8 w-px bg-rose-200 dark:bg-rose-700" />
                 <div>
-                  <p className="text-sm font-semibold tabular-nums">{selTotalRawKg.toFixed(3)} kg raw meat</p>
+                  <p className="text-base font-semibold tabular-nums">{selTotalRawKg.toFixed(3)} kg raw meat</p>
                   {selTotalMarinadeG > 0 && (
-                    <p className="text-xs text-muted-foreground">+ {selTotalMarinadeG >= 1000 ? `${(selTotalMarinadeG / 1000).toFixed(3)} kg` : `${selTotalMarinadeG}g`} marinade</p>
+                    <p className="text-sm text-muted-foreground">+ {selTotalMarinadeG >= 1000 ? `${(selTotalMarinadeG / 1000).toFixed(3)} kg` : `${selTotalMarinadeG}g`} marinade</p>
                   )}
-                  {selRawMeat.length > 1 && <p className="text-xs text-rose-600 dark:text-rose-400 font-medium mt-0.5">across {selRawMeat.length} meat types</p>}
+                  {selRawMeat.length > 1 && <p className="text-sm text-rose-600 dark:text-rose-400 font-medium mt-0.5">across {selRawMeat.length} meat types</p>}
                 </div>
               </div>
             )}
@@ -298,7 +298,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
               <div className="mb-5 space-y-3">
                 <div className="flex items-center gap-8">
                   <div className="text-center">
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Raw Meat</p>
+                    <p className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-1">Raw Meat</p>
                     <p className="text-5xl font-bold font-display tabular-nums text-rose-600 dark:text-rose-400">
                       {selTotalRawKg.toFixed(3)}
                       <span className="text-2xl font-normal ml-1 text-muted-foreground">kg</span>
@@ -306,7 +306,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                   </div>
                   {selTotalMarinadeG > 0 && (
                     <div className="text-center">
-                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Marinade</p>
+                      <p className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-1">Marinade</p>
                       <p className="text-3xl font-bold font-display tabular-nums text-orange-500">
                         {selTotalMarinadeG >= 1000 ? `${(selTotalMarinadeG / 1000).toFixed(3)}` : selTotalMarinadeG}
                         <span className="text-xl font-normal ml-1 text-muted-foreground">{selTotalMarinadeG >= 1000 ? "kg" : "g"}</span>
@@ -314,7 +314,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                     </div>
                   )}
                 </div>
-                <div className="flex items-start gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800 text-xs text-amber-700 dark:text-amber-400">
+                <div className="flex items-start gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800 text-sm text-amber-700 dark:text-amber-400">
                   <span className="mt-0.5">⚠️</span>
                   <span>Tray count not set — add a <strong>Tray Capacity (kg)</strong> to this recipe's raw meat ingredients in the Ingredients Library to see per-tray breakdown.</span>
                 </div>
@@ -323,7 +323,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
 
             {/* Per-ingredient tray task cards */}
             <div className="space-y-4">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              <p className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
                 {selTotalTrays > 0 ? "Tap each tray to mark it complete" : "Ingredients"}
               </p>
               {selRawMeat.map(ing => {
@@ -350,21 +350,21 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                             ingAllDone ? "bg-rose-500 text-white" : "bg-rose-600 text-white"
                           )}>
                             <p className="text-2xl font-bold font-display tabular-nums leading-none">{ingDone}<span className="text-sm opacity-70">/{ingTrays}</span></p>
-                            <p className="text-xs opacity-80">tray{ingTrays !== 1 ? "s" : ""}</p>
+                            <p className="text-sm opacity-80">tray{ingTrays !== 1 ? "s" : ""}</p>
                           </div>
                           <div className="flex-1">
                             <div className="flex items-center gap-2">
                               {ingAllDone && <CheckCircle2 className="w-4 h-4 text-rose-500" />}
                               <p className={cn("font-semibold", ingAllDone && "line-through text-muted-foreground")}>{ing.ingredientName}</p>
                             </div>
-                            <p className="text-xs text-muted-foreground tabular-nums">
+                            <p className="text-sm text-muted-foreground tabular-nums">
                               {ingKgTotal.toFixed(3)} kg total
                               {ing.rawMeatTrayCapacityKg && ` · ${ing.rawMeatTrayCapacityKg} kg cap`}
                             </p>
                           </div>
                           <div className="text-right">
                             <p className="text-xl font-bold tabular-nums text-rose-700 dark:text-rose-300 leading-none">{perTrayKg!.toFixed(3)} kg</p>
-                            <p className="text-xs text-muted-foreground mt-0.5">per tray</p>
+                            <p className="text-sm text-muted-foreground mt-0.5">per tray</p>
                           </div>
                         </>
                       ) : (
@@ -389,7 +389,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                             {perTrayG != null ? (
                               <>
                                 <span className="tabular-nums font-semibold text-foreground">{perTrayG}g / tray</span>
-                                <p className="text-xs text-muted-foreground">{m.totalGrams}g total</p>
+                                <p className="text-sm text-muted-foreground">{m.totalGrams}g total</p>
                               </>
                             ) : (
                               <span className="tabular-nums font-medium text-foreground">{m.totalGrams}g</span>
@@ -425,15 +425,15 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                                   ) : (
                                     <div className="w-4 h-4 rounded-full border-2 border-muted-foreground/40" />
                                   )}
-                                  <span className="text-sm font-bold">Tray {tn}</span>
+                                  <span className="text-base font-bold">Tray {tn}</span>
                                 </div>
                                 {perTrayKg != null && (
-                                  <span className={cn("text-lg font-bold tabular-nums", done ? "text-rose-600 dark:text-rose-300" : "text-foreground")}>
+                                  <span className={cn("text-xl font-bold tabular-nums", done ? "text-rose-600 dark:text-rose-300" : "text-foreground")}>
                                     {perTrayKg.toFixed(3)} kg
                                   </span>
                                 )}
                                 {done && completion && (
-                                  <span className="text-[10px] text-rose-600 dark:text-rose-400 mt-1 leading-tight text-center">
+                                  <span className="text-xs text-rose-600 dark:text-rose-400 mt-1 leading-tight text-center">
                                     {completion.userName ?? "Done"} · {format(new Date(completion.completedAt), "HH:mm")}
                                   </span>
                                 )}

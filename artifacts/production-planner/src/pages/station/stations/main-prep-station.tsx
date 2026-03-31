@@ -397,7 +397,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                       <p className="text-sm font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300 truncate">
                         {group.recipeName}
                       </p>
-                      <span className="text-xs text-emerald-600 dark:text-emerald-400 ml-2 whitespace-nowrap">
+                      <span className="text-sm text-emerald-600 dark:text-emerald-400 ml-2 whitespace-nowrap">
                         {group.batchesTarget} batch{group.batchesTarget !== 1 ? "es" : ""}
                       </span>
                     </div>
@@ -447,7 +447,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                               rStatus.allDone && "line-through text-muted-foreground"
                             )}>
                               {ing.ingredientName}
-                              {presence.length > 0 && <span className="ml-1 text-xs text-blue-500">👁</span>}
+                              {presence.length > 0 && <span className="ml-1 text-sm text-blue-500">👁</span>}
                             </p>
                             {ing.recipes.length > 1 && (
                               <p className="text-sm text-muted-foreground"><span className="text-amber-500">shared</span></p>
@@ -465,7 +465,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                             ))}
                             {rStatus.totalTins > 0 && (
                               <span className={cn(
-                                "text-xs tabular-nums",
+                                "text-sm tabular-nums",
                                 rStatus.allDone ? "text-emerald-600 font-semibold" : "text-muted-foreground"
                               )}>
                                 {rStatus.completedTins}/{rStatus.totalTins}
@@ -514,18 +514,18 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                               {ing.ingredientName}
                             </h3>
                           </div>
-                          <p className="text-sm text-muted-foreground mt-0.5">
+                          <p className="text-base text-muted-foreground mt-0.5">
                             <span className="font-semibold text-foreground">{fmtQty(ing.totalQty, ing.unit)}</span>
                             {" total · "}{status.completedTinCount}/{status.totalTinCount} tins done
                           </p>
                           {isShared && (
-                            <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                            <p className="text-sm text-amber-600 dark:text-amber-400 mt-1">
                               <span className="font-medium">Shared —</span>
                               {" in: "}{ing.recipes.map(r => r.recipeName).join(", ")}
                             </p>
                           )}
                           {presence.length > 0 && (
-                            <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                            <p className="text-sm text-blue-600 dark:text-blue-400 mt-1">
                               👁 <span className="font-medium">{presence.map(p => p.userName).join(", ")}</span> also viewing this
                             </p>
                           )}
@@ -539,7 +539,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                               {status.completedTinCount}
                               <span className="text-base text-muted-foreground font-normal">/{status.totalTinCount}</span>
                             </p>
-                            <p className="text-xs text-muted-foreground">tins</p>
+                            <p className="text-sm text-muted-foreground">tins</p>
                           </div>
                         )}
                       </div>
@@ -568,18 +568,18 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                               <div className="flex items-center gap-2 min-w-0">
                                 {allRecipeDone && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />}
                                 <p className={cn(
-                                  "text-sm font-bold uppercase tracking-wider truncate",
+                                  "text-base font-bold uppercase tracking-wider truncate",
                                   allRecipeDone ? "text-emerald-700 dark:text-emerald-300" : "text-emerald-800 dark:text-emerald-300"
                                 )}>
                                   {recipe.recipeName}
                                 </p>
                               </div>
                               <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                                <span className="text-xs text-muted-foreground tabular-nums">
+                                <span className="text-sm text-muted-foreground tabular-nums">
                                   {fmtQty(recipe.qtyForRecipe, ing.unit)}
                                 </span>
                                 <span className={cn(
-                                  "text-xs font-semibold tabular-nums",
+                                  "text-sm font-semibold tabular-nums",
                                   allRecipeDone ? "text-emerald-600" : "text-muted-foreground"
                                 )}>
                                   {rDone}/{rTins.length}
@@ -609,13 +609,13 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                                       ) : (
                                         <div className="w-4 h-4 rounded-full border-2 border-muted-foreground/40" />
                                       )}
-                                      <span className="text-sm font-bold">Tin {tn}</span>
+                                      <span className="text-base font-bold">Tin {tn}</span>
                                     </div>
-                                    <span className={cn("text-lg font-bold tabular-nums", done ? "text-emerald-700 dark:text-emerald-300" : "text-foreground")}>
+                                    <span className={cn("text-xl font-bold tabular-nums", done ? "text-emerald-700 dark:text-emerald-300" : "text-foreground")}>
                                       {fmtQty(recipe.qtyPerTin, ing.unit)}
                                     </span>
                                     {done && completion && (
-                                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1 leading-tight text-center">
+                                      <span className="text-xs text-emerald-600 dark:text-emerald-400 mt-1 leading-tight text-center">
                                         {completion.userName ?? "User"} · {format(new Date(completion.completedAt), "HH:mm")}
                                       </span>
                                     )}
@@ -632,8 +632,8 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                         <div ref={stockCheckRef} className="mt-4 bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-xl p-4">
                           <div className="flex items-center gap-2 mb-3">
                             <Package className="w-4 h-4 text-blue-600 animate-pulse" />
-                            <p className="text-sm font-bold text-blue-800 dark:text-blue-200">Stock Check</p>
-                            <p className="text-xs text-blue-600 dark:text-blue-400">— how much {ing.ingredientName.toLowerCase()} remains?</p>
+                            <p className="text-base font-bold text-blue-800 dark:text-blue-200">Stock Check</p>
+                            <p className="text-sm text-blue-600 dark:text-blue-400">— how much {ing.ingredientName.toLowerCase()} remains?</p>
                           </div>
                           <div className="flex items-center gap-2">
                             <input
@@ -644,12 +644,12 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                               onChange={e => { dirtyStockIds.current.add(ing.ingredientId); setStockValues(v => ({ ...v, [ing.ingredientId]: e.target.value })); }}
                               onKeyDown={e => { if (e.key === "Enter") saveStockCheck(ing.ingredientId); }}
                             />
-                            <span className="text-sm text-muted-foreground">{ing.unit}</span>
+                            <span className="text-base text-muted-foreground">{ing.unit}</span>
                             <button
                               onClick={() => saveStockCheck(ing.ingredientId)}
                               disabled={!stockValues[ing.ingredientId] || savingStock[ing.ingredientId]}
                               className={cn(
-                                "px-4 py-2 rounded-lg text-sm font-bold transition-all",
+                                "px-4 py-2 rounded-lg text-base font-bold transition-all",
                                 stockValues[ing.ingredientId]
                                   ? "bg-blue-600 text-white hover:bg-blue-700 shadow active:scale-95"
                                   : "bg-blue-200 text-blue-400 cursor-not-allowed"
@@ -659,7 +659,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                             </button>
                           </div>
                           {status.stockSaved && (
-                            <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-2 flex items-center gap-1">
+                            <p className="text-sm text-emerald-600 dark:text-emerald-400 mt-2 flex items-center gap-1">
                               <CheckCircle2 className="w-3 h-3" />
                               {stockValues[ing.ingredientId]} {ing.unit} recorded
                             </p>
@@ -674,7 +674,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                           <button
                             onClick={() => transferToFreezer(ing.ingredientId, ing.ingredientName, remaining, ing.unit)}
                             disabled={transferringId === ing.ingredientId}
-                            className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-300 dark:border-indigo-700 text-indigo-800 dark:text-indigo-300 rounded-xl text-sm font-semibold hover:bg-indigo-100 dark:hover:bg-indigo-950/50 transition-colors"
+                            className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-300 dark:border-indigo-700 text-indigo-800 dark:text-indigo-300 rounded-xl text-base font-semibold hover:bg-indigo-100 dark:hover:bg-indigo-950/50 transition-colors"
                           >
                             {transferringId === ing.ingredientId ? <Loader2 className="w-4 h-4 animate-spin" /> : <Snowflake className="w-4 h-4" />}
                             Transfer {remaining} {ing.unit} to Freezer

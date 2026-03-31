@@ -122,8 +122,8 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
         <div className="bg-card border-2 border-emerald-400 dark:border-emerald-600 rounded-xl p-6">
           <div className="text-center mb-4">
             <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
-            <h2 className="font-semibold text-lg mb-1">All sheeting complete!</h2>
-            <p className="text-muted-foreground text-sm">{totalSheeted} batches sheeted and passed to builders.</p>
+            <h2 className="font-semibold text-xl mb-1">All sheeting complete!</h2>
+            <p className="text-muted-foreground text-base">{totalSheeted} batches sheeted and passed to builders.</p>
           </div>
           <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden mb-4">
             <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: "100%" }} />
@@ -136,7 +136,7 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
         <div className="bg-card border-2 border-amber-400 dark:border-amber-600 rounded-xl p-5">
           <div className="flex items-center justify-between mb-3">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400 mb-0.5">
+              <p className="text-sm font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400 mb-0.5">
                 Now Sheeting
               </p>
               <h2 className="font-display text-xl font-bold">
@@ -145,7 +145,7 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
             </div>
             <div className="text-right">
               <p className="text-3xl font-bold font-display tabular-nums">{totalSheeted} <span className="text-lg text-muted-foreground font-normal">/ {totalTarget}</span></p>
-              <p className="text-xs text-muted-foreground">batches sheeted</p>
+              <p className="text-sm text-muted-foreground">batches sheeted</p>
             </div>
           </div>
 
@@ -161,7 +161,7 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
           </div>
 
           {nextBallWeight && (
-            <p className="text-sm text-muted-foreground mb-3">
+            <p className="text-base text-muted-foreground mb-3">
               Ball weight: <span className="font-semibold text-amber-600 dark:text-amber-400">{nextBallWeight}g</span>
             </p>
           )}
@@ -170,7 +170,7 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
             <button
               onClick={undoLast}
               disabled={isOnBreak || totalSheeted === 0}
-              className="flex items-center gap-1.5 px-4 py-3 text-sm rounded-xl border border-border text-muted-foreground hover:bg-secondary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              className="flex items-center gap-1.5 px-4 py-3 text-base rounded-xl border border-border text-muted-foreground hover:bg-secondary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               <Minus className="w-4 h-4" />
               Undo
@@ -199,9 +199,9 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
           >
             <div className="flex items-center gap-2">
               <Package className="w-4 h-4 text-muted-foreground" />
-              <span className="text-sm font-medium text-muted-foreground">Sheet Daily Extras</span>
+              <span className="text-base font-medium text-muted-foreground">Sheet Daily Extras</span>
               {(someExtrasSheeted || allExtrasSheeted) && (
-                <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">
+                <span className="text-sm bg-primary/10 text-primary px-2 py-0.5 rounded-full">
                   {extraSheetItems.filter(e => extraSheetTicks[e.key]).length}/{extraSheetItems.length}
                 </span>
               )}
@@ -211,7 +211,7 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
           </button>
           {showExtraSection && (
             <div className="px-4 pb-4 space-y-2 border-t border-border/50">
-              <p className="text-xs text-muted-foreground pt-3">Tick each extra ball as it's sheeted and passed to building.</p>
+              <p className="text-sm text-muted-foreground pt-3">Tick each extra ball as it's sheeted and passed to building.</p>
               {extraSheetItems.map(item => (
                 <button
                   key={item.key}
@@ -230,10 +230,10 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
                   )}>
                     {extraSheetTicks[item.key] && <Check className="w-3 h-3 text-white" />}
                   </div>
-                  <span className={cn("text-sm font-medium flex-1", extraSheetTicks[item.key] && "line-through text-muted-foreground")}>
+                  <span className={cn("text-base font-medium flex-1", extraSheetTicks[item.key] && "line-through text-muted-foreground")}>
                     {item.label}
                   </span>
-                  <span className="text-xs text-muted-foreground">{item.weightG}g</span>
+                  <span className="text-sm text-muted-foreground">{item.weightG}g</span>
                 </button>
               ))}
             </div>
@@ -243,7 +243,7 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
 
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
-          <h3 className="font-semibold text-sm">Recipe Breakdown</h3>
+          <h3 className="font-semibold text-base">Recipe Breakdown</h3>
         </div>
         <div className="divide-y divide-border/50">
           {items.map(item => {
@@ -270,15 +270,15 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
                     ) : isActive ? (
                       <div className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
                     ) : null}
-                    <span className={cn("text-sm font-medium truncate", isDone && "text-muted-foreground line-through")}>
+                    <span className={cn("text-base font-medium truncate", isDone && "text-muted-foreground line-through")}>
                       {item.recipeName ?? `Recipe #${item.recipeId}`}
                     </span>
                   </div>
                   <div className="flex items-center gap-3 flex-shrink-0 ml-2">
                     {ballWeight && (
-                      <span className="text-xs text-muted-foreground">{ballWeight}g</span>
+                      <span className="text-sm text-muted-foreground">{ballWeight}g</span>
                     )}
-                    <span className={cn("text-sm font-bold tabular-nums", isDone ? "text-emerald-600 dark:text-emerald-400" : "")}>
+                    <span className={cn("text-base font-bold tabular-nums", isDone ? "text-emerald-600 dark:text-emerald-400" : "")}>
                       {sheeted}/{target}
                     </span>
                   </div>
@@ -381,8 +381,8 @@ export function ChillerRackVisual({
       <div className="mb-4">
         <div className="flex items-center justify-between mb-2.5">
           <div>
-            <h3 className="font-semibold text-sm">Chiller Rack</h3>
-            <p className="text-xs text-muted-foreground">
+            <h3 className="font-semibold text-base">Chiller Rack</h3>
+            <p className="text-sm text-muted-foreground">
               {totalTrays} tray{totalTrays !== 1 ? "s" : ""} · {racks.length} rack{racks.length !== 1 ? "s" : ""} · fills top to bottom
             </p>
           </div>
@@ -394,7 +394,7 @@ export function ChillerRackVisual({
                 className="w-3.5 h-3.5 rounded-[3px] flex-shrink-0 border border-black/10"
                 style={{ backgroundColor: r.colour }}
               />
-              <span className="text-xs text-muted-foreground">
+              <span className="text-sm text-muted-foreground">
                 {r.recipeName.length > 18 ? r.recipeName.slice(0, 18) + "…" : r.recipeName}
                 <span className="font-semibold text-foreground ml-1">×{r.trayCount}</span>
               </span>
@@ -406,7 +406,7 @@ export function ChillerRackVisual({
                 className="w-3.5 h-3.5 rounded-[3px] flex-shrink-0 border border-black/10"
                 style={{ background: wonkyBackground }}
               />
-              <span className="text-xs text-muted-foreground">
+              <span className="text-sm text-muted-foreground">
                 Wonky
                 <span className="font-semibold text-foreground ml-1">×1 tray</span>
               </span>
@@ -425,7 +425,7 @@ export function ChillerRackVisual({
           return (
             <div key={rackIdx} className="flex-shrink-0">
               {racks.length > 1 && (
-                <p className="text-xs text-center text-muted-foreground mb-2 font-medium">
+                <p className="text-sm text-center text-muted-foreground mb-2 font-medium">
                   Rack {rackIdx + 1}
                 </p>
               )}

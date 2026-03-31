@@ -68,7 +68,7 @@ function ScaledIngredientChecklist({
   ];
 
   if (allItems.length === 0) {
-    return <p className="text-sm text-muted-foreground italic py-4 text-center">No ingredients defined for this sub-recipe.</p>;
+    return <p className="text-base text-muted-foreground italic py-4 text-center">No ingredients defined for this sub-recipe.</p>;
   }
 
   return (
@@ -281,12 +281,12 @@ export function SubRecipeMakeFlow({
           </button>
           <div className="flex-1">
             <h3 className="font-bold text-xl">{sr?.subRecipeName}</h3>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-base text-muted-foreground">
               {state.batches} batch{state.batches !== 1 ? "es" : ""} · Total yield: {(yieldPerBatch * state.batches).toFixed(3)} {sr?.yieldUnit}
             </p>
           </div>
           <div className={cn(
-            "px-3 py-1.5 rounded-xl text-sm font-semibold",
+            "px-3 py-1.5 rounded-xl text-base font-semibold",
             checkedCount === totalItems && totalItems > 0
               ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300"
               : "bg-secondary/50 text-muted-foreground"
@@ -338,24 +338,24 @@ export function SubRecipeMakeFlow({
           </button>
           <div>
             <h3 className="font-bold text-xl">{sr.subRecipeName}</h3>
-            <p className="text-sm text-muted-foreground">Stock check before production</p>
+            <p className="text-base text-muted-foreground">Stock check before production</p>
           </div>
         </div>
 
         <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-secondary/30 rounded-xl px-4 py-3">
-              <p className="text-xs text-muted-foreground mb-1">Required by plan</p>
+              <p className="text-sm text-muted-foreground mb-1">Required by plan</p>
               <p className="text-2xl font-bold tabular-nums">{sr.totalRequired.toFixed(3)} <span className="text-base font-medium text-muted-foreground">{sr.yieldUnit}</span></p>
             </div>
             <div className="bg-secondary/30 rounded-xl px-4 py-3">
-              <p className="text-xs text-muted-foreground mb-1">Yield per batch</p>
+              <p className="text-sm text-muted-foreground mb-1">Yield per batch</p>
               <p className="text-2xl font-bold tabular-nums">{yieldPerBatch.toFixed(3)} <span className="text-base font-medium text-muted-foreground">{sr.yieldUnit}</span></p>
             </div>
           </div>
 
           <div>
-            <label className="text-sm font-semibold block mb-2">How much is currently in stock?</label>
+            <label className="text-base font-semibold block mb-2">How much is currently in stock?</label>
             <div className="flex items-center gap-2">
               <input
                 type="number"
@@ -378,7 +378,7 @@ export function SubRecipeMakeFlow({
                 net === 0 ? "bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800"
                   : "bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800"
               )}>
-                <span className="text-sm font-medium">Net needed</span>
+                <span className="text-base font-medium">Net needed</span>
                 <span className="text-xl font-bold tabular-nums">{net.toFixed(3)} {sr.yieldUnit}</span>
               </div>
               {batchCount !== null && (
@@ -389,8 +389,8 @@ export function SubRecipeMakeFlow({
                     : "bg-primary/10 border border-primary/30"
                 )}>
                   <div>
-                    <p className="text-sm font-medium text-muted-foreground">Batches to make</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">⌈{net.toFixed(3)} ÷ {yieldPerBatch.toFixed(3)}⌉ = {batchCount}</p>
+                    <p className="text-base font-medium text-muted-foreground">Batches to make</p>
+                    <p className="text-sm text-muted-foreground mt-0.5">⌈{net.toFixed(3)} ÷ {yieldPerBatch.toFixed(3)}⌉ = {batchCount}</p>
                   </div>
                   <span className="text-4xl font-bold tabular-nums text-primary">{batchCount}</span>
                 </div>
@@ -427,18 +427,18 @@ export function SubRecipeMakeFlow({
           </button>
           <div>
             <h3 className="font-bold text-xl">{sr.subRecipeName}</h3>
-            <p className="text-sm text-muted-foreground">Choose how many batches to make</p>
+            <p className="text-base text-muted-foreground">Choose how many batches to make</p>
           </div>
         </div>
 
         <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
           <div className="bg-secondary/30 rounded-xl px-4 py-3">
-            <p className="text-xs text-muted-foreground mb-1">Yield per batch</p>
+            <p className="text-sm text-muted-foreground mb-1">Yield per batch</p>
             <p className="text-xl font-bold tabular-nums">{yieldPerBatch.toFixed(3)} {sr.yieldUnit}</p>
           </div>
 
           <div>
-            <p className="text-sm font-semibold mb-3">Number of batches</p>
+            <p className="text-base font-semibold mb-3">Number of batches</p>
             <div className="flex items-center gap-2 flex-wrap">
               {([1, 2, 4] as const).map(m => (
                 <button
@@ -488,12 +488,12 @@ export function SubRecipeMakeFlow({
                 >
                   <Plus className="w-4 h-4" />
                 </button>
-                <span className="text-sm text-muted-foreground">batches</span>
+                <span className="text-base text-muted-foreground">batches</span>
               </div>
             )}
 
             <div className="mt-3 bg-primary/10 rounded-xl px-4 py-2.5">
-              <p className="text-sm font-semibold text-primary">Total yield: {totalYield.toFixed(3)} {sr.yieldUnit}</p>
+              <p className="text-base font-semibold text-primary">Total yield: {totalYield.toFixed(3)} {sr.yieldUnit}</p>
             </div>
           </div>
 
@@ -523,7 +523,7 @@ export function SubRecipeMakeFlow({
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder={mode === "plan" ? "Search plan sub-recipes…" : "Search all sub-recipes…"}
-            className="w-full pl-9 pr-4 py-2 bg-card border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            className="w-full pl-9 pr-4 py-2 bg-card border border-border rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
         </div>
       </div>
@@ -533,7 +533,7 @@ export function SubRecipeMakeFlow({
           <PackageSearch className="w-8 h-8 mx-auto mb-2 opacity-30" />
           <p className="font-medium">No sub-recipes found</p>
           {mode === "plan" && (
-            <p className="text-sm mt-1">No sub-recipe components are linked to this production plan's recipes.</p>
+            <p className="text-base mt-1">No sub-recipe components are linked to this production plan's recipes.</p>
           )}
         </div>
       )}
@@ -554,7 +554,7 @@ export function SubRecipeMakeFlow({
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-semibold text-base truncate">{sr.subRecipeName}</p>
-                <p className="text-sm text-muted-foreground">
+                <p className="text-base text-muted-foreground">
                   {sr.yield.toFixed(3)} {sr.yieldUnit} per batch
                   {mode === "plan" && sr.totalRequired > 0 && ` · ${sr.totalRequired.toFixed(3)} ${sr.yieldUnit} required`}
                 </p>
@@ -562,7 +562,7 @@ export function SubRecipeMakeFlow({
               {batchsNeeded !== null && (
                 <div className="text-right flex-shrink-0">
                   <p className="text-2xl font-bold text-primary tabular-nums">{batchsNeeded}</p>
-                  <p className="text-xs text-muted-foreground">batch{batchsNeeded !== 1 ? "es" : ""}</p>
+                  <p className="text-sm text-muted-foreground">batch{batchsNeeded !== 1 ? "es" : ""}</p>
                 </div>
               )}
               <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
@@ -727,7 +727,7 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
             <Layers className="w-6 h-6 text-yellow-500" />
             <div>
               <h2 className="font-semibold text-base">Sauces</h2>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 {ingredients.length > 0 ? `${completedTins} of ${totalTins} tins completed` : "No sauces to prep"}
               </p>
             </div>
@@ -750,7 +750,7 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
         <div className="lg:w-80 xl:w-96 flex-shrink-0">
           <div className="bg-card border border-border rounded-xl overflow-hidden">
             <div className="px-4 py-2.5 bg-secondary/30 border-b border-border">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Prep Items</p>
+              <p className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Prep Items</p>
             </div>
             <div className="max-h-[calc(100vh-300px)] overflow-y-auto">
               {/* Tomato Base — special pinned item */}
@@ -771,13 +771,13 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
                 )}
                 <div className="min-w-0 flex-1">
                   <p className={cn(
-                    "text-sm font-semibold",
+                    "text-base font-semibold",
                     selectedItem === "tomato_base" && "text-primary",
                     tomatoBaseDone && "line-through text-muted-foreground"
                   )}>
                     Tomato Base
                   </p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-sm text-muted-foreground">
                     {tomatoBaseDone ? "Complete" : "Sub-recipe production"}
                   </p>
                 </div>
@@ -788,10 +788,10 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
               {leftGroups.map((group, gi) => (
                 <div key={group.recipeId} className={cn(gi > 0 && "border-t border-border")}>
                   <div className="px-4 py-2 bg-yellow-50/60 dark:bg-yellow-950/20 flex items-center justify-between">
-                    <p className="text-xs font-bold uppercase tracking-wider text-yellow-800 dark:text-yellow-300 truncate">
+                    <p className="text-sm font-bold uppercase tracking-wider text-yellow-800 dark:text-yellow-300 truncate">
                       {group.recipeName}
                     </p>
-                    <span className="text-[10px] text-yellow-600 dark:text-yellow-400 ml-2 whitespace-nowrap">
+                    <span className="text-sm text-yellow-600 dark:text-yellow-400 ml-2 whitespace-nowrap">
                       {group.batchesTarget} batch{group.batchesTarget !== 1 ? "es" : ""}
                     </span>
                   </div>
@@ -831,14 +831,14 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className={cn(
-                            "text-sm font-medium truncate",
+                            "text-base font-medium truncate",
                             isSelected && "font-semibold",
                             rStatus.allDone && "line-through text-muted-foreground"
                           )}>
                             {ing.ingredientName}
                           </p>
                           {ing.recipes.length > 1 && (
-                            <p className="text-xs text-amber-500">shared</p>
+                            <p className="text-sm text-amber-500">shared</p>
                           )}
                         </div>
                         <div className="flex items-center gap-1 flex-shrink-0">
@@ -853,7 +853,7 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
                           ))}
                           {rStatus.totalTins > 0 && (
                             <span className={cn(
-                              "text-xs tabular-nums",
+                              "text-sm tabular-nums",
                               rStatus.allDone ? "text-yellow-600 font-semibold" : "text-muted-foreground"
                             )}>
                               {rStatus.completedTins}/{rStatus.totalTins}
@@ -877,7 +877,7 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
                 <FlaskConical className="w-5 h-5 text-primary" />
                 <div>
                   <h3 className="font-semibold">Tomato Base — Sub-Recipe Production</h3>
-                  <p className="text-xs text-muted-foreground">Stock check → auto-calculate batches → ingredient checklist</p>
+                  <p className="text-sm text-muted-foreground">Stock check → auto-calculate batches → ingredient checklist</p>
                 </div>
               </div>
               {subRecipesLoading ? (
@@ -915,12 +915,12 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
                         {ing.ingredientName}
                       </h3>
                     </div>
-                    <p className="text-sm text-muted-foreground mt-0.5">
+                    <p className="text-base text-muted-foreground mt-0.5">
                       <span className="font-semibold text-foreground">{fmtQty(ing.totalQty, ing.unit)}</span>
                       {" total · "}{status.completedTinCount}/{status.totalTinCount} tins done
                     </p>
                     {isShared && (
-                      <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                      <p className="text-sm text-amber-600 dark:text-amber-400 mt-1">
                         <span className="font-medium">Shared —</span>
                         {" in: "}{ing.recipes.map(r => r.recipeName).join(", ")}
                       </p>
@@ -935,7 +935,7 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
                         {status.completedTinCount}
                         <span className="text-base text-muted-foreground font-normal">/{status.totalTinCount}</span>
                       </p>
-                      <p className="text-xs text-muted-foreground">tins</p>
+                      <p className="text-sm text-muted-foreground">tins</p>
                     </div>
                   )}
                 </div>
@@ -962,15 +962,15 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
                         <div className="flex items-center gap-2 min-w-0">
                           {allRecipeDone && <CheckCircle2 className="w-3.5 h-3.5 text-yellow-500 flex-shrink-0" />}
                           <p className={cn(
-                            "text-sm font-bold uppercase tracking-wider truncate",
+                            "text-base font-bold uppercase tracking-wider truncate",
                             allRecipeDone ? "text-yellow-700 dark:text-yellow-300" : "text-yellow-800 dark:text-yellow-300"
                           )}>
                             {recipe.recipeName}
                           </p>
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                          <span className="text-xs text-muted-foreground tabular-nums">{fmtQty(recipe.qtyForRecipe, ing.unit)}</span>
-                          <span className={cn("text-xs font-semibold tabular-nums", allRecipeDone ? "text-yellow-600" : "text-muted-foreground")}>
+                          <span className="text-sm text-muted-foreground tabular-nums">{fmtQty(recipe.qtyForRecipe, ing.unit)}</span>
+                          <span className={cn("text-sm font-semibold tabular-nums", allRecipeDone ? "text-yellow-600" : "text-muted-foreground")}>
                             {rDone}/{rTins.length}
                           </span>
                         </div>
@@ -998,13 +998,13 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
                                 ) : (
                                   <div className="w-4 h-4 rounded-full border-2 border-muted-foreground/40" />
                                 )}
-                                <span className="text-sm font-bold">Tin {tn}</span>
+                                <span className="text-base font-bold">Tin {tn}</span>
                               </div>
-                              <span className={cn("text-lg font-bold tabular-nums", done ? "text-yellow-700 dark:text-yellow-300" : "text-foreground")}>
+                              <span className={cn("text-xl font-bold tabular-nums", done ? "text-yellow-700 dark:text-yellow-300" : "text-foreground")}>
                                 {fmtQty(recipe.qtyPerTin, ing.unit)}
                               </span>
                               {done && completion && (
-                                <span className="text-[10px] text-yellow-600 dark:text-yellow-400 mt-1 leading-tight text-center">
+                                <span className="text-xs text-yellow-600 dark:text-yellow-400 mt-1 leading-tight text-center">
                                   {completion.userName ?? "User"} · {format(new Date(completion.completedAt), "HH:mm")}
                                 </span>
                               )}

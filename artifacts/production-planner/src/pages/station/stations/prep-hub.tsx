@@ -32,7 +32,7 @@ export function PrepSubNav({ planId, current }: { planId: number; current: strin
             key={s.key}
             onClick={() => navigate(`/plans/${planId}/station/${s.key}`)}
             className={cn(
-              "flex flex-1 items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all",
+              "flex flex-1 items-center justify-center gap-2 px-3 py-2 rounded-lg text-base font-medium transition-all",
               isActive ? s.activeClass : s.inactiveClass
             )}
           >
@@ -96,15 +96,15 @@ function PrepFullScreenMode({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <StationIcon className={cn("w-5 h-5", stationColor)} />
-          <span className="font-semibold text-sm">{stationLabel}</span>
+          <span className="font-semibold text-base">{stationLabel}</span>
         </div>
         <div className="flex items-center gap-3">
           {total > 0 && !isDone && (
-            <span className="text-sm text-muted-foreground tabular-nums">{idx + 1} of {total}</span>
+            <span className="text-base text-muted-foreground tabular-nums">{idx + 1} of {total}</span>
           )}
           <button
             onClick={onOverviewClick}
-            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-1.5 transition-colors"
+            className="flex items-center gap-1.5 text-base text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-1.5 transition-colors"
           >
             <List className="w-4 h-4" />
             Overview
@@ -135,7 +135,7 @@ function PrepFullScreenMode({
           {/* Header row */}
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+              <p className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-1">
                 Item {idx + 1} of {total}
               </p>
               <h2 className="font-display text-4xl font-bold leading-tight break-words">
@@ -147,7 +147,7 @@ function PrepFullScreenMode({
                 href={current.sopUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-xl text-blue-700 dark:text-blue-300 text-sm font-medium hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors whitespace-nowrap flex-shrink-0"
+                className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-xl text-blue-700 dark:text-blue-300 text-base font-medium hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors whitespace-nowrap flex-shrink-0"
               >
                 SOP <ExternalLink className="w-3.5 h-3.5" />
               </a>
@@ -167,7 +167,7 @@ function PrepFullScreenMode({
           {/* Optional badge (tray count, tin count, etc.) */}
           {current.badge && (
             <div className={cn("border rounded-xl px-4 py-3 flex items-center justify-between", badgeColors[current.badge.color])}>
-              <span className="font-medium text-sm">{current.badge.label}</span>
+              <span className="font-medium text-base">{current.badge.label}</span>
               <span className="text-3xl font-bold tabular-nums">{current.badge.value}</span>
             </div>
           )}
@@ -197,13 +197,13 @@ function PrepFullScreenMode({
             <button
               onClick={() => setIdx(i => Math.max(0, i - 1))}
               disabled={idx === 0}
-              className="flex-1 py-3 rounded-xl border border-border text-sm font-medium hover:bg-secondary/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              className="flex-1 py-3 rounded-xl border border-border text-base font-medium hover:bg-secondary/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               ← Back
             </button>
             <button
               onClick={() => setIdx(i => Math.min(total, i + 1))}
-              className="flex-1 py-3 rounded-xl border border-border text-sm font-medium hover:bg-secondary/50 transition-colors"
+              className="flex-1 py-3 rounded-xl border border-border text-base font-medium hover:bg-secondary/50 transition-colors"
             >
               Skip →
             </button>
@@ -407,7 +407,7 @@ export function PrepHub({ planId, planDate }: { planId: number; planDate?: strin
       />
 
       <div>
-        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+        <p className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">
           Select prep station
         </p>
         <div className="grid gap-4">
@@ -438,8 +438,8 @@ export function PrepHub({ planId, planDate }: { planId: number; planDate?: strin
                 </div>
                 <div className="flex-1 min-w-0">
                   <h3 className="font-bold text-lg">{s.label}</h3>
-                  <p className="text-sm text-muted-foreground leading-snug">{s.description}</p>
-                  <p className={cn("text-xs font-semibold mt-1.5", nextPlan?.planDate ? s.color : "text-muted-foreground")}>
+                  <p className="text-base text-muted-foreground leading-snug">{s.description}</p>
+                  <p className={cn("text-sm font-semibold mt-1.5", nextPlan?.planDate ? s.color : "text-muted-foreground")}>
                     {prepDateLabel}
                   </p>
                 </div>
@@ -458,8 +458,8 @@ export function PrepHub({ planId, planDate }: { planId: number; planDate?: strin
             </div>
             <div className="flex-1 min-w-0">
               <h3 className="font-bold text-lg">Replenish Sub Recipes</h3>
-              <p className="text-sm text-muted-foreground leading-snug">Ad-hoc spice rubs, dough mixes, and other prepared components — any time</p>
-              <p className="text-xs font-semibold mt-1.5 text-violet-500">Pick a sub-recipe · choose batch count · follow checklist</p>
+              <p className="text-base text-muted-foreground leading-snug">Ad-hoc spice rubs, dough mixes, and other prepared components — any time</p>
+              <p className="text-sm font-semibold mt-1.5 text-violet-500">Pick a sub-recipe · choose batch count · follow checklist</p>
             </div>
             <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
           </button>
