@@ -707,8 +707,11 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
   };
 
   const totalTins = ingredients.reduce((s, ing) => s + ing.totalTinCount, 0);
-  const completedTins = completions.length;
-  const overallPct = totalTins > 0 ? Math.round((completedTins / totalTins) * 100) : 0;
+  const completedTins = ingredients.reduce((s, ing) => {
+    const status = ingredientDoneStatus(ing);
+    return s + status.completedTinCount;
+  }, 0);
+  const overallPct = totalTins > 0 ? Math.round((Math.min(completedTins, totalTins) / totalTins) * 100) : 0;
 
   if (loading || isNextPlanLoading) {
     return <div className="flex items-center justify-center py-20 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin mr-2" />Loading…</div>;

@@ -2,7 +2,7 @@ import React from "react";
 import { useParams } from "wouter";
 import { useGetProductionPlan, getGetProductionPlanQueryKey } from "@workspace/api-client-react";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
-import { Loader2 } from "lucide-react";
+import { Loader2, AlertTriangle, RotateCw } from "lucide-react";
 import { StationLayout } from "./shared/station-layout";
 import { MixingStation } from "./stations/mixing-station";
 import { BuildingStation } from "./stations/building-station";
@@ -17,6 +17,42 @@ import { PrepBasesStation } from "./stations/prep-bases-station";
 import { PrepMeatStation } from "./stations/prep-meat-station";
 import type { StationType } from "./shared/constants";
 
+class StationErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
+          <AlertTriangle className="w-10 h-10 text-amber-500" />
+          <h2 className="text-lg font-semibold">Something went wrong</h2>
+          <p className="text-sm text-muted-foreground max-w-md">
+            {this.state.error?.message ?? "An unexpected error occurred."}
+          </p>
+          <button
+            onClick={() => this.setState({ hasError: false, error: null })}
+            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium"
+          >
+            <RotateCw className="w-4 h-4" />
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function StationPage() {
   const params = useParams<{ planId: string; stationType: string }>();
   const planId = Number(params.planId);
@@ -26,6 +62,7 @@ export default function StationPage() {
     query: {
       queryKey: getGetProductionPlanQueryKey(planId),
       refetchInterval: 5000,
+      placeholderData: (prev: ProductionPlanDetail | undefined) => prev,
     },
   }) as {
     data: ProductionPlanDetail | undefined;
@@ -36,7 +73,7 @@ export default function StationPage() {
     return <div className="p-8 text-center text-muted-foreground">Invalid plan ID</div>;
   }
 
-  if (isLoading) {
+  if (isLoading && !plan) {
     return (
       <div className="flex items-center justify-center min-h-screen text-muted-foreground">
         <Loader2 className="w-6 h-6 animate-spin mr-2" />
@@ -80,7 +117,9 @@ export default function StationPage() {
 
   return (
     <StationLayout planId={planId} stationType={stationType} plan={plan}>
-      {stationContent()}
+      <StationErrorBoundary key={stationType}>
+        {stationContent()}
+      </StationErrorBoundary>
     </StationLayout>
   );
 }

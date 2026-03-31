@@ -3707,7 +3707,7 @@ router.get("/:id/main-prep", async (req, res) => {
     FROM prep_completions
     WHERE plan_id = ${planId}
   `);
-  const completions = (completionRows.rows as Array<{
+  const rawCompletions = (completionRows.rows as Array<{
     id: number;
     ingredientId: number | null;
     subRecipeId: number | null;
@@ -3720,6 +3720,13 @@ router.get("/:id/main-prep", async (req, res) => {
     isSubRecipe: c.subRecipeId != null,
     ingredientId: c.ingredientId ?? c.subRecipeId ?? 0,
   }));
+
+  const validItemKeys = new Set(
+    allItems.map(item => `${item.ingredientId}_${!!item.isSubRecipe}`)
+  );
+  const completions = rawCompletions.filter(c =>
+    validItemKeys.has(`${c.ingredientId}_${c.isSubRecipe}`)
+  );
 
   res.json({ ingredients: allItems, completions });
 });
