@@ -3436,6 +3436,23 @@ router.get("/:id/main-prep", async (req, res) => {
     }>;
   }>();
 
+  const subRecipeMap = new Map<string, {
+    subRecipeId: number;
+    ingredientName: string;
+    unit: string;
+    totalQty: number;
+    recipes: Array<{
+      recipeId: number;
+      recipeName: string;
+      batchesTarget: number;
+      qtyForRecipe: number;
+      tinSize: string | null;
+      maxBatchesPerTin: number | null;
+      tinCount: number;
+      qtyPerTin: number;
+    }>;
+  }>();
+
   for (const planItem of planItems) {
     const batchesTarget = Number(planItem.batchesTarget) || 0;
     if (!planItem.recipeId || batchesTarget === 0) continue;
@@ -3531,66 +3548,182 @@ router.get("/:id/main-prep", async (req, res) => {
         });
       }
     }
+
+    if (station === "main_prep") {
+      const subRecipeRows = await db
+        .select({
+          subRecipeId: recipeSubRecipesTable.subRecipeId,
+          quantity: recipeSubRecipesTable.quantity,
+          includeInFillingMix: recipeSubRecipesTable.includeInFillingMix,
+          marinadeForIngredientId: recipeSubRecipesTable.marinadeForIngredientId,
+          subRecipeName: subRecipesTable.name,
+          yieldUnit: subRecipesTable.yieldUnit,
+          isBase: subRecipesTable.isBase,
+        })
+        .from(recipeSubRecipesTable)
+        .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
+        .where(eq(recipeSubRecipesTable.recipeId, planItem.recipeId));
+
+      for (const sr of subRecipeRows) {
+        if (sr.subRecipeId == null) continue;
+        if (sr.isBase) continue;
+        const nameLc = (sr.subRecipeName ?? "").toLowerCase();
+        if (nameLc.includes("dough")) continue;
+        if (sr.marinadeForIngredientId != null) continue;
+        if (sr.includeInFillingMix) continue;
+
+        const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
+        const qtyPerPortion = Number(sr.quantity) || 0;
+        const totalQty = qtyPerPortion * portionsPerBatch * batchesTarget;
+        const unit = sr.yieldUnit ?? "kg";
+        const roundedQty = roundByUnit(totalQty, unit);
+        if (roundedQty <= 0) continue;
+        const qtyPerTin = tinCount > 0 ? roundByUnit(roundedQty / tinCount, unit) : roundedQty;
+
+        const mapKey = `sr_${sr.subRecipeId}`;
+        const existing = subRecipeMap.get(mapKey);
+        if (existing) {
+          existing.totalQty += roundedQty;
+          existing.recipes.push({
+            recipeId: planItem.recipeId!,
+            recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
+            batchesTarget,
+            qtyForRecipe: roundedQty,
+            tinSize: planItem.tinSize ?? null,
+            maxBatchesPerTin: planItem.maxBatchesPerTin ?? null,
+            tinCount,
+            qtyPerTin,
+          });
+        } else {
+          subRecipeMap.set(mapKey, {
+            subRecipeId: sr.subRecipeId,
+            ingredientName: sr.subRecipeName ?? `Sub-recipe #${sr.subRecipeId}`,
+            unit,
+            totalQty: roundedQty,
+            recipes: [{
+              recipeId: planItem.recipeId!,
+              recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
+              batchesTarget,
+              qtyForRecipe: roundedQty,
+              tinSize: planItem.tinSize ?? null,
+              maxBatchesPerTin: planItem.maxBatchesPerTin ?? null,
+              tinCount,
+              qtyPerTin,
+            }],
+          });
+        }
+      }
+    }
   }
 
+  const subRecipeIngredients = [...subRecipeMap.values()].map(sr => ({
+    ingredientId: sr.subRecipeId,
+    ingredientName: sr.ingredientName,
+    unit: sr.unit,
+    category: "sub_recipe" as string | null,
+    stockCheckEnabled: false,
+    stockCheckFrequency: "daily",
+    stockCheckDay: null as string | null,
+    totalQty: sr.totalQty,
+    isSubRecipe: true,
+    recipes: sr.recipes,
+    totalTinCount: sr.recipes.reduce((s, r) => s + r.tinCount, 0),
+  }));
+
   const ingredients = [...ingredientMap.values()]
-    .sort((a, b) => a.ingredientName.localeCompare(b.ingredientName))
     .map(ing => ({
       ...ing,
+      isSubRecipe: false,
       totalTinCount: ing.recipes.reduce((s, r) => s + r.tinCount, 0),
     }));
 
-  const completions = await db
-    .select({
-      id: prepCompletionsTable.id,
-      ingredientId: prepCompletionsTable.ingredientId,
-      recipeId: prepCompletionsTable.recipeId,
-      tinNumber: prepCompletionsTable.tinNumber,
-      userId: prepCompletionsTable.userId,
-      userName: usersTable.name,
-      completedAt: prepCompletionsTable.completedAt,
-    })
-    .from(prepCompletionsTable)
-    .leftJoin(usersTable, eq(prepCompletionsTable.userId, usersTable.id))
-    .where(eq(prepCompletionsTable.planId, planId));
+  const allItems = [...ingredients, ...subRecipeIngredients]
+    .sort((a, b) => a.ingredientName.localeCompare(b.ingredientName));
 
-  res.json({ ingredients, completions });
+  const completionRows = await db.execute(sql`
+    SELECT id, ingredient_id AS "ingredientId", sub_recipe_id AS "subRecipeId",
+           recipe_id AS "recipeId", tin_number AS "tinNumber",
+           user_id AS "userId", completed_at AS "completedAt"
+    FROM prep_completions
+    WHERE plan_id = ${planId}
+  `);
+  const completions = (completionRows.rows as Array<{
+    id: number;
+    ingredientId: number | null;
+    subRecipeId: number | null;
+    recipeId: number;
+    tinNumber: number;
+    userId: number | null;
+    completedAt: string;
+  }>).map(c => ({
+    ...c,
+    isSubRecipe: c.subRecipeId != null,
+    ingredientId: c.ingredientId ?? c.subRecipeId ?? 0,
+  }));
+
+  res.json({ ingredients: allItems, completions });
 });
 
 router.post("/:id/prep-completions", async (req, res) => {
   const planId = Number(req.params.id);
-  const { ingredientId, recipeId, tinNumber } = req.body;
+  const { ingredientId, recipeId, tinNumber, isSubRecipe } = req.body;
   if (!recipeId) { res.status(400).json({ error: "recipeId is required" }); return; }
   const userId = (req.session as any)?.userId ?? null;
 
-  const [row] = await db.insert(prepCompletionsTable).values({
-    planId,
-    ingredientId,
-    recipeId,
-    tinNumber,
-    userId,
-  }).onConflictDoNothing().returning();
+  if (isSubRecipe) {
+    const result = await db.execute(sql`
+      INSERT INTO prep_completions (plan_id, sub_recipe_id, recipe_id, tin_number, user_id, completed_at)
+      VALUES (${planId}, ${ingredientId}, ${recipeId}, ${tinNumber}, ${userId}, NOW())
+      ON CONFLICT DO NOTHING
+      RETURNING id, sub_recipe_id AS "ingredientId", recipe_id AS "recipeId",
+                tin_number AS "tinNumber", user_id AS "userId", completed_at AS "completedAt"
+    `);
+    const row = result.rows[0] as Record<string, unknown> | undefined;
+    if (!row) { res.status(409).json({ error: "Already completed" }); return; }
+    const userName = userId
+      ? (await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId)))?.[0]?.name ?? null
+      : null;
+    res.status(201).json({ ...row, isSubRecipe: true, userName });
+  } else {
+    const [row] = await db.insert(prepCompletionsTable).values({
+      planId,
+      ingredientId,
+      recipeId,
+      tinNumber,
+      userId,
+    }).onConflictDoNothing().returning();
 
-  if (!row) { res.status(409).json({ error: "Already completed" }); return; }
+    if (!row) { res.status(409).json({ error: "Already completed" }); return; }
 
-  const userName = userId
-    ? (await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId)))?.[0]?.name ?? null
-    : null;
+    const userName = userId
+      ? (await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId)))?.[0]?.name ?? null
+      : null;
 
-  res.status(201).json({ ...row, userName });
+    res.status(201).json({ ...row, isSubRecipe: false, userName });
+  }
 });
 
 router.delete("/:id/prep-completions/by-tin", async (req, res) => {
   const planId = Number(req.params.id);
-  const { ingredientId, recipeId, tinNumber } = req.body;
+  const { ingredientId, recipeId, tinNumber, isSubRecipe } = req.body;
   if (!recipeId) { res.status(400).json({ error: "recipeId is required" }); return; }
-  await db.delete(prepCompletionsTable)
-    .where(and(
-      eq(prepCompletionsTable.planId, planId),
-      eq(prepCompletionsTable.ingredientId, ingredientId),
-      eq(prepCompletionsTable.recipeId, recipeId),
-      eq(prepCompletionsTable.tinNumber, tinNumber),
-    ));
+  if (isSubRecipe) {
+    await db.execute(sql`
+      DELETE FROM prep_completions
+      WHERE plan_id = ${planId}
+        AND sub_recipe_id = ${ingredientId}
+        AND recipe_id = ${recipeId}
+        AND tin_number = ${tinNumber}
+    `);
+  } else {
+    await db.delete(prepCompletionsTable)
+      .where(and(
+        eq(prepCompletionsTable.planId, planId),
+        eq(prepCompletionsTable.ingredientId, ingredientId),
+        eq(prepCompletionsTable.recipeId, recipeId),
+        eq(prepCompletionsTable.tinNumber, tinNumber),
+      ));
+  }
   res.json({ ok: true });
 });
 

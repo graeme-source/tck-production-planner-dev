@@ -475,6 +475,26 @@ async function runStartupMigrations() {
       console.log(`[kanban backfill] Created ${kanbanBackfillCount} kanban item(s) for kanban-enabled ingredients`);
     }
 
+    await db.execute(sql`
+      ALTER TABLE prep_completions ADD COLUMN IF NOT EXISTS sub_recipe_id INTEGER REFERENCES sub_recipes(id)
+    `);
+    await db.execute(sql`
+      ALTER TABLE prep_completions ALTER COLUMN ingredient_id DROP NOT NULL
+    `);
+    await db.execute(sql`
+      DROP INDEX IF EXISTS uq_prep_completion_v3
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_prep_completion_ing
+      ON prep_completions (plan_id, ingredient_id, recipe_id, tin_number)
+      WHERE ingredient_id IS NOT NULL
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_prep_completion_sub
+      ON prep_completions (plan_id, sub_recipe_id, recipe_id, tin_number)
+      WHERE sub_recipe_id IS NOT NULL
+    `);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

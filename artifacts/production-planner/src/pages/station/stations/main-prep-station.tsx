@@ -22,6 +22,7 @@ export interface MainPrepIngredient {
   stockCheckDay: string | null;
   totalQty: number;
   totalTinCount: number;
+  isSubRecipe?: boolean;
   recipes: Array<{
     recipeId: number;
     recipeName: string;
@@ -37,6 +38,7 @@ export interface MainPrepIngredient {
 interface PrepTinCompletion {
   id: number;
   ingredientId: number;
+  isSubRecipe?: boolean;
   recipeId: number;
   tinNumber: number;
   userId: number | null;
@@ -92,7 +94,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const [stockValues, setStockValues] = useState<Record<number, string>>({});
   const [savingStock, setSavingStock] = useState<Record<number, boolean>>({});
   const dirtyStockIds = useRef<Set<number>>(new Set());
-  const [selectedIngredientId, setSelectedIngredientId] = useState<number | null>(null);
+  const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
   const [isOnBreak, setIsOnBreak] = useState(false);
   const [presenceData, setPresenceData] = useState<PrepPresenceData>({});
   const activeIngIdRef = useRef<number | null>(null);
@@ -102,7 +104,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const checkDate = nextPlan?.planDate ?? plan.planDate;
 
   useEffect(() => {
-    setSelectedIngredientId(null);
+    setSelectedItemKey(null);
     setStockValues({});
     dirtyStockIds.current.clear();
   }, [targetPlanId]);
@@ -166,11 +168,11 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const ingredients = data?.ingredients ?? [];
   const completions = data?.completions ?? [];
 
-  const isCompleted = (ingredientId: number, recipeId: number, tinNumber: number) =>
-    completions.some(c => c.ingredientId === ingredientId && c.recipeId === recipeId && c.tinNumber === tinNumber);
+  const isCompleted = (ingredientId: number, recipeId: number, tinNumber: number, isSubRecipe?: boolean) =>
+    completions.some(c => c.ingredientId === ingredientId && c.recipeId === recipeId && c.tinNumber === tinNumber && !!c.isSubRecipe === !!isSubRecipe);
 
-  const getCompletion = (ingredientId: number, recipeId: number, tinNumber: number) =>
-    completions.find(c => c.ingredientId === ingredientId && c.recipeId === recipeId && c.tinNumber === tinNumber);
+  const getCompletion = (ingredientId: number, recipeId: number, tinNumber: number, isSubRecipe?: boolean) =>
+    completions.find(c => c.ingredientId === ingredientId && c.recipeId === recipeId && c.tinNumber === tinNumber && !!c.isSubRecipe === !!isSubRecipe);
 
   const todayDayName = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date().getDay()];
 
@@ -186,7 +188,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     for (const r of ing.recipes) {
       totalTinCount += r.tinCount;
       for (let tn = 1; tn <= r.tinCount; tn++) {
-        if (isCompleted(ing.ingredientId, r.recipeId, tn)) completedTinCount++;
+        if (isCompleted(ing.ingredientId, r.recipeId, tn, ing.isSubRecipe)) completedTinCount++;
       }
     }
     const allTinsDone = totalTinCount > 0 && completedTinCount >= totalTinCount;
@@ -202,15 +204,16 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     if (!recipe) return { completedTins: 0, totalTins: 0, allDone: false };
     const totalTins = recipe.tinCount;
     const completedTins = Array.from({ length: totalTins }, (_, i) => i + 1)
-      .filter(tn => isCompleted(ing.ingredientId, recipeId, tn)).length;
+      .filter(tn => isCompleted(ing.ingredientId, recipeId, tn, ing.isSubRecipe)).length;
     return { completedTins, totalTins, allDone: totalTins > 0 && completedTins >= totalTins };
   };
 
-  const getPreppedByInitials = (ingredientId: number, recipeId?: number): { initials: string; fullName: string }[] => {
+  const getPreppedByInitials = (ingredientId: number, recipeId?: number, isSubRecipe?: boolean): { initials: string; fullName: string }[] => {
     const seen = new Set<string>();
     const result: { initials: string; fullName: string }[] = [];
     for (const c of completions) {
       if (c.ingredientId !== ingredientId || !c.userName) continue;
+      if (!!c.isSubRecipe !== !!isSubRecipe) continue;
       if (recipeId !== undefined && c.recipeId !== recipeId) continue;
       if (seen.has(c.userName)) continue;
       seen.add(c.userName);
@@ -242,20 +245,21 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     return [...map.values()];
   }, [ingredients]);
 
-  // Auto-select first incomplete ingredient
+  const itemKey = (ing: MainPrepIngredient) => ing.isSubRecipe ? `sub:${ing.ingredientId}` : `ing:${ing.ingredientId}`;
+
   useEffect(() => {
     if (ingredients.length === 0) return;
-    if (selectedIngredientId && ingredients.find(i => i.ingredientId === selectedIngredientId)) return;
+    if (selectedItemKey && ingredients.find(i => itemKey(i) === selectedItemKey)) return;
     const firstIncomplete = ingredients.find(ing => !ingredientDoneStatus(ing).isFullyDone);
-    setSelectedIngredientId((firstIncomplete ?? ingredients[0]).ingredientId);
+    setSelectedItemKey(itemKey(firstIncomplete ?? ingredients[0]));
   }, [ingredients]);
 
-  const selectedIngredient = ingredients.find(i => i.ingredientId === selectedIngredientId) ?? null;
+  const selectedIngredient = ingredients.find(i => itemKey(i) === selectedItemKey) ?? null;
 
   const selectedStatus = selectedIngredient ? ingredientDoneStatus(selectedIngredient) : null;
   useEffect(() => {
     prevNeedsStockCheckRef.current = false;
-  }, [selectedIngredientId]);
+  }, [selectedItemKey]);
 
   useEffect(() => {
     if (selectedStatus?.needsStockCheck && !selectedStatus.stockSaved && !prevNeedsStockCheckRef.current) {
@@ -267,22 +271,22 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     prevNeedsStockCheckRef.current = selectedStatus?.needsStockCheck ?? false;
   }, [selectedStatus?.needsStockCheck, selectedStatus?.stockSaved, selectedIngredient?.ingredientId]);
 
-  const toggleTin = async (ingredientId: number, recipeId: number, tinNumber: number) => {
+  const toggleTin = async (ingredientId: number, recipeId: number, tinNumber: number, isSubRecipe?: boolean) => {
     if (isOnBreak) return;
     activeIngIdRef.current = ingredientId;
     postPresence(ingredientId);
-    const existing = getCompletion(ingredientId, recipeId, tinNumber);
+    const existing = getCompletion(ingredientId, recipeId, tinNumber, isSubRecipe);
     if (existing) {
       await fetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
         method: "DELETE", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ingredientId, recipeId, tinNumber }),
+        body: JSON.stringify({ ingredientId, recipeId, tinNumber, isSubRecipe: !!isSubRecipe }),
       });
     } else {
       await fetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ingredientId, recipeId, tinNumber }),
+        body: JSON.stringify({ ingredientId, recipeId, tinNumber, isSubRecipe: !!isSubRecipe }),
       });
     }
     refetch();
@@ -403,13 +407,14 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                     </div>
                     {group.items.map(({ ing, qtyForRecipe }) => {
                       const rStatus = recipeIngredientStatus(ing, group.recipeId);
-                      const isSelected = ing.ingredientId === selectedIngredientId;
+                      const ik = itemKey(ing);
+                      const isSelected = ik === selectedItemKey;
                       const presence = presenceData[ing.ingredientId] ?? [];
                       return (
                         <button
-                          key={`${group.recipeId}-${ing.ingredientId}`}
+                          key={`${group.recipeId}-${ik}`}
                           onClick={() => {
-                            setSelectedIngredientId(ing.ingredientId);
+                            setSelectedItemKey(ik);
                             activeIngIdRef.current = ing.ingredientId;
                             postPresence(ing.ingredientId);
                           }}
@@ -454,7 +459,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                             )}
                           </div>
                           <div className="flex items-center gap-1 flex-shrink-0">
-                            {rStatus.completedTins > 0 && getPreppedByInitials(ing.ingredientId, group.recipeId).map(({ initials, fullName }) => (
+                            {rStatus.completedTins > 0 && getPreppedByInitials(ing.ingredientId, group.recipeId, ing.isSubRecipe).map(({ initials, fullName }) => (
                               <span
                                 key={fullName}
                                 title={fullName}
@@ -555,7 +560,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
 
                       {ing.recipes.map((recipe, ri) => {
                         const rTins = Array.from({ length: recipe.tinCount }, (_, i) => i + 1);
-                        const rDone = rTins.filter(tn => isCompleted(ing.ingredientId, recipe.recipeId, tn)).length;
+                        const rDone = rTins.filter(tn => isCompleted(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe)).length;
                         const allRecipeDone = rTins.length > 0 && rDone >= rTins.length;
                         return (
                           <div key={recipe.recipeId} className={cn(ri > 0 && "mt-4")}>
@@ -588,12 +593,12 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                             </div>
                             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
                               {rTins.map(tn => {
-                                const done = isCompleted(ing.ingredientId, recipe.recipeId, tn);
-                                const completion = getCompletion(ing.ingredientId, recipe.recipeId, tn);
+                                const done = isCompleted(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe);
+                                const completion = getCompletion(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe);
                                 return (
                                   <button
                                     key={tn}
-                                    onClick={() => toggleTin(ing.ingredientId, recipe.recipeId, tn)}
+                                    onClick={() => toggleTin(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe)}
                                     disabled={isOnBreak}
                                     className={cn(
                                       "relative flex flex-col items-center border-2 rounded-2xl px-3 py-3.5 transition-all active:scale-95",
