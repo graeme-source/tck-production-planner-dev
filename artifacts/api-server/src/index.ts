@@ -393,6 +393,12 @@ async function runStartupMigrations() {
     `);
     await db.execute(sql`
       DO $$ BEGIN
+        ALTER TYPE improvement_progress_status ADD VALUE IF NOT EXISTS 'acknowledged';
+      EXCEPTION WHEN others THEN NULL;
+      END $$
+    `);
+    await db.execute(sql`
+      DO $$ BEGIN
         CREATE TYPE andon_severity AS ENUM ('yellow', 'red');
       EXCEPTION WHEN duplicate_object THEN NULL;
       END $$

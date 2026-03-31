@@ -6,6 +6,7 @@ import { usersTable } from "./users";
 export const improvementApprovalTierEnum = pgEnum("improvement_approval_tier", ["minor", "medium", "major"]);
 export const improvementProgressStatusEnum = pgEnum("improvement_progress_status", [
   "submitted_for_review",
+  "acknowledged",
   "approved",
   "testing",
   "complete",
