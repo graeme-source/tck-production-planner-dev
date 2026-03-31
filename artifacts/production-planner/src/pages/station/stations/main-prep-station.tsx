@@ -407,6 +407,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                     </div>
                     {group.items.map(({ ing, qtyForRecipe }) => {
                       const rStatus = recipeIngredientStatus(ing, group.recipeId);
+                      const ingStatus = ingredientDoneStatus(ing);
                       const ik = itemKey(ing);
                       const isSelected = ik === selectedItemKey;
                       const presence = presenceData[ing.ingredientId] ?? [];
@@ -421,14 +422,18 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                           className={cn(
                             "w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors border-t border-border/30",
                             isSelected
-                              ? "bg-emerald-500/10 border-l-4 border-l-emerald-500"
+                              ? ingStatus.needsStockCheck
+                                ? "bg-blue-500/10 border-l-4 border-l-blue-500"
+                                : "bg-emerald-500/10 border-l-4 border-l-emerald-500"
                               : "hover:bg-secondary/40 border-l-4 border-l-transparent",
-                            rStatus.allDone && !isSelected && "opacity-60"
+                            ingStatus.isFullyDone && !isSelected && "opacity-60"
                           )}
                         >
                           <div className="flex-shrink-0">
-                            {rStatus.allDone ? (
+                            {ingStatus.isFullyDone ? (
                               <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                            ) : ingStatus.needsStockCheck ? (
+                              <Package className="w-4 h-4 text-blue-500 animate-pulse" />
                             ) : rStatus.totalTins > 0 ? (
                               <div className="relative w-4 h-4">
                                 <svg className="w-4 h-4 -rotate-90" viewBox="0 0 16 16">
@@ -449,12 +454,15 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                             <p className={cn(
                               "text-base font-medium truncate",
                               isSelected && "font-semibold",
-                              rStatus.allDone && "line-through text-muted-foreground"
+                              ingStatus.isFullyDone && "line-through text-muted-foreground"
                             )}>
                               {ing.ingredientName}
                               {presence.length > 0 && <span className="ml-1 text-sm text-blue-500">👁</span>}
                             </p>
-                            {ing.recipes.length > 1 && (
+                            {ingStatus.needsStockCheck && (
+                              <p className="text-sm text-blue-600 font-medium">Stock check needed</p>
+                            )}
+                            {!ingStatus.needsStockCheck && ing.recipes.length > 1 && (
                               <p className="text-sm text-muted-foreground"><span className="text-amber-500">shared</span></p>
                             )}
                           </div>
@@ -633,11 +641,19 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                       })}
 
                       {/* Stock check */}
+                      {stockCheckActiveToday(ing) && !status.allTinsDone && (
+                        <div className="mt-4 bg-blue-50/30 dark:bg-blue-950/10 border border-blue-200/50 dark:border-blue-800/50 rounded-xl p-3 opacity-60">
+                          <div className="flex items-center gap-2">
+                            <Package className="w-4 h-4 text-blue-400" />
+                            <p className="text-sm text-blue-600 dark:text-blue-400">Stock check required after all tins are completed</p>
+                          </div>
+                        </div>
+                      )}
                       {status.needsStockCheck && (
-                        <div ref={stockCheckRef} className="mt-4 bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-xl p-4">
+                        <div ref={stockCheckRef} className="mt-4 bg-blue-50/70 dark:bg-blue-950/30 border-2 border-blue-400 dark:border-blue-600 rounded-xl p-4 shadow-md">
                           <div className="flex items-center gap-2 mb-3">
-                            <Package className="w-4 h-4 text-blue-600 animate-pulse" />
-                            <p className="text-base font-bold text-blue-800 dark:text-blue-200">Stock Check</p>
+                            <Package className="w-5 h-5 text-blue-600 animate-pulse" />
+                            <p className="text-lg font-bold text-blue-800 dark:text-blue-200">Stock Check</p>
                             <p className="text-sm text-blue-600 dark:text-blue-400">— how much {ing.ingredientName.toLowerCase()} remains?</p>
                           </div>
                           <div className="flex items-center gap-2">
