@@ -253,15 +253,11 @@ export function MixingStation({ plan }: MixingStationProps) {
 
     const movingItem = items[oldIndex];
 
-    if (!isAdmin) {
-      // Never move a locked recipe
-      if (isOrderLocked(movingItem)) return;
-      // Never drop into the locked zone (above locked recipes)
-      const lockedCount = items.filter(isOrderLocked).length;
-      if (newIndex < lockedCount) {
-        toast({ title: "Can't reorder", description: "Recipes already in production are fixed at the top.", variant: "destructive" });
-        return;
-      }
+    if (isOrderLocked(movingItem)) return;
+    const lockedCount = items.filter(isOrderLocked).length;
+    if (newIndex < lockedCount) {
+      toast({ title: "Can't reorder", description: "Recipes already in production are fixed at the top.", variant: "destructive" });
+      return;
     }
 
     const reordered = arrayMove(items, oldIndex, newIndex);
@@ -758,7 +754,7 @@ export function MixingStation({ plan }: MixingStationProps) {
                 const filling = getFillingForItem(item.id);
                 const hasFillingItems = filling && (filling.fillingIngredients.length > 0 || filling.fillingSubRecipes.length > 0);
                 const isActive = activeItemId === item.id;
-                const isDraggable = isAdmin || (!isOrderLocked(item) && item.status === "pending");
+                const isDraggable = !isOrderLocked(item);
 
                 return (
                   <MixingOverviewRow
