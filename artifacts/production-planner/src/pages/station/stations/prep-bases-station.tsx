@@ -718,7 +718,7 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
     <div className="space-y-4">
       <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
 
-      <PrepSubNav planId={targetPlanId} current="prep_bases" />
+      <PrepSubNav planId={plan.id} current="prep_bases" />
 
       {/* Sauce progress bar (excludes Tomato Base which tracks via sub-recipe) */}
       <div className="bg-card border border-border rounded-xl p-4">

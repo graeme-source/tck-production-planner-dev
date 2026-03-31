@@ -145,7 +145,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
     <div className="space-y-4">
       <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
 
-      <PrepSubNav planId={targetPlanId} current="prep_meat" />
+      <PrepSubNav planId={plan.id} current="prep_meat" />
 
       {/* Summary bar */}
       <div className="bg-card border border-border rounded-xl p-4">
