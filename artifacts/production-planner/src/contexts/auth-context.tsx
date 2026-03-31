@@ -34,27 +34,49 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ status: "loading" });
   const [pinLocked, setPinLocked] = useState(false);
 
-  const checkSession = useCallback(async () => {
+  const consecutiveFailsRef = useRef(0);
+
+  const checkSession = useCallback(async (isPeriodicRefresh = false) => {
     try {
       const res = await fetch("/api/auth/me", { credentials: "include" });
       if (res.ok) {
+        consecutiveFailsRef.current = 0;
         const data: AuthUser & { pinRequired?: boolean } = await res.json();
         const { pinRequired, ...user } = data;
         addDeviceUserId(user.id);
         setState({ status: "authenticated", user });
         setPinLocked(!!pinRequired);
+      } else if (res.status === 401) {
+        consecutiveFailsRef.current = 0;
+        setState({ status: "unauthenticated" });
+        setPinLocked(false);
       } else {
+        consecutiveFailsRef.current++;
+        if (!isPeriodicRefresh && consecutiveFailsRef.current >= 3) {
+          setState({ status: "unauthenticated" });
+          setPinLocked(false);
+        }
+      }
+    } catch {
+      consecutiveFailsRef.current++;
+      if (!isPeriodicRefresh && consecutiveFailsRef.current >= 3) {
         setState({ status: "unauthenticated" });
         setPinLocked(false);
       }
-    } catch {
-      setState({ status: "unauthenticated" });
-      setPinLocked(false);
     }
   }, []);
 
   useEffect(() => {
     checkSession();
+  }, [checkSession]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        checkSession(true);
+      }
+    }, 5 * 60 * 1000);
+    return () => clearInterval(interval);
   }, [checkSession]);
 
   const hiddenAtRef = useRef<number | null>(null);
