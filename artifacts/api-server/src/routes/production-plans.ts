@@ -1525,7 +1525,7 @@ router.get("/:id/prep-requirements", async (req, res) => {
     if (!planItem.recipeId || batchesTarget === 0) continue;
 
     const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
-    const resolved = await resolveRecipeIngredients(planItem.recipeId, portionsPerBatch);
+    const resolved = await resolveRecipeIngredients(planItem.recipeId, portionsPerBatch, { skipToppings: true });
     const agg = aggregateIngredients(resolved);
 
     for (const [iid, ing] of agg) {
@@ -1634,7 +1634,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
     if (!planItem.recipeId || batchesTarget === 0) continue;
 
     const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
-    const resolved = await resolveRecipeIngredients(planItem.recipeId, portionsPerBatch);
+    const resolved = await resolveRecipeIngredients(planItem.recipeId, portionsPerBatch, { skipToppings: true });
     const agg = aggregateIngredients(resolved);
 
     const ingredients: Array<{
@@ -2306,7 +2306,7 @@ router.get("/:id/ingredient-requirements", async (req, res) => {
     totalBatches += batchesTarget;
 
     const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
-    const resolved = await resolveRecipeIngredients(planItem.recipeId, portionsPerBatch);
+    const resolved = await resolveRecipeIngredients(planItem.recipeId, portionsPerBatch, { skipToppings: true });
     const agg = aggregateIngredients(resolved);
 
     for (const [iid, ing] of agg) {
@@ -3524,13 +3524,12 @@ router.get("/:id/main-prep", async (req, res) => {
         isBottle: ingredientsTable.isBottle,
         bottleSize: ingredientsTable.bottleSize,
         packWeight: ingredientsTable.packWeight,
+        isTopping: recipeIngredientsTable.isTopping,
       })
       .from(recipeIngredientsTable)
       .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
       .where(and(
         eq(recipeIngredientsTable.recipeId, planItem.recipeId),
-        // Exclude marinade rows — ingredients used purely as a marinade for another
-        // ingredient should not appear as standalone items in Main Prep.
         isNull(recipeIngredientsTable.marinadeForIngredientId),
       ));
 
@@ -3539,6 +3538,7 @@ router.get("/:id/main-prep", async (req, res) => {
       : 1;
 
     for (const row of directIngredients) {
+      if (row.isTopping) continue;
       const cat = row.category ?? "";
       const rowNameLc = (row.ingredientName ?? "").toLowerCase();
       const isMozzType = rowNameLc.includes("mozzarella") || rowNameLc.includes("fior di latte");
@@ -3617,6 +3617,7 @@ router.get("/:id/main-prep", async (req, res) => {
           subRecipeName: subRecipesTable.name,
           yieldUnit: subRecipesTable.yieldUnit,
           isBase: subRecipesTable.isBase,
+          isTopping: recipeSubRecipesTable.isTopping,
         })
         .from(recipeSubRecipesTable)
         .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
@@ -3625,6 +3626,7 @@ router.get("/:id/main-prep", async (req, res) => {
       for (const sr of subRecipeRows) {
         if (sr.subRecipeId == null) continue;
         if (sr.isBase) continue;
+        if (sr.isTopping) continue;
         const nameLc = (sr.subRecipeName ?? "").toLowerCase();
         if (nameLc.includes("dough")) continue;
         if (sr.marinadeForIngredientId != null) continue;

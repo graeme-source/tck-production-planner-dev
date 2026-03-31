@@ -7,7 +7,7 @@ import {
   subRecipeIngredientsTable,
   subRecipeSubRecipesTable,
 } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 
 export interface ResolvedIngredient {
   ingredientId: number;
@@ -107,12 +107,16 @@ async function resolveSubRecipeIngredients(
 export async function resolveRecipeIngredients(
   recipeId: number,
   portionsPerBatch: number = 1,
+  options?: { skipToppings?: boolean },
 ): Promise<ResolvedIngredient[]> {
+  const skipToppings = options?.skipToppings ?? false;
+
   const directIngredients = await db
     .select({
       ingredientId: recipeIngredientsTable.ingredientId,
       quantity: recipeIngredientsTable.quantity,
       includeInFillingMix: recipeIngredientsTable.includeInFillingMix,
+      isTopping: recipeIngredientsTable.isTopping,
       ingredientName: ingredientsTable.name,
       unit: ingredientsTable.unit,
       category: ingredientsTable.category,
@@ -129,7 +133,9 @@ export async function resolveRecipeIngredients(
     .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
     .where(eq(recipeIngredientsTable.recipeId, recipeId));
 
-  const results: ResolvedIngredient[] = directIngredients.map((row) => ({
+  const filteredDirect = skipToppings ? directIngredients.filter(r => !r.isTopping) : directIngredients;
+
+  const results: ResolvedIngredient[] = filteredDirect.map((row) => ({
     ingredientId: row.ingredientId,
     ingredientName: row.ingredientName ?? `Ingredient #${row.ingredientId}`,
     unit: row.unit ?? "g",
@@ -150,11 +156,14 @@ export async function resolveRecipeIngredients(
     .select({
       subRecipeId: recipeSubRecipesTable.subRecipeId,
       quantity: recipeSubRecipesTable.quantity,
+      isTopping: recipeSubRecipesTable.isTopping,
     })
     .from(recipeSubRecipesTable)
     .where(eq(recipeSubRecipesTable.recipeId, recipeId));
 
-  for (const rsr of recipeSubRecipes) {
+  const filteredSubRecipes = skipToppings ? recipeSubRecipes.filter(r => !r.isTopping) : recipeSubRecipes;
+
+  for (const rsr of filteredSubRecipes) {
     const visited = new Set<number>();
     const subResults = await resolveSubRecipeIngredients(
       rsr.subRecipeId,
