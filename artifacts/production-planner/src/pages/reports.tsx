@@ -150,7 +150,7 @@ interface ImprovementRecord {
   type: "improvement" | "struggle";
   submittedByName: string | null;
   approvalTier: "minor" | "medium" | "major" | null;
-  progressStatus: "submitted_for_review" | "approved" | "testing" | "complete" | "rejected";
+  progressStatus: "submitted_for_review" | "acknowledged" | "approved" | "testing" | "complete" | "rejected";
   notes: string | null;
   createdAt: string;
   updatedAt: string;
@@ -265,7 +265,7 @@ export default function Reports() {
             <Zap className="w-4 h-4" /> Packing Speed
           </TabButton>
           <TabButton active={activeTab === "improvements"} onClick={() => switchTab("improvements")}>
-            <Lightbulb className="w-4 h-4" /> Improvements
+            <Lightbulb className="w-4 h-4" /> Improvements & Struggles
           </TabButton>
           <TabButton active={activeTab === "andon"} onClick={() => switchTab("andon")}>
             <AlertTriangle className="w-4 h-4" /> Andon Log
@@ -1240,6 +1240,7 @@ const STATION_LABELS_REPORT: Record<string, string> = {
 
 const IMPROVEMENT_PROGRESS_OPTIONS = [
   { value: "submitted_for_review", label: "Submitted for Review" },
+  { value: "acknowledged", label: "Acknowledged" },
   { value: "approved", label: "Approved" },
   { value: "testing", label: "Testing" },
   { value: "complete", label: "Complete" },
@@ -1248,6 +1249,7 @@ const IMPROVEMENT_PROGRESS_OPTIONS = [
 
 function statusRowClass(status: string) {
   if (status === "submitted_for_review") return "bg-yellow-50/60 dark:bg-yellow-900/10";
+  if (status === "acknowledged") return "bg-violet-50/60 dark:bg-violet-900/10";
   if (status === "approved") return "bg-green-50/60 dark:bg-green-900/10";
   if (status === "testing") return "bg-blue-50/60 dark:bg-blue-900/10";
   if (status === "complete") return "bg-emerald-50/60 dark:bg-emerald-900/10";
@@ -1257,6 +1259,7 @@ function statusRowClass(status: string) {
 
 function statusBadgeClass(status: string) {
   if (status === "submitted_for_review") return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300";
+  if (status === "acknowledged") return "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400";
   if (status === "approved") return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";
   if (status === "testing") return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
   if (status === "complete") return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400 font-semibold";
@@ -1266,6 +1269,7 @@ function statusBadgeClass(status: string) {
 
 function statusSelectClass(status: string) {
   if (status === "submitted_for_review") return "border-yellow-300 bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300 dark:border-yellow-700";
+  if (status === "acknowledged") return "border-violet-300 bg-violet-50 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400 dark:border-violet-700";
   if (status === "approved") return "border-green-300 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400 dark:border-green-700";
   if (status === "testing") return "border-blue-300 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-700";
   if (status === "complete") return "border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-700";
@@ -1325,6 +1329,22 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
     await updateField(id, "notes", editNotes[id] ?? "");
   }
 
+  const isAdmin = userRole === "admin";
+
+  async function deleteEntry(id: number) {
+    if (!confirm("Are you sure you want to delete this entry?")) return;
+    try {
+      const res = await fetch(`${BASE}/api/improvements/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Delete failed");
+      setImprovements(prev => prev.filter(i => i.id !== id));
+    } catch {
+      alert("Failed to delete entry");
+    }
+  }
+
   const filtered = improvements.filter(imp => {
     if (viewTab === "mine" && imp.submittedByName !== currentUserName) return false;
     if (filterStatus && imp.progressStatus !== filterStatus) return false;
@@ -1350,13 +1370,13 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
             onClick={() => setViewTab("all")}
             className={cn("px-4 py-2 font-medium transition-colors", viewTab === "all" ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:text-foreground")}
           >
-            All Improvements
+            All Entries
           </button>
           <button
             onClick={() => setViewTab("mine")}
             className={cn("px-4 py-2 font-medium transition-colors border-l border-border", viewTab === "mine" ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:text-foreground")}
           >
-            My Improvements
+            My Entries
           </button>
         </div>
 
@@ -1447,6 +1467,7 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
                 <th className="px-4 py-3 font-medium text-center">Tier</th>
                 <th className="px-4 py-3 font-medium text-center">Status</th>
                 <th className="px-4 py-3 font-medium text-left">Notes</th>
+                {isAdmin && <th className="px-4 py-3 font-medium text-center w-16"></th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
@@ -1527,6 +1548,16 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
                       <span className="text-xs text-muted-foreground">{imp.notes ?? "—"}</span>
                     )}
                   </td>
+                  {isAdmin && (
+                    <td className="px-4 py-3 text-center">
+                      <button
+                        onClick={() => deleteEntry(imp.id)}
+                        className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-xs px-2 py-1 rounded-lg border border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

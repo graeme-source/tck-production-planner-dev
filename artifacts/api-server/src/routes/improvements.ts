@@ -96,8 +96,8 @@ router.patch("/:id", async (req: Request, res: Response) => {
 
 router.delete("/:id", async (req: Request, res: Response) => {
   const role = req.session.userRole;
-  if (role !== "admin" && role !== "manager") {
-    res.status(403).json({ error: "Manager or admin access required" });
+  if (role !== "admin") {
+    res.status(403).json({ error: "Admin access required" });
     return;
   }
 

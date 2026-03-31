@@ -111,7 +111,7 @@ export default function LeanCave() {
                 <TrendingUp className="w-6 h-6 text-primary" />
               </div>
               <div>
-                <h3 className="font-bold text-lg">Improvements Report</h3>
+                <h3 className="font-bold text-lg">Improvements & Struggles Report</h3>
                 <p className="text-sm text-muted-foreground mt-0.5">
                   View all team improvement ideas, track their progress, and take action on Kaizen submissions.
                 </p>
