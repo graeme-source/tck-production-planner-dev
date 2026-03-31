@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useListSubRecipes, useListIngredients, useGetSubRecipe } from "@workspace/api-client-react";
 import type { Ingredient, SubRecipeDetail, SubRecipe } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
@@ -952,11 +953,12 @@ export default function SubRecipes() {
   const { data: ingredients } = useListIngredients();
   const { createSubRecipe, deleteSubRecipe } = useAppMutations();
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search);
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [viewingId, setViewingId] = useState<number | null>(null);
 
-  const filtered = subRecipes?.filter(r => r.name.toLowerCase().includes(search.toLowerCase()));
+  const filtered = subRecipes?.filter(r => r.name.toLowerCase().includes(debouncedSearch.toLowerCase()));
 
   const ingredientList: IngredientOption[] = (ingredients ?? []).map(i => ({
     id: i.id,

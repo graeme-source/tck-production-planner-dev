@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useListSuppliers } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
@@ -386,13 +387,14 @@ export default function Suppliers() {
   const { data: suppliers, isLoading } = useListSuppliers();
   const { createSupplier, updateSupplier, deleteSupplier } = useAppMutations();
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search);
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<SupplierItem | null>(null);
 
   const filtered = suppliers?.filter(s =>
-    s.name.toLowerCase().includes(search.toLowerCase()) ||
-    s.contactName?.toLowerCase().includes(search.toLowerCase()) ||
-    s.email?.toLowerCase().includes(search.toLowerCase())
+    s.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+    s.contactName?.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+    s.email?.toLowerCase().includes(debouncedSearch.toLowerCase())
   );
 
   return (

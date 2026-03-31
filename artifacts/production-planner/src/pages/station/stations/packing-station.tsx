@@ -199,7 +199,8 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
             )}
             <button
               onClick={fetchData}
-              className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
+              disabled={loading}
+              className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors disabled:opacity-50 disabled:pointer-events-none"
               title="Refresh"
             >
               <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />

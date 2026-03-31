@@ -84,25 +84,34 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
     }
   }, [recipes, selectedRecipeId]);
 
+  const [trayPending, setTrayPending] = useState<string | null>(null);
+
   const toggleTray = async (ingredientId: number, recipeId: number, trayNum: number) => {
     if (isOnBreak) return;
-    const existing = getCompletion(ingredientId, recipeId, trayNum);
-    if (existing) {
-      await fetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
-        method: "DELETE",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ingredientId, recipeId, tinNumber: trayNum }),
-      });
-    } else {
-      await fetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ingredientId, recipeId, tinNumber: trayNum }),
-      });
+    const pendingKey = `${ingredientId}-${recipeId}-${trayNum}`;
+    if (trayPending === pendingKey) return;
+    setTrayPending(pendingKey);
+    try {
+      const existing = getCompletion(ingredientId, recipeId, trayNum);
+      if (existing) {
+        await fetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
+          method: "DELETE",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ingredientId, recipeId, tinNumber: trayNum }),
+        });
+      } else {
+        await fetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ingredientId, recipeId, tinNumber: trayNum }),
+        });
+      }
+      refetch();
+    } finally {
+      setTrayPending(null);
     }
-    refetch();
   };
 
   if (isLoading) {
@@ -410,7 +419,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                               <button
                                 key={tn}
                                 onClick={() => toggleTray(ing.ingredientId, selected.recipeId, tn)}
-                                disabled={isOnBreak}
+                                disabled={isOnBreak || trayPending === `${ing.ingredientId}-${selected.recipeId}-${tn}`}
                                 className={cn(
                                   "relative flex flex-col items-center border-2 rounded-2xl px-3 py-3.5 transition-all active:scale-95",
                                   isOnBreak ? "opacity-50 cursor-not-allowed" : "",

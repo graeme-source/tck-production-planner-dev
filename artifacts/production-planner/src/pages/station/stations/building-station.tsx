@@ -167,7 +167,9 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
           const data = await res.json();
           setPaceData(data.pace ?? {});
         }
-      } catch {}
+      } catch (err) {
+        console.warn("[BuildingStation] Failed to fetch pace data:", err);
+      }
     };
     fetchPace();
     const interval = setInterval(fetchPace, 5000);
@@ -187,7 +189,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
           setAssemblyMap(map);
         }
       })
-      .catch(() => {});
+      .catch((err) => { console.warn("[BuildingStation] Assembly data fetch failed:", err); });
   }, [plan.id]);
 
   const handleAssemblyDragEnd = useCallback(async (event: DragEndEvent, itemId: number) => {
@@ -216,7 +218,8 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
           if (!r.ok) throw new Error("Save failed");
           toast({ title: "Assembly order saved" });
         })
-        .catch(() => {
+        .catch((err) => {
+          console.warn("[BuildingStation] Assembly order save failed:", err);
           toast({ title: "Failed to save order", variant: "destructive" });
         });
       return { ...prev, [itemId]: { ...asm, assemblyItems: reordered } };
@@ -242,11 +245,11 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     fetch(`/api/production-plans/${plan.id}/mozzarella-load`, { credentials: "include" })
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d) setMozzLoad(d); })
-      .catch(() => {});
+      .catch((err) => { console.warn("[BuildingStation] Mozz load fetch failed:", err); });
     fetch(`/api/app-settings/${MOZZ_KEY}`, { credentials: "include" })
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d?.value === "true") setMozzConfirmed(true); })
-      .catch(() => {});
+      .catch((err) => { console.warn("[BuildingStation] Mozz setting fetch failed:", err); });
   }, [plan.id]);
   const confirmMozz = async () => {
     setMozzConfirmed(true);
@@ -254,7 +257,9 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
       method: "PUT", credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value: "true" }),
-    }).catch(() => {});
+    }).catch((err) => {
+      console.warn("[BuildingStation] Failed to save mozz confirmation:", err);
+    });
   };
   const unconfirmMozz = async () => {
     setMozzConfirmed(false);
@@ -262,7 +267,9 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
       method: "PUT", credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value: "false" }),
-    }).catch(() => {});
+    }).catch((err) => {
+      console.warn("[BuildingStation] Failed to save mozz unconfirmation:", err);
+    });
   };
 
   function getCombinedBuildCount(it: ProductionPlanItem) {
@@ -304,7 +311,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
         }
         setChecklistLoadedForItem(currentItem.id);
       })
-      .catch(() => setChecklistLoadedForItem(currentItem.id));
+      .catch((err) => { console.warn("[BuildingStation] Checklist setting fetch failed:", err); setChecklistLoadedForItem(currentItem.id); });
   }, [currentItem?.id, stationType]);
 
   useEffect(() => {
@@ -331,7 +338,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
         method: "PUT", credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ value: "true" }),
-      }).catch(() => {});
+      }).catch((err) => { console.warn("[BuildingStation] Checklist lock save failed:", err); });
     }
   }, [checkedItems, currentItem?.id, assemblyMap, checklistLockedForItem]);
 
@@ -691,7 +698,8 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
               {buildingCount > 0 && !isOnBreak && (
                 <button
                   onClick={handleUndo}
-                  className="mt-1.5 w-full py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg transition-colors"
+                  disabled={pendingTap}
+                  className="mt-1.5 w-full py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Undo
                 </button>

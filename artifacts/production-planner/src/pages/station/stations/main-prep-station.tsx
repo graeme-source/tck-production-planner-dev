@@ -131,7 +131,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
           });
         }
       })
-      .catch(() => {});
+      .catch((err) => { console.warn("[MainPrep] Stock checks fetch failed:", err); });
   }, [checkDate]);
 
   useEffect(() => {
@@ -146,7 +146,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
       method: "POST", credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ingredientId }),
-    }).catch(() => {});
+    }).catch((err) => { console.warn("[MainPrep] Presence post failed:", err); });
   }, [targetPlanId]);
 
   // Poll presence every 10s
@@ -155,7 +155,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
       fetch(`/api/production-plans/${targetPlanId}/prep-presence`, { credentials: "include" })
         .then(r => r.ok ? r.json() : null)
         .then(d => { if (d) setPresenceData(d); })
-        .catch(() => {});
+        .catch((err) => { console.warn("[MainPrep] Presence poll failed:", err); });
     };
     poll();
     const interval = setInterval(poll, 10_000);
@@ -310,7 +310,8 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
       dirtyStockIds.current.delete(ingredientId);
       toast({ title: "Stock check saved" });
       refetch();
-    } catch {
+    } catch (err) {
+      console.warn("[MainPrep] Stock check save failed:", err);
       toast({ title: "Failed to save stock check", variant: "destructive" });
     } finally {
       setSavingStock(s => ({ ...s, [ingredientId]: false }));
@@ -336,7 +337,8 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
       });
       if (!resp.ok) throw new Error("Transfer failed");
       toast({ title: `Transferred ${qty} ${unit} of ${ingredientName} to Freezer` });
-    } catch {
+    } catch (err) {
+      console.warn("[MainPrep] Freezer transfer failed:", err);
       toast({ title: "Transfer failed", variant: "destructive" });
     } finally {
       setTransferringId(null);

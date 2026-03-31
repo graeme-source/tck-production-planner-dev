@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import {
@@ -144,6 +145,7 @@ export default function Orders() {
 
   const [kanbanSearchOpen, setKanbanSearchOpen] = useState(false);
   const [kanbanSearch, setKanbanSearch] = useState("");
+  const debouncedKanbanSearch = useDebouncedValue(kanbanSearch);
   const [selectedKanbanIds, setSelectedKanbanIds] = useState<Set<number>>(new Set());
   const [addedKanbanIngredientIds, setAddedKanbanIngredientIds] = useState<Set<number>>(new Set());
   const [kanbanOnlySupplierInfo, setKanbanOnlySupplierInfo] = useState<Record<number, { id: number; name: string }>>({});
@@ -209,10 +211,10 @@ export default function Orders() {
     enabled: kanbanSearchOpen,
   });
 
-  const filteredKanbanIngredients = kanbanSearch.trim()
+  const filteredKanbanIngredients = debouncedKanbanSearch.trim()
     ? kanbanIngredients.filter(k =>
-        (k.ingredientName ?? "").toLowerCase().includes(kanbanSearch.toLowerCase()) ||
-        (k.supplierName ?? "").toLowerCase().includes(kanbanSearch.toLowerCase())
+        (k.ingredientName ?? "").toLowerCase().includes(debouncedKanbanSearch.toLowerCase()) ||
+        (k.supplierName ?? "").toLowerCase().includes(debouncedKanbanSearch.toLowerCase())
       )
     : kanbanIngredients;
 

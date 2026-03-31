@@ -106,17 +106,17 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     fetch(`/api/app-settings/${extraTicksKey}`, { credentials: "include" })
       .then(r => r.ok ? r.json() : null)
       .then(d => {
-        if (d?.value) { try { setExtraTicks(JSON.parse(d.value)); } catch { /* ignore */ } }
+        if (d?.value) { try { setExtraTicks(JSON.parse(d.value)); } catch (err) { console.warn("[DoughPrep] Extra ticks parse failed:", err); } }
         setExtraTicksLoaded(true);
       })
-      .catch(() => setExtraTicksLoaded(true));
+      .catch((err) => { console.warn("[DoughPrep] Extra ticks fetch failed:", err); setExtraTicksLoaded(true); });
   }, [extraTicksKey]);
   const saveExtraTicks = (updated: Record<string, boolean>) => {
     fetch(`/api/app-settings/${extraTicksKey}`, {
       method: "PUT", credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value: JSON.stringify(updated) }),
-    }).catch(() => {});
+    }).catch((err) => { console.warn("[DoughPrep] Extra ticks save failed:", err); });
   };
   const toggleExtraTick = (key: string) => {
     const updated = { ...extraTicks, [key]: !extraTicks[key] };
@@ -437,7 +437,7 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                   </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); addBalls(BALLS_PER_TRAY); }}
-                    disabled={isOnBreak}
+                    disabled={isOnBreak || createBatch.isPending}
                     className={cn(
                       "h-10 px-5 rounded-xl text-sm font-bold transition-all",
                       isOnBreak
@@ -466,7 +466,7 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                       </button>
                       <button
                         onClick={(e) => { e.stopPropagation(); addBalls(1); }}
-                        disabled={isOnBreak}
+                        disabled={isOnBreak || createBatch.isPending}
                         className="h-8 px-3 rounded-lg text-xs font-semibold border border-border bg-background hover:bg-secondary/60 disabled:opacity-50 transition-all"
                       >
                         + 1 Ball
@@ -551,6 +551,7 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
             undoBall={undoBall}
             removeBalls={removeBalls}
             removingBalls={removingBalls}
+            batchPending={createBatch.isPending}
             getBallAllocation={getBallAllocation}
             isOnBreak={isOnBreak}
             traysDone={traysDone}
@@ -778,7 +779,7 @@ function DoughMixingView({
 
 function DoughBallingView({
   doughData, ballCount, totalBallsNeeded, allBallingDone,
-  addBalls, undoBall, removeBalls, removingBalls, getBallAllocation, isOnBreak,
+  addBalls, undoBall, removeBalls, removingBalls, batchPending, getBallAllocation, isOnBreak,
   traysDone, totalTraysNeeded, ballsPerTray,
   extraTicks, ticksLoaded, toggleTick,
 }: {
@@ -790,6 +791,7 @@ function DoughBallingView({
   undoBall: () => void;
   removeBalls: (n: number) => void;
   removingBalls: boolean;
+  batchPending: boolean;
   getBallAllocation: () => Array<{ recipeId: number; recipeName: string; ballCount: number; ballWeightG: number; portionsPerBatch: number; ballsDone: number }>;
   isOnBreak: boolean;
   traysDone: number;
@@ -889,7 +891,7 @@ function DoughBallingView({
               </button>
               <button
                 onClick={() => addBalls(ballsPerTray)}
-                disabled={isOnBreak}
+                disabled={isOnBreak || batchPending}
                 className={cn(
                   "h-16 px-8 rounded-2xl text-lg font-bold transition-all shadow-lg",
                   isOnBreak
@@ -916,7 +918,7 @@ function DoughBallingView({
                 </button>
                 <button
                   onClick={() => addBalls(1)}
-                  disabled={isOnBreak}
+                  disabled={isOnBreak || batchPending}
                   className={cn(
                     "h-12 px-5 rounded-xl text-base font-bold border transition-all",
                     isOnBreak

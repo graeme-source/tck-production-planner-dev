@@ -111,14 +111,19 @@ export function MixingStation({ plan }: MixingStationProps) {
           return merged;
         });
       })
-      .catch(() => {});
+      .catch((err) => { console.warn("[MixingStation] Oven events fetch failed:", err); });
   }, [plan.id]);
+
+  const [trayPending, setTrayPending] = useState<string | null>(null);
 
   const advanceTray = async (
     recipeId: number, recipeName: string,
     ingredientId: number, ingredientName: string,
     trayIdx: number, planId: number, planName: string,
   ) => {
+    const pendingKey = `${recipeId}-${ingredientId}-${trayIdx}`;
+    if (trayPending === pendingKey) return;
+    setTrayPending(pendingKey);
     const key = `${recipeId}-${ingredientId}`;
     const cur = (trayStates[key]?.[trayIdx] ?? 0) as 0 | 1 | 2;
     let next: 0 | 1 | 2;
@@ -157,9 +162,11 @@ export function MixingStation({ plan }: MixingStationProps) {
         });
         setOvenEvents(prev => prev.filter(e => !(e.recipeId === recipeId && e.ingredientId === ingredientId && e.trayIndex === trayIdx)));
       }
-    } catch {
-      // Revert on error
+    } catch (err) {
+      console.warn("[MixingStation] Tray advance failed, reverting:", err);
       setTrayStates(prev => ({ ...prev, [key]: { ...prev[key], [trayIdx]: cur } }));
+    } finally {
+      setTrayPending(null);
     }
   };
 
@@ -195,7 +202,8 @@ export function MixingStation({ plan }: MixingStationProps) {
         }),
       });
       toast({ title: "Temperature recorded", description: `${c}°C saved for tray ${tempPrompt.trayIdx + 1}` });
-    } catch {
+    } catch (err) {
+      console.warn("[MixingStation] Temperature save failed:", err);
       toast({ title: "Failed to save temperature", variant: "destructive" });
     } finally {
       setTempSaving(false);
@@ -208,12 +216,12 @@ export function MixingStation({ plan }: MixingStationProps) {
     fetch(`/api/production-plans/${plan.id}/prep-requirements-by-recipe?station=prep_meat`, { credentials: "include" })
       .then(r => r.json())
       .then((d: { recipes?: PrepRecipeDetail[] }) => setCookingRecipes(d.recipes ?? []))
-      .catch(() => {});
+      .catch((err) => { console.warn("[MixingStation] Cooking recipes fetch failed:", err); });
     const interval = setInterval(() => {
       fetch(`/api/production-plans/${plan.id}/prep-requirements-by-recipe?station=prep_meat`, { credentials: "include" })
         .then(r => r.json())
         .then((d: { recipes?: PrepRecipeDetail[] }) => setCookingRecipes(d.recipes ?? []))
-        .catch(() => {});
+        .catch((err) => { console.warn("[MixingStation] Cooking recipes poll failed:", err); });
     }, 10000);
     return () => clearInterval(interval);
   }, [plan.id]);
@@ -223,7 +231,7 @@ export function MixingStation({ plan }: MixingStationProps) {
     fetch(`/api/production-plans/${plan.id}/filling-mix`, { credentials: "include" })
       .then(r => r.json())
       .then(d => setFillingData(d.items ?? []))
-      .catch(() => {});
+      .catch((err) => { console.warn("[MixingStation] Filling data fetch failed:", err); });
   }, [plan.id]);
 
   const updateOrder = useUpdateProductionPlanOrder({
@@ -284,13 +292,16 @@ export function MixingStation({ plan }: MixingStationProps) {
     return { tinsTarget, tinsComplete, batchesPerTinEven, mixed, target, allDone: false };
   };
 
+  const [tinPending, setTinPending] = useState(false);
+
   const addTin = async (item: ProductionPlanItem): Promise<boolean> => {
-    if (isOnBreak) return false;
+    if (isOnBreak || tinPending) return false;
+    setTinPending(true);
     const { tinsComplete, batchesPerTinEven, mixed, target, allDone } = getTinInfo(item);
-    if (allDone) return false;
+    if (allDone) { setTinPending(false); return false; }
     const batchesAfterNextTin = Math.min((tinsComplete + 1) * batchesPerTinEven, target);
     const batchesToAdd = batchesAfterNextTin - mixed;
-    if (batchesToAdd <= 0) return false;
+    if (batchesToAdd <= 0) { setTinPending(false); return false; }
     try {
       await withRetry(async () => {
         const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
@@ -311,16 +322,19 @@ export function MixingStation({ plan }: MixingStationProps) {
     } catch (err) {
       toast({ title: "Could not complete tin", description: err instanceof Error ? err.message : "Please try again.", variant: "destructive" });
       return false;
+    } finally {
+      setTinPending(false);
     }
   };
 
   const undoTin = async (item: ProductionPlanItem) => {
-    if (isOnBreak) return;
+    if (isOnBreak || tinPending) return;
+    setTinPending(true);
     const { tinsComplete, batchesPerTinEven, mixed } = getTinInfo(item);
-    if (tinsComplete === 0 && mixed === 0) return;
+    if (tinsComplete === 0 && mixed === 0) { setTinPending(false); return; }
     const prevTinThreshold = Math.max((tinsComplete - 1) * batchesPerTinEven, 0);
     const batchesToRemove = mixed - prevTinThreshold;
-    if (batchesToRemove <= 0) return;
+    if (batchesToRemove <= 0) { setTinPending(false); return; }
     try {
       await withRetry(async () => {
         const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
@@ -339,6 +353,8 @@ export function MixingStation({ plan }: MixingStationProps) {
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
     } catch (err) {
       toast({ title: "Undo failed", description: err instanceof Error ? err.message : "Could not undo tin. Please try again.", variant: "destructive" });
+    } finally {
+      setTinPending(false);
     }
   };
 
@@ -651,8 +667,9 @@ export function MixingStation({ plan }: MixingStationProps) {
                                       {/* Top — state: tap to advance empty → in oven → done */}
                                       <button
                                         onClick={() => advanceTray(recipe.recipeId, recipe.recipeName, ing.ingredientId, ing.ingredientName, idx, plan.id, plan.name ?? "")}
+                                        disabled={trayPending === `${recipe.recipeId}-${ing.ingredientId}-${idx}`}
                                         className={cn(
-                                          "flex flex-col items-center justify-center py-3 font-semibold text-base w-full",
+                                          "flex flex-col items-center justify-center py-3 font-semibold text-base w-full disabled:opacity-50 disabled:pointer-events-none",
                                           st === 2 ? "bg-green-500 text-white"
                                           : st === 1 ? "bg-orange-500 text-white"
                                           : "bg-card text-muted-foreground hover:text-foreground"
@@ -776,6 +793,7 @@ export function MixingStation({ plan }: MixingStationProps) {
                     onActivate={() => activateItem(item.id)}
                     onAdd={() => addTin(item)}
                     onRemove={() => undoTin(item)}
+                    tinPending={tinPending}
                     filling={filling ?? null}
                     checkedIngredients={checkedIngredients}
                     onToggleIngredient={(key) => toggleIngredient(item.id, key)}
@@ -813,6 +831,7 @@ interface MixingOverviewRowProps {
   onActivate: () => void;
   onAdd: () => void;
   onRemove: () => void;
+  tinPending: boolean;
   filling: FillingMixItem | null;
   checkedIngredients: Record<string, boolean>;
   onToggleIngredient: (key: string) => void;
@@ -821,7 +840,7 @@ interface MixingOverviewRowProps {
   onAutoComplete: () => void;
 }
 
-function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFillingItems, tinsComplete, tinsTarget, allTinsDone, progress, mixingCount, target, batchesPerTinEven, isOnBreak, isAdmin, onActivate, onAdd, onRemove, filling, checkedIngredients, onToggleIngredient, completing, completeFailed, onAutoComplete }: MixingOverviewRowProps) {
+function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFillingItems, tinsComplete, tinsTarget, allTinsDone, progress, mixingCount, target, batchesPerTinEven, isOnBreak, isAdmin, onActivate, onAdd, onRemove, tinPending, filling, checkedIngredients, onToggleIngredient, completing, completeFailed, onAutoComplete }: MixingOverviewRowProps) {
   const {
     attributes, listeners, setNodeRef,
     transform, transition, isDragging,
@@ -916,7 +935,7 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={onRemove}
-              disabled={tinsComplete === 0 || isOnBreak}
+              disabled={tinsComplete === 0 || isOnBreak || tinPending}
               className="w-11 h-11 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
             >
               <Minus className="w-5 h-5" />
@@ -927,7 +946,7 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
             </div>
             <button
               onClick={onAdd}
-              disabled={(allTinsDone && !isAdmin) || isOnBreak}
+              disabled={(allTinsDone && !isAdmin) || isOnBreak || tinPending}
               className={cn(
                 "w-11 h-11 flex items-center justify-center rounded-full transition-colors",
                 isOnBreak

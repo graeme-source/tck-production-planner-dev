@@ -1,4 +1,5 @@
 import { useState, useRef, useMemo } from "react";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useListIngredients, useListSuppliers } from "@workspace/api-client-react";
 import type { Ingredient } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
@@ -1010,6 +1011,7 @@ export default function Inventory() {
   const queryClient = useQueryClient();
 
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search);
   const [filterCategory, setFilterCategory] = useState("all");
   const [filterUsage, setFilterUsage] = useState<"all" | "used" | "unused">("all");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -1028,8 +1030,8 @@ export default function Inventory() {
   const filtered = useMemo(() => {
     return tabItems.filter(i => {
       const matchesSearch =
-        i.name.toLowerCase().includes(search.toLowerCase()) ||
-        (i.brand ?? "").toLowerCase().includes(search.toLowerCase());
+        i.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+        (i.brand ?? "").toLowerCase().includes(debouncedSearch.toLowerCase());
       const matchesCategory =
         filterCategory === "all" ||
         (filterCategory === "uncategorised" ? !i.category : i.category === filterCategory);
@@ -1040,7 +1042,7 @@ export default function Inventory() {
         (filterUsage === "used" ? totalUsage > 0 : totalUsage === 0);
       return matchesSearch && matchesCategory && matchesUsage;
     });
-  }, [tabItems, search, filterCategory, filterUsage]);
+  }, [tabItems, debouncedSearch, filterCategory, filterUsage]);
 
   const supplierMap = Object.fromEntries((suppliers ?? []).map(s => [s.id, s.name]));
   const categoryOptions = activeTab === "ingredients" ? INGREDIENT_CATEGORIES : SUPPLY_CATEGORIES;

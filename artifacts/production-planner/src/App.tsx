@@ -1,12 +1,14 @@
 import React from "react";
 import { Switch, Route, Router as WouterRouter, Redirect, useLocation } from "wouter";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, MutationCache, QueryCache } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { Layout } from "@/components/layout";
 import { PinSetupModal } from "@/components/pin-setup-modal";
+import { AppErrorBoundary } from "@/components/error-boundary";
+import { NetworkStatusBanner } from "@/components/network-status-banner";
 import Dashboard from "@/pages/dashboard";
 import Ingredients from "@/pages/ingredients";
 import Inventory from "@/pages/inventory";
@@ -37,8 +39,47 @@ import ForgotPassword from "@/pages/forgot-password";
 import ResetPassword from "@/pages/reset-password";
 import { Loader2 } from "lucide-react";
 import { PinLockOverlay } from "@/components/pin-lock-overlay";
+import { toast } from "@/hooks/use-toast";
 
-const queryClient = new QueryClient();
+function isApiError(error: unknown): error is { status: number; message: string } {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "status" in error &&
+    typeof (error as Record<string, unknown>).status === "number"
+  );
+}
+
+function shouldRetry(failureCount: number, error: unknown): boolean {
+  if (isApiError(error) && error.status >= 400 && error.status < 500) return false;
+  return failureCount < 2;
+}
+
+const queryClient = new QueryClient({
+  queryCache: new QueryCache({
+    onError: (error) => {
+      if (isApiError(error) && error.status === 401) return;
+      console.error("[QueryCache] Query error:", error);
+    },
+  }),
+  mutationCache: new MutationCache({
+    onError: (error) => {
+      if (isApiError(error) && error.status === 401) return;
+      console.error("[MutationCache] Mutation error:", error);
+    },
+  }),
+  defaultOptions: {
+    queries: {
+      retry: shouldRetry,
+      staleTime: 30_000,
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: "always",
+    },
+    mutations: {
+      retry: false,
+    },
+  },
+});
 
 const PUBLIC_PATHS = ["/accept-invite", "/forgot-password", "/reset-password"];
 
@@ -144,16 +185,19 @@ function AuthGate() {
 
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <AuthProvider>
-          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-            <AuthGate />
-          </WouterRouter>
-        </AuthProvider>
-        <Toaster />
-      </TooltipProvider>
-    </QueryClientProvider>
+    <AppErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <AuthProvider>
+            <NetworkStatusBanner />
+            <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+              <AuthGate />
+            </WouterRouter>
+          </AuthProvider>
+          <Toaster />
+        </TooltipProvider>
+      </QueryClientProvider>
+    </AppErrorBoundary>
   );
 }
 

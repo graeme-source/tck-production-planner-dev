@@ -58,7 +58,7 @@ export default function StationPage() {
   const planId = Number(params.planId);
   const stationType = params.stationType as StationType;
 
-  const { data: plan, isLoading } = useGetProductionPlan(planId, {
+  const { data: plan, isLoading, error, refetch } = useGetProductionPlan(planId, {
     query: {
       queryKey: getGetProductionPlanQueryKey(planId),
       refetchInterval: 5000,
@@ -67,6 +67,8 @@ export default function StationPage() {
   }) as {
     data: ProductionPlanDetail | undefined;
     isLoading: boolean;
+    error: Error | null;
+    refetch: () => void;
   };
 
   if (isNaN(planId)) {
@@ -78,6 +80,25 @@ export default function StationPage() {
       <div className="flex items-center justify-center min-h-screen text-muted-foreground">
         <Loader2 className="w-6 h-6 animate-spin mr-2" />
         Loading...
+      </div>
+    );
+  }
+
+  if (error && !plan) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen gap-4 text-center px-4">
+        <AlertTriangle className="w-10 h-10 text-amber-500" />
+        <h2 className="text-lg font-semibold">Failed to load production plan</h2>
+        <p className="text-sm text-muted-foreground max-w-md">
+          {error.message || "Could not connect to the server. Check your network connection."}
+        </p>
+        <button
+          onClick={() => refetch()}
+          className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors"
+        >
+          <RotateCw className="w-4 h-4" />
+          Retry
+        </button>
       </div>
     );
   }

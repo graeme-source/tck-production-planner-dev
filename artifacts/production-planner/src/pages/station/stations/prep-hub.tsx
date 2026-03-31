@@ -420,7 +420,7 @@ export function PrepHub({ planId, planDate }: { planId: number; planDate?: strin
                     try {
                       const d = parseISO(nextPlan.planDate);
                       return `For production on ${format(d, "EEEE d MMM")}`;
-                    } catch { return nextPlan.planDate; }
+                    } catch (err) { console.warn("[PrepHub] Date parse failed:", err); return nextPlan.planDate; }
                   })()
                 : "No upcoming production plan";
             return (

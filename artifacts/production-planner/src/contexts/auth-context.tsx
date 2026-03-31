@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { addDeviceUserId } from "@/lib/device-users";
+import { toast } from "@/hooks/use-toast";
 
 export type AuthUser = {
   id: number;
@@ -35,8 +36,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [pinLocked, setPinLocked] = useState(false);
 
   const consecutiveFailsRef = useRef(0);
+  const offlineToastedRef = useRef(false);
 
   const checkSession = useCallback(async (isPeriodicRefresh = false) => {
+    const BACKOFFS = [1000, 2000, 4000];
+    const MAX_FAILS = 6;
+
+    const handleRetryOrFallback = async () => {
+      const retryIndex = consecutiveFailsRef.current;
+      if (retryIndex < BACKOFFS.length) {
+        const delay = BACKOFFS[retryIndex];
+        await new Promise(r => setTimeout(r, delay));
+        consecutiveFailsRef.current++;
+        return checkSession(isPeriodicRefresh);
+      }
+      consecutiveFailsRef.current++;
+      if (consecutiveFailsRef.current >= MAX_FAILS) {
+        console.warn(`[Auth] ${MAX_FAILS} consecutive failures — keeping current session, will retry on next poll`);
+        consecutiveFailsRef.current = 0;
+      }
+    };
+
     try {
       const res = await fetch("/api/auth/me", { credentials: "include" });
       if (res.ok) {
@@ -51,18 +71,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setState({ status: "unauthenticated" });
         setPinLocked(false);
       } else {
-        consecutiveFailsRef.current++;
-        if (!isPeriodicRefresh && consecutiveFailsRef.current >= 3) {
-          setState({ status: "unauthenticated" });
-          setPinLocked(false);
+        console.warn(`[Auth] Session check returned ${res.status}`);
+        await handleRetryOrFallback();
+      }
+    } catch (err) {
+      const isOffline = !navigator.onLine;
+      if (isOffline) {
+        console.warn("[Auth] Network offline, keeping current session");
+        if (!offlineToastedRef.current) {
+          offlineToastedRef.current = true;
+          toast({ title: "You appear to be offline", description: "Session will refresh when connection returns.", variant: "destructive" });
         }
+        return;
       }
-    } catch {
-      consecutiveFailsRef.current++;
-      if (!isPeriodicRefresh && consecutiveFailsRef.current >= 3) {
-        setState({ status: "unauthenticated" });
-        setPinLocked(false);
-      }
+      offlineToastedRef.current = false;
+      console.warn("[Auth] Session check network error:", err);
+      await handleRetryOrFallback();
     }
   }, []);
 
@@ -94,7 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         hiddenAtRef.current = null;
         if (state.status === "authenticated" && state.user.hasPin && !pinLocked) {
           setPinLocked(true);
-          fetch("/api/auth/pin/lock", { method: "POST", credentials: "include" }).catch(() => {});
+          fetch("/api/auth/pin/lock", { method: "POST", credentials: "include" }).catch((err) => { console.warn("[Auth] Pin lock failed:", err); });
         }
       }
     };
@@ -123,7 +147,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       const data = await res.json().catch(() => ({}));
       return { error: data.error ?? "Login failed" };
-    } catch {
+    } catch (err) {
+      console.warn("[Auth] Login network error:", err);
       return { error: "Network error — please try again" };
     }
   }, []);
@@ -150,7 +175,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         lockedUntil: data.lockedUntil,
         remainingSeconds: data.remainingSeconds,
       };
-    } catch {
+    } catch (err) {
+      console.warn("[Auth] PIN login network error:", err);
       return { error: "Network error — please try again" };
     }
   }, []);
@@ -177,7 +203,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         lockedUntil: data.lockedUntil,
         remainingSeconds: data.remainingSeconds,
       };
-    } catch {
+    } catch (err) {
+      console.warn("[Auth] PIN verify network error:", err);
       return { error: "Network error — please try again" };
     }
   }, []);
@@ -195,8 +222,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!res.ok) {
         console.warn("Lock station: server returned non-OK, locking UI anyway");
       }
-    } catch {
-      console.warn("Lock station: network error, locking UI anyway");
+    } catch (err) {
+      console.warn("[Auth] Lock station: network error, locking UI anyway:", err);
     }
     setPinLocked(true);
   }, []);

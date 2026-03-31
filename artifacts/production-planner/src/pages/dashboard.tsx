@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useListProductionPlans, useListDispatchOrders, useGetProductionPlan } from "@workspace/api-client-react";
+import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { format, isToday, startOfWeek, addWeeks } from "date-fns";
@@ -41,11 +42,13 @@ function AndonBanner({ userRole }: { userRole?: string }) {
   const [issues, setIssues] = useState<AndonIssueSummary[]>([]);
   const [acknowledging, setAcknowledging] = useState<number | null>(null);
 
+  const hasToastedRef = React.useRef(false);
   async function fetchIssues() {
     try {
       const res = await fetch(`${BASE}/api/andon?open=true`, { credentials: "include" });
       if (!res.ok) return;
       const all: AndonIssueSummary[] = await res.json();
+      hasToastedRef.current = false;
       const unacked = all.filter((i) => !i.acknowledgedAt);
       unacked.sort((a, b) => {
         if (a.severity === "red" && b.severity !== "red") return -1;
@@ -53,7 +56,13 @@ function AndonBanner({ userRole }: { userRole?: string }) {
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       });
       setIssues(unacked);
-    } catch {}
+    } catch (err) {
+      console.warn("[AndonBanner] Failed to fetch issues:", err);
+      if (!hasToastedRef.current) {
+        hasToastedRef.current = true;
+        toast({ title: "Failed to load issues", description: "Could not fetch active issues.", variant: "destructive" });
+      }
+    }
   }
 
   useEffect(() => {
@@ -67,7 +76,10 @@ function AndonBanner({ userRole }: { userRole?: string }) {
     try {
       await fetch(`${BASE}/api/andon/${id}/acknowledge`, { method: "PATCH", credentials: "include" });
       await fetchIssues();
-    } catch {}
+    } catch (err) {
+      console.warn("[AndonBanner] Failed to acknowledge issue:", err);
+      toast({ title: "Acknowledge failed", description: "Could not acknowledge the issue. Please try again.", variant: "destructive" });
+    }
     setAcknowledging(null);
   }
 

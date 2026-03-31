@@ -60,7 +60,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
           setPostOvenMap(map);
         }
       })
-      .catch(() => {});
+      .catch((err) => { console.warn("[WrappingStation] Post-oven map fetch failed:", err); });
   }, [plan.id]);
 
   const addWonly = async (item: ProductionPlanItem) => {
@@ -70,7 +70,8 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
         method: "POST", credentials: "include",
       });
       await queryClient.invalidateQueries({ queryKey: [`/api/production-plans/${plan.id}`] });
-    } catch {
+    } catch (err) {
+      console.warn("[WrappingStation] Add wonly failed:", err);
     } finally {
       setWonlyLoading(null);
     }
@@ -84,7 +85,8 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
         method: "DELETE", credentials: "include",
       });
       await queryClient.invalidateQueries({ queryKey: [`/api/production-plans/${plan.id}`] });
-    } catch {
+    } catch (err) {
+      console.warn("[WrappingStation] Remove wonly failed:", err);
     } finally {
       setWonlyLoading(null);
     }
@@ -144,7 +146,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
         }
         setShopifyMappings(map);
       })
-      .catch(() => {});
+      .catch((err) => { console.warn("[WrappingStation] Shopify mappings fetch failed:", err); });
   }, []);
 
   const sendWrappingComplete = async (item: ProductionPlanItem, complete: boolean) => {
@@ -225,7 +227,9 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
           throw new Error(msg);
         }
       });
-    } catch {}
+    } catch (err) {
+      console.warn("[WrappingStation] Failed to toggle wrapping:", err);
+    }
   };
 
   const addToStorage = async (item: ProductionPlanItem, qty: number, storageKey: string) => {

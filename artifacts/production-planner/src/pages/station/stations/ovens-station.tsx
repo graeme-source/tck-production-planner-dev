@@ -50,8 +50,11 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
     createBatch.mutate({ id: plan.id, data: { planItemId: item.id, stationType: "ovens", completedAt: new Date().toISOString() } });
   };
 
+  const [removePending, setRemovePending] = useState(false);
+
   const removeBatch = async (item: ProductionPlanItem) => {
-    if (isOnBreak || getStationCount(item, "ovens") === 0) return;
+    if (isOnBreak || removePending || getStationCount(item, "ovens") === 0) return;
+    setRemovePending(true);
     try {
       const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
         method: "DELETE",
@@ -63,6 +66,8 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
     } catch (err) {
       toast({ title: "Undo failed", description: err instanceof Error ? err.message : "Could not undo batch. Please try again.", variant: "destructive" });
+    } finally {
+      setRemovePending(false);
     }
   };
 
@@ -191,7 +196,7 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
           <div className="flex items-center justify-center gap-6 my-5">
             <button
               onClick={() => removeBatch(currentItem)}
-              disabled={getStationCount(currentItem, "ovens") === 0 || isOnBreak}
+              disabled={getStationCount(currentItem, "ovens") === 0 || isOnBreak || createBatch.isPending || removePending}
               className="w-14 h-14 flex items-center justify-center rounded-full border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
             >
               <Minus className="w-5 h-5" />
@@ -210,6 +215,7 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
             <button
               onClick={() => addBatch(currentItem)}
               disabled={
+                createBatch.isPending ||
                 (getStationCount(currentItem, "ovens") >= (currentItem.batchesTarget ?? 0) && !isAdmin) ||
                 getAvailableFromPrev(currentItem, "ovens") <= 0 ||
                 isOnBreak

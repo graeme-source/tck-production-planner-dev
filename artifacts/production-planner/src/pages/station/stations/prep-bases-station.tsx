@@ -192,7 +192,7 @@ export function SubRecipeMakeFlow({
         });
         setLoadingDetail(false);
       })
-      .catch(() => setLoadingDetail(false));
+      .catch((err) => { console.warn("[PrepBases] Detail fetch failed:", err); setLoadingDetail(false); });
   }, [state.sr, state.phase]);
 
   const sr = loadedDetail ?? state.sr;
@@ -589,7 +589,7 @@ function usePlanSubRecipeRequirements(planId: number) {
         setData(d.subRecipes ?? []);
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch((err) => { console.warn("[PrepBases] Sub-recipes fetch failed:", err); setLoading(false); });
   }, [planId]);
 
   return { subRecipes: data, loading };

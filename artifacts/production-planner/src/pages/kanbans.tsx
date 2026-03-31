@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useListKanbans, useListIngredients, useListSuppliers } from "@workspace/api-client-react";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
@@ -118,6 +119,7 @@ export default function Kanbans() {
   const { toast } = useToast();
   const canEdit = state.status === "authenticated" && (state.user.role === "admin" || state.user.role === "manager");
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search);
   const [filterStatus, setFilterStatus] = useState("all");
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [newIngredientId, setNewIngredientId] = useState<number>(0);
@@ -306,8 +308,8 @@ export default function Kanbans() {
 
   const filtered = useMemo(() => {
     let items = (kanbans ?? []) as KanbanItemData[];
-    if (search) {
-      const q = search.toLowerCase();
+    if (debouncedSearch) {
+      const q = debouncedSearch.toLowerCase();
       items = items.filter(k =>
         (k.ingredientName ?? "").toLowerCase().includes(q) ||
         (k.supplierName ?? "").toLowerCase().includes(q)
@@ -321,7 +323,7 @@ export default function Kanbans() {
       }
     }
     return items;
-  }, [kanbans, search, filterStatus]);
+  }, [kanbans, debouncedSearch, filterStatus]);
 
   const grouped = useMemo(() => {
     const map = new Map<string, KanbanItemData[]>();
@@ -513,7 +515,8 @@ export default function Kanbans() {
                         )}
                         <button
                           onClick={() => { if (confirm("Delete this kanban?")) deleteMutation.mutate(k.id); }}
-                          className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
+                          disabled={deleteMutation.isPending}
+                          className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors disabled:opacity-50 disabled:pointer-events-none"
                           title="Delete"
                         >
                           <Trash2 className="w-3.5 h-3.5" />

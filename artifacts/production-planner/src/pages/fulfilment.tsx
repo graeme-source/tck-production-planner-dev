@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
+import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
@@ -328,7 +329,8 @@ function printLabel(
     try {
       window.addEventListener("afterprint", handleAfterPrint, { once: true });
       iframe.contentWindow?.print();
-    } catch {
+    } catch (err) {
+      console.warn("[Fulfilment] Print failed:", err);
       settle(false);
     }
   };
@@ -673,8 +675,8 @@ export default function Fulfilment() {
         osc.start(ctx.currentTime);
         osc.stop(ctx.currentTime + 0.15);
         osc.onended = () => ctx.close();
-      } catch {
-        // AudioContext not available; silent fallback
+      } catch (err) {
+        console.warn("[Fulfilment] AudioContext not available:", err);
       }
 
       setCheckedItems(prev => {
@@ -1768,7 +1770,8 @@ export default function Fulfilment() {
             const packingDay = format(addDays(parseISO(queryTag), -1), "EEEE d MMM");
             const deliveryDay = format(parseISO(queryTag), "EEEE d MMM");
             return `Packing ${packingDay} · Delivery ${deliveryDay}`;
-          } catch {
+          } catch (err) {
+            console.warn("[Fulfilment] Date parse failed:", err);
             return `Orders tagged ${queryTag}`;
           }
         })()}
@@ -1894,7 +1897,9 @@ export default function Fulfilment() {
                         refetchProgress();
                         refetchTags();
                         refetchPostcodes();
-                      } catch {
+                      } catch (err) {
+                        console.warn("[Fulfilment] Bulk tag dispatch failed:", err);
+                        toast({ title: "Bulk tagging failed", description: "Please try again.", variant: "destructive" });
                       } finally {
                         setBulkTagging(false);
                       }
@@ -2001,7 +2006,9 @@ export default function Fulfilment() {
                       try {
                         await recheckPostcode(order.id, queryTag);
                         refetchPostcodes();
-                      } catch {
+                      } catch (err) {
+                        console.warn("[Fulfilment] Postcode recheck failed:", err);
+                        toast({ title: "Recheck failed", description: "Could not recheck postcode. Please try again.", variant: "destructive" });
                       } finally {
                         setRecheckingId(null);
                       }

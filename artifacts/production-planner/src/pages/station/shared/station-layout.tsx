@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
+import { toast } from "@/hooks/use-toast";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import { STATIONS, type StationType } from "./constants";
 import {
@@ -27,6 +28,7 @@ interface AndonIssueBadge {
 
 function useAndonBadge(stationKey: string) {
   const [severity, setSeverity] = useState<"green" | "yellow" | "red">("green");
+  const hasToastedRef = React.useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -34,6 +36,7 @@ function useAndonBadge(stationKey: string) {
       try {
         const res = await fetch(`${BASE}/api/andon?open=true&station=${encodeURIComponent(stationKey)}`, { credentials: "include" });
         if (!res.ok || cancelled) return;
+        hasToastedRef.current = false;
         const issues: AndonIssueBadge[] = await res.json();
         if (issues.length === 0) {
           setSeverity("green");
@@ -42,7 +45,13 @@ function useAndonBadge(stationKey: string) {
         } else {
           setSeverity("yellow");
         }
-      } catch {}
+      } catch (err) {
+        console.warn("[AndonBadge] Failed to fetch andon status:", err);
+        if (!hasToastedRef.current) {
+          hasToastedRef.current = true;
+          toast({ title: "Issue status unavailable", description: "Could not load andon status.", variant: "destructive" });
+        }
+      }
     }
     fetchAndon();
     const interval = setInterval(fetchAndon, 30000);

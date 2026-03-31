@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useListStockItems, useListSuppliers } from "@workspace/api-client-react";
 import type { StockItem } from "@workspace/api-client-react";
+import { toast } from "@/hooks/use-toast";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { Search, Plus, Trash2, Edit2, Loader2, ExternalLink, Settings2, X } from "lucide-react";
@@ -30,7 +31,10 @@ function useCategories() {
     try {
       const res = await fetch(`${BASE}/api/stock-items/categories/list`, { credentials: "include" });
       if (res.ok) setCategories(await res.json());
-    } catch {} finally { setLoading(false); }
+    } catch (err) {
+      console.warn("[Supplies] Failed to load categories:", err);
+      toast({ title: "Failed to load categories", description: "Could not fetch supply categories.", variant: "destructive" });
+    } finally { setLoading(false); }
   };
 
   useEffect(() => { fetchCategories(); }, []);

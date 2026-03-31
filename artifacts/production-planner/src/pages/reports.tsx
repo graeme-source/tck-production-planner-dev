@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from "react";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useSearch, useLocation } from "wouter";
+import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, subWeeks, subMonths } from "date-fns";
 import {
@@ -335,7 +337,7 @@ function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: str
     fetch(`${BASE}/api/reports/production-kpis?${params.toString()}`, { credentials: "include" })
       .then(r => { if (!r.ok) throw new Error("Failed"); return r.json(); })
       .then(d => { setData(d); setLoading(false); })
-      .catch(() => { setData(null); setLoading(false); });
+      .catch((err) => { console.warn("[Reports] KPI fetch failed:", err); toast({ title: "Failed to load KPIs", variant: "destructive" }); setData(null); setLoading(false); });
   }, [fromDate, toDate]);
 
   if (loading) {
@@ -635,7 +637,7 @@ function BreaksTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
     fetch(`${BASE}/api/reports/breaks?${params.toString()}`, { credentials: "include" })
       .then(r => { if (!r.ok) throw new Error("Failed"); return r.json(); })
       .then(d => { setData(d); setLoading(false); })
-      .catch(() => { setData(null); setLoading(false); });
+      .catch((err) => { console.warn("[Reports] Breaks fetch failed:", err); toast({ title: "Failed to load break data", variant: "destructive" }); setData(null); setLoading(false); });
   }, [fromDate, toDate]);
 
   if (loading) {
@@ -1296,6 +1298,7 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
   const [filterStation, setFilterStation] = useState("");
   const [filterTier, setFilterTier] = useState("");
   const [filterSearch, setFilterSearch] = useState("");
+  const debouncedFilterSearch = useDebouncedValue(filterSearch);
   const [filterType, setFilterType] = useState("");
 
   const isManager = userRole === "admin" || userRole === "manager";
@@ -1305,7 +1308,10 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
     try {
       const res = await fetch(`${BASE}/api/improvements`, { credentials: "include" });
       if (res.ok) setImprovements(await res.json());
-    } catch {}
+    } catch (err) {
+      console.warn("[Reports] Failed to load improvements:", err);
+      toast({ title: "Failed to load improvements", variant: "destructive" });
+    }
     setLoading(false);
   }
 
@@ -1321,7 +1327,10 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
         body: JSON.stringify({ [field]: value || null }),
       });
       await load();
-    } catch {}
+    } catch (err) {
+      console.warn("[Reports] Failed to update improvement:", err);
+      toast({ title: "Update failed", description: "Could not update improvement.", variant: "destructive" });
+    }
     setUpdating(null);
   }
 
@@ -1340,7 +1349,8 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
       });
       if (!res.ok) throw new Error("Delete failed");
       setImprovements(prev => prev.filter(i => i.id !== id));
-    } catch {
+    } catch (err) {
+      console.warn("[Reports] Delete improvement failed:", err);
       alert("Failed to delete entry");
     }
   }
@@ -1351,8 +1361,8 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
     if (filterStation && imp.station !== filterStation) return false;
     if (filterTier && (imp.approvalTier ?? "") !== filterTier) return false;
     if (filterType && (imp.type ?? "improvement") !== filterType) return false;
-    if (filterSearch) {
-      const q = filterSearch.toLowerCase();
+    if (debouncedFilterSearch) {
+      const q = debouncedFilterSearch.toLowerCase();
       if (!imp.title.toLowerCase().includes(q) && !imp.description.toLowerCase().includes(q)) return false;
     }
     return true;
@@ -1595,7 +1605,10 @@ function AndonLogTab({ userRole }: { userRole: string }) {
       if (severityFilter) params.set("severity", severityFilter);
       const res = await fetch(`${BASE}/api/andon?${params.toString()}`, { credentials: "include" });
       if (res.ok) setIssues(await res.json());
-    } catch {}
+    } catch (err) {
+      console.warn("[Reports] Failed to load andon issues:", err);
+      toast({ title: "Failed to load issues", variant: "destructive" });
+    }
     setLoading(false);
   }
 
@@ -1606,7 +1619,10 @@ function AndonLogTab({ userRole }: { userRole: string }) {
     try {
       await fetch(`${BASE}/api/andon/${id}/acknowledge`, { method: "PATCH", credentials: "include" });
       await load();
-    } catch {}
+    } catch (err) {
+      console.warn("[Reports] Failed to acknowledge issue:", err);
+      toast({ title: "Acknowledge failed", variant: "destructive" });
+    }
     setActioningId(null);
   }
 
@@ -1615,7 +1631,10 @@ function AndonLogTab({ userRole }: { userRole: string }) {
     try {
       await fetch(`${BASE}/api/andon/${id}/resolve`, { method: "PATCH", credentials: "include" });
       await load();
-    } catch {}
+    } catch (err) {
+      console.warn("[Reports] Failed to resolve issue:", err);
+      toast({ title: "Resolve failed", variant: "destructive" });
+    }
     setActioningId(null);
   }
 

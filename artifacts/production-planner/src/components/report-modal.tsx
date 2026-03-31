@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { X, Lightbulb, AlertTriangle, CheckCircle, Loader2, ChevronDown, CircleDot, HandHelping, ScanLine, ArrowDownCircle, Package } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { toast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { QrScanner } from "./qr-scanner";
 
@@ -147,7 +148,8 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
     try {
       const parsed = JSON.parse(raw);
       if (parsed.type && parsed.id) return { type: parsed.type, id: Number(parsed.id) };
-    } catch {}
+    } catch {
+    }
 
     const urlMatch = raw.match(/[?&]type=([\w-]+)&id=(\d+)/);
     if (urlMatch) return { type: urlMatch[1].replace(/-/g, "_"), id: Number(urlMatch[2]) };
@@ -194,7 +196,8 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
       const result: KanbanLookupResult = await res.json();
       setLookupResult(result);
       setScanStep("result");
-    } catch {
+    } catch (err) {
+      console.warn("[ReportModal] Kanban lookup failed:", err);
       setScanStep("error");
       setPullError("Network error. Please check your connection and try again.");
     }
@@ -219,7 +222,8 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
       }
 
       setScanStep("done");
-    } catch {
+    } catch (err) {
+      console.warn("[ReportModal] Kanban pull failed:", err);
       setScanStep("error");
       setPullError("Network error. Please try again.");
     }
@@ -246,7 +250,10 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
         const data = await res.json();
         setRecentImprovements(data.slice(0, 10));
       }
-    } catch {}
+    } catch (err) {
+      console.warn("[ReportModal] Failed to load recent improvements:", err);
+      toast({ title: "Failed to load improvements", description: "Could not fetch recent improvements.", variant: "destructive" });
+    }
     setImpListLoading(false);
   }
 
@@ -272,7 +279,8 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
         loadRecentImprovements();
         setTimeout(() => setImpSuccess(false), 3000);
       }
-    } catch {
+    } catch (err) {
+      console.warn("[ReportModal] Improvement submit failed:", err);
       setImpError("Network error, please try again");
     }
     setImpSubmitting(false);
@@ -300,7 +308,8 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
         loadRecentImprovements();
         setTimeout(() => setStruggleSuccess(false), 3000);
       }
-    } catch {
+    } catch (err) {
+      console.warn("[ReportModal] Struggle submit failed:", err);
       setStruggleError("Network error, please try again");
     }
     setStruggleSubmitting(false);
@@ -330,7 +339,8 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
         setAndonDescription("");
         setTimeout(() => { setAndonSuccess(false); onClose(); }, 2000);
       }
-    } catch {
+    } catch (err) {
+      console.warn("[ReportModal] Andon submit failed:", err);
       setAndonError("Network error, please try again");
     }
     setAndonSubmitting(false);

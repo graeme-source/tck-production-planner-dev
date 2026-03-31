@@ -33,11 +33,11 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (d?.value) {
-          try { setExtraSheetTicks(JSON.parse(d.value)); } catch { /* ignore */ }
+          try { setExtraSheetTicks(JSON.parse(d.value)); } catch (err) { console.warn("[DoughSheeting] Extra sheet ticks parse failed:", err); }
         }
         setExtraSheetLoaded(true);
       })
-      .catch(() => setExtraSheetLoaded(true));
+      .catch((err) => { console.warn("[DoughSheeting] Extra sheet ticks fetch failed:", err); setExtraSheetLoaded(true); });
   }, [extraSheetKey]);
 
   const saveSheetTicks = (updated: Record<string, boolean>) => {
@@ -46,7 +46,7 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value: JSON.stringify(updated) }),
-    }).catch(() => {});
+    }).catch((err) => { console.warn("[DoughSheeting] Extra sheet ticks save failed:", err); });
   };
 
   const toggleSheetTick = (key: string) => {
@@ -102,7 +102,8 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
       });
       if (!res.ok) throw new Error("Failed to undo");
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
-    } catch {
+    } catch (err) {
+      console.warn("[DoughSheeting] Undo failed:", err);
       toast({ title: "Undo failed", variant: "destructive" });
     }
   };
@@ -169,7 +170,7 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
           <div className="flex items-center gap-3">
             <button
               onClick={undoLast}
-              disabled={isOnBreak || totalSheeted === 0}
+              disabled={isOnBreak || totalSheeted === 0 || createBatch.isPending}
               className="flex items-center gap-1.5 px-4 py-3 text-base rounded-xl border border-border text-muted-foreground hover:bg-secondary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               <Minus className="w-4 h-4" />
@@ -177,7 +178,7 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
             </button>
             <button
               onClick={sheetNext}
-              disabled={isOnBreak || !nextItem}
+              disabled={isOnBreak || !nextItem || createBatch.isPending}
               className="flex-1 flex items-center justify-center gap-2 px-6 py-3 text-base rounded-xl bg-primary text-primary-foreground font-semibold hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               <Plus className="w-5 h-5" />
