@@ -242,18 +242,26 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     }
   };
 
-  const removeBalls = (count: number) => {
-    if (isOnBreak || ballCount <= 0) return;
-    let toRemove = Math.min(count, ballCount);
-    for (const item of [...items].reverse()) {
-      if (toRemove <= 0) break;
-      const done = getStationCount(item, "dough_prep");
-      if (done <= 0) continue;
-      const removing = Math.min(toRemove, done);
-      for (let i = 0; i < removing; i++) {
-        removeBatch(item);
+  const [removingBalls, setRemovingBalls] = useState(false);
+  const removeBalls = async (count: number) => {
+    if (isOnBreak || ballCount <= 0 || removingBalls) return;
+    setRemovingBalls(true);
+    try {
+      let toRemove = Math.min(count, ballCount);
+      const alreadyRemoved: Record<number, number> = {};
+      for (const item of [...items].reverse()) {
+        if (toRemove <= 0) break;
+        const done = getStationCount(item, "dough_prep") - (alreadyRemoved[item.id] ?? 0);
+        if (done <= 0) continue;
+        const removing = Math.min(toRemove, done);
+        for (let i = 0; i < removing; i++) {
+          await removeBatch(item);
+          alreadyRemoved[item.id] = (alreadyRemoved[item.id] ?? 0) + 1;
+        }
+        toRemove -= removing;
       }
-      toRemove -= removing;
+    } finally {
+      setRemovingBalls(false);
     }
   };
 
@@ -422,10 +430,10 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                 <div className="flex gap-1.5 items-stretch">
                   <button
                     onClick={(e) => { e.stopPropagation(); removeBalls(BALLS_PER_TRAY); }}
-                    disabled={ballCount < BALLS_PER_TRAY || isOnBreak}
+                    disabled={ballCount < BALLS_PER_TRAY || isOnBreak || removingBalls}
                     className="h-10 px-4 rounded-xl text-sm font-bold transition-all border border-border bg-background hover:bg-secondary/60 disabled:opacity-30"
                   >
-                    − 1 Tray
+                    {removingBalls ? "…" : "− 1 Tray"}
                   </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); addBalls(BALLS_PER_TRAY); }}
@@ -542,6 +550,7 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
             addBalls={addBalls}
             undoBall={undoBall}
             removeBalls={removeBalls}
+            removingBalls={removingBalls}
             getBallAllocation={getBallAllocation}
             isOnBreak={isOnBreak}
             traysDone={traysDone}
@@ -769,7 +778,7 @@ function DoughMixingView({
 
 function DoughBallingView({
   doughData, ballCount, totalBallsNeeded, allBallingDone,
-  addBalls, undoBall, removeBalls, getBallAllocation, isOnBreak,
+  addBalls, undoBall, removeBalls, removingBalls, getBallAllocation, isOnBreak,
   traysDone, totalTraysNeeded, ballsPerTray,
   extraTicks, ticksLoaded, toggleTick,
 }: {
@@ -780,6 +789,7 @@ function DoughBallingView({
   addBalls: (n: number) => void;
   undoBall: () => void;
   removeBalls: (n: number) => void;
+  removingBalls: boolean;
   getBallAllocation: () => Array<{ recipeId: number; recipeName: string; ballCount: number; ballWeightG: number; portionsPerBatch: number; ballsDone: number }>;
   isOnBreak: boolean;
   traysDone: number;
@@ -872,10 +882,10 @@ function DoughBallingView({
             <div className="flex gap-2 items-stretch">
               <button
                 onClick={() => removeBalls(ballsPerTray)}
-                disabled={ballCount < ballsPerTray || isOnBreak}
+                disabled={ballCount < ballsPerTray || isOnBreak || removingBalls}
                 className="h-16 px-5 rounded-2xl text-base font-bold transition-all border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30"
               >
-                − 1 Tray
+                {removingBalls ? "…" : "− 1 Tray"}
               </button>
               <button
                 onClick={() => addBalls(ballsPerTray)}
