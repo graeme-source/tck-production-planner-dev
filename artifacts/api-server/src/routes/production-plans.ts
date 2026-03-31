@@ -3630,6 +3630,29 @@ router.get("/:id/main-prep", async (req, res) => {
     totalTinCount: sr.recipes.reduce((s, r) => s + r.tinCount, 0),
   }));
 
+  const FIXED_TWO_TIN_IDS = new Set([18, 19]);
+  for (const [ingId, ing] of ingredientMap) {
+    if (!FIXED_TWO_TIN_IDS.has(ingId)) continue;
+    if (ing.recipes.length <= 1 && ing.recipes[0]?.tinCount === 2) continue;
+    const combinedQty = ing.totalQty;
+    const qtyPerTin = roundByUnit(combinedQty / 2, ing.unit);
+    const allRecipeNames = ing.recipes.map(r => r.recipeName);
+    const combinedName = allRecipeNames.length > 1
+      ? allRecipeNames.slice(0, -1).join(", ") + " & " + allRecipeNames[allRecipeNames.length - 1]
+      : allRecipeNames[0] ?? "Combined";
+    const totalBatches = ing.recipes.reduce((s, r) => s + r.batchesTarget, 0);
+    ing.recipes = [{
+      recipeId: ing.recipes[0]?.recipeId ?? 0,
+      recipeName: combinedName,
+      batchesTarget: totalBatches,
+      qtyForRecipe: combinedQty,
+      tinSize: null,
+      maxBatchesPerTin: null,
+      tinCount: 2,
+      qtyPerTin,
+    }];
+  }
+
   const ingredients = [...ingredientMap.values()]
     .map(ing => ({
       ...ing,
