@@ -36,6 +36,8 @@ function mapRow(r: typeof ingredientsTable.$inferSelect) {
     fibre: r.fibre != null ? Number(r.fibre) : null,
     salt: r.salt != null ? Number(r.salt) : null,
     labelDeclaration: r.labelDeclaration ?? null,
+    isBottle: r.isBottle ?? false,
+    bottleSize: r.bottleSize != null ? Number(r.bottleSize) : null,
     allergens: (r.allergens as string[] | null) ?? [],
     createdAt: r.createdAt.toISOString(),
   };
@@ -85,7 +87,7 @@ function validateProcessingRatio(value: unknown): string | null {
 }
 
 router.post("/", validate(CreateIngredientBody), async (req, res) => {
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const [row] = await db.insert(ingredientsTable).values({
@@ -107,6 +109,8 @@ router.post("/", validate(CreateIngredientBody), async (req, res) => {
     estimatedCookTimeMin: estimatedCookTimeMin != null ? Number(estimatedCookTimeMin) : null,
     ovenTempC: ovenTempC != null ? Number(ovenTempC) : null,
     steamPct: steamPct != null ? Number(steamPct) : null,
+    isBottle: isBottle ?? false,
+    bottleSize: bottleSize != null ? String(bottleSize) : null,
     stockCheckEnabled: stockCheckEnabled ?? false,
     stockCheckFrequency: stockCheckFrequency ?? "daily",
     stockCheckDay: stockCheckDay || null,
@@ -201,7 +205,7 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const [row] = await db.update(ingredientsTable).set({
@@ -223,6 +227,8 @@ router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
     estimatedCookTimeMin: estimatedCookTimeMin != null ? Number(estimatedCookTimeMin) : null,
     ovenTempC: ovenTempC != null ? Number(ovenTempC) : null,
     steamPct: steamPct != null ? Number(steamPct) : null,
+    ...(isBottle !== undefined ? { isBottle } : {}),
+    ...(bottleSize !== undefined ? { bottleSize: bottleSize != null ? String(bottleSize) : null } : {}),
     ...(stockCheckEnabled !== undefined ? { stockCheckEnabled } : {}),
     ...(stockCheckFrequency !== undefined ? { stockCheckFrequency } : {}),
     stockCheckDay: stockCheckDay || null,

@@ -33,6 +33,7 @@ The application is structured as a pnpm workspace monorepo using TypeScript, com
     - **Color Scheme (TCK Brand):** Yellow (`#ffbe23`), Light Cream (`#fffdf0`), Green Primary (`#919b5f`), Black (`#231f20`), Rosemary (`#3b4317`), Champagne Gold (`#d6c38c`). Green is mapped to `--primary` CSS variable for Tailwind utility classes.
     - **Station Features:** Full-screen views for each of the 9 production stations, designed for shop floor use. Features like DnD reordering, batch counters, break trackers, filling mix displays with checklists, SOP buttons, and progress bars are integrated.
     - **Prep Hub:** Sub-station picker for Main Prep, Bases & Mozzarella, and Raw Meat, with specific UIs for ingredient grouping, tin tracking, and stock checks.
+    - **Bottled Items:** Ingredients can be flagged as `isBottle=true` with an optional `bottleSize` (in the ingredient's unit). The prep station calculates bottles needed as `ceil(totalQty / bottleSize)`, displays an amber "Bottles Required" card instead of the tin grid, and uses a single "Mark Bottles as Collected" button for completion. Falls back to `packWeight` if no `bottleSize` is set.
 
 **Backend (API Server):**
 - **Framework:** Express 5

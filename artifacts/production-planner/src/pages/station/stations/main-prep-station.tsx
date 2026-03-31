@@ -20,6 +20,9 @@ export interface MainPrepIngredient {
   stockCheckEnabled: boolean;
   stockCheckFrequency: string;
   stockCheckDay: string | null;
+  isBottle?: boolean;
+  bottleSize?: number | null;
+  bottlesNeeded?: number | null;
   totalQty: number;
   totalTinCount: number;
   isSubRecipe?: boolean;
@@ -365,7 +368,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
             <ClipboardList className="w-6 h-6 text-emerald-600" />
             <div>
               <h2 className="font-semibold text-lg">Main Prep</h2>
-              <p className="text-sm text-muted-foreground">{completedTins} of {totalTins} tins completed</p>
+              <p className="text-sm text-muted-foreground">{completedTins} of {totalTins} items completed</p>
             </div>
           </div>
           <span className="text-2xl font-bold font-display">{overallPct}%</span>
@@ -476,14 +479,21 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                                 {initials}
                               </span>
                             ))}
-                            {rStatus.totalTins > 0 && (
+                            {ing.isBottle && ing.bottlesNeeded ? (
+                              <span className={cn(
+                                "text-sm tabular-nums",
+                                ingStatus.isFullyDone ? "text-emerald-600 font-semibold" : "text-amber-600 font-semibold"
+                              )}>
+                                {ing.bottlesNeeded} btl{ing.bottlesNeeded === 1 ? "" : "s"}
+                              </span>
+                            ) : rStatus.totalTins > 0 ? (
                               <span className={cn(
                                 "text-sm tabular-nums",
                                 rStatus.allDone ? "text-emerald-600 font-semibold" : "text-muted-foreground"
                               )}>
                                 {rStatus.completedTins}/{rStatus.totalTins}
                               </span>
-                            )}
+                            ) : null}
                           </div>
                         </button>
                       );
@@ -529,7 +539,10 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                           </div>
                           <p className="text-base text-muted-foreground mt-0.5">
                             <span className="font-semibold text-foreground">{fmtQty(ing.totalQty, ing.unit)}</span>
-                            {" total · "}{status.completedTinCount}/{status.totalTinCount} tins done
+                            {ing.isBottle && ing.bottlesNeeded
+                              ? ` total · ${ing.bottlesNeeded} bottle${ing.bottlesNeeded === 1 ? "" : "s"} needed`
+                              : ` total · ${status.completedTinCount}/${status.totalTinCount} tins done`
+                            }
                           </p>
                           {isShared && (
                             <p className="text-sm text-amber-600 dark:text-amber-400 mt-1">
@@ -543,7 +556,17 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                             </p>
                           )}
                         </div>
-                        {status.totalTinCount > 0 && (
+                        {ing.isBottle && ing.bottlesNeeded ? (
+                          <div className="ml-4 flex-shrink-0 text-right">
+                            <p className={cn(
+                              "text-3xl font-bold font-display tabular-nums",
+                              status.isFullyDone ? "text-emerald-600" : "text-amber-600"
+                            )}>
+                              {ing.bottlesNeeded}
+                            </p>
+                            <p className="text-sm text-muted-foreground">bottle{ing.bottlesNeeded === 1 ? "" : "s"}</p>
+                          </div>
+                        ) : status.totalTinCount > 0 ? (
                           <div className="ml-4 flex-shrink-0 text-right">
                             <p className={cn(
                               "text-3xl font-bold font-display tabular-nums",
@@ -554,7 +577,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                             </p>
                             <p className="text-sm text-muted-foreground">tins</p>
                           </div>
-                        )}
+                        ) : null}
                       </div>
 
                       {status.totalTinCount > 1 && (
@@ -566,7 +589,77 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                         </div>
                       )}
 
-                      {ing.recipes.map((recipe, ri) => {
+                      {ing.isBottle && ing.bottlesNeeded ? (() => {
+                        const recipe = ing.recipes[0];
+                        if (!recipe) return null;
+                        const done = isCompleted(ing.ingredientId, recipe.recipeId, 1, ing.isSubRecipe);
+                        const completion = getCompletion(ing.ingredientId, recipe.recipeId, 1, ing.isSubRecipe);
+                        return (
+                          <div>
+                            <div className={cn(
+                              "flex items-center justify-between px-3 py-2 rounded-lg mb-3",
+                              done ? "bg-emerald-50 dark:bg-emerald-900/20" : "bg-secondary/40"
+                            )}>
+                              <div className="flex items-center gap-2 min-w-0">
+                                {done && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />}
+                                <p className={cn(
+                                  "text-base font-bold uppercase tracking-wider truncate",
+                                  done ? "text-emerald-700 dark:text-emerald-300" : "text-emerald-800 dark:text-emerald-300"
+                                )}>
+                                  {recipe.recipeName}
+                                </p>
+                              </div>
+                              <span className="text-sm text-muted-foreground tabular-nums ml-2 flex-shrink-0">
+                                {fmtQty(ing.totalQty, ing.unit)}
+                              </span>
+                            </div>
+
+                            <div className="bg-amber-50 dark:bg-amber-950/30 border-2 border-amber-300 dark:border-amber-700 rounded-2xl p-5 text-center">
+                              <p className="text-sm font-semibold text-amber-800 dark:text-amber-200 uppercase tracking-wider mb-2">
+                                Bottles Required
+                              </p>
+                              <p className="text-5xl font-bold text-amber-700 dark:text-amber-300 tabular-nums mb-1">
+                                {ing.bottlesNeeded}
+                              </p>
+                              <p className="text-sm text-amber-600 dark:text-amber-400 mb-1">
+                                bottle{ing.bottlesNeeded === 1 ? "" : "s"} × {fmtQty(ing.bottleSize ?? 0, ing.unit)} each
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {fmtQty(ing.totalQty, ing.unit)} total needed
+                              </p>
+                            </div>
+
+                            <button
+                              onClick={() => toggleTin(ing.ingredientId, recipe.recipeId, 1, ing.isSubRecipe)}
+                              disabled={isOnBreak}
+                              className={cn(
+                                "mt-3 w-full flex items-center justify-center gap-2 border-2 rounded-2xl px-4 py-3.5 transition-all active:scale-95 text-base font-bold",
+                                isOnBreak ? "opacity-50 cursor-not-allowed" : "",
+                                done
+                                  ? "bg-emerald-50 dark:bg-emerald-900/30 border-emerald-400 dark:border-emerald-600 text-emerald-700 dark:text-emerald-300"
+                                  : "bg-background border-border hover:border-emerald-400 hover:shadow-md text-foreground"
+                              )}
+                            >
+                              {done ? (
+                                <>
+                                  <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                                  Bottles Collected
+                                </>
+                              ) : (
+                                <>
+                                  <div className="w-5 h-5 rounded-full border-2 border-muted-foreground/40" />
+                                  Mark Bottles as Collected
+                                </>
+                              )}
+                            </button>
+                            {done && completion && (
+                              <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-2 text-center">
+                                {completion.userName ?? "User"} · {format(new Date(completion.completedAt), "HH:mm")}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })() : ing.recipes.map((recipe, ri) => {
                         const rTins = Array.from({ length: recipe.tinCount }, (_, i) => i + 1);
                         const rDone = rTins.filter(tn => isCompleted(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe)).length;
                         const allRecipeDone = rTins.length > 0 && rDone >= rTins.length;

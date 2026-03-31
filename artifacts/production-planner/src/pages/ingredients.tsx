@@ -434,6 +434,11 @@ const schema = z.object({
     (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
     z.number().int().min(0).max(100).nullable().optional()
   ),
+  isBottle: z.boolean().optional(),
+  bottleSize: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().min(0).nullable().optional()
+  ),
   stockCheckEnabled: z.boolean().optional(),
   stockCheckFrequency: z.enum(["daily", "weekly"]).optional(),
   stockCheckDay: z.string().optional(),
@@ -467,7 +472,7 @@ type FormValues = z.infer<typeof schema>;
 const emptyDefaults: FormValues = {
   name: "", unit: "kg", packWeight: 0, costPerPack: 0,
   brand: "", supplierPartNumber: "", supplierId: 0, secondarySupplierId: 0,
-  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null, estimatedCookTimeMin: null, ovenTempC: null, steamPct: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "", surplusPercent: 10, shelfLifeDays: null, kanbanEnabled: false, kanbanQuantity: 0, kanbanUnit: "weight" as const, kanbanOrderAmount: null,
+  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null, estimatedCookTimeMin: null, ovenTempC: null, steamPct: null, isBottle: false, bottleSize: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "", surplusPercent: 10, shelfLifeDays: null, kanbanEnabled: false, kanbanQuantity: 0, kanbanUnit: "weight" as const, kanbanOrderAmount: null,
   energyKj: null, energyKcal: null, fat: null, saturates: null, carbohydrate: null, sugars: null, protein: null, fibre: null, salt: null, labelDeclaration: "", allergens: [],
 };
 
@@ -512,6 +517,7 @@ export default function Ingredients() {
   const watchedPackWeight = watch("packWeight");
   const watchedCostPerPack = watch("costPerPack");
   const watchedProcessingRatioPct = watch("processingRatioPct");
+  const watchedIsBottle = watch("isBottle");
   const watchedStockCheckEnabled = watch("stockCheckEnabled");
   const watchedStockCheckFrequency = watch("stockCheckFrequency");
   const watchedCategory = watch("category");
@@ -548,6 +554,8 @@ export default function Ingredients() {
       ovenTempC: item.ovenTempC != null ? Number(item.ovenTempC) : null,
       steamPct: item.steamPct != null ? Number(item.steamPct) : null,
       category: item.category ?? "",
+      isBottle: (item as Record<string, unknown>).isBottle as boolean ?? false,
+      bottleSize: (item as Record<string, unknown>).bottleSize != null ? Number((item as Record<string, unknown>).bottleSize) : null,
       stockCheckEnabled: item.stockCheckEnabled ?? false,
       stockCheckFrequency: (item.stockCheckFrequency as "daily" | "weekly") ?? "daily",
       stockCheckDay: item.stockCheckDay ?? "",
@@ -590,6 +598,8 @@ export default function Ingredients() {
     estimatedCookTimeMin: data.estimatedCookTimeMin ?? null,
     ovenTempC: data.ovenTempC ?? null,
     steamPct: data.steamPct ?? null,
+    isBottle: data.isBottle ?? false,
+    bottleSize: data.isBottle ? (data.bottleSize ?? null) : null,
     stockCheckEnabled: data.stockCheckEnabled ?? false,
     stockCheckFrequency: data.stockCheckFrequency ?? "daily",
     stockCheckDay: data.stockCheckFrequency === "weekly" ? (data.stockCheckDay || null) : null,
@@ -889,6 +899,39 @@ export default function Ingredients() {
                   <p className="text-xs text-muted-foreground mt-1">Oven steam percentage during cooking.</p>
                   {errors.steamPct && <span className="text-destructive text-xs">{String(errors.steamPct.message)}</span>}
                 </div>
+              </div>
+            )}
+
+            <div className="flex items-center gap-3 py-1">
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  {...register("isBottle")}
+                  className="sr-only peer"
+                />
+                <div className="w-9 h-5 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/30 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+              </label>
+              <div>
+                <span className="text-sm font-medium">Bottled Item</span>
+                <p className="text-xs text-muted-foreground">
+                  When enabled, the prep station will show bottle counts instead of splitting into tins.
+                </p>
+              </div>
+            </div>
+
+            {watchedIsBottle && (
+              <div className="pl-4 border-l-2 border-primary/20">
+                <label className="text-sm font-medium mb-1 block">Bottle Size ({watchedUnit || "g"})</label>
+                <input
+                  type="number"
+                  step="any"
+                  {...register("bottleSize")}
+                  placeholder={`e.g. 750 for a 750${watchedUnit || "g"} bottle`}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Size of each bottle in {watchedUnit || "g"}. Used to calculate how many bottles are needed. If left empty, pack weight will be used.
+                </p>
               </div>
             )}
 

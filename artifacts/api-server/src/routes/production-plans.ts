@@ -3423,6 +3423,8 @@ router.get("/:id/main-prep", async (req, res) => {
     stockCheckEnabled: boolean;
     stockCheckFrequency: string;
     stockCheckDay: string | null;
+    isBottle: boolean;
+    bottleSize: number | null;
     totalQty: number;
     recipes: Array<{
       recipeId: number;
@@ -3470,6 +3472,9 @@ router.get("/:id/main-prep", async (req, res) => {
         stockCheckEnabled: ingredientsTable.stockCheckEnabled,
         stockCheckFrequency: ingredientsTable.stockCheckFrequency,
         stockCheckDay: ingredientsTable.stockCheckDay,
+        isBottle: ingredientsTable.isBottle,
+        bottleSize: ingredientsTable.bottleSize,
+        packWeight: ingredientsTable.packWeight,
       })
       .from(recipeIngredientsTable)
       .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -3526,6 +3531,8 @@ router.get("/:id/main-prep", async (req, res) => {
           qtyPerTin,
         });
       } else {
+        const isBottle = row.isBottle ?? false;
+        const bottleSizeVal = row.bottleSize ? Number(row.bottleSize) : (row.packWeight ? Number(row.packWeight) : null);
         ingredientMap.set(row.ingredientId, {
           ingredientId: row.ingredientId,
           ingredientName: row.ingredientName ?? `Ingredient #${row.ingredientId}`,
@@ -3534,6 +3541,8 @@ router.get("/:id/main-prep", async (req, res) => {
           stockCheckEnabled: row.stockCheckEnabled ?? false,
           stockCheckFrequency: row.stockCheckFrequency ?? "daily",
           stockCheckDay: row.stockCheckDay ?? null,
+          isBottle,
+          bottleSize: isBottle ? bottleSizeVal : null,
           totalQty: roundedQty,
           recipes: [{
             recipeId: planItem.recipeId!,
@@ -3654,11 +3663,39 @@ router.get("/:id/main-prep", async (req, res) => {
   }
 
   const ingredients = [...ingredientMap.values()]
-    .map(ing => ({
-      ...ing,
-      isSubRecipe: false,
-      totalTinCount: ing.recipes.reduce((s, r) => s + r.tinCount, 0),
-    }));
+    .map(ing => {
+      if (ing.isBottle && ing.bottleSize && ing.bottleSize > 0) {
+        const totalGrams = ing.totalQty;
+        const bottlesNeeded = Math.ceil(totalGrams / ing.bottleSize);
+        const allRecipeNames = ing.recipes.map(r => r.recipeName);
+        const combinedName = allRecipeNames.length > 1
+          ? allRecipeNames.slice(0, -1).join(", ") + " & " + allRecipeNames[allRecipeNames.length - 1]
+          : allRecipeNames[0] ?? "Combined";
+        const totalBatches = ing.recipes.reduce((s, r) => s + r.batchesTarget, 0);
+        return {
+          ...ing,
+          isSubRecipe: false,
+          totalTinCount: 1,
+          bottlesNeeded,
+          recipes: [{
+            recipeId: ing.recipes[0]?.recipeId ?? 0,
+            recipeName: combinedName,
+            batchesTarget: totalBatches,
+            qtyForRecipe: totalGrams,
+            tinSize: null,
+            maxBatchesPerTin: null,
+            tinCount: 1,
+            qtyPerTin: totalGrams,
+          }],
+        };
+      }
+      return {
+        ...ing,
+        isSubRecipe: false,
+        bottlesNeeded: null as number | null,
+        totalTinCount: ing.recipes.reduce((s, r) => s + r.tinCount, 0),
+      };
+    });
 
   const allItems = [...ingredients, ...subRecipeIngredients]
     .sort((a, b) => a.ingredientName.localeCompare(b.ingredientName));

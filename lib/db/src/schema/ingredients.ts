@@ -46,6 +46,8 @@ export const ingredientsTable = pgTable("ingredients", {
   labelDeclaration: text("label_declaration"),
   allergens: jsonb("allergens").$type<string[]>().default([]),
   qrCodeUrl: text("qr_code_url"),
+  isBottle: boolean("is_bottle").notNull().default(false),
+  bottleSize: numeric("bottle_size", { precision: 10, scale: 4 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

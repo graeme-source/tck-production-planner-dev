@@ -495,6 +495,13 @@ async function runStartupMigrations() {
       WHERE sub_recipe_id IS NOT NULL
     `);
 
+    await db.execute(sql`
+      ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS is_bottle BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+    await db.execute(sql`
+      ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS bottle_size NUMERIC(10,4)
+    `);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);
