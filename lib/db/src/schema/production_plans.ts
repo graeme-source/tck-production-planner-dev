@@ -33,6 +33,7 @@ export const productionPlanItemsTable = pgTable("production_plan_items", {
   maxBatchesPerTin: integer("max_batches_per_tin"),
   sopUrl: text("sop_url"),
   extraPacksBuilt: integer("extra_packs_built").notNull().default(0),
+  shortCount: integer("short_count").notNull().default(0),
 });
 
 export const batchCompletionsTable = pgTable("batch_completions", {

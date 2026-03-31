@@ -16,7 +16,7 @@ import { useAuth } from "@/contexts/auth-context";
 import {
   Plus, Minus, CheckCircle2, Loader2, Package, ChevronRight, RotateCcw,
   BarChart2, BookOpen, Target, Scale, GripVertical, Check, ExternalLink,
-  ClipboardList, CheckSquare, Square, AlertCircle, Trophy, Eye, X,
+  ClipboardList, CheckSquare, Square, AlertCircle, Trophy, Eye, X, AlertTriangle,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -162,7 +162,18 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   }
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
-  const currentItem = items.find(it => getCombinedBuildCount(it) < (it.batchesTarget ?? 0));
+  const otherStation = stationType === "building_1" ? "building_2" : "building_1";
+  const currentItem = items.find(it => {
+    const combined = getCombinedBuildCount(it);
+    const target = it.batchesTarget ?? 0;
+    if (combined >= target) return false;
+    const myBatches = getStationCount(it, stationType);
+    const otherBatches = getStationCount(it, otherStation);
+    const mixDone = getStationCount(it, "mixing");
+    const remaining = target - combined;
+    if (mixDone >= target && remaining > 0 && myBatches > otherBatches) return false;
+    return true;
+  });
 
   // Combined count from both lines — used for display and progress
   const buildingCount = currentItem ? getCombinedBuildCount(currentItem) : 0;
@@ -567,6 +578,15 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
               isOnBreak={isOnBreak}
             />
           )}
+
+          {/* Shortfall recording */}
+          {currentItem && (
+            <ShortfallControl
+              planId={plan.id}
+              item={currentItem}
+              isOnBreak={isOnBreak}
+            />
+          )}
         </div>
       ) : (
         <div className="bg-card border border-border rounded-2xl p-10 text-center">
@@ -809,6 +829,79 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function ShortfallControl({ planId, item, isOnBreak }: { planId: number; item: ProductionPlanItem; isOnBreak: boolean }) {
+  const queryClient = useQueryClient();
+  const [loading, setLoading] = useState(false);
+  const shortCount = item.shortCount ?? 0;
+
+  const addShort = async () => {
+    if (isOnBreak || loading) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/production-plans/${planId}/items/${item.id}/short`, {
+        method: "POST", credentials: "include",
+      });
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(planId) });
+      toast({ title: "Shortfall recorded", description: `${item.recipeName ?? "Recipe"}: ${shortCount + 1} pack${shortCount + 1 !== 1 ? "s" : ""} short` });
+    } catch (err: unknown) {
+      toast({ title: "Error recording shortfall", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const removeShort = async () => {
+    if (loading || shortCount <= 0) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/production-plans/${planId}/items/${item.id}/short`, {
+        method: "DELETE", credentials: "include",
+      });
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(planId) });
+    } catch (err: unknown) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="bg-red-50/50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-xl p-3">
+      <div className="flex items-center gap-3">
+        <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-red-700 dark:text-red-300">Pack Shortfall</p>
+          <p className="text-xs text-muted-foreground">Record packs lost during building</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={removeShort}
+            disabled={loading || shortCount <= 0}
+            className="w-8 h-8 rounded-full border border-border flex items-center justify-center text-muted-foreground hover:bg-secondary disabled:opacity-40 transition-colors"
+          >
+            <Minus className="w-4 h-4" />
+          </button>
+          <span className={cn(
+            "text-lg font-bold tabular-nums min-w-[2ch] text-center",
+            shortCount > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground"
+          )}>
+            {shortCount}
+          </span>
+          <button
+            onClick={addShort}
+            disabled={loading || isOnBreak}
+            className="w-8 h-8 rounded-full border border-red-300 dark:border-red-700 flex items-center justify-center text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 disabled:opacity-40 transition-colors"
+          >
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -34,6 +34,8 @@ The application is structured as a pnpm workspace monorepo using TypeScript, com
     - **Station Features:** Full-screen views for each of the 9 production stations, designed for shop floor use. Features like DnD reordering, batch counters, break trackers, filling mix displays with checklists, SOP buttons, and progress bars are integrated.
     - **Prep Hub:** Sub-station picker for Main Prep, Bases & Mozzarella, and Raw Meat, with specific UIs for ingredient grouping, tin tracking, and stock checks.
     - **Bottled Items:** Ingredients can be flagged as `isBottle=true` with an optional `bottleSize` (in the ingredient's unit). The prep station calculates bottles needed as `ceil(totalQty / bottleSize)`, displays an amber "Bottles Required" card instead of the tin grid, and uses a single "Mark Bottles as Collected" button for completion. Falls back to `packWeight` if no `bottleSize` is set.
+    - **Pack Shortfall:** Builders can record pack shortfalls on the building station (+/- controls). `shortCount` column on `production_plan_items` subtracts from gross packs in the wrapping station net pack formula: `net = max(0, gross - wonky - short) + extra`. Recipes auto-complete when all production is allocated (stored >= net packs).
+    - **Building Station Progression:** When all batches for a recipe have been mixed and one builder has completed more batches than the other, that builder can advance to the next recipe. This prevents idle time when the remaining batch(es) belong to the other building line.
 
 **Backend (API Server):**
 - **Framework:** Express 5

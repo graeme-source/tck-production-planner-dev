@@ -124,6 +124,9 @@ async function runStartupMigrations() {
       ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS extra_packs_built INTEGER NOT NULL DEFAULT 0
     `);
     await db.execute(sql`
+      ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS short_count INTEGER NOT NULL DEFAULT 0
+    `);
+    await db.execute(sql`
       ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS surplus_percent NUMERIC(5,2) NOT NULL DEFAULT 10
     `);
     await db.execute(sql`

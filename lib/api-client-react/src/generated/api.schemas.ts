@@ -332,6 +332,7 @@ export interface ProductionPlanItem {
   batchesComplete: number;
   wonlyCount: number;
   extraPacksBuilt: number;
+  shortCount: number;
   wrappingComplete: boolean;
   fridgeQty: number;
   freezerQty: number;

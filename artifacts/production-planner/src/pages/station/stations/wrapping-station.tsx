@@ -121,9 +121,10 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const grossPacks = (item: ProductionPlanItem) =>
     Math.floor((getStationCount(item, "ovens") * (item.portionsPerBatch ?? 10)) / 2);
   const netPacks = (item: ProductionPlanItem) =>
-    Math.max(0, grossPacks(item) - (item.wonlyCount ?? 0)) + (item.extraPacksBuilt ?? 0);
+    Math.max(0, grossPacks(item) - (item.wonlyCount ?? 0) - (item.shortCount ?? 0)) + (item.extraPacksBuilt ?? 0);
 
   const totalWonly = items.reduce((s, it) => s + (it.wonlyCount ?? 0), 0);
+  const totalShort = items.reduce((s, it) => s + (it.shortCount ?? 0), 0);
   const totalNet = items.reduce((s, it) => s + netPacks(it), 0);
   const wrappedCount = items.filter(it => it.wrappingComplete).length;
   const allWrapped = items.length > 0 && items.every(it => it.wrappingComplete);
@@ -324,6 +325,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
             <h2 className="font-semibold text-lg">Wrapping Station</h2>
             <p className="text-sm text-muted-foreground">
               {wrappedCount} of {items.length} recipes wrapped · {totalNet} net packs
+              {totalShort > 0 && <span className="text-red-500"> · {totalShort} short</span>}
             </p>
           </div>
           {allWrapped && (
@@ -406,6 +408,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                   <p className="text-sm text-muted-foreground mt-1">
                     {getStationCount(item, "ovens")} / {item.batchesTarget ?? 0} oven loads
                     {totalStored > 0 && ` · ${fridge} fridge · ${freezer} freezer`}
+                    {(item.shortCount ?? 0) > 0 && <span className="text-red-500"> · {item.shortCount} short</span>}
                   </p>
                 </div>
                 <button

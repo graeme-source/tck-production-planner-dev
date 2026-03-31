@@ -806,6 +806,7 @@ router.get("/:id", async (req, res) => {
       maxBatchesPerTin: productionPlanItemsTable.maxBatchesPerTin,
       sopUrl: productionPlanItemsTable.sopUrl,
       extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
+      shortCount: productionPlanItemsTable.shortCount,
       fillWeightGrams: recipesTable.fillWeightGrams,
       baseType: recipesTable.baseType,
       baseWeightGrams: recipesTable.baseWeightGrams,
@@ -2762,6 +2763,54 @@ router.delete("/:id/items/:itemId/wonly", async (req, res) => {
     .returning({ wonlyCount: productionPlanItemsTable.wonlyCount });
 
   res.json({ itemId, wonlyCount: updated.wonlyCount });
+});
+
+router.post("/:id/items/:itemId/short", async (req, res) => {
+  const planId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+
+  const [exists] = await db.select({ id: productionPlanItemsTable.id })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
+
+  if (!exists) {
+    res.status(404).json({ error: "Plan item not found" });
+    return;
+  }
+
+  const [updated] = await db
+    .update(productionPlanItemsTable)
+    .set({ shortCount: sql`${productionPlanItemsTable.shortCount} + 1` })
+    .where(eq(productionPlanItemsTable.id, itemId))
+    .returning({ shortCount: productionPlanItemsTable.shortCount });
+
+  res.json({ itemId, shortCount: updated.shortCount });
+});
+
+router.delete("/:id/items/:itemId/short", async (req, res) => {
+  const planId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+
+  const [item] = await db.select({ id: productionPlanItemsTable.id, shortCount: productionPlanItemsTable.shortCount })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
+
+  if (!item) {
+    res.status(404).json({ error: "Plan item not found" });
+    return;
+  }
+  if ((item.shortCount ?? 0) <= 0) {
+    res.status(409).json({ error: "Short count is already 0" });
+    return;
+  }
+
+  const [updated] = await db
+    .update(productionPlanItemsTable)
+    .set({ shortCount: sql`GREATEST(${productionPlanItemsTable.shortCount} - 1, 0)` })
+    .where(eq(productionPlanItemsTable.id, itemId))
+    .returning({ shortCount: productionPlanItemsTable.shortCount });
+
+  res.json({ itemId, shortCount: updated.shortCount });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
