@@ -28,6 +28,79 @@ import { KpiBar } from "../shared/kpi-bar";
 import { EodSummary } from "../shared/eod-summary";
 import { getStationCount, getAvailableFromPrev } from "../shared/constants";
 import { fmtQty } from "../shared/prep-helpers";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+
+function SortableAssemblyRow({
+  id,
+  ai,
+  checked,
+  locked,
+  showHandle,
+  onToggle,
+}: {
+  id: string;
+  ai: { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number };
+  checked: boolean;
+  locked: boolean;
+  showHandle: boolean;
+  onToggle: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    position: "relative" as const,
+    zIndex: isDragging ? 50 : undefined,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="flex items-center">
+      {showHandle && (
+        <button
+          type="button"
+          className="flex-shrink-0 px-1 py-3 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 cursor-grab active:cursor-grabbing touch-none"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="w-5 h-5" />
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={locked}
+        className={cn(
+          "flex-1 flex items-center gap-3 px-3 py-3 text-left transition-colors",
+          !locked && "active:bg-slate-200 dark:active:bg-slate-700"
+        )}
+      >
+        {locked || checked
+          ? <CheckSquare className="w-6 h-6 text-emerald-500 flex-shrink-0" />
+          : <Square className="w-6 h-6 text-slate-400 flex-shrink-0" />}
+        <span className="text-lg font-semibold flex-1">{ai.name}</span>
+        <div className="text-right flex-shrink-0">
+          <span className="text-xl font-bold font-mono tabular-nums">{Math.round(ai.weightPerBatch)}g</span>
+          <span className="block text-sm text-muted-foreground font-mono tabular-nums">{Math.round(ai.weightHalfBatch)}g half</span>
+        </div>
+      </button>
+    </div>
+  );
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Building Station (shared for building_1 and building_2)
@@ -43,6 +116,8 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   const queryClient = useQueryClient();
   const { state } = useAuth();
   const isAdmin = state.status === "authenticated" && state.user.role === "admin";
+
+  const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
   // Session tracking
   const [sessionStartedAt] = useState<Date>(() => new Date());
@@ -99,8 +174,8 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     return () => clearInterval(interval);
   }, [plan.id, stationType, sessionBatches]);
 
-  type AssemblyItemData = { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number };
-  type AssemblyData = { itemId: number; fillingWeightPerBatch: number; fillingWeightHalfBatch: number; assemblyItems: AssemblyItemData[]; postOvenItems?: AssemblyItemData[] };
+  type AssemblyItemData = { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number; sourceType: "ingredient" | "sub_recipe"; sourceId: number; assemblyOrder: number | null };
+  type AssemblyData = { itemId: number; recipeId: number; fillingWeightPerBatch: number; fillingWeightHalfBatch: number; assemblyItems: AssemblyItemData[]; postOvenItems?: AssemblyItemData[] };
   const [assemblyMap, setAssemblyMap] = useState<Record<number, AssemblyData>>({});
   useEffect(() => {
     fetch(`/api/production-plans/${plan.id}/assembly-items`, { credentials: "include" })
@@ -114,6 +189,39 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
       })
       .catch(() => {});
   }, [plan.id]);
+
+  const handleAssemblyDragEnd = useCallback(async (event: DragEndEvent, itemId: number) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setAssemblyMap(prev => {
+      const asm = prev[itemId];
+      if (!asm) return prev;
+      const items = asm.assemblyItems;
+      const oldIdx = items.findIndex(a => `${a.sourceType}-${a.sourceId}` === active.id);
+      const newIdx = items.findIndex(a => `${a.sourceType}-${a.sourceId}` === over.id);
+      if (oldIdx === -1 || newIdx === -1) return prev;
+      const reordered = arrayMove(items, oldIdx, newIdx);
+      const orderPayload = reordered.map((a, i) => ({
+        sourceType: a.sourceType,
+        sourceId: a.sourceId,
+        order: i,
+      }));
+      fetch(`/api/recipes/${asm.recipeId}/assembly-order`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(orderPayload),
+      })
+        .then(r => {
+          if (!r.ok) throw new Error("Save failed");
+          toast({ title: "Assembly order saved" });
+        })
+        .catch(() => {
+          toast({ title: "Failed to save order", variant: "destructive" });
+        });
+      return { ...prev, [itemId]: { ...asm, assemblyItems: reordered } };
+    });
+  }, []);
 
   const [checkedItems, setCheckedItems] = useState<Record<string, boolean>>({});
   const [checklistLockedForItem, setChecklistLockedForItem] = useState<number | null>(null);
@@ -216,7 +324,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     if (!asm) return;
     const allKeys: string[] = [];
     if (asm.fillingWeightPerBatch > 0) allKeys.push("filling");
-    asm.assemblyItems.forEach((_, i) => allKeys.push(`item-${i}`));
+    asm.assemblyItems.forEach((a) => allKeys.push(`${a.sourceType}-${a.sourceId}`));
     if (allKeys.length > 0 && allKeys.every(k => checkedItems[k])) {
       setChecklistLockedForItem(currentItem.id);
       fetch(`/api/app-settings/${checklistKey(currentItem.id)}`, {
@@ -438,30 +546,51 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                           </div>
                         </button>
                       )}
-                      {asm.assemblyItems.map((ai, i) => {
-                        const key = `item-${i}`;
-                        return (
-                          <button
-                            type="button"
-                            key={key}
-                            onClick={() => toggleCheck(key)}
-                            disabled={isLocked}
-                            className={cn(
-                              "w-full flex items-center gap-3 px-3 py-3 text-left transition-colors",
-                              !isLocked && "active:bg-slate-200 dark:active:bg-slate-700"
-                            )}
-                          >
-                            {isLocked || checkedItems[key]
-                              ? <CheckSquare className="w-6 h-6 text-emerald-500 flex-shrink-0" />
-                              : <Square className="w-6 h-6 text-slate-400 flex-shrink-0" />}
-                            <span className="text-lg font-semibold flex-1">{ai.name}</span>
-                            <div className="text-right flex-shrink-0">
-                              <span className="text-xl font-bold font-mono tabular-nums">{Math.round(ai.weightPerBatch)}g</span>
-                              <span className="block text-sm text-muted-foreground font-mono tabular-nums">{Math.round(ai.weightHalfBatch)}g half</span>
-                            </div>
-                          </button>
-                        );
-                      })}
+                      {isAdmin && !isLocked ? (
+                        <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={(e) => handleAssemblyDragEnd(e, currentItem.id)}>
+                          <SortableContext items={asm.assemblyItems.map(a => `${a.sourceType}-${a.sourceId}`)} strategy={verticalListSortingStrategy}>
+                            {asm.assemblyItems.map((ai) => {
+                              const key = `${ai.sourceType}-${ai.sourceId}`;
+                              return (
+                                <SortableAssemblyRow
+                                  key={key}
+                                  id={key}
+                                  ai={ai}
+                                  checked={!!checkedItems[key]}
+                                  locked={false}
+                                  showHandle={true}
+                                  onToggle={() => toggleCheck(key)}
+                                />
+                              );
+                            })}
+                          </SortableContext>
+                        </DndContext>
+                      ) : (
+                        asm.assemblyItems.map((ai) => {
+                          const key = `${ai.sourceType}-${ai.sourceId}`;
+                          return (
+                            <button
+                              type="button"
+                              key={key}
+                              onClick={() => toggleCheck(key)}
+                              disabled={isLocked}
+                              className={cn(
+                                "w-full flex items-center gap-3 px-3 py-3 text-left transition-colors",
+                                !isLocked && "active:bg-slate-200 dark:active:bg-slate-700"
+                              )}
+                            >
+                              {isLocked || checkedItems[key]
+                                ? <CheckSquare className="w-6 h-6 text-emerald-500 flex-shrink-0" />
+                                : <Square className="w-6 h-6 text-slate-400 flex-shrink-0" />}
+                              <span className="text-lg font-semibold flex-1">{ai.name}</span>
+                              <div className="text-right flex-shrink-0">
+                                <span className="text-xl font-bold font-mono tabular-nums">{Math.round(ai.weightPerBatch)}g</span>
+                                <span className="block text-sm text-muted-foreground font-mono tabular-nums">{Math.round(ai.weightHalfBatch)}g half</span>
+                              </div>
+                            </button>
+                          );
+                        })
+                      )}
                     </div>
                   </div>
                 );

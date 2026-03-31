@@ -2172,7 +2172,8 @@ router.get("/:id/assembly-items", async (req, res) => {
 
     const nonFillingIngRows = await db.execute(sql`
       SELECT ri.recipe_id as "recipeId", ri.ingredient_id as "ingredientId",
-             i.name as "ingredientName", i.unit, ri.quantity
+             i.name as "ingredientName", i.unit, ri.quantity,
+             ri.assembly_order as "assemblyOrder"
       FROM recipe_ingredients ri
       LEFT JOIN ingredients i ON ri.ingredient_id = i.id
       WHERE ri.recipe_id IN (${sql.join(recipeIds.map(id => sql`${id}`), sql`, `)})
@@ -2183,7 +2184,8 @@ router.get("/:id/assembly-items", async (req, res) => {
     const nonFillingSubRows = await db.execute(sql`
       SELECT rs.recipe_id as "recipeId", rs.sub_recipe_id as "subRecipeId",
              s.name as "subRecipeName", s.yield_unit as unit, rs.quantity,
-             s.is_base as "isBase"
+             s.is_base as "isBase",
+             rs.assembly_order as "assemblyOrder"
       FROM recipe_sub_recipes rs
       LEFT JOIN sub_recipes s ON rs.sub_recipe_id = s.id
       WHERE rs.recipe_id IN (${sql.join(recipeIds.map(id => sql`${id}`), sql`, `)})
@@ -2195,8 +2197,8 @@ router.get("/:id/assembly-items", async (req, res) => {
 
     const fiRows = fillingIngRows.rows as Array<{ recipeId: number; quantity: string; unit: string }>;
     const fsRows = fillingSubRows.rows as Array<{ recipeId: number; quantity: string; unit: string }>;
-    const nfiRows = nonFillingIngRows.rows as Array<{ recipeId: number; ingredientId: number; ingredientName: string; unit: string; quantity: string }>;
-    const nfsRows = nonFillingSubRows.rows as Array<{ recipeId: number; subRecipeId: number; subRecipeName: string; unit: string; quantity: string; isBase: boolean }>;
+    const nfiRows = nonFillingIngRows.rows as Array<{ recipeId: number; ingredientId: number; ingredientName: string; unit: string; quantity: string; assemblyOrder: number | null }>;
+    const nfsRows = nonFillingSubRows.rows as Array<{ recipeId: number; subRecipeId: number; subRecipeName: string; unit: string; quantity: string; isBase: boolean; assemblyOrder: number | null }>;
 
     const toGrams = (qty: number, unit: string): number => {
       const u = (unit || "").toLowerCase();
@@ -2218,14 +2220,15 @@ router.get("/:id/assembly-items", async (req, res) => {
       const fillingWeightPerBatch = fillingTotalGrams * ppb;
       const fillingWeightHalfBatch = fillingWeightPerBatch / 2;
 
-      const assemblyItems: Array<{ name: string; unit: string; weightPerBatch: number; weightHalfBatch: number }> = [];
-      const postOvenItems: Array<{ name: string; unit: string; weightPerBatch: number; weightHalfBatch: number }> = [];
+      type AssemblyEntry = { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number; sourceType: "ingredient" | "sub_recipe"; sourceId: number; assemblyOrder: number | null };
+      const assemblyItems: AssemblyEntry[] = [];
+      const postOvenItems: AssemblyEntry[] = [];
 
       const isPostOven = (name: string) => /garlic[\s\-]*butter/i.test(name);
 
       for (const row of nfiRows.filter(r => r.recipeId === item.recipeId)) {
         const wt = toGrams(Number(row.quantity), row.unit) * ppb;
-        const entry = { name: row.ingredientName, unit: "g", weightPerBatch: wt, weightHalfBatch: wt / 2 };
+        const entry: AssemblyEntry = { name: row.ingredientName, unit: "g", weightPerBatch: wt, weightHalfBatch: wt / 2, sourceType: "ingredient", sourceId: row.ingredientId, assemblyOrder: row.assemblyOrder };
         if (isPostOven(row.ingredientName)) {
           postOvenItems.push(entry);
         } else {
@@ -2236,13 +2239,22 @@ router.get("/:id/assembly-items", async (req, res) => {
       for (const row of nfsRows.filter(r => r.recipeId === item.recipeId)) {
         if (row.isBase) continue;
         const wt = toGrams(Number(row.quantity), row.unit) * ppb;
-        const entry = { name: row.subRecipeName, unit: "g", weightPerBatch: wt, weightHalfBatch: wt / 2 };
+        const entry: AssemblyEntry = { name: row.subRecipeName, unit: "g", weightPerBatch: wt, weightHalfBatch: wt / 2, sourceType: "sub_recipe", sourceId: row.subRecipeId, assemblyOrder: row.assemblyOrder };
         if (isPostOven(row.subRecipeName)) {
           postOvenItems.push(entry);
         } else {
           assemblyItems.push(entry);
         }
       }
+
+      const sortByOrder = (a: AssemblyEntry, b: AssemblyEntry) => {
+        if (a.assemblyOrder != null && b.assemblyOrder != null) return a.assemblyOrder - b.assemblyOrder;
+        if (a.assemblyOrder != null) return -1;
+        if (b.assemblyOrder != null) return 1;
+        return a.name.localeCompare(b.name);
+      };
+      assemblyItems.sort(sortByOrder);
+      postOvenItems.sort(sortByOrder);
 
       return {
         itemId: item.id,

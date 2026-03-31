@@ -1,4 +1,4 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { db, recipesTable, recipeIngredientsTable, recipeSubRecipesTable, recipeMeatMarinadesTable, ingredientsTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, appSettingsTable, kanbanItemsTable, productionPlansTable, productionPlanItemsTable } from "@workspace/db";
 import { eq, inArray, ne, and, gte } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
@@ -8,6 +8,14 @@ import { validate } from "../middleware/validate";
 import { computeSubRecipeCosts } from "../lib/sub-recipe-costs";
 import { generateQrCode } from "../lib/qr-code";
 import * as z from "zod";
+
+function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  if ((req.session as { userRole?: string }).userRole !== "admin") {
+    res.status(403).json({ error: "Admin access required" });
+    return;
+  }
+  next();
+}
 
 const RecipeIdParams = z.object({ id: z.coerce.number().int().positive() });
 const ShopifyMappingBody = z.object({
@@ -1162,6 +1170,51 @@ router.post("/:id/create-kanban", async (req, res) => {
   } catch (err) {
     console.error(`Failed to create kanban for recipe ${id}:`, err);
     res.status(500).json({ error: "Failed to create kanban" });
+  }
+});
+
+const AssemblyOrderBody = z.array(z.object({
+  sourceType: z.enum(["ingredient", "sub_recipe"]),
+  sourceId: z.number().int().positive(),
+  order: z.number().int().min(0),
+}));
+
+router.put("/:id/assembly-order", requireAdmin, async (req, res) => {
+  try {
+    const recipeId = Number(req.params.id);
+    if (isNaN(recipeId)) {
+      res.status(400).json({ error: "Invalid recipe id" });
+      return;
+    }
+    const parsed = AssemblyOrderBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid body", details: parsed.error.format() });
+      return;
+    }
+    const items = parsed.data;
+
+    for (const item of items) {
+      if (item.sourceType === "ingredient") {
+        await db.update(recipeIngredientsTable)
+          .set({ assemblyOrder: item.order })
+          .where(and(
+            eq(recipeIngredientsTable.recipeId, recipeId),
+            eq(recipeIngredientsTable.ingredientId, item.sourceId)
+          ));
+      } else {
+        await db.update(recipeSubRecipesTable)
+          .set({ assemblyOrder: item.order })
+          .where(and(
+            eq(recipeSubRecipesTable.recipeId, recipeId),
+            eq(recipeSubRecipesTable.subRecipeId, item.sourceId)
+          ));
+      }
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("assembly-order error:", err);
+    res.status(500).json({ error: "Failed to save assembly order" });
   }
 });
 

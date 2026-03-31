@@ -41,6 +41,7 @@ export const recipeIngredientsTable = pgTable("recipe_ingredients", {
   includeInFillingMix: boolean("include_in_filling_mix").notNull().default(false),
   quid: boolean("quid").notNull().default(false),
   isTopping: boolean("is_topping").notNull().default(false),
+  assemblyOrder: integer("assembly_order"),
 });
 
 export const recipeSubRecipesTable = pgTable("recipe_sub_recipes", {
@@ -52,6 +53,7 @@ export const recipeSubRecipesTable = pgTable("recipe_sub_recipes", {
   includeInFillingMix: boolean("include_in_filling_mix").notNull().default(false),
   quid: boolean("quid").notNull().default(false),
   isTopping: boolean("is_topping").notNull().default(false),
+  assemblyOrder: integer("assembly_order"),
 });
 
 export const recipeMeatMarinadesTable = pgTable("recipe_meat_marinades", {

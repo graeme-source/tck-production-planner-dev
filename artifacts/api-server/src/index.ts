@@ -133,6 +133,12 @@ async function runStartupMigrations() {
       ALTER TABLE recipe_sub_recipes ADD COLUMN IF NOT EXISTS is_topping BOOLEAN NOT NULL DEFAULT FALSE
     `);
     await db.execute(sql`
+      ALTER TABLE recipe_ingredients ADD COLUMN IF NOT EXISTS assembly_order INTEGER
+    `);
+    await db.execute(sql`
+      ALTER TABLE recipe_sub_recipes ADD COLUMN IF NOT EXISTS assembly_order INTEGER
+    `);
+    await db.execute(sql`
       ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS surplus_percent NUMERIC(5,2) NOT NULL DEFAULT 10
     `);
     await db.execute(sql`
