@@ -60,6 +60,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const hiddenAtRef = useRef<number | null>(null);
 
   useEffect(() => {
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+      || ("ontouchstart" in window && window.innerWidth < 1024);
+
+    if (!isMobile) return;
+
     const handleVisibility = () => {
       if (document.visibilityState === "hidden") {
         hiddenAtRef.current = Date.now();
