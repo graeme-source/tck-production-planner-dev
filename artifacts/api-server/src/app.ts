@@ -37,9 +37,10 @@ app.use(cors({
       ...(devDomain ? [`https://${devDomain}`] : []),
       ...extraOrigins,
     ];
-    // Also allow any *.replit.app domain (all Replit-hosted deployments)
+    // Also allow any *.replit.app or *.railway.app domain
     const isReplitApp = /^https:\/\/[a-z0-9-]+\.replit\.app$/.test(origin);
-    if (allowed.includes(origin) || isReplitApp) {
+    const isRailwayApp = /^https:\/\/[a-z0-9-]+\.up\.railway\.app$/.test(origin);
+    if (allowed.includes(origin) || isReplitApp || isRailwayApp) {
       callback(null, true);
     } else {
       callback(new Error(`CORS: origin '${origin}' not allowed`));
