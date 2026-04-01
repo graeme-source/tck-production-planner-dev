@@ -227,16 +227,20 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     setAddingBalls(true);
     try {
       let toAdd = count;
+      const added: Record<number, number> = {};
       for (const recipe of doughData.recipes) {
         if (toAdd <= 0) break;
         const item = items.find(it => it.recipeId === recipe.recipeId);
         if (!item) continue;
-        const done = getStationCount(item, "dough_prep");
+        const done = getStationCount(item, "dough_prep") + (added[item.id] ?? 0);
         const needed = recipe.ballCount - done;
         if (needed <= 0) continue;
         const adding = Math.min(toAdd, needed);
         for (let i = 0; i < adding; i++) {
-          try { await addBatch(item); } catch { /* server will reject if target met */ }
+          try {
+            await addBatch(item);
+            added[item.id] = (added[item.id] ?? 0) + 1;
+          } catch { /* server will reject if target met */ }
         }
         toAdd -= adding;
       }
