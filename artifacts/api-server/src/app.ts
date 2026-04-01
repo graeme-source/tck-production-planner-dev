@@ -100,16 +100,6 @@ app.use("/api", router);
 // In production, serve the built frontend
 if (process.env["NODE_ENV"] === "production") {
   const frontendDist = path.resolve(import.meta.dirname, "../../production-planner/dist/public");
-  console.log("[static] Serving frontend from:", frontendDist);
-  const fs = await import("fs");
-  console.log("[static] Directory exists:", fs.existsSync(frontendDist));
-  if (fs.existsSync(frontendDist)) {
-    console.log("[static] Files:", fs.readdirSync(frontendDist).join(", "));
-    const assetsDir = path.resolve(frontendDist, "assets");
-    if (fs.existsSync(assetsDir)) {
-      console.log("[static] Assets:", fs.readdirSync(assetsDir).slice(0, 5).join(", "));
-    }
-  }
   app.use(express.static(frontendDist));
   // SPA fallback — serve index.html for all non-API routes
   app.get("/{*splat}", (_req, res) => {
