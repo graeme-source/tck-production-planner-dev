@@ -70,6 +70,7 @@ router.post("/login", loginLimiter, validate(LoginBody), async (req, res) => {
   req.session.pinVerifiedAt = new Date().toISOString();
   req.session.save((err) => {
     if (err) {
+      console.error("Session save error:", err);
       res.status(500).json({ error: "Failed to create session" });
       return;
     }
@@ -235,6 +236,7 @@ router.post("/pin/login", loginLimiter, async (req, res) => {
   req.session.pinVerifiedAt = new Date().toISOString();
   req.session.save((err) => {
     if (err) {
+      console.error("Session save error:", err);
       res.status(500).json({ error: "Failed to create session" });
       return;
     }
