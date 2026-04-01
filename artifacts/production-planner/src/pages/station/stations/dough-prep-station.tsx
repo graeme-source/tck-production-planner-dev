@@ -142,13 +142,15 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const hasAnyMixDone = completedMixes.size > 0 || hasServerProgress;
   const BALLS_PER_TRAY = 4;
 
-  const addBatch = (item: ProductionPlanItem) => {
-    return new Promise<void>((resolve, reject) => {
-      createBatch.mutate(
-        { id: plan.id, data: { planItemId: item.id, stationType: "dough_prep", completedAt: new Date().toISOString() } },
-        { onSuccess: () => resolve(), onError: (err) => reject(err) },
-      );
+  const addBatch = async (item: ProductionPlanItem) => {
+    const res = await fetch(`/api/production-plans/${plan.id}/batch-completions`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ planItemId: item.id, stationType: "dough_prep", completedAt: new Date().toISOString() }),
     });
+    if (!res.ok) throw new Error(`Server error ${res.status}`);
+    queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
   };
 
   const removeBatch = async (item: ProductionPlanItem) => {
@@ -226,23 +228,19 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     if (isOnBreak || !doughData || addingBalls) return;
     setAddingBalls(true);
     try {
-      let toAdd = count;
-      const added: Record<number, number> = {};
-      for (const recipe of doughData.recipes) {
-        if (toAdd <= 0) break;
-        const item = items.find(it => it.recipeId === recipe.recipeId);
-        if (!item) continue;
-        const done = getStationCount(item, "dough_prep") + (added[item.id] ?? 0);
-        const needed = recipe.ballCount - done;
-        if (needed <= 0) continue;
-        const adding = Math.min(toAdd, needed);
-        for (let i = 0; i < adding; i++) {
+      let remaining = count;
+      for (const item of items) {
+        if (remaining <= 0) break;
+        // Try adding balls to this item until target met or we've added enough
+        while (remaining > 0) {
           try {
             await addBatch(item);
-            added[item.id] = (added[item.id] ?? 0) + 1;
-          } catch { /* server will reject if target met */ }
+            remaining--;
+          } catch {
+            // Server rejected (target met for this item) — move to next item
+            break;
+          }
         }
-        toAdd -= adding;
       }
     } finally {
       setAddingBalls(false);
