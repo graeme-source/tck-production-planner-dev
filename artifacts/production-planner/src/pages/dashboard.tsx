@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useListProductionPlans, useListDispatchOrders, useGetProductionPlan } from "@workspace/api-client-react";
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
@@ -42,7 +42,7 @@ function AndonBanner({ userRole }: { userRole?: string }) {
   const [issues, setIssues] = useState<AndonIssueSummary[]>([]);
   const [acknowledging, setAcknowledging] = useState<number | null>(null);
 
-  const hasToastedRef = React.useRef(false);
+  const hasToastedRef = useRef(false);
   async function fetchIssues() {
     try {
       const res = await fetch(`${BASE}/api/andon?open=true`, { credentials: "include" });
