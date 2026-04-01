@@ -392,13 +392,14 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
             isOnBreak={isOnBreak}
           />
 
-          <button
+          <div
+            role="button"
+            tabIndex={0}
             onClick={() => hasAnyMixDone ? setActiveView("balling") : toast({ title: "Complete a mix first", description: "Balling starts after the first mix is done." })}
-            disabled={!hasAnyMixDone}
             className={cn(
-              "w-full border-2 rounded-2xl p-4 transition-all text-left",
+              "w-full border-2 rounded-2xl p-4 transition-all text-left cursor-pointer",
               !hasAnyMixDone
-                ? "border-border/50 bg-secondary/20 opacity-50"
+                ? "border-border/50 bg-secondary/20 opacity-50 pointer-events-none"
                 : allBallingDone
                   ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/10"
                   : "border-primary/30 bg-primary/5 hover:border-primary/60"
@@ -496,7 +497,7 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                 </div>
               </div>
             )}
-          </button>
+          </div>
         </>
       ) : (
         <>
