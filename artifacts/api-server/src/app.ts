@@ -4,6 +4,7 @@ import helmet from "helmet";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import rateLimit from "express-rate-limit";
+import path from "path";
 import router from "./routes";
 
 const sessionSecret = process.env["SESSION_SECRET"];
@@ -95,11 +96,11 @@ app.use("/api", router);
 
 // In production, serve the built frontend
 if (process.env["NODE_ENV"] === "production") {
-  const frontendDist = require("path").resolve(__dirname, "../../production-planner/dist/public");
+  const frontendDist = path.resolve(__dirname, "../../production-planner/dist/public");
   app.use(express.static(frontendDist));
   // SPA fallback — serve index.html for all non-API routes
   app.get("*", (_req, res) => {
-    res.sendFile(require("path").resolve(frontendDist, "index.html"));
+    res.sendFile(path.resolve(frontendDist, "index.html"));
   });
 }
 
