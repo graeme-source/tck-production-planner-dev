@@ -97,6 +97,7 @@ app.use("/api", router);
 // In production, serve the built frontend
 if (process.env["NODE_ENV"] === "production") {
   const frontendDist = path.resolve(import.meta.dirname, "../../production-planner/dist/public");
+  console.log("[static] Serving frontend from:", frontendDist);
   app.use(express.static(frontendDist));
   // SPA fallback — serve index.html for all non-API routes
   app.get("/{*splat}", (_req, res) => {
