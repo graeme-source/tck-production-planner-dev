@@ -134,7 +134,7 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const totalComplete = items.reduce((s, it) => s + getStationCount(it, "dough_prep"), 0);
   // Ball TARGET comes from the next day's plan (via doughData), not today's plan.
   // Today's plan items are used only for tracking completions.
-  const totalBallsNeeded = doughData ? doughData.recipes.reduce((s, r) => s + r.ballCount, 0) : 0;
+  const totalBallsNeeded = doughData?.recipes?.reduce((s, r) => s + r.ballCount, 0) ?? 0;
   const overallPct = totalBallsNeeded > 0 ? Math.round((totalComplete / totalBallsNeeded) * 100) : 0;
   const mixCount = doughData?.mixCount ?? 0;
 
