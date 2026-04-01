@@ -99,7 +99,7 @@ if (process.env["NODE_ENV"] === "production") {
   const frontendDist = path.resolve(import.meta.dirname, "../../production-planner/dist/public");
   app.use(express.static(frontendDist));
   // SPA fallback — serve index.html for all non-API routes
-  app.get("*", (_req, res) => {
+  app.get("/{*splat}", (_req, res) => {
     res.sendFile(path.resolve(frontendDist, "index.html"));
   });
 }
