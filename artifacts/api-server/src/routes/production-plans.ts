@@ -3558,6 +3558,8 @@ router.get("/:id/main-prep", async (req, res) => {
         if (!BASES_CATEGORIES.includes(cat)) continue;
         // Mozzarella/fior di latte belongs to filling mix prep, not bases — always exclude here
         if (isMozzType) continue;
+      } else if (station === "prep_meat") {
+        if (cat !== "raw_meat") continue;
       } else {
         if (MAIN_PREP_EXCLUDED.includes(cat)) continue;
         // Mozzarella/fior di latte goes directly to building fridges — exclude from main prep
