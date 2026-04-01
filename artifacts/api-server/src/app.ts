@@ -95,14 +95,11 @@ app.use("/api", router);
 
 // In production, serve the built frontend
 if (process.env["NODE_ENV"] === "production") {
-  const path = await import("path");
-  // esbuild bundles to CJS where __dirname is available globally
-  const dir = typeof __dirname !== "undefined" ? __dirname : process.cwd();
-  const frontendDist = path.resolve(dir, "../../production-planner/dist/public");
+  const frontendDist = require("path").resolve(__dirname, "../../production-planner/dist/public");
   app.use(express.static(frontendDist));
   // SPA fallback — serve index.html for all non-API routes
   app.get("*", (_req, res) => {
-    res.sendFile(path.resolve(frontendDist, "index.html"));
+    res.sendFile(require("path").resolve(frontendDist, "index.html"));
   });
 }
 
