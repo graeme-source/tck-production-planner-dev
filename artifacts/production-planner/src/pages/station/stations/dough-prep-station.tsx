@@ -426,114 +426,72 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
             {hasAnyMixDone && !allBallingDone && (
               <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
 
-                {/* PRIMARY — Tray controls */}
-                <div className="flex gap-1.5 items-stretch">
+                {/* Tray controls — left */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); removeBalls(BALLS_PER_TRAY); }}
+                  disabled={ballCount < BALLS_PER_TRAY || isOnBreak || removingBalls}
+                  className="h-14 px-5 rounded-xl text-lg font-bold transition-all border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30"
+                >
+                  {removingBalls ? "…" : "− 1 Tray"}
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); addBalls(BALLS_PER_TRAY); }}
+                  disabled={isOnBreak || createBatch.isPending}
+                  className={cn(
+                    "h-14 px-6 rounded-xl text-lg font-bold transition-all",
+                    isOnBreak
+                      ? "bg-secondary text-muted-foreground"
+                      : "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95"
+                  )}
+                >
+                  + 1 Tray
+                </button>
+
+                {/* Secondary controls — pushed right */}
+                <div className="ml-auto flex items-center gap-2">
                   <button
-                    onClick={(e) => { e.stopPropagation(); removeBalls(BALLS_PER_TRAY); }}
-                    disabled={ballCount < BALLS_PER_TRAY || isOnBreak || removingBalls}
-                    className="h-10 px-4 rounded-xl text-sm font-bold transition-all border border-border bg-background hover:bg-secondary/60 disabled:opacity-30"
+                    onClick={(e) => { e.stopPropagation(); undoBall(); }}
+                    disabled={ballCount === 0 || isOnBreak}
+                    className="h-14 px-4 rounded-xl text-lg font-bold border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
                   >
-                    {removingBalls ? "…" : "− 1 Tray"}
+                    − 1 Ball
                   </button>
                   <button
-                    onClick={(e) => { e.stopPropagation(); addBalls(BALLS_PER_TRAY); }}
+                    onClick={(e) => { e.stopPropagation(); addBalls(1); }}
                     disabled={isOnBreak || createBatch.isPending}
-                    className={cn(
-                      "h-10 px-5 rounded-xl text-sm font-bold transition-all",
-                      isOnBreak
-                        ? "bg-secondary text-muted-foreground"
-                        : "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95"
-                    )}
+                    className="h-14 px-4 rounded-xl text-lg font-bold border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-50 transition-all"
                   >
-                    + 1 Tray
+                    + 1 Ball
                   </button>
-                </div>
 
-                {/* SECONDARY — Single ball + extras, pushed to the right */}
-                <div className="ml-auto flex items-stretch gap-2">
+                  {extraPackItems.length > 0 && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); addExtraType(extraPackItems); }}
+                      disabled={isOnBreak || extraPackDone >= extraPackItems.length}
+                      className={cn(
+                        "h-14 px-4 rounded-xl text-lg font-bold border-2 transition-all",
+                        extraPackDone >= extraPackItems.length
+                          ? "border-emerald-300 bg-emerald-50/50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400"
+                          : "border-border bg-background hover:bg-secondary/60 active:scale-95 disabled:opacity-50"
+                      )}
+                    >
+                      {extraPackItems[0]?.weightG}g ({extraPackDone}/{extraPackItems.length})
+                    </button>
+                  )}
 
-                  <div className="w-px bg-border/50 self-stretch" />
-
-                  {/* Single ball */}
-                  <div className="flex flex-col items-center justify-center gap-0.5">
-                    <div className="flex gap-1">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); undoBall(); }}
-                        disabled={ballCount === 0 || isOnBreak}
-                        className="h-8 w-8 flex items-center justify-center rounded-lg border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
-                      >
-                        <Minus className="w-3 h-3" />
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); addBalls(1); }}
-                        disabled={isOnBreak || createBatch.isPending}
-                        className="h-8 px-3 rounded-lg text-xs font-semibold border border-border bg-background hover:bg-secondary/60 disabled:opacity-50 transition-all"
-                      >
-                        + 1 Ball
-                      </button>
-                    </div>
-                    <span className="text-[9px] text-muted-foreground">single</span>
-                  </div>
-
-                  {/* Extra ball types */}
-                  {(extraPackItems.length > 0 || snackItems.length > 0) && (
-                    <>
-                      <div className="w-px bg-border/50 self-stretch" />
-
-                    {extraPackItems.length > 0 && (
-                      <div className="flex flex-col items-center justify-center gap-0.5">
-                        <div className="flex gap-1 items-center">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); addExtraType(extraPackItems); }}
-                            disabled={isOnBreak || extraPackDone >= extraPackItems.length}
-                            className={cn(
-                              "h-8 px-2.5 rounded-lg text-xs font-semibold border transition-all",
-                              extraPackDone >= extraPackItems.length
-                                ? "border-emerald-300 bg-emerald-50/50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400"
-                                : "border-border bg-background hover:bg-secondary/60 active:scale-95 disabled:opacity-50"
-                            )}
-                          >
-                            Add {extraPackItems[0]?.weightG}g ball
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); removeExtraType(extraPackItems); }}
-                            disabled={extraPackDone === 0 || isOnBreak}
-                            className="h-7 w-7 flex items-center justify-center rounded-md border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
-                          >
-                            <Minus className="w-3 h-3" />
-                          </button>
-                        </div>
-                        <span className="text-[9px] text-muted-foreground">{extraPackDone} of {extraPackItems.length}</span>
-                      </div>
-                    )}
-
-                    {snackItems.length > 0 && (
-                      <div className="flex flex-col items-center justify-center gap-0.5">
-                        <div className="flex gap-1 items-center">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); addExtraType(snackItems); }}
-                            disabled={isOnBreak || snackDone >= snackItems.length}
-                            className={cn(
-                              "h-8 px-2.5 rounded-lg text-xs font-semibold border transition-all",
-                              snackDone >= snackItems.length
-                                ? "border-emerald-300 bg-emerald-50/50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400"
-                                : "border-border bg-background hover:bg-secondary/60 active:scale-95 disabled:opacity-50"
-                            )}
-                          >
-                            Add {snackItems[0]?.weightG}g Snack
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); removeExtraType(snackItems); }}
-                            disabled={snackDone === 0 || isOnBreak}
-                            className="h-7 w-7 flex items-center justify-center rounded-md border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
-                          >
-                            <Minus className="w-3 h-3" />
-                          </button>
-                        </div>
-                        <span className="text-[9px] text-muted-foreground">{snackDone} of {snackItems.length}</span>
-                      </div>
-                    )}
-                    </>
+                  {snackItems.length > 0 && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); addExtraType(snackItems); }}
+                      disabled={isOnBreak || snackDone >= snackItems.length}
+                      className={cn(
+                        "h-14 px-4 rounded-xl text-lg font-bold border-2 transition-all",
+                        snackDone >= snackItems.length
+                          ? "border-emerald-300 bg-emerald-50/50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400"
+                          : "border-border bg-background hover:bg-secondary/60 active:scale-95 disabled:opacity-50"
+                      )}
+                    >
+                      Snack ({snackDone}/{snackItems.length})
+                    </button>
                   )}
                 </div>
               </div>
@@ -730,25 +688,18 @@ function DoughMixingView({
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className={cn(
-                    "font-semibold text-lg",
+                    "font-semibold text-3xl",
                     isChecked && "line-through text-muted-foreground"
                   )}>
                     {ing.ingredientName}
                   </p>
-                  <p className="text-sm text-muted-foreground">
-                    {ing.pctOfDough > 0 ? `${ing.pctOfDough}%` : "<0.1%"} of dough
-                  </p>
                 </div>
                 <div className="text-right flex-shrink-0">
                   <p className={cn(
-                    "text-2xl font-bold tabular-nums",
+                    "text-3xl font-semibold tabular-nums",
                     isChecked ? "text-emerald-700 dark:text-emerald-300" : "text-foreground"
                   )}>
                     {fmtDoughQty(ing.qtyPerMix, ing.unit, ing.ingredientName)}
-                  </p>
-                  <p className="text-xs text-muted-foreground/70">per mix</p>
-                  <p className="text-sm text-muted-foreground font-medium">
-                    Day total: {fmtDoughQty(ing.totalQty, ing.unit, ing.ingredientName)}
                   </p>
                 </div>
               </button>
@@ -843,34 +794,34 @@ function DoughBallingView({
           ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/20"
           : "border-primary/50 bg-card"
       )}>
-        <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="grid grid-cols-2 gap-6 mb-6">
           <div>
-            <p className="text-sm text-muted-foreground mb-1">Balls</p>
+            <p className="text-xl text-muted-foreground mb-1">Balls</p>
             <p className={cn(
-              "font-display text-5xl font-bold tabular-nums",
+              "font-display text-8xl font-bold tabular-nums",
               allBallingDone ? "text-emerald-600" : "text-foreground"
             )}>
               {ballCount}
             </p>
-            <p className="text-base text-muted-foreground">of {totalBallsNeeded}</p>
+            <p className="text-2xl text-muted-foreground">of {totalBallsNeeded}</p>
           </div>
           <div>
-            <p className="text-sm text-muted-foreground mb-1">Trays</p>
+            <p className="text-xl text-muted-foreground mb-1">Trays</p>
             <p className={cn(
-              "font-display text-5xl font-bold tabular-nums",
+              "font-display text-8xl font-bold tabular-nums",
               allBallingDone ? "text-emerald-600" : "text-foreground"
             )}>
               {fmtTrays(traysDone)}
             </p>
-            <p className="text-base text-muted-foreground">of {fmtTrays(totalTraysNeeded)}</p>
+            <p className="text-2xl text-muted-foreground">of {fmtTrays(totalTraysNeeded)}</p>
           </div>
         </div>
 
-        <p className="text-sm text-muted-foreground mb-3">
+        <p className="text-xl text-muted-foreground mb-4">
           Each ball = {doughData.recipes[0]?.ballWeightG ?? 0}g · {ballsPerTray} balls per tray
         </p>
 
-        <div className="w-full h-3 bg-secondary rounded-full overflow-hidden mb-6">
+        <div className="w-full h-5 bg-secondary rounded-full overflow-hidden mb-8">
           <div
             className={cn("h-full rounded-full transition-all", allBallingDone ? "bg-emerald-500" : "bg-primary")}
             style={{ width: `${Math.min(ballPct, 100)}%` }}
@@ -878,14 +829,14 @@ function DoughBallingView({
         </div>
 
         {!allBallingDone ? (
-          <div className="flex flex-wrap items-stretch justify-center gap-3">
+          <div className="flex flex-col items-center gap-4">
 
-            {/* PRIMARY — Tray controls (left) */}
-            <div className="flex gap-2 items-stretch">
+            {/* PRIMARY — Tray controls */}
+            <div className="flex gap-3 items-stretch w-full">
               <button
                 onClick={() => removeBalls(ballsPerTray)}
                 disabled={ballCount < ballsPerTray || isOnBreak || removingBalls}
-                className="h-16 px-5 rounded-2xl text-base font-bold transition-all border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30"
+                className="flex-1 h-20 rounded-2xl text-2xl font-bold transition-all border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30"
               >
                 {removingBalls ? "…" : "− 1 Tray"}
               </button>
@@ -893,7 +844,7 @@ function DoughBallingView({
                 onClick={() => addBalls(ballsPerTray)}
                 disabled={isOnBreak || batchPending}
                 className={cn(
-                  "h-16 px-8 rounded-2xl text-lg font-bold transition-all shadow-lg",
+                  "flex-[2] h-20 rounded-2xl text-3xl font-bold transition-all shadow-lg",
                   isOnBreak
                     ? "bg-secondary text-muted-foreground"
                     : "bg-primary text-primary-foreground hover:bg-primary/90 shadow-primary/20 active:scale-95"
@@ -903,48 +854,47 @@ function DoughBallingView({
               </button>
             </div>
 
-            {/* Divider */}
-            <div className="w-px bg-border/50 self-stretch mx-0.5" />
-
             {/* SECONDARY — Single ball controls */}
-            <div className="flex flex-col items-center justify-center gap-1">
-              <div className="flex gap-1.5">
-                <button
-                  onClick={undoBall}
-                  disabled={ballCount === 0 || isOnBreak}
-                  className="w-12 h-12 flex items-center justify-center rounded-xl border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
-                >
-                  <Minus className="w-5 h-5" />
-                </button>
-                <button
-                  onClick={() => addBalls(1)}
-                  disabled={isOnBreak || batchPending}
-                  className={cn(
-                    "h-12 px-5 rounded-xl text-base font-bold border transition-all",
-                    isOnBreak
-                      ? "border-border bg-background text-muted-foreground opacity-50"
-                      : "border-border bg-background hover:bg-secondary/60 active:scale-95"
-                  )}
-                >
-                  + 1 Ball
-                </button>
-              </div>
-              <span className="text-xs text-muted-foreground">single ball</span>
+            <div className="flex gap-3 items-stretch w-full">
+              <button
+                onClick={undoBall}
+                disabled={ballCount === 0 || isOnBreak}
+                className="flex-1 h-16 rounded-2xl text-xl font-bold border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
+              >
+                − 1 Ball
+              </button>
+              <button
+                onClick={() => addBalls(1)}
+                disabled={isOnBreak || batchPending}
+                className={cn(
+                  "flex-1 h-16 rounded-2xl text-xl font-bold border-2 transition-all",
+                  isOnBreak
+                    ? "border-border bg-background text-muted-foreground opacity-50"
+                    : "border-border bg-background hover:bg-secondary/60 active:scale-95"
+                )}
+              >
+                + 1 Ball
+              </button>
             </div>
 
             {/* Extra ball type controls */}
             {(extraPackItems.length > 0 || snackItems.length > 0) && (
-              <>
-                <div className="w-px bg-border/50 self-stretch mx-0.5" />
-
+              <div className="flex gap-3 items-stretch w-full">
                 {extraPackItems.length > 0 && (
-                  <div className="flex flex-col items-center justify-center gap-1">
-                    <div className="flex gap-1.5 items-center">
+                  <div className="flex-1 flex flex-col gap-2">
+                    <div className="flex gap-3 items-stretch">
+                      <button
+                        onClick={() => removeExtraType(extraPackItems)}
+                        disabled={extraPackDone === 0 || isOnBreak}
+                        className="w-14 flex items-center justify-center rounded-2xl border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
+                      >
+                        <Minus className="w-6 h-6" />
+                      </button>
                       <button
                         onClick={() => addExtraType(extraPackItems)}
                         disabled={isOnBreak || extraPackDone >= extraPackItems.length}
                         className={cn(
-                          "h-12 px-4 rounded-xl text-sm font-bold border transition-all",
+                          "flex-1 h-16 rounded-2xl text-xl font-bold border-2 transition-all",
                           extraPackDone >= extraPackItems.length
                             ? "border-emerald-300 bg-emerald-50/50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400"
                             : isOnBreak
@@ -954,28 +904,28 @@ function DoughBallingView({
                       >
                         Add {extraPackItems[0]?.weightG}g ball
                       </button>
-                      <button
-                        onClick={() => removeExtraType(extraPackItems)}
-                        disabled={extraPackDone === 0 || isOnBreak}
-                        className="w-10 h-10 flex items-center justify-center rounded-lg border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
-                      >
-                        <Minus className="w-4 h-4" />
-                      </button>
                     </div>
-                    <span className="text-xs text-muted-foreground">
+                    <p className="text-lg text-muted-foreground text-center">
                       {extraPackDone} of {extraPackItems.length}
-                    </span>
+                    </p>
                   </div>
                 )}
 
                 {snackItems.length > 0 && (
-                  <div className="flex flex-col items-center justify-center gap-1">
-                    <div className="flex gap-1.5 items-center">
+                  <div className="flex-1 flex flex-col gap-2">
+                    <div className="flex gap-3 items-stretch">
+                      <button
+                        onClick={() => removeExtraType(snackItems)}
+                        disabled={snackDone === 0 || isOnBreak}
+                        className="w-14 flex items-center justify-center rounded-2xl border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
+                      >
+                        <Minus className="w-6 h-6" />
+                      </button>
                       <button
                         onClick={() => addExtraType(snackItems)}
                         disabled={isOnBreak || snackDone >= snackItems.length}
                         className={cn(
-                          "h-12 px-4 rounded-xl text-sm font-bold border transition-all",
+                          "flex-1 h-16 rounded-2xl text-xl font-bold border-2 transition-all",
                           snackDone >= snackItems.length
                             ? "border-emerald-300 bg-emerald-50/50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400"
                             : isOnBreak
@@ -985,26 +935,19 @@ function DoughBallingView({
                       >
                         Add {snackItems[0]?.weightG}g Snack
                       </button>
-                      <button
-                        onClick={() => removeExtraType(snackItems)}
-                        disabled={snackDone === 0 || isOnBreak}
-                        className="w-10 h-10 flex items-center justify-center rounded-lg border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
-                      >
-                        <Minus className="w-4 h-4" />
-                      </button>
                     </div>
-                    <span className="text-xs text-muted-foreground">
+                    <p className="text-lg text-muted-foreground text-center">
                       {snackDone} of {snackItems.length}
-                    </span>
+                    </p>
                   </div>
                 )}
-              </>
+              </div>
             )}
           </div>
         ) : (
-          <div className="flex items-center justify-center gap-2 text-emerald-600">
-            <CheckCircle2 className="w-6 h-6" />
-            <span className="text-lg font-semibold">All balls complete!</span>
+          <div className="flex items-center justify-center gap-3 text-emerald-600">
+            <CheckCircle2 className="w-10 h-10" />
+            <span className="text-3xl font-semibold">All balls complete!</span>
           </div>
         )}
       </div>
