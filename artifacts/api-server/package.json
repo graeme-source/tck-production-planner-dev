@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "NODE_ENV=development node --env-file=.env --import tsx/esm ./src/index.ts",
+    "start": "node --import tsx/esm ./src/index.ts",
     "build": "tsx ./build.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "export-seed": "tsx ./scripts/export-prod-seed.ts"

@@ -26,5 +26,6 @@ ENV PORT=3000
 ENV NODE_ENV=production
 EXPOSE 3000
 
-# Run with tsx directly (available from devDependencies)
-CMD ["node", "--import", "tsx/esm", "artifacts/api-server/src/index.ts"]
+# Run from the api-server directory where tsx is available
+WORKDIR /app/artifacts/api-server
+CMD ["pnpm", "run", "start"]
