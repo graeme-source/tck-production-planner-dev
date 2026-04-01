@@ -143,7 +143,12 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const BALLS_PER_TRAY = 4;
 
   const addBatch = (item: ProductionPlanItem) => {
-    createBatch.mutate({ id: plan.id, data: { planItemId: item.id, stationType: "dough_prep", completedAt: new Date().toISOString() } });
+    return new Promise<void>((resolve, reject) => {
+      createBatch.mutate(
+        { id: plan.id, data: { planItemId: item.id, stationType: "dough_prep", completedAt: new Date().toISOString() } },
+        { onSuccess: () => resolve(), onError: (err) => reject(err) },
+      );
+    });
   };
 
   const removeBatch = async (item: ProductionPlanItem) => {
@@ -216,21 +221,27 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     if (last) toggleExtraTick(last.key);
   };
 
-  const addBalls = (count: number) => {
-    if (isOnBreak || !doughData) return;
-    let toAdd = count;
-    for (const recipe of doughData.recipes) {
-      if (toAdd <= 0) break;
-      const item = items.find(it => it.recipeId === recipe.recipeId);
-      if (!item) continue;
-      const done = getStationCount(item, "dough_prep");
-      const needed = recipe.ballCount - done;
-      if (needed <= 0) continue;
-      const adding = Math.min(toAdd, needed);
-      for (let i = 0; i < adding; i++) {
-        addBatch(item);
+  const [addingBalls, setAddingBalls] = useState(false);
+  const addBalls = async (count: number) => {
+    if (isOnBreak || !doughData || addingBalls) return;
+    setAddingBalls(true);
+    try {
+      let toAdd = count;
+      for (const recipe of doughData.recipes) {
+        if (toAdd <= 0) break;
+        const item = items.find(it => it.recipeId === recipe.recipeId);
+        if (!item) continue;
+        const done = getStationCount(item, "dough_prep");
+        const needed = recipe.ballCount - done;
+        if (needed <= 0) continue;
+        const adding = Math.min(toAdd, needed);
+        for (let i = 0; i < adding; i++) {
+          try { await addBatch(item); } catch { /* server will reject if target met */ }
+        }
+        toAdd -= adding;
       }
-      toAdd -= adding;
+    } finally {
+      setAddingBalls(false);
     }
   };
 
