@@ -1,0 +1,8 @@
+node_modules
+.git
+.env
+.env.*
+.claude
+backups
+*.png
+dist
