@@ -51,8 +51,8 @@ interface FillingMixItem {
   tinsTarget: number;
   batchesPerTin: number;
   servingsPerTin: number;
-  fillingIngredients: Array<{ ingredientId: number; name: string | null; unit: string | null; qtyPerBatch: number; qtyPerTin: number }>;
-  fillingSubRecipes: Array<{ subRecipeId: number; name: string | null; unit: string | null; qtyPerBatch: number; qtyPerTin: number }>;
+  fillingIngredients: Array<{ ingredientId: number; name: string | null; unit: string | null; qtyPerBatch: number; qtyPerTin: number; mixingOverage?: number }>;
+  fillingSubRecipes: Array<{ subRecipeId: number; name: string | null; unit: string | null; qtyPerBatch: number; qtyPerTin: number; mixingOverage?: number }>;
 }
 
 interface MixingStationProps {
@@ -941,9 +941,14 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
           <div className="px-4 pb-3 space-y-0.5">
             {filling.fillingIngredients.map((fi, idx) => (
               <div key={`ing-${idx}`} className="flex items-center gap-3 py-2 px-3 rounded-lg">
-                <span className="flex-1 text-lg">
-                  {fi.name ?? `Ingredient #${fi.ingredientId}`}
-                </span>
+                <div className="flex-1">
+                  <span className="text-lg">{fi.name ?? `Ingredient #${fi.ingredientId}`}</span>
+                  {(fi.mixingOverage ?? 0) > 0 && (
+                    <span className="ml-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded px-1.5 py-0.5">
+                      +{formatMixQty(fi.mixingOverage! * batchesPerTinEqual, fi.unit)} extra
+                    </span>
+                  )}
+                </div>
                 <div className="flex flex-col items-end">
                   <span className="text-lg font-mono tabular-nums font-bold text-foreground">
                     {formatMixQty(fi.qtyPerBatch * batchesPerTinEqual, fi.unit)}
@@ -954,9 +959,14 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
             ))}
             {filling.fillingSubRecipes.map((fs, idx) => (
               <div key={`sub-${idx}`} className="flex items-center gap-3 py-2 px-3 rounded-lg">
-                <span className="flex-1 text-lg">
-                  {fs.name ?? `Sub-recipe #${fs.subRecipeId}`}
-                </span>
+                <div className="flex-1">
+                  <span className="text-lg">{fs.name ?? `Sub-recipe #${fs.subRecipeId}`}</span>
+                  {(fs.mixingOverage ?? 0) > 0 && (
+                    <span className="ml-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded px-1.5 py-0.5">
+                      +{formatMixQty(fs.mixingOverage! * batchesPerTinEqual, fs.unit)} extra
+                    </span>
+                  )}
+                </div>
                 <div className="flex flex-col items-end">
                   <span className="text-lg font-mono tabular-nums font-bold text-foreground">
                     {formatMixQty(fs.qtyPerBatch * batchesPerTinEqual, fs.unit)}

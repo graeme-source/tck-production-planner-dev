@@ -362,8 +362,8 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                       <span className="text-xl font-bold tabular-nums text-purple-700 dark:text-purple-300">{net}</span>
                     </div>
                     <div className="text-center border-l border-border/50 pl-3">
-                      <span className="text-sm text-blue-600 dark:text-blue-400 block">Wrapped</span>
-                      <span className="text-xl font-bold tabular-nums text-blue-700 dark:text-blue-300">{fridge}</span>
+                      <span className="text-sm text-primary block">Wrapped</span>
+                      <span className="text-xl font-bold tabular-nums text-primary">{fridge}</span>
                     </div>
                     {(item.wonlyCount ?? 0) > 0 && (
                       <div className="text-center">
@@ -432,7 +432,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                   <button
                     onClick={() => addToStorage(item, Math.min(STACK_SIZE, remaining), "fridge")}
                     disabled={isStorageLoading || isOnBreak || addingRef.current || storageBusy}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
                   >
                     {isStorageLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
                     {remaining < STACK_SIZE ? `Add ${remaining} to Fridge` : `Add ${STACK_SIZE}`}
@@ -461,7 +461,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                       <button
                         onClick={() => { if (customNum > 0) addToStorage(item, customNum, "fridge"); }}
                         disabled={isStorageLoading || !(customNum > 0) || isOnBreak || addingRef.current || storageBusy}
-                        className="px-3 py-2 rounded-lg bg-blue-600 text-white text-base font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                        className="px-3 py-2 rounded-lg bg-primary text-primary-foreground text-base font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
                       >
                         Add
                       </button>

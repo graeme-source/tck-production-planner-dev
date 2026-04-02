@@ -2027,7 +2027,8 @@ router.get("/:id/filling-mix", async (req, res) => {
   const fillingIngredients = await db.execute(sql`
     SELECT ri.recipe_id as "recipeId", ri.ingredient_id as "ingredientId",
            i.name as "ingredientName", i.unit, ri.quantity,
-           ri.marinade_for_ingredient_id as "marinadeForIngredientId"
+           ri.marinade_for_ingredient_id as "marinadeForIngredientId",
+           ri.mixing_overage as "mixingOverage"
     FROM recipe_ingredients ri
     LEFT JOIN ingredients i ON ri.ingredient_id = i.id
     WHERE ri.recipe_id IN (${sql.join(recipeIds.map(id => sql`${id}`), sql`, `)})
@@ -2037,15 +2038,16 @@ router.get("/:id/filling-mix", async (req, res) => {
   const fillingSubRecipeRows = await db.execute(sql`
     SELECT rs.recipe_id as "recipeId", rs.sub_recipe_id as "subRecipeId",
            s.name as "subRecipeName", s.yield_unit as unit, rs.quantity,
-           rs.marinade_for_ingredient_id as "marinadeForIngredientId"
+           rs.marinade_for_ingredient_id as "marinadeForIngredientId",
+           rs.mixing_overage as "mixingOverage"
     FROM recipe_sub_recipes rs
     LEFT JOIN sub_recipes s ON rs.sub_recipe_id = s.id
     WHERE rs.recipe_id IN (${sql.join(recipeIds.map(id => sql`${id}`), sql`, `)})
       AND rs.include_in_filling_mix = true
   `);
 
-  const fiRows = fillingIngredients.rows as Array<{ recipeId: number; ingredientId: number; ingredientName: string; unit: string; quantity: string; marinadeForIngredientId: number | null }>;
-  const fsRows = fillingSubRecipeRows.rows as Array<{ recipeId: number; subRecipeId: number; subRecipeName: string; unit: string; quantity: string; marinadeForIngredientId: number | null }>;
+  const fiRows = fillingIngredients.rows as Array<{ recipeId: number; ingredientId: number; ingredientName: string; unit: string; quantity: string; marinadeForIngredientId: number | null; mixingOverage: string | null }>;
+  const fsRows = fillingSubRecipeRows.rows as Array<{ recipeId: number; subRecipeId: number; subRecipeName: string; unit: string; quantity: string; marinadeForIngredientId: number | null; mixingOverage: string | null }>;
 
   const result = planItems.map(item => {
     const bpt = item.maxBatchesPerTin ?? 1;
@@ -2086,24 +2088,30 @@ router.get("/:id/filling-mix", async (req, res) => {
       .map(fi => {
         const extra = extraQtyByMeatId.get(fi.ingredientId) ?? 0;
         const totalQtyPerPortion = Number(fi.quantity) + extra;
+        const overage = Number(fi.mixingOverage ?? 0);
         return {
           ingredientId: fi.ingredientId,
           name: fi.ingredientName,
           unit: fi.unit,
-          qtyPerBatch: totalQtyPerPortion * ppb,
-          qtyPerTin: totalQtyPerPortion * ppb * batchesPerTin,
+          qtyPerBatch: totalQtyPerPortion * ppb + overage,
+          qtyPerTin: (totalQtyPerPortion * ppb + overage) * batchesPerTin,
+          mixingOverage: overage,
         };
       });
 
     const subRecipes = recipeSubRows
       .filter(fs => !marinadeSubIds.has(fs.subRecipeId))
-      .map(fs => ({
-        subRecipeId: fs.subRecipeId,
-        name: fs.subRecipeName,
-        unit: fs.unit,
-        qtyPerBatch: Number(fs.quantity) * ppb,
-        qtyPerTin: Number(fs.quantity) * ppb * batchesPerTin,
-      }));
+      .map(fs => {
+        const overage = Number(fs.mixingOverage ?? 0);
+        return {
+          subRecipeId: fs.subRecipeId,
+          name: fs.subRecipeName,
+          unit: fs.unit,
+          qtyPerBatch: Number(fs.quantity) * ppb + overage,
+          qtyPerTin: (Number(fs.quantity) * ppb + overage) * batchesPerTin,
+          mixingOverage: overage,
+        };
+      });
 
     return {
       itemId: item.id,

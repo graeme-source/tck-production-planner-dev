@@ -42,6 +42,7 @@ export const recipeIngredientsTable = pgTable("recipe_ingredients", {
   quid: boolean("quid").notNull().default(false),
   isTopping: boolean("is_topping").notNull().default(false),
   assemblyOrder: integer("assembly_order"),
+  mixingOverage: numeric("mixing_overage", { precision: 10, scale: 4 }).notNull().default("0"),
 });
 
 export const recipeSubRecipesTable = pgTable("recipe_sub_recipes", {
@@ -54,6 +55,7 @@ export const recipeSubRecipesTable = pgTable("recipe_sub_recipes", {
   quid: boolean("quid").notNull().default(false),
   isTopping: boolean("is_topping").notNull().default(false),
   assemblyOrder: integer("assembly_order"),
+  mixingOverage: numeric("mixing_overage", { precision: 10, scale: 4 }).notNull().default("0"),
 });
 
 export const recipeMeatMarinadesTable = pgTable("recipe_meat_marinades", {
