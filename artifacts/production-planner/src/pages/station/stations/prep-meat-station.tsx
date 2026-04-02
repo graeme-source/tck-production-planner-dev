@@ -7,7 +7,6 @@ import {
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { BreakTracker } from "../shared/break-tracker";
-import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { PrepDateBanner, toKg } from "../shared/prep-helpers";
 import { PrepSubNav, usePrepByRecipe } from "./prep-hub";
 import type { PrepRecipeDetail } from "./prep-hub";
@@ -55,8 +54,8 @@ function usePrepMeatCompletions(planId: number) {
 export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
   const [isOnBreak, setIsOnBreak] = useState(false);
   const [selectedRecipeId, setSelectedRecipeId] = useState<number | null>(null);
-  const { recipes, isLoading, nextPlan, targetPlanId } = usePrepByRecipe("prep_meat", plan.id, plan.planDate);
-  const { completions, refetch } = usePrepMeatCompletions(targetPlanId);
+  const { recipes, isLoading, nextPlan, targetPlanId, noFuturePlan } = usePrepByRecipe("prep_meat", plan.id, plan.planDate);
+  const { completions, refetch } = usePrepMeatCompletions(targetPlanId ?? plan.id);
 
   const totalTrays = recipes.reduce((sum, r) => sum + (r.trayCount ?? 0), 0);
 
@@ -85,9 +84,6 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
     }
   }, [recipes, selectedRecipeId]);
 
-  const [runTrayAction, trayBusy] = useGuardedAction({
-    onSuccess: () => refetch(),
-  });
   const [trayPending, setTrayPending] = useState<string | null>(null);
 
   const toggleTray = async (ingredientId: number, recipeId: number, trayNum: number) => {
@@ -95,29 +91,47 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
     const pendingKey = `${ingredientId}-${recipeId}-${trayNum}`;
     if (trayPending === pendingKey) return;
     setTrayPending(pendingKey);
-    const existing = getCompletion(ingredientId, recipeId, trayNum);
-    await runTrayAction(async (signal) => {
+    try {
+      const existing = getCompletion(ingredientId, recipeId, trayNum);
       if (existing) {
-        await guardedFetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
+        await fetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
           method: "DELETE",
+          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ingredientId, recipeId, tinNumber: trayNum }),
-          signal,
         });
       } else {
-        await guardedFetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
+        await fetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
           method: "POST",
+          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ingredientId, recipeId, tinNumber: trayNum }),
-          signal,
         });
       }
-    });
-    setTrayPending(null);
+      refetch();
+    } finally {
+      setTrayPending(null);
+    }
   };
 
   if (isLoading) {
     return <div className="flex items-center justify-center py-20 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin mr-2" />Loading…</div>;
+  }
+
+  if (noFuturePlan) {
+    return (
+      <div className="space-y-4">
+        <PrepSubNav planId={plan.id} current="prep_meat" />
+        <div className="bg-card border border-border rounded-xl p-8 text-center">
+          <Beef className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-50" />
+          <h2 className="font-semibold text-lg mb-1">No future production plan</h2>
+          <p className="text-muted-foreground text-sm">
+            There is no upcoming active production plan to prep for.
+            Create and activate a future plan to see prep requirements here.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   if (recipes.length === 0) {

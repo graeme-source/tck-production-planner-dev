@@ -11,7 +11,6 @@ import {
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
-import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { BreakTracker } from "../shared/break-tracker";
 import { PrepDateBanner, useNextActivePlan, fmtQty } from "../shared/prep-helpers";
 import type { NextActivePlan } from "../shared/prep-helpers";
@@ -602,7 +601,8 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
   const [completedSubRecipeIds, setCompletedSubRecipeIds] = useState<Set<number>>(new Set());
   const { data: nextPlanData, isLoading: isNextPlanLoading } = useNextActivePlan(plan.planDate);
   const nextPlan = nextPlanData as NextActivePlan | null;
-  const targetPlanId = nextPlan?.planId ?? plan.id;
+  const noFuturePlan = !isNextPlanLoading && nextPlan != null && nextPlan.planId == null;
+  const targetPlanId = noFuturePlan ? plan.id : (nextPlan?.planId ?? plan.id);
   const { subRecipes: planSubRecipes, loading: subRecipesLoading } = usePlanSubRecipeRequirements(targetPlanId);
   const { data: allSubRecipesData } = useListSubRecipes();
   const allSubRecipes = (allSubRecipesData ?? []) as SubRecipe[];
@@ -688,30 +688,23 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
     ? ingredients.find(i => i.ingredientId === selectedItem) ?? null
     : null;
 
-  const [runTinAction, tinPending] = useGuardedAction({
-    onSuccess: () => refetch(),
-  });
-
   const toggleTin = async (ingredientId: number, recipeId: number, tinNumber: number) => {
     if (isOnBreak) return;
     const existing = getCompletion(ingredientId, recipeId, tinNumber);
-    await runTinAction(async (signal) => {
-      if (existing) {
-        await guardedFetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ingredientId, recipeId, tinNumber }),
-          signal,
-        });
-      } else {
-        await guardedFetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ingredientId, recipeId, tinNumber }),
-          signal,
-        });
-      }
-    });
+    if (existing) {
+      await fetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
+        method: "DELETE", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ingredientId, recipeId, tinNumber }),
+      });
+    } else {
+      await fetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ingredientId, recipeId, tinNumber }),
+      });
+    }
+    refetch();
   };
 
   const totalTins = ingredients.reduce((s, ing) => s + ing.totalTinCount, 0);
@@ -723,6 +716,22 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
 
   if (loading || isNextPlanLoading) {
     return <div className="flex items-center justify-center py-20 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin mr-2" />Loading…</div>;
+  }
+
+  if (noFuturePlan) {
+    return (
+      <div className="space-y-4">
+        <PrepSubNav planId={plan.id} current="prep_bases" />
+        <div className="bg-card border border-border rounded-xl p-8 text-center">
+          <Layers className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-50" />
+          <h2 className="font-semibold text-lg mb-1">No future production plan</h2>
+          <p className="text-muted-foreground text-sm">
+            There is no upcoming active production plan to prep for.
+            Create and activate a future plan to see prep requirements here.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   return (

@@ -2,7 +2,7 @@ import React from "react";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import {
-  ClipboardList, Loader2, CheckCircle2, Package, Plus, Minus, Check, Snowflake,
+  ClipboardList, Loader2, CheckCircle2, Package, Plus, Minus, Check, Snowflake, Salad,
 } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -93,7 +93,8 @@ export function useMainPrepData(planId: number, station: string = "main_prep") {
 export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const { data: nextPlanData, isLoading: isNextPlanLoading } = useNextActivePlan(plan.planDate);
   const nextPlan = nextPlanData as NextActivePlan | null;
-  const targetPlanId = nextPlan?.planId ?? plan.id;
+  const noFuturePlan = !isNextPlanLoading && nextPlan != null && nextPlan.planId == null;
+  const targetPlanId = noFuturePlan ? plan.id : (nextPlan?.planId ?? plan.id);
   const { data, loading, refetch } = useMainPrepData(targetPlanId);
   const [stockValues, setStockValues] = useState<Record<number, string>>({});
   const [savingStock, setSavingStock] = useState<Record<number, boolean>>({});
@@ -357,6 +358,22 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
 
   if (loading || isNextPlanLoading) {
     return <div className="flex items-center justify-center py-20 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin mr-2" />Loading…</div>;
+  }
+
+  if (noFuturePlan) {
+    return (
+      <div className="space-y-4">
+        <PrepSubNav planId={plan.id} current="main_prep" />
+        <div className="bg-card border border-border rounded-xl p-8 text-center">
+          <Salad className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-50" />
+          <h2 className="font-semibold text-lg mb-1">No future production plan</h2>
+          <p className="text-muted-foreground text-sm">
+            There is no upcoming active production plan to prep for.
+            Create and activate a future plan to see prep requirements here.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   return (

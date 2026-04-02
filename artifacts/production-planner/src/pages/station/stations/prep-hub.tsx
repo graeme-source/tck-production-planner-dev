@@ -260,7 +260,10 @@ export interface PrepRecipeDetail {
 // ──────────────────────────────────────────────────────────────────────────────
 export function usePrepByRecipe(station: string, currentPlanId: number, afterDate?: string) {
   const { data: nextPlan, isLoading: isPlanLoading } = useNextActivePlan(afterDate) as { data: NextActivePlan | null; isLoading: boolean };
-  const targetPlanId = nextPlan?.planId ?? currentPlanId;
+  // When the next-plan lookup has resolved but found nothing, signal "no future plan"
+  // instead of falling back to the current plan (which would show today's data).
+  const noFuturePlan = !isPlanLoading && nextPlan != null && nextPlan.planId == null;
+  const targetPlanId = noFuturePlan ? null : (nextPlan?.planId ?? null);
   const [recipes, setRecipes] = useState<PrepRecipeDetail[]>([]);
   const [isPrepLoading, setIsPrepLoading] = useState(false);
   const initialLoadDone = useRef(false);
@@ -294,6 +297,7 @@ export function usePrepByRecipe(station: string, currentPlanId: number, afterDat
     isLoading: isPlanLoading || (!!targetPlanId && isPrepLoading),
     nextPlan,
     targetPlanId,
+    noFuturePlan,
   };
 }
 
@@ -369,6 +373,21 @@ export function PrepHub({ planId, planDate }: { planId: number; planDate?: strin
       description: "Raw meat quantities, seasoning weights, and tray assignments",
     },
   ] as const;
+
+  const noFuturePlan = !isLoading && nextPlan != null && nextPlan.planId == null;
+
+  if (noFuturePlan) {
+    return (
+      <div className="bg-card border border-border rounded-xl p-8 text-center">
+        <ClipboardList className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-50" />
+        <h2 className="font-semibold text-lg mb-1">No future production plan</h2>
+        <p className="text-muted-foreground text-sm">
+          There is no upcoming active production plan to prep for.
+          Create and activate a future plan to see prep requirements here.
+        </p>
+      </div>
+    );
+  }
 
   if (showReplenish) {
     return (
