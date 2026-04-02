@@ -121,6 +121,8 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
 
+  const plannedPacks = (item: ProductionPlanItem) =>
+    Math.floor(((item.batchesTarget ?? 0) * (item.portionsPerBatch ?? 10)) / 2);
   const grossPacks = (item: ProductionPlanItem) =>
     Math.floor((getStationCount(item, "ovens") * (item.portionsPerBatch ?? 10)) / 2);
   const netPacks = (item: ProductionPlanItem) =>
@@ -317,6 +319,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
       {/* ── Top: Net production cards (no wonky counts or freezer transfers here) ── */}
       <div className="space-y-2">
         {items.map(item => {
+          const planned = plannedPacks(item);
           const gross = grossPacks(item);
           const net = netPacks(item);
           const fridge = item.fridgeQty ?? 0;
@@ -355,7 +358,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                   <div className="flex items-center gap-3 text-base">
                     <div className="text-center">
                       <span className="text-sm text-muted-foreground block">Planned</span>
-                      <span className="font-semibold tabular-nums">{gross}</span>
+                      <span className="font-semibold tabular-nums">{planned}</span>
                     </div>
                     <div className="text-center">
                       <span className="text-sm text-purple-600 dark:text-purple-400 block">In Chiller</span>
