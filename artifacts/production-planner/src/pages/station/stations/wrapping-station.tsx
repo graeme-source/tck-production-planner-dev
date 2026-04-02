@@ -69,6 +69,16 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   }, [plan.id]);
 
   const addWonly = async (item: ProductionPlanItem) => {
+    // Prevent adding wonky if all gross packs are already accounted for
+    const gross = grossPacks(item);
+    const wonky = item.wonlyCount ?? 0;
+    const fridge = item.fridgeQty ?? 0;
+    const freezer = item.freezerQty ?? 0;
+    const totalAccountedFor = fridge + freezer + wonky;
+    if (totalAccountedFor >= gross) {
+      toast({ title: "No stock available", description: `All ${gross} packs are already accounted for (${fridge} fridge, ${wonky} wonky). Remove fridge stock first if packs need reclassifying.`, variant: "destructive" });
+      return;
+    }
     setWonlyLoading(item.id);
     await runWonlyAction(async (signal) => {
       await guardedFetch(`/api/production-plans/${plan.id}/items/${item.id}/wonly`, {
@@ -281,7 +291,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
           <div>
             <h2 className="font-semibold text-lg">Wrapping Station</h2>
             <p className="text-sm text-muted-foreground">
-              {wrappedCount} of {items.length} recipes wrapped · {totalNet} net packs
+              {wrappedCount} of {items.length} recipes wrapped · {totalNet} in chiller · {totalWonly} wonky
               {totalShort > 0 && <span className="text-red-500"> · {totalShort} short</span>}
             </p>
           </div>
@@ -344,17 +354,23 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                   </div>
                   <div className="flex items-center gap-3 text-base">
                     <div className="text-center">
-                      <span className="text-sm text-muted-foreground block">Gross</span>
+                      <span className="text-sm text-muted-foreground block">Planned</span>
                       <span className="font-semibold tabular-nums">{gross}</span>
                     </div>
                     <div className="text-center">
-                      <span className="text-sm text-purple-600 dark:text-purple-400 block">Net</span>
+                      <span className="text-sm text-purple-600 dark:text-purple-400 block">In Chiller</span>
                       <span className="text-xl font-bold tabular-nums text-purple-700 dark:text-purple-300">{net}</span>
                     </div>
                     <div className="text-center border-l border-border/50 pl-3">
-                      <span className="text-sm text-blue-600 dark:text-blue-400 block">Stored</span>
-                      <span className="text-xl font-bold tabular-nums text-blue-700 dark:text-blue-300">{totalStored}</span>
+                      <span className="text-sm text-blue-600 dark:text-blue-400 block">Wrapped</span>
+                      <span className="text-xl font-bold tabular-nums text-blue-700 dark:text-blue-300">{fridge}</span>
                     </div>
+                    {(item.wonlyCount ?? 0) > 0 && (
+                      <div className="text-center">
+                        <span className="text-sm text-red-500 block">Wonky</span>
+                        <span className="font-semibold tabular-nums text-red-500">{item.wonlyCount}</span>
+                      </div>
+                    )}
                     {remaining > 0 && (
                       <div className="text-center">
                         <span className="text-sm text-amber-600 dark:text-amber-400 block">Left</span>
@@ -364,7 +380,6 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                   </div>
                   <p className="text-sm text-muted-foreground mt-1">
                     {getStationCount(item, "ovens")} / {item.batchesTarget ?? 0} oven loads
-                    {totalStored > 0 && ` · ${fridge} fridge · ${freezer} freezer`}
                     {(item.shortCount ?? 0) > 0 && <span className="text-red-500"> · {item.shortCount} short</span>}
                   </p>
                 </div>
@@ -410,7 +425,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
               {/* Storage controls — always targets Production Fridge */}
               <div className="mt-3 pt-3 border-t border-border/40">
                 {fridge > 0 && (
-                  <p className="text-xs text-muted-foreground mb-2">Production Fridge: <span className="font-bold">{fridge}</span> packs</p>
+                  <p className="text-xs text-muted-foreground mb-2">Wrapped: <span className="font-bold">{fridge}</span> in Production Fridge</p>
                 )}
                 <div className="flex items-center gap-2 flex-wrap">
                   {remaining > 0 && (
