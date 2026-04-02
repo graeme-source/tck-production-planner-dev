@@ -55,8 +55,14 @@ export function BreakTracker({ planId, stationType, onBreakChange, onBreakActive
 
   useEffect(() => {
     if (!hydrated) return;
+    let abortCtrl: AbortController | null = null;
     const poll = () => {
-      fetch(`/api/production-plans/${planId}/station-breaks/active`, { credentials: "include" })
+      abortCtrl?.abort();
+      abortCtrl = new AbortController();
+      fetch(`/api/production-plans/${planId}/station-breaks/active`, {
+        credentials: "include",
+        signal: abortCtrl.signal,
+      })
         .then(r => r.ok ? r.json() : null)
         .then((breakData: { id: number; breakType: string; startedAt: string } | null) => {
           const curr = activeBreakRef.current;
@@ -71,10 +77,10 @@ export function BreakTracker({ planId, stationType, onBreakChange, onBreakActive
             onBreakActiveChange?.(false);
           }
         })
-        .catch(() => {});
+        .catch(e => { if (e.name !== "AbortError") { /* silent */ } });
     };
     const interval = setInterval(poll, 10000);
-    return () => clearInterval(interval);
+    return () => { clearInterval(interval); abortCtrl?.abort(); };
   }, [planId, hydrated]);
 
   useEffect(() => {
