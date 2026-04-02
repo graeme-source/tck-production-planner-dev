@@ -298,18 +298,6 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
         queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
         setSessionBatches(prev => prev + 1);
         setPendingTap(false);
-        // Reset checklist for next batch of the same recipe
-        setCheckedItems({});
-        setChecklistLockedForItem(null);
-        setChecklistLoadedForItem(null);
-        // Clear the persisted lock so checklist is fresh for next batch
-        if (currentItem) {
-          fetch(`/api/app-settings/${checklistKey(currentItem.id)}`, {
-            method: "PUT", credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ value: "false" }),
-          }).catch(() => {});
-        }
       },
       onError: () => setPendingTap(false),
     },
