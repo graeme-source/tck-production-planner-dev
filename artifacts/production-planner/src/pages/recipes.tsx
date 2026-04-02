@@ -38,6 +38,7 @@ const schema = z.object({
     marinadeForIngredientId: z.preprocess(v => (v === "" || v === "0" || v == null ? null : Number(v)), z.number().nullable().optional()),
     includeInFillingMix: z.boolean().optional(),
     isTopping: z.boolean().optional(),
+    mixingOverage: z.preprocess(v => (v === "" || v == null ? 0 : Number(v)), z.number().min(0).optional()),
   })),
   subRecipes: z.array(z.object({
     subRecipeId: z.coerce.number().min(1, "Select sub-recipe"),
@@ -45,6 +46,7 @@ const schema = z.object({
     marinadeForIngredientId: z.preprocess(v => (v === "" || v === "0" || v == null ? null : Number(v)), z.number().nullable().optional()),
     includeInFillingMix: z.boolean().optional(),
     isTopping: z.boolean().optional(),
+    mixingOverage: z.preprocess(v => (v === "" || v == null ? 0 : Number(v)), z.number().min(0).optional()),
   })),
 });
 
@@ -442,7 +444,7 @@ function RecipeForm({
                   <span className="text-xs font-semibold text-primary uppercase tracking-wide">
                     Ingredients <span className="font-normal normal-case text-muted-foreground tracking-normal">(cooked qty)</span>
                   </span>
-                  <button type="button" onClick={() => appendIng({ ingredientId: 0, quantity: 0, marinadeForIngredientId: null, includeInFillingMix: false, isTopping: false })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add</button>
+                  <button type="button" onClick={() => appendIng({ ingredientId: 0, quantity: 0, marinadeForIngredientId: null, includeInFillingMix: false, isTopping: false, mixingOverage: 0 })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add</button>
                 </div>
                 {ingFields.length === 0 && <p className="text-xs text-muted-foreground italic pl-1 pb-1">No ingredients added</p>}
                 <div className="space-y-1.5">
@@ -504,6 +506,19 @@ function RecipeForm({
                             <input type="checkbox" {...register(`ingredients.${index}.includeInFillingMix`)} className="rounded border-border text-primary focus:ring-primary/30 w-3 h-3" />
                             <span className="text-[10px] text-muted-foreground">Filling</span>
                           </label>
+                          {watch(`ingredients.${index}.includeInFillingMix`) && (
+                            <label className="flex items-center gap-0.5 whitespace-nowrap" title="Extra fixed amount added at mixing station only (does not affect building weights)">
+                              <input
+                                type="number"
+                                step="any"
+                                min="0"
+                                placeholder="0"
+                                {...register(`ingredients.${index}.mixingOverage`)}
+                                className="w-12 h-5 rounded border border-border bg-background px-1 text-[10px] tabular-nums text-center focus:outline-none focus:ring-1 focus:ring-amber-500/30"
+                              />
+                              <span className="text-[10px] text-amber-600">extra</span>
+                            </label>
+                          )}
                           <label className="flex items-center gap-1 cursor-pointer whitespace-nowrap" title="Topping — skips prep, shown in building checklist">
                             <input type="checkbox" {...register(`ingredients.${index}.isTopping`)} className="rounded border-border text-amber-500 focus:ring-amber-500/30 w-3 h-3" />
                             <span className="text-[10px] text-muted-foreground">Topping</span>
@@ -541,7 +556,7 @@ function RecipeForm({
               <div>
                 <div className="flex items-center justify-between py-1.5">
                   <span className="text-xs font-semibold text-accent uppercase tracking-wide">Prep Items</span>
-                  <button type="button" onClick={() => appendSub({ subRecipeId: 0, quantity: 0, marinadeForIngredientId: null, includeInFillingMix: false, isTopping: false })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add</button>
+                  <button type="button" onClick={() => appendSub({ subRecipeId: 0, quantity: 0, marinadeForIngredientId: null, includeInFillingMix: false, isTopping: false, mixingOverage: 0 })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add</button>
                 </div>
                 {subFields.length === 0 && <p className="text-xs text-muted-foreground italic pl-1 pb-1">No prep items added</p>}
                 <div className="space-y-1.5">
@@ -592,6 +607,19 @@ function RecipeForm({
                             <input type="checkbox" {...register(`subRecipes.${index}.includeInFillingMix`)} className="rounded border-border text-primary focus:ring-primary/30 w-3 h-3" />
                             <span className="text-[10px] text-muted-foreground">Filling</span>
                           </label>
+                          {watch(`subRecipes.${index}.includeInFillingMix`) && (
+                            <label className="flex items-center gap-0.5 whitespace-nowrap" title="Extra fixed amount added at mixing station only (does not affect building weights)">
+                              <input
+                                type="number"
+                                step="any"
+                                min="0"
+                                placeholder="0"
+                                {...register(`subRecipes.${index}.mixingOverage`)}
+                                className="w-12 h-5 rounded border border-border bg-background px-1 text-[10px] tabular-nums text-center focus:outline-none focus:ring-1 focus:ring-amber-500/30"
+                              />
+                              <span className="text-[10px] text-amber-600">extra</span>
+                            </label>
+                          )}
                           <label className="flex items-center gap-1 cursor-pointer whitespace-nowrap" title="Topping — skips prep, shown in building checklist">
                             <input type="checkbox" {...register(`subRecipes.${index}.isTopping`)} className="rounded border-border text-amber-500 focus:ring-amber-500/30 w-3 h-3" />
                             <span className="text-[10px] text-muted-foreground">Topping</span>
@@ -833,8 +861,8 @@ function EditRecipeDialog({
         isCurrentSpecial: detail.isCurrentSpecial ?? false,
         color: detail.color ?? "",
         cookingLossPercent: (detail as Record<string, unknown>).cookingLossPercent != null ? Number((detail as Record<string, unknown>).cookingLossPercent) : 3,
-        ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true })),
-        subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true })),
+        ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
+        subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
       }
     : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", cookingLossPercent: 3, ingredients: [], subRecipes: [] };
 
@@ -1626,8 +1654,8 @@ export default function Recipes() {
         isCurrentSpecial: false,
         color: duplicateDetail.color ?? "",
         cookingLossPercent: (duplicateDetail as Record<string, unknown>).cookingLossPercent != null ? Number((duplicateDetail as Record<string, unknown>).cookingLossPercent) : 3,
-        ingredients: (duplicateDetail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true })),
-        subRecipes: (duplicateDetail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true })),
+        ingredients: (duplicateDetail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
+        subRecipes: (duplicateDetail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
       };
       setDuplicateDefaults(vals);
       setIsAddOpen(true);

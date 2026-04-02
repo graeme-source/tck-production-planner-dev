@@ -223,23 +223,25 @@ router.post("/", preserveToppingFlags, validate(CreateRecipeBody), async (req, r
 
   if (ingredients?.length) {
     await db.insert(recipeIngredientsTable).values(
-      ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean }) => ({
+      ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; mixingOverage?: number }) => ({
         recipeId: recipe.id, ingredientId: i.ingredientId, quantity: String(i.quantity),
         marinadeForIngredientId: i.marinadeForIngredientId ?? null,
         includeInFillingMix: i.includeInFillingMix ?? false,
         quid: i.quid ?? false,
         isTopping: i.isTopping ?? false,
+        mixingOverage: String(i.mixingOverage ?? 0),
       }))
     );
   }
   if (subRecipes?.length) {
     await db.insert(recipeSubRecipesTable).values(
-      subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean }) => ({
+      subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; mixingOverage?: number }) => ({
         recipeId: recipe.id, subRecipeId: s.subRecipeId, quantity: String(s.quantity),
         marinadeForIngredientId: s.marinadeForIngredientId ?? null,
         includeInFillingMix: s.includeInFillingMix ?? false,
         quid: s.quid ?? false,
         isTopping: s.isTopping ?? false,
+        mixingOverage: String(s.mixingOverage ?? 0),
       }))
     );
   }
@@ -281,6 +283,7 @@ router.get("/:id", async (req, res) => {
       includeInFillingMix: recipeIngredientsTable.includeInFillingMix,
       quid: recipeIngredientsTable.quid,
       isTopping: recipeIngredientsTable.isTopping,
+      mixingOverage: recipeIngredientsTable.mixingOverage,
     })
     .from(recipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -298,6 +301,7 @@ router.get("/:id", async (req, res) => {
       includeInFillingMix: recipeSubRecipesTable.includeInFillingMix,
       quid: recipeSubRecipesTable.quid,
       isTopping: recipeSubRecipesTable.isTopping,
+      mixingOverage: recipeSubRecipesTable.mixingOverage,
     })
     .from(recipeSubRecipesTable)
     .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
