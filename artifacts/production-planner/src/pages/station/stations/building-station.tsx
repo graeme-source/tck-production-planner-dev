@@ -448,14 +448,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   const currentItem = items.find(it => {
     const combined = getCombinedBuildCount(it);
     const target = it.batchesTarget ?? 0;
-    if (combined >= target) return false;
-    const myBatches = getStationCount(it, stationType);
-    const otherBatches = getStationCount(it, otherStation);
-    const mixDone = getStationCount(it, "mixing");
-    const remaining = target - combined;
-    // Only yield to the other line if we're 2+ batches ahead — prevents skipping after just 1 batch
-    if (mixDone >= target && remaining > 0 && myBatches >= otherBatches + 2) return false;
-    return true;
+    return combined < target;
   });
 
   // Combined count from both lines — used for display and progress
