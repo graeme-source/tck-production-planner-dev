@@ -23,7 +23,7 @@ import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
-import { ExtraPackControl } from "./mixing-station";
+// ExtraPackControl removed — replaced by inline PackAdjustment
 import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
 import { EodSummary } from "../shared/eod-summary";
@@ -709,18 +709,9 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
             </div>
           </div>
 
-          {/* Extra Pack secondary control */}
+          {/* Pack adjustment: extra packs + shortfall in one control */}
           {currentItem && (
-            <ExtraPackControl
-              planId={plan.id}
-              item={currentItem}
-              isOnBreak={isOnBreak}
-            />
-          )}
-
-          {/* Shortfall recording */}
-          {currentItem && (
-            <ShortfallControl
+            <PackAdjustment
               planId={plan.id}
               item={currentItem}
               isOnBreak={isOnBreak}
@@ -972,73 +963,111 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   );
 }
 
-function ShortfallControl({ planId, item, isOnBreak }: { planId: number; item: ProductionPlanItem; isOnBreak: boolean }) {
+function PackAdjustment({ planId, item, isOnBreak }: { planId: number; item: ProductionPlanItem; isOnBreak: boolean }) {
   const queryClient = useQueryClient();
-  const [loading, setLoading] = useState(false);
-  const shortCount = item.shortCount ?? 0;
+  const [runAction, busy] = useGuardedAction({
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(planId) }),
+  });
 
-  const addShort = async () => {
-    if (isOnBreak || loading) return;
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/production-plans/${planId}/items/${item.id}/short`, {
-        method: "POST", credentials: "include",
-      });
-      if (!res.ok) throw new Error(`Server error ${res.status}`);
-      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(planId) });
-      toast({ title: "Shortfall recorded", description: `${item.recipeName ?? "Recipe"}: ${shortCount + 1} pack${shortCount + 1 !== 1 ? "s" : ""} short` });
-    } catch (err: unknown) {
-      toast({ title: "Error recording shortfall", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
+  const extraPacks = item.extraPacksBuilt ?? 0;
+  const shortCount = item.shortCount ?? 0;
+  const net = extraPacks - shortCount;
+
+  const addExtra = () => {
+    if (isOnBreak) return;
+    runAction((signal) =>
+      guardedFetch(`/api/production-plans/${planId}/items/${item.id}/extra-packs-built`, {
+        method: "PATCH", signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ delta: 1 }),
+      })
+    );
   };
 
-  const removeShort = async () => {
-    if (loading || shortCount <= 0) return;
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/production-plans/${planId}/items/${item.id}/short`, {
-        method: "DELETE", credentials: "include",
-      });
-      if (!res.ok) throw new Error(`Server error ${res.status}`);
-      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(planId) });
-    } catch (err: unknown) {
-      toast({ title: "Error", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
+  const removeExtra = () => {
+    if (extraPacks <= 0) return;
+    runAction((signal) =>
+      guardedFetch(`/api/production-plans/${planId}/items/${item.id}/extra-packs-built`, {
+        method: "PATCH", signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ delta: -1 }),
+      })
+    );
+  };
+
+  const addShort = () => {
+    if (isOnBreak) return;
+    runAction((signal) =>
+      guardedFetch(`/api/production-plans/${planId}/items/${item.id}/short`, {
+        method: "POST", signal,
+      })
+    );
+  };
+
+  const removeShort = () => {
+    if (shortCount <= 0) return;
+    runAction((signal) =>
+      guardedFetch(`/api/production-plans/${planId}/items/${item.id}/short`, {
+        method: "DELETE", signal,
+      })
+    );
   };
 
   return (
-    <div className="bg-red-50/50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-xl p-3">
-      <div className="flex items-center gap-3">
-        <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0" />
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-red-700 dark:text-red-300">Pack Shortfall</p>
-          <p className="text-xs text-muted-foreground">Record packs lost during building</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={removeShort}
-            disabled={loading || shortCount <= 0}
-            className="w-8 h-8 rounded-full border border-border flex items-center justify-center text-muted-foreground hover:bg-secondary disabled:opacity-40 transition-colors"
-          >
-            <Minus className="w-4 h-4" />
-          </button>
-          <span className={cn(
-            "text-lg font-bold tabular-nums min-w-[2ch] text-center",
-            shortCount > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground"
-          )}>
-            {shortCount}
-          </span>
+    <div className="border-2 border-border rounded-2xl p-4">
+      <p className="text-sm font-semibold text-muted-foreground mb-3 text-center">Pack Adjustment</p>
+      <div className="flex items-stretch gap-3">
+        {/* Shortfall side (red) */}
+        <div className="flex-1 flex flex-col gap-1.5">
           <button
             onClick={addShort}
-            disabled={loading || isOnBreak}
-            className="w-8 h-8 rounded-full border border-red-300 dark:border-red-700 flex items-center justify-center text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 disabled:opacity-40 transition-colors"
+            disabled={busy || isOnBreak}
+            className="h-14 rounded-xl text-lg font-bold border-2 border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/40 disabled:opacity-40 transition-all active:scale-95"
           >
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+            − Short
           </button>
+          {shortCount > 0 && (
+            <button
+              onClick={removeShort}
+              disabled={busy || shortCount <= 0}
+              className="text-xs text-red-500 hover:text-red-700 disabled:opacity-40"
+            >
+              undo ({shortCount} short)
+            </button>
+          )}
+        </div>
+
+        {/* Centre: net adjustment */}
+        <div className="flex flex-col items-center justify-center min-w-[4rem]">
+          <span className={cn(
+            "text-4xl font-bold tabular-nums",
+            net > 0 ? "text-emerald-600 dark:text-emerald-400" :
+            net < 0 ? "text-red-600 dark:text-red-400" :
+            "text-muted-foreground"
+          )}>
+            {net > 0 ? `+${net}` : net}
+          </span>
+          <span className="text-xs text-muted-foreground">net</span>
+        </div>
+
+        {/* Extra side (green) */}
+        <div className="flex-1 flex flex-col gap-1.5">
+          <button
+            onClick={addExtra}
+            disabled={busy || isOnBreak}
+            className="h-14 rounded-xl text-lg font-bold border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 disabled:opacity-40 transition-all active:scale-95"
+          >
+            + Extra
+          </button>
+          {extraPacks > 0 && (
+            <button
+              onClick={removeExtra}
+              disabled={busy || extraPacks <= 0}
+              className="text-xs text-emerald-500 hover:text-emerald-700 disabled:opacity-40"
+            >
+              undo ({extraPacks} extra)
+            </button>
+          )}
         </div>
       </div>
     </div>
