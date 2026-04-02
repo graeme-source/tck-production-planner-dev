@@ -37,6 +37,7 @@ import founderPanelsRouter from "./founder-panels";
 import improvementsRouter from "./improvements";
 import andonRouter from "./andon";
 import qrRouter from "./qr";
+import pnlRouter from "./pnl";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -105,6 +106,7 @@ router.use("/founder-panels", founderPanelsRouter);
 router.use("/improvements", improvementsRouter);
 router.use("/andon", andonRouter);
 router.use("/qr", qrRouter);
+router.use("/pnl", pnlRouter);
 
 router.post("/backup/trigger", requireAdmin, (_req: Request, res: Response) => {
   res.json({ status: "started", message: "Backup triggered" });
