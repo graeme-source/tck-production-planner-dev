@@ -36,7 +36,6 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const [isOnBreak, setIsOnBreak] = useState(false);
   const [customAmounts, setCustomAmounts] = useState<Record<number, string>>({});
   const [showCustom, setShowCustom] = useState<Record<number, boolean>>({});
-  const [activeStorage, setActiveStorage] = useState<string>("fridge");
   const [shopifyConfirm, setShopifyConfirm] = useState<ShopifyWrapConfirmState | null>(null);
   const [wonkyTransferResult, setWonkyTransferResult] = useState<{
     transferred: Array<{ recipeName: string | null; qty: number }>;
@@ -408,40 +407,20 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                 </div>
               )}
 
-              {/* Storage controls */}
+              {/* Storage controls — always targets Production Fridge */}
               <div className="mt-3 pt-3 border-t border-border/40">
-                <div className="flex gap-1 mb-2">
-                  {STORAGE_LOCATIONS.map(loc => {
-                    const qty = getStorageQty(item, loc.key);
-                    const colorMap: Record<string, string> = {
-                      blue: "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-700",
-                      cyan: "bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300 border-cyan-300 dark:border-cyan-700",
-                    };
-                    const inactiveColor = "bg-secondary/30 text-muted-foreground border-border";
-                    const isActive = activeStorage === loc.key;
-                    return (
-                      <button
-                        key={loc.key}
-                        onClick={() => setActiveStorage(loc.key)}
-                        className={cn(
-                          "flex-1 px-2 py-1.5 rounded-lg text-sm font-medium border transition-colors",
-                          isActive ? colorMap[loc.color] : inactiveColor
-                        )}
-                      >
-                        {loc.label} {qty > 0 && <span className="font-bold ml-0.5">({qty})</span>}
-                      </button>
-                    );
-                  })}
-                </div>
+                {fridge > 0 && (
+                  <p className="text-xs text-muted-foreground mb-2">Production Fridge: <span className="font-bold">{fridge}</span> packs</p>
+                )}
                 <div className="flex items-center gap-2 flex-wrap">
                   {remaining > 0 && (
                   <button
-                    onClick={() => addToStorage(item, Math.min(STACK_SIZE, remaining), activeStorage)}
+                    onClick={() => addToStorage(item, Math.min(STACK_SIZE, remaining), "fridge")}
                     disabled={isStorageLoading || isOnBreak || addingRef.current || storageBusy}
                     className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
                   >
                     {isStorageLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                    {remaining < STACK_SIZE ? `Add ${remaining} remaining` : `Add ${STACK_SIZE}`}
+                    {remaining < STACK_SIZE ? `Add ${remaining} to Fridge` : `Add ${STACK_SIZE}`}
                   </button>
                   )}
 
@@ -460,12 +439,12 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                         placeholder="Qty"
                         value={customVal}
                         onChange={e => setCustomAmounts(prev => ({ ...prev, [item.id]: e.target.value }))}
-                        onKeyDown={e => { if (e.key === "Enter" && customNum > 0) addToStorage(item, customNum, activeStorage); }}
+                        onKeyDown={e => { if (e.key === "Enter" && customNum > 0) addToStorage(item, customNum, "fridge"); }}
                         className="w-20 h-10 rounded-lg border border-border bg-background px-2 text-base tabular-nums text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
                         autoFocus
                       />
                       <button
-                        onClick={() => { if (customNum > 0) addToStorage(item, customNum, activeStorage); }}
+                        onClick={() => { if (customNum > 0) addToStorage(item, customNum, "fridge"); }}
                         disabled={isStorageLoading || !(customNum > 0) || isOnBreak || addingRef.current || storageBusy}
                         className="px-3 py-2 rounded-lg bg-blue-600 text-white text-base font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
                       >
@@ -480,12 +459,11 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                     </div>
                   )}
 
-                  {getStorageQty(item, activeStorage) > 0 && (() => {
-                    const storageQty = getStorageQty(item, activeStorage);
-                    const undoAmt = Math.min(STACK_SIZE, storageQty);
+                  {fridge > 0 && (() => {
+                    const undoAmt = Math.min(STACK_SIZE, fridge);
                     return (
                     <button
-                      onClick={() => undoStorage(item, undoAmt, activeStorage)}
+                      onClick={() => undoStorage(item, undoAmt, "fridge")}
                       disabled={isStorageLoading || storageBusy}
                       className="ml-auto inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-base hover:bg-red-50 dark:hover:bg-red-950/20 disabled:opacity-50 transition-colors"
                     >
