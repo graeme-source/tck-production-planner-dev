@@ -518,6 +518,7 @@ function RecipeForm({
                               const displayGrams = isKg ? Math.round(storedOverage * 1000) : storedOverage;
                               return (
                                 <div className="flex items-center gap-0.5">
+                                  <input type="hidden" {...register(`ingredients.${index}.mixingOverage`)} />
                                   <input
                                     type="number"
                                     step="1"
@@ -526,7 +527,7 @@ function RecipeForm({
                                     value={displayGrams || ""}
                                     onChange={e => {
                                       const g = Number(e.target.value) || 0;
-                                      setValue(`ingredients.${index}.mixingOverage`, isKg ? g / 1000 : g);
+                                      setValue(`ingredients.${index}.mixingOverage`, isKg ? g / 1000 : g, { shouldDirty: true, shouldValidate: true });
                                     }}
                                     className="w-11 h-6 rounded border border-amber-300 bg-amber-50/50 dark:bg-amber-900/10 px-1 text-[10px] tabular-nums text-center focus:outline-none focus:ring-1 focus:ring-amber-500/30"
                                   />
@@ -629,6 +630,7 @@ function RecipeForm({
                               const displayGrams = isKg ? Math.round(storedOverage * 1000) : storedOverage;
                               return (
                                 <div className="flex items-center gap-0.5">
+                                  <input type="hidden" {...register(`subRecipes.${index}.mixingOverage`)} />
                                   <input
                                     type="number"
                                     step="1"
@@ -637,7 +639,7 @@ function RecipeForm({
                                     value={displayGrams || ""}
                                     onChange={e => {
                                       const g = Number(e.target.value) || 0;
-                                      setValue(`subRecipes.${index}.mixingOverage`, isKg ? g / 1000 : g);
+                                      setValue(`subRecipes.${index}.mixingOverage`, isKg ? g / 1000 : g, { shouldDirty: true, shouldValidate: true });
                                     }}
                                     className="w-11 h-6 rounded border border-amber-300 bg-amber-50/50 dark:bg-amber-900/10 px-1 text-[10px] tabular-nums text-center focus:outline-none focus:ring-1 focus:ring-amber-500/30"
                                   />
