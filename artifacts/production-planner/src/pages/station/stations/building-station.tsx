@@ -443,22 +443,48 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     return getStationCount(it, "building_1") + getStationCount(it, "building_2");
   }
 
+  /** Calculate effective batch target accounting for shorts and extras */
+  function getEffectiveTarget(it: ProductionPlanItem) {
+    const rawTarget = it.batchesTarget ?? 0;
+    const packsPerBatch = Math.max(1, Math.floor((it.portionsPerBatch ?? 10) / 2));
+    const totalPacksTarget = rawTarget * packsPerBatch;
+    const shorts = it.shortCount ?? 0;
+    const extras = it.extraPacksBuilt ?? 0;
+    const effectivePacksNeeded = Math.max(0, totalPacksTarget - shorts + extras);
+    return Math.ceil(effectivePacksNeeded / packsPerBatch);
+  }
+
+  /** Packs in the last batch (0 = full batch) */
+  function getLastBatchPacks(it: ProductionPlanItem) {
+    const packsPerBatch = Math.max(1, Math.floor((it.portionsPerBatch ?? 10) / 2));
+    const totalPacksTarget = (it.batchesTarget ?? 0) * packsPerBatch;
+    const shorts = it.shortCount ?? 0;
+    const extras = it.extraPacksBuilt ?? 0;
+    const effectivePacksNeeded = Math.max(0, totalPacksTarget - shorts + extras);
+    const remainder = effectivePacksNeeded % packsPerBatch;
+    return remainder; // 0 means full batch
+  }
+
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
   const otherStation = stationType === "building_1" ? "building_2" : "building_1";
   const currentItem = items.find(it => {
     const combined = getCombinedBuildCount(it);
-    const target = it.batchesTarget ?? 0;
-    return combined < target;
+    const effectiveTarget = getEffectiveTarget(it);
+    return combined < effectiveTarget;
   });
 
   // Combined count from both lines — used for display and progress
   const buildingCount = currentItem ? getCombinedBuildCount(currentItem) : 0;
+  // Effective target accounting for shorts/extras
+  const effectiveBatches = currentItem ? getEffectiveTarget(currentItem) : 0;
   // This builder's own contribution — used for undo guard and KPI
   const myCount = currentItem ? getStationCount(currentItem, stationType) : 0;
   // Available = how many more batches can be built before outpacing mixing
   const mixingCount = currentItem ? getStationCount(currentItem, "mixing") : 0;
   const available = currentItem ? Math.max(0, mixingCount - buildingCount) : 0;
-  const remaining = currentItem ? Math.max(0, (currentItem.batchesTarget ?? 0) - buildingCount) : 0;
+  const remaining = currentItem ? Math.max(0, effectiveBatches - buildingCount) : 0;
+  const isLastBatchPartial = currentItem ? remaining === 1 && getLastBatchPacks(currentItem) > 0 : false;
+  const lastBatchPackCount = currentItem ? getLastBatchPacks(currentItem) : 0;
   const allDone = items.length > 0 && !currentItem;
 
   useEffect(() => {
@@ -562,11 +588,11 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     }
   }, [activeBreakMinutes]);
 
-  const pct = currentItem && (currentItem.batchesTarget ?? 0) > 0
-    ? Math.round((buildingCount / (currentItem.batchesTarget ?? 0)) * 100)
+  const pct = currentItem && effectiveBatches > 0
+    ? Math.round((buildingCount / effectiveBatches) * 100)
     : 0;
 
-  const totalBatchesTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
+  const totalBatchesTarget = items.reduce((s, it) => s + getEffectiveTarget(it), 0);
   const totalBatchesDone = items.reduce((s, it) => s + getCombinedBuildCount(it), 0);
   const overallProgress = totalBatchesTarget > 0 ? Math.round((totalBatchesDone / totalBatchesTarget) * 100) : 0;
 
@@ -734,10 +760,10 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                 <p className="text-5xl sm:text-6xl font-bold font-display tabular-nums text-primary leading-none">
                   {buildingCount}
                 </p>
-                <p className="text-lg font-light text-muted-foreground">/ {currentItem.batchesTarget ?? 0}</p>
-                {currentItem.maxBatchesPerTin && (currentItem.batchesTarget ?? 0) > 0 && (
+                <p className="text-lg font-light text-muted-foreground">/ {effectiveBatches}</p>
+                {currentItem.maxBatchesPerTin && effectiveBatches > 0 && (
                   <p className="text-xs text-amber-600 dark:text-amber-400 font-semibold mt-0.5">
-                    {Math.ceil((currentItem.batchesTarget ?? 0) / currentItem.maxBatchesPerTin)} tins
+                    {Math.ceil(effectiveBatches / currentItem.maxBatchesPerTin)} tins
                   </p>
                 )}
                 {myCount > 0 && (
@@ -796,7 +822,9 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                         ? "Waiting…"
                         : pendingTap
                           ? "Recording..."
-                          : "BATCH DONE ✓"}
+                          : isLastBatchPartial
+                            ? `PARTIAL — ${lastBatchPackCount} pack${lastBatchPackCount !== 1 ? "s" : ""} ✓`
+                            : "BATCH DONE ✓"}
               </button>
 
               {/* Undo */}
@@ -866,7 +894,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
         const hasFilling = asm && asm.fillingWeightPerBatch > 0;
         const hasItems = asm && asm.assemblyItems.length > 0;
         const viewBuildCount = getCombinedBuildCount(viewItem);
-        const viewIsDone = viewBuildCount >= (viewItem.batchesTarget ?? 0);
+        const viewIsDone = viewBuildCount >= getEffectiveTarget(viewItem);
         const viewMixing = getStationCount(viewItem, "mixing");
 
         return (
