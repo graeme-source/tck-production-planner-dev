@@ -2089,12 +2089,14 @@ router.get("/:id/filling-mix", async (req, res) => {
         const extra = extraQtyByMeatId.get(fi.ingredientId) ?? 0;
         const totalQtyPerPortion = Number(fi.quantity) + extra;
         const overage = Number(fi.mixingOverage ?? 0);
+        // Overage is a fixed total amount spread across all tins (not per batch)
+        const overagePerTin = tinsTarget > 0 ? overage / tinsTarget : overage;
         return {
           ingredientId: fi.ingredientId,
           name: fi.ingredientName,
           unit: fi.unit,
-          qtyPerBatch: totalQtyPerPortion * ppb + overage,
-          qtyPerTin: (totalQtyPerPortion * ppb + overage) * batchesPerTin,
+          qtyPerBatch: totalQtyPerPortion * ppb,
+          qtyPerTin: totalQtyPerPortion * ppb * batchesPerTin + overagePerTin,
           mixingOverage: overage,
         };
       });
@@ -2103,12 +2105,14 @@ router.get("/:id/filling-mix", async (req, res) => {
       .filter(fs => !marinadeSubIds.has(fs.subRecipeId))
       .map(fs => {
         const overage = Number(fs.mixingOverage ?? 0);
+        // Overage is a fixed total amount spread across all tins (not per batch)
+        const overagePerTin = tinsTarget > 0 ? overage / tinsTarget : overage;
         return {
           subRecipeId: fs.subRecipeId,
           name: fs.subRecipeName,
           unit: fs.unit,
-          qtyPerBatch: Number(fs.quantity) * ppb + overage,
-          qtyPerTin: (Number(fs.quantity) * ppb + overage) * batchesPerTin,
+          qtyPerBatch: Number(fs.quantity) * ppb,
+          qtyPerTin: Number(fs.quantity) * ppb * batchesPerTin + overagePerTin,
           mixingOverage: overage,
         };
       });

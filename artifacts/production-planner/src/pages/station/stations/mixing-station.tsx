@@ -945,13 +945,13 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
                   <span className="text-lg">{fi.name ?? `Ingredient #${fi.ingredientId}`}</span>
                   {(fi.mixingOverage ?? 0) > 0 && (
                     <span className="ml-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded px-1.5 py-0.5">
-                      +{formatMixQty(fi.mixingOverage! * batchesPerTinEqual, fi.unit)} extra
+                      +{formatMixQty(fi.mixingOverage!, fi.unit)} extra total
                     </span>
                   )}
                 </div>
                 <div className="flex flex-col items-end">
                   <span className="text-lg font-mono tabular-nums font-bold text-foreground">
-                    {formatMixQty(fi.qtyPerBatch * batchesPerTinEqual, fi.unit)}
+                    {formatMixQty(fi.qtyPerTin, fi.unit)}
                   </span>
                   <span className="text-sm text-muted-foreground leading-none mt-0.5">per tin</span>
                 </div>
@@ -963,13 +963,13 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
                   <span className="text-lg">{fs.name ?? `Sub-recipe #${fs.subRecipeId}`}</span>
                   {(fs.mixingOverage ?? 0) > 0 && (
                     <span className="ml-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded px-1.5 py-0.5">
-                      +{formatMixQty(fs.mixingOverage! * batchesPerTinEqual, fs.unit)} extra
+                      +{formatMixQty(fs.mixingOverage!, fs.unit)} extra total
                     </span>
                   )}
                 </div>
                 <div className="flex flex-col items-end">
                   <span className="text-lg font-mono tabular-nums font-bold text-foreground">
-                    {formatMixQty(fs.qtyPerBatch * batchesPerTinEqual, fs.unit)}
+                    {formatMixQty(fs.qtyPerTin, fs.unit)}
                   </span>
                   <span className="text-sm text-muted-foreground leading-none mt-0.5">per tin</span>
                 </div>
