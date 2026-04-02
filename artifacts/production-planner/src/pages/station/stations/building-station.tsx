@@ -1129,9 +1129,9 @@ function PackAdjustment({ planId, item, isOnBreak }: { planId: number; item: Pro
   };
 
   return (
-    <div className="border border-border rounded-xl px-3 py-2">
+    <div className="border border-border rounded-xl px-3 py-2 mt-3">
       <div className="flex items-center gap-3">
-        <p className="text-xs text-muted-foreground font-medium">Pack Adj.</p>
+        <p className="text-sm text-muted-foreground font-semibold">Pack Adjustment</p>
         <div className="flex items-center gap-2 ml-auto">
           <button
             onClick={addShort}
