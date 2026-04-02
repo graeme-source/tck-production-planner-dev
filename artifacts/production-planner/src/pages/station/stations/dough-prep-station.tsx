@@ -142,15 +142,17 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const hasAnyMixDone = completedMixes.size > 0 || hasServerProgress;
   const BALLS_PER_TRAY = 4;
 
-  const addBatch = async (item: ProductionPlanItem) => {
+  const addBatch = async (item: ProductionPlanItem): Promise<boolean> => {
     const res = await fetch(`/api/production-plans/${plan.id}/batch-completions`, {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ planItemId: item.id, stationType: "dough_prep", completedAt: new Date().toISOString() }),
     });
+    if (res.status === 409) return false; // Target met — not an error
     if (!res.ok) throw new Error(`Server error ${res.status}`);
     queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+    return true;
   };
 
   const removeBatch = async (item: ProductionPlanItem) => {
@@ -233,13 +235,9 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
         if (remaining <= 0) break;
         // Try adding balls to this item until target met or we've added enough
         while (remaining > 0) {
-          try {
-            await addBatch(item);
-            remaining--;
-          } catch {
-            // Server rejected (target met for this item) — move to next item
-            break;
-          }
+          const added = await addBatch(item);
+          if (!added) break; // Target met for this item — move to next
+          remaining--;
         }
       }
     } finally {
