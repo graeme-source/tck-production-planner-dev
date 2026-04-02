@@ -287,7 +287,8 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     const otherBatches = getStationCount(it, otherStation);
     const mixDone = getStationCount(it, "mixing");
     const remaining = target - combined;
-    if (mixDone >= target && remaining > 0 && myBatches > otherBatches) return false;
+    // Only yield to the other line if we're 2+ batches ahead — prevents skipping after just 1 batch
+    if (mixDone >= target && remaining > 0 && myBatches >= otherBatches + 2) return false;
     return true;
   });
 
@@ -1014,60 +1015,42 @@ function PackAdjustment({ planId, item, isOnBreak }: { planId: number; item: Pro
   };
 
   return (
-    <div className="border-2 border-border rounded-2xl p-4">
-      <p className="text-sm font-semibold text-muted-foreground mb-3 text-center">Pack Adjustment</p>
-      <div className="flex items-stretch gap-3">
-        {/* Shortfall side (red) */}
-        <div className="flex-1 flex flex-col gap-1.5">
+    <div className="border border-border rounded-xl px-3 py-2">
+      <div className="flex items-center gap-3">
+        <p className="text-xs text-muted-foreground font-medium">Pack Adj.</p>
+        <div className="flex items-center gap-2 ml-auto">
           <button
             onClick={addShort}
             disabled={busy || isOnBreak}
-            className="h-14 rounded-xl text-lg font-bold border-2 border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/40 disabled:opacity-40 transition-all active:scale-95"
+            className="h-9 px-3 rounded-lg text-sm font-semibold border border-border bg-background hover:bg-secondary/60 disabled:opacity-40 transition-all active:scale-95"
           >
             − Short
           </button>
           {shortCount > 0 && (
-            <button
-              onClick={removeShort}
-              disabled={busy || shortCount <= 0}
-              className="text-xs text-red-500 hover:text-red-700 disabled:opacity-40"
-            >
-              undo ({shortCount} short)
+            <button onClick={removeShort} disabled={busy} className="text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-40 underline">
+              undo {shortCount}
             </button>
           )}
-        </div>
-
-        {/* Centre: net adjustment */}
-        <div className="flex flex-col items-center justify-center min-w-[4rem]">
           <span className={cn(
-            "text-4xl font-bold tabular-nums",
+            "text-lg font-bold tabular-nums min-w-[2.5rem] text-center",
             net > 0 ? "text-emerald-600 dark:text-emerald-400" :
             net < 0 ? "text-red-600 dark:text-red-400" :
             "text-muted-foreground"
           )}>
             {net > 0 ? `+${net}` : net}
           </span>
-          <span className="text-xs text-muted-foreground">net</span>
-        </div>
-
-        {/* Extra side (green) */}
-        <div className="flex-1 flex flex-col gap-1.5">
+          {extraPacks > 0 && (
+            <button onClick={removeExtra} disabled={busy} className="text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-40 underline">
+              undo {extraPacks}
+            </button>
+          )}
           <button
             onClick={addExtra}
             disabled={busy || isOnBreak}
-            className="h-14 rounded-xl text-lg font-bold border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 disabled:opacity-40 transition-all active:scale-95"
+            className="h-9 px-3 rounded-lg text-sm font-semibold border border-border bg-background hover:bg-secondary/60 disabled:opacity-40 transition-all active:scale-95"
           >
             + Extra
           </button>
-          {extraPacks > 0 && (
-            <button
-              onClick={removeExtra}
-              disabled={busy || extraPacks <= 0}
-              className="text-xs text-emerald-500 hover:text-emerald-700 disabled:opacity-40"
-            >
-              undo ({extraPacks} extra)
-            </button>
-          )}
         </div>
       </div>
     </div>
