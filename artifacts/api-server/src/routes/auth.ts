@@ -27,23 +27,52 @@ const LoginBody = z.object({
 });
 
 // Returns true if the session needs PIN re-verification.
-// PIN lock resets daily at 4am UTC. This maps to 4am GMT (winter) / 5am BST (summer),
-// ensuring the reset always happens well before TCK's earliest shift start.
+// PIN lock resets at 4am UTC (morning shift start) and 7pm UK time (evening shift).
+// Uses Europe/London timezone for the 7pm reset to handle BST/GMT automatically.
 function isPinRequired(pinVerifiedAt: string | undefined): boolean {
   if (!pinVerifiedAt) return true;
 
   const verified = new Date(pinVerifiedAt);
   const now = new Date();
 
-  // Most recent 4am UTC reset point
-  const reset = new Date();
-  reset.setUTCHours(4, 0, 0, 0);
-  if (now.getTime() < reset.getTime()) {
-    // Before today's 4am — use yesterday's 4am as the cutoff
-    reset.setUTCDate(reset.getUTCDate() - 1);
-  }
+  // Calculate reset times and find the most recent one
+  const resets: Date[] = [];
 
-  return verified.getTime() < reset.getTime();
+  // Reset 1: 4am UTC (always UTC, doesn't shift with BST)
+  const morning = new Date();
+  morning.setUTCHours(4, 0, 0, 0);
+  if (now.getTime() < morning.getTime()) {
+    morning.setUTCDate(morning.getUTCDate() - 1);
+  }
+  resets.push(morning);
+
+  // Reset 2: 7pm UK time (Europe/London — automatically handles BST/GMT)
+  // 7pm GMT = 19:00 UTC in winter, 7pm BST = 18:00 UTC in summer
+  const ukHour = Number(new Intl.DateTimeFormat("en-GB", { hour: "numeric", hour12: false, timeZone: "Europe/London" }).format(now));
+  const evening = new Date();
+  // Work out 7pm UK in UTC: subtract the UK offset
+  const ukOffsetMs = getUKOffsetMs(now);
+  evening.setTime(now.getTime());
+  evening.setUTCHours(0, 0, 0, 0);
+  evening.setTime(evening.getTime() + 19 * 60 * 60 * 1000 - ukOffsetMs); // 19:00 UK → UTC
+  if (now.getTime() < evening.getTime()) {
+    evening.setUTCDate(evening.getUTCDate() - 1);
+  }
+  resets.push(evening);
+
+  // The most recent reset is the one we check against
+  const latestReset = resets.reduce((a, b) => (a.getTime() > b.getTime() ? a : b));
+
+  return verified.getTime() < latestReset.getTime();
+}
+
+/** Get the UK timezone offset in milliseconds (0 in winter, +3600000 in BST) */
+function getUKOffsetMs(date: Date): number {
+  const utcStr = date.toLocaleString("en-GB", { timeZone: "UTC" });
+  const ukStr = date.toLocaleString("en-GB", { timeZone: "Europe/London" });
+  const utcDate = new Date(utcStr.split(",").reverse().join(" "));
+  const ukDate = new Date(ukStr.split(",").reverse().join(" "));
+  return ukDate.getTime() - utcDate.getTime();
 }
 
 router.post("/login", loginLimiter, validate(LoginBody), async (req, res) => {
