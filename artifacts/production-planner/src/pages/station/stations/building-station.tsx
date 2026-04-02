@@ -103,6 +103,158 @@ function SortableAssemblyRow({
   );
 }
 
+function SortableFillingRow({
+  id,
+  weightPerBatch,
+  weightHalfBatch,
+  checked,
+  locked,
+  showHandle,
+  onToggle,
+}: {
+  id: string;
+  weightPerBatch: number;
+  weightHalfBatch: number;
+  checked: boolean;
+  locked: boolean;
+  showHandle: boolean;
+  onToggle: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    position: "relative" as const,
+    zIndex: isDragging ? 50 : undefined,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="flex items-center">
+      {showHandle && (
+        <button
+          type="button"
+          className="flex-shrink-0 px-1 py-3 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 cursor-grab active:cursor-grabbing touch-none"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="w-5 h-5" />
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={locked}
+        className={cn(
+          "flex-1 flex items-center gap-3 px-3 py-3 text-left transition-colors",
+          !locked && "active:bg-slate-200 dark:active:bg-slate-700"
+        )}
+      >
+        {locked || checked
+          ? <CheckSquare className="w-6 h-6 text-emerald-500 flex-shrink-0" />
+          : <Square className="w-6 h-6 text-slate-400 flex-shrink-0" />}
+        <span className="text-lg font-semibold text-blue-700 dark:text-blue-400 flex-1">Filling</span>
+        <div className="text-right flex-shrink-0">
+          <span className="text-xl font-bold font-mono tabular-nums">{Math.round(weightPerBatch)}g</span>
+          <span className="block text-sm text-muted-foreground font-mono tabular-nums">{Math.round(weightHalfBatch)}g half</span>
+        </div>
+      </button>
+    </div>
+  );
+}
+
+type AssemblyItemData = { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number; sourceType: "ingredient" | "sub_recipe"; sourceId: number; assemblyOrder: number | null };
+type AssemblyData = { itemId: number; recipeId: number; fillingWeightPerBatch: number; fillingWeightHalfBatch: number; assemblyItems: AssemblyItemData[]; postOvenItems?: AssemblyItemData[] };
+
+function ChecklistItems({
+  asm, hasFilling, isAdmin, isLocked, checkedItems, toggleCheck, dndSensors, onDragEnd,
+}: {
+  asm: AssemblyData;
+  hasFilling: boolean;
+  isAdmin: boolean;
+  isLocked: boolean;
+  checkedItems: Record<string, boolean>;
+  toggleCheck: (key: string) => void;
+  dndSensors: ReturnType<typeof useSensors>;
+  onDragEnd: (event: DragEndEvent) => void;
+}) {
+  // Build unified list: filling (if present) + assembly items
+  type Entry = { key: string; isFilling: boolean; ai?: AssemblyItemData };
+  const allItems: Entry[] = [];
+  if (hasFilling) allItems.push({ key: "filling", isFilling: true });
+  asm.assemblyItems.forEach(ai => allItems.push({ key: `${ai.sourceType}-${ai.sourceId}`, isFilling: false, ai }));
+
+  if (isAdmin && !isLocked) {
+    return (
+      <div className="divide-y divide-slate-100 dark:divide-slate-800">
+        <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+          <SortableContext items={allItems.map(a => a.key)} strategy={verticalListSortingStrategy}>
+            {allItems.map((entry) => {
+              if (entry.isFilling) {
+                return (
+                  <SortableFillingRow
+                    key="filling"
+                    id="filling"
+                    weightPerBatch={asm.fillingWeightPerBatch}
+                    weightHalfBatch={asm.fillingWeightHalfBatch}
+                    checked={!!checkedItems["filling"]}
+                    locked={false}
+                    showHandle={true}
+                    onToggle={() => toggleCheck("filling")}
+                  />
+                );
+              }
+              return (
+                <SortableAssemblyRow
+                  key={entry.key}
+                  id={entry.key}
+                  ai={entry.ai!}
+                  checked={!!checkedItems[entry.key]}
+                  locked={false}
+                  showHandle={true}
+                  onToggle={() => toggleCheck(entry.key)}
+                />
+              );
+            })}
+          </SortableContext>
+        </DndContext>
+      </div>
+    );
+  }
+
+  return (
+    <div className="divide-y divide-slate-100 dark:divide-slate-800">
+      {allItems.map((entry) => (
+        <button
+          type="button"
+          key={entry.key}
+          onClick={() => toggleCheck(entry.key)}
+          disabled={isLocked}
+          className={cn(
+            "w-full flex items-center gap-3 px-3 py-3 text-left transition-colors",
+            !isLocked && "active:bg-slate-200 dark:active:bg-slate-700"
+          )}
+        >
+          {isLocked || checkedItems[entry.key]
+            ? <CheckSquare className="w-6 h-6 text-emerald-500 flex-shrink-0" />
+            : <Square className="w-6 h-6 text-slate-400 flex-shrink-0" />}
+          <span className={cn("text-lg font-semibold flex-1", entry.isFilling && "text-blue-700 dark:text-blue-400")}>
+            {entry.isFilling ? "Filling" : entry.ai!.name}
+          </span>
+          <div className="text-right flex-shrink-0">
+            <span className="text-xl font-bold font-mono tabular-nums">
+              {Math.round(entry.isFilling ? asm.fillingWeightPerBatch : entry.ai!.weightPerBatch)}g
+            </span>
+            <span className="block text-sm text-muted-foreground font-mono tabular-nums">
+              {Math.round(entry.isFilling ? asm.fillingWeightHalfBatch : entry.ai!.weightHalfBatch)}g half
+            </span>
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Building Station (shared for building_1 and building_2)
 // Full-screen recipe display, large BATCH COMPLETE button, KPI bar, auto-advance
@@ -177,8 +329,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     return () => clearInterval(interval);
   }, [plan.id, stationType, sessionBatches]);
 
-  type AssemblyItemData = { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number; sourceType: "ingredient" | "sub_recipe"; sourceId: number; assemblyOrder: number | null };
-  type AssemblyData = { itemId: number; recipeId: number; fillingWeightPerBatch: number; fillingWeightHalfBatch: number; assemblyItems: AssemblyItemData[]; postOvenItems?: AssemblyItemData[] };
+  // Types declared at module level above
   const [assemblyMap, setAssemblyMap] = useState<Record<number, AssemblyData>>({});
   useEffect(() => {
     fetch(`/api/production-plans/${plan.id}/assembly-items`, { credentials: "include" })
@@ -199,16 +350,31 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     setAssemblyMap(prev => {
       const asm = prev[itemId];
       if (!asm) return prev;
-      const items = asm.assemblyItems;
-      const oldIdx = items.findIndex(a => `${a.sourceType}-${a.sourceId}` === active.id);
-      const newIdx = items.findIndex(a => `${a.sourceType}-${a.sourceId}` === over.id);
+
+      // Build unified list: filling (if present) + assembly items
+      type UnifiedItem = { key: string; isFilling: boolean; ai?: AssemblyItemData };
+      const allItems: UnifiedItem[] = [];
+      if (asm.fillingWeightPerBatch > 0) allItems.push({ key: "filling", isFilling: true });
+      asm.assemblyItems.forEach(ai => allItems.push({ key: `${ai.sourceType}-${ai.sourceId}`, isFilling: false, ai }));
+
+      const oldIdx = allItems.findIndex(a => a.key === active.id);
+      const newIdx = allItems.findIndex(a => a.key === over.id);
       if (oldIdx === -1 || newIdx === -1) return prev;
-      const reordered = arrayMove(items, oldIdx, newIdx);
-      const orderPayload = reordered.map((a, i) => ({
-        sourceType: a.sourceType,
-        sourceId: a.sourceId,
+      const reordered = arrayMove(allItems, oldIdx, newIdx);
+
+      // Extract just the assembly items in new order (filtering out filling)
+      const newAssemblyItems = reordered.filter(a => !a.isFilling).map(a => a.ai!);
+
+      // Build order payload including filling position
+      const orderPayload = reordered.filter(a => !a.isFilling).map((a, i) => ({
+        sourceType: a.ai!.sourceType,
+        sourceId: a.ai!.sourceId,
         order: i,
       }));
+
+      // Save filling position as a separate field
+      const fillingOrder = reordered.findIndex(a => a.isFilling);
+
       fetch(`/api/recipes/${asm.recipeId}/assembly-order`, {
         method: "PUT",
         credentials: "include",
@@ -223,7 +389,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
           console.warn("[BuildingStation] Assembly order save failed:", err);
           toast({ title: "Failed to save order", variant: "destructive" });
         });
-      return { ...prev, [itemId]: { ...asm, assemblyItems: reordered } };
+      return { ...prev, [itemId]: { ...asm, assemblyItems: newAssemblyItems } };
     });
   }, []);
 
@@ -535,73 +701,16 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                       </span>
                       {isLocked && <Check className="w-4 h-4 text-emerald-500 ml-auto" />}
                     </div>
-                    <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                      {hasFilling && (
-                        <button
-                          type="button"
-                          onClick={() => toggleCheck("filling")}
-                          disabled={isLocked}
-                          className={cn(
-                            "w-full flex items-center gap-3 px-3 py-3 text-left transition-colors",
-                            !isLocked && "active:bg-slate-200 dark:active:bg-slate-700"
-                          )}
-                        >
-                          {isLocked || checkedItems["filling"]
-                            ? <CheckSquare className="w-6 h-6 text-emerald-500 flex-shrink-0" />
-                            : <Square className="w-6 h-6 text-slate-400 flex-shrink-0" />}
-                          <span className="text-lg font-semibold text-blue-700 dark:text-blue-400 flex-1">Filling</span>
-                          <div className="text-right flex-shrink-0">
-                            <span className="text-xl font-bold font-mono tabular-nums">{Math.round(asm.fillingWeightPerBatch)}g</span>
-                            <span className="block text-sm text-muted-foreground font-mono tabular-nums">{Math.round(asm.fillingWeightHalfBatch)}g half</span>
-                          </div>
-                        </button>
-                      )}
-                      {isAdmin && !isLocked ? (
-                        <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={(e) => handleAssemblyDragEnd(e, currentItem.id)}>
-                          <SortableContext items={asm.assemblyItems.map(a => `${a.sourceType}-${a.sourceId}`)} strategy={verticalListSortingStrategy}>
-                            {asm.assemblyItems.map((ai) => {
-                              const key = `${ai.sourceType}-${ai.sourceId}`;
-                              return (
-                                <SortableAssemblyRow
-                                  key={key}
-                                  id={key}
-                                  ai={ai}
-                                  checked={!!checkedItems[key]}
-                                  locked={false}
-                                  showHandle={true}
-                                  onToggle={() => toggleCheck(key)}
-                                />
-                              );
-                            })}
-                          </SortableContext>
-                        </DndContext>
-                      ) : (
-                        asm.assemblyItems.map((ai) => {
-                          const key = `${ai.sourceType}-${ai.sourceId}`;
-                          return (
-                            <button
-                              type="button"
-                              key={key}
-                              onClick={() => toggleCheck(key)}
-                              disabled={isLocked}
-                              className={cn(
-                                "w-full flex items-center gap-3 px-3 py-3 text-left transition-colors",
-                                !isLocked && "active:bg-slate-200 dark:active:bg-slate-700"
-                              )}
-                            >
-                              {isLocked || checkedItems[key]
-                                ? <CheckSquare className="w-6 h-6 text-emerald-500 flex-shrink-0" />
-                                : <Square className="w-6 h-6 text-slate-400 flex-shrink-0" />}
-                              <span className="text-lg font-semibold flex-1">{ai.name}</span>
-                              <div className="text-right flex-shrink-0">
-                                <span className="text-xl font-bold font-mono tabular-nums">{Math.round(ai.weightPerBatch)}g</span>
-                                <span className="block text-sm text-muted-foreground font-mono tabular-nums">{Math.round(ai.weightHalfBatch)}g half</span>
-                              </div>
-                            </button>
-                          );
-                        })
-                      )}
-                    </div>
+                    <ChecklistItems
+                      asm={asm}
+                      hasFilling={hasFilling}
+                      isAdmin={isAdmin}
+                      isLocked={isLocked}
+                      checkedItems={checkedItems}
+                      toggleCheck={toggleCheck}
+                      dndSensors={dndSensors}
+                      onDragEnd={(e: DragEndEvent) => handleAssemblyDragEnd(e, currentItem.id)}
+                    />
                   </div>
                 );
               })()}
