@@ -431,10 +431,13 @@ function RecipeForm({
           return (
             <div className="border-t border-border pt-4 space-y-0">
               {/* Column headers */}
-              <div className="grid grid-cols-[1fr_6rem_4.5rem_1.25rem] gap-2 px-1 mb-1.5">
-                <span className="text-xs text-muted-foreground font-medium">Name</span>
-                <span className="text-xs text-muted-foreground font-medium">Qty</span>
-                <span className="text-xs text-muted-foreground font-medium text-right">£/portion</span>
+              <div className="grid grid-cols-[1fr_6rem_3.5rem_2rem_2rem_4rem_1.25rem] gap-x-2 gap-y-0 items-end px-1 mb-1.5">
+                <span className="text-[10px] text-muted-foreground font-medium">Name</span>
+                <span className="text-[10px] text-muted-foreground font-medium">Qty</span>
+                <span className="text-[10px] text-muted-foreground font-medium text-right">Cost</span>
+                <span className="text-[10px] text-muted-foreground font-medium text-center" title="Include in filling mix">Fill</span>
+                <span className="text-[10px] text-muted-foreground font-medium text-center" title="Topping — skips prep">Top</span>
+                <span className="text-[10px] text-amber-600 font-medium text-center" title="Extra grams added at mixing station only">Mix +g</span>
                 <span />
               </div>
 
@@ -456,7 +459,7 @@ function RecipeForm({
                     const ingMarinadeSet = ingMarinadeVal != null && ingMarinadeVal !== "" && ingMarinadeVal !== 0 && ingMarinadeVal !== "0";
                     return (
                       <div key={field.id} className="space-y-0.5">
-                        <div className="grid grid-cols-[1fr_6rem_4.5rem_auto_auto_1.25rem] gap-2 items-center">
+                        <div className="grid grid-cols-[1fr_6rem_3.5rem_2rem_2rem_4rem_1.25rem] gap-x-2 gap-y-0 items-center">
                           <div className="flex gap-1 min-w-0">
                             <Controller
                               control={control}
@@ -502,27 +505,36 @@ function RecipeForm({
                           <span className="text-xs tabular-nums text-right text-muted-foreground">
                             {cost !== null ? `£${(Math.ceil(cost * 100) / 100).toFixed(2)}` : "—"}
                           </span>
-                          <label className="flex items-center gap-1 cursor-pointer whitespace-nowrap" title="Include in filling mix">
-                            <input type="checkbox" {...register(`ingredients.${index}.includeInFillingMix`)} className="rounded border-border text-primary focus:ring-primary/30 w-3 h-3" />
-                            <span className="text-[10px] text-muted-foreground">Filling</span>
-                          </label>
-                          {watch(`ingredients.${index}.includeInFillingMix`) && (
-                            <label className="flex items-center gap-0.5 whitespace-nowrap" title="Extra fixed amount added at mixing station only (does not affect building weights)">
-                              <input
-                                type="number"
-                                step="any"
-                                min="0"
-                                placeholder="0"
-                                {...register(`ingredients.${index}.mixingOverage`)}
-                                className="w-12 h-5 rounded border border-border bg-background px-1 text-[10px] tabular-nums text-center focus:outline-none focus:ring-1 focus:ring-amber-500/30"
-                              />
-                              <span className="text-[10px] text-amber-600">extra</span>
-                            </label>
-                          )}
-                          <label className="flex items-center gap-1 cursor-pointer whitespace-nowrap" title="Topping — skips prep, shown in building checklist">
-                            <input type="checkbox" {...register(`ingredients.${index}.isTopping`)} className="rounded border-border text-amber-500 focus:ring-amber-500/30 w-3 h-3" />
-                            <span className="text-[10px] text-muted-foreground">Topping</span>
-                          </label>
+                          <div className="flex justify-center">
+                            <input type="checkbox" {...register(`ingredients.${index}.includeInFillingMix`)} className="rounded border-border text-primary focus:ring-primary/30 w-3.5 h-3.5 cursor-pointer" title="Include in filling mix" />
+                          </div>
+                          <div className="flex justify-center">
+                            <input type="checkbox" {...register(`ingredients.${index}.isTopping`)} className="rounded border-border text-amber-500 focus:ring-amber-500/30 w-3.5 h-3.5 cursor-pointer" title="Topping" />
+                          </div>
+                          <div className="flex justify-center">
+                            {watch(`ingredients.${index}.includeInFillingMix`) ? (() => {
+                              const isKg = thisIng?.unit === "kg";
+                              const storedOverage = Number(watchedIngredients?.[index]?.mixingOverage) || 0;
+                              const displayGrams = isKg ? Math.round(storedOverage * 1000) : storedOverage;
+                              return (
+                                <div className="flex items-center gap-0.5">
+                                  <input
+                                    type="number"
+                                    step="1"
+                                    min="0"
+                                    placeholder="0"
+                                    value={displayGrams || ""}
+                                    onChange={e => {
+                                      const g = Number(e.target.value) || 0;
+                                      setValue(`ingredients.${index}.mixingOverage`, isKg ? g / 1000 : g);
+                                    }}
+                                    className="w-11 h-6 rounded border border-amber-300 bg-amber-50/50 dark:bg-amber-900/10 px-1 text-[10px] tabular-nums text-center focus:outline-none focus:ring-1 focus:ring-amber-500/30"
+                                  />
+                                  <span className="text-[9px] text-amber-600">g</span>
+                                </div>
+                              );
+                            })() : <span className="text-[10px] text-muted-foreground/30">—</span>}
+                          </div>
                           <button type="button" onClick={() => removeIng(index)} className="text-muted-foreground hover:text-destructive flex justify-center"><X className="w-3.5 h-3.5" /></button>
                         </div>
                         {!isRawMeat && rawMeatIngs.length > 0 && (
@@ -566,7 +578,7 @@ function RecipeForm({
                     const subMarinadeSet = subMarinadeVal != null && subMarinadeVal !== "" && subMarinadeVal !== 0 && subMarinadeVal !== "0";
                     return (
                       <div key={field.id} className="space-y-0.5">
-                        <div className="grid grid-cols-[1fr_6rem_4.5rem_auto_auto_1.25rem] gap-2 items-center">
+                        <div className="grid grid-cols-[1fr_6rem_3.5rem_2rem_2rem_4rem_1.25rem] gap-x-2 gap-y-0 items-center">
                           <select {...register(`subRecipes.${index}.subRecipeId`)} className="min-w-0 px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30">
                             <option value={0} disabled>Select…</option>
                             {subRecipes.map(s => <option key={s.id} value={s.id}>{s.name} ({s.yieldUnit})</option>)}
@@ -603,27 +615,37 @@ function RecipeForm({
                           <span className="text-xs tabular-nums text-right text-muted-foreground">
                             {cost !== null ? `£${(Math.ceil(cost * 100) / 100).toFixed(2)}` : "—"}
                           </span>
-                          <label className="flex items-center gap-1 cursor-pointer whitespace-nowrap" title="Include in filling mix">
-                            <input type="checkbox" {...register(`subRecipes.${index}.includeInFillingMix`)} className="rounded border-border text-primary focus:ring-primary/30 w-3 h-3" />
-                            <span className="text-[10px] text-muted-foreground">Filling</span>
-                          </label>
-                          {watch(`subRecipes.${index}.includeInFillingMix`) && (
-                            <label className="flex items-center gap-0.5 whitespace-nowrap" title="Extra fixed amount added at mixing station only (does not affect building weights)">
-                              <input
-                                type="number"
-                                step="any"
-                                min="0"
-                                placeholder="0"
-                                {...register(`subRecipes.${index}.mixingOverage`)}
-                                className="w-12 h-5 rounded border border-border bg-background px-1 text-[10px] tabular-nums text-center focus:outline-none focus:ring-1 focus:ring-amber-500/30"
-                              />
-                              <span className="text-[10px] text-amber-600">extra</span>
-                            </label>
-                          )}
-                          <label className="flex items-center gap-1 cursor-pointer whitespace-nowrap" title="Topping — skips prep, shown in building checklist">
-                            <input type="checkbox" {...register(`subRecipes.${index}.isTopping`)} className="rounded border-border text-amber-500 focus:ring-amber-500/30 w-3 h-3" />
-                            <span className="text-[10px] text-muted-foreground">Topping</span>
-                          </label>
+                          <div className="flex justify-center">
+                            <input type="checkbox" {...register(`subRecipes.${index}.includeInFillingMix`)} className="rounded border-border text-primary focus:ring-primary/30 w-3.5 h-3.5 cursor-pointer" title="Include in filling mix" />
+                          </div>
+                          <div className="flex justify-center">
+                            <input type="checkbox" {...register(`subRecipes.${index}.isTopping`)} className="rounded border-border text-amber-500 focus:ring-amber-500/30 w-3.5 h-3.5 cursor-pointer" title="Topping" />
+                          </div>
+                          <div className="flex justify-center">
+                            {watch(`subRecipes.${index}.includeInFillingMix`) ? (() => {
+                              const thisSub = subRecipes.find(s => s.id === Number(watchedSubRecipes?.[index]?.subRecipeId));
+                              const isKg = thisSub?.yieldUnit === "kg";
+                              const storedOverage = Number(watchedSubRecipes?.[index]?.mixingOverage) || 0;
+                              const displayGrams = isKg ? Math.round(storedOverage * 1000) : storedOverage;
+                              return (
+                                <div className="flex items-center gap-0.5">
+                                  <input
+                                    type="number"
+                                    step="1"
+                                    min="0"
+                                    placeholder="0"
+                                    value={displayGrams || ""}
+                                    onChange={e => {
+                                      const g = Number(e.target.value) || 0;
+                                      setValue(`subRecipes.${index}.mixingOverage`, isKg ? g / 1000 : g);
+                                    }}
+                                    className="w-11 h-6 rounded border border-amber-300 bg-amber-50/50 dark:bg-amber-900/10 px-1 text-[10px] tabular-nums text-center focus:outline-none focus:ring-1 focus:ring-amber-500/30"
+                                  />
+                                  <span className="text-[9px] text-amber-600">g</span>
+                                </div>
+                              );
+                            })() : <span className="text-[10px] text-muted-foreground/30">—</span>}
+                          </div>
                           <button type="button" onClick={() => removeSub(index)} className="text-muted-foreground hover:text-destructive flex justify-center"><X className="w-3.5 h-3.5" /></button>
                         </div>
                         {rawMeatIngs.length > 0 && (
