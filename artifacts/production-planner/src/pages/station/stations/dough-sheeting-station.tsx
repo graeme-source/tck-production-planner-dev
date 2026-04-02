@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { BreakTracker } from "../shared/break-tracker";
 import { getStationCount } from "../shared/constants";
 import { useDoughPrepData } from "./dough-prep-station";
@@ -89,23 +90,22 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
     createBatch.mutate({ id: plan.id, data: { planItemId: nextItem.id, stationType: "dough_sheeting" } });
   };
 
+  const [runUndo, undoBusy] = useGuardedAction({
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
+  });
+
   const undoLast = async () => {
     if (isOnBreak) return;
     const lastItemWithCount = [...items].reverse().find(it => getStationCount(it, "dough_sheeting") > 0);
     if (!lastItemWithCount) return;
-    try {
-      const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
+    await runUndo(async (signal) => {
+      await guardedFetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
         method: "DELETE",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ planItemId: lastItemWithCount.id, stationType: "dough_sheeting" }),
+        signal,
       });
-      if (!res.ok) throw new Error("Failed to undo");
-      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
-    } catch (err) {
-      console.warn("[DoughSheeting] Undo failed:", err);
-      toast({ title: "Undo failed", variant: "destructive" });
-    }
+    });
   };
 
   const totalSheeted = items.reduce((s, it) => s + getStationCount(it, "dough_sheeting"), 0);
@@ -170,11 +170,11 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
           <div className="flex items-center gap-3">
             <button
               onClick={undoLast}
-              disabled={isOnBreak || totalSheeted === 0 || createBatch.isPending}
+              disabled={isOnBreak || totalSheeted === 0 || createBatch.isPending || undoBusy}
               className="flex items-center gap-1.5 px-4 py-3 text-base rounded-xl border border-border text-muted-foreground hover:bg-secondary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               <Minus className="w-4 h-4" />
-              Undo
+              {undoBusy ? "Undoing\u2026" : "Undo"}
             </button>
             <button
               onClick={sheetNext}

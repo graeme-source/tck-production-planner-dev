@@ -7,6 +7,7 @@ import {
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { BreakTracker } from "../shared/break-tracker";
+import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { PrepDateBanner, toKg } from "../shared/prep-helpers";
 import { PrepSubNav, usePrepByRecipe } from "./prep-hub";
 import type { PrepRecipeDetail } from "./prep-hub";
@@ -84,6 +85,9 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
     }
   }, [recipes, selectedRecipeId]);
 
+  const [runTrayAction, trayBusy] = useGuardedAction({
+    onSuccess: () => refetch(),
+  });
   const [trayPending, setTrayPending] = useState<string | null>(null);
 
   const toggleTray = async (ingredientId: number, recipeId: number, trayNum: number) => {
@@ -91,27 +95,25 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
     const pendingKey = `${ingredientId}-${recipeId}-${trayNum}`;
     if (trayPending === pendingKey) return;
     setTrayPending(pendingKey);
-    try {
-      const existing = getCompletion(ingredientId, recipeId, trayNum);
+    const existing = getCompletion(ingredientId, recipeId, trayNum);
+    await runTrayAction(async (signal) => {
       if (existing) {
-        await fetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
+        await guardedFetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
           method: "DELETE",
-          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ingredientId, recipeId, tinNumber: trayNum }),
+          signal,
         });
       } else {
-        await fetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
+        await guardedFetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
           method: "POST",
-          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ingredientId, recipeId, tinNumber: trayNum }),
+          signal,
         });
       }
-      refetch();
-    } finally {
-      setTrayPending(null);
-    }
+    });
+    setTrayPending(null);
   };
 
   if (isLoading) {

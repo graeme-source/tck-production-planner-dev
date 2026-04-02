@@ -12,6 +12,8 @@ import {
 import { format, parseISO, differenceInMinutes, differenceInSeconds } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
+import { ClientError } from "@/lib/with-retry";
 import { BreakTracker } from "../shared/break-tracker";
 import { PrepDateBanner } from "../shared/prep-helpers";
 import { getStationCount } from "../shared/constants";
@@ -143,32 +145,34 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const BALLS_PER_TRAY = 4;
 
   const addBatch = async (item: ProductionPlanItem): Promise<boolean> => {
-    const res = await fetch(`/api/production-plans/${plan.id}/batch-completions`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ planItemId: item.id, stationType: "dough_prep", completedAt: new Date().toISOString() }),
-    });
-    if (res.status === 409) return false; // Target met — not an error
-    if (!res.ok) throw new Error(`Server error ${res.status}`);
-    queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
-    return true;
+    try {
+      await guardedFetch(`/api/production-plans/${plan.id}/batch-completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planItemId: item.id, stationType: "dough_prep", completedAt: new Date().toISOString() }),
+      });
+      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+      return true;
+    } catch (err) {
+      if (err instanceof ClientError && err.status === 409) return false; // Target met — not an error
+      throw err;
+    }
   };
+
+  const [runRemoveBatch, removeBatchBusy] = useGuardedAction({
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
+  });
 
   const removeBatch = async (item: ProductionPlanItem) => {
     if (getStationCount(item, "dough_prep") === 0) return;
-    try {
-      const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
+    await runRemoveBatch(async (signal) => {
+      await guardedFetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
         method: "DELETE",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ planItemId: item.id, stationType: "dough_prep" }),
+        signal,
       });
-      if (!res.ok) throw new Error(`Server error ${res.status}`);
-      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
-    } catch (err) {
-      toast({ title: "Undo failed", description: err instanceof Error ? err.message : "Could not undo batch. Please try again.", variant: "destructive" });
-    }
+    });
   };
 
   const toggleIngredient = (mixNum: number, ingredientKey: string) => {

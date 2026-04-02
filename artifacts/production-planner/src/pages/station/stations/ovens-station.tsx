@@ -16,6 +16,7 @@ import {
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
 import { getStationCount, getAvailableFromPrev, getPrevStationCount } from "../shared/constants";
@@ -50,59 +51,46 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
     createBatch.mutate({ id: plan.id, data: { planItemId: item.id, stationType: "ovens", completedAt: new Date().toISOString() } });
   };
 
-  const [removePending, setRemovePending] = useState(false);
+  const [runRemoveBatch, removePending] = useGuardedAction({
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
+  });
 
   const removeBatch = async (item: ProductionPlanItem) => {
-    if (isOnBreak || removePending || getStationCount(item, "ovens") === 0) return;
-    setRemovePending(true);
-    try {
-      const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
+    if (isOnBreak || getStationCount(item, "ovens") === 0) return;
+    await runRemoveBatch(async (signal) => {
+      await guardedFetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
         method: "DELETE",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ planItemId: item.id, stationType: "ovens" }),
+        signal,
       });
-      if (!res.ok) throw new Error(`Server error ${res.status}`);
-      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
-    } catch (err) {
-      toast({ title: "Undo failed", description: err instanceof Error ? err.message : "Could not undo batch. Please try again.", variant: "destructive" });
-    } finally {
-      setRemovePending(false);
-    }
+    });
   };
+
+  const [runWonlyAction, wonlyBusy] = useGuardedAction({
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
+  });
 
   const addWonly = async (item: ProductionPlanItem) => {
     setWonlyLoading(item.id);
-    try {
-      const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/wonly`, {
-        method: "POST",
-        credentials: "include",
+    await runWonlyAction(async (signal) => {
+      await guardedFetch(`/api/production-plans/${plan.id}/items/${item.id}/wonly`, {
+        method: "POST", signal,
       });
-      if (!res.ok) throw new Error(`Server error ${res.status}`);
-      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
       toast({ title: "Wonky recorded", description: `Quality reject logged for ${item.recipeName ?? "recipe"}.` });
-    } catch (err) {
-      toast({ title: "Wonky failed", description: err instanceof Error ? err.message : "Could not record wonky.", variant: "destructive" });
-    } finally {
-      setWonlyLoading(null);
-    }
+    });
+    setWonlyLoading(null);
   };
 
   const undoWonly = async (item: ProductionPlanItem) => {
     if ((item.wonlyCount ?? 0) === 0) return;
     setWonlyLoading(item.id);
-    try {
-      const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/wonly`, {
-        method: "DELETE",
-        credentials: "include",
+    await runWonlyAction(async (signal) => {
+      await guardedFetch(`/api/production-plans/${plan.id}/items/${item.id}/wonly`, {
+        method: "DELETE", signal,
       });
-      if (!res.ok) throw new Error(`Server error ${res.status}`);
-      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
-    } catch (err) {
-      toast({ title: "Undo failed", description: err instanceof Error ? err.message : "Could not undo wonky.", variant: "destructive" });
-    } finally {
-      setWonlyLoading(null);
-    }
+    });
+    setWonlyLoading(null);
   };
 
   const totalOvenComplete = items.reduce((s, it) => s + getStationCount(it, "ovens"), 0);
@@ -264,7 +252,7 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => undoWonly(currentItem)}
-                disabled={(currentItem.wonlyCount ?? 0) === 0 || wonlyLoading === currentItem.id || isOnBreak}
+                disabled={(currentItem.wonlyCount ?? 0) === 0 || wonlyLoading === currentItem.id || wonlyBusy || isOnBreak}
                 className="w-10 h-10 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
               >
                 <Minus className="w-4 h-4" />
@@ -274,7 +262,7 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
               </span>
               <button
                 onClick={() => addWonly(currentItem)}
-                disabled={wonlyLoading === currentItem.id || isOnBreak}
+                disabled={wonlyLoading === currentItem.id || wonlyBusy || isOnBreak}
                 className="w-10 h-10 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
               >
                 <Plus className="w-4 h-4" />
@@ -368,7 +356,7 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
                       {isCurrentRow && (
                         <button
                           onClick={() => addWonly(item)}
-                          disabled={wonlyLoading === item.id}
+                          disabled={wonlyLoading === item.id || wonlyBusy}
                           className="w-4 h-4 rounded-full bg-red-500 text-white flex items-center justify-center ml-0.5"
                         >
                           <Plus className="w-2.5 h-2.5" />

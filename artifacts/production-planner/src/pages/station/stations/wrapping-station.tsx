@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
-import { withRetry, ClientError } from "@/lib/with-retry";
+import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
@@ -38,13 +38,19 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const [showCustom, setShowCustom] = useState<Record<number, boolean>>({});
   const [activeStorage, setActiveStorage] = useState<string>("fridge");
   const [shopifyConfirm, setShopifyConfirm] = useState<ShopifyWrapConfirmState | null>(null);
-  const [wonkyTransferLoading, setWonkyTransferLoading] = useState(false);
   const [wonkyTransferResult, setWonkyTransferResult] = useState<{
     transferred: Array<{ recipeName: string | null; qty: number }>;
     totalQty: number;
   } | null>(null);
   const [postOvenMap, setPostOvenMap] = useState<PostOvenMap>({});
   const addingRef = useRef(false);
+
+  const [runWonlyAction, wonlyBusy] = useGuardedAction({
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [`/api/production-plans/${plan.id}`] }),
+  });
+  const [runWonkyTransfer, wonkyTransferLoading] = useGuardedAction();
+  const [runWrappingAction, wrappingBusy] = useGuardedAction();
+  const [runStorageAction, storageBusy] = useGuardedAction();
 
   useEffect(() => {
     fetch(`/api/production-plans/${plan.id}/assembly-items`, { credentials: "include" })
@@ -65,40 +71,30 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
 
   const addWonly = async (item: ProductionPlanItem) => {
     setWonlyLoading(item.id);
-    try {
-      await fetch(`/api/production-plans/${plan.id}/items/${item.id}/wonly`, {
-        method: "POST", credentials: "include",
+    await runWonlyAction(async (signal) => {
+      await guardedFetch(`/api/production-plans/${plan.id}/items/${item.id}/wonly`, {
+        method: "POST", signal,
       });
-      await queryClient.invalidateQueries({ queryKey: [`/api/production-plans/${plan.id}`] });
-    } catch (err) {
-      console.warn("[WrappingStation] Add wonly failed:", err);
-    } finally {
-      setWonlyLoading(null);
-    }
+    });
+    setWonlyLoading(null);
   };
 
   const removeWonly = async (item: ProductionPlanItem) => {
     if ((item.wonlyCount ?? 0) <= 0) return;
     setWonlyLoading(item.id);
-    try {
-      await fetch(`/api/production-plans/${plan.id}/items/${item.id}/wonly`, {
-        method: "DELETE", credentials: "include",
+    await runWonlyAction(async (signal) => {
+      await guardedFetch(`/api/production-plans/${plan.id}/items/${item.id}/wonly`, {
+        method: "DELETE", signal,
       });
-      await queryClient.invalidateQueries({ queryKey: [`/api/production-plans/${plan.id}`] });
-    } catch (err) {
-      console.warn("[WrappingStation] Remove wonly failed:", err);
-    } finally {
-      setWonlyLoading(null);
-    }
+    });
+    setWonlyLoading(null);
   };
 
   const wonkyToFreezer = async () => {
-    setWonkyTransferLoading(true);
-    try {
-      const res = await fetch(`/api/production-plans/${plan.id}/wonky-to-freezer`, {
-        method: "POST", credentials: "include",
+    await runWonkyTransfer(async (signal) => {
+      const res = await guardedFetch(`/api/production-plans/${plan.id}/wonky-to-freezer`, {
+        method: "POST", signal,
       });
-      if (!res.ok) throw new Error(`Server error ${res.status}`);
       const data = await res.json() as {
         transferred: Array<{ recipeName: string | null; qty: number }>;
         totalQty: number;
@@ -109,11 +105,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
         title: `${data.totalQty} wonky pack${data.totalQty !== 1 ? "s" : ""} → Product Freezer`,
         description: data.transferred.map(t => `${t.recipeName ?? "Recipe"}: ${t.qty}`).join(" · "),
       });
-    } catch (err: unknown) {
-      toast({ title: "Transfer failed", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
-    } finally {
-      setWonkyTransferLoading(false);
-    }
+    });
   };
 
   const STACK_SIZE = 24;
@@ -151,21 +143,14 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
 
   const sendWrappingComplete = async (item: ProductionPlanItem, complete: boolean) => {
     setWrappingLoading(item.id);
-    try {
-      const data = await withRetry(async () => {
-        const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/wrapping-complete`, {
-          method: "PATCH",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ complete }),
-        });
-        if (!res.ok) {
-          const msg = `Server error ${res.status}`;
-          if (res.status >= 400 && res.status < 500) throw new ClientError(res.status, msg);
-          throw new Error(msg);
-        }
-        return res.json() as Promise<{ wonkyFrozen?: number; shopifyProductTitle?: string | null; shopifyNewQty?: number | null; shopifyError?: string | null }>;
+    await runWrappingAction(async (signal) => {
+      const res = await guardedFetch(`/api/production-plans/${plan.id}/items/${item.id}/wrapping-complete`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ complete }),
+        signal,
       });
+      const data = await res.json() as { wonkyFrozen?: number; shopifyProductTitle?: string | null; shopifyNewQty?: number | null; shopifyError?: string | null };
       if (complete) {
         if (data.wonkyFrozen && data.wonkyFrozen > 0) {
           toast({ title: `${data.wonkyFrozen} wonky pack${data.wonkyFrozen !== 1 ? "s" : ""} → Production Freezer`, description: `Auto-frozen for ${item.recipeName ?? "recipe"}` });
@@ -178,11 +163,8 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
         }
       }
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
-    } catch (err) {
-      toast({ title: "Error", description: err instanceof Error ? err.message : "Could not update wrapping status.", variant: "destructive" });
-    } finally {
-      setWrappingLoading(null);
-    }
+    });
+    setWrappingLoading(null);
   };
 
   const toggleWrapping = async (item: ProductionPlanItem) => {
@@ -214,18 +196,10 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
 
   const markWrappingComplete = async (itemId: number, complete: boolean) => {
     try {
-      await withRetry(async () => {
-        const res = await fetch(`/api/production-plans/${plan.id}/items/${itemId}/wrapping-complete`, {
-          method: "PATCH",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ complete }),
-        });
-        if (!res.ok) {
-          const msg = `Server error ${res.status}`;
-          if (res.status >= 400 && res.status < 500) throw new ClientError(res.status, msg);
-          throw new Error(msg);
-        }
+      await guardedFetch(`/api/production-plans/${plan.id}/items/${itemId}/wrapping-complete`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ complete }),
       });
     } catch (err) {
       console.warn("[WrappingStation] Failed to toggle wrapping:", err);
@@ -238,19 +212,12 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
     if (!loc) return;
     addingRef.current = true;
     setStorageLoading(item.id);
-    try {
-      await withRetry(async () => {
-        const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/${loc.endpoint}`, {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ qty }),
-        });
-        if (!res.ok) {
-          const msg = `Server error ${res.status}`;
-          if (res.status >= 400 && res.status < 500) throw new ClientError(res.status, msg);
-          throw new Error(msg);
-        }
+    await runStorageAction(async (signal) => {
+      await guardedFetch(`/api/production-plans/${plan.id}/items/${item.id}/${loc.endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ qty }),
+        signal,
       });
       const net = netPacks(item);
       const currentStored = STORAGE_LOCATIONS.reduce((s, l) => s + getStorageQty(item, l.key), 0);
@@ -262,12 +229,9 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
       setCustomAmounts(prev => ({ ...prev, [item.id]: "" }));
       setShowCustom(prev => ({ ...prev, [item.id]: false }));
       toast({ title: `+${qty} packs → ${loc.label}`, description: `${item.recipeName ?? "Recipe"}` });
-    } catch (err) {
-      toast({ title: "Error", description: err instanceof Error ? err.message : `Could not add to ${loc.label}.`, variant: "destructive" });
-    } finally {
-      setStorageLoading(null);
-      addingRef.current = false;
-    }
+    });
+    setStorageLoading(null);
+    addingRef.current = false;
   };
 
   const undoStorage = async (item: ProductionPlanItem, qty: number, storageKey: string) => {
@@ -275,27 +239,17 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
     const loc = STORAGE_LOCATIONS.find(l => l.key === storageKey);
     if (!loc) return;
     setStorageLoading(item.id);
-    try {
-      await withRetry(async () => {
-        const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/${loc.endpoint}`, {
-          method: "DELETE",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ qty }),
-        });
-        if (!res.ok) {
-          const msg = `Server error ${res.status}`;
-          if (res.status >= 400 && res.status < 500) throw new ClientError(res.status, msg);
-          throw new Error(msg);
-        }
+    await runStorageAction(async (signal) => {
+      await guardedFetch(`/api/production-plans/${plan.id}/items/${item.id}/${loc.endpoint}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ qty }),
+        signal,
       });
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
       toast({ title: `−${qty} packs from ${loc.label}`, description: `${item.recipeName ?? "Recipe"}` });
-    } catch (err) {
-      toast({ title: "Error", description: err instanceof Error ? err.message : `Could not undo from ${loc.label}.`, variant: "destructive" });
-    } finally {
-      setStorageLoading(null);
-    }
+    });
+    setStorageLoading(null);
   };
 
   return (
@@ -417,7 +371,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                 </div>
                 <button
                   onClick={() => toggleWrapping(item)}
-                  disabled={isLoading || isOnBreak}
+                  disabled={isLoading || wrappingBusy || isOnBreak}
                   className={cn(
                     "w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 transition-all",
                     isWrapped
@@ -483,7 +437,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                   {remaining > 0 && (
                   <button
                     onClick={() => addToStorage(item, Math.min(STACK_SIZE, remaining), activeStorage)}
-                    disabled={isStorageLoading || isOnBreak || addingRef.current}
+                    disabled={isStorageLoading || isOnBreak || addingRef.current || storageBusy}
                     className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
                   >
                     {isStorageLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
@@ -512,7 +466,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                       />
                       <button
                         onClick={() => { if (customNum > 0) addToStorage(item, customNum, activeStorage); }}
-                        disabled={isStorageLoading || !(customNum > 0) || isOnBreak || addingRef.current}
+                        disabled={isStorageLoading || !(customNum > 0) || isOnBreak || addingRef.current || storageBusy}
                         className="px-3 py-2 rounded-lg bg-blue-600 text-white text-base font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
                       >
                         Add
@@ -532,7 +486,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                     return (
                     <button
                       onClick={() => undoStorage(item, undoAmt, activeStorage)}
-                      disabled={isStorageLoading}
+                      disabled={isStorageLoading || storageBusy}
                       className="ml-auto inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-base hover:bg-red-50 dark:hover:bg-red-950/20 disabled:opacity-50 transition-colors"
                     >
                       <Minus className="w-3.5 h-3.5" />
@@ -575,7 +529,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                   <button
                     type="button"
                     onClick={() => removeWonly(item)}
-                    disabled={wonlyLoading === item.id || wonlys <= 0 || isOnBreak || !!wonkyTransferResult}
+                    disabled={wonlyLoading === item.id || wonlyBusy || wonlys <= 0 || isOnBreak || !!wonkyTransferResult}
                     className="w-9 h-9 flex items-center justify-center rounded-full border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 disabled:opacity-40 transition-colors"
                   >
                     <Minus className="w-4 h-4" />
@@ -591,7 +545,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                   <button
                     type="button"
                     onClick={() => addWonly(item)}
-                    disabled={wonlyLoading === item.id || isOnBreak || !!wonkyTransferResult}
+                    disabled={wonlyLoading === item.id || wonlyBusy || isOnBreak || !!wonkyTransferResult}
                     className="w-9 h-9 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-40 transition-colors"
                   >
                     <Plus className="w-4 h-4" />
@@ -620,11 +574,11 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-medium text-sm disabled:opacity-50 transition-colors"
             >
               {wonkyTransferLoading
-                ? <Loader2 className="w-4 h-4 animate-spin" />
-                : <Snowflake className="w-4 h-4" />}
+                ? <><Loader2 className="w-4 h-4 animate-spin" /> Transferring…</>
+                : <><Snowflake className="w-4 h-4" />
               {totalWonly === 0
                 ? "No wonky packs to transfer"
-                : `Transfer ${totalWonly} wonky pack${totalWonly !== 1 ? "s" : ""} to Product Freezer`}
+                : `Transfer ${totalWonly} wonky pack${totalWonly !== 1 ? "s" : ""} to Product Freezer`}</>}
             </button>
           )}
         </div>

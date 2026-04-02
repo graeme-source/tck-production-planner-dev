@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import {
   useCreateBatchCompletion,
   useUpdateProductionPlanItem,
@@ -374,21 +375,22 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
 
   // Undo last batch — deletes the most recent batch_completion row for this user/station
   // and decrements batches_complete atomically, keeping KPI metrics consistent.
-  const handleUndo = async () => {
-    if (!currentItem || myCount === 0 || isOnBreak) return;
-    try {
-      const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
-        method: "DELETE",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planItemId: currentItem.id, stationType }),
-      });
-      if (!res.ok) throw new Error(`Server error ${res.status}`);
+  const [runUndo, undoPending] = useGuardedAction({
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
       setSessionBatches(prev => Math.max(0, prev - 1));
-    } catch (err) {
-      toast({ title: "Undo failed", description: err instanceof Error ? err.message : "Could not undo batch. Please try again.", variant: "destructive" });
-    }
+    },
+  });
+  const handleUndo = () => {
+    if (!currentItem || myCount === 0 || isOnBreak) return;
+    runUndo((signal) =>
+      guardedFetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
+        method: "DELETE",
+        signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planItemId: currentItem.id, stationType }),
+      })
+    );
   };
 
   const handleBreakChange = useCallback((breakMins: number | null) => {
@@ -698,10 +700,10 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
               {buildingCount > 0 && !isOnBreak && (
                 <button
                   onClick={handleUndo}
-                  disabled={pendingTap}
+                  disabled={pendingTap || undoPending}
                   className="mt-1.5 w-full py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
-                  Undo
+                  {undoPending ? "Undoing…" : "Undo"}
                 </button>
               )}
             </div>

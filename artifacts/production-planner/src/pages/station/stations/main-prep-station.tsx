@@ -7,6 +7,7 @@ import {
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { BreakTracker } from "../shared/break-tracker";
 import { PrepDateBanner, useNextActivePlan, fmtQty } from "../shared/prep-helpers";
 import type { NextActivePlan } from "../shared/prep-helpers";
@@ -274,57 +275,63 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     prevNeedsStockCheckRef.current = selectedStatus?.needsStockCheck ?? false;
   }, [selectedStatus?.needsStockCheck, selectedStatus?.stockSaved, selectedIngredient?.ingredientId]);
 
+  const [runTinAction, tinPending] = useGuardedAction({
+    onSuccess: () => refetch(),
+  });
+
   const toggleTin = async (ingredientId: number, recipeId: number, tinNumber: number, isSubRecipe?: boolean) => {
     if (isOnBreak) return;
     activeIngIdRef.current = ingredientId;
     postPresence(ingredientId);
     const existing = getCompletion(ingredientId, recipeId, tinNumber, isSubRecipe);
-    if (existing) {
-      await fetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
-        method: "DELETE", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ingredientId, recipeId, tinNumber, isSubRecipe: !!isSubRecipe }),
-      });
-    } else {
-      await fetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
-        method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ingredientId, recipeId, tinNumber, isSubRecipe: !!isSubRecipe }),
-      });
-    }
-    refetch();
+    await runTinAction(async (signal) => {
+      if (existing) {
+        await guardedFetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ingredientId, recipeId, tinNumber, isSubRecipe: !!isSubRecipe }),
+          signal,
+        });
+      } else {
+        await guardedFetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ingredientId, recipeId, tinNumber, isSubRecipe: !!isSubRecipe }),
+          signal,
+        });
+      }
+    });
   };
+
+  const [runStockCheck, stockCheckBusy] = useGuardedAction();
 
   const saveStockCheck = async (ingredientId: number) => {
     const val = stockValues[ingredientId];
     if (val === undefined || val === "") return;
     setSavingStock(s => ({ ...s, [ingredientId]: true }));
     const cd = nextPlan?.planDate ?? plan.planDate;
-    try {
-      const resp = await fetch("/api/production-plans/stock-checks", {
-        method: "POST", credentials: "include",
+    await runStockCheck(async (signal) => {
+      await guardedFetch("/api/production-plans/stock-checks", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ingredientId, checkDate: cd, quantity: Number(val) }),
+        signal,
       });
-      if (!resp.ok) throw new Error("Save failed");
       dirtyStockIds.current.delete(ingredientId);
       toast({ title: "Stock check saved" });
       refetch();
-    } catch (err) {
-      console.warn("[MainPrep] Stock check save failed:", err);
-      toast({ title: "Failed to save stock check", variant: "destructive" });
-    } finally {
-      setSavingStock(s => ({ ...s, [ingredientId]: false }));
-    }
+    });
+    setSavingStock(s => ({ ...s, [ingredientId]: false }));
   };
 
   const [transferringId, setTransferringId] = useState<number | null>(null);
+  const [runTransfer, transferBusy] = useGuardedAction();
 
   const transferToFreezer = async (ingredientId: number, ingredientName: string, qty: number, unit: string) => {
     setTransferringId(ingredientId);
-    try {
-      const resp = await fetch("/api/stock-transfers", {
-        method: "POST", credentials: "include",
+    await runTransfer(async (signal) => {
+      await guardedFetch("/api/stock-transfers", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ingredientId,
@@ -334,15 +341,11 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
           unit,
           notes: `Remaining after prep: ${ingredientName}`,
         }),
+        signal,
       });
-      if (!resp.ok) throw new Error("Transfer failed");
       toast({ title: `Transferred ${qty} ${unit} of ${ingredientName} to Freezer` });
-    } catch (err) {
-      console.warn("[MainPrep] Freezer transfer failed:", err);
-      toast({ title: "Transfer failed", variant: "destructive" });
-    } finally {
-      setTransferringId(null);
-    }
+    });
+    setTransferringId(null);
   };
 
   const totalTins = ingredients.reduce((s, ing) => s + ing.totalTinCount, 0);

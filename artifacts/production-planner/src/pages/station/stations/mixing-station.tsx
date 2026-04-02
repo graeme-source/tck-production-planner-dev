@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
-import { withRetry, ClientError } from "@/lib/with-retry";
+import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import {
   DndContext, closestCenter, PointerSensor, useSensor, useSensors,
 } from "@dnd-kit/core";
@@ -114,6 +114,7 @@ export function MixingStation({ plan }: MixingStationProps) {
       .catch((err) => { console.warn("[MixingStation] Oven events fetch failed:", err); });
   }, [plan.id]);
 
+  const [runTrayAction, trayBusy] = useGuardedAction();
   const [trayPending, setTrayPending] = useState<string | null>(null);
 
   const advanceTray = async (
@@ -136,29 +137,25 @@ export function MixingStation({ plan }: MixingStationProps) {
     const base = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
     try {
       if (next === 1) {
-        const res = await fetch(`${base}/api/oven-events/oven-in`, {
-          method: "POST", credentials: "include",
+        const res = await guardedFetch(`${base}/api/oven-events/oven-in`, {
+          method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ planId, recipeId, recipeName, ingredientId, ingredientName, trayIndex: trayIdx }),
         });
-        if (res.ok) {
-          const ev: OvenEventRow = await res.json();
-          setOvenEvents(prev => [ev, ...prev]);
-        }
+        const ev: OvenEventRow = await res.json();
+        setOvenEvents(prev => [ev, ...prev]);
       } else if (next === 2) {
-        const res = await fetch(`${base}/api/oven-events/oven-out`, {
-          method: "POST", credentials: "include",
+        const res = await guardedFetch(`${base}/api/oven-events/oven-out`, {
+          method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ planId, recipeId, ingredientId, trayIndex: trayIdx }),
         });
-        if (res.ok) {
-          const ev: OvenEventRow = await res.json();
-          setOvenEvents(prev => prev.map(e => e.id === ev.id ? ev : e));
-        }
+        const ev: OvenEventRow = await res.json();
+        setOvenEvents(prev => prev.map(e => e.id === ev.id ? ev : e));
         setTimeout(() => setTempPrompt({ recipeId, recipeName, ingredientId, ingredientName, trayIdx, planId, planName }), 0);
       } else {
-        await fetch(`${base}/api/oven-events?planId=${planId}&recipeId=${recipeId}&ingredientId=${ingredientId}&trayIndex=${trayIdx}`, {
-          method: "DELETE", credentials: "include",
+        await guardedFetch(`${base}/api/oven-events?planId=${planId}&recipeId=${recipeId}&ingredientId=${ingredientId}&trayIndex=${trayIdx}`, {
+          method: "DELETE",
         });
         setOvenEvents(prev => prev.filter(e => !(e.recipeId === recipeId && e.ingredientId === ingredientId && e.trayIndex === trayIdx)));
       }
@@ -178,16 +175,17 @@ export function MixingStation({ plan }: MixingStationProps) {
     });
   };
 
+  const [runTempAction, tempSavingBusy] = useGuardedAction();
+
   const submitTemp = async () => {
     if (!tempPrompt) return;
     const c = parseFloat(tempValue);
     if (isNaN(c)) return;
     setTempSaving(true);
-    try {
-      const base = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
-      await fetch(`${base}/api/temperature-records`, {
+    const base = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
+    await runTempAction(async (signal) => {
+      await guardedFetch(`${base}/api/temperature-records`, {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           planId: tempPrompt.planId,
@@ -200,16 +198,13 @@ export function MixingStation({ plan }: MixingStationProps) {
           temperatureC: c,
           recordType: "cooked_core",
         }),
+        signal,
       });
       toast({ title: "Temperature recorded", description: `${c}°C saved for tray ${tempPrompt.trayIdx + 1}` });
-    } catch (err) {
-      console.warn("[MixingStation] Temperature save failed:", err);
-      toast({ title: "Failed to save temperature", variant: "destructive" });
-    } finally {
-      setTempSaving(false);
-      setTempPrompt(null);
-      setTempValue("");
-    }
+    });
+    setTempSaving(false);
+    setTempPrompt(null);
+    setTempValue("");
   };
   const [cookingRecipes, setCookingRecipes] = useState<PrepRecipeDetail[]>([]);
   useEffect(() => {
@@ -292,70 +287,44 @@ export function MixingStation({ plan }: MixingStationProps) {
     return { tinsTarget, tinsComplete, batchesPerTinEven, mixed, target, allDone: false };
   };
 
-  const [tinPending, setTinPending] = useState(false);
+  const [runTinAction, tinPending] = useGuardedAction({
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
+  });
 
   const addTin = async (item: ProductionPlanItem): Promise<boolean> => {
-    if (isOnBreak || tinPending) return false;
-    setTinPending(true);
+    if (isOnBreak) return false;
     const { tinsComplete, batchesPerTinEven, mixed, target, allDone } = getTinInfo(item);
-    if (allDone) { setTinPending(false); return false; }
+    if (allDone) return false;
     const batchesAfterNextTin = Math.min((tinsComplete + 1) * batchesPerTinEven, target);
     const batchesToAdd = batchesAfterNextTin - mixed;
-    if (batchesToAdd <= 0) { setTinPending(false); return false; }
-    try {
-      await withRetry(async () => {
-        const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ planItemId: item.id, stationType: "mixing", count: batchesToAdd }),
-        });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          const msg = data.error || `Server error ${res.status}`;
-          if (res.status >= 400 && res.status < 500) throw new ClientError(res.status, msg);
-          throw new Error(msg);
-        }
+    if (batchesToAdd <= 0) return false;
+    const result = await runTinAction(async (signal) => {
+      await guardedFetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planItemId: item.id, stationType: "mixing", count: batchesToAdd }),
+        signal,
       });
-      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
       return true;
-    } catch (err) {
-      toast({ title: "Could not complete tin", description: err instanceof Error ? err.message : "Please try again.", variant: "destructive" });
-      return false;
-    } finally {
-      setTinPending(false);
-    }
+    });
+    return result ?? false;
   };
 
   const undoTin = async (item: ProductionPlanItem) => {
-    if (isOnBreak || tinPending) return;
-    setTinPending(true);
+    if (isOnBreak) return;
     const { tinsComplete, batchesPerTinEven, mixed } = getTinInfo(item);
-    if (tinsComplete === 0 && mixed === 0) { setTinPending(false); return; }
+    if (tinsComplete === 0 && mixed === 0) return;
     const prevTinThreshold = Math.max((tinsComplete - 1) * batchesPerTinEven, 0);
     const batchesToRemove = mixed - prevTinThreshold;
-    if (batchesToRemove <= 0) { setTinPending(false); return; }
-    try {
-      await withRetry(async () => {
-        const res = await fetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
-          method: "DELETE",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ planItemId: item.id, stationType: "mixing", count: batchesToRemove }),
-        });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          const msg = data.error || `Server error ${res.status}`;
-          if (res.status >= 400 && res.status < 500) throw new ClientError(res.status, msg);
-          throw new Error(msg);
-        }
+    if (batchesToRemove <= 0) return;
+    await runTinAction(async (signal) => {
+      await guardedFetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planItemId: item.id, stationType: "mixing", count: batchesToRemove }),
+        signal,
       });
-      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
-    } catch (err) {
-      toast({ title: "Undo failed", description: err instanceof Error ? err.message : "Could not undo tin. Please try again.", variant: "destructive" });
-    } finally {
-      setTinPending(false);
-    }
+    });
   };
 
   const getFillingForItem = (itemId: number) => fillingData.find(f => f.itemId === itemId);

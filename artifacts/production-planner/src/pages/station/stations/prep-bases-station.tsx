@@ -11,6 +11,7 @@ import {
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { BreakTracker } from "../shared/break-tracker";
 import { PrepDateBanner, useNextActivePlan, fmtQty } from "../shared/prep-helpers";
 import type { NextActivePlan } from "../shared/prep-helpers";
@@ -687,23 +688,30 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
     ? ingredients.find(i => i.ingredientId === selectedItem) ?? null
     : null;
 
+  const [runTinAction, tinPending] = useGuardedAction({
+    onSuccess: () => refetch(),
+  });
+
   const toggleTin = async (ingredientId: number, recipeId: number, tinNumber: number) => {
     if (isOnBreak) return;
     const existing = getCompletion(ingredientId, recipeId, tinNumber);
-    if (existing) {
-      await fetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
-        method: "DELETE", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ingredientId, recipeId, tinNumber }),
-      });
-    } else {
-      await fetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
-        method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ingredientId, recipeId, tinNumber }),
-      });
-    }
-    refetch();
+    await runTinAction(async (signal) => {
+      if (existing) {
+        await guardedFetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ingredientId, recipeId, tinNumber }),
+          signal,
+        });
+      } else {
+        await guardedFetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ingredientId, recipeId, tinNumber }),
+          signal,
+        });
+      }
+    });
   };
 
   const totalTins = ingredients.reduce((s, ing) => s + ing.totalTinCount, 0);
