@@ -518,7 +518,6 @@ function RecipeForm({
                               const displayGrams = isKg ? Math.round(storedOverage * 1000) : storedOverage;
                               return (
                                 <div className="flex items-center gap-0.5">
-                                  <input type="hidden" {...register(`ingredients.${index}.mixingOverage`)} />
                                   <input
                                     type="number"
                                     step="1"
@@ -630,7 +629,6 @@ function RecipeForm({
                               const displayGrams = isKg ? Math.round(storedOverage * 1000) : storedOverage;
                               return (
                                 <div className="flex items-center gap-0.5">
-                                  <input type="hidden" {...register(`subRecipes.${index}.mixingOverage`)} />
                                   <input
                                     type="number"
                                     step="1"
