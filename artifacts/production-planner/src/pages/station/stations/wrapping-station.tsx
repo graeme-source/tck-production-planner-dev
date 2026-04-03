@@ -350,7 +350,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
               <div className="flex items-center gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1.5">
-                    <h3 className={cn("font-semibold text-lg", isWrapped ? "line-through text-muted-foreground" : "")}>
+                    <h3 className={cn("font-semibold text-xl", isWrapped ? "line-through text-muted-foreground" : "")}>
                       {item.recipeName ?? `Recipe #${item.recipeId}`}
                     </h3>
                     {isWrapped && <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />}
@@ -358,26 +358,26 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
                   <div className="flex items-center gap-3 text-base">
                     <div className="text-center">
                       <span className="text-sm text-muted-foreground block">Planned</span>
-                      <span className="font-semibold tabular-nums">{planned}</span>
+                      <span className="text-lg font-bold tabular-nums">{planned}</span>
                     </div>
                     <div className="text-center">
                       <span className="text-sm text-purple-600 dark:text-purple-400 block">In Chiller</span>
-                      <span className="text-xl font-bold tabular-nums text-purple-700 dark:text-purple-300">{net}</span>
+                      <span className="text-2xl font-bold tabular-nums text-purple-700 dark:text-purple-300">{net}</span>
                     </div>
                     <div className="text-center border-l border-border/50 pl-3">
                       <span className="text-sm text-primary block">Wrapped</span>
-                      <span className="text-xl font-bold tabular-nums text-primary">{fridge}</span>
+                      <span className="text-2xl font-bold tabular-nums text-primary">{fridge}</span>
                     </div>
                     {(item.wonlyCount ?? 0) > 0 && (
                       <div className="text-center">
                         <span className="text-sm text-red-500 block">Wonky</span>
-                        <span className="font-semibold tabular-nums text-red-500">{item.wonlyCount}</span>
+                        <span className="text-lg font-bold tabular-nums text-red-500">{item.wonlyCount}</span>
                       </div>
                     )}
                     {remaining > 0 && (
                       <div className="text-center">
                         <span className="text-sm text-amber-600 dark:text-amber-400 block">Left</span>
-                        <span className="font-semibold tabular-nums text-amber-600 dark:text-amber-400">{remaining}</span>
+                        <span className="text-lg font-bold tabular-nums text-amber-600 dark:text-amber-400">{remaining}</span>
                       </div>
                     )}
                   </div>

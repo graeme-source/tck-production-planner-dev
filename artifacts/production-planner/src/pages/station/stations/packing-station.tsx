@@ -157,7 +157,7 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
     return (
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-base font-semibold">{label}</span>
+          <span className="text-lg font-semibold">{label}</span>
           <span className={cn("text-sm font-medium px-2 py-0.5 rounded-full", remaining === 0 ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300")}>
             {remaining === 0 ? "Done" : `${remaining} left`}
           </span>

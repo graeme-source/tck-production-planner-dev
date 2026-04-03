@@ -2365,8 +2365,8 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
 
       {/* Station navigation */}
       <div className="bg-card border border-border rounded-xl p-4">
-        <h2 className="font-semibold text-sm mb-3 flex items-center gap-2">
-          <BarChart2 className="w-4 h-4 text-primary" />
+        <h2 className="font-bold text-base mb-3 flex items-center gap-2">
+          <BarChart2 className="w-5 h-5 text-primary" />
           Enter Station
         </h2>
         <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-5 gap-3">
@@ -2380,7 +2380,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
               <button
                 key={s.key}
                 onClick={() => navigate(`/plans/${planId}/station/${s.key}`)}
-                className="flex flex-col items-center gap-2 p-4 min-h-[96px] border border-border rounded-xl hover:border-primary/40 hover:bg-secondary/40 transition-all group relative"
+                className="flex flex-col items-center gap-3 p-5 min-h-[130px] border-2 border-border rounded-xl hover:border-primary hover:bg-secondary/40 hover:shadow-md transition-all group relative"
               >
                 {/* Active user badge */}
                 {activeUsers > 0 && (
@@ -2397,10 +2397,10 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                 {isBuildingStation && stationInProgress && activeUsers === 0 && (
                   <span className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full bg-amber-400" title="In progress" />
                 )}
-                <div className={cn("w-11 h-11 rounded-xl flex items-center justify-center", s.color)}>
-                  <Icon className="w-5 h-5" />
+                <div className={cn("w-14 h-14 rounded-xl flex items-center justify-center", s.color)}>
+                  <Icon className="w-7 h-7" />
                 </div>
-                <span className="text-xs font-medium text-center leading-tight text-muted-foreground group-hover:text-foreground transition-colors">
+                <span className="text-base font-extrabold text-center leading-snug text-black dark:text-white transition-colors">
                   {s.label}
                 </span>
                 {isBuildingStation && totalBatchesTarget > 0 && (

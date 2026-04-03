@@ -138,7 +138,7 @@ function PrepFullScreenMode({
               <p className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-1">
                 Item {idx + 1} of {total}
               </p>
-              <h2 className="font-display text-4xl font-bold leading-tight break-words">
+              <h2 className="font-display text-5xl font-bold leading-tight break-words">
                 {current.name}
               </h2>
             </div>
@@ -160,7 +160,7 @@ function PrepFullScreenMode({
               {current.quantity}
             </p>
             {current.subDetail && (
-              <p className="text-muted-foreground mt-2 text-lg">{current.subDetail}</p>
+              <p className="text-muted-foreground mt-2 text-xl">{current.subDetail}</p>
             )}
           </div>
 
@@ -168,7 +168,7 @@ function PrepFullScreenMode({
           {current.badge && (
             <div className={cn("border rounded-xl px-4 py-3 flex items-center justify-between", badgeColors[current.badge.color])}>
               <span className="font-medium text-base">{current.badge.label}</span>
-              <span className="text-3xl font-bold tabular-nums">{current.badge.value}</span>
+              <span className="text-4xl font-bold tabular-nums">{current.badge.value}</span>
             </div>
           )}
 
