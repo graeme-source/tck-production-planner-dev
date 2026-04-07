@@ -1649,6 +1649,9 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       estimatedCookTimeMin: number | null;
       ovenTempC: number | null;
       steamPct: number | null;
+      stockCheckEnabled: boolean;
+      stockCheckFrequency: string;
+      stockCheckDay: string | null;
       cookedQty: number;
       rawQty: number;
       prepQty: number;
@@ -1746,6 +1749,9 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
         estimatedCookTimeMin: ing.estimatedCookTimeMin,
         ovenTempC: ing.ovenTempC,
         steamPct: ing.steamPct,
+        stockCheckEnabled: ing.stockCheckEnabled ?? false,
+        stockCheckFrequency: ing.stockCheckFrequency ?? "daily",
+        stockCheckDay: ing.stockCheckDay ?? null,
         cookedQty: roundedCooked,
         rawQty: roundedRaw,
         prepQty: ing.prepWeightMode === "processed" ? roundedCooked : roundedRaw,

@@ -22,6 +22,8 @@ export interface ResolvedIngredient {
   ovenTempC: number | null;
   steamPct: number | null;
   stockCheckEnabled: boolean;
+  stockCheckFrequency: string;
+  stockCheckDay: string | null;
   quantityPerBatch: number;
   includeInFillingMix: boolean;
 }
@@ -59,6 +61,8 @@ async function resolveSubRecipeIngredients(
       ovenTempC: ingredientsTable.ovenTempC,
       steamPct: ingredientsTable.steamPct,
       stockCheckEnabled: ingredientsTable.stockCheckEnabled,
+      stockCheckFrequency: ingredientsTable.stockCheckFrequency,
+      stockCheckDay: ingredientsTable.stockCheckDay,
     })
     .from(subRecipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -77,6 +81,8 @@ async function resolveSubRecipeIngredients(
     ovenTempC: row.ovenTempC ?? null,
     steamPct: row.steamPct ?? null,
     stockCheckEnabled: row.stockCheckEnabled ?? false,
+    stockCheckFrequency: row.stockCheckFrequency ?? "daily",
+    stockCheckDay: row.stockCheckDay ?? null,
     quantityPerBatch: Number(row.quantity) * effectiveScale,
     includeInFillingMix: false,
   }));
@@ -128,6 +134,8 @@ export async function resolveRecipeIngredients(
       ovenTempC: ingredientsTable.ovenTempC,
       steamPct: ingredientsTable.steamPct,
       stockCheckEnabled: ingredientsTable.stockCheckEnabled,
+      stockCheckFrequency: ingredientsTable.stockCheckFrequency,
+      stockCheckDay: ingredientsTable.stockCheckDay,
     })
     .from(recipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -148,6 +156,8 @@ export async function resolveRecipeIngredients(
     ovenTempC: row.ovenTempC ?? null,
     steamPct: row.steamPct ?? null,
     stockCheckEnabled: row.stockCheckEnabled ?? false,
+    stockCheckFrequency: row.stockCheckFrequency ?? "daily",
+    stockCheckDay: row.stockCheckDay ?? null,
     quantityPerBatch: Number(row.quantity) * portionsPerBatch,
     includeInFillingMix: row.includeInFillingMix ?? false,
   }));
