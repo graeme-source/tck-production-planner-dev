@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useSearch, useLocation } from "wouter";
 import { toast } from "@/hooks/use-toast";
@@ -11,9 +11,11 @@ import {
   ChevronDown, ChevronRight, Thermometer, ShieldCheck,
   Package, Zap, CalendarDays, Trophy, Snail, Hourglass,
   Lightbulb, AlertTriangle, CheckCircle, Filter,
+  MessageSquare, Send,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -154,8 +156,18 @@ interface ImprovementRecord {
   approvalTier: "minor" | "medium" | "major" | null;
   progressStatus: "submitted_for_review" | "acknowledged" | "approved" | "testing" | "complete" | "rejected";
   notes: string | null;
+  reportContext: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+interface ImprovementComment {
+  id: number;
+  improvementId: number;
+  userId: number | null;
+  userName: string | null;
+  comment: string;
+  createdAt: string;
 }
 
 interface AndonIssueRecord {
@@ -1292,6 +1304,53 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
   const [updating, setUpdating] = useState<number | null>(null);
   const [editNotes, setEditNotes] = useState<Record<number, string>>({});
 
+  // Detail dialog state
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [comments, setComments] = useState<ImprovementComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [newComment, setNewComment] = useState("");
+  const [postingComment, setPostingComment] = useState(false);
+  const commentsEndRef = useRef<HTMLDivElement>(null);
+
+  const selectedImp = selectedId !== null ? improvements.find(i => i.id === selectedId) ?? null : null;
+
+  const loadComments = useCallback(async (id: number) => {
+    setCommentsLoading(true);
+    try {
+      const res = await fetch(`${BASE}/api/improvements/${id}/comments`, { credentials: "include" });
+      if (res.ok) setComments(await res.json());
+    } catch { /* ignore */ }
+    setCommentsLoading(false);
+  }, []);
+
+  const openDetail = (id: number) => {
+    setSelectedId(id);
+    setNewComment("");
+    loadComments(id);
+  };
+
+  const postComment = async () => {
+    if (!selectedId || !newComment.trim()) return;
+    setPostingComment(true);
+    try {
+      const res = await fetch(`${BASE}/api/improvements/${selectedId}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ comment: newComment.trim() }),
+      });
+      if (res.ok) {
+        const row = await res.json();
+        setComments(prev => [...prev, row]);
+        setNewComment("");
+        setTimeout(() => commentsEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+      }
+    } catch {
+      toast({ title: "Failed to post comment", variant: "destructive" });
+    }
+    setPostingComment(false);
+  };
+
   // Filters
   const [viewTab, setViewTab] = useState<"all" | "mine">("all");
   const [filterStatus, setFilterStatus] = useState("");
@@ -1482,10 +1541,10 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
             </thead>
             <tbody className="divide-y divide-border/50">
               {filtered.map(imp => (
-                <tr key={imp.id} className={cn("transition-colors align-top", statusRowClass(imp.progressStatus))}>
+                <tr key={imp.id} className={cn("transition-colors align-top cursor-pointer hover:bg-secondary/40", statusRowClass(imp.progressStatus))} onClick={() => openDetail(imp.id)}>
                   <td className="px-4 py-3">
                     <p className="font-medium">{imp.title}</p>
-                    {imp.description && <p className="text-xs text-muted-foreground mt-0.5 max-w-xs">{imp.description}</p>}
+                    {imp.description && <p className="text-xs text-muted-foreground mt-0.5 max-w-xs line-clamp-2">{imp.description}</p>}
                   </td>
                   <td className="px-4 py-3 text-center">
                     <span className={cn(
@@ -1504,7 +1563,7 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
                   <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
                     {imp.createdAt ? format(new Date(imp.createdAt), "d MMM yyyy") : "—"}
                   </td>
-                  <td className="px-4 py-3 text-center">
+                  <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
                     {isManager ? (
                       <select
                         value={imp.approvalTier ?? ""}
@@ -1518,7 +1577,7 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
                       <span className="text-muted-foreground capitalize">{imp.approvalTier ?? "—"}</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-center">
+                  <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
                     {isManager ? (
                       <select
                         value={imp.progressStatus}
@@ -1534,7 +1593,7 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                     {isManager ? (
                       <div className="flex items-start gap-2">
                         <textarea
@@ -1559,7 +1618,7 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
                     )}
                   </td>
                   {isAdmin && (
-                    <td className="px-4 py-3 text-center">
+                    <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
                       <button
                         onClick={() => deleteEntry(imp.id)}
                         className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-xs px-2 py-1 rounded-lg border border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
@@ -1574,6 +1633,125 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
           </table>
         </div>
       )}
+
+      {/* Detail dialog */}
+      <Dialog open={selectedId !== null} onOpenChange={open => { if (!open) setSelectedId(null); }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+          {selectedImp && (
+            <>
+              <DialogHeader>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={cn(
+                    "px-2.5 py-0.5 rounded-full text-xs font-medium",
+                    (selectedImp.type ?? "improvement") === "struggle"
+                      ? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
+                      : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                  )}>
+                    {(selectedImp.type ?? "improvement") === "struggle" ? "Struggle" : "Improvement"}
+                  </span>
+                  <span className={cn("px-2 py-0.5 rounded-full text-xs", statusBadgeClass(selectedImp.progressStatus))}>
+                    {IMPROVEMENT_PROGRESS_OPTIONS.find(o => o.value === selectedImp.progressStatus)?.label ?? selectedImp.progressStatus}
+                  </span>
+                  {selectedImp.approvalTier && (
+                    <span className="px-2 py-0.5 rounded-full text-xs bg-secondary text-muted-foreground capitalize">
+                      {selectedImp.approvalTier}
+                    </span>
+                  )}
+                </div>
+                <DialogTitle className="text-xl">{selectedImp.title}</DialogTitle>
+                <DialogDescription className="text-sm text-muted-foreground">
+                  {STATION_LABELS_REPORT[selectedImp.station] ?? selectedImp.station}
+                  {" · "}
+                  {selectedImp.submittedByName ?? "Unknown"}
+                  {" · "}
+                  {selectedImp.createdAt ? format(new Date(selectedImp.createdAt), "d MMM yyyy, HH:mm") : "—"}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="flex-1 overflow-y-auto space-y-4 mt-2">
+                {/* Full description */}
+                <div className="bg-secondary/30 rounded-xl p-4">
+                  <p className="text-sm font-medium text-muted-foreground mb-1">Description</p>
+                  <p className="text-sm whitespace-pre-wrap">{selectedImp.description}</p>
+                </div>
+
+                {/* Report context */}
+                {selectedImp.reportContext && (
+                  <div className="bg-blue-50/50 dark:bg-blue-950/20 border border-blue-200/50 dark:border-blue-800/50 rounded-xl px-4 py-3 flex items-start gap-2">
+                    <Package className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-xs font-medium text-blue-700 dark:text-blue-400 mb-0.5">Reported from</p>
+                      <p className="text-sm text-blue-800 dark:text-blue-300">{selectedImp.reportContext}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Manager notes */}
+                {selectedImp.notes && (
+                  <div className="bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/50 dark:border-amber-800/50 rounded-xl p-4">
+                    <p className="text-sm font-medium text-amber-700 dark:text-amber-400 mb-1">Manager Notes</p>
+                    <p className="text-sm whitespace-pre-wrap">{selectedImp.notes}</p>
+                  </div>
+                )}
+
+                {/* Comments section */}
+                <div className="border-t border-border pt-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <MessageSquare className="w-4 h-4 text-muted-foreground" />
+                    <p className="text-sm font-semibold">Comments ({comments.length})</p>
+                  </div>
+
+                  {commentsLoading ? (
+                    <div className="flex items-center justify-center py-6 text-muted-foreground">
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />Loading...
+                    </div>
+                  ) : comments.length === 0 ? (
+                    <p className="text-sm text-muted-foreground italic py-3">No comments yet. Be the first to add an update.</p>
+                  ) : (
+                    <div className="space-y-3 max-h-[240px] overflow-y-auto pr-1">
+                      {comments.map(c => (
+                        <div key={c.id} className="bg-secondary/20 rounded-lg px-3.5 py-2.5">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-sm font-medium">{c.userName ?? "Unknown"}</span>
+                            <span className="text-xs text-muted-foreground">{format(new Date(c.createdAt), "d MMM yyyy, HH:mm")}</span>
+                          </div>
+                          <p className="text-sm whitespace-pre-wrap">{c.comment}</p>
+                        </div>
+                      ))}
+                      <div ref={commentsEndRef} />
+                    </div>
+                  )}
+
+                  {/* Add comment input */}
+                  <div className="flex items-start gap-2 mt-3">
+                    <textarea
+                      value={newComment}
+                      onChange={e => setNewComment(e.target.value)}
+                      placeholder="Add a comment or update..."
+                      rows={2}
+                      className="flex-1 px-3 py-2 border border-border rounded-lg text-sm bg-background resize-none focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                      onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) postComment(); }}
+                    />
+                    <button
+                      onClick={postComment}
+                      disabled={!newComment.trim() || postingComment}
+                      className={cn(
+                        "px-3 py-2 rounded-lg transition-all mt-0.5",
+                        newComment.trim()
+                          ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow active:scale-95"
+                          : "bg-secondary text-muted-foreground cursor-not-allowed"
+                      )}
+                    >
+                      {postingComment ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">Press Cmd+Enter to send</p>
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

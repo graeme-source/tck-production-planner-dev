@@ -32,6 +32,7 @@ interface SubRecipePlanRequirement {
     ingredientName: string;
     unit: string;
     quantity: number;
+    packWeight?: number | null;
   }>;
   subRecipeComponents: Array<{
     id: number;
@@ -63,8 +64,8 @@ function ScaledIngredientChecklist({
   onToggle: (key: string) => void;
 }) {
   const allItems = [
-    ...ingredients.map(i => ({ key: `ing-${i.id}`, label: i.ingredientName, qty: i.quantity, unit: i.unit, isComponent: false })),
-    ...subRecipeComponents.map(c => ({ key: `comp-${c.id}`, label: c.componentSubRecipeName, qty: c.quantity, unit: c.componentYieldUnit, isComponent: true })),
+    ...ingredients.map(i => ({ key: `ing-${i.id}`, label: i.ingredientName, qty: i.quantity, unit: i.unit, isComponent: false, packWeight: i.packWeight ?? null })),
+    ...subRecipeComponents.map(c => ({ key: `comp-${c.id}`, label: c.componentSubRecipeName, qty: c.quantity, unit: c.componentYieldUnit, isComponent: true, packWeight: null as number | null })),
   ];
 
   if (allItems.length === 0) {
@@ -97,9 +98,22 @@ function ScaledIngredientChecklist({
             <span className={cn("flex-1 font-medium text-base", isDone && "line-through text-muted-foreground")}>
               {item.label}
             </span>
-            <span className={cn("text-xl font-bold tabular-nums", isDone ? "text-emerald-600 dark:text-emerald-400" : "text-foreground")}>
-              {fmtScaledQty(item.qty, item.unit, batches)}
-            </span>
+            <div className="text-right flex-shrink-0">
+              {item.packWeight && item.packWeight > 0 && (() => {
+                const scaledQty = item.qty * batches;
+                // Convert to same unit as packWeight (g) for comparison
+                const scaledG = item.unit === "kg" ? scaledQty * 1000 : scaledQty;
+                const packs = Math.ceil(scaledG / item.packWeight);
+                return (
+                  <span className={cn("text-sm tabular-nums block", isDone ? "text-emerald-600/70 dark:text-emerald-400/70" : "text-muted-foreground")}>
+                    {packs} {packs === 1 ? "pack" : "packs"}
+                  </span>
+                );
+              })()}
+              <span className={cn("text-xl font-bold tabular-nums", isDone ? "text-emerald-600 dark:text-emerald-400" : "text-foreground")}>
+                {fmtScaledQty(item.qty, item.unit, batches)}
+              </span>
+            </div>
           </button>
         );
       })}
@@ -177,7 +191,7 @@ export function SubRecipeMakeFlow({
       .then(r => r.json())
       .then((d: {
         id: number; name: string; yield: number; yieldUnit: string; shelfLifeDays: number | null;
-        ingredients: Array<{ id: number; ingredientId: number; ingredientName: string; unit: string; quantity: number }>;
+        ingredients: Array<{ id: number; ingredientId: number; ingredientName: string; unit: string; quantity: number; packWeight?: number | null }>;
         subRecipeComponents: Array<{ id: number; componentSubRecipeId: number; componentSubRecipeName: string; componentYieldUnit: string; quantity: number }>;
       }) => {
         setLoadedDetail({
@@ -187,7 +201,7 @@ export function SubRecipeMakeFlow({
           yieldUnit: d.yieldUnit,
           shelfLifeDays: d.shelfLifeDays,
           totalRequired: state.sr?.totalRequired ?? 0,
-          ingredients: (d.ingredients ?? []).map(i => ({ id: i.id, ingredientId: i.ingredientId, ingredientName: i.ingredientName ?? "", unit: i.unit ?? "kg", quantity: Number(i.quantity) })),
+          ingredients: (d.ingredients ?? []).map(i => ({ id: i.id, ingredientId: i.ingredientId, ingredientName: i.ingredientName ?? "", unit: i.unit ?? "kg", quantity: Number(i.quantity), packWeight: i.packWeight ? Number(i.packWeight) : null })),
           subRecipeComponents: (d.subRecipeComponents ?? []).map(c => ({ id: c.id, componentSubRecipeId: c.componentSubRecipeId, componentSubRecipeName: c.componentSubRecipeName ?? "", componentYieldUnit: c.componentYieldUnit ?? "kg", quantity: Number(c.quantity) })),
         });
         setLoadingDetail(false);

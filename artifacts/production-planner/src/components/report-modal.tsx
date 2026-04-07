@@ -87,9 +87,10 @@ interface ReportModalProps {
   open: boolean;
   onClose: () => void;
   defaultStation?: string;
+  reportContext?: string;
 }
 
-export function ReportModal({ open, onClose, defaultStation }: ReportModalProps) {
+export function ReportModal({ open, onClose, defaultStation, reportContext }: ReportModalProps) {
   const [activeTab, setActiveTab] = useState<Tab>("pullKanban");
 
   const [scanActive, setScanActive] = useState(false);
@@ -267,7 +268,7 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ title: impTitle.trim(), description: impDescription.trim(), station: impStation, type: "improvement" }),
+        body: JSON.stringify({ title: impTitle.trim(), description: impDescription.trim(), station: impStation, type: "improvement", reportContext: reportContext || null }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -296,7 +297,7 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ title: struggleTitle.trim(), description: struggleDescription.trim(), station: struggleStation, type: "struggle" }),
+        body: JSON.stringify({ title: struggleTitle.trim(), description: struggleDescription.trim(), station: struggleStation, type: "struggle", reportContext: reportContext || null }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -329,6 +330,7 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
           severity: andonSeverity,
           description: andonDescription.trim() || null,
           station: andonStation,
+          reportContext: reportContext || null,
         }),
       });
       if (!res.ok) {
@@ -424,6 +426,15 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
                 Issue
               </button>
             </div>
+
+            {reportContext && activeTab !== "pullKanban" && (
+              <div className="mx-5 mt-3 mb-0 px-3 py-2 bg-blue-50 dark:bg-blue-950/20 border border-blue-200/60 dark:border-blue-800/40 rounded-lg flex items-center gap-2 flex-shrink-0">
+                <Package className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
+                <p className="text-xs text-blue-700 dark:text-blue-400">
+                  <span className="font-medium">Context:</span> {reportContext}
+                </p>
+              </div>
+            )}
 
             <div className="flex-1 overflow-y-auto">
               {activeTab === "pullKanban" && (
@@ -878,10 +889,11 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
 
 interface ReportButtonProps {
   defaultStation?: string;
+  reportContext?: string;
   className?: string;
 }
 
-export function ReportButton({ defaultStation, className }: ReportButtonProps) {
+export function ReportButton({ defaultStation, reportContext, className }: ReportButtonProps) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -897,7 +909,7 @@ export function ReportButton({ defaultStation, className }: ReportButtonProps) {
         <CircleDot className="w-4 h-4" />
         Quick Idea
       </button>
-      <ReportModal open={open} onClose={() => setOpen(false)} defaultStation={defaultStation} />
+      <ReportModal open={open} onClose={() => setOpen(false)} defaultStation={defaultStation} reportContext={reportContext} />
     </>
   );
 }
