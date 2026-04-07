@@ -216,10 +216,11 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
         <input
           type="number"
           min={0}
-          value={item.fridgeStock}
-          onChange={e => onFridgeStockChange(item.id, Number(e.target.value))}
+          value={item.fridgeStock === 0 ? "" : item.fridgeStock}
+          onChange={e => onFridgeStockChange(item.id, e.target.value === "" ? 0 : Math.max(0, parseInt(e.target.value, 10) || 0))}
           disabled={saving}
-          className="w-16 px-1.5 py-1 bg-background border border-border rounded-lg text-xs text-center focus-ring disabled:opacity-40 tabular-nums"
+          className="w-20 px-1.5 py-1 bg-background border border-border rounded-lg text-xs text-center focus-ring disabled:opacity-40 tabular-nums"
+          placeholder="0"
         />
       </td>
       <td className="py-2 px-2 text-center tabular-nums text-xs text-red-500">
