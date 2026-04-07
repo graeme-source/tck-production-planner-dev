@@ -1,6 +1,6 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { db, improvementSubmissionsTable, usersTable } from "@workspace/db";
-import { eq, desc } from "drizzle-orm";
+import { db, improvementSubmissionsTable, improvementCommentsTable, usersTable } from "@workspace/db";
+import { eq, desc, asc } from "drizzle-orm";
 import type { ImprovementSubmission } from "@workspace/db";
 
 const router: IRouter = Router();
@@ -20,7 +20,7 @@ router.get("/", async (req: Request, res: Response) => {
 
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { title, description, station, type } = req.body;
+    const { title, description, station, type, reportContext } = req.body;
     if (!title || !description || !station) {
       res.status(400).json({ error: "title, description, and station are required" });
       return;
@@ -44,6 +44,7 @@ router.post("/", async (req: Request, res: Response) => {
         type: submissionType,
         submittedBy: userId ?? null,
         submittedByName,
+        reportContext: reportContext || null,
       })
       .returning();
 
@@ -122,6 +123,48 @@ router.delete("/:id", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("Error deleting improvement submission:", err);
     res.status(500).json({ error: "Failed to delete improvement submission" });
+  }
+});
+
+// Comments
+router.get("/:id/comments", async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(String(req.params.id), 10);
+    if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+    const rows = await db
+      .select()
+      .from(improvementCommentsTable)
+      .where(eq(improvementCommentsTable.improvementId, id))
+      .orderBy(asc(improvementCommentsTable.createdAt));
+    res.json(rows);
+  } catch (err) {
+    console.error("Error fetching comments:", err);
+    res.status(500).json({ error: "Failed to fetch comments" });
+  }
+});
+
+router.post("/:id/comments", async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(String(req.params.id), 10);
+    if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+    const { comment } = req.body;
+    if (!comment || !comment.trim()) { res.status(400).json({ error: "comment is required" }); return; }
+
+    const userId = req.session.userId;
+    let userName: string | null = null;
+    if (userId) {
+      const [user] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId));
+      userName = user?.name ?? null;
+    }
+
+    const [row] = await db
+      .insert(improvementCommentsTable)
+      .values({ improvementId: id, userId: userId ?? null, userName, comment: comment.trim() })
+      .returning();
+    res.status(201).json(row);
+  } catch (err) {
+    console.error("Error creating comment:", err);
+    res.status(500).json({ error: "Failed to create comment" });
   }
 });
 

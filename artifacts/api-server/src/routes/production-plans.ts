@@ -138,6 +138,7 @@ function getPreviousStations(stationType: string): string[] {
 
 const CreatePlanBody = z.object({
   planDate: z.string(),
+  prepDate: z.string().nullish(),
   name: z.string(),
   notes: z.string().nullish(),
   status: z.enum(["draft", "active", "prep", "building", "complete"]).optional(),
@@ -158,6 +159,7 @@ type PlanStatus = typeof PLAN_STATUSES[number];
 
 const UpdatePlanBody = z.object({
   planDate: z.string().optional(),
+  prepDate: z.string().nullish(),
   name: z.string().optional(),
   notes: z.string().nullish(),
   status: z.enum(PLAN_STATUSES).optional(),
@@ -209,7 +211,7 @@ router.get("/", async (req, res) => {
 });
 
 router.post("/", validate(CreatePlanBody), async (req, res) => {
-  const { planDate, name, notes, status, items } = req.body;
+  const { planDate, prepDate, name, notes, status, items } = req.body;
   // Enforce Mon–Fri only — parse at noon UTC to avoid timezone edge cases
   const dateObj = new Date(`${planDate}T12:00:00Z`);
   const dayOfWeek = dateObj.getUTCDay(); // 0=Sun, 6=Sat
@@ -233,6 +235,7 @@ router.post("/", validate(CreatePlanBody), async (req, res) => {
 
   const [plan] = await db.insert(productionPlansTable).values({
     planDate,
+    prepDate: prepDate ?? null,
     name,
     notes: notes ?? null,
     status: status ?? "draft",
@@ -712,21 +715,31 @@ router.get("/next-active", async (req, res) => {
   }
 
   const plans = await db
-    .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate, name: productionPlansTable.name, status: productionPlansTable.status })
+    .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate, prepDate: productionPlansTable.prepDate, name: productionPlansTable.name, status: productionPlansTable.status })
     .from(productionPlansTable)
     .where(and(
       gt(productionPlansTable.planDate, afterDateStr),
       eq(productionPlansTable.status, "active")
     ))
-    .orderBy(asc(productionPlansTable.planDate))
-    .limit(1);
+    .orderBy(asc(productionPlansTable.planDate), asc(productionPlansTable.id));
 
   if (plans.length === 0) {
-    res.json({ planId: null, planDate: null, planName: null });
+    res.json({ planId: null, planDate: null, planName: null, prepDate: null, sameDayPlans: [] });
     return;
   }
 
-  res.json({ planId: plans[0].id, planDate: plans[0].planDate, planName: plans[0].name, status: plans[0].status });
+  // Return first plan, plus list of all plans on the same date
+  const firstDate = plans[0].planDate;
+  const sameDayPlans = plans.filter(p => p.planDate === firstDate).map(p => ({ planId: p.id, planName: p.name }));
+
+  res.json({
+    planId: plans[0].id,
+    planDate: plans[0].planDate,
+    planName: plans[0].name,
+    prepDate: plans[0].prepDate ?? null,
+    status: plans[0].status,
+    sameDayPlans: sameDayPlans.length > 1 ? sameDayPlans : [],
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -840,7 +853,7 @@ const LOCKED_STATUSES: PlanStatus[] = ["active", "prep", "building", "complete"]
 
 router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { planDate, name, notes, status, items } = req.body;
+  const { planDate, prepDate, name, notes, status, items } = req.body;
 
   const [existing] = await db.select().from(productionPlansTable).where(eq(productionPlansTable.id, id));
   if (!existing) { res.status(404).json({ error: "Not found" }); return; }
@@ -873,6 +886,7 @@ router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
 
   const setPlan: Partial<typeof productionPlansTable.$inferInsert> = {};
   if (planDate !== undefined) setPlan.planDate = planDate;
+  if (prepDate !== undefined) setPlan.prepDate = prepDate ?? null;
   if (name !== undefined) setPlan.name = name;
   if (notes !== undefined) setPlan.notes = notes ?? null;
   if (status !== undefined) setPlan.status = status;
@@ -1957,6 +1971,7 @@ router.get("/:id/sub-recipe-requirements", async (req, res) => {
         ingredientName: ingredientsTable.name,
         unit: ingredientsTable.unit,
         quantity: subRecipeIngredientsTable.quantity,
+        packWeight: ingredientsTable.packWeight,
       })
       .from(subRecipeIngredientsTable)
       .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -1988,6 +2003,7 @@ router.get("/:id/sub-recipe-requirements", async (req, res) => {
         ingredientName: i.ingredientName ?? "",
         unit: i.unit ?? "kg",
         quantity: Number(i.quantity),
+        packWeight: i.packWeight ? Number(i.packWeight) : null,
       })),
       subRecipeComponents: nestedRows.map(n => ({
         id: n.id,
@@ -3662,7 +3678,6 @@ router.get("/:id/main-prep", async (req, res) => {
         const nameLc = (sr.subRecipeName ?? "").toLowerCase();
         if (nameLc.includes("dough")) continue;
         if (sr.marinadeForIngredientId != null) continue;
-        if (sr.includeInFillingMix) continue;
 
         const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
         const qtyPerPortion = Number(sr.quantity) || 0;

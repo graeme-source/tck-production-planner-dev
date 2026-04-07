@@ -8,6 +8,7 @@ import { ingredientsTable } from "./ingredients";
 export const productionPlansTable = pgTable("production_plans", {
   id: serial("id").primaryKey(),
   planDate: date("plan_date").notNull(),
+  prepDate: date("prep_date"),
   name: text("name").notNull(),
   notes: text("notes"),
   status: text("status").notNull().default("draft"),

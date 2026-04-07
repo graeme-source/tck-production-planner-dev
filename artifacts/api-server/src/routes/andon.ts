@@ -29,7 +29,7 @@ router.get("/", async (req: Request, res: Response) => {
 
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { category, severity, description, station } = req.body;
+    const { category, severity, description, station, reportContext } = req.body;
     if (!category || !severity || !station) {
       res.status(400).json({ error: "category, severity, and station are required" });
       return;
@@ -51,6 +51,7 @@ router.post("/", async (req: Request, res: Response) => {
         station,
         reportedBy: userId ?? null,
         reportedByName,
+        reportContext: reportContext || null,
       })
       .returning();
 

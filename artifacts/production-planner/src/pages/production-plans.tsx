@@ -340,6 +340,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   const isAdmin = userRole === "admin";
   const minPlanDate = getMinPlanDate();
   const [planDate, setPlanDate] = useState(isAdmin ? toLocalDateStr(new Date()) : toLocalDateStr(minPlanDate));
+  const [prepDate, setPrepDate] = useState("");
   const [planName, setPlanName] = useState("");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<PlanItem[]>([]);
@@ -388,10 +389,12 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   const planDateRef = useRef(planDate);
   const planNameRef = useRef(planName);
   const notesRef = useRef(notes);
+  const prepDateRef = useRef(prepDate);
   useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => { planDateRef.current = planDate; }, [planDate]);
   useEffect(() => { planNameRef.current = planName; }, [planName]);
   useEffect(() => { notesRef.current = notes; }, [notes]);
+  useEffect(() => { prepDateRef.current = prepDate; }, [prepDate]);
 
   // Reset dirty state when dialog closes
   useEffect(() => {
@@ -415,6 +418,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
       if (currentItems.length === 0) return;
       const payload = {
         planDate: planDateRef.current,
+        prepDate: prepDateRef.current || null,
         name: planNameRef.current || `Plan ${planDateRef.current}`,
         notes: notesRef.current || undefined,
         status: "draft" as const,
@@ -758,6 +762,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
     try {
       const data = {
         planDate,
+        prepDate: prepDate || null,
         name: planName || `Plan ${planDate}`,
         notes: notes || undefined,
         status: targetStatus,
@@ -832,6 +837,21 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                   <Info className="w-3 h-3 flex-shrink-0" />
                   {dateWarning}
                 </p>
+              )}
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block text-muted-foreground">
+                Prep Date <span className="font-normal text-muted-foreground/60">(optional override)</span>
+              </label>
+              <input
+                type="date"
+                value={prepDate}
+                max={planDate}
+                onChange={e => { isDirty.current = true; setPrepDate(e.target.value); }}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
+              />
+              {!prepDate && (
+                <p className="text-xs text-muted-foreground mt-1">Defaults to previous production day</p>
               )}
             </div>
             <div>
@@ -1123,6 +1143,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const editUserRole = editAuthState.status === "authenticated" ? editAuthState.user.role : undefined;
   const editIsAdmin = editUserRole === "admin";
   const [planDate, setPlanDate] = useState(plan.planDate);
+  const [prepDate, setPrepDate] = useState((plan as any).prepDate ?? "");
   const [planName, setPlanName] = useState(plan.name);
   const [notes, setNotes] = useState(plan.notes ?? "");
   const [dateWarning, setDateWarning] = useState<string | null>(null);
@@ -1180,10 +1201,12 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const planDateRef = useRef(planDate);
   const planNameRef = useRef(planName);
   const notesRef = useRef(notes);
+  const prepDateRef = useRef(prepDate);
   useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => { planDateRef.current = planDate; }, [planDate]);
   useEffect(() => { planNameRef.current = planName; }, [planName]);
   useEffect(() => { notesRef.current = notes; }, [notes]);
+  useEffect(() => { prepDateRef.current = prepDate; }, [prepDate]);
 
   // Reset dirty state when dialog closes
   useEffect(() => {
@@ -1377,6 +1400,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
         id: plan.id,
         data: {
           planDate,
+          prepDate: prepDate || null,
           name: planName,
           notes: notes || undefined,
           status: targetStatus,
@@ -1426,6 +1450,21 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
                   <Info className="w-3 h-3 flex-shrink-0" />
                   {dateWarning}
                 </p>
+              )}
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block text-muted-foreground">
+                Prep Date <span className="font-normal text-muted-foreground/60">(optional override)</span>
+              </label>
+              <input
+                type="date"
+                value={prepDate}
+                max={planDate}
+                onChange={e => { isDirty.current = true; setPrepDate(e.target.value); }}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
+              />
+              {!prepDate && (
+                <p className="text-xs text-muted-foreground mt-1">Defaults to previous production day</p>
               )}
             </div>
             <div>

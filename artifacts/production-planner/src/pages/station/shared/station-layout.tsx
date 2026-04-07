@@ -257,7 +257,14 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
         {children}
       </div>
 
-      <ReportButton defaultStation={stationType} />
+      <ReportButton
+        defaultStation={stationType}
+        reportContext={
+          plan
+            ? `${meta.label} station · Plan: ${format(parseISO(plan.planDate), "EEEE d MMM yyyy")}${plan.batchNumber ? ` · Batch #${plan.batchNumber}` : ""}`
+            : `${meta.label} station`
+        }
+      />
     </div>
   );
 }
