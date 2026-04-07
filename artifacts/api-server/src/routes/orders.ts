@@ -28,6 +28,8 @@ router.get("/calculate", async (req, res) => {
     return;
   }
 
+  try {
+
   const plan = await db
     .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate, name: productionPlansTable.name, status: productionPlansTable.status })
     .from(productionPlansTable)
@@ -358,6 +360,11 @@ router.get("/calculate", async (req, res) => {
     planDate: plan[0].planDate,
     suppliers,
   });
+
+  } catch (err) {
+    console.error("[Orders] Calculate failed:", err);
+    res.status(500).json({ error: "Failed to calculate orders", detail: String(err) });
+  }
 });
 
 router.get("/purchase-orders", async (req, res) => {
