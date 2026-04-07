@@ -225,6 +225,9 @@ export interface PrepIngredientDetail {
   estimatedCookTimeMin: number | null;
   ovenTempC: number | null;
   steamPct: number | null;
+  stockCheckEnabled: boolean;
+  stockCheckFrequency: string;
+  stockCheckDay: string | null;
   cookedQty: number;
   rawQty: number;
   isRawMeat: boolean;
