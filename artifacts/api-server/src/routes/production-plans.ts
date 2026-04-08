@@ -2144,7 +2144,8 @@ router.get("/:id/assembly-items", async (req, res) => {
 
     const planItemsResult = await db.execute(sql`
       SELECT ppi.id, ppi.recipe_id as "recipeId", r.name as "recipeName",
-             ppi.batches_target as "batchesTarget", r.portions_per_batch as "portionsPerBatch"
+             ppi.batches_target as "batchesTarget", r.portions_per_batch as "portionsPerBatch",
+             r.filling_assembly_order as "fillingAssemblyOrder"
       FROM production_plan_items ppi
       LEFT JOIN recipes r ON ppi.recipe_id = r.id
       WHERE ppi.plan_id = ${planId}
@@ -2153,6 +2154,7 @@ router.get("/:id/assembly-items", async (req, res) => {
     const planItems = planItemsResult.rows as Array<{
       id: number; recipeId: number; recipeName: string | null;
       batchesTarget: number | null; portionsPerBatch: number | null;
+      fillingAssemblyOrder: number | null;
     }>;
 
     if (planItems.length === 0) {
@@ -2276,6 +2278,7 @@ router.get("/:id/assembly-items", async (req, res) => {
         recipeName: item.recipeName,
         fillingWeightPerBatch,
         fillingWeightHalfBatch,
+        fillingAssemblyOrder: item.fillingAssemblyOrder ?? 0,
         assemblyItems,
         postOvenItems,
       };

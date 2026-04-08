@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "api",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "artifacts/api-server",
+      "port": 3000
+    },
+    {
+      "name": "frontend",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "artifacts/production-planner",
+      "port": 5173
+    }
+  ]
+}
