@@ -660,6 +660,21 @@ function FounderDashboard() {
         }
       />
 
+      {/* ── Quick Nav ─────────────────────────────────────────────────────── */}
+      <a
+        href={`${BASE}/founder/pnl`}
+        className="glass-panel p-4 rounded-2xl flex items-center gap-3 hover:bg-secondary/50 transition-colors group"
+      >
+        <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-500">
+          <Calculator className="w-5 h-5" />
+        </div>
+        <div className="flex-1">
+          <p className="text-sm font-medium group-hover:text-primary transition-colors">P&L Dashboard</p>
+          <p className="text-xs text-muted-foreground">Estimated profit &amp; loss from Shopify data, COGS, fees &amp; overheads</p>
+        </div>
+        <ChevronDown className="w-4 h-4 text-muted-foreground -rotate-90" />
+      </a>
+
       {/* ── Section 1: Fixed At-a-Glance KPIs (always this month) ──────────── */}
       <section>
         {sectionHeading("At a Glance — " + format(today, "MMMM yyyy"))}

@@ -140,7 +140,7 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
               <p className="text-sm font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400 mb-0.5">
                 Now Sheeting
               </p>
-              <h2 className="font-display text-xl font-bold">
+              <h2 className="font-display text-2xl font-bold">
                 {nextItem?.recipeName ?? "—"}
               </h2>
             </div>

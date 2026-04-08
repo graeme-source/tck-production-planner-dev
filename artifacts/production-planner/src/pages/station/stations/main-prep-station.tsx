@@ -480,7 +480,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                           </div>
                           <div className="min-w-0 flex-1">
                             <p className={cn(
-                              "text-base font-medium truncate",
+                              "text-lg font-medium truncate",
                               isSelected && "font-semibold",
                               ingStatus.isFullyDone && "line-through text-muted-foreground"
                             )}>
@@ -628,7 +628,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                               <div className="flex items-center gap-2 min-w-0">
                                 {done && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />}
                                 <p className={cn(
-                                  "text-base font-bold uppercase tracking-wider truncate",
+                                  "text-lg font-bold uppercase tracking-wider truncate",
                                   done ? "text-emerald-700 dark:text-emerald-300" : "text-emerald-800 dark:text-emerald-300"
                                 )}>
                                   {recipe.recipeName}
@@ -699,7 +699,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                               <div className="flex items-center gap-2 min-w-0">
                                 {allRecipeDone && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />}
                                 <p className={cn(
-                                  "text-base font-bold uppercase tracking-wider truncate",
+                                  "text-lg font-bold uppercase tracking-wider truncate",
                                   allRecipeDone ? "text-emerald-700 dark:text-emerald-300" : "text-emerald-800 dark:text-emerald-300"
                                 )}>
                                   {recipe.recipeName}
@@ -742,7 +742,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                                       )}
                                       <span className="text-base font-bold">Tin {tn}</span>
                                     </div>
-                                    <span className={cn("text-xl font-bold tabular-nums", done ? "text-emerald-700 dark:text-emerald-300" : "text-foreground")}>
+                                    <span className={cn("text-2xl font-bold tabular-nums", done ? "text-emerald-700 dark:text-emerald-300" : "text-foreground")}>
                                       {fmtQty(recipe.qtyPerTin, ing.unit)}
                                     </span>
                                     {done && completion && (

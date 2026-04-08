@@ -120,6 +120,7 @@ async function shopifyFetch(path: string, params?: Record<string, string>) {
 
 export interface ShopifyLineItem {
   id: number;
+  variant_id: number | null;
   title: string;
   variant_title: string | null;
   quantity: number;
@@ -509,6 +510,82 @@ export async function getOrdersByDateRange(
   } while (pageInfo);
 
   return allOrders;
+}
+
+// Fetch orders with full line_items for P&L calculation.
+// Separate from getOrdersByDateRange to avoid bloating the sales-summary endpoint.
+export async function getOrdersForPnl(
+  fromDate: string,
+  toDate: string,
+): Promise<ShopifyOrder[]> {
+  const min = `${fromDate}T00:00:00Z`;
+  const max = `${toDate}T23:59:59Z`;
+
+  const allOrders: ShopifyOrder[] = [];
+  let pageInfo: string | null = null;
+
+  do {
+    const params: Record<string, string> = pageInfo
+      ? { limit: "250", page_info: pageInfo }
+      : {
+          limit: "250",
+          status: "any",
+          created_at_min: min,
+          created_at_max: max,
+          fields:
+            "id,name,tags,created_at,cancelled_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,total_weight,customer,line_items,refunds",
+        };
+
+    const res = await shopifyFetchRaw("/orders.json", params);
+    const data = (await res.json()) as { orders: ShopifyOrder[] };
+    allOrders.push(...data.orders);
+    pageInfo = parseNextPageInfo(res.headers.get("Link"));
+  } while (pageInfo);
+
+  return allOrders;
+}
+
+// Fetch transaction fees for a batch of order IDs from Shopify Transactions API.
+// Returns a map of orderId → total fee amount (GBP).
+export async function getOrderTransactionFees(
+  orderIds: number[],
+): Promise<Record<number, number>> {
+  const fees: Record<number, number> = {};
+  // Process in batches of 10 with a small delay to respect rate limits
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < orderIds.length; i += BATCH_SIZE) {
+    const batch = orderIds.slice(i, i + BATCH_SIZE);
+    const results = await Promise.all(
+      batch.map(async (orderId) => {
+        try {
+          const data = (await shopifyFetch(`/orders/${orderId}/transactions.json`)) as {
+            transactions: Array<{
+              kind: string;
+              status: string;
+              fee: string;
+            }>;
+          };
+          const totalFee = data.transactions.reduce((sum, t) => {
+            if (t.status === "success" && t.fee) {
+              return sum + Math.abs(parseFloat(t.fee));
+            }
+            return sum;
+          }, 0);
+          return { orderId, fee: totalFee };
+        } catch {
+          return { orderId, fee: 0 };
+        }
+      }),
+    );
+    for (const r of results) {
+      fees[r.orderId] = r.fee;
+    }
+    // Small delay between batches to stay within Shopify rate limits
+    if (i + BATCH_SIZE < orderIds.length) {
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+  }
+  return fees;
 }
 
 // Add a tag to a Shopify order. No-op if the tag is already present.

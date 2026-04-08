@@ -30,6 +30,7 @@ import Kanbans from "@/pages/kanbans";
 import Orders from "@/pages/orders";
 import Deliveries from "@/pages/deliveries";
 import FounderView from "@/pages/founder";
+import FounderPnL from "@/pages/founder-pnl";
 import StockControl from "@/pages/stock-control";
 import ProductHub from "@/pages/product-hub";
 import NotFound from "@/pages/not-found";
@@ -121,6 +122,7 @@ function Router() {
               <Route path="/stock-control" component={StockControl} />
               <Route path="/product-hub" component={ProductHub} />
               <Route path="/founder" component={FounderView} />
+              <Route path="/founder/pnl" component={FounderPnL} />
               <Route path="/reports">{() => <ProtectedRoute component={Reports} pageKey="/reports" />}</Route>
               <Route path="/lean-cave" component={LeanCave} />
               <Route path="/settings" component={Settings} />

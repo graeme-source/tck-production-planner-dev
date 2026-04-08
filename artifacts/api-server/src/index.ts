@@ -529,6 +529,31 @@ async function runStartupMigrations() {
       ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS bottle_size NUMERIC(10,4)
     `);
 
+    // P&L estimation dashboard tables
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS pnl_settings (
+        id SERIAL PRIMARY KEY,
+        key TEXT NOT NULL UNIQUE,
+        value TEXT NOT NULL,
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      INSERT INTO pnl_settings (key, value) VALUES
+        ('small_box_cost', '2.50'),
+        ('large_box_cost', '3.50')
+      ON CONFLICT (key) DO NOTHING
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS pnl_overheads (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        monthly_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

@@ -52,7 +52,7 @@ function mapRecipe(r: typeof recipesTable.$inferSelect) {
   };
 }
 
-async function computeCosts(recipeIds: number[]) {
+export async function computeCosts(recipeIds: number[]) {
   if (recipeIds.length === 0) return {};
 
   const recipeIngredients = await db
