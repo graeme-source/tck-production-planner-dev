@@ -2369,7 +2369,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
           <BarChart2 className="w-5 h-5 text-primary" />
           Enter Station
         </h2>
-        <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-5 gap-4">
           {STATION_BUTTONS.map(s => {
             const Icon = s.icon;
             const isBuildingStation = s.key === "building_1" || s.key === "building_2";
@@ -2380,31 +2380,31 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
               <button
                 key={s.key}
                 onClick={() => navigate(`/plans/${planId}/station/${s.key}`)}
-                className="flex flex-col items-center gap-3 p-5 min-h-[130px] border-2 border-border rounded-xl hover:border-primary hover:bg-secondary/40 hover:shadow-md transition-all group relative"
+                className="flex flex-col items-center justify-center gap-4 p-6 min-h-[160px] border-2 border-border rounded-2xl hover:border-primary hover:bg-secondary/40 hover:shadow-md active:scale-[0.97] transition-all group relative"
               >
                 {/* Active user badge */}
                 {activeUsers > 0 && (
                   <span
-                    className="absolute top-2 right-2 min-w-[20px] h-5 px-1.5 rounded-full bg-blue-500 text-white text-[11px] font-bold flex items-center justify-center"
+                    className="absolute top-3 right-3 min-w-[24px] h-6 px-2 rounded-full bg-blue-500 text-white text-sm font-bold flex items-center justify-center"
                     title={`${activeUsers} active user${activeUsers !== 1 ? "s" : ""} today`}
                   >
                     {activeUsers}
                   </span>
                 )}
                 {isBuildingStation && stationComplete && activeUsers === 0 && (
-                  <span className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full bg-emerald-500" title="Complete" />
+                  <span className="absolute top-3 right-3 w-3 h-3 rounded-full bg-emerald-500" title="Complete" />
                 )}
                 {isBuildingStation && stationInProgress && activeUsers === 0 && (
-                  <span className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full bg-amber-400" title="In progress" />
+                  <span className="absolute top-3 right-3 w-3 h-3 rounded-full bg-amber-400" title="In progress" />
                 )}
-                <div className={cn("w-14 h-14 rounded-xl flex items-center justify-center", s.color)}>
-                  <Icon className="w-7 h-7" />
+                <div className={cn("w-20 h-20 rounded-2xl flex items-center justify-center", s.color)}>
+                  <Icon className="w-10 h-10" />
                 </div>
-                <span className="text-base font-extrabold text-center leading-snug text-black dark:text-white transition-colors">
+                <span className="text-lg font-extrabold text-center leading-snug text-black dark:text-white transition-colors">
                   {s.label}
                 </span>
                 {isBuildingStation && totalBatchesTarget > 0 && (
-                  <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden">
+                  <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
                     <div
                       className={cn("h-full rounded-full transition-all", stationComplete ? "bg-emerald-500" : "bg-primary")}
                       style={{ width: `${Math.min(progress, 100)}%` }}
@@ -2412,7 +2412,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                   </div>
                 )}
                 {!isBuildingStation && activeUsers === 0 && (
-                  <ArrowRight className="w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <ArrowRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                 )}
               </button>
             );

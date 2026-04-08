@@ -93,11 +93,11 @@ function SortableAssemblyRow({
         {locked || checked
           ? <CheckSquare className="w-6 h-6 text-emerald-500 flex-shrink-0" />
           : <Square className="w-6 h-6 text-slate-400 flex-shrink-0" />}
-        <span className="text-lg font-semibold flex-1">{ai.name}</span>
-        <div className="text-right flex-shrink-0">
-          <span className="text-xl font-bold font-mono tabular-nums">{Math.round(ai.weightPerBatch)}g</span>
-          <span className="block text-sm text-muted-foreground font-mono tabular-nums">{Math.round(ai.weightHalfBatch)}g half</span>
-        </div>
+        <span className="text-2xl font-bold flex-1 leading-tight">{ai.name}</span>
+        {ai.isTopping
+          ? <span className="text-2xl font-bold font-mono flex-shrink-0 text-slate-500 dark:text-slate-400">Sprinkle</span>
+          : <span className="text-2xl font-bold font-mono tabular-nums flex-shrink-0">{Math.round(ai.weightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(ai.weightHalfBatch)}g</span></span>
+        }
       </button>
     </div>
   );
@@ -153,17 +153,14 @@ function SortableFillingRow({
         {locked || checked
           ? <CheckSquare className="w-6 h-6 text-emerald-500 flex-shrink-0" />
           : <Square className="w-6 h-6 text-slate-400 flex-shrink-0" />}
-        <span className="text-lg font-semibold text-blue-700 dark:text-blue-400 flex-1">Filling</span>
-        <div className="text-right flex-shrink-0">
-          <span className="text-xl font-bold font-mono tabular-nums">{Math.round(weightPerBatch)}g</span>
-          <span className="block text-sm text-muted-foreground font-mono tabular-nums">{Math.round(weightHalfBatch)}g half</span>
-        </div>
+        <span className="text-2xl font-bold text-blue-700 dark:text-blue-400 flex-1 leading-tight">Filling</span>
+        <span className="text-2xl font-bold font-mono tabular-nums flex-shrink-0">{Math.round(weightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(weightHalfBatch)}g</span></span>
       </button>
     </div>
   );
 }
 
-type AssemblyItemData = { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number; sourceType: "ingredient" | "sub_recipe"; sourceId: number; assemblyOrder: number | null };
+type AssemblyItemData = { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number; sourceType: "ingredient" | "sub_recipe"; sourceId: number; assemblyOrder: number | null; isTopping?: boolean };
 type AssemblyData = { itemId: number; recipeId: number; fillingWeightPerBatch: number; fillingWeightHalfBatch: number; assemblyItems: AssemblyItemData[]; postOvenItems?: AssemblyItemData[] };
 
 function ChecklistItems({
@@ -238,17 +235,15 @@ function ChecklistItems({
           {isLocked || checkedItems[entry.key]
             ? <CheckSquare className="w-6 h-6 text-emerald-500 flex-shrink-0" />
             : <Square className="w-6 h-6 text-slate-400 flex-shrink-0" />}
-          <span className={cn("text-lg font-semibold flex-1", entry.isFilling && "text-blue-700 dark:text-blue-400")}>
+          <span className={cn("text-2xl font-bold flex-1 leading-tight", entry.isFilling && "text-blue-700 dark:text-blue-400")}>
             {entry.isFilling ? "Filling" : entry.ai!.name}
           </span>
-          <div className="text-right flex-shrink-0">
-            <span className="text-xl font-bold font-mono tabular-nums">
-              {Math.round(entry.isFilling ? asm.fillingWeightPerBatch : entry.ai!.weightPerBatch)}g
-            </span>
-            <span className="block text-sm text-muted-foreground font-mono tabular-nums">
-              {Math.round(entry.isFilling ? asm.fillingWeightHalfBatch : entry.ai!.weightHalfBatch)}g half
-            </span>
-          </div>
+          {!entry.isFilling && entry.ai!.isTopping
+            ? <span className="text-2xl font-bold font-mono flex-shrink-0 text-slate-500 dark:text-slate-400">Sprinkle</span>
+            : <span className="text-2xl font-bold font-mono tabular-nums flex-shrink-0">
+                {Math.round(entry.isFilling ? asm.fillingWeightPerBatch : entry.ai!.weightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(entry.isFilling ? asm.fillingWeightHalfBatch : entry.ai!.weightHalfBatch)}g</span>
+              </span>
+          }
         </button>
       ))}
     </div>
@@ -932,20 +927,17 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                   <div className="divide-y divide-slate-100 dark:divide-slate-800">
                     {hasFilling && (
                       <div className="flex items-center gap-3 px-3 py-3">
-                        <span className="text-base font-semibold text-blue-700 dark:text-blue-400 flex-1">Filling</span>
-                        <div className="text-right flex-shrink-0">
-                          <span className="text-lg font-bold font-mono tabular-nums">{Math.round(asm.fillingWeightPerBatch)}g</span>
-                          <span className="block text-xs text-muted-foreground font-mono tabular-nums">{Math.round(asm.fillingWeightHalfBatch)}g half</span>
-                        </div>
+                        <span className="text-xl font-bold text-blue-700 dark:text-blue-400 flex-1 leading-tight">Filling</span>
+                        <span className="text-xl font-bold font-mono tabular-nums flex-shrink-0">{Math.round(asm.fillingWeightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(asm.fillingWeightHalfBatch)}g</span></span>
                       </div>
                     )}
                     {hasItems && asm.assemblyItems.map((ai, i) => (
                       <div key={i} className="flex items-center gap-3 px-3 py-3">
-                        <span className="text-base font-semibold flex-1">{ai.name}</span>
-                        <div className="text-right flex-shrink-0">
-                          <span className="text-lg font-bold font-mono tabular-nums">{Math.round(ai.weightPerBatch)}g</span>
-                          <span className="block text-xs text-muted-foreground font-mono tabular-nums">{Math.round(ai.weightHalfBatch)}g half</span>
-                        </div>
+                        <span className="text-xl font-bold flex-1 leading-tight">{ai.name}</span>
+                        {ai.isTopping
+                          ? <span className="text-xl font-bold font-mono flex-shrink-0 text-slate-500 dark:text-slate-400">Sprinkle</span>
+                          : <span className="text-xl font-bold font-mono tabular-nums flex-shrink-0">{Math.round(ai.weightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(ai.weightHalfBatch)}g</span></span>
+                        }
                       </div>
                     ))}
                   </div>

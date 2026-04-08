@@ -364,20 +364,39 @@ router.get("/production-kpis", async (req, res) => {
     stations: Array.from(us.stations),
   }));
 
-  const totalBatches = dailySessions.reduce((s, ds) => s + ds.batchCount, 0);
-  const totalActiveMinutes = dailySessions.reduce((s, ds) => s + ds.activeMinutes, 0);
+  // Overview KPIs only count building tables (the real production throughput)
+  const buildingSessions = dailySessions.filter(ds => ds.station === "building_1" || ds.station === "building_2");
+  const totalBatches = buildingSessions.reduce((s, ds) => s + ds.batchCount, 0);
+  const totalActiveMinutes = buildingSessions.reduce((s, ds) => s + ds.activeMinutes, 0);
   const overallBph = totalActiveMinutes > 0
     ? Math.round((totalBatches / (totalActiveMinutes / 60)) * 10) / 10
     : 0;
-  const uniqueDays = new Set(dailySessions.map(ds => ds.date)).size;
+  const uniqueDays = new Set(buildingSessions.map(ds => ds.date)).size;
+
+  // Production start/finish from earliest and latest building completion timestamps
+  const buildingCompletions = completions.filter(c => c.stationType === "building_1" || c.stationType === "building_2");
+  let productionStartTime: string | null = null;
+  let productionFinishTime: string | null = null;
+  let wallClockMinutes = 0;
+  if (buildingCompletions.length > 0) {
+    const times = buildingCompletions.map(c => c.completedAt.getTime());
+    const earliest = new Date(Math.min(...times));
+    const latest = new Date(Math.max(...times));
+    productionStartTime = earliest.toISOString();
+    productionFinishTime = latest.toISOString();
+    wallClockMinutes = Math.round((latest.getTime() - earliest.getTime()) / 60000);
+  }
 
   res.json({
     overview: {
       totalBatches,
       totalActiveMinutes,
+      wallClockMinutes,
       overallBph,
       uniqueDays,
       avgBatchesPerDay: uniqueDays > 0 ? Math.round(totalBatches / uniqueDays) : 0,
+      productionStartTime,
+      productionFinishTime,
     },
     stationSummaries,
     userSummaries,

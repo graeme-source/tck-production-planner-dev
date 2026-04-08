@@ -57,6 +57,20 @@ const TIER_LABELS: Record<string, string> = {
 
 type Tab = "pullKanban" | "improvements" | "struggle" | "andon";
 
+type QuickIdeaTabSettings = { kanban: boolean; idea: boolean; struggle: boolean; issue: boolean };
+const DEFAULT_TAB_SETTINGS: QuickIdeaTabSettings = { kanban: true, idea: true, struggle: true, issue: true };
+
+function useQuickIdeaTabSettings() {
+  const [settings, setSettings] = useState<QuickIdeaTabSettings>(DEFAULT_TAB_SETTINGS);
+  useEffect(() => {
+    fetch("/api/app-settings/quick_idea_tabs", { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.value) { try { setSettings({ ...DEFAULT_TAB_SETTINGS, ...JSON.parse(d.value) }); } catch {} } })
+      .catch(() => {});
+  }, []);
+  return settings;
+}
+
 interface KanbanInfo {
   id: number;
   ingredientId: number;
@@ -87,10 +101,18 @@ interface ReportModalProps {
   open: boolean;
   onClose: () => void;
   defaultStation?: string;
+  tabSettings?: QuickIdeaTabSettings;
 }
 
-export function ReportModal({ open, onClose, defaultStation }: ReportModalProps) {
-  const [activeTab, setActiveTab] = useState<Tab>("pullKanban");
+export function ReportModal({ open, onClose, defaultStation, tabSettings = DEFAULT_TAB_SETTINGS }: ReportModalProps) {
+  const enabledTabs: { key: Tab; settingKey: keyof QuickIdeaTabSettings }[] = [
+    { key: "pullKanban", settingKey: "kanban" },
+    { key: "improvements", settingKey: "idea" },
+    { key: "struggle", settingKey: "struggle" },
+    { key: "andon", settingKey: "issue" },
+  ].filter(t => tabSettings[t.settingKey]) as { key: Tab; settingKey: keyof QuickIdeaTabSettings }[];
+
+  const [activeTab, setActiveTab] = useState<Tab>(enabledTabs[0]?.key ?? "pullKanban");
 
   const [scanActive, setScanActive] = useState(false);
   const [scanStep, setScanStep] = useState<"scanning" | "loading" | "result" | "pulling" | "done" | "error">("scanning");
@@ -135,7 +157,7 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
 
   useEffect(() => {
     if (open) {
-      setActiveTab("pullKanban");
+      setActiveTab(enabledTabs[0]?.key ?? "pullKanban");
     } else {
       setScanActive(false);
       setScanStep("scanning");
@@ -375,7 +397,7 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
             </div>
 
             <div className="flex items-center gap-1 p-3 border-b border-border bg-secondary/20 flex-shrink-0 overflow-x-auto">
-              <button
+              {tabSettings.kanban && <button
                 onClick={() => setActiveTab("pullKanban")}
                 className={cn(
                   "flex items-center gap-1.5 flex-1 justify-center px-2.5 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all whitespace-nowrap min-w-0",
@@ -386,8 +408,8 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
               >
                 <ScanLine className="w-4 h-4 shrink-0" />
                 Pull Kanban
-              </button>
-              <button
+              </button>}
+              {tabSettings.idea && <button
                 onClick={() => setActiveTab("improvements")}
                 className={cn(
                   "flex items-center gap-1.5 flex-1 justify-center px-2.5 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all whitespace-nowrap min-w-0",
@@ -398,8 +420,8 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
               >
                 <Lightbulb className="w-4 h-4 shrink-0" />
                 <span className="hidden sm:inline">Improvement</span> Idea
-              </button>
-              <button
+              </button>}
+              {tabSettings.struggle && <button
                 onClick={() => setActiveTab("struggle")}
                 className={cn(
                   "flex items-center gap-1.5 flex-1 justify-center px-2.5 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all whitespace-nowrap min-w-0",
@@ -410,8 +432,8 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
               >
                 <HandHelping className="w-4 h-4 shrink-0" />
                 Struggle
-              </button>
-              <button
+              </button>}
+              {tabSettings.issue && <button
                 onClick={() => setActiveTab("andon")}
                 className={cn(
                   "flex items-center gap-1.5 flex-1 justify-center px-2.5 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all whitespace-nowrap min-w-0",
@@ -422,7 +444,7 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
               >
                 <AlertTriangle className="w-4 h-4 shrink-0" />
                 Issue
-              </button>
+              </button>}
             </div>
 
             <div className="flex-1 overflow-y-auto">
@@ -883,6 +905,10 @@ interface ReportButtonProps {
 
 export function ReportButton({ defaultStation, className }: ReportButtonProps) {
   const [open, setOpen] = useState(false);
+  const tabSettings = useQuickIdeaTabSettings();
+  const anyEnabled = tabSettings.kanban || tabSettings.idea || tabSettings.struggle || tabSettings.issue;
+
+  if (!anyEnabled) return null;
 
   return (
     <>
@@ -897,7 +923,7 @@ export function ReportButton({ defaultStation, className }: ReportButtonProps) {
         <CircleDot className="w-4 h-4" />
         Quick Idea
       </button>
-      <ReportModal open={open} onClose={() => setOpen(false)} defaultStation={defaultStation} />
+      <ReportModal open={open} onClose={() => setOpen(false)} defaultStation={defaultStation} tabSettings={tabSettings} />
     </>
   );
 }

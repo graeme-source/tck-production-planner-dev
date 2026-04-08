@@ -10,7 +10,7 @@ import {
   TrendingUp, TrendingDown, Activity, Layers, Target, Timer,
   ChevronDown, ChevronRight, Thermometer, ShieldCheck,
   Package, Zap, CalendarDays, Trophy, Snail, Hourglass,
-  Lightbulb, AlertTriangle, CheckCircle, Filter,
+  Lightbulb, AlertTriangle, CheckCircle, Filter, Play, Square,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
@@ -53,8 +53,11 @@ interface KpiOverview {
   totalBatches: number;
   totalActiveMinutes: number;
   overallBph: number;
+  wallClockMinutes: number;
   uniqueDays: number;
   avgBatchesPerDay: number;
+  productionStartTime: string | null;
+  productionFinishTime: string | null;
 }
 
 interface StationSummary {
@@ -371,22 +374,30 @@ function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: str
     <>
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <SummaryCard
+          icon={<Play className="w-5 h-5 text-emerald-600" />}
+          label="Start Time"
+          value={data.overview.productionStartTime ? format(new Date(data.overview.productionStartTime), "HH:mm") : "—"}
+          sub={data.overview.productionStartTime ? format(new Date(data.overview.productionStartTime), "d MMM yyyy") : "No data"}
+        />
+        <SummaryCard
+          icon={<Square className="w-5 h-5 text-red-500" />}
+          label="Finish Time"
+          value={data.overview.productionFinishTime ? format(new Date(data.overview.productionFinishTime), "HH:mm") : "—"}
+          sub={data.overview.wallClockMinutes > 0
+            ? `${Math.floor(data.overview.wallClockMinutes / 60)}h ${data.overview.wallClockMinutes % 60}m wall clock`
+            : "No data"}
+        />
+        <SummaryCard
           icon={<Layers className="w-5 h-5 text-blue-600" />}
           label="Total Batches"
           value={String(data.overview.totalBatches)}
           sub={`Over ${data.overview.uniqueDays} day${data.overview.uniqueDays !== 1 ? "s" : ""}`}
         />
         <SummaryCard
-          icon={<Activity className="w-5 h-5 text-emerald-600" />}
-          label="Overall BPH"
+          icon={<Activity className="w-5 h-5 text-violet-600" />}
+          label="Batches / Hour"
           value={String(data.overview.overallBph)}
-          sub="Batches per hour"
-        />
-        <SummaryCard
-          icon={<Target className="w-5 h-5 text-violet-600" />}
-          label="Avg / Day"
-          value={String(data.overview.avgBatchesPerDay)}
-          sub="Batches per day"
+          sub="Building tables combined"
         />
         <SummaryCard
           icon={<Timer className="w-5 h-5 text-amber-600" />}
@@ -395,12 +406,6 @@ function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: str
             ? `${Math.floor(data.overview.totalActiveMinutes / 60)}h ${data.overview.totalActiveMinutes % 60}m`
             : `${data.overview.totalActiveMinutes}m`}
           sub="Total productive time"
-        />
-        <SummaryCard
-          icon={<Users className="w-5 h-5 text-rose-600" />}
-          label="Stations Active"
-          value={String(data.stationSummaries.length)}
-          sub={`${data.userSummaries.length} user${data.userSummaries.length !== 1 ? "s" : ""}`}
         />
       </div>
 
