@@ -145,8 +145,9 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
               </h2>
             </div>
             <div className="text-right">
-              <p className="text-3xl font-bold font-display tabular-nums">{totalSheeted} <span className="text-lg text-muted-foreground font-normal">/ {totalTarget}</span></p>
-              <p className="text-sm text-muted-foreground">batches sheeted</p>
+              <p className="text-3xl font-bold font-display tabular-nums">{nextItem ? getStationCount(nextItem, "dough_sheeting") : 0} <span className="text-lg text-muted-foreground font-normal">/ {nextItem?.batchesTarget ?? 0}</span></p>
+              <p className="text-sm text-muted-foreground">this recipe</p>
+              <p className="text-xs text-muted-foreground/70 tabular-nums mt-0.5">{totalSheeted} / {totalTarget} today</p>
             </div>
           </div>
 

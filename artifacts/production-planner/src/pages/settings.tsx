@@ -10,7 +10,7 @@ import {
   Plus, Trash2, Edit2, Loader2, Users, ShieldCheck, Eye, Wrench,
   CheckCircle2, XCircle, KeyRound, Package, ChevronDown, ChevronUp,
   Lock, Timer, BarChart2, Coffee, Truck, Mail, Warehouse,
-  Camera, User, ToggleRight,
+  Camera, User, CircleDot, ToggleRight,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
@@ -821,6 +821,21 @@ export default function Settings() {
               {user?.role === "admin" && <ProductionExtrasSection />}
               {user?.role === "admin" && <BreakDefaultsSection />}
               {user?.role === "admin" && <ApcServiceCodesSection />}
+            </div>
+          )}
+
+          {activeSection === "features" && user?.role === "admin" && (
+            <div className="space-y-8">
+              <FeaturesSection />
+              <QuickIdeaTabsSection />
+            </div>
+          )}
+
+          {activeSection === "features" && user?.role !== "admin" && (
+            <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
+              <Lock className="w-8 h-8 mx-auto mb-3 opacity-50" />
+              <p className="font-medium">Admin access required</p>
+              <p className="text-sm mt-1">Only admins can manage feature flags.</p>
             </div>
           )}
 
@@ -1807,6 +1822,156 @@ function BreakDefaultsSection() {
             Save
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Feature Flags Section ───────────────────────────────────────────
+
+const FEATURE_FLAGS: { key: string; label: string; description: string }[] = [
+  {
+    key: "feature_checklists",
+    label: "Station Checklists",
+    description: "Enable daily opening, cleaning, and closing checklists for each station. When enabled, stations auto-open to checklist view at start and end of day.",
+  },
+];
+
+function FeaturesSection() {
+  const queryClient = useQueryClient();
+  const [flags, setFlags] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`${BASE}/api/app-settings/`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : {})
+      .then(data => { setFlags(data); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  const toggleFlag = async (key: string, enabled: boolean) => {
+    const newVal = enabled ? "true" : "false";
+    setFlags(prev => ({ ...prev, [key]: newVal }));
+    try {
+      const res = await fetch(`${BASE}/api/app-settings/${key}`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: newVal }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      queryClient.invalidateQueries({ queryKey: ["app-settings", "feature-flags"] });
+      toast({ title: `Feature ${enabled ? "enabled" : "disabled"}` });
+    } catch {
+      setFlags(prev => ({ ...prev, [key]: enabled ? "false" : "true" }));
+      toast({ title: "Failed to update feature flag", variant: "destructive" });
+    }
+  };
+
+  return (
+    <div>
+      <h2 className="text-base font-semibold mb-1 flex items-center gap-2">
+        <ToggleRight className="w-5 h-5 text-primary" />
+        Feature Flags
+      </h2>
+      <p className="text-sm text-muted-foreground mb-4">
+        Toggle features on and off across the application.
+      </p>
+
+      {loading ? (
+        <div className="flex items-center gap-2 text-muted-foreground py-4">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Loading...
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {FEATURE_FLAGS.map(flag => (
+            <div
+              key={flag.key}
+              className="flex items-center justify-between gap-4 p-4 bg-card border border-border rounded-xl"
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">{flag.label}</p>
+                <p className="text-sm text-muted-foreground mt-0.5">{flag.description}</p>
+              </div>
+              <Switch
+                checked={flags[flag.key] === "true"}
+                onCheckedChange={(checked) => toggleFlag(flag.key, checked)}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function QuickIdeaTabsSection() {
+  const [tabs, setTabs] = useState({ kanban: true, idea: true, struggle: true, issue: true });
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/app-settings/quick_idea_tabs", { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.value) { try { setTabs(prev => ({ ...prev, ...JSON.parse(d.value) })); } catch {} } })
+      .catch(() => {})
+      .finally(() => setLoaded(true));
+  }, []);
+
+  const handleToggle = async (key: keyof typeof tabs) => {
+    const updated = { ...tabs, [key]: !tabs[key] };
+    setTabs(updated);
+    setSaving(true);
+    try {
+      const r = await fetch("/api/app-settings/quick_idea_tabs", {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: JSON.stringify(updated) }),
+      });
+      if (!r.ok) throw new Error("Failed to save");
+      setSavedMsg("Saved");
+      setTimeout(() => setSavedMsg(null), 2000);
+    } catch {
+      setTabs(tabs); // revert
+      setSavedMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const items: { key: keyof typeof tabs; label: string }[] = [
+    { key: "kanban", label: "Pull Kanban" },
+    { key: "idea", label: "Improvement Idea" },
+    { key: "struggle", label: "Struggle" },
+    { key: "issue", label: "Issue" },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <CircleDot className="w-4 h-4 text-blue-500" /> Quick Idea Tabs
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Toggle which tabs appear in the Quick Idea modal (blue button, bottom-right of every page).
+          </p>
+        </div>
+        {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
+      </div>
+      <div className="space-y-3">
+        {items.map(({ key, label }) => (
+          <div key={key} className="flex items-center justify-between gap-4 p-4 bg-card border border-border rounded-xl">
+            <span className="text-sm font-semibold">{label}</span>
+            <Switch
+              checked={tabs[key]}
+              onCheckedChange={() => handleToggle(key)}
+              disabled={!loaded || saving}
+            />
+          </div>
+        ))}
       </div>
     </div>
   );

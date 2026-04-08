@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useListRecipes, useListIngredients, useListSubRecipes, useGetRecipe, useListCategoryDefaults } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { useAuth } from "@/contexts/auth-context";
@@ -38,6 +39,7 @@ const schema = z.object({
     marinadeForIngredientId: z.preprocess(v => (v === "" || v === "0" || v == null ? null : Number(v)), z.number().nullable().optional()),
     includeInFillingMix: z.boolean().optional(),
     isTopping: z.boolean().optional(),
+    showInPrep: z.boolean().optional(),
     mixingOverage: z.preprocess(v => (v === "" || v == null ? 0 : Number(v)), z.number().min(0).optional()),
   })),
   subRecipes: z.array(z.object({
@@ -46,6 +48,7 @@ const schema = z.object({
     marinadeForIngredientId: z.preprocess(v => (v === "" || v === "0" || v == null ? null : Number(v)), z.number().nullable().optional()),
     includeInFillingMix: z.boolean().optional(),
     isTopping: z.boolean().optional(),
+    showInPrep: z.boolean().optional(),
     mixingOverage: z.preprocess(v => (v === "" || v == null ? 0 : Number(v)), z.number().min(0).optional()),
   })),
 });
@@ -431,12 +434,13 @@ function RecipeForm({
           return (
             <div className="border-t border-border pt-4 space-y-0">
               {/* Column headers */}
-              <div className="grid grid-cols-[1fr_6rem_3.5rem_2rem_2rem_4rem_1.25rem] gap-x-2 gap-y-0 items-end px-1 mb-1.5">
+              <div className="grid grid-cols-[1fr_6rem_3.5rem_2rem_2rem_2rem_4rem_1.25rem] gap-x-2 gap-y-0 items-end px-1 mb-1.5">
                 <span className="text-[10px] text-muted-foreground font-medium">Name</span>
                 <span className="text-[10px] text-muted-foreground font-medium">Qty</span>
                 <span className="text-[10px] text-muted-foreground font-medium text-right">Cost</span>
                 <span className="text-[10px] text-muted-foreground font-medium text-center" title="Include in filling mix">Fill</span>
                 <span className="text-[10px] text-muted-foreground font-medium text-center" title="Topping — skips prep">Top</span>
+                <span className="text-[10px] text-muted-foreground font-medium text-center" title="Show in prep station (for filling items)">Prep</span>
                 <span className="text-[10px] text-amber-600 font-medium text-center" title="Extra grams added at mixing station only">Mix +g</span>
                 <span />
               </div>
@@ -447,7 +451,7 @@ function RecipeForm({
                   <span className="text-xs font-semibold text-primary uppercase tracking-wide">
                     Ingredients <span className="font-normal normal-case text-muted-foreground tracking-normal">(cooked qty)</span>
                   </span>
-                  <button type="button" onClick={() => appendIng({ ingredientId: 0, quantity: 0, marinadeForIngredientId: null, includeInFillingMix: false, isTopping: false, mixingOverage: 0 })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add</button>
+                  <button type="button" onClick={() => appendIng({ ingredientId: 0, quantity: 0, marinadeForIngredientId: null, includeInFillingMix: false, isTopping: false, showInPrep: false, mixingOverage: 0 })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add</button>
                 </div>
                 {ingFields.length === 0 && <p className="text-xs text-muted-foreground italic pl-1 pb-1">No ingredients added</p>}
                 <div className="space-y-1.5">
@@ -459,7 +463,7 @@ function RecipeForm({
                     const ingMarinadeSet = ingMarinadeVal != null && ingMarinadeVal !== "" && ingMarinadeVal !== 0 && ingMarinadeVal !== "0";
                     return (
                       <div key={field.id} className="space-y-0.5">
-                        <div className="grid grid-cols-[1fr_6rem_3.5rem_2rem_2rem_4rem_1.25rem] gap-x-2 gap-y-0 items-center">
+                        <div className="grid grid-cols-[1fr_6rem_3.5rem_2rem_2rem_2rem_4rem_1.25rem] gap-x-2 gap-y-0 items-center">
                           <div className="flex gap-1 min-w-0">
                             <Controller
                               control={control}
@@ -510,6 +514,9 @@ function RecipeForm({
                           </div>
                           <div className="flex justify-center">
                             <input type="checkbox" {...register(`ingredients.${index}.isTopping`)} className="rounded border-border text-amber-500 focus:ring-amber-500/30 w-3.5 h-3.5 cursor-pointer" title="Topping" />
+                          </div>
+                          <div className="flex justify-center">
+                            <input type="checkbox" {...register(`ingredients.${index}.showInPrep`)} className="rounded border-border text-emerald-500 focus:ring-emerald-500/30 w-3.5 h-3.5 cursor-pointer" title="Show in prep station" />
                           </div>
                           <div className="flex justify-center">
                             {watch(`ingredients.${index}.includeInFillingMix`) ? (() => {
@@ -568,7 +575,7 @@ function RecipeForm({
               <div>
                 <div className="flex items-center justify-between py-1.5">
                   <span className="text-xs font-semibold text-accent uppercase tracking-wide">Prep Items</span>
-                  <button type="button" onClick={() => appendSub({ subRecipeId: 0, quantity: 0, marinadeForIngredientId: null, includeInFillingMix: false, isTopping: false, mixingOverage: 0 })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add</button>
+                  <button type="button" onClick={() => appendSub({ subRecipeId: 0, quantity: 0, marinadeForIngredientId: null, includeInFillingMix: false, isTopping: false, showInPrep: false, mixingOverage: 0 })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add</button>
                 </div>
                 {subFields.length === 0 && <p className="text-xs text-muted-foreground italic pl-1 pb-1">No prep items added</p>}
                 <div className="space-y-1.5">
@@ -578,7 +585,7 @@ function RecipeForm({
                     const subMarinadeSet = subMarinadeVal != null && subMarinadeVal !== "" && subMarinadeVal !== 0 && subMarinadeVal !== "0";
                     return (
                       <div key={field.id} className="space-y-0.5">
-                        <div className="grid grid-cols-[1fr_6rem_3.5rem_2rem_2rem_4rem_1.25rem] gap-x-2 gap-y-0 items-center">
+                        <div className="grid grid-cols-[1fr_6rem_3.5rem_2rem_2rem_2rem_4rem_1.25rem] gap-x-2 gap-y-0 items-center">
                           <select {...register(`subRecipes.${index}.subRecipeId`)} className="min-w-0 px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30">
                             <option value={0} disabled>Select…</option>
                             {subRecipes.map(s => <option key={s.id} value={s.id}>{s.name} ({s.yieldUnit})</option>)}
@@ -620,6 +627,9 @@ function RecipeForm({
                           </div>
                           <div className="flex justify-center">
                             <input type="checkbox" {...register(`subRecipes.${index}.isTopping`)} className="rounded border-border text-amber-500 focus:ring-amber-500/30 w-3.5 h-3.5 cursor-pointer" title="Topping" />
+                          </div>
+                          <div className="flex justify-center">
+                            <input type="checkbox" {...register(`subRecipes.${index}.showInPrep`)} className="rounded border-border text-emerald-500 focus:ring-emerald-500/30 w-3.5 h-3.5 cursor-pointer" title="Show in prep station" />
                           </div>
                           <div className="flex justify-center">
                             {watch(`subRecipes.${index}.includeInFillingMix`) ? (() => {
@@ -717,6 +727,7 @@ function EditRecipeDialog({
   const canEditShopify = authState.status === "authenticated" &&
     (authState.user.role === "admin" || authState.user.role === "manager");
 
+  const queryClient = useQueryClient();
   const { data: detail, isLoading } = useGetRecipe(id, { query: { enabled: open } });
   const { data: allRecipes } = useListRecipes({ query: { enabled: open } });
   const { updateRecipe } = useAppMutations();
@@ -883,8 +894,8 @@ function EditRecipeDialog({
         isCurrentSpecial: detail.isCurrentSpecial ?? false,
         color: detail.color ?? "",
         cookingLossPercent: (detail as Record<string, unknown>).cookingLossPercent != null ? Number((detail as Record<string, unknown>).cookingLossPercent) : 3,
-        ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
-        subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
+        ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, showInPrep: (i as Record<string, unknown>).showInPrep === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
+        subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, showInPrep: (s as Record<string, unknown>).showInPrep === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
       }
     : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", cookingLossPercent: 3, ingredients: [], subRecipes: [] };
 
@@ -935,7 +946,7 @@ function EditRecipeDialog({
                 thisRecipeIsSpecial={thisRecipeIsSpecial}
                 onDirtyChange={setFormIsDirty}
                 submitRef={submitRef}
-                onSubmit={(data) => updateRecipe.mutate({ id, data }, { onSuccess: () => onOpenChange(false) })}
+                onSubmit={(data) => updateRecipe.mutate({ id, data }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: [`/api/recipes/${id}`] }); onOpenChange(false); } })}
               />
 
               {/* Shopify Inventory Link */}
@@ -1676,8 +1687,8 @@ export default function Recipes() {
         isCurrentSpecial: false,
         color: duplicateDetail.color ?? "",
         cookingLossPercent: (duplicateDetail as Record<string, unknown>).cookingLossPercent != null ? Number((duplicateDetail as Record<string, unknown>).cookingLossPercent) : 3,
-        ingredients: (duplicateDetail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
-        subRecipes: (duplicateDetail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
+        ingredients: (duplicateDetail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, showInPrep: (i as Record<string, unknown>).showInPrep === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
+        subRecipes: (duplicateDetail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, showInPrep: (s as Record<string, unknown>).showInPrep === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
       };
       setDuplicateDefaults(vals);
       setIsAddOpen(true);
