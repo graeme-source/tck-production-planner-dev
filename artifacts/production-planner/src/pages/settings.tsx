@@ -10,8 +10,9 @@ import {
   Plus, Trash2, Edit2, Loader2, Users, ShieldCheck, Eye, Wrench,
   CheckCircle2, XCircle, KeyRound, Package, ChevronDown, ChevronUp,
   Lock, Timer, BarChart2, Coffee, Truck, Mail, Warehouse,
-  Camera, User,
+  Camera, User, ToggleRight,
 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { upsertDptSettingByRecipe, updateTimingStandard, getListDptSettingsQueryKey, getListTimingStandardsQueryKey } from "@workspace/api-client-react";
 import { useForm } from "react-hook-form";
@@ -422,13 +423,14 @@ function PinSection() {
   );
 }
 
-type SettingsSection = "profile" | "team" | "production" | "storage";
+type SettingsSection = "profile" | "team" | "production" | "storage" | "features";
 
 const NAV_ITEMS: { id: SettingsSection; label: string; icon: typeof User }[] = [
   { id: "profile", label: "My Profile", icon: User },
   { id: "team", label: "Team & Access", icon: Users },
   { id: "production", label: "Production", icon: BarChart2 },
   { id: "storage", label: "Storage & Inventory", icon: Warehouse },
+  { id: "features", label: "Features", icon: ToggleRight },
 ];
 
 function TeamAccessContent({
@@ -739,7 +741,7 @@ export default function Settings() {
 
   const params = new URLSearchParams(search);
   const sectionParam = params.get("section") as SettingsSection | null;
-  const validSections: SettingsSection[] = ["profile", "team", "production", "storage"];
+  const validSections: SettingsSection[] = ["profile", "team", "production", "storage", "features"];
   const activeSection: SettingsSection = sectionParam && validSections.includes(sectionParam) ? sectionParam : "profile";
 
   const setSection = (s: SettingsSection) => {
@@ -829,8 +831,101 @@ export default function Settings() {
               {user?.role === "admin" && <IngredientStorageAssignmentsSection />}
             </div>
           )}
+
+          {activeSection === "features" && user?.role === "admin" && (
+            <div className="space-y-8">
+              <FeaturesSection />
+            </div>
+          )}
+
+          {activeSection === "features" && user?.role !== "admin" && (
+            <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
+              <Lock className="w-8 h-8 mx-auto mb-3 opacity-50" />
+              <p className="font-medium">Admin access required</p>
+              <p className="text-sm mt-1">Only admins can manage feature flags.</p>
+            </div>
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Feature Flags Section ───────────────────────────────────────────
+
+const FEATURE_FLAGS: { key: string; label: string; description: string }[] = [
+  {
+    key: "feature_checklists",
+    label: "Station Checklists",
+    description: "Enable daily opening, cleaning, and closing checklists for each station. When enabled, stations auto-open to checklist view at start and end of day.",
+  },
+];
+
+function FeaturesSection() {
+  const queryClient = useQueryClient();
+  const [flags, setFlags] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`${BASE}/api/app-settings/`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : {})
+      .then(data => { setFlags(data); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  const toggleFlag = async (key: string, enabled: boolean) => {
+    const newVal = enabled ? "true" : "false";
+    setFlags(prev => ({ ...prev, [key]: newVal }));
+    try {
+      const res = await fetch(`${BASE}/api/app-settings/${key}`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: newVal }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      queryClient.invalidateQueries({ queryKey: ["app-settings", "feature-flags"] });
+      toast({ title: `Feature ${enabled ? "enabled" : "disabled"}` });
+    } catch {
+      setFlags(prev => ({ ...prev, [key]: enabled ? "false" : "true" }));
+      toast({ title: "Failed to update feature flag", variant: "destructive" });
+    }
+  };
+
+  return (
+    <div>
+      <h2 className="text-base font-semibold mb-1 flex items-center gap-2">
+        <ToggleRight className="w-5 h-5 text-primary" />
+        Feature Flags
+      </h2>
+      <p className="text-sm text-muted-foreground mb-4">
+        Toggle features on and off across the application.
+      </p>
+
+      {loading ? (
+        <div className="flex items-center gap-2 text-muted-foreground py-4">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Loading...
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {FEATURE_FLAGS.map(flag => (
+            <div
+              key={flag.key}
+              className="flex items-center justify-between gap-4 p-4 bg-card border border-border rounded-xl"
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">{flag.label}</p>
+                <p className="text-sm text-muted-foreground mt-0.5">{flag.description}</p>
+              </div>
+              <Switch
+                checked={flags[flag.key] === "true"}
+                onCheckedChange={(checked) => toggleFlag(flag.key, checked)}
+              />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
