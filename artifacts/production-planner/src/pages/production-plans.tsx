@@ -275,6 +275,7 @@ interface CreatePlanDialogProps {
   open: boolean;
   onClose: () => void;
   onCreated?: (planId: number) => void;
+  initialDate?: Date;
 }
 
 interface CalcRecipe {
@@ -334,12 +335,13 @@ async function fetchCalculation(planDate: string): Promise<CalcResponse> {
   return res.json();
 }
 
-function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
+function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanDialogProps) {
   const { state: authState } = useAuth();
   const userRole = authState.status === "authenticated" ? authState.user.role : undefined;
   const isAdmin = userRole === "admin";
   const minPlanDate = getMinPlanDate();
-  const [planDate, setPlanDate] = useState(isAdmin ? toLocalDateStr(new Date()) : toLocalDateStr(minPlanDate));
+  const defaultDate = initialDate ?? (isAdmin ? new Date() : minPlanDate);
+  const [planDate, setPlanDate] = useState(toLocalDateStr(defaultDate));
   const [planName, setPlanName] = useState("");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<PlanItem[]>([]);
@@ -349,6 +351,13 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   const [totalBatchesOverride, setTotalBatchesOverride] = useState<number | null>(null);
   const [savedOrder, setSavedOrder] = useState<number[]>([]);
   const [orderSaved, setOrderSaved] = useState(false);
+
+  // Sync date when dialog opens with a selected date
+  useEffect(() => {
+    if (open && initialDate) {
+      setPlanDate(toLocalDateStr(initialDate));
+    }
+  }, [open, initialDate]);
 
   // Fetch stored production order on open
   useEffect(() => {
@@ -3019,6 +3028,7 @@ export default function ProductionPlans() {
         open={isCreateOpen}
         onClose={() => setIsCreateOpen(false)}
         onCreated={handlePlanCreated}
+        initialDate={selectedDate}
       />
     </div>
   );
