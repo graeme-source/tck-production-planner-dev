@@ -50,6 +50,14 @@ interface DoughPrepData {
     doughSubRecipeName: string;
   }>;
   nextPlan: { id: number; planDate: string; name: string } | null;
+  nextPlanItems?: Array<{
+    id: number;
+    recipeId: number | null;
+    batchesTarget: number;
+    orderPosition: number;
+    recipeName: string;
+    stationCompletions: Record<string, number>;
+  }>;
   noFuturePlan?: boolean;
   extraBalls?: {
     extraPack: { count: number; weightG: number };
@@ -86,14 +94,14 @@ export function useDoughPrepData(planId: number, mode?: "current") {
     return () => { clearInterval(interval); abortRef.current?.abort(); };
   }, [doFetch]);
 
-  return { data, loading, error };
+  return { data, loading, error, refetch: doFetch };
 }
 
 type DoughView = "mixing" | "balling" | "overview";
 
 export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const queryClient = useQueryClient();
-  const { data: doughData, loading: doughLoading } = useDoughPrepData(plan.id);
+  const { data: doughData, loading: doughLoading, refetch: refetchDough } = useDoughPrepData(plan.id);
   const [activeMix, setActiveMix] = useState<number>(1);
   const [isOnBreak, setIsOnBreak] = useState(false);
   const [activeView, setActiveView] = useState<DoughView>("mixing");
@@ -133,9 +141,18 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   });
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
-  const totalComplete = items.reduce((s, it) => s + getStationCount(it, "dough_prep"), 0);
-  // Ball TARGET comes from the next day's plan (via doughData), not today's plan.
-  // Today's plan items are used only for tracking completions.
+
+  // Dough prep tracks completions against the NEXT day's plan items (the ones we're prepping for).
+  // The display target comes from doughData.recipes (next day), so tracking must match.
+  const nextPlanId = doughData?.nextPlan?.id;
+  const nextPlanItems = doughData?.nextPlanItems ?? [];
+  const trackingItems = nextPlanItems.length > 0 ? nextPlanItems : items;
+  const trackingPlanId = nextPlanId ?? plan.id;
+
+  const totalComplete = trackingItems.reduce((s, it) => {
+    const sc = (it as any).stationCompletions;
+    return s + (sc?.dough_prep ?? 0);
+  }, 0);
   const totalBallsNeeded = doughData?.recipes?.reduce((s, r) => s + r.ballCount, 0) ?? 0;
   const overallPct = totalBallsNeeded > 0 ? Math.round((totalComplete / totalBallsNeeded) * 100) : 0;
   const mixCount = doughData?.mixCount ?? 0;
@@ -144,14 +161,15 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const hasAnyMixDone = completedMixes.size > 0 || hasServerProgress;
   const BALLS_PER_TRAY = 4;
 
-  const addBatch = async (item: ProductionPlanItem): Promise<boolean> => {
+  const addBatch = async (item: { id: number; batchesTarget?: number | null }): Promise<boolean> => {
     try {
-      await guardedFetch(`/api/production-plans/${plan.id}/batch-completions`, {
+      await guardedFetch(`/api/production-plans/${trackingPlanId}/batch-completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ planItemId: item.id, stationType: "dough_prep", completedAt: new Date().toISOString() }),
       });
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+      refetchDough();
       return true;
     } catch (err) {
       if (err instanceof ClientError && err.status === 409) return false; // Target met — not an error
@@ -160,13 +178,14 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   };
 
   const [runRemoveBatch, removeBatchBusy] = useGuardedAction({
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }); refetchDough(); },
   });
 
-  const removeBatch = async (item: ProductionPlanItem) => {
-    if (getStationCount(item, "dough_prep") === 0) return;
+  const removeBatch = async (item: { id: number; stationCompletions?: Record<string, number> }) => {
+    const sc = (item as any).stationCompletions;
+    if ((sc?.dough_prep ?? 0) === 0) return;
     await runRemoveBatch(async (signal) => {
-      await guardedFetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
+      await guardedFetch(`/api/production-plans/${trackingPlanId}/batch-completions/last`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ planItemId: item.id, stationType: "dough_prep" }),
@@ -235,7 +254,7 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     setAddingBalls(true);
     try {
       let remaining = count;
-      for (const item of items) {
+      for (const item of trackingItems) {
         if (remaining <= 0) break;
         // Try adding balls to this item until target met or we've added enough
         while (remaining > 0) {
@@ -251,7 +270,10 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
 
   const undoBall = () => {
     if (isOnBreak || ballCount <= 0) return;
-    const lastItemWithCount = [...items].reverse().find(it => getStationCount(it, "dough_prep") > 0);
+    const lastItemWithCount = [...trackingItems].reverse().find(it => {
+      const sc = (it as any).stationCompletions;
+      return (sc?.dough_prep ?? 0) > 0;
+    });
     if (lastItemWithCount) {
       removeBatch(lastItemWithCount);
     }
@@ -264,9 +286,10 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
     try {
       let toRemove = Math.min(count, ballCount);
       const alreadyRemoved: Record<number, number> = {};
-      for (const item of [...items].reverse()) {
+      for (const item of [...trackingItems].reverse()) {
         if (toRemove <= 0) break;
-        const done = getStationCount(item, "dough_prep") - (alreadyRemoved[item.id] ?? 0);
+        const sc = (item as any).stationCompletions;
+        const done = (sc?.dough_prep ?? 0) - (alreadyRemoved[item.id] ?? 0);
         if (done <= 0) continue;
         const removing = Math.min(toRemove, done);
         for (let i = 0; i < removing; i++) {
@@ -283,8 +306,9 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const getBallAllocation = () => {
     if (!doughData) return [];
     return doughData.recipes.map(r => {
-      const item = items.find(it => it.recipeId === r.recipeId);
-      const ballsDone = item ? getStationCount(item, "dough_prep") : 0;
+      const item = trackingItems.find(it => it.recipeId === r.recipeId);
+      const sc = item ? (item as any).stationCompletions : {};
+      const ballsDone = sc?.dough_prep ?? 0;
       return { ...r, ballsDone };
     });
   };
@@ -1153,9 +1177,10 @@ function DoughOverview({
             </tr>
           </thead>
           <tbody>
-            {items.map(item => {
+            {trackingItems.map(item => {
               const recipeInfo = doughData.recipes.find(r => r.recipeId === item.recipeId);
-              const dpCount = getStationCount(item, "dough_prep");
+              const sc = (item as any).stationCompletions;
+              const dpCount = sc?.dough_prep ?? 0;
               const target = item.batchesTarget ?? 0;
               const isComplete = dpCount >= target;
               const trays = target / 4;

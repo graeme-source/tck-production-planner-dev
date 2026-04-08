@@ -3348,6 +3348,49 @@ router.get("/:id/dough-prep", async (req, res) => {
     };
   });
 
+  // ── 9. Fetch next plan's items with dough_prep station completions ──
+  // The frontend needs these to track dough ball completions against the correct plan
+  let nextPlanItems: Array<{ id: number; recipeId: number | null; batchesTarget: number; orderPosition: number; recipeName: string; stationCompletions: Record<string, number> }> = [];
+  if (targetPlanId !== planId) {
+    const nextItems = await db
+      .select({
+        id: productionPlanItemsTable.id,
+        recipeId: productionPlanItemsTable.recipeId,
+        batchesTarget: productionPlanItemsTable.batchesTarget,
+        orderPosition: productionPlanItemsTable.orderPosition,
+        recipeName: recipesTable.name,
+      })
+      .from(productionPlanItemsTable)
+      .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+      .where(eq(productionPlanItemsTable.planId, targetPlanId))
+      .orderBy(productionPlanItemsTable.orderPosition);
+
+    const nextItemIds = nextItems.map(it => it.id);
+    let completionsByItem: Record<number, Record<string, number>> = {};
+    if (nextItemIds.length > 0) {
+      const completionRows = await db.execute(sql`
+        SELECT plan_item_id, station_type, COUNT(*)::int as cnt
+        FROM batch_completions
+        WHERE plan_item_id IN (${sql.join(nextItemIds.map(id => sql`${id}`), sql`, `)})
+          AND station_type = 'dough_prep'
+        GROUP BY plan_item_id, station_type
+      `);
+      for (const row of completionRows.rows as Array<{ plan_item_id: number; station_type: string; cnt: number }>) {
+        if (!completionsByItem[row.plan_item_id]) completionsByItem[row.plan_item_id] = {};
+        completionsByItem[row.plan_item_id][row.station_type] = row.cnt;
+      }
+    }
+
+    nextPlanItems = nextItems.map(it => ({
+      id: it.id,
+      recipeId: it.recipeId,
+      batchesTarget: it.batchesTarget ?? 0,
+      orderPosition: it.orderPosition,
+      recipeName: it.recipeName ?? `Recipe #${it.recipeId}`,
+      stationCompletions: completionsByItem[it.id] ?? {},
+    }));
+  }
+
   res.json({
     totalDoughKg: Math.round(totalDoughKg * 100) / 100,
     totalFlourKg: Math.round(totalFlourKg * 100) / 100,
@@ -3359,6 +3402,7 @@ router.get("/:id/dough-prep", async (req, res) => {
     ingredients,
     recipes: recipeResults,
     nextPlan,
+    nextPlanItems,
     extraBalls: {
       extraPack: { count: extraPackBallCount, weightG: extraPackBallWeightG },
       snack: { count: snackBallCount, weightG: snackBallWeightG },
