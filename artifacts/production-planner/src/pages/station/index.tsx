@@ -1,9 +1,12 @@
-import React from "react";
+import React, { useState, useMemo } from "react";
 import { useParams } from "wouter";
 import { useGetProductionPlan, getGetProductionPlanQueryKey } from "@workspace/api-client-react";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
-import { Loader2, AlertTriangle, RotateCw } from "lucide-react";
+import { Loader2, AlertTriangle, RotateCw, ClipboardCheck, Factory } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { useFeatureFlags } from "@/hooks/use-feature-flags";
 import { StationLayout } from "./shared/station-layout";
+import { StationChecklist } from "./shared/checklist/station-checklist";
 import { MixingStation } from "./stations/mixing-station";
 import { BuildingStation } from "./stations/building-station";
 import { OvensStation } from "./stations/ovens-station";
@@ -16,6 +19,19 @@ import { MainPrepStation } from "./stations/main-prep-station";
 import { PrepBasesStation } from "./stations/prep-bases-station";
 import { PrepMeatStation } from "./stations/prep-meat-station";
 import type { StationType } from "./shared/constants";
+
+type StationView = "production" | "checklist";
+
+/** Determine the default view and checklist category based on time of day and plan status */
+function getDefaultView(planStatus?: string): { view: StationView; category: "opening" | "cleaning" | "closing" } {
+  const hour = new Date().getHours();
+  // Before 10am → show opening checks
+  if (hour < 10) return { view: "checklist", category: "opening" };
+  // After 4pm or plan complete → show closing/cleaning checks
+  if (hour >= 16 || planStatus === "complete") return { view: "checklist", category: "closing" };
+  // During production hours → show production
+  return { view: "production", category: "opening" };
+}
 
 class StationErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -57,6 +73,7 @@ export default function StationPage() {
   const params = useParams<{ planId: string; stationType: string }>();
   const planId = Number(params.planId);
   const stationType = params.stationType as StationType;
+  const { checklists: checklistsEnabled } = useFeatureFlags();
 
   const { data: plan, isLoading, error, refetch } = useGetProductionPlan(planId, {
     query: {
@@ -70,6 +87,21 @@ export default function StationPage() {
     error: Error | null;
     refetch: () => void;
   };
+
+  // Compute default view based on time of day and plan status
+  const defaults = useMemo(
+    () => getDefaultView(plan?.status),
+    [plan?.status],
+  );
+
+  const [activeView, setActiveView] = useState<StationView>(
+    checklistsEnabled ? defaults.view : "production",
+  );
+
+  // If feature gets toggled off while on checklist view, switch back
+  if (!checklistsEnabled && activeView === "checklist") {
+    setActiveView("production");
+  }
 
   if (isNaN(planId)) {
     return <div className="p-8 text-center text-muted-foreground">Invalid plan ID</div>;
@@ -138,8 +170,46 @@ export default function StationPage() {
 
   return (
     <StationLayout planId={planId} stationType={stationType} plan={plan}>
-      <StationErrorBoundary key={stationType}>
-        {stationContent()}
+      {/* View toggle — only shown when checklists feature is enabled */}
+      {checklistsEnabled && (
+        <div className="flex items-center gap-1 mb-4 p-1 bg-secondary/40 rounded-xl w-fit">
+          <button
+            onClick={() => setActiveView("checklist")}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+              activeView === "checklist"
+                ? "bg-card text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <ClipboardCheck className="w-4 h-4" />
+            Checklist
+          </button>
+          <button
+            onClick={() => setActiveView("production")}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+              activeView === "production"
+                ? "bg-card text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Factory className="w-4 h-4" />
+            Production
+          </button>
+        </div>
+      )}
+
+      <StationErrorBoundary key={`${stationType}-${activeView}`}>
+        {activeView === "checklist" && checklistsEnabled ? (
+          <StationChecklist
+            stationType={stationType}
+            planId={planId}
+            defaultCategory={defaults.category}
+          />
+        ) : (
+          stationContent()
+        )}
       </StationErrorBoundary>
     </StationLayout>
   );
