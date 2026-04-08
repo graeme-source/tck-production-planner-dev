@@ -164,7 +164,7 @@ function SortableFillingRow({
 }
 
 type AssemblyItemData = { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number; sourceType: "ingredient" | "sub_recipe"; sourceId: number; assemblyOrder: number | null };
-type AssemblyData = { itemId: number; recipeId: number; fillingWeightPerBatch: number; fillingWeightHalfBatch: number; assemblyItems: AssemblyItemData[]; postOvenItems?: AssemblyItemData[] };
+type AssemblyData = { itemId: number; recipeId: number; fillingWeightPerBatch: number; fillingWeightHalfBatch: number; fillingAssemblyOrder: number; assemblyItems: AssemblyItemData[]; postOvenItems?: AssemblyItemData[] };
 
 function ChecklistItems({
   asm, hasFilling, isAdmin, isLocked, checkedItems, toggleCheck, dndSensors, onDragEnd,
@@ -178,11 +178,14 @@ function ChecklistItems({
   dndSensors: ReturnType<typeof useSensors>;
   onDragEnd: (event: DragEndEvent) => void;
 }) {
-  // Build unified list: filling (if present) + assembly items
+  // Build unified list: assembly items with filling inserted at its saved position
   type Entry = { key: string; isFilling: boolean; ai?: AssemblyItemData };
   const allItems: Entry[] = [];
-  if (hasFilling) allItems.push({ key: "filling", isFilling: true });
   asm.assemblyItems.forEach(ai => allItems.push({ key: `${ai.sourceType}-${ai.sourceId}`, isFilling: false, ai }));
+  if (hasFilling) {
+    const pos = Math.min(asm.fillingAssemblyOrder ?? 0, allItems.length);
+    allItems.splice(pos, 0, { key: "filling", isFilling: true });
+  }
 
   if (isAdmin && !isLocked) {
     return (
@@ -351,11 +354,14 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
       const asm = prev[itemId];
       if (!asm) return prev;
 
-      // Build unified list: filling (if present) + assembly items
+      // Build unified list: assembly items with filling at its saved position
       type UnifiedItem = { key: string; isFilling: boolean; ai?: AssemblyItemData };
       const allItems: UnifiedItem[] = [];
-      if (asm.fillingWeightPerBatch > 0) allItems.push({ key: "filling", isFilling: true });
       asm.assemblyItems.forEach(ai => allItems.push({ key: `${ai.sourceType}-${ai.sourceId}`, isFilling: false, ai }));
+      if (asm.fillingWeightPerBatch > 0) {
+        const pos = Math.min(asm.fillingAssemblyOrder ?? 0, allItems.length);
+        allItems.splice(pos, 0, { key: "filling", isFilling: true });
+      }
 
       const oldIdx = allItems.findIndex(a => a.key === active.id);
       const newIdx = allItems.findIndex(a => a.key === over.id);
@@ -366,20 +372,19 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
       const newAssemblyItems = reordered.filter(a => !a.isFilling).map(a => a.ai!);
 
       // Build order payload including filling position
-      const orderPayload = reordered.filter(a => !a.isFilling).map((a, i) => ({
+      const orderItems = reordered.filter(a => !a.isFilling).map((a, i) => ({
         sourceType: a.ai!.sourceType,
         sourceId: a.ai!.sourceId,
         order: i,
       }));
 
-      // Save filling position as a separate field
       const fillingOrder = reordered.findIndex(a => a.isFilling);
 
       fetch(`/api/recipes/${asm.recipeId}/assembly-order`, {
         method: "PUT",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(orderPayload),
+        body: JSON.stringify({ items: orderItems, fillingOrder: fillingOrder >= 0 ? fillingOrder : null }),
       })
         .then(r => {
           if (!r.ok) throw new Error("Save failed");
@@ -389,7 +394,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
           console.warn("[BuildingStation] Assembly order save failed:", err);
           toast({ title: "Failed to save order", variant: "destructive" });
         });
-      return { ...prev, [itemId]: { ...asm, assemblyItems: newAssemblyItems } };
+      return { ...prev, [itemId]: { ...asm, assemblyItems: newAssemblyItems, fillingAssemblyOrder: fillingOrder >= 0 ? fillingOrder : 0 } };
     });
   }, []);
 

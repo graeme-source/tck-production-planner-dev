@@ -29,6 +29,7 @@ export const recipesTable = pgTable("recipes", {
   isCurrentSpecial: boolean("is_current_special").notNull().default(false),
   color: text("color"),
   cookingLossPercent: numeric("cooking_loss_percent", { precision: 5, scale: 2 }).notNull().default("3"),
+  fillingAssemblyOrder: integer("filling_assembly_order"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

@@ -1179,7 +1179,17 @@ router.post("/:id/create-kanban", async (req, res) => {
   }
 });
 
-const AssemblyOrderBody = z.array(z.object({
+const AssemblyOrderBody = z.object({
+  items: z.array(z.object({
+    sourceType: z.enum(["ingredient", "sub_recipe"]),
+    sourceId: z.number().int().positive(),
+    order: z.number().int().min(0),
+  })),
+  fillingOrder: z.number().int().min(0).nullable().optional(),
+});
+
+// Also accept the legacy flat-array format for backwards compat
+const LegacyAssemblyOrderBody = z.array(z.object({
   sourceType: z.enum(["ingredient", "sub_recipe"]),
   sourceId: z.number().int().positive(),
   order: z.number().int().min(0),
@@ -1192,12 +1202,22 @@ router.put("/:id/assembly-order", requireAdmin, async (req, res) => {
       res.status(400).json({ error: "Invalid recipe id" });
       return;
     }
-    const parsed = AssemblyOrderBody.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: "Invalid body", details: parsed.error.format() });
-      return;
+
+    let items: { sourceType: "ingredient" | "sub_recipe"; sourceId: number; order: number }[];
+    let fillingOrder: number | null | undefined;
+
+    const newParsed = AssemblyOrderBody.safeParse(req.body);
+    if (newParsed.success) {
+      items = newParsed.data.items;
+      fillingOrder = newParsed.data.fillingOrder;
+    } else {
+      const legacyParsed = LegacyAssemblyOrderBody.safeParse(req.body);
+      if (!legacyParsed.success) {
+        res.status(400).json({ error: "Invalid body", details: newParsed.error.format() });
+        return;
+      }
+      items = legacyParsed.data;
     }
-    const items = parsed.data;
 
     for (const item of items) {
       if (item.sourceType === "ingredient") {
@@ -1215,6 +1235,12 @@ router.put("/:id/assembly-order", requireAdmin, async (req, res) => {
             eq(recipeSubRecipesTable.subRecipeId, item.sourceId)
           ));
       }
+    }
+
+    if (fillingOrder !== undefined) {
+      await db.update(recipesTable)
+        .set({ fillingAssemblyOrder: fillingOrder })
+        .where(eq(recipesTable.id, recipeId));
     }
 
     res.json({ success: true });
