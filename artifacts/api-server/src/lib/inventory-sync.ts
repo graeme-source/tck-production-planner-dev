@@ -15,15 +15,17 @@
  * it end-to-end. Flip it off once all recipes have correct Shopify
  * variant mappings.
  */
-import { db } from "@workspace/db";
-import { sql } from "drizzle-orm";
+import { db, appSettingsTable } from "@workspace/db";
+import { eq, sql } from "drizzle-orm";
 import { syncRecipeFridgeStock } from "../routes/production-plans";
 import type { ShopifyLineItem } from "../services/shopify";
 
 /**
- * Feature flag: limit the factory-number loop to core-menu recipes only.
+ * Runtime feature flag: limit the factory-number loop to core-menu
+ * recipes only. Stored in the app_settings table under the key
+ * `factory_number_core_menu_only` with value "true" or "false".
  *
- * When `true`:
+ * When enabled:
  *   - Non-core variants are silently skipped during the fulfilment
  *     decrement (they're not even logged as unmapped).
  *   - Non-core recipes get `predictedFridgeStock = liveFridgeStock` in
@@ -32,11 +34,41 @@ import type { ShopifyLineItem } from "../services/shopify";
  *   - The frontend Create Plan column header shows a "Core menu only"
  *     badge.
  *
- * Flip to `false` once Shopify variant mappings are populated for all
- * recipes, then restart the api server. The frontend re-reads the flag
- * via GET /api/stock/factory-number-config on page load.
+ * Default is `true` when the setting row doesn't exist. The frontend
+ * Settings page has an admin-only toggle to flip it at runtime without
+ * any restart — the value is cached in memory for 30 seconds and
+ * re-read on cache miss, so flipping takes effect within a few seconds
+ * on the backend and on the next page load on the frontend.
  */
-export const FACTORY_NUMBER_CORE_MENU_ONLY = true;
+export const FACTORY_NUMBER_CORE_MENU_ONLY_KEY = "factory_number_core_menu_only";
+export const FACTORY_NUMBER_CORE_MENU_ONLY_DEFAULT = true;
+
+let cachedFlag: { value: boolean; loadedAt: number } | null = null;
+const FLAG_CACHE_TTL_MS = 30_000;
+
+export async function getFactoryNumberCoreMenuOnly(): Promise<boolean> {
+  if (cachedFlag && Date.now() - cachedFlag.loadedAt < FLAG_CACHE_TTL_MS) {
+    return cachedFlag.value;
+  }
+  try {
+    const [row] = await db
+      .select({ value: appSettingsTable.value })
+      .from(appSettingsTable)
+      .where(eq(appSettingsTable.key, FACTORY_NUMBER_CORE_MENU_ONLY_KEY));
+    const value = row ? row.value === "true" : FACTORY_NUMBER_CORE_MENU_ONLY_DEFAULT;
+    cachedFlag = { value, loadedAt: Date.now() };
+    return value;
+  } catch (err) {
+    console.error("[inventory-sync] failed to read factory-number flag, using default:", err);
+    return FACTORY_NUMBER_CORE_MENU_ONLY_DEFAULT;
+  }
+}
+
+/** Force-clear the cached flag so the next read hits the DB immediately.
+ *  Called by the /factory-number-config endpoint after a PUT. */
+export function invalidateFactoryNumberFlagCache() {
+  cachedFlag = null;
+}
 
 interface VariantMapping {
   recipeId: number;
@@ -108,7 +140,10 @@ export async function decrementFridgeForShopifyOrder(
   lineItems: ShopifyLineItem[],
 ): Promise<DecrementResult> {
   const result: DecrementResult = { decremented: [], unmapped: [], skippedNonCore: 0 };
-  const variantMap = await loadVariantMap();
+  const [variantMap, coreMenuOnly] = await Promise.all([
+    loadVariantMap(),
+    getFactoryNumberCoreMenuOnly(),
+  ]);
 
   // Aggregate per recipe so orders with multiple variants of the same
   // recipe only do one update.
@@ -121,10 +156,10 @@ export async function decrementFridgeForShopifyOrder(
     if (!mapping) {
       // Only track unmapped variants when the flag is off — with the
       // flag on, non-core variants would flood this log.
-      if (!FACTORY_NUMBER_CORE_MENU_ONLY) result.unmapped.push(variantKey);
+      if (!coreMenuOnly) result.unmapped.push(variantKey);
       continue;
     }
-    if (FACTORY_NUMBER_CORE_MENU_ONLY && !mapping.isCoreMenu) {
+    if (coreMenuOnly && !mapping.isCoreMenu) {
       result.skippedNonCore += 1;
       continue;
     }

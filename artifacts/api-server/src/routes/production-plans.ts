@@ -6,7 +6,7 @@ import { validate } from "../middleware/validate";
 import * as z from "zod";
 import { resolveRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
 import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag } from "../services/shopify";
-import { FACTORY_NUMBER_CORE_MENU_ONLY } from "../lib/inventory-sync";
+import { getFactoryNumberCoreMenuOnly } from "../lib/inventory-sync";
 
 const router: IRouter = Router();
 
@@ -435,6 +435,7 @@ router.get("/calculate", async (req, res) => {
   // close of business, regardless of whether planDate is tomorrow or
   // three days out.
   const todayStr = new Date().toISOString().slice(0, 10);
+  const coreMenuOnly = await getFactoryNumberCoreMenuOnly();
 
   const todayPlanItems = await db
     .select({
@@ -487,7 +488,7 @@ router.get("/calculate", async (req, res) => {
           if (!line.variant_id) continue;
           const mapping = variantToRecipe.get(String(line.variant_id));
           if (!mapping) continue;
-          if (FACTORY_NUMBER_CORE_MENU_ONLY && !mapping.isCoreMenu) continue;
+          if (coreMenuOnly && !mapping.isCoreMenu) continue;
           remainingFulfilmentPacksToday[mapping.recipeId] =
             (remainingFulfilmentPacksToday[mapping.recipeId] ?? 0) + (line.quantity || 0);
         }
@@ -695,7 +696,7 @@ router.get("/calculate", async (req, res) => {
     const isCore = r.isCoreMenu ?? false;
     const wrapRemain = remainingWrappingPacksToday[recipeId] ?? 0;
     const fulRemain = remainingFulfilmentPacksToday[recipeId] ?? 0;
-    const useNewPrediction = !FACTORY_NUMBER_CORE_MENU_ONLY || isCore;
+    const useNewPrediction = !coreMenuOnly || isCore;
     const predictedFridgeStock = useNewPrediction
       ? Math.max(0, Math.round(fridgeStock + wrapRemain - fulRemain))
       : Math.round(fridgeStock);

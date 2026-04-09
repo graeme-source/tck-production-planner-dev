@@ -10,7 +10,7 @@ import {
   Plus, Trash2, Edit2, Loader2, Users, ShieldCheck, Eye, Wrench,
   CheckCircle2, XCircle, KeyRound, Package, ChevronDown, ChevronUp,
   Lock, Timer, BarChart2, Coffee, Truck, Mail, Warehouse,
-  Camera, User, CircleDot, ToggleRight,
+  Camera, User, CircleDot, ToggleRight, Boxes,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
@@ -816,6 +816,7 @@ export default function Settings() {
               <div ref={dptRef}>
                 {user?.role === "admin" && <DptSettingsSection />}
               </div>
+              {user?.role === "admin" && <FactoryNumberSection />}
               {user?.role === "admin" && <TimingStandardsSection />}
               {user?.role === "admin" && <MixerCapacitySection />}
               {user?.role === "admin" && <ProductionExtrasSection />}
@@ -1721,6 +1722,102 @@ function ProductionExtrasSection() {
             Save
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Factory number accounting loop scope toggle.
+ *
+ * Reads and writes GET/PUT /api/stock-entries/factory-number-config, which
+ * is backed by the `factory_number_core_menu_only` row in app_settings.
+ * When enabled, the fulfilment decrement path, the /calculate predicted
+ * fridge stock, and the reset endpoint all ignore non-core recipes.
+ * Flip it off once every recipe has a Shopify variant mapping set.
+ */
+function FactoryNumberSection() {
+  const [coreMenuOnly, setCoreMenuOnly] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/stock-entries/factory-number-config", { credentials: "include" })
+      .then(r => r.ok ? r.json() : { coreMenuOnly: true })
+      .then((d: { coreMenuOnly: boolean }) => setCoreMenuOnly(d.coreMenuOnly))
+      .catch(() => setCoreMenuOnly(true));
+  }, []);
+
+  async function handleToggle(next: boolean) {
+    setSaving(true);
+    setSavedMsg(null);
+    try {
+      const res = await fetch("/api/stock-entries/factory-number-config", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ coreMenuOnly: next }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      const data = (await res.json()) as { coreMenuOnly: boolean };
+      setCoreMenuOnly(data.coreMenuOnly);
+      setSavedMsg("Saved");
+      setTimeout(() => setSavedMsg(null), 2000);
+    } catch {
+      setSavedMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (coreMenuOnly === null) return null;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-base font-semibold flex items-center gap-2">
+          <Boxes className="w-4 h-4 text-primary" /> Factory Number Scope
+        </h2>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          Controls which recipes participate in the factory-number
+          accounting loop (fridge stock increments from wrapping and
+          decrements from Shopify fulfilment).
+        </p>
+      </div>
+
+      <div className="bg-card border border-border rounded-xl p-4 flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <p className="text-sm font-medium">Core menu items only</p>
+            {saving && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+            {savedMsg && <span className="text-xs text-emerald-600 font-medium">{savedMsg}</span>}
+          </div>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            {coreMenuOnly ? (
+              <>
+                <span className="font-medium text-foreground">Enabled.</span>{" "}
+                Only recipes flagged as core menu items have their fridge
+                stock tracked. Non-core recipes show live values only with
+                no prediction, and Shopify fulfilments of non-core variants
+                are not deducted. Turn off once every recipe has a Shopify
+                variant mapping configured via the recipe edit dialog.
+              </>
+            ) : (
+              <>
+                <span className="font-medium text-foreground">Disabled.</span>{" "}
+                All recipes participate in the factory-number loop. Any
+                recipe without a Shopify variant mapping will log an unmapped
+                warning on fulfilment but won't block dispatch.
+              </>
+            )}
+          </p>
+        </div>
+        <Switch
+          checked={coreMenuOnly}
+          onCheckedChange={handleToggle}
+          disabled={saving}
+          aria-label="Toggle core menu only scope"
+        />
       </div>
     </div>
   );
