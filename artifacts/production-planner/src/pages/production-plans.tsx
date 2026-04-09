@@ -290,7 +290,14 @@ interface CalcRecipe {
   tinSize: string | null;
   maxBatchesPerTin: number | null;
   sopUrl: string | null;
+  isCoreMenu?: boolean;
   fridgeStock: number;
+  // Predicted end-of-today fridge stock from /calculate (factory number
+  // accounting loop). Core recipes get the full prediction; non-core
+  // recipes fall back to `fridgeStock` while the feature flag is on.
+  predictedFridgeStock?: number;
+  remainingWrappingPacksToday?: number;
+  remainingFulfilmentPacksToday?: number;
   prevProduction: number;
   estimatedFactoryNumber: number;
   dispatch1Qty: number;
@@ -353,6 +360,19 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   const [totalBatchesOverride, setTotalBatchesOverride] = useState<number | null>(null);
   const [savedOrder, setSavedOrder] = useState<number[]>([]);
   const [orderSaved, setOrderSaved] = useState(false);
+
+  // Runtime feature flag from the backend — controls whether the
+  // Factory Number column shows a "Core menu only" scope badge. When
+  // the server-side flag flips to false, this automatically updates
+  // on the next dialog open without a frontend rebuild.
+  const [factoryConfig, setFactoryConfig] = useState<{ coreMenuOnly: boolean } | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    fetch("/api/stock-entries/factory-number-config", { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setFactoryConfig(d))
+      .catch(() => setFactoryConfig(null));
+  }, [open]);
 
   // Sync date when dialog opens with a selected date
   useEffect(() => {
@@ -584,7 +604,12 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
         packsPerBatch: r.packsPerBatch,
         sopUrl: r.sopUrl,
         isFromDpt: true,
-        fridgeStock: prev ? prev.fridgeStock : r.fridgeStock,
+        // Seed with predicted end-of-today fridge stock so the DPT
+        // calculation uses the right baseline regardless of what time
+        // the user opens the form. Non-core recipes (with the feature
+        // flag on) receive `predictedFridgeStock == fridgeStock` from
+        // the backend.
+        fridgeStock: prev ? prev.fridgeStock : (r.predictedFridgeStock ?? r.fridgeStock),
         prevProduction: r.prevProduction,
         estimatedFactoryNumber: r.estimatedFactoryNumber,
         dispatch1Qty: r.dispatch1Qty,
@@ -951,7 +976,19 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                               />
                             </th>
                             <th className="py-2 px-2 text-left font-medium text-muted-foreground">Recipe</th>
-                            <th className="py-2 px-2 text-center font-medium text-muted-foreground min-w-[70px]" title="Current packs in the production fridge">Factory Number</th>
+                            <th
+                              className="py-2 px-2 text-center font-medium text-muted-foreground min-w-[70px]"
+                              title="Predicted packs in the fridge at end-of-today = live + remaining wrapping − remaining fulfilment"
+                            >
+                              <div className="flex flex-col items-center gap-0.5">
+                                <span>Factory Number</span>
+                                {factoryConfig && (
+                                  <span className="text-[9px] text-primary/80 font-normal tracking-tight">
+                                    {factoryConfig.coreMenuOnly ? "Core menu · predicted" : "Predicted"}
+                                  </span>
+                                )}
+                              </div>
+                            </th>
                             <th className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]" title={dispatchDates[0] ? `Dispatched ${format(parseISO(dispatchDates[0]), "EEE d MMM")} — delivered ${deliveryDates[0] ? format(parseISO(deliveryDates[0]), "EEE d MMM") : ""}` : "Next dispatch"}>
                               {dispatchDates[0] ? `\u2212 ${format(parseISO(dispatchDates[0]), "EEE")} Dispatch` : "\u2212 Dispatch"}
                             </th>
@@ -1200,6 +1237,46 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const { updatePlan } = useAppMutations();
   const queryClient = useQueryClient();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  // ── Update Factory Number (re-run DPT) state ────────────────────────────────
+  // Clicking the Update button runs /calculate for this plan's date and
+  // opens a diff modal. The user accepts/rejects per recipe, then the
+  // selected rows overwrite batchesTarget in the local items state.
+  const [updateModalOpen, setUpdateModalOpen] = useState(false);
+  const [updateLoading, setUpdateLoading] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const [updateCalcData, setUpdateCalcData] = useState<CalcResponse | null>(null);
+
+  async function handleUpdateFactoryNumber() {
+    setUpdateLoading(true);
+    setUpdateError(null);
+    try {
+      const data = await fetchCalculation(planDate);
+      setUpdateCalcData(data);
+      setUpdateModalOpen(true);
+    } catch (err) {
+      setUpdateError(err instanceof Error ? err.message : "Failed to refresh factory numbers");
+    } finally {
+      setUpdateLoading(false);
+    }
+  }
+
+  function applyUpdatedBatches(selected: Array<{ recipeId: number; newBatches: number }>) {
+    isDirty.current = true;
+    setItems(prev => prev.map(it => {
+      const match = selected.find(s => s.recipeId === it.recipeId);
+      if (!match) return it;
+      return {
+        ...it,
+        batchesTarget: match.newBatches,
+        tinCount: it.maxBatchesPerTin && match.newBatches > 0
+          ? Math.ceil(match.newBatches / it.maxBatchesPerTin)
+          : null,
+      };
+    }));
+    setUpdateModalOpen(false);
+    setUpdateCalcData(null);
+  }
 
   // ── Auto-save state ──────────────────────────────────────────────────────────
   const isDirty = useRef(false);
@@ -1497,13 +1574,30 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
             </div>
           </div>
 
-          <h3 className="font-semibold text-sm mb-2 flex items-center gap-2">
-            <BarChart2 className="w-4 h-4 text-primary" />
-            Production Items
-            <span className="text-muted-foreground font-normal text-xs">
-              ({includedCount} of {items.length} included · drag to reorder)
-            </span>
-          </h3>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-semibold text-sm flex items-center gap-2">
+              <BarChart2 className="w-4 h-4 text-primary" />
+              Production Items
+              <span className="text-muted-foreground font-normal text-xs">
+                ({includedCount} of {items.length} included · drag to reorder)
+              </span>
+            </h3>
+            <button
+              type="button"
+              onClick={handleUpdateFactoryNumber}
+              disabled={updateLoading || items.length === 0}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 border border-border rounded-lg bg-background hover:bg-secondary/60 transition-colors disabled:opacity-40"
+              title="Refresh factory numbers from live stock and recompute DPT suggestions — old values stay until you accept the new ones."
+            >
+              {updateLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+              Update Factory Number
+            </button>
+          </div>
+          {updateError && (
+            <div className="mb-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+              {updateError}
+            </div>
+          )}
 
           {items.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground bg-secondary/20 rounded-xl mb-3">
@@ -1619,7 +1713,184 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
           </p>
         </div>
       </DialogContent>
+      {updateModalOpen && updateCalcData && (
+        <UpdateFactoryDiffModal
+          currentItems={items}
+          calcData={updateCalcData}
+          onApply={applyUpdatedBatches}
+          onCancel={() => { setUpdateModalOpen(false); setUpdateCalcData(null); }}
+        />
+      )}
     </Dialog>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Update Factory Number — diff modal
+// ──────────────────────────────────────────────────────────────────────────────
+// Shown when the user clicks the "Update Factory Number" button in the
+// Edit Plan dialog. For every recipe in the current plan, compares the
+// saved batchesTarget against the freshly-calculated suggestedBatches
+// from /calculate (which is now driven by the predicted fridge stock).
+// User accepts/rejects per row; only accepted rows overwrite the local
+// items state on apply.
+interface UpdateFactoryDiffModalProps {
+  currentItems: PlanItem[];
+  calcData: CalcResponse;
+  onApply: (selected: Array<{ recipeId: number; newBatches: number }>) => void;
+  onCancel: () => void;
+}
+
+function UpdateFactoryDiffModal({ currentItems, calcData, onApply, onCancel }: UpdateFactoryDiffModalProps) {
+  const rows = currentItems.map(item => {
+    const calc = calcData.recipes.find(r => r.recipeId === item.recipeId);
+    const oldBatches = item.batchesTarget;
+    const newBatches = calc?.suggestedBatches ?? oldBatches;
+    const delta = newBatches - oldBatches;
+    return {
+      recipeId: item.recipeId,
+      recipeName: item.recipeName,
+      recipeColor: item.recipeColor,
+      oldBatches,
+      newBatches,
+      delta,
+      predictedFridgeStock: (calc as unknown as { predictedFridgeStock?: number })?.predictedFridgeStock ?? calc?.fridgeStock ?? 0,
+      hasCalc: !!calc,
+    };
+  });
+
+  // Default: pre-check every row that has a change (delta != 0). Rows
+  // without changes are rendered but unchecked so the user can tick
+  // them explicitly if they want to force-apply.
+  const [checked, setChecked] = useState<Record<number, boolean>>(() => {
+    const initial: Record<number, boolean> = {};
+    for (const row of rows) {
+      initial[row.recipeId] = row.delta !== 0 && row.hasCalc;
+    }
+    return initial;
+  });
+
+  const selectedCount = Object.values(checked).filter(Boolean).length;
+  const changedCount = rows.filter(r => r.delta !== 0).length;
+
+  function toggle(recipeId: number) {
+    setChecked(prev => ({ ...prev, [recipeId]: !prev[recipeId] }));
+  }
+
+  function apply() {
+    const selected = rows
+      .filter(r => checked[r.recipeId])
+      .map(r => ({ recipeId: r.recipeId, newBatches: r.newBatches }));
+    onApply(selected);
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
+      <div className="bg-card border border-border rounded-2xl shadow-xl max-w-2xl w-full max-h-[85vh] flex flex-col">
+        <div className="p-5 border-b border-border flex items-start justify-between gap-3">
+          <div>
+            <h2 className="font-display text-lg font-bold flex items-center gap-2">
+              <RotateCcw className="w-4 h-4 text-primary" />
+              Update Factory Number
+            </h2>
+            <p className="text-xs text-muted-foreground mt-1">
+              New DPT suggestions based on the latest predicted end-of-day fridge stock.
+              Tick the rows you want to apply — unticked rows keep their current values.
+              {" "}
+              <span className="font-medium">{changedCount}</span> of {rows.length} have changed.
+            </p>
+          </div>
+          <button
+            onClick={onCancel}
+            className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors flex-shrink-0"
+            title="Cancel"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5">
+          <div className="border border-border rounded-xl overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-secondary/30 border-b border-border">
+                <tr>
+                  <th className="w-8 py-2 px-2">
+                    <input
+                      type="checkbox"
+                      checked={rows.length > 0 && rows.every(r => checked[r.recipeId])}
+                      onChange={e => {
+                        const all = e.target.checked;
+                        setChecked(Object.fromEntries(rows.map(r => [r.recipeId, all && r.hasCalc])));
+                      }}
+                      className="rounded border-border cursor-pointer"
+                      title="Select all"
+                    />
+                  </th>
+                  <th className="py-2 px-3 text-left font-medium text-muted-foreground">Recipe</th>
+                  <th className="py-2 px-3 text-center font-medium text-muted-foreground">Predicted Factory #</th>
+                  <th className="py-2 px-3 text-center font-medium text-muted-foreground">Old → New</th>
+                  <th className="py-2 px-3 text-center font-medium text-muted-foreground">Δ</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/50">
+                {rows.map(row => {
+                  const isChecked = !!checked[row.recipeId];
+                  const deltaColor = row.delta > 0 ? "text-emerald-600" : row.delta < 0 ? "text-red-600" : "text-muted-foreground";
+                  return (
+                    <tr key={row.recipeId} className={cn("transition-colors", isChecked ? "bg-primary/5" : "hover:bg-secondary/20")}>
+                      <td className="py-2 px-2 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          disabled={!row.hasCalc}
+                          onChange={() => toggle(row.recipeId)}
+                          className="rounded border-border cursor-pointer disabled:opacity-40"
+                        />
+                      </td>
+                      <td className="py-2 px-3 font-medium" style={row.recipeColor ? { color: row.recipeColor } : undefined}>
+                        {row.recipeName}
+                        {!row.hasCalc && <span className="ml-2 text-[10px] text-muted-foreground font-normal">(no DPT data)</span>}
+                      </td>
+                      <td className="py-2 px-3 text-center tabular-nums text-muted-foreground">{row.predictedFridgeStock}</td>
+                      <td className="py-2 px-3 text-center tabular-nums">
+                        <span className="text-muted-foreground">{row.oldBatches}</span>
+                        <span className="mx-1.5 text-muted-foreground">→</span>
+                        <span className="font-semibold">{row.newBatches}</span>
+                      </td>
+                      <td className={cn("py-2 px-3 text-center tabular-nums font-bold", deltaColor)}>
+                        {row.delta === 0 ? "—" : row.delta > 0 ? `+${row.delta}` : row.delta}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="p-5 border-t border-border flex items-center justify-between">
+          <span className="text-xs text-muted-foreground">
+            {selectedCount} recipe{selectedCount !== 1 ? "s" : ""} selected
+          </span>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onCancel}
+              className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-xl transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={apply}
+              disabled={selectedCount === 0}
+              className="px-5 py-2 text-sm bg-primary text-primary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center gap-2 shadow-md shadow-primary/20 hover:opacity-90 transition-opacity"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              Apply Selected
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

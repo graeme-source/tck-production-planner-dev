@@ -369,6 +369,18 @@ async function runStartupMigrations() {
     await db.execute(sql`ALTER TABLE recipe_shopify_mappings ADD COLUMN IF NOT EXISTS wonky_variant_id TEXT`);
     await db.execute(sql`ALTER TABLE recipe_shopify_mappings ADD COLUMN IF NOT EXISTS wonky_product_title TEXT`);
     await db.execute(sql`ALTER TABLE recipe_shopify_mappings ADD COLUMN IF NOT EXISTS wonky_variant_title TEXT`);
+    // Factory-number accounting loop: idempotency table for the
+    // Shopify fulfilment decrement path (both the immediate Confirm &
+    // Complete call and the 5-minute safety-net poller dedupe
+    // through this primary key).
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS shopify_fulfilment_tracking (
+        shopify_order_id BIGINT PRIMARY KEY,
+        fulfilled_at TIMESTAMP NOT NULL,
+        processed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        source TEXT NOT NULL
+      )
+    `);
     // Founder custom tag panels (added for custom panel feature)
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS founder_custom_panels (
@@ -554,11 +566,15 @@ async function runStartupMigrations() {
       )
     `);
 
+    // Note: references app_users(id) — the canonical user table name.
+    // Historically this was written as users(id) which matches nothing
+    // and aborted the whole startup-migration run, so shopify_fulfilment_tracking
+    // and every subsequent DDL silently never ran.
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS improvement_comments (
         id SERIAL PRIMARY KEY,
         improvement_id INTEGER NOT NULL REFERENCES improvement_submissions(id) ON DELETE CASCADE,
-        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
         user_name TEXT,
         comment TEXT NOT NULL,
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
@@ -615,6 +631,12 @@ async function startup() {
     const { guardMarinadeSettings } = await import("./lib/seed-guard");
     await guardMarinadeSettings();
     startBackupScheduler();
+    // Factory-number fulfilment decrement safety net — catches orders
+    // fulfilled outside the TCK fulfilment UI. Idempotent via the
+    // shopify_fulfilment_tracking table. Lazily imported so the
+    // startup path can complete even if Shopify is unreachable.
+    const { startFulfilmentPoller } = await import("./lib/fulfilment-poller");
+    startFulfilmentPoller().catch(err => console.error("[fulfilment-poller] start failed:", err));
   } catch (err) {
     console.error(
       "Background startup tasks failed:",

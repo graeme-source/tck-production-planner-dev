@@ -440,6 +440,24 @@ export async function getRecentUnfulfilledOrders(daysBack = 30): Promise<Shopify
   return allOrders.filter(o => o.fulfillment_status !== "fulfilled");
 }
 
+/**
+ * Fetch a single order by its Shopify order ID, including line items.
+ * Used by the factory-number fulfilment decrement path — we need
+ * line_items to know which recipes/quantities to remove from the
+ * production fridge when Confirm & Complete fires.
+ */
+export async function getOrderById(orderId: number): Promise<ShopifyOrder | null> {
+  try {
+    const data = (await shopifyFetch(`/orders/${orderId}.json`, {
+      fields: "id,name,tags,created_at,fulfillment_status,line_items",
+    })) as { order: ShopifyOrder };
+    return data.order ?? null;
+  } catch (err) {
+    console.error(`[shopify] getOrderById(${orderId}) failed:`, err);
+    return null;
+  }
+}
+
 // Find a single order by its Shopify order name (e.g. "#1234" or "1234").
 export async function findOrderByName(name: string): Promise<ShopifyOrder | null> {
   const searchName = name.startsWith("#") ? name : `#${name}`;

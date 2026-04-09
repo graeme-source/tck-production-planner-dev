@@ -5,11 +5,17 @@ import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
 import * as z from "zod";
 import { resolveRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
-import { countProductsByTag, adjustInventoryLevel } from "../services/shopify";
+import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag } from "../services/shopify";
+import { FACTORY_NUMBER_CORE_MENU_ONLY } from "../lib/inventory-sync";
 
 const router: IRouter = Router();
 
-async function syncRecipeFridgeStock(recipeId: number, deltaQty: number) {
+/** Applies a delta to the latest production_fridge stock_entries row
+ *  for a given recipe. Positive delta = wrapping added packs, negative
+ *  delta = fulfilment removed packs. Floors at 0. Exported so the
+ *  inventory-sync helper can call it from the fulfilment decrement
+ *  path and the one-off reset endpoint. */
+export async function syncRecipeFridgeStock(recipeId: number, deltaQty: number) {
   const existing = await db
     .select({ id: stockEntriesTable.id, quantity: stockEntriesTable.quantity })
     .from(stockEntriesTable)
@@ -419,6 +425,78 @@ router.get("/calculate", async (req, res) => {
     }
   }
 
+  // ─── Predicted end-of-today fridge stock ───────────────────────────
+  // Two inputs feed the prediction: (1) remaining wrapping for TODAY's
+  // active plan (what the wrapping station still needs to push into the
+  // fridge), and (2) remaining fulfilment for today's dispatch (what the
+  // fulfilment station still needs to pull out). `today` is the real
+  // current calendar day, NOT the requested planDate — the operator
+  // building the plan at 3pm wants to know where the fridge will be by
+  // close of business, regardless of whether planDate is tomorrow or
+  // three days out.
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  const todayPlanItems = await db
+    .select({
+      recipeId: productionPlanItemsTable.recipeId,
+      batchesTarget: productionPlanItemsTable.batchesTarget,
+      fridgeQty: productionPlanItemsTable.fridgeQty,
+      portionsPerBatch: recipesTable.portionsPerBatch,
+      packSize: recipesTable.packSize,
+    })
+    .from(productionPlanItemsTable)
+    .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
+    .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(and(
+      eq(productionPlansTable.planDate, todayStr),
+      inArray(productionPlansTable.status, ["active", "prep", "building"]),
+    ));
+
+  const remainingWrappingPacksToday: Record<number, number> = {};
+  for (const row of todayPlanItems) {
+    if (row.recipeId == null) continue;
+    const portionsPerBatch = Number(row.portionsPerBatch) || 10;
+    const packSize = Number(row.packSize) || 1;
+    const packsPerBatch = portionsPerBatch / packSize;
+    const targetPacks = (row.batchesTarget ?? 0) * packsPerBatch;
+    const remaining = Math.max(0, targetPacks - (row.fridgeQty ?? 0));
+    remainingWrappingPacksToday[row.recipeId] = (remainingWrappingPacksToday[row.recipeId] ?? 0) + remaining;
+  }
+
+  const remainingFulfilmentPacksToday: Record<number, number> = {};
+  try {
+    const unfulfilled = await getUnfulfilledOrdersByTag(todayStr);
+    if (unfulfilled.length > 0) {
+      const mappingRows = await db.execute<{
+        recipe_id: number;
+        shopify_variant_id: string;
+        wonky_variant_id: string | null;
+        is_core_menu: boolean;
+      }>(sql`
+        SELECT m.recipe_id, m.shopify_variant_id, m.wonky_variant_id, r.is_core_menu
+        FROM recipe_shopify_mappings m
+        INNER JOIN recipes r ON r.id = m.recipe_id
+      `);
+      const variantToRecipe = new Map<string, { recipeId: number; isCoreMenu: boolean }>();
+      for (const m of mappingRows) {
+        if (m.shopify_variant_id) variantToRecipe.set(String(m.shopify_variant_id), { recipeId: m.recipe_id, isCoreMenu: m.is_core_menu });
+        if (m.wonky_variant_id) variantToRecipe.set(String(m.wonky_variant_id), { recipeId: m.recipe_id, isCoreMenu: m.is_core_menu });
+      }
+      for (const order of unfulfilled) {
+        for (const line of order.line_items ?? []) {
+          if (!line.variant_id) continue;
+          const mapping = variantToRecipe.get(String(line.variant_id));
+          if (!mapping) continue;
+          if (FACTORY_NUMBER_CORE_MENU_ONLY && !mapping.isCoreMenu) continue;
+          remainingFulfilmentPacksToday[mapping.recipeId] =
+            (remainingFulfilmentPacksToday[mapping.recipeId] ?? 0) + (line.quantity || 0);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[/calculate] prediction: failed to fetch unfulfilled orders for today, falling back to live stock", err);
+  }
+
   const shopifySalesPerDate: Record<string, Record<string, number>> = {};
   const shopifySalesCombined: Record<string, number> = {};
   const shopifyDatesLoaded = new Set<string>();
@@ -609,7 +687,22 @@ router.get("/calculate", async (req, res) => {
     const totalDispatchQty = dispatch1Qty + dispatch2Qty + dispatch3Qty;
 
     const prevProduction = Math.round(prevProductionPacks[recipeId] ?? 0);
-    const estimatedFactoryNumber = fridgeStock - dispatch1Qty + prevProduction;
+
+    // Prediction-based factory number (end-of-today). For core recipes this
+    // drives the DPT deficit/suggestion math. For non-core recipes while
+    // the feature flag is on, we fall back to the legacy formula so those
+    // recipes behave identically to before.
+    const isCore = r.isCoreMenu ?? false;
+    const wrapRemain = remainingWrappingPacksToday[recipeId] ?? 0;
+    const fulRemain = remainingFulfilmentPacksToday[recipeId] ?? 0;
+    const useNewPrediction = !FACTORY_NUMBER_CORE_MENU_ONLY || isCore;
+    const predictedFridgeStock = useNewPrediction
+      ? Math.max(0, Math.round(fridgeStock + wrapRemain - fulRemain))
+      : Math.round(fridgeStock);
+    const legacyEstimatedFactoryNumber = fridgeStock - dispatch1Qty + prevProduction;
+    const estimatedFactoryNumber = useNewPrediction
+      ? predictedFridgeStock
+      : Math.round(legacyEstimatedFactoryNumber);
 
     const recipeSource: "shopify" | "dpt" = (hasRecipeMatch && shopifyDatesLoaded.size > 0) ? "shopify" : "dpt";
     const effectivePacksSold = totalDispatchQty;
@@ -639,8 +732,11 @@ router.get("/calculate", async (req, res) => {
       maxBatchesPerTin: r.maxBatchesPerTin ? Number(r.maxBatchesPerTin) : null,
       sopUrl: r.sopUrl ?? null,
       color: r.color ?? null,
-      isCoreMenu: r.isCoreMenu ?? false,
+      isCoreMenu: isCore,
       fridgeStock: Math.round(fridgeStock),
+      predictedFridgeStock,
+      remainingWrappingPacksToday: Math.round(wrapRemain),
+      remainingFulfilmentPacksToday: Math.round(fulRemain),
       prevProduction,
       estimatedFactoryNumber: Math.round(estimatedFactoryNumber),
       dispatch1Qty,

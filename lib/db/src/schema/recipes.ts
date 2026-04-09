@@ -42,6 +42,9 @@ export const recipeIngredientsTable = pgTable("recipe_ingredients", {
   includeInFillingMix: boolean("include_in_filling_mix").notNull().default(false),
   quid: boolean("quid").notNull().default(false),
   isTopping: boolean("is_topping").notNull().default(false),
+  // Show filling items (e.g. meat) in the prep-bases station checklist,
+  // so the prep team can prepare them ahead of the main prep flow.
+  showInPrep: boolean("show_in_prep").notNull().default(false),
   assemblyOrder: integer("assembly_order"),
   mixingOverage: numeric("mixing_overage", { precision: 10, scale: 4 }).notNull().default("0"),
 });
@@ -55,6 +58,7 @@ export const recipeSubRecipesTable = pgTable("recipe_sub_recipes", {
   includeInFillingMix: boolean("include_in_filling_mix").notNull().default(false),
   quid: boolean("quid").notNull().default(false),
   isTopping: boolean("is_topping").notNull().default(false),
+  showInPrep: boolean("show_in_prep").notNull().default(false),
   assemblyOrder: integer("assembly_order"),
   mixingOverage: numeric("mixing_overage", { precision: 10, scale: 4 }).notNull().default("0"),
 });
