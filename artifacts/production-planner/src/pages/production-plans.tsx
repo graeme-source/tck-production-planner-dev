@@ -2906,11 +2906,11 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
               const statusConfig = STATUS_CONFIG[plan.status as keyof typeof STATUS_CONFIG] ?? STATUS_CONFIG.draft;
               const StatusIcon = statusConfig.icon;
               // The list endpoint now returns a lightweight items array
-              // (id/recipeId/recipeName/batchesTarget/orderPosition). This
-              // field isn't in the generated ProductionPlan type yet, so
-              // read it through a local cast.
+              // (id/recipeId/recipeName/recipeColor/batchesTarget/
+              // orderPosition). This field isn't in the generated
+              // ProductionPlan type yet, so read it through a local cast.
               const planItems = (plan as unknown as {
-                items?: Array<{ id: number; recipeId: number; recipeName: string; batchesTarget: number; orderPosition: number }>
+                items?: Array<{ id: number; recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; orderPosition: number }>
               }).items ?? [];
 
               return (
@@ -2960,24 +2960,29 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
                     </div>
                   </div>
 
-                  {/* Inline recipe breakdown — shown by default so the user
-                      can flick between days and instantly see the lineup
-                      without drilling into each plan. */}
+                  {/* Inline recipe breakdown — single column, colour-coded
+                      using each recipe's own colour (same pattern as the
+                      dashboard recipe list and the plan detail view) so
+                      the user can flick between days and instantly read
+                      the lineup at a glance. */}
                   {planItems.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-border/60">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
-                        {planItems.map(item => (
+                    <div className="mt-3 pt-3 border-t border-border/60 space-y-1">
+                      {planItems.map(item => {
+                        const colorStyle = item.recipeColor ? { color: item.recipeColor } : undefined;
+                        return (
                           <div
                             key={item.id}
                             className="flex items-baseline justify-between gap-3 text-sm min-w-0"
                           >
-                            <span className="truncate text-foreground">{item.recipeName}</span>
-                            <span className="tabular-nums font-semibold text-primary whitespace-nowrap">
+                            <span className="truncate font-medium" style={colorStyle}>
+                              {item.recipeName}
+                            </span>
+                            <span className="tabular-nums font-bold whitespace-nowrap" style={colorStyle}>
                               {item.batchesTarget} {item.batchesTarget === 1 ? "batch" : "batches"}
                             </span>
                           </div>
-                        ))}
-                      </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>

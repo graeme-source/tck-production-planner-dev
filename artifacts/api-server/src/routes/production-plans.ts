@@ -213,6 +213,7 @@ router.get("/", async (req, res) => {
       planId: productionPlanItemsTable.planId,
       recipeId: productionPlanItemsTable.recipeId,
       recipeName: recipesTable.name,
+      recipeColor: recipesTable.color,
       batchesTarget: productionPlanItemsTable.batchesTarget,
       orderPosition: productionPlanItemsTable.orderPosition,
     })
@@ -236,6 +237,7 @@ router.get("/", async (req, res) => {
       id: it.id,
       recipeId: it.recipeId,
       recipeName: it.recipeName,
+      recipeColor: it.recipeColor,
       batchesTarget: it.batchesTarget,
       orderPosition: it.orderPosition,
     })),
