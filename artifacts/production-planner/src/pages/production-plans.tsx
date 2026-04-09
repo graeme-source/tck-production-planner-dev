@@ -2964,25 +2964,33 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
                       using each recipe's own colour (same pattern as the
                       dashboard recipe list and the plan detail view) so
                       the user can flick between days and instantly read
-                      the lineup at a glance. */}
+                      the lineup at a glance. A single "Batches" header
+                      is printed once above the count column instead of
+                      repeating the word on every row. */}
                   {planItems.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-border/60 space-y-1">
-                      {planItems.map(item => {
-                        const colorStyle = item.recipeColor ? { color: item.recipeColor } : undefined;
-                        return (
-                          <div
-                            key={item.id}
-                            className="flex items-baseline justify-between gap-3 text-sm min-w-0"
-                          >
-                            <span className="truncate font-medium" style={colorStyle}>
-                              {item.recipeName}
-                            </span>
-                            <span className="tabular-nums font-bold whitespace-nowrap" style={colorStyle}>
-                              {item.batchesTarget} {item.batchesTarget === 1 ? "batch" : "batches"}
-                            </span>
-                          </div>
-                        );
-                      })}
+                    <div className="mt-3 pt-3 border-t border-border/60">
+                      <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
+                        <span>Recipe</span>
+                        <span>Batches</span>
+                      </div>
+                      <div className="space-y-1">
+                        {planItems.map(item => {
+                          const colorStyle = item.recipeColor ? { color: item.recipeColor } : undefined;
+                          return (
+                            <div
+                              key={item.id}
+                              className="flex items-baseline justify-between gap-3 text-sm min-w-0"
+                            >
+                              <span className="truncate font-medium" style={colorStyle}>
+                                {item.recipeName}
+                              </span>
+                              <span className="tabular-nums font-bold whitespace-nowrap" style={colorStyle}>
+                                {item.batchesTarget}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </div>
