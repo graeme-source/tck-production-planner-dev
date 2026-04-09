@@ -147,7 +147,7 @@ interface PackingSpeedData {
   source?: string;
 }
 
-type TabId = "kpis" | "breaks" | "temperature" | "packing-speed" | "improvements" | "andon";
+type TabId = "kpis" | "breaks" | "temperature" | "packing-speed" | "improvements" | "issues";
 
 interface ImprovementRecord {
   id: number;
@@ -237,12 +237,14 @@ function DateShortcutsDropdown({ onSelect }: { onSelect: (from: string, to: stri
   );
 }
 
-const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "packing-speed", "improvements", "andon"];
+const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "packing-speed", "improvements", "issues"];
 
 export default function Reports() {
   const search = useSearch();
   const [, navigate] = useLocation();
-  const queryTab = new URLSearchParams(search).get("tab") as TabId | null;
+  const rawTab = new URLSearchParams(search).get("tab");
+  // Backward compat: old "andon" tab id redirects to "issues"
+  const queryTab = (rawTab === "andon" ? "issues" : rawTab) as TabId | null;
   const initialTab: TabId = queryTab && VALID_TABS.includes(queryTab) ? queryTab : "kpis";
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);
   const { state } = useAuth();
@@ -258,7 +260,7 @@ export default function Reports() {
   const [fromDate, setFromDate] = useState(todayStr);
   const [toDate, setToDate] = useState(todayStr);
 
-  const showDatePicker = activeTab !== "packing-speed" && activeTab !== "improvements" && activeTab !== "andon";
+  const showDatePicker = activeTab !== "packing-speed" && activeTab !== "improvements" && activeTab !== "issues";
 
   return (
     <div className="space-y-6">
@@ -284,8 +286,8 @@ export default function Reports() {
           <TabButton active={activeTab === "improvements"} onClick={() => switchTab("improvements")}>
             <Lightbulb className="w-4 h-4" /> Improvements & Struggles
           </TabButton>
-          <TabButton active={activeTab === "andon"} onClick={() => switchTab("andon")}>
-            <AlertTriangle className="w-4 h-4" /> Andon Log
+          <TabButton active={activeTab === "issues"} onClick={() => switchTab("issues")}>
+            <AlertTriangle className="w-4 h-4" /> Issue Log
           </TabButton>
         </div>
         {showDatePicker && (
@@ -318,7 +320,7 @@ export default function Reports() {
       {activeTab === "temperature" && <TemperatureRecordsTab fromDate={fromDate} toDate={toDate} />}
       {activeTab === "packing-speed" && <PackingSpeedTab />}
       {activeTab === "improvements" && <ImprovementsTab userRole={userRole} currentUserName={state.status === "authenticated" ? state.user.name : null} />}
-      {activeTab === "andon" && <AndonLogTab userRole={userRole} />}
+      {activeTab === "issues" && <AndonLogTab userRole={userRole} />}
     </div>
   );
 }
@@ -1261,6 +1263,7 @@ const IMPROVEMENT_PROGRESS_OPTIONS = [
   { value: "submitted_for_review", label: "Submitted for Review" },
   { value: "acknowledged", label: "Acknowledged" },
   { value: "approved", label: "Approved" },
+  { value: "in_development", label: "In Development" },
   { value: "testing", label: "Testing" },
   { value: "complete", label: "Complete" },
   { value: "rejected", label: "Rejected" },
@@ -1270,6 +1273,7 @@ function statusRowClass(status: string) {
   if (status === "submitted_for_review") return "bg-yellow-50/60 dark:bg-yellow-900/10";
   if (status === "acknowledged") return "bg-violet-50/60 dark:bg-violet-900/10";
   if (status === "approved") return "bg-green-50/60 dark:bg-green-900/10";
+  if (status === "in_development") return "bg-amber-50/60 dark:bg-amber-900/10";
   if (status === "testing") return "bg-blue-50/60 dark:bg-blue-900/10";
   if (status === "complete") return "bg-emerald-50/60 dark:bg-emerald-900/10";
   if (status === "rejected") return "bg-red-50/60 dark:bg-red-900/10";
@@ -1280,6 +1284,7 @@ function statusBadgeClass(status: string) {
   if (status === "submitted_for_review") return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300";
   if (status === "acknowledged") return "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400";
   if (status === "approved") return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";
+  if (status === "in_development") return "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400";
   if (status === "testing") return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
   if (status === "complete") return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400 font-semibold";
   if (status === "rejected") return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
@@ -1290,6 +1295,7 @@ function statusSelectClass(status: string) {
   if (status === "submitted_for_review") return "border-yellow-300 bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300 dark:border-yellow-700";
   if (status === "acknowledged") return "border-violet-300 bg-violet-50 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400 dark:border-violet-700";
   if (status === "approved") return "border-green-300 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400 dark:border-green-700";
+  if (status === "in_development") return "border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700";
   if (status === "testing") return "border-blue-300 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-700";
   if (status === "complete") return "border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-700";
   if (status === "rejected") return "border-red-300 bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400 dark:border-red-700";
@@ -1769,6 +1775,15 @@ const ANDON_CATEGORY_LABELS: Record<string, string> = {
   other: "Other",
 };
 
+interface AndonComment {
+  id: number;
+  andonId: number;
+  userId: number | null;
+  userName: string | null;
+  comment: string;
+  createdAt: string;
+}
+
 function AndonLogTab({ userRole }: { userRole: string }) {
   const [issues, setIssues] = useState<AndonIssueRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1777,7 +1792,54 @@ function AndonLogTab({ userRole }: { userRole: string }) {
   const [categoryFilter, setCategoryFilter] = useState("");
   const [severityFilter, setSeverityFilter] = useState("");
 
+  // Detail dialog + comments state (mirrors ImprovementsTab)
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [comments, setComments] = useState<AndonComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [newComment, setNewComment] = useState("");
+  const [postingComment, setPostingComment] = useState(false);
+  const commentsEndRef = useRef<HTMLDivElement>(null);
+
+  const selectedIssue = selectedId !== null ? issues.find(i => i.id === selectedId) ?? null : null;
+
   const isManager = userRole === "admin" || userRole === "manager";
+
+  const loadComments = useCallback(async (id: number) => {
+    setCommentsLoading(true);
+    try {
+      const res = await fetch(`${BASE}/api/andon/${id}/comments`, { credentials: "include" });
+      if (res.ok) setComments(await res.json());
+    } catch { /* ignore */ }
+    setCommentsLoading(false);
+  }, []);
+
+  const openDetail = (id: number) => {
+    setSelectedId(id);
+    setNewComment("");
+    loadComments(id);
+  };
+
+  const postComment = async () => {
+    if (!selectedId || !newComment.trim()) return;
+    setPostingComment(true);
+    try {
+      const res = await fetch(`${BASE}/api/andon/${selectedId}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ comment: newComment.trim() }),
+      });
+      if (res.ok) {
+        const row = await res.json();
+        setComments(prev => [...prev, row]);
+        setNewComment("");
+        setTimeout(() => commentsEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+      }
+    } catch {
+      toast({ title: "Failed to post comment", variant: "destructive" });
+    }
+    setPostingComment(false);
+  };
 
   async function load() {
     setLoading(true);
@@ -1860,7 +1922,7 @@ function AndonLogTab({ userRole }: { userRole: string }) {
       ) : issues.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border p-12 text-center">
           <AlertTriangle className="w-10 h-10 mx-auto mb-3 opacity-30" />
-          <p className="font-medium text-muted-foreground">No Andon issues found</p>
+          <p className="font-medium text-muted-foreground">No issues found</p>
         </div>
       ) : (
         <div className="rounded-2xl border border-border bg-card overflow-x-auto">
@@ -1880,7 +1942,11 @@ function AndonLogTab({ userRole }: { userRole: string }) {
             </thead>
             <tbody className="divide-y divide-border/50">
               {issues.map(issue => (
-                <tr key={issue.id} className="hover:bg-secondary/10 transition-colors align-top">
+                <tr
+                  key={issue.id}
+                  onClick={() => openDetail(issue.id)}
+                  className="hover:bg-secondary/20 cursor-pointer transition-colors align-top"
+                >
                   <td className="px-4 py-3">
                     <span className={cn(
                       "flex items-center gap-1.5 text-xs font-bold",
@@ -1926,7 +1992,7 @@ function AndonLogTab({ userRole }: { userRole: string }) {
                     )}
                   </td>
                   {isManager && (
-                    <td className="px-4 py-3 text-center">
+                    <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
                       <div className="flex flex-col gap-1.5 items-center">
                         {!issue.acknowledgedAt && (
                           <button
@@ -1960,6 +2026,161 @@ function AndonLogTab({ userRole }: { userRole: string }) {
           </table>
         </div>
       )}
+
+      {/* Detail dialog (mirrors ImprovementsTab) */}
+      <Dialog open={selectedId !== null} onOpenChange={open => { if (!open) setSelectedId(null); }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+          {selectedIssue && (
+            <>
+              <DialogHeader>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={cn(
+                    "flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold",
+                    selectedIssue.severity === "red"
+                      ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                      : "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+                  )}>
+                    <span className={cn("w-2 h-2 rounded-full", selectedIssue.severity === "red" ? "bg-red-500" : "bg-yellow-400")} />
+                    {selectedIssue.severity === "red" ? "Serious" : "Minor"}
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary text-muted-foreground capitalize">
+                    {ANDON_CATEGORY_LABELS[selectedIssue.category] ?? selectedIssue.category}
+                  </span>
+                  {selectedIssue.resolvedAt ? (
+                    <span className="px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 font-semibold">Resolved</span>
+                  ) : selectedIssue.acknowledgedAt ? (
+                    <span className="px-2 py-0.5 rounded-full text-xs bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400">Acknowledged</span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-full text-xs bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300">Open</span>
+                  )}
+                </div>
+                <DialogTitle className="text-xl">
+                  {selectedIssue.description && selectedIssue.description.trim()
+                    ? selectedIssue.description.split("\n")[0].slice(0, 100)
+                    : `${ANDON_CATEGORY_LABELS[selectedIssue.category] ?? selectedIssue.category} issue`}
+                </DialogTitle>
+                <DialogDescription className="text-sm text-muted-foreground">
+                  {STATION_LABELS_REPORT[selectedIssue.station] ?? selectedIssue.station}
+                  {" · "}
+                  {selectedIssue.reportedByName ?? "Unknown"}
+                  {" · "}
+                  {selectedIssue.createdAt ? format(new Date(selectedIssue.createdAt), "d MMM yyyy, HH:mm") : "—"}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="flex-1 overflow-y-auto space-y-4 mt-2">
+                {/* Full description */}
+                {selectedIssue.description && (
+                  <div className="bg-secondary/30 rounded-xl p-4">
+                    <p className="text-sm font-medium text-muted-foreground mb-1">Description</p>
+                    <p className="text-sm whitespace-pre-wrap">{selectedIssue.description}</p>
+                  </div>
+                )}
+
+                {/* Resolution metadata */}
+                {(selectedIssue.acknowledgedAt || selectedIssue.resolvedAt) && (
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    {selectedIssue.acknowledgedAt && (
+                      <div className="bg-violet-50/50 dark:bg-violet-950/20 border border-violet-200/50 dark:border-violet-800/50 rounded-xl px-3 py-2">
+                        <p className="font-medium text-violet-700 dark:text-violet-400">Acknowledged</p>
+                        <p className="text-muted-foreground">{selectedIssue.acknowledgedByName ?? "—"}</p>
+                        <p className="text-muted-foreground">{format(new Date(selectedIssue.acknowledgedAt), "d MMM yyyy, HH:mm")}</p>
+                      </div>
+                    )}
+                    {selectedIssue.resolvedAt && (
+                      <div className="bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/50 dark:border-emerald-800/50 rounded-xl px-3 py-2">
+                        <p className="font-medium text-emerald-700 dark:text-emerald-400">Resolved</p>
+                        <p className="text-muted-foreground">{selectedIssue.resolvedByName ?? "—"}</p>
+                        <p className="text-muted-foreground">{format(new Date(selectedIssue.resolvedAt), "d MMM yyyy, HH:mm")}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Manager quick actions */}
+                {isManager && (!selectedIssue.acknowledgedAt || !selectedIssue.resolvedAt) && (
+                  <div className="flex gap-2">
+                    {!selectedIssue.acknowledgedAt && (
+                      <button
+                        onClick={() => acknowledge(selectedIssue.id)}
+                        disabled={actioningId === selectedIssue.id}
+                        className="flex items-center gap-1.5 text-sm px-3 py-2 border border-border rounded-lg hover:bg-secondary transition-colors disabled:opacity-50"
+                      >
+                        <CheckCircle className="w-4 h-4" />
+                        Acknowledge
+                      </button>
+                    )}
+                    {!selectedIssue.resolvedAt && (
+                      <button
+                        onClick={() => resolve(selectedIssue.id)}
+                        disabled={actioningId === selectedIssue.id}
+                        className="flex items-center gap-1.5 text-sm px-3 py-2 border border-emerald-500 text-emerald-600 dark:text-emerald-400 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors disabled:opacity-50"
+                      >
+                        <CheckCircle className="w-4 h-4" />
+                        Resolve
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Comments section */}
+                <div className="border-t border-border pt-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <MessageSquare className="w-4 h-4 text-muted-foreground" />
+                    <p className="text-sm font-semibold">Comments ({comments.length})</p>
+                  </div>
+
+                  {commentsLoading ? (
+                    <div className="flex items-center justify-center py-6 text-muted-foreground">
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />Loading...
+                    </div>
+                  ) : comments.length === 0 ? (
+                    <p className="text-sm text-muted-foreground italic py-3">No comments yet. Be the first to add an update.</p>
+                  ) : (
+                    <div className="space-y-3 max-h-[240px] overflow-y-auto pr-1">
+                      {comments.map(c => (
+                        <div key={c.id} className="bg-secondary/20 rounded-lg px-3.5 py-2.5">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-sm font-medium">{c.userName ?? "Unknown"}</span>
+                            <span className="text-xs text-muted-foreground">{format(new Date(c.createdAt), "d MMM yyyy, HH:mm")}</span>
+                          </div>
+                          <p className="text-sm whitespace-pre-wrap">{c.comment}</p>
+                        </div>
+                      ))}
+                      <div ref={commentsEndRef} />
+                    </div>
+                  )}
+
+                  {/* Add comment input */}
+                  <div className="flex items-start gap-2 mt-3">
+                    <textarea
+                      value={newComment}
+                      onChange={e => setNewComment(e.target.value)}
+                      placeholder="Add a comment or update..."
+                      rows={2}
+                      className="flex-1 px-3 py-2 border border-border rounded-lg text-sm bg-background resize-none focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                      onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) postComment(); }}
+                    />
+                    <button
+                      onClick={postComment}
+                      disabled={!newComment.trim() || postingComment}
+                      className={cn(
+                        "px-3 py-2 rounded-lg transition-all mt-0.5",
+                        newComment.trim()
+                          ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow active:scale-95"
+                          : "bg-secondary text-muted-foreground cursor-not-allowed"
+                      )}
+                    >
+                      {postingComment ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">Press Cmd+Enter to send</p>
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -8,6 +8,7 @@ export const improvementProgressStatusEnum = pgEnum("improvement_progress_status
   "submitted_for_review",
   "acknowledged",
   "approved",
+  "in_development",
   "testing",
   "complete",
   "rejected",
@@ -76,8 +77,18 @@ export const improvementCommentsTable = pgTable("improvement_comments", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export const andonCommentsTable = pgTable("andon_comments", {
+  id: serial("id").primaryKey(),
+  andonId: integer("andon_id").notNull().references(() => andonIssuesTable.id, { onDelete: "cascade" }),
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  userName: text("user_name"),
+  comment: text("comment").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export type ImprovementSubmission = typeof improvementSubmissionsTable.$inferSelect;
 export type AndonIssue = typeof andonIssuesTable.$inferSelect;
 export type ImprovementComment = typeof improvementCommentsTable.$inferSelect;
+export type AndonComment = typeof andonCommentsTable.$inferSelect;
 export type InsertImprovementSubmission = z.infer<typeof insertImprovementSubmissionSchema>;
 export type InsertAndonIssue = z.infer<typeof insertAndonIssueSchema>;
