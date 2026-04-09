@@ -1,8 +1,9 @@
 import React from "react";
 import { useState, useEffect, useCallback, useRef } from "react";
-import { CalendarCheck } from "lucide-react";
+import { CalendarCheck, AlertTriangle } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
+import { toast } from "@/hooks/use-toast";
 import type { PrepRequirementItem } from "@workspace/api-client-react";
 
 export function fmtQty(q: number, unit: string): string {
@@ -172,4 +173,78 @@ export function PrepDateBanner({
       </div>
     </div>
   );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PrepDraftBanner — shown above prep stations when the next upcoming plan is
+// still in draft status. The prep crew can see all prep data but completions
+// are blocked (both in the UI and at the API) until the plan is activated.
+// ──────────────────────────────────────────────────────────────────────────────
+export function PrepDraftBanner({
+  planId,
+  planDate,
+  planName,
+  onActivated,
+}: {
+  planId: number;
+  planDate: string;
+  planName?: string | null;
+  onActivated?: () => void;
+}) {
+  const [activating, setActivating] = useState(false);
+  const dateLabel = format(parseISO(planDate), "EEE d MMM");
+
+  const activate = async () => {
+    setActivating(true);
+    try {
+      const res = await fetch(`/api/production-plans/${planId}`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "active" }),
+      });
+      if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
+      toast({ title: "Plan activated", description: `${planName ?? "Plan"} is now active — you can start prepping.` });
+      onActivated?.();
+    } catch (e) {
+      toast({
+        title: "Failed to activate plan",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    } finally {
+      setActivating(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/30 p-4 flex items-center gap-3">
+      <AlertTriangle className="w-7 h-7 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+      <div className="flex-1 min-w-0">
+        <h3 className="font-bold text-amber-900 dark:text-amber-200 text-base leading-tight">
+          Draft plan — activate before starting prep
+        </h3>
+        <p className="text-sm text-amber-800 dark:text-amber-300 leading-snug mt-0.5">
+          {planName ?? "This plan"} ({dateLabel}) is still a draft. You can see what's needed below,
+          but completions are locked until it's activated. Batch numbers may still change while draft.
+        </p>
+      </div>
+      <button
+        onClick={activate}
+        disabled={activating}
+        className="px-4 py-2 rounded-lg bg-amber-600 text-white font-semibold hover:bg-amber-700 disabled:opacity-50 flex-shrink-0 whitespace-nowrap"
+      >
+        {activating ? "Activating…" : "Activate now"}
+      </button>
+    </div>
+  );
+}
+
+/** Shared toast helper for stations blocking actions when the plan is draft. */
+export function toastDraftBlocked() {
+  toast({
+    title: "Plan is a draft",
+    description: "Activate the plan before recording completions.",
+    variant: "destructive",
+  });
 }

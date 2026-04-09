@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { BreakTracker } from "../shared/break-tracker";
-import { PrepDateBanner, useNextActivePlan, fmtQty } from "../shared/prep-helpers";
+import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtQty, toastDraftBlocked } from "../shared/prep-helpers";
 import type { NextActivePlan } from "../shared/prep-helpers";
 import { PrepSubNav } from "./prep-hub";
 
@@ -94,6 +94,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const { data: nextPlanData, isLoading: isNextPlanLoading } = useNextActivePlan(plan.planDate);
   const nextPlan = nextPlanData as NextActivePlan | null;
   const noFuturePlan = !isNextPlanLoading && nextPlan != null && nextPlan.planId == null;
+  const isDraft = nextPlan?.status === "draft";
   const targetPlanId = noFuturePlan ? plan.id : (nextPlan?.planId ?? plan.id);
   const { data, loading, refetch } = useMainPrepData(targetPlanId);
   const [stockValues, setStockValues] = useState<Record<number, string>>({});
@@ -282,6 +283,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
 
   const toggleTin = async (ingredientId: number, recipeId: number, tinNumber: number, isSubRecipe?: boolean) => {
     if (isOnBreak) return;
+    if (isDraft) { toastDraftBlocked(); return; }
     activeIngIdRef.current = ingredientId;
     postPresence(ingredientId);
     const existing = getCompletion(ingredientId, recipeId, tinNumber, isSubRecipe);
@@ -309,6 +311,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const saveStockCheck = async (ingredientId: number) => {
     const val = stockValues[ingredientId];
     if (val === undefined || val === "") return;
+    if (isDraft) { toastDraftBlocked(); return; }
     setSavingStock(s => ({ ...s, [ingredientId]: true }));
     const cd = nextPlan?.planDate ?? plan.planDate;
     await runStockCheck(async (signal) => {
@@ -378,6 +381,13 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
 
   return (
     <div className="space-y-4">
+      {isDraft && nextPlan?.planId != null && nextPlan?.planDate && (
+        <PrepDraftBanner
+          planId={nextPlan.planId}
+          planDate={nextPlan.planDate}
+          planName={nextPlan.planName}
+        />
+      )}
       <PrepDateBanner
         currentPlanDate={plan.planDate}
         targetPlanDate={nextPlan?.planDate ?? null}

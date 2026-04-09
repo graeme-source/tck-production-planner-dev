@@ -12,7 +12,7 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { BreakTracker } from "../shared/break-tracker";
-import { PrepDateBanner, useNextActivePlan, fmtQty } from "../shared/prep-helpers";
+import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtQty, toastDraftBlocked } from "../shared/prep-helpers";
 import type { NextActivePlan } from "../shared/prep-helpers";
 import { PrepSubNav } from "./prep-hub";
 import { useMainPrepData } from "./main-prep-station";
@@ -616,12 +616,14 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
   const { data: nextPlanData, isLoading: isNextPlanLoading } = useNextActivePlan(plan.planDate);
   const nextPlan = nextPlanData as NextActivePlan | null;
   const noFuturePlan = !isNextPlanLoading && nextPlan != null && nextPlan.planId == null;
+  const isDraft = nextPlan?.status === "draft";
   const targetPlanId = noFuturePlan ? plan.id : (nextPlan?.planId ?? plan.id);
   const { subRecipes: planSubRecipes, loading: subRecipesLoading } = usePlanSubRecipeRequirements(targetPlanId);
   const { data: allSubRecipesData } = useListSubRecipes();
   const allSubRecipes = (allSubRecipesData ?? []) as SubRecipe[];
 
   const handleSubRecipeDone = (subRecipeId: number) => {
+    if (isDraft) { toastDraftBlocked(); return; }
     setCompletedSubRecipeIds(prev => new Set([...prev, subRecipeId]));
   };
 
@@ -704,6 +706,7 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
 
   const toggleTin = async (ingredientId: number, recipeId: number, tinNumber: number) => {
     if (isOnBreak) return;
+    if (isDraft) { toastDraftBlocked(); return; }
     const existing = getCompletion(ingredientId, recipeId, tinNumber);
     if (existing) {
       await fetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
@@ -750,6 +753,14 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
 
   return (
     <div className="space-y-4">
+      {isDraft && nextPlan?.planId != null && nextPlan?.planDate && (
+        <PrepDraftBanner
+          planId={nextPlan.planId}
+          planDate={nextPlan.planDate}
+          planName={nextPlan.planName}
+          onActivated={refetch}
+        />
+      )}
       <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
 
       <PrepSubNav planId={plan.id} current="prep_bases" />

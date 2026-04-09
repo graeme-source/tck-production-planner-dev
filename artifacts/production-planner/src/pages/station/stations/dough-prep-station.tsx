@@ -15,7 +15,7 @@ import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { ClientError } from "@/lib/with-retry";
 import { BreakTracker } from "../shared/break-tracker";
-import { PrepDateBanner } from "../shared/prep-helpers";
+import { PrepDateBanner, PrepDraftBanner, toastDraftBlocked } from "../shared/prep-helpers";
 import { getStationCount } from "../shared/constants";
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -49,7 +49,7 @@ interface DoughPrepData {
     ballWeightG: number;
     doughSubRecipeName: string;
   }>;
-  nextPlan: { id: number; planDate: string; name: string } | null;
+  nextPlan: { id: number; planDate: string; name: string; status?: string } | null;
   nextPlanItems?: Array<{
     id: number;
     recipeId: number | null;
@@ -148,6 +148,7 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const nextPlanItems = doughData?.nextPlanItems ?? [];
   const trackingItems = nextPlanItems.length > 0 ? nextPlanItems : items;
   const trackingPlanId = nextPlanId ?? plan.id;
+  const isDraft = doughData?.nextPlan?.status === "draft";
 
   const totalComplete = trackingItems.reduce((s, it) => {
     const sc = (it as any).stationCompletions;
@@ -162,6 +163,7 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const BALLS_PER_TRAY = 4;
 
   const addBatch = async (item: { id: number; batchesTarget?: number | null }): Promise<boolean> => {
+    if (isDraft) { toastDraftBlocked(); return false; }
     try {
       await guardedFetch(`/api/production-plans/${trackingPlanId}/batch-completions`, {
         method: "POST",
@@ -184,6 +186,7 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const removeBatch = async (item: { id: number; stationCompletions?: Record<string, number> }) => {
     const sc = (item as any).stationCompletions;
     if ((sc?.dough_prep ?? 0) === 0) return;
+    if (isDraft) { toastDraftBlocked(); return; }
     await runRemoveBatch(async (signal) => {
       await guardedFetch(`/api/production-plans/${trackingPlanId}/batch-completions/last`, {
         method: "DELETE",
@@ -196,6 +199,7 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
 
   const toggleIngredient = (mixNum: number, ingredientKey: string) => {
     if (isOnBreak) return;
+    if (isDraft) { toastDraftBlocked(); return; }
     setCheckedIngredients(prev => {
       const mixSet = new Set(prev[mixNum] ?? []);
       if (mixSet.has(ingredientKey)) mixSet.delete(ingredientKey);
@@ -206,6 +210,7 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
 
   const completeMix = (mixNum: number) => {
     if (isOnBreak) return;
+    if (isDraft) { toastDraftBlocked(); return; }
     setCompletedMixes(prev => new Set(prev).add(mixNum));
     if (mixNum < mixCount) {
       setActiveMix(mixNum + 1);
@@ -355,6 +360,14 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
 
   return (
     <div className="space-y-4">
+      {isDraft && doughData.nextPlan && (
+        <PrepDraftBanner
+          planId={doughData.nextPlan.id}
+          planDate={doughData.nextPlan.planDate}
+          planName={doughData.nextPlan.name}
+          onActivated={refetchDough}
+        />
+      )}
       {doughData.nextPlan && (
         <PrepDateBanner
           currentPlanDate={plan.planDate}

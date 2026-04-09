@@ -73,6 +73,24 @@ async function syncRecipeFreezerStock(recipeId: number, deltaQty: number) {
   }
 }
 
+/** Returns the plan's status if the plan exists and is a draft; null
+ *  if it doesn't exist or is in any other status. Used by completion
+ *  endpoints to reject writes against draft plans (prep crew must
+ *  activate a plan before recording work — batchesTarget can still
+ *  change while draft). */
+async function planDraftStatus(planId: number): Promise<string | null> {
+  if (!Number.isFinite(planId)) return null;
+  const [row] = await db
+    .select({ status: productionPlansTable.status })
+    .from(productionPlansTable)
+    .where(eq(productionPlansTable.id, planId))
+    .limit(1);
+  if (!row) return null;
+  return row.status === "draft" ? "draft" : null;
+}
+
+const DRAFT_COMPLETION_ERROR = "Plan is a draft — activate before recording completions.";
+
 function julianBatchNumber(date: Date): number {
   const year = date.getFullYear() % 100;
   const start = new Date(date.getFullYear(), 0, 0);
@@ -850,7 +868,7 @@ router.get("/next-active", async (req, res) => {
     .from(productionPlansTable)
     .where(and(
       gt(productionPlansTable.planDate, afterDateStr),
-      eq(productionPlansTable.status, "active")
+      inArray(productionPlansTable.status, ["draft", "active"])
     ))
     .orderBy(asc(productionPlansTable.planDate), asc(productionPlansTable.id));
 
@@ -1154,6 +1172,8 @@ router.post("/:id/batch-completions", async (req, res) => {
   const { planItemId, stationType, startedAt, completedAt } = req.body;
   const sessionUserId = (req.session as { userId?: number }).userId ?? null;
 
+  if (await planDraftStatus(planId)) { res.status(409).json({ error: DRAFT_COMPLETION_ERROR }); return; }
+
   // Verify that the planItemId belongs to this plan (prevent cross-plan contamination)
   const [planItem] = await db.select({
     id: productionPlanItemsTable.id,
@@ -1257,6 +1277,7 @@ router.post("/:id/batch-completions/bulk", async (req, res) => {
     res.status(400).json({ error: "count must be between 1 and 50" });
     return;
   }
+  if (await planDraftStatus(planId)) { res.status(409).json({ error: DRAFT_COMPLETION_ERROR }); return; }
   const sessionUserId = (req.session as { userId?: number }).userId ?? null;
 
   const [planItem] = await db.select({
@@ -1335,6 +1356,7 @@ router.delete("/:id/batch-completions/bulk", async (req, res) => {
     res.status(400).json({ error: "count must be between 1 and 50" });
     return;
   }
+  if (await planDraftStatus(planId)) { res.status(409).json({ error: DRAFT_COMPLETION_ERROR }); return; }
   const [planItem] = await db.select({ id: productionPlanItemsTable.id, batchesComplete: productionPlanItemsTable.batchesComplete })
     .from(productionPlanItemsTable)
     .where(and(eq(productionPlanItemsTable.id, Number(planItemId)), eq(productionPlanItemsTable.planId, planId)));
@@ -1416,6 +1438,7 @@ router.get("/:id/batch-completions/pace", async (req, res) => {
 router.delete("/:id/batch-completions/last", async (req, res) => {
   const planId = Number(req.params.id);
   const { planItemId, stationType } = req.body;
+  if (await planDraftStatus(planId)) { res.status(409).json({ error: DRAFT_COMPLETION_ERROR }); return; }
   // Verify planItemId belongs to this plan
   const [planItem] = await db.select({ id: productionPlanItemsTable.id, batchesComplete: productionPlanItemsTable.batchesComplete })
     .from(productionPlanItemsTable)
@@ -3270,7 +3293,7 @@ router.get("/:id/dough-prep", async (req, res) => {
   // Optional afterDate=YYYY-MM-DD to override which date to search from
   const useCurrentPlan = req.query.mode === "current";
 
-  let nextPlan: { id: number; planDate: string; name: string } | null = null;
+  let nextPlan: { id: number; planDate: string; name: string; status: string } | null = null;
   let targetPlanId = planId;
 
   if (!useCurrentPlan) {
@@ -3283,9 +3306,9 @@ router.get("/:id/dough-prep", async (req, res) => {
     }
 
     const nextPlans = await db
-      .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate, name: productionPlansTable.name })
+      .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate, name: productionPlansTable.name, status: productionPlansTable.status })
       .from(productionPlansTable)
-      .where(and(gt(productionPlansTable.planDate, afterDate), eq(productionPlansTable.status, "active")))
+      .where(and(gt(productionPlansTable.planDate, afterDate), inArray(productionPlansTable.status, ["draft", "active"])))
       .orderBy(asc(productionPlansTable.planDate))
       .limit(1);
     if (nextPlans.length > 0) nextPlan = nextPlans[0];
@@ -4016,6 +4039,7 @@ router.post("/:id/prep-completions", async (req, res) => {
   const planId = Number(req.params.id);
   const { ingredientId, recipeId, tinNumber, isSubRecipe } = req.body;
   if (!recipeId) { res.status(400).json({ error: "recipeId is required" }); return; }
+  if (await planDraftStatus(planId)) { res.status(409).json({ error: DRAFT_COMPLETION_ERROR }); return; }
   const userId = (req.session as any)?.userId ?? null;
 
   if (isSubRecipe) {
@@ -4055,6 +4079,7 @@ router.delete("/:id/prep-completions/by-tin", async (req, res) => {
   const planId = Number(req.params.id);
   const { ingredientId, recipeId, tinNumber, isSubRecipe } = req.body;
   if (!recipeId) { res.status(400).json({ error: "recipeId is required" }); return; }
+  if (await planDraftStatus(planId)) { res.status(409).json({ error: DRAFT_COMPLETION_ERROR }); return; }
   if (isSubRecipe) {
     await db.execute(sql`
       DELETE FROM prep_completions
@@ -4079,6 +4104,7 @@ router.delete("/:id/prep-completions/by-tin", async (req, res) => {
 router.delete("/:id/prep-completions/:completionId", async (req, res) => {
   const planId = Number(req.params.id);
   const completionId = Number(req.params.completionId);
+  if (await planDraftStatus(planId)) { res.status(409).json({ error: DRAFT_COMPLETION_ERROR }); return; }
   const deleted = await db.delete(prepCompletionsTable)
     .where(and(eq(prepCompletionsTable.id, completionId), eq(prepCompletionsTable.planId, planId)))
     .returning();

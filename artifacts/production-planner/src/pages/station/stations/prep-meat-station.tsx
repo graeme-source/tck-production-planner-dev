@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { BreakTracker } from "../shared/break-tracker";
-import { PrepDateBanner, toKg } from "../shared/prep-helpers";
+import { PrepDateBanner, PrepDraftBanner, toKg, toastDraftBlocked } from "../shared/prep-helpers";
 import { PrepSubNav, usePrepByRecipe } from "./prep-hub";
 import type { PrepRecipeDetail, PrepIngredientDetail } from "./prep-hub";
 
@@ -57,6 +57,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
   const [isOnBreak, setIsOnBreak] = useState(false);
   const [selectedRecipeId, setSelectedRecipeId] = useState<number | null>(null);
   const { recipes, isLoading, nextPlan, targetPlanId, noFuturePlan } = usePrepByRecipe("prep_meat", plan.id, plan.planDate);
+  const isDraft = nextPlan?.status === "draft";
   const { completions, refetch } = usePrepMeatCompletions(targetPlanId ?? plan.id);
 
   // Stock check state
@@ -107,6 +108,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
   const saveStockCheck = async (ingredientId: number) => {
     const val = stockValues[ingredientId];
     if (val === undefined || val === "") return;
+    if (isDraft) { toastDraftBlocked(); return; }
     setSavingStock(s => ({ ...s, [ingredientId]: true }));
     try {
       await fetch("/api/production-plans/stock-checks", {
@@ -170,6 +172,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
 
   const toggleTray = async (ingredientId: number, recipeId: number, trayNum: number) => {
     if (isOnBreak) return;
+    if (isDraft) { toastDraftBlocked(); return; }
     const pendingKey = `${ingredientId}-${recipeId}-${trayNum}`;
     if (trayPending === pendingKey) return;
     setTrayPending(pendingKey);
@@ -250,6 +253,13 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
 
   return (
     <div className="space-y-4">
+      {isDraft && nextPlan?.planId != null && nextPlan?.planDate && (
+        <PrepDraftBanner
+          planId={nextPlan.planId}
+          planDate={nextPlan.planDate}
+          planName={nextPlan.planName}
+        />
+      )}
       <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
 
       <PrepSubNav planId={plan.id} current="prep_meat" />

@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
-import { PrepDateBanner, useNextActivePlan } from "../shared/prep-helpers";
+import { PrepDateBanner, PrepDraftBanner, useNextActivePlan } from "../shared/prep-helpers";
 import type { NextActivePlan } from "../shared/prep-helpers";
 import { SubRecipeMakeFlow } from "./prep-bases-station";
 
@@ -378,6 +378,7 @@ export function PrepHub({ planId, planDate }: { planId: number; planDate?: strin
   ] as const;
 
   const noFuturePlan = !isLoading && nextPlan != null && nextPlan.planId == null;
+  const isDraft = nextPlan?.status === "draft";
 
   if (noFuturePlan) {
     return (
@@ -421,6 +422,13 @@ export function PrepHub({ planId, planDate }: { planId: number; planDate?: strin
 
   return (
     <div className="space-y-5">
+      {isDraft && nextPlan?.planId != null && nextPlan?.planDate && (
+        <PrepDraftBanner
+          planId={nextPlan.planId}
+          planDate={nextPlan.planDate}
+          planName={nextPlan.planName}
+        />
+      )}
       <PrepDateBanner
         currentPlanDate={planDate}
         targetPlanDate={nextPlan?.planDate ?? null}
