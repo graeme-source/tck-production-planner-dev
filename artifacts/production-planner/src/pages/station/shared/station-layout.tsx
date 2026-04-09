@@ -175,7 +175,9 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
         )}
       </AnimatePresence>
 
-      {/* Sticky station top-bar */}
+      {/* Sticky station top-bar (contains the collapsible station nav so it
+          always renders at the current viewport top instead of the original
+          top of the document) */}
       <div className="border-b border-border bg-card sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-4 py-3">
           <div className="flex items-center justify-between gap-4">
@@ -243,19 +245,20 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Collapsible station navigation grid */}
-      <AnimatePresence>
-        {stationNavOpen && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="border-b border-border bg-card overflow-hidden z-10"
-          >
-            <div className="max-w-7xl mx-auto px-4 py-4">
+        {/* Collapsible station navigation grid — rendered INSIDE the sticky
+            top-bar so it appears at the current viewport top regardless of
+            scroll position. */}
+        <AnimatePresence>
+          {stationNavOpen && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="border-t border-border bg-card overflow-hidden"
+            >
+              <div className="max-w-7xl mx-auto px-4 py-4">
               <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-3">
                 {STATIONS.map(s => {
                   const Icon = s.icon;
@@ -295,6 +298,7 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
 
       <div className="max-w-7xl mx-auto px-4 py-6">
         {children}
