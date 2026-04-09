@@ -9,7 +9,7 @@ import {
   ovenEventsTable,
   usersTable,
 } from "@workspace/db";
-import { eq, and, asc, desc } from "drizzle-orm";
+import { eq, and, asc, desc, gte, lte, sql } from "drizzle-orm";
 import * as z from "zod";
 
 type ChecklistCompletion = typeof checklistCompletionsTable.$inferSelect;
@@ -298,6 +298,103 @@ router.delete("/completions/:id", async (req: Request, res: Response) => {
   const [row] = await db.delete(checklistCompletionsTable).where(eq(checklistCompletionsTable.id, id)).returning();
   if (!row) { res.status(404).json({ error: "Completion not found" }); return; }
   res.json({ success: true });
+});
+
+// HACCP reporting: list completions across a date range, joined with template
+// info (title, category) so reports can show what was ticked off without
+// needing a second round-trip for each row.
+//
+// Query params:
+//   from (required): inclusive start date, YYYY-MM-DD (interpreted as UTC)
+//   to   (required): inclusive end date,   YYYY-MM-DD
+//   stationType (optional): filter to a single station
+//   userId (optional): filter to a single user's completions (numeric)
+//
+// Returns an array ordered by most-recent-first, with template rows and
+// one-off rows merged into a uniform shape.
+router.get("/completions", async (req: Request, res: Response) => {
+  const from = typeof req.query.from === "string" ? req.query.from : null;
+  const to = typeof req.query.to === "string" ? req.query.to : null;
+  if (!from || !to) {
+    res.status(400).json({ error: "from and to are required (YYYY-MM-DD)" });
+    return;
+  }
+  const fromDate = new Date(`${from}T00:00:00.000Z`);
+  const toDate = new Date(`${to}T23:59:59.999Z`);
+  if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+    res.status(400).json({ error: "Invalid date format" });
+    return;
+  }
+
+  const stationFilter = typeof req.query.stationType === "string" ? req.query.stationType : null;
+  const userIdRaw = typeof req.query.userId === "string" ? Number(req.query.userId) : null;
+  const userIdFilter = userIdRaw && Number.isFinite(userIdRaw) ? userIdRaw : null;
+
+  // Template-based completions, joined with template title/category
+  const templateConds = [
+    gte(checklistCompletionsTable.completedAt, fromDate),
+    lte(checklistCompletionsTable.completedAt, toDate),
+  ];
+  if (stationFilter) templateConds.push(eq(checklistCompletionsTable.stationType, stationFilter));
+  if (userIdFilter) templateConds.push(eq(checklistCompletionsTable.completedBy, userIdFilter));
+
+  const templateRows = await db
+    .select({
+      id: checklistCompletionsTable.id,
+      kind: sql<string>`'template'`.as("kind"),
+      templateId: checklistCompletionsTable.templateId,
+      planId: checklistCompletionsTable.planId,
+      stationType: checklistCompletionsTable.stationType,
+      category: checklistTemplatesTable.category,
+      title: checklistTemplatesTable.title,
+      description: checklistTemplatesTable.description,
+      completedBy: checklistCompletionsTable.completedBy,
+      completedByName: checklistCompletionsTable.completedByName,
+      completedAt: checklistCompletionsTable.completedAt,
+      notes: checklistCompletionsTable.notes,
+    })
+    .from(checklistCompletionsTable)
+    .innerJoin(
+      checklistTemplatesTable,
+      eq(checklistTemplatesTable.id, checklistCompletionsTable.templateId),
+    )
+    .where(and(...templateConds))
+    .orderBy(desc(checklistCompletionsTable.completedAt));
+
+  // One-off items completed in the range
+  const oneoffConds = [
+    gte(checklistOneoffItemsTable.completedAt, fromDate),
+    lte(checklistOneoffItemsTable.completedAt, toDate),
+  ];
+  if (stationFilter) oneoffConds.push(eq(checklistOneoffItemsTable.stationType, stationFilter));
+  if (userIdFilter) oneoffConds.push(eq(checklistOneoffItemsTable.completedBy, userIdFilter));
+
+  const oneoffRows = await db
+    .select({
+      id: checklistOneoffItemsTable.id,
+      kind: sql<string>`'oneoff'`.as("kind"),
+      templateId: sql<number | null>`NULL`.as("templateId"),
+      planId: checklistOneoffItemsTable.planId,
+      stationType: checklistOneoffItemsTable.stationType,
+      category: checklistOneoffItemsTable.category,
+      title: checklistOneoffItemsTable.title,
+      description: checklistOneoffItemsTable.description,
+      completedBy: checklistOneoffItemsTable.completedBy,
+      completedByName: checklistOneoffItemsTable.completedByName,
+      completedAt: checklistOneoffItemsTable.completedAt,
+      notes: sql<string | null>`NULL`.as("notes"),
+    })
+    .from(checklistOneoffItemsTable)
+    .where(and(...oneoffConds))
+    .orderBy(desc(checklistOneoffItemsTable.completedAt));
+
+  const merged = [...templateRows, ...oneoffRows].sort((a, b) => {
+    const aTime = a.completedAt ? new Date(a.completedAt).getTime() : 0;
+    const bTime = b.completedAt ? new Date(b.completedAt).getTime() : 0;
+    return bTime - aTime;
+  });
+
+  res.json(merged);
 });
 
 // ─── One-off Items ───────────────────────────────────────────────────

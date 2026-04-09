@@ -11,7 +11,7 @@ import {
   ChevronDown, ChevronRight, Thermometer, ShieldCheck,
   Package, Zap, CalendarDays, Trophy, Snail, Hourglass,
   Lightbulb, AlertTriangle, CheckCircle, Filter, Play, Square,
-  MessageSquare, Send,
+  MessageSquare, Send, ClipboardCheck, FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
@@ -147,7 +147,7 @@ interface PackingSpeedData {
   source?: string;
 }
 
-type TabId = "kpis" | "breaks" | "temperature" | "packing-speed" | "improvements" | "issues";
+type TabId = "kpis" | "breaks" | "temperature" | "packing-speed" | "haccp" | "improvements" | "issues";
 
 interface ImprovementRecord {
   id: number;
@@ -237,7 +237,7 @@ function DateShortcutsDropdown({ onSelect }: { onSelect: (from: string, to: stri
   );
 }
 
-const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "packing-speed", "improvements", "issues"];
+const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "packing-speed", "haccp", "improvements", "issues"];
 
 export default function Reports() {
   const search = useSearch();
@@ -283,6 +283,9 @@ export default function Reports() {
           <TabButton active={activeTab === "packing-speed"} onClick={() => switchTab("packing-speed")}>
             <Zap className="w-4 h-4" /> Packing Speed
           </TabButton>
+          <TabButton active={activeTab === "haccp"} onClick={() => switchTab("haccp")}>
+            <ShieldCheck className="w-4 h-4" /> HACCP
+          </TabButton>
           <TabButton active={activeTab === "improvements"} onClick={() => switchTab("improvements")}>
             <Lightbulb className="w-4 h-4" /> Improvements & Struggles
           </TabButton>
@@ -319,6 +322,7 @@ export default function Reports() {
       {activeTab === "breaks" && <BreaksTab fromDate={fromDate} toDate={toDate} />}
       {activeTab === "temperature" && <TemperatureRecordsTab fromDate={fromDate} toDate={toDate} />}
       {activeTab === "packing-speed" && <PackingSpeedTab />}
+      {activeTab === "haccp" && <HaccpTab fromDate={fromDate} toDate={toDate} />}
       {activeTab === "improvements" && <ImprovementsTab userRole={userRole} currentUserName={state.status === "authenticated" ? state.user.name : null} />}
       {activeTab === "issues" && <AndonLogTab userRole={userRole} />}
     </div>
@@ -941,6 +945,333 @@ function TemperatureRecordsTab({ fromDate, toDate }: { fromDate: string; toDate:
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── HACCP Tab ──────────────────────────────────────────────────────────────
+// Unified reporting view for EHO-relevant records: checklist completions
+// (opening/cleaning/closing checks) and cooked-core temperature readings.
+// Filterable by date range, station, user, and record kind. Intended as the
+// single place auditors or managers can pull evidence of daily food-safety
+// procedures.
+
+interface HaccpChecklistRow {
+  id: number;
+  kind: "template" | "oneoff";
+  templateId: number | null;
+  planId: number;
+  stationType: string;
+  category: "opening" | "cleaning" | "closing";
+  title: string;
+  description: string | null;
+  completedBy: number | null;
+  completedByName: string | null;
+  completedAt: string;
+  notes: string | null;
+}
+
+interface UserLite {
+  id: number;
+  name: string;
+  email?: string;
+  role?: string;
+  isActive?: boolean;
+}
+
+const HACCP_CATEGORY_META: Record<HaccpChecklistRow["category"], { label: string; color: string; bg: string }> = {
+  opening: { label: "Opening", color: "text-amber-700 dark:text-amber-300", bg: "bg-amber-100 dark:bg-amber-900/30" },
+  cleaning: { label: "Cleaning", color: "text-blue-700 dark:text-blue-300", bg: "bg-blue-100 dark:bg-blue-900/30" },
+  closing: { label: "Closing", color: "text-indigo-700 dark:text-indigo-300", bg: "bg-indigo-100 dark:bg-indigo-900/30" },
+};
+
+function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
+  const [checklists, setChecklists] = useState<HaccpChecklistRow[]>([]);
+  const [temps, setTemps] = useState<TemperatureRecord[]>([]);
+  const [users, setUsers] = useState<UserLite[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Filters
+  const [stationFilter, setStationFilter] = useState("");
+  const [userFilter, setUserFilter] = useState("");
+  const [kindFilter, setKindFilter] = useState<"all" | "checklists" | "temperatures">("all");
+  const [categoryFilter, setCategoryFilter] = useState<"" | HaccpChecklistRow["category"]>("");
+
+  // Load users once (for filter dropdown)
+  useEffect(() => {
+    fetch(`${BASE}/api/users`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : [])
+      .then((rows: UserLite[]) => setUsers(rows))
+      .catch(() => { /* ignore */ });
+  }, []);
+
+  // Reload data when date range or server-side filters change. Station/user
+  // filters are passed as query params so the backend does the heavy lifting.
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    const params = new URLSearchParams({ from: fromDate, to: toDate });
+    if (stationFilter) params.set("stationType", stationFilter);
+    if (userFilter) params.set("userId", userFilter);
+
+    const checklistUrl = `${BASE}/api/checklists/completions?${params.toString()}`;
+    const tempParams = new URLSearchParams({ from: fromDate, to: toDate });
+    const tempUrl = `${BASE}/api/temperature-records?${tempParams.toString()}`;
+
+    Promise.all([
+      fetch(checklistUrl, { credentials: "include" }).then(r => r.ok ? r.json() : []),
+      fetch(tempUrl, { credentials: "include" }).then(r => r.ok ? r.json() : []),
+    ])
+      .then(([c, t]: [HaccpChecklistRow[], TemperatureRecord[]]) => {
+        setChecklists(c);
+        setTemps(t);
+        setLoading(false);
+      })
+      .catch((err: Error) => { setError(err.message); setLoading(false); });
+  }, [fromDate, toDate, stationFilter, userFilter]);
+
+  // Temperature records have no station column in the schema (they're tied
+  // to a plan), so station filter is only applied to the checklist dataset.
+  // User filter for temps uses the user_id from the record.
+  const filteredTemps = temps.filter(t => {
+    if (userFilter && String(t.userId ?? "") !== userFilter) return false;
+    return true;
+  });
+
+  const filteredChecklists = checklists.filter(c => {
+    if (categoryFilter && c.category !== categoryFilter) return false;
+    return true;
+  });
+
+  // Pre-compute summary stats
+  const tempPass = filteredTemps.filter(r => parseFloat(r.temperatureC) >= 75).length;
+  const tempFail = filteredTemps.filter(r => parseFloat(r.temperatureC) < 75).length;
+  const uniqueCheckUsers = new Set(filteredChecklists.map(c => c.completedByName ?? "").filter(Boolean)).size;
+  const uniqueStations = new Set(filteredChecklists.map(c => c.stationType)).size;
+  const totalRecords = filteredChecklists.length + filteredTemps.length;
+
+  const showChecks = kindFilter === "all" || kindFilter === "checklists";
+  const showTemps = kindFilter === "all" || kindFilter === "temperatures";
+
+  function clearFilters() {
+    setStationFilter("");
+    setUserFilter("");
+    setKindFilter("all");
+    setCategoryFilter("");
+  }
+
+  const hasFilters = stationFilter || userFilter || kindFilter !== "all" || categoryFilter;
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-16 text-muted-foreground gap-2">
+      <Loader2 className="w-5 h-5 animate-spin" /> Loading HACCP records…
+    </div>
+  );
+  if (error) return (
+    <div className="rounded-xl border border-red-200 bg-red-50 dark:bg-red-900/20 p-4 text-red-700 dark:text-red-400 text-sm">{error}</div>
+  );
+
+  return (
+    <div className="space-y-4">
+      {/* Info banner */}
+      <div className="rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20 px-4 py-3 flex items-start gap-3">
+        <FileText className="w-5 h-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+        <div className="text-sm">
+          <p className="font-semibold text-blue-800 dark:text-blue-300">HACCP Evidence Log</p>
+          <p className="text-blue-700/80 dark:text-blue-300/80 mt-0.5">
+            Daily opening/cleaning/closing checks and cooked-core temperature readings for EHO inspections.
+            Use the filters below to narrow by date, station, or team member.
+          </p>
+        </div>
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <SummaryCard icon={<ClipboardCheck className="w-4 h-4 text-emerald-600" />} label="Checks Completed" value={String(filteredChecklists.length)} sub={`${uniqueCheckUsers} team member${uniqueCheckUsers !== 1 ? "s" : ""}, ${uniqueStations} station${uniqueStations !== 1 ? "s" : ""}`} />
+        <SummaryCard icon={<Thermometer className="w-4 h-4 text-blue-500" />} label="Temp Readings" value={String(filteredTemps.length)} sub={filteredTemps.length > 0 ? `${tempPass} safe / ${tempFail} low` : undefined} />
+        <SummaryCard icon={<ShieldCheck className="w-4 h-4 text-green-600" />} label="Temps ≥ 75°C" value={String(tempPass)} sub={filteredTemps.length ? `${Math.round((tempPass / filteredTemps.length) * 100)}% pass rate` : undefined} highlight={filteredTemps.length > 0 ? "green" : undefined} />
+        <SummaryCard icon={<FileText className="w-4 h-4 text-amber-600" />} label="Total Records" value={String(totalRecords)} sub={`${fromDate} → ${toDate}`} />
+      </div>
+
+      {/* Filter bar */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card px-3 py-2">
+        <Filter className="w-4 h-4 text-muted-foreground" />
+        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mr-1">Filter</span>
+        <select
+          value={kindFilter}
+          onChange={e => setKindFilter(e.target.value as typeof kindFilter)}
+          className="px-2.5 py-1.5 border border-border rounded-lg text-sm bg-background"
+          title="Record type"
+        >
+          <option value="all">All records</option>
+          <option value="checklists">Checklists only</option>
+          <option value="temperatures">Temperatures only</option>
+        </select>
+        <select
+          value={stationFilter}
+          onChange={e => setStationFilter(e.target.value)}
+          className="px-2.5 py-1.5 border border-border rounded-lg text-sm bg-background"
+          title="Station"
+        >
+          <option value="">All stations</option>
+          {Object.entries(STATION_LABELS_REPORT).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+        <select
+          value={userFilter}
+          onChange={e => setUserFilter(e.target.value)}
+          className="px-2.5 py-1.5 border border-border rounded-lg text-sm bg-background"
+          title="User"
+        >
+          <option value="">All users</option>
+          {users.filter(u => u.isActive !== false).map(u => (
+            <option key={u.id} value={String(u.id)}>{u.name}</option>
+          ))}
+        </select>
+        {showChecks && (
+          <select
+            value={categoryFilter}
+            onChange={e => setCategoryFilter(e.target.value as typeof categoryFilter)}
+            className="px-2.5 py-1.5 border border-border rounded-lg text-sm bg-background"
+            title="Checklist category"
+          >
+            <option value="">All categories</option>
+            <option value="opening">Opening</option>
+            <option value="cleaning">Cleaning</option>
+            <option value="closing">Closing</option>
+          </select>
+        )}
+        {hasFilters && (
+          <button
+            onClick={clearFilters}
+            className="ml-auto text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
+          >
+            Clear filters
+          </button>
+        )}
+      </div>
+
+      {/* Checklist completions table */}
+      {showChecks && (
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-border bg-secondary/20 flex items-center gap-2">
+            <ClipboardCheck className="w-4 h-4 text-emerald-600" />
+            <h3 className="text-sm font-semibold">Checklist Completions ({filteredChecklists.length})</h3>
+          </div>
+          {filteredChecklists.length === 0 ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">
+              No checklist completions for the selected filters.
+            </div>
+          ) : (
+            <div className="overflow-x-auto max-h-[560px] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-secondary/40 backdrop-blur-sm">
+                  <tr className="border-b border-border">
+                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Completed</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Category</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Station</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Item</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">By</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Notes</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {filteredChecklists.map(row => {
+                    const meta = HACCP_CATEGORY_META[row.category];
+                    return (
+                      <tr key={`${row.kind}-${row.id}`} className="hover:bg-secondary/10 transition-colors align-top">
+                        <td className="px-4 py-2.5 tabular-nums text-muted-foreground whitespace-nowrap text-xs">
+                          {format(new Date(row.completedAt), "dd MMM, HH:mm")}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className={cn("inline-block px-2 py-0.5 rounded-full text-xs font-semibold", meta.bg, meta.color)}>
+                            {meta.label}
+                          </span>
+                          {row.kind === "oneoff" && (
+                            <span className="ml-1 text-[10px] text-amber-500 font-semibold uppercase">one-off</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
+                          {STATION_LABELS_REPORT[row.stationType] ?? row.stationType}
+                        </td>
+                        <td className="px-4 py-2.5 font-medium">{row.title}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{row.completedByName ?? "—"}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground text-xs max-w-[280px] whitespace-pre-wrap">
+                          {row.notes ?? "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Temperature records table */}
+      {showTemps && (
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-border bg-secondary/20 flex items-center gap-2">
+            <Thermometer className="w-4 h-4 text-blue-600" />
+            <h3 className="text-sm font-semibold">Temperature Readings ({filteredTemps.length})</h3>
+          </div>
+          {filteredTemps.length === 0 ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">
+              No temperature records for the selected filters.
+            </div>
+          ) : (
+            <div className="overflow-x-auto max-h-[560px] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-secondary/40 backdrop-blur-sm">
+                  <tr className="border-b border-border">
+                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Recorded</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Recipe</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Ingredient</th>
+                    <th className="text-center px-4 py-2.5 font-semibold text-muted-foreground">Tray</th>
+                    <th className="text-center px-4 py-2.5 font-semibold text-muted-foreground">Temp</th>
+                    <th className="text-center px-4 py-2.5 font-semibold text-muted-foreground">Status</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">By</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {filteredTemps.map(rec => {
+                    const temp = parseFloat(rec.temperatureC);
+                    const safe = temp >= 75;
+                    return (
+                      <tr key={rec.id} className={cn("hover:bg-secondary/10 transition-colors", !safe && "bg-red-50/60 dark:bg-red-950/20")}>
+                        <td className="px-4 py-2.5 tabular-nums text-muted-foreground whitespace-nowrap text-xs">
+                          {format(new Date(rec.recordedAt), "dd MMM, HH:mm")}
+                        </td>
+                        <td className="px-4 py-2.5 font-medium">{rec.recipeName ?? `Recipe #${rec.recipeId}`}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{rec.ingredientName ?? `Ingredient #${rec.ingredientId}`}</td>
+                        <td className="px-4 py-2.5 text-center tabular-nums">{rec.trayIndex + 1}</td>
+                        <td className="px-4 py-2.5 text-center">
+                          <span className={cn("font-bold tabular-nums", safe ? "text-green-700 dark:text-green-400" : "text-red-600")}>
+                            {temp.toFixed(1)}°C
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-center">
+                          {safe ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 dark:text-green-400 bg-green-100 dark:bg-green-900/30 rounded-full px-2 py-0.5">
+                              <ShieldCheck className="w-3 h-3" /> Safe
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-100 dark:bg-red-900/30 rounded-full px-2 py-0.5">
+                              <Thermometer className="w-3 h-3" /> Low
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{rec.userName ?? "Unknown"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </div>

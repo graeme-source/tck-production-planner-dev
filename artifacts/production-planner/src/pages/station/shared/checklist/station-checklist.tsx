@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   CheckCircle2, Circle, ClipboardCheck, Plus, Undo2, Loader2,
   Sun, Sparkles, Moon, ChevronDown, ChevronUp, GripVertical, Trash2, Pencil,
@@ -40,6 +40,10 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
   const [oneoffCategory, setOneoffCategory] = useState<Category>("opening");
   const [completionNotes, setCompletionNotes] = useState("");
 
+  // Refs to checklist item buttons, keyed by item key. Used for scroll-into-view
+  // when the selection auto-advances after completing an item.
+  const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+
   const [runComplete, completeBusy] = useGuardedAction({ onSuccess: refetch });
   const [runUndo, undoBusy] = useGuardedAction({ onSuccess: refetch });
   const [runOneoff, oneoffBusy] = useGuardedAction({ onSuccess: refetch });
@@ -74,6 +78,16 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
   }, [allItems.length, data?.summary.done]);
 
   const selectedItem = allItems.find(i => itemKey(i) === selectedItemKey) ?? null;
+
+  // Scroll the left-panel list so the selected item is visible. Runs after
+  // every selection change (including the optimistic advance from
+  // handleComplete) so users can keep tapping "Mark Complete" without
+  // re-scrolling manually.
+  useEffect(() => {
+    if (!selectedItemKey) return;
+    const el = itemRefs.current[selectedItemKey];
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [selectedItemKey]);
 
   // Dynamic data for selected item
   const { data: dynamicData, loading: dynamicLoading } = useDynamicData(
@@ -114,7 +128,26 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
   const { summary } = data;
   const pct = summary.total > 0 ? Math.round((summary.done / summary.total) * 100) : 0;
 
+  /** Given the item that was just completed, find the next item the user
+   *  should be working on: the first incomplete item after it in the flat
+   *  list, wrapping around to the beginning if needed. Returns null if
+   *  everything else is already done. */
+  function findNextIncompleteItem(
+    justCompleted: ChecklistItem & { category: Category },
+  ): (ChecklistItem & { category: Category }) | null {
+    const currentIdx = allItems.findIndex(i => itemKey(i) === itemKey(justCompleted));
+    const isStillOpen = (i: ChecklistItem & { category: Category }) =>
+      !i.completed && itemKey(i) !== itemKey(justCompleted);
+    const after = allItems.slice(currentIdx + 1).find(isStillOpen);
+    if (after) return after;
+    const before = allItems.slice(0, currentIdx).find(isStillOpen);
+    return before ?? null;
+  }
+
   const handleComplete = (item: ChecklistItem & { category: Category }) => {
+    // Optimistically advance selection to the next incomplete item so the
+    // user can keep working without scrolling or tapping back to the list.
+    const next = findNextIncompleteItem(item);
     runComplete(async (signal) => {
       if (item.type === "template") {
         await guardedFetch(`${BASE}/api/checklists/completions`, {
@@ -139,6 +172,9 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
       setCompletionNotes("");
       toast({ title: "Check completed", description: item.title });
     });
+    if (next) {
+      setSelectedItemKey(itemKey(next));
+    }
   };
 
   const handleUndo = (item: ChecklistItem & { category: Category }) => {
@@ -295,6 +331,7 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                         return (
                           <button
                             key={ik}
+                            ref={el => { itemRefs.current[ik] = el; }}
                             onClick={() => setSelectedItemKey(ik)}
                             className={cn(
                               "w-full flex items-center gap-3 px-4 py-3 text-left transition-colors border-t border-border/30",
