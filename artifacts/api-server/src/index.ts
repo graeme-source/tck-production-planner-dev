@@ -144,6 +144,19 @@ async function runStartupMigrations() {
     await db.execute(sql`
       ALTER TABLE recipe_sub_recipes ADD COLUMN IF NOT EXISTS mixing_overage NUMERIC(10,4) NOT NULL DEFAULT 0
     `);
+    // show_in_prep: referenced by the recipe edit dialog + backend
+    // route since commit 050896b but previously missing from BOTH
+    // the drizzle schema AND the startup migration chain. PR #7
+    // landed the drizzle side without this DDL and crashed the live
+    // site because Railway's Postgres didn't have the column. This
+    // migration creates it idempotently; the drizzle alignment is
+    // in lib/db/src/schema/recipes.ts in the same commit.
+    await db.execute(sql`
+      ALTER TABLE recipe_ingredients ADD COLUMN IF NOT EXISTS show_in_prep BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+    await db.execute(sql`
+      ALTER TABLE recipe_sub_recipes ADD COLUMN IF NOT EXISTS show_in_prep BOOLEAN NOT NULL DEFAULT FALSE
+    `);
     await db.execute(sql`
       ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS surplus_percent NUMERIC(5,2) NOT NULL DEFAULT 10
     `);
