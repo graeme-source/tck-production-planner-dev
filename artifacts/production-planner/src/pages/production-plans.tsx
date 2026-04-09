@@ -2905,6 +2905,13 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
             {selectedDayPlans.map(plan => {
               const statusConfig = STATUS_CONFIG[plan.status as keyof typeof STATUS_CONFIG] ?? STATUS_CONFIG.draft;
               const StatusIcon = statusConfig.icon;
+              // The list endpoint now returns a lightweight items array
+              // (id/recipeId/recipeName/batchesTarget/orderPosition). This
+              // field isn't in the generated ProductionPlan type yet, so
+              // read it through a local cast.
+              const planItems = (plan as unknown as {
+                items?: Array<{ id: number; recipeId: number; recipeName: string; batchesTarget: number; orderPosition: number }>
+              }).items ?? [];
 
               return (
                 <div
@@ -2952,6 +2959,27 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
                       </button>
                     </div>
                   </div>
+
+                  {/* Inline recipe breakdown — shown by default so the user
+                      can flick between days and instantly see the lineup
+                      without drilling into each plan. */}
+                  {planItems.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-border/60">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
+                        {planItems.map(item => (
+                          <div
+                            key={item.id}
+                            className="flex items-baseline justify-between gap-3 text-sm min-w-0"
+                          >
+                            <span className="truncate text-foreground">{item.recipeName}</span>
+                            <span className="tabular-nums font-semibold text-primary whitespace-nowrap">
+                              {item.batchesTarget} {item.batchesTarget === 1 ? "batch" : "batches"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}

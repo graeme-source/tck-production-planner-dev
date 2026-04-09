@@ -203,10 +203,42 @@ router.get("/", async (req, res) => {
 
   const totalsMap = new Map(totals.map(t => [t.planId, { totalBatchesTarget: Number(t.totalBatchesTarget) || 0, itemCount: Number(t.itemCount) || 0 }]));
 
+  // Lightweight item breakdown per plan so the list view can show the
+  // recipe lineup inline (used by the Production Plans day-card in the
+  // front-end). We only need id/recipeId/recipeName/batchesTarget/
+  // orderPosition — no completions, no ingredient joins.
+  const itemRows = await db
+    .select({
+      id: productionPlanItemsTable.id,
+      planId: productionPlanItemsTable.planId,
+      recipeId: productionPlanItemsTable.recipeId,
+      recipeName: recipesTable.name,
+      batchesTarget: productionPlanItemsTable.batchesTarget,
+      orderPosition: productionPlanItemsTable.orderPosition,
+    })
+    .from(productionPlanItemsTable)
+    .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(inArray(productionPlanItemsTable.planId, planIds))
+    .orderBy(productionPlanItemsTable.planId, productionPlanItemsTable.orderPosition);
+
+  const itemsByPlan = new Map<number, typeof itemRows>();
+  for (const it of itemRows) {
+    const arr = itemsByPlan.get(it.planId) ?? [];
+    arr.push(it);
+    itemsByPlan.set(it.planId, arr);
+  }
+
   res.json(plans.map(p => ({
     ...mapPlan(p),
     totalBatchesTarget: totalsMap.get(p.id)?.totalBatchesTarget ?? 0,
     itemCount: totalsMap.get(p.id)?.itemCount ?? 0,
+    items: (itemsByPlan.get(p.id) ?? []).map(it => ({
+      id: it.id,
+      recipeId: it.recipeId,
+      recipeName: it.recipeName,
+      batchesTarget: it.batchesTarget,
+      orderPosition: it.orderPosition,
+    })),
   })));
 });
 
