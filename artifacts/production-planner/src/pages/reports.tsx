@@ -147,7 +147,10 @@ interface PackingSpeedData {
   source?: string;
 }
 
-type TabId = "kpis" | "breaks" | "temperature" | "packing-speed" | "haccp" | "improvements" | "issues";
+// Packing-speed is now a subsection inside the Production KPIs view, so it's
+// no longer a top-level tab. The URL ?tab=packing-speed redirects to ?tab=kpis
+// for backward compat.
+type TabId = "kpis" | "breaks" | "temperature" | "haccp" | "improvements" | "issues";
 
 interface ImprovementRecord {
   id: number;
@@ -237,14 +240,32 @@ function DateShortcutsDropdown({ onSelect }: { onSelect: (from: string, to: stri
   );
 }
 
-const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "packing-speed", "haccp", "improvements", "issues"];
+const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "haccp", "improvements", "issues"];
+
+interface ReportsNavItem {
+  id: TabId;
+  label: string;
+  icon: typeof TrendingUp;
+}
+
+const REPORTS_NAV_ITEMS: ReportsNavItem[] = [
+  { id: "kpis", label: "Production KPIs", icon: TrendingUp },
+  { id: "breaks", label: "Breaks & Lunches", icon: Coffee },
+  { id: "temperature", label: "Temperature Log", icon: Thermometer },
+  { id: "haccp", label: "HACCP", icon: ShieldCheck },
+  { id: "improvements", label: "Improvements & Struggles", icon: Lightbulb },
+  { id: "issues", label: "Issue Log", icon: AlertTriangle },
+];
 
 export default function Reports() {
   const search = useSearch();
   const [, navigate] = useLocation();
   const rawTab = new URLSearchParams(search).get("tab");
-  // Backward compat: old "andon" tab id redirects to "issues"
-  const queryTab = (rawTab === "andon" ? "issues" : rawTab) as TabId | null;
+  // Backward compat: legacy "andon" tab id redirects to "issues", and
+  // "packing-speed" redirects to "kpis" since it's now a subsection there.
+  const normalisedTab =
+    rawTab === "andon" ? "issues" : rawTab === "packing-speed" ? "kpis" : rawTab;
+  const queryTab = normalisedTab as TabId | null;
   const initialTab: TabId = queryTab && VALID_TABS.includes(queryTab) ? queryTab : "kpis";
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);
   const { state } = useAuth();
@@ -260,7 +281,7 @@ export default function Reports() {
   const [fromDate, setFromDate] = useState(todayStr);
   const [toDate, setToDate] = useState(todayStr);
 
-  const showDatePicker = activeTab !== "packing-speed" && activeTab !== "improvements" && activeTab !== "issues";
+  const showDatePicker = activeTab !== "improvements" && activeTab !== "issues";
 
   return (
     <div className="space-y-6">
@@ -269,79 +290,94 @@ export default function Reports() {
         description="Production KPIs, break and lunch tracking analytics."
       />
 
-      <div className="flex items-center gap-4 flex-wrap">
-        <div className="flex items-center gap-1 bg-secondary/30 rounded-xl p-1 flex-wrap">
-          <TabButton active={activeTab === "kpis"} onClick={() => switchTab("kpis")}>
-            <TrendingUp className="w-4 h-4" /> Production KPIs
-          </TabButton>
-          <TabButton active={activeTab === "breaks"} onClick={() => switchTab("breaks")}>
-            <Coffee className="w-4 h-4" /> Breaks & Lunches
-          </TabButton>
-          <TabButton active={activeTab === "temperature"} onClick={() => switchTab("temperature")}>
-            <Thermometer className="w-4 h-4" /> Temperature Log
-          </TabButton>
-          <TabButton active={activeTab === "packing-speed"} onClick={() => switchTab("packing-speed")}>
-            <Zap className="w-4 h-4" /> Packing Speed
-          </TabButton>
-          <TabButton active={activeTab === "haccp"} onClick={() => switchTab("haccp")}>
-            <ShieldCheck className="w-4 h-4" /> HACCP
-          </TabButton>
-          <TabButton active={activeTab === "improvements"} onClick={() => switchTab("improvements")}>
-            <Lightbulb className="w-4 h-4" /> Improvements & Struggles
-          </TabButton>
-          <TabButton active={activeTab === "issues"} onClick={() => switchTab("issues")}>
-            <AlertTriangle className="w-4 h-4" /> Issue Log
-          </TabButton>
+      <div className="flex gap-6 items-start">
+        {/* Left nav — mirrors the settings page sidebar pattern */}
+        <nav className="w-52 flex-shrink-0 sticky top-6 hidden md:block">
+          <ul className="space-y-1">
+            {REPORTS_NAV_ITEMS.map((item) => {
+              const Icon = item.icon;
+              const active = activeTab === item.id;
+              return (
+                <li key={item.id}>
+                  <button
+                    onClick={() => switchTab(item.id)}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors text-left",
+                      active
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
+                    )}
+                  >
+                    <Icon className="w-4 h-4 flex-shrink-0" />
+                    {item.label}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+
+        {/* Mobile: horizontal scroll of the same nav, shown above the content */}
+        <nav className="md:hidden w-full overflow-x-auto pb-2 -mb-2">
+          <ul className="flex gap-1 min-w-max">
+            {REPORTS_NAV_ITEMS.map((item) => {
+              const Icon = item.icon;
+              const active = activeTab === item.id;
+              return (
+                <li key={item.id}>
+                  <button
+                    onClick={() => switchTab(item.id)}
+                    className={cn(
+                      "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap",
+                      active
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
+                    )}
+                  >
+                    <Icon className="w-4 h-4 flex-shrink-0" />
+                    {item.label}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+
+        {/* Right content panel */}
+        <div className="flex-1 min-w-0 space-y-4">
+          {showDatePicker && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <DateShortcutsDropdown onSelect={(f, t) => { setFromDate(f); setToDate(t); }} />
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-muted-foreground">From</label>
+                <input
+                  type="date"
+                  value={fromDate}
+                  onChange={e => setFromDate(e.target.value)}
+                  className="px-3 py-2 border border-border rounded-lg text-sm bg-background"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-muted-foreground">To</label>
+                <input
+                  type="date"
+                  value={toDate}
+                  onChange={e => setToDate(e.target.value)}
+                  className="px-3 py-2 border border-border rounded-lg text-sm bg-background"
+                />
+              </div>
+            </div>
+          )}
+
+          {activeTab === "kpis" && <ProductionKpisTab fromDate={fromDate} toDate={toDate} />}
+          {activeTab === "breaks" && <BreaksTab fromDate={fromDate} toDate={toDate} />}
+          {activeTab === "temperature" && <TemperatureRecordsTab fromDate={fromDate} toDate={toDate} />}
+          {activeTab === "haccp" && <HaccpTab fromDate={fromDate} toDate={toDate} />}
+          {activeTab === "improvements" && <ImprovementsTab userRole={userRole} currentUserName={state.status === "authenticated" ? state.user.name : null} />}
+          {activeTab === "issues" && <AndonLogTab userRole={userRole} />}
         </div>
-        {showDatePicker && (
-          <div className="flex items-center gap-2 ml-auto flex-wrap">
-            <DateShortcutsDropdown onSelect={(f, t) => { setFromDate(f); setToDate(t); }} />
-            <div className="flex items-center gap-2">
-              <label className="text-sm font-medium text-muted-foreground">From</label>
-              <input
-                type="date"
-                value={fromDate}
-                onChange={e => setFromDate(e.target.value)}
-                className="px-3 py-2 border border-border rounded-lg text-sm bg-background"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-sm font-medium text-muted-foreground">To</label>
-              <input
-                type="date"
-                value={toDate}
-                onChange={e => setToDate(e.target.value)}
-                className="px-3 py-2 border border-border rounded-lg text-sm bg-background"
-              />
-            </div>
-          </div>
-        )}
       </div>
-
-      {activeTab === "kpis" && <ProductionKpisTab fromDate={fromDate} toDate={toDate} />}
-      {activeTab === "breaks" && <BreaksTab fromDate={fromDate} toDate={toDate} />}
-      {activeTab === "temperature" && <TemperatureRecordsTab fromDate={fromDate} toDate={toDate} />}
-      {activeTab === "packing-speed" && <PackingSpeedTab />}
-      {activeTab === "haccp" && <HaccpTab fromDate={fromDate} toDate={toDate} />}
-      {activeTab === "improvements" && <ImprovementsTab userRole={userRole} currentUserName={state.status === "authenticated" ? state.user.name : null} />}
-      {activeTab === "issues" && <AndonLogTab userRole={userRole} />}
     </div>
-  );
-}
-
-function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
-        active
-          ? "bg-background text-foreground shadow-sm"
-          : "text-muted-foreground hover:text-foreground"
-      )}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -607,6 +643,18 @@ function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: str
             })}
           </div>
         )}
+      </div>
+
+      {/* Packing speed — previously a separate tab, now a section inside
+          Production KPIs since packing throughput is a production metric.
+          Has its own "today" + custom date range controls because its
+          reporting window is typically wider than the KPI date range. */}
+      <div className="pt-8 border-t border-border">
+        <div className="flex items-center gap-2 mb-4">
+          <Zap className="w-5 h-5 text-amber-500" />
+          <h2 className="text-lg font-bold">Packing Speed</h2>
+        </div>
+        <PackingSpeedTab />
       </div>
     </>
   );
@@ -973,6 +1021,19 @@ interface HaccpChecklistRow {
   notes: string | null;
 }
 
+interface HaccpMissingRow {
+  id: string; // "tpl-{templateId}-plan-{planId}" or "oneoff-{id}"
+  kind: "template-missing" | "oneoff-missing";
+  templateId: number | null;
+  planId: number;
+  stationType: string;
+  category: "opening" | "cleaning" | "closing";
+  title: string;
+  description: string | null;
+  planDate: string;
+  missing: true;
+}
+
 interface UserLite {
   id: number;
   name: string;
@@ -989,6 +1050,7 @@ const HACCP_CATEGORY_META: Record<HaccpChecklistRow["category"], { label: string
 
 function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
   const [checklists, setChecklists] = useState<HaccpChecklistRow[]>([]);
+  const [missing, setMissing] = useState<HaccpMissingRow[]>([]);
   const [temps, setTemps] = useState<TemperatureRecord[]>([]);
   const [users, setUsers] = useState<UserLite[]>([]);
   const [loading, setLoading] = useState(true);
@@ -997,7 +1059,9 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
   // Filters
   const [stationFilter, setStationFilter] = useState("");
   const [userFilter, setUserFilter] = useState("");
-  const [kindFilter, setKindFilter] = useState<"all" | "checklists" | "temperatures">("all");
+  // "all" = completed + outstanding + temperatures
+  // "outstanding" = only expected-but-not-completed checklist items
+  const [kindFilter, setKindFilter] = useState<"all" | "checklists" | "outstanding" | "temperatures">("all");
   const [categoryFilter, setCategoryFilter] = useState<"" | HaccpChecklistRow["category"]>("");
 
   // Load users once (for filter dropdown)
@@ -1010,6 +1074,8 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
 
   // Reload data when date range or server-side filters change. Station/user
   // filters are passed as query params so the backend does the heavy lifting.
+  // We always pull the "missing" set too so the Outstanding filter can flip
+  // on without another round-trip and so the summary card stays accurate.
   useEffect(() => {
     setLoading(true);
     setError(null);
@@ -1021,13 +1087,21 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
     const tempParams = new URLSearchParams({ from: fromDate, to: toDate });
     const tempUrl = `${BASE}/api/temperature-records?${tempParams.toString()}`;
 
+    // The /missing endpoint does not take userId (un-done items have no
+    // user), but it does honour stationType.
+    const missingParams = new URLSearchParams({ from: fromDate, to: toDate });
+    if (stationFilter) missingParams.set("stationType", stationFilter);
+    const missingUrl = `${BASE}/api/checklists/missing?${missingParams.toString()}`;
+
     Promise.all([
       fetch(checklistUrl, { credentials: "include" }).then(r => r.ok ? r.json() : []),
       fetch(tempUrl, { credentials: "include" }).then(r => r.ok ? r.json() : []),
+      fetch(missingUrl, { credentials: "include" }).then(r => r.ok ? r.json() : []),
     ])
-      .then(([c, t]: [HaccpChecklistRow[], TemperatureRecord[]]) => {
+      .then(([c, t, m]: [HaccpChecklistRow[], TemperatureRecord[], HaccpMissingRow[]]) => {
         setChecklists(c);
         setTemps(t);
+        setMissing(m);
         setLoading(false);
       })
       .catch((err: Error) => { setError(err.message); setLoading(false); });
@@ -1046,6 +1120,11 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
     return true;
   });
 
+  const filteredMissing = missing.filter(m => {
+    if (categoryFilter && m.category !== categoryFilter) return false;
+    return true;
+  });
+
   // Pre-compute summary stats
   const tempPass = filteredTemps.filter(r => parseFloat(r.temperatureC) >= 75).length;
   const tempFail = filteredTemps.filter(r => parseFloat(r.temperatureC) < 75).length;
@@ -1054,7 +1133,11 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
   const totalRecords = filteredChecklists.length + filteredTemps.length;
 
   const showChecks = kindFilter === "all" || kindFilter === "checklists";
+  const showMissing = kindFilter === "all" || kindFilter === "outstanding";
   const showTemps = kindFilter === "all" || kindFilter === "temperatures";
+  // When the user explicitly filters to Outstanding, hide the other
+  // sections so the list is unambiguous.
+  const outstandingOnly = kindFilter === "outstanding";
 
   function clearFilters() {
     setStationFilter("");
@@ -1091,9 +1174,15 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
       {/* Summary cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <SummaryCard icon={<ClipboardCheck className="w-4 h-4 text-emerald-600" />} label="Checks Completed" value={String(filteredChecklists.length)} sub={`${uniqueCheckUsers} team member${uniqueCheckUsers !== 1 ? "s" : ""}, ${uniqueStations} station${uniqueStations !== 1 ? "s" : ""}`} />
+        <SummaryCard
+          icon={<AlertTriangle className={cn("w-4 h-4", filteredMissing.length > 0 ? "text-red-500" : "text-muted-foreground")} />}
+          label="Outstanding Checks"
+          value={String(filteredMissing.length)}
+          sub={filteredMissing.length > 0 ? "Expected but not completed" : "All checks accounted for"}
+          highlight={filteredMissing.length > 0 ? "red" : undefined}
+        />
         <SummaryCard icon={<Thermometer className="w-4 h-4 text-blue-500" />} label="Temp Readings" value={String(filteredTemps.length)} sub={filteredTemps.length > 0 ? `${tempPass} safe / ${tempFail} low` : undefined} />
         <SummaryCard icon={<ShieldCheck className="w-4 h-4 text-green-600" />} label="Temps ≥ 75°C" value={String(tempPass)} sub={filteredTemps.length ? `${Math.round((tempPass / filteredTemps.length) * 100)}% pass rate` : undefined} highlight={filteredTemps.length > 0 ? "green" : undefined} />
-        <SummaryCard icon={<FileText className="w-4 h-4 text-amber-600" />} label="Total Records" value={String(totalRecords)} sub={`${fromDate} → ${toDate}`} />
       </div>
 
       {/* Filter bar */}
@@ -1108,6 +1197,7 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
         >
           <option value="all">All records</option>
           <option value="checklists">Checklists only</option>
+          <option value="outstanding">Outstanding only</option>
           <option value="temperatures">Temperatures only</option>
         </select>
         <select
@@ -1153,8 +1243,68 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
         )}
       </div>
 
+      {/* Outstanding (expected but not completed) checklist items */}
+      {showMissing && (
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-border bg-red-50/40 dark:bg-red-950/20 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-600" />
+            <h3 className="text-sm font-semibold">Outstanding Items ({filteredMissing.length})</h3>
+            <span className="text-xs text-muted-foreground ml-2">Expected for the day but never ticked off</span>
+          </div>
+          {filteredMissing.length === 0 ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">
+              <ShieldCheck className="w-5 h-5 text-emerald-500 inline-block mr-1 align-text-bottom" />
+              All expected checks have been completed in this date range.
+            </div>
+          ) : (
+            <div className="overflow-x-auto max-h-[560px] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-secondary/40 backdrop-blur-sm">
+                  <tr className="border-b border-border">
+                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Expected For</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Category</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Station</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Item</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {filteredMissing.map(row => {
+                    const meta = HACCP_CATEGORY_META[row.category];
+                    return (
+                      <tr key={row.id} className="hover:bg-secondary/10 transition-colors align-top">
+                        <td className="px-4 py-2.5 tabular-nums text-muted-foreground whitespace-nowrap text-xs">
+                          {row.planDate ? format(new Date(`${row.planDate}T12:00:00Z`), "dd MMM yyyy") : "—"}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className={cn("inline-block px-2 py-0.5 rounded-full text-xs font-semibold", meta.bg, meta.color)}>
+                            {meta.label}
+                          </span>
+                          {row.kind === "oneoff-missing" && (
+                            <span className="ml-1 text-[10px] text-amber-500 font-semibold uppercase">one-off</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
+                          {STATION_LABELS_REPORT[row.stationType] ?? row.stationType}
+                        </td>
+                        <td className="px-4 py-2.5 font-medium">{row.title}</td>
+                        <td className="px-4 py-2.5">
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-900/30 rounded-full px-2 py-0.5">
+                            <AlertTriangle className="w-3 h-3" /> Not completed
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Checklist completions table */}
-      {showChecks && (
+      {showChecks && !outstandingOnly && (
         <div className="rounded-xl border border-border bg-card overflow-hidden">
           <div className="px-4 py-2.5 border-b border-border bg-secondary/20 flex items-center gap-2">
             <ClipboardCheck className="w-4 h-4 text-emerald-600" />
@@ -1212,7 +1362,7 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
       )}
 
       {/* Temperature records table */}
-      {showTemps && (
+      {showTemps && !outstandingOnly && (
         <div className="rounded-xl border border-border bg-card overflow-hidden">
           <div className="px-4 py-2.5 border-b border-border bg-secondary/20 flex items-center gap-2">
             <Thermometer className="w-4 h-4 text-blue-600" />

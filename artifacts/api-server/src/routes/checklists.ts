@@ -9,7 +9,7 @@ import {
   ovenEventsTable,
   usersTable,
 } from "@workspace/db";
-import { eq, and, asc, desc, gte, lte, sql } from "drizzle-orm";
+import { eq, and, asc, desc, gte, lte, sql, isNull, inArray } from "drizzle-orm";
 import * as z from "zod";
 
 type ChecklistCompletion = typeof checklistCompletionsTable.$inferSelect;
@@ -395,6 +395,154 @@ router.get("/completions", async (req: Request, res: Response) => {
   });
 
   res.json(merged);
+});
+
+// HACCP reporting: list OUTSTANDING checklist items across a date range —
+// templates that were scheduled for a given (plan date × station) but have
+// no matching completion row, plus any one-off items that were created but
+// never ticked off. Used by the Analytics → HACCP tab to surface "what did
+// we miss yesterday?" for EHO compliance.
+//
+// Query params:
+//   from (required): YYYY-MM-DD, inclusive
+//   to   (required): YYYY-MM-DD, inclusive
+//   stationType (optional): filter to a single station
+//
+// Returns an array of missing items in the same shape as /completions so
+// the frontend can render them in the same table, but with completedAt
+// replaced by the plan date and a `missing: true` flag.
+router.get("/missing", async (req: Request, res: Response) => {
+  const from = typeof req.query.from === "string" ? req.query.from : null;
+  const to = typeof req.query.to === "string" ? req.query.to : null;
+  if (!from || !to) {
+    res.status(400).json({ error: "from and to are required (YYYY-MM-DD)" });
+    return;
+  }
+  const stationFilter = typeof req.query.stationType === "string" ? req.query.stationType : null;
+
+  // Plans that live in the requested date range. We enumerate "what should
+  // have happened" against these plans — each plan represents a day that
+  // the station was scheduled to run.
+  const plans = await db
+    .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate })
+    .from(productionPlansTable)
+    .where(and(
+      gte(productionPlansTable.planDate, from),
+      lte(productionPlansTable.planDate, to),
+    ));
+
+  if (plans.length === 0) {
+    res.json([]);
+    return;
+  }
+
+  // All active templates (optionally filtered to the requested station).
+  const templateConds = [eq(checklistTemplatesTable.isActive, true)];
+  if (stationFilter) {
+    // Shared-checklist resolution: building_2 reads off the canonical
+    // building_1 template row.
+    templateConds.push(eq(checklistTemplatesTable.stationType, resolveChecklistStation(stationFilter)));
+  }
+  const templates = await db
+    .select()
+    .from(checklistTemplatesTable)
+    .where(and(...templateConds))
+    .orderBy(asc(checklistTemplatesTable.category), asc(checklistTemplatesTable.orderPosition));
+
+  // Completions for the plans in range — existence means "not missing".
+  const planIds = plans.map(p => p.id);
+  const completions = planIds.length > 0
+    ? await db
+        .select({
+          templateId: checklistCompletionsTable.templateId,
+          planId: checklistCompletionsTable.planId,
+          stationType: checklistCompletionsTable.stationType,
+        })
+        .from(checklistCompletionsTable)
+        .where(inArray(checklistCompletionsTable.planId, planIds))
+    : [];
+
+  // (templateId → Set<planId>) so we can check "did template X have a
+  // completion for plan Y?" in constant time.
+  const completedMap = new Map<number, Set<number>>();
+  for (const c of completions) {
+    let set = completedMap.get(c.templateId);
+    if (!set) { set = new Set(); completedMap.set(c.templateId, set); }
+    set.add(c.planId);
+  }
+
+  type MissingRow = {
+    id: string; // synthesised "tpl-{templateId}-plan-{planId}" key for React
+    kind: "template-missing" | "oneoff-missing";
+    templateId: number | null;
+    planId: number;
+    stationType: string;
+    category: "opening" | "cleaning" | "closing";
+    title: string;
+    description: string | null;
+    planDate: string;
+    missing: true;
+  };
+  const missing: MissingRow[] = [];
+
+  // Iterate every (plan × template) combination and emit a row for each
+  // template that SHOULD apply on that plan's date but has no completion.
+  for (const plan of plans) {
+    for (const t of templates) {
+      if (!templateMatchesDay(t, plan.planDate)) continue;
+      const done = completedMap.get(t.id);
+      if (done?.has(plan.id)) continue;
+      missing.push({
+        id: `tpl-${t.id}-plan-${plan.id}`,
+        kind: "template-missing",
+        templateId: t.id,
+        planId: plan.id,
+        stationType: t.stationType,
+        category: t.category as "opening" | "cleaning" | "closing",
+        title: t.title,
+        description: t.description,
+        planDate: plan.planDate,
+        missing: true,
+      });
+    }
+  }
+
+  // Uncompleted one-off items in the same date range (rows exist but
+  // completedAt IS NULL).
+  const oneoffConds = [
+    inArray(checklistOneoffItemsTable.planId, planIds),
+    isNull(checklistOneoffItemsTable.completedAt),
+  ];
+  if (stationFilter) {
+    oneoffConds.push(eq(checklistOneoffItemsTable.stationType, resolveChecklistStation(stationFilter)));
+  }
+  const oneoffs = planIds.length > 0
+    ? await db.select().from(checklistOneoffItemsTable).where(and(...oneoffConds))
+    : [];
+
+  // Map planId → planDate so one-off rows can be sorted alongside templates.
+  const planDateById = new Map(plans.map(p => [p.id, p.planDate]));
+
+  for (const o of oneoffs) {
+    missing.push({
+      id: `oneoff-${o.id}`,
+      kind: "oneoff-missing",
+      templateId: null,
+      planId: o.planId,
+      stationType: o.stationType,
+      category: o.category as "opening" | "cleaning" | "closing",
+      title: o.title,
+      description: o.description,
+      planDate: planDateById.get(o.planId) ?? "",
+      missing: true,
+    });
+  }
+
+  // Most-recent plan date first so "what was outstanding yesterday" is at
+  // the top.
+  missing.sort((a, b) => (a.planDate < b.planDate ? 1 : a.planDate > b.planDate ? -1 : 0));
+
+  res.json(missing);
 });
 
 // ─── One-off Items ───────────────────────────────────────────────────
