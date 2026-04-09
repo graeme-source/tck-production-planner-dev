@@ -29,7 +29,7 @@ import { format, addDays, parseISO, isWeekend, isToday, startOfWeek, isSameDay }
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 import {
   DndContext,
@@ -2994,8 +2994,15 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
 // Main page
 // ──────────────────────────────────────────────────────────────────────────────
 export default function ProductionPlans() {
-  const [view, setView] = useState<PlanView>("list");
-  const [selectedPlanId, setSelectedPlanId] = useState<number | null>(null);
+  const search = useSearch();
+  const initialPlanId = useMemo(() => {
+    const params = new URLSearchParams(search);
+    const id = params.get("planId");
+    return id ? Number(id) : null;
+  }, []);
+
+  const [view, setView] = useState<PlanView>(initialPlanId ? "detail" : "list");
+  const [selectedPlanId, setSelectedPlanId] = useState<number | null>(initialPlanId);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [, navigate] = useLocation();
 
