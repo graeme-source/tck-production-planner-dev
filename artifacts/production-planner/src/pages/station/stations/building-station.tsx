@@ -467,11 +467,36 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
   const otherStation = stationType === "building_1" ? "building_2" : "building_1";
+  // Per-builder currentItem: when a recipe has only 1 batch remaining AND the other
+  // station has already completed more of this recipe than we have, yield the last
+  // batch to that builder and advance to the next recipe. This unblocks the "other"
+  // builder so they can start the next recipe while the last batch is still being made.
   const currentItem = items.find(it => {
     const combined = getCombinedBuildCount(it);
     const effectiveTarget = getEffectiveTarget(it);
-    return combined < effectiveTarget;
+    if (combined >= effectiveTarget) return false;
+    const remainingForItem = effectiveTarget - combined;
+    if (remainingForItem === 1) {
+      const myCountForItem = getStationCount(it, stationType);
+      const otherCountForItem = getStationCount(it, otherStation);
+      if (otherCountForItem > myCountForItem) return false;
+    }
+    return true;
   });
+  // If currentItem is undefined but there's still an unfinished item we've yielded
+  // to the other builder, surface it so the UI can show a "waiting on other builder"
+  // state instead of falsely declaring allDone.
+  const waitingOnOtherItem = !currentItem
+    ? items.find(it => {
+        const combined = getCombinedBuildCount(it);
+        const effectiveTarget = getEffectiveTarget(it);
+        if (combined >= effectiveTarget) return false;
+        if (effectiveTarget - combined !== 1) return false;
+        const myCountForItem = getStationCount(it, stationType);
+        const otherCountForItem = getStationCount(it, otherStation);
+        return otherCountForItem > myCountForItem;
+      })
+    : undefined;
 
   // Combined count from both lines — used for display and progress
   const buildingCount = currentItem ? getCombinedBuildCount(currentItem) : 0;
@@ -485,7 +510,12 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   const remaining = currentItem ? Math.max(0, effectiveBatches - buildingCount) : 0;
   const isLastBatchPartial = currentItem ? remaining === 1 && getLastBatchPacks(currentItem) > 0 : false;
   const lastBatchPackCount = currentItem ? getLastBatchPacks(currentItem) : 0;
-  const allDone = items.length > 0 && !currentItem;
+  // Production is fully done only when every item's combined count has hit its
+  // effective target — not just when this builder has no currentItem (they may
+  // have yielded the last batch of the final recipe to the other builder).
+  const allDone = items.length > 0 && items.every(it =>
+    getCombinedBuildCount(it) >= getEffectiveTarget(it)
+  );
 
   useEffect(() => {
     if (!currentItem) return;
@@ -798,7 +828,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                 onClick={handleBatchComplete}
                 disabled={pendingTap || isOnBreak || available <= 0 || checklistPending}
                 className={cn(
-                  "w-full flex-1 min-h-[100px] rounded-2xl text-xl sm:text-2xl font-bold transition-all select-none active:scale-95 flex items-center justify-center",
+                  "w-full h-[200px] rounded-2xl text-xl sm:text-2xl font-bold transition-all select-none active:scale-95 flex items-center justify-center",
                   remaining === 0
                     ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 border-2 border-emerald-400 opacity-60 cursor-not-allowed"
                     : isOnBreak
@@ -848,6 +878,19 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
               isOnBreak={isOnBreak}
             />
           )}
+        </div>
+      ) : waitingOnOtherItem ? (
+        <div className="bg-card border-2 border-amber-300 dark:border-amber-700 rounded-2xl p-10 text-center">
+          <AlertCircle className="w-16 h-16 text-amber-500 mx-auto mb-4" />
+          <h2 className="font-display text-2xl font-bold mb-2">Waiting on Table {lineNumber === 1 ? 2 : 1}</h2>
+          <p className="text-muted-foreground">
+            Finishing the last batch of{" "}
+            <span className="font-semibold text-foreground">
+              {waitingOnOtherItem.recipeName ?? `Recipe #${waitingOnOtherItem.recipeId}`}
+            </span>
+            .
+          </p>
+          <p className="text-xs text-muted-foreground mt-2">The next recipe will appear here automatically.</p>
         </div>
       ) : (
         <div className="bg-card border border-border rounded-2xl p-10 text-center">

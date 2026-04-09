@@ -320,15 +320,21 @@ export function ReportModal({ open, onClose, defaultStation }: ReportModalProps)
     setAndonSubmitting(true);
     setAndonError(null);
     try {
-      const res = await fetch(`${BASE}/api/andon`, {
+      // Synthesize a title from the description (or category+severity if blank).
+      // The unified improvement_submissions table requires a title.
+      const desc = andonDescription.trim();
+      const title = desc ? desc.slice(0, 80) : `${andonCategory} (${andonSeverity})`;
+      const res = await fetch(`${BASE}/api/improvements`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
+          title,
+          description: desc,
+          station: andonStation,
+          type: "issue",
           category: andonCategory,
           severity: andonSeverity,
-          description: andonDescription.trim() || null,
-          station: andonStation,
         }),
       });
       if (!res.ok) {

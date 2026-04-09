@@ -96,7 +96,7 @@ function AndonBanner({ userRole }: { userRole?: string }) {
             {issues.length} unacknowledged issue{issues.length !== 1 ? "s" : ""}
           </span>
           <Link
-            href="/reports?tab=andon"
+            href="/reports?tab=issues"
             className="ml-auto flex items-center gap-1 text-xs font-medium text-destructive/70 hover:text-destructive transition-colors flex-shrink-0"
           >
             View full log <ArrowRight className="w-3.5 h-3.5" />
