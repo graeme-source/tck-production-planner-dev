@@ -29,7 +29,7 @@ import { format, addDays, parseISO, isWeekend, isToday, startOfWeek, isSameDay }
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 import {
   DndContext,
@@ -216,10 +216,11 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
         <input
           type="number"
           min={0}
-          value={item.fridgeStock}
-          onChange={e => onFridgeStockChange(item.id, Number(e.target.value))}
+          value={item.fridgeStock === 0 ? "" : item.fridgeStock}
+          onChange={e => onFridgeStockChange(item.id, e.target.value === "" ? 0 : Math.max(0, parseInt(e.target.value, 10) || 0))}
           disabled={saving}
-          className="w-16 px-1.5 py-1 bg-background border border-border rounded-lg text-xs text-center focus-ring disabled:opacity-40 tabular-nums"
+          className="w-20 px-1.5 py-1 bg-background border border-border rounded-lg text-xs text-center focus-ring disabled:opacity-40 tabular-nums"
+          placeholder="0"
         />
       </td>
       <td className="py-2 px-2 text-center tabular-nums text-xs text-red-500">
@@ -275,6 +276,7 @@ interface CreatePlanDialogProps {
   open: boolean;
   onClose: () => void;
   onCreated?: (planId: number) => void;
+  initialDate?: Date;
 }
 
 interface CalcRecipe {
@@ -334,12 +336,14 @@ async function fetchCalculation(planDate: string): Promise<CalcResponse> {
   return res.json();
 }
 
-function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
+function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanDialogProps) {
   const { state: authState } = useAuth();
   const userRole = authState.status === "authenticated" ? authState.user.role : undefined;
   const isAdmin = userRole === "admin";
   const minPlanDate = getMinPlanDate();
-  const [planDate, setPlanDate] = useState(isAdmin ? toLocalDateStr(new Date()) : toLocalDateStr(minPlanDate));
+  const defaultDate = initialDate ?? (isAdmin ? new Date() : minPlanDate);
+  const [planDate, setPlanDate] = useState(toLocalDateStr(defaultDate));
+  const [prepDate, setPrepDate] = useState("");
   const [planName, setPlanName] = useState("");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<PlanItem[]>([]);
@@ -349,6 +353,13 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   const [totalBatchesOverride, setTotalBatchesOverride] = useState<number | null>(null);
   const [savedOrder, setSavedOrder] = useState<number[]>([]);
   const [orderSaved, setOrderSaved] = useState(false);
+
+  // Sync date when dialog opens with a selected date
+  useEffect(() => {
+    if (open && initialDate) {
+      setPlanDate(toLocalDateStr(initialDate));
+    }
+  }, [open, initialDate]);
 
   // Fetch stored production order on open
   useEffect(() => {
@@ -388,10 +399,12 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   const planDateRef = useRef(planDate);
   const planNameRef = useRef(planName);
   const notesRef = useRef(notes);
+  const prepDateRef = useRef(prepDate);
   useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => { planDateRef.current = planDate; }, [planDate]);
   useEffect(() => { planNameRef.current = planName; }, [planName]);
   useEffect(() => { notesRef.current = notes; }, [notes]);
+  useEffect(() => { prepDateRef.current = prepDate; }, [prepDate]);
 
   // Reset dirty state when dialog closes
   useEffect(() => {
@@ -415,6 +428,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
       if (currentItems.length === 0) return;
       const payload = {
         planDate: planDateRef.current,
+        prepDate: prepDateRef.current || null,
         name: planNameRef.current || `Plan ${planDateRef.current}`,
         notes: notesRef.current || undefined,
         status: "draft" as const,
@@ -758,6 +772,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
     try {
       const data = {
         planDate,
+        prepDate: prepDate || null,
         name: planName || `Plan ${planDate}`,
         notes: notes || undefined,
         status: targetStatus,
@@ -832,6 +847,21 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                   <Info className="w-3 h-3 flex-shrink-0" />
                   {dateWarning}
                 </p>
+              )}
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block text-muted-foreground">
+                Prep Date <span className="font-normal text-muted-foreground/60">(optional override)</span>
+              </label>
+              <input
+                type="date"
+                value={prepDate}
+                max={planDate}
+                onChange={e => { isDirty.current = true; setPrepDate(e.target.value); }}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
+              />
+              {!prepDate && (
+                <p className="text-xs text-muted-foreground mt-1">Defaults to previous production day</p>
               )}
             </div>
             <div>
@@ -1123,6 +1153,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const editUserRole = editAuthState.status === "authenticated" ? editAuthState.user.role : undefined;
   const editIsAdmin = editUserRole === "admin";
   const [planDate, setPlanDate] = useState(plan.planDate);
+  const [prepDate, setPrepDate] = useState((plan as any).prepDate ?? "");
   const [planName, setPlanName] = useState(plan.name);
   const [notes, setNotes] = useState(plan.notes ?? "");
   const [dateWarning, setDateWarning] = useState<string | null>(null);
@@ -1180,10 +1211,12 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const planDateRef = useRef(planDate);
   const planNameRef = useRef(planName);
   const notesRef = useRef(notes);
+  const prepDateRef = useRef(prepDate);
   useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => { planDateRef.current = planDate; }, [planDate]);
   useEffect(() => { planNameRef.current = planName; }, [planName]);
   useEffect(() => { notesRef.current = notes; }, [notes]);
+  useEffect(() => { prepDateRef.current = prepDate; }, [prepDate]);
 
   // Reset dirty state when dialog closes
   useEffect(() => {
@@ -1377,6 +1410,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
         id: plan.id,
         data: {
           planDate,
+          prepDate: prepDate || null,
           name: planName,
           notes: notes || undefined,
           status: targetStatus,
@@ -1426,6 +1460,21 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
                   <Info className="w-3 h-3 flex-shrink-0" />
                   {dateWarning}
                 </p>
+              )}
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block text-muted-foreground">
+                Prep Date <span className="font-normal text-muted-foreground/60">(optional override)</span>
+              </label>
+              <input
+                type="date"
+                value={prepDate}
+                max={planDate}
+                onChange={e => { isDirty.current = true; setPrepDate(e.target.value); }}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
+              />
+              {!prepDate && (
+                <p className="text-xs text-muted-foreground mt-1">Defaults to previous production day</p>
               )}
             </div>
             <div>
@@ -2369,7 +2418,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
           <BarChart2 className="w-5 h-5 text-primary" />
           Enter Station
         </h2>
-        <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-5 gap-4">
           {STATION_BUTTONS.map(s => {
             const Icon = s.icon;
             const isBuildingStation = s.key === "building_1" || s.key === "building_2";
@@ -2380,31 +2429,31 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
               <button
                 key={s.key}
                 onClick={() => navigate(`/plans/${planId}/station/${s.key}`)}
-                className="flex flex-col items-center gap-3 p-5 min-h-[130px] border-2 border-border rounded-xl hover:border-primary hover:bg-secondary/40 hover:shadow-md transition-all group relative"
+                className="flex flex-col items-center justify-center gap-4 p-6 min-h-[160px] border-2 border-border rounded-2xl hover:border-primary hover:bg-secondary/40 hover:shadow-md active:scale-[0.97] transition-all group relative"
               >
                 {/* Active user badge */}
                 {activeUsers > 0 && (
                   <span
-                    className="absolute top-2 right-2 min-w-[20px] h-5 px-1.5 rounded-full bg-blue-500 text-white text-[11px] font-bold flex items-center justify-center"
+                    className="absolute top-3 right-3 min-w-[24px] h-6 px-2 rounded-full bg-blue-500 text-white text-sm font-bold flex items-center justify-center"
                     title={`${activeUsers} active user${activeUsers !== 1 ? "s" : ""} today`}
                   >
                     {activeUsers}
                   </span>
                 )}
                 {isBuildingStation && stationComplete && activeUsers === 0 && (
-                  <span className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full bg-emerald-500" title="Complete" />
+                  <span className="absolute top-3 right-3 w-3 h-3 rounded-full bg-emerald-500" title="Complete" />
                 )}
                 {isBuildingStation && stationInProgress && activeUsers === 0 && (
-                  <span className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full bg-amber-400" title="In progress" />
+                  <span className="absolute top-3 right-3 w-3 h-3 rounded-full bg-amber-400" title="In progress" />
                 )}
-                <div className={cn("w-14 h-14 rounded-xl flex items-center justify-center", s.color)}>
-                  <Icon className="w-7 h-7" />
+                <div className={cn("w-20 h-20 rounded-2xl flex items-center justify-center", s.color)}>
+                  <Icon className="w-10 h-10" />
                 </div>
-                <span className="text-base font-extrabold text-center leading-snug text-black dark:text-white transition-colors">
+                <span className="text-lg font-extrabold text-center leading-snug text-black dark:text-white transition-colors">
                   {s.label}
                 </span>
                 {isBuildingStation && totalBatchesTarget > 0 && (
-                  <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden">
+                  <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
                     <div
                       className={cn("h-full rounded-full transition-all", stationComplete ? "bg-emerald-500" : "bg-primary")}
                       style={{ width: `${Math.min(progress, 100)}%` }}
@@ -2412,7 +2461,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                   </div>
                 )}
                 {!isBuildingStation && activeUsers === 0 && (
-                  <ArrowRight className="w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <ArrowRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                 )}
               </button>
             );
@@ -2945,8 +2994,15 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
 // Main page
 // ──────────────────────────────────────────────────────────────────────────────
 export default function ProductionPlans() {
-  const [view, setView] = useState<PlanView>("list");
-  const [selectedPlanId, setSelectedPlanId] = useState<number | null>(null);
+  const search = useSearch();
+  const initialPlanId = useMemo(() => {
+    const params = new URLSearchParams(search);
+    const id = params.get("planId");
+    return id ? Number(id) : null;
+  }, []);
+
+  const [view, setView] = useState<PlanView>(initialPlanId ? "detail" : "list");
+  const [selectedPlanId, setSelectedPlanId] = useState<number | null>(initialPlanId);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [, navigate] = useLocation();
 
@@ -3019,6 +3075,7 @@ export default function ProductionPlans() {
         open={isCreateOpen}
         onClose={() => setIsCreateOpen(false)}
         onCreated={handlePlanCreated}
+        initialDate={selectedDate}
       />
     </div>
   );

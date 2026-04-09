@@ -322,7 +322,7 @@ export default function Dashboard() {
           icon={ChefHat}
           color="text-primary"
           bg="bg-primary/10"
-          href="/plans"
+          href={todayPlans.length > 0 ? `/plans?planId=${todayPlans[0].id}` : "/plans"}
         />
         <StatCard
           title="Dispatching Today"

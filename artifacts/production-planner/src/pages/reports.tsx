@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useSearch, useLocation } from "wouter";
 import { toast } from "@/hooks/use-toast";
@@ -10,10 +10,12 @@ import {
   TrendingUp, TrendingDown, Activity, Layers, Target, Timer,
   ChevronDown, ChevronRight, Thermometer, ShieldCheck,
   Package, Zap, CalendarDays, Trophy, Snail, Hourglass,
-  Lightbulb, AlertTriangle, AlertCircle, CheckCircle, Filter, X,
+  Lightbulb, AlertTriangle, CheckCircle, Filter, Play, Square,
+  MessageSquare, Send,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -53,8 +55,11 @@ interface KpiOverview {
   totalBatches: number;
   totalActiveMinutes: number;
   overallBph: number;
+  wallClockMinutes: number;
   uniqueDays: number;
   avgBatchesPerDay: number;
+  productionStartTime: string | null;
+  productionFinishTime: string | null;
 }
 
 interface StationSummary {
@@ -142,45 +147,43 @@ interface PackingSpeedData {
   source?: string;
 }
 
-type TabId = "kpis" | "breaks" | "temperature" | "packing-speed" | "improvements" | "issues";
-
-type ImprovementType = "improvement" | "struggle" | "issue";
-type ProgressStatus =
-  | "submitted_for_review"
-  | "acknowledged"
-  | "approved"
-  | "in_development"
-  | "testing"
-  | "complete"
-  | "rejected";
+type TabId = "kpis" | "breaks" | "temperature" | "packing-speed" | "improvements" | "andon";
 
 interface ImprovementRecord {
   id: number;
   title: string;
   description: string;
   station: string;
-  type: ImprovementType;
+  type: "improvement" | "struggle";
   submittedByName: string | null;
   approvalTier: "minor" | "medium" | "major" | null;
-  progressStatus: ProgressStatus;
+  progressStatus: "submitted_for_review" | "acknowledged" | "approved" | "testing" | "complete" | "rejected";
   notes: string | null;
-  // Issue-specific fields (null for type !== "issue")
-  category: "equipment" | "safety" | "production" | "product" | "other" | null;
-  severity: "yellow" | "red" | null;
-  acknowledgedByName: string | null;
-  acknowledgedAt: string | null;
-  resolvedByName: string | null;
-  resolvedAt: string | null;
+  reportContext: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-interface ImprovementCommentRecord {
+interface ImprovementComment {
   id: number;
-  submissionId: number;
+  improvementId: number;
   userId: number | null;
   userName: string | null;
   comment: string;
+  createdAt: string;
+}
+
+interface AndonIssueRecord {
+  id: number;
+  category: "equipment" | "safety" | "production" | "product" | "other";
+  severity: "yellow" | "red";
+  description: string | null;
+  station: string;
+  reportedByName: string | null;
+  acknowledgedByName: string | null;
+  acknowledgedAt: string | null;
+  resolvedByName: string | null;
+  resolvedAt: string | null;
   createdAt: string;
 }
 
@@ -234,14 +237,12 @@ function DateShortcutsDropdown({ onSelect }: { onSelect: (from: string, to: stri
   );
 }
 
-const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "packing-speed", "improvements", "issues"];
+const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "packing-speed", "improvements", "andon"];
 
 export default function Reports() {
   const search = useSearch();
   const [, navigate] = useLocation();
-  const rawTab = new URLSearchParams(search).get("tab");
-  // Backward compat: old "andon" tab id redirects to "issues"
-  const queryTab = (rawTab === "andon" ? "issues" : rawTab) as TabId | null;
+  const queryTab = new URLSearchParams(search).get("tab") as TabId | null;
   const initialTab: TabId = queryTab && VALID_TABS.includes(queryTab) ? queryTab : "kpis";
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);
   const { state } = useAuth();
@@ -257,7 +258,7 @@ export default function Reports() {
   const [fromDate, setFromDate] = useState(todayStr);
   const [toDate, setToDate] = useState(todayStr);
 
-  const showDatePicker = activeTab !== "packing-speed" && activeTab !== "improvements" && activeTab !== "issues";
+  const showDatePicker = activeTab !== "packing-speed" && activeTab !== "improvements" && activeTab !== "andon";
 
   return (
     <div className="space-y-6">
@@ -283,8 +284,8 @@ export default function Reports() {
           <TabButton active={activeTab === "improvements"} onClick={() => switchTab("improvements")}>
             <Lightbulb className="w-4 h-4" /> Improvements & Struggles
           </TabButton>
-          <TabButton active={activeTab === "issues"} onClick={() => switchTab("issues")}>
-            <AlertTriangle className="w-4 h-4" /> Issue Log
+          <TabButton active={activeTab === "andon"} onClick={() => switchTab("andon")}>
+            <AlertTriangle className="w-4 h-4" /> Andon Log
           </TabButton>
         </div>
         {showDatePicker && (
@@ -317,7 +318,7 @@ export default function Reports() {
       {activeTab === "temperature" && <TemperatureRecordsTab fromDate={fromDate} toDate={toDate} />}
       {activeTab === "packing-speed" && <PackingSpeedTab />}
       {activeTab === "improvements" && <ImprovementsTab userRole={userRole} currentUserName={state.status === "authenticated" ? state.user.name : null} />}
-      {activeTab === "issues" && <IssueLogTab userRole={userRole} />}
+      {activeTab === "andon" && <AndonLogTab userRole={userRole} />}
     </div>
   );
 }
@@ -385,22 +386,30 @@ function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: str
     <>
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <SummaryCard
+          icon={<Play className="w-5 h-5 text-emerald-600" />}
+          label="Start Time"
+          value={data.overview.productionStartTime ? format(new Date(data.overview.productionStartTime), "HH:mm") : "—"}
+          sub={data.overview.productionStartTime ? format(new Date(data.overview.productionStartTime), "d MMM yyyy") : "No data"}
+        />
+        <SummaryCard
+          icon={<Square className="w-5 h-5 text-red-500" />}
+          label="Finish Time"
+          value={data.overview.productionFinishTime ? format(new Date(data.overview.productionFinishTime), "HH:mm") : "—"}
+          sub={data.overview.wallClockMinutes > 0
+            ? `${Math.floor(data.overview.wallClockMinutes / 60)}h ${data.overview.wallClockMinutes % 60}m wall clock`
+            : "No data"}
+        />
+        <SummaryCard
           icon={<Layers className="w-5 h-5 text-blue-600" />}
           label="Total Batches"
           value={String(data.overview.totalBatches)}
           sub={`Over ${data.overview.uniqueDays} day${data.overview.uniqueDays !== 1 ? "s" : ""}`}
         />
         <SummaryCard
-          icon={<Activity className="w-5 h-5 text-emerald-600" />}
-          label="Overall BPH"
+          icon={<Activity className="w-5 h-5 text-violet-600" />}
+          label="Batches / Hour"
           value={String(data.overview.overallBph)}
-          sub="Batches per hour"
-        />
-        <SummaryCard
-          icon={<Target className="w-5 h-5 text-violet-600" />}
-          label="Avg / Day"
-          value={String(data.overview.avgBatchesPerDay)}
-          sub="Batches per day"
+          sub="Building tables combined"
         />
         <SummaryCard
           icon={<Timer className="w-5 h-5 text-amber-600" />}
@@ -409,12 +418,6 @@ function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: str
             ? `${Math.floor(data.overview.totalActiveMinutes / 60)}h ${data.overview.totalActiveMinutes % 60}m`
             : `${data.overview.totalActiveMinutes}m`}
           sub="Total productive time"
-        />
-        <SummaryCard
-          icon={<Users className="w-5 h-5 text-rose-600" />}
-          label="Stations Active"
-          value={String(data.stationSummaries.length)}
-          sub={`${data.userSummaries.length} user${data.userSummaries.length !== 1 ? "s" : ""}`}
         />
       </div>
 
@@ -1258,7 +1261,6 @@ const IMPROVEMENT_PROGRESS_OPTIONS = [
   { value: "submitted_for_review", label: "Submitted for Review" },
   { value: "acknowledged", label: "Acknowledged" },
   { value: "approved", label: "Approved" },
-  { value: "in_development", label: "In Development" },
   { value: "testing", label: "Testing" },
   { value: "complete", label: "Complete" },
   { value: "rejected", label: "Rejected" },
@@ -1268,7 +1270,6 @@ function statusRowClass(status: string) {
   if (status === "submitted_for_review") return "bg-yellow-50/60 dark:bg-yellow-900/10";
   if (status === "acknowledged") return "bg-violet-50/60 dark:bg-violet-900/10";
   if (status === "approved") return "bg-green-50/60 dark:bg-green-900/10";
-  if (status === "in_development") return "bg-amber-50/60 dark:bg-amber-900/10";
   if (status === "testing") return "bg-blue-50/60 dark:bg-blue-900/10";
   if (status === "complete") return "bg-emerald-50/60 dark:bg-emerald-900/10";
   if (status === "rejected") return "bg-red-50/60 dark:bg-red-900/10";
@@ -1279,7 +1280,6 @@ function statusBadgeClass(status: string) {
   if (status === "submitted_for_review") return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300";
   if (status === "acknowledged") return "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400";
   if (status === "approved") return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";
-  if (status === "in_development") return "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400";
   if (status === "testing") return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
   if (status === "complete") return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400 font-semibold";
   if (status === "rejected") return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
@@ -1290,7 +1290,6 @@ function statusSelectClass(status: string) {
   if (status === "submitted_for_review") return "border-yellow-300 bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300 dark:border-yellow-700";
   if (status === "acknowledged") return "border-violet-300 bg-violet-50 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400 dark:border-violet-700";
   if (status === "approved") return "border-green-300 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400 dark:border-green-700";
-  if (status === "in_development") return "border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700";
   if (status === "testing") return "border-blue-300 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-700";
   if (status === "complete") return "border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-700";
   if (status === "rejected") return "border-red-300 bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400 dark:border-red-700";
@@ -1309,7 +1308,53 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<number | null>(null);
   const [editNotes, setEditNotes] = useState<Record<number, string>>({});
-  const [selectedDetailId, setSelectedDetailId] = useState<number | null>(null);
+
+  // Detail dialog state
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [comments, setComments] = useState<ImprovementComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [newComment, setNewComment] = useState("");
+  const [postingComment, setPostingComment] = useState(false);
+  const commentsEndRef = useRef<HTMLDivElement>(null);
+
+  const selectedImp = selectedId !== null ? improvements.find(i => i.id === selectedId) ?? null : null;
+
+  const loadComments = useCallback(async (id: number) => {
+    setCommentsLoading(true);
+    try {
+      const res = await fetch(`${BASE}/api/improvements/${id}/comments`, { credentials: "include" });
+      if (res.ok) setComments(await res.json());
+    } catch { /* ignore */ }
+    setCommentsLoading(false);
+  }, []);
+
+  const openDetail = (id: number) => {
+    setSelectedId(id);
+    setNewComment("");
+    loadComments(id);
+  };
+
+  const postComment = async () => {
+    if (!selectedId || !newComment.trim()) return;
+    setPostingComment(true);
+    try {
+      const res = await fetch(`${BASE}/api/improvements/${selectedId}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ comment: newComment.trim() }),
+      });
+      if (res.ok) {
+        const row = await res.json();
+        setComments(prev => [...prev, row]);
+        setNewComment("");
+        setTimeout(() => commentsEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+      }
+    } catch {
+      toast({ title: "Failed to post comment", variant: "destructive" });
+    }
+    setPostingComment(false);
+  };
 
   // Filters
   const [viewTab, setViewTab] = useState<"all" | "mine">("all");
@@ -1326,11 +1371,7 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
     setLoading(true);
     try {
       const res = await fetch(`${BASE}/api/improvements`, { credentials: "include" });
-      if (res.ok) {
-        const rows: ImprovementRecord[] = await res.json();
-        // Exclude issues — those live in the Issue Log tab.
-        setImprovements(rows.filter(r => r.type !== "issue"));
-      }
+      if (res.ok) setImprovements(await res.json());
     } catch (err) {
       console.warn("[Reports] Failed to load improvements:", err);
       toast({ title: "Failed to load improvements", variant: "destructive" });
@@ -1505,17 +1546,10 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
             </thead>
             <tbody className="divide-y divide-border/50">
               {filtered.map(imp => (
-                <tr
-                  key={imp.id}
-                  onClick={() => setSelectedDetailId(imp.id)}
-                  className={cn(
-                    "transition-colors align-top cursor-pointer hover:bg-secondary/20",
-                    statusRowClass(imp.progressStatus)
-                  )}
-                >
+                <tr key={imp.id} className={cn("transition-colors align-top cursor-pointer hover:bg-secondary/40", statusRowClass(imp.progressStatus))} onClick={() => openDetail(imp.id)}>
                   <td className="px-4 py-3">
                     <p className="font-medium">{imp.title}</p>
-                    {imp.description && <p className="text-xs text-muted-foreground mt-0.5 max-w-xs truncate">{imp.description}</p>}
+                    {imp.description && <p className="text-xs text-muted-foreground mt-0.5 max-w-xs line-clamp-2">{imp.description}</p>}
                   </td>
                   <td className="px-4 py-3 text-center">
                     <span className={cn(
@@ -1605,14 +1639,124 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
         </div>
       )}
 
-      {selectedDetailId !== null && (
-        <IssueDetailDialog
-          submissionId={selectedDetailId}
-          userRole={userRole}
-          onClose={() => setSelectedDetailId(null)}
-          onChange={load}
-        />
-      )}
+      {/* Detail dialog */}
+      <Dialog open={selectedId !== null} onOpenChange={open => { if (!open) setSelectedId(null); }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+          {selectedImp && (
+            <>
+              <DialogHeader>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={cn(
+                    "px-2.5 py-0.5 rounded-full text-xs font-medium",
+                    (selectedImp.type ?? "improvement") === "struggle"
+                      ? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
+                      : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                  )}>
+                    {(selectedImp.type ?? "improvement") === "struggle" ? "Struggle" : "Improvement"}
+                  </span>
+                  <span className={cn("px-2 py-0.5 rounded-full text-xs", statusBadgeClass(selectedImp.progressStatus))}>
+                    {IMPROVEMENT_PROGRESS_OPTIONS.find(o => o.value === selectedImp.progressStatus)?.label ?? selectedImp.progressStatus}
+                  </span>
+                  {selectedImp.approvalTier && (
+                    <span className="px-2 py-0.5 rounded-full text-xs bg-secondary text-muted-foreground capitalize">
+                      {selectedImp.approvalTier}
+                    </span>
+                  )}
+                </div>
+                <DialogTitle className="text-xl">{selectedImp.title}</DialogTitle>
+                <DialogDescription className="text-sm text-muted-foreground">
+                  {STATION_LABELS_REPORT[selectedImp.station] ?? selectedImp.station}
+                  {" · "}
+                  {selectedImp.submittedByName ?? "Unknown"}
+                  {" · "}
+                  {selectedImp.createdAt ? format(new Date(selectedImp.createdAt), "d MMM yyyy, HH:mm") : "—"}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="flex-1 overflow-y-auto space-y-4 mt-2">
+                {/* Full description */}
+                <div className="bg-secondary/30 rounded-xl p-4">
+                  <p className="text-sm font-medium text-muted-foreground mb-1">Description</p>
+                  <p className="text-sm whitespace-pre-wrap">{selectedImp.description}</p>
+                </div>
+
+                {/* Report context */}
+                {selectedImp.reportContext && (
+                  <div className="bg-blue-50/50 dark:bg-blue-950/20 border border-blue-200/50 dark:border-blue-800/50 rounded-xl px-4 py-3 flex items-start gap-2">
+                    <Package className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-xs font-medium text-blue-700 dark:text-blue-400 mb-0.5">Reported from</p>
+                      <p className="text-sm text-blue-800 dark:text-blue-300">{selectedImp.reportContext}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Manager notes */}
+                {selectedImp.notes && (
+                  <div className="bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/50 dark:border-amber-800/50 rounded-xl p-4">
+                    <p className="text-sm font-medium text-amber-700 dark:text-amber-400 mb-1">Manager Notes</p>
+                    <p className="text-sm whitespace-pre-wrap">{selectedImp.notes}</p>
+                  </div>
+                )}
+
+                {/* Comments section */}
+                <div className="border-t border-border pt-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <MessageSquare className="w-4 h-4 text-muted-foreground" />
+                    <p className="text-sm font-semibold">Comments ({comments.length})</p>
+                  </div>
+
+                  {commentsLoading ? (
+                    <div className="flex items-center justify-center py-6 text-muted-foreground">
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />Loading...
+                    </div>
+                  ) : comments.length === 0 ? (
+                    <p className="text-sm text-muted-foreground italic py-3">No comments yet. Be the first to add an update.</p>
+                  ) : (
+                    <div className="space-y-3 max-h-[240px] overflow-y-auto pr-1">
+                      {comments.map(c => (
+                        <div key={c.id} className="bg-secondary/20 rounded-lg px-3.5 py-2.5">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-sm font-medium">{c.userName ?? "Unknown"}</span>
+                            <span className="text-xs text-muted-foreground">{format(new Date(c.createdAt), "d MMM yyyy, HH:mm")}</span>
+                          </div>
+                          <p className="text-sm whitespace-pre-wrap">{c.comment}</p>
+                        </div>
+                      ))}
+                      <div ref={commentsEndRef} />
+                    </div>
+                  )}
+
+                  {/* Add comment input */}
+                  <div className="flex items-start gap-2 mt-3">
+                    <textarea
+                      value={newComment}
+                      onChange={e => setNewComment(e.target.value)}
+                      placeholder="Add a comment or update..."
+                      rows={2}
+                      className="flex-1 px-3 py-2 border border-border rounded-lg text-sm bg-background resize-none focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                      onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) postComment(); }}
+                    />
+                    <button
+                      onClick={postComment}
+                      disabled={!newComment.trim() || postingComment}
+                      className={cn(
+                        "px-3 py-2 rounded-lg transition-all mt-0.5",
+                        newComment.trim()
+                          ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow active:scale-95"
+                          : "bg-secondary text-muted-foreground cursor-not-allowed"
+                      )}
+                    >
+                      {postingComment ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">Press Cmd+Enter to send</p>
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1625,15 +1769,13 @@ const ANDON_CATEGORY_LABELS: Record<string, string> = {
   other: "Other",
 };
 
-function IssueLogTab({ userRole }: { userRole: string }) {
-  const [issues, setIssues] = useState<ImprovementRecord[]>([]);
+function AndonLogTab({ userRole }: { userRole: string }) {
+  const [issues, setIssues] = useState<AndonIssueRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [actioningId, setActioningId] = useState<number | null>(null);
   const [stationFilter, setStationFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [severityFilter, setSeverityFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
-  const [selectedIssueId, setSelectedIssueId] = useState<number | null>(null);
 
   const isManager = userRole === "admin" || userRole === "manager";
 
@@ -1641,33 +1783,24 @@ function IssueLogTab({ userRole }: { userRole: string }) {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      params.set("type", "issue");
       if (stationFilter) params.set("station", stationFilter);
-      const res = await fetch(`${BASE}/api/improvements?${params.toString()}`, { credentials: "include" });
-      if (res.ok) {
-        const rows: ImprovementRecord[] = await res.json();
-        setIssues(rows);
-      }
+      if (categoryFilter) params.set("category", categoryFilter);
+      if (severityFilter) params.set("severity", severityFilter);
+      const res = await fetch(`${BASE}/api/andon?${params.toString()}`, { credentials: "include" });
+      if (res.ok) setIssues(await res.json());
     } catch (err) {
-      console.warn("[Reports] Failed to load issues:", err);
+      console.warn("[Reports] Failed to load andon issues:", err);
       toast({ title: "Failed to load issues", variant: "destructive" });
     }
     setLoading(false);
   }
 
-  useEffect(() => { load(); }, [stationFilter]);
-
-  const filtered = issues.filter(i => {
-    if (categoryFilter && (i.category ?? "") !== categoryFilter) return false;
-    if (severityFilter && (i.severity ?? "") !== severityFilter) return false;
-    if (statusFilter && i.progressStatus !== statusFilter) return false;
-    return true;
-  });
+  useEffect(() => { load(); }, [stationFilter, categoryFilter, severityFilter]);
 
   async function acknowledge(id: number) {
     setActioningId(id);
     try {
-      await fetch(`${BASE}/api/improvements/${id}/acknowledge`, { method: "PATCH", credentials: "include" });
+      await fetch(`${BASE}/api/andon/${id}/acknowledge`, { method: "PATCH", credentials: "include" });
       await load();
     } catch (err) {
       console.warn("[Reports] Failed to acknowledge issue:", err);
@@ -1679,7 +1812,7 @@ function IssueLogTab({ userRole }: { userRole: string }) {
   async function resolve(id: number) {
     setActioningId(id);
     try {
-      await fetch(`${BASE}/api/improvements/${id}/resolve`, { method: "PATCH", credentials: "include" });
+      await fetch(`${BASE}/api/andon/${id}/resolve`, { method: "PATCH", credentials: "include" });
       await load();
     } catch (err) {
       console.warn("[Reports] Failed to resolve issue:", err);
@@ -1720,30 +1853,14 @@ function IssueLogTab({ userRole }: { userRole: string }) {
           <option value="yellow">Yellow (Minor)</option>
           <option value="red">Red (Serious)</option>
         </select>
-        <select
-          value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value)}
-          className="px-3 py-1.5 border border-border rounded-lg text-sm bg-background"
-        >
-          <option value="">All statuses</option>
-          {IMPROVEMENT_PROGRESS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
-        <span className="ml-auto text-sm text-muted-foreground">{filtered.length} result{filtered.length !== 1 ? "s" : ""}</span>
       </div>
 
       {loading ? (
         <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
-      ) : filtered.length === 0 ? (
+      ) : issues.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border p-12 text-center">
           <AlertTriangle className="w-10 h-10 mx-auto mb-3 opacity-30" />
-          <p className="font-medium text-muted-foreground">
-            {issues.length === 0 ? "No issues reported" : "No results match your filters"}
-          </p>
-          <p className="text-sm text-muted-foreground mt-1">
-            {issues.length === 0
-              ? "Team members can report issues from the Record button on any page."
-              : "Try adjusting or clearing your filters."}
-          </p>
+          <p className="font-medium text-muted-foreground">No Andon issues found</p>
         </div>
       ) : (
         <div className="rounded-2xl border border-border bg-card overflow-x-auto">
@@ -1756,20 +1873,14 @@ function IssueLogTab({ userRole }: { userRole: string }) {
                 <th className="px-4 py-3 font-medium text-left">Description</th>
                 <th className="px-4 py-3 font-medium text-left">Reported by</th>
                 <th className="px-4 py-3 font-medium text-left">Submitted</th>
-                <th className="px-4 py-3 font-medium text-center">Status</th>
+                <th className="px-4 py-3 font-medium text-left">Acknowledged</th>
+                <th className="px-4 py-3 font-medium text-left">Resolved</th>
                 {isManager && <th className="px-4 py-3 font-medium text-center">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
-              {filtered.map(issue => (
-                <tr
-                  key={issue.id}
-                  onClick={() => setSelectedIssueId(issue.id)}
-                  className={cn(
-                    "hover:bg-secondary/20 cursor-pointer transition-colors align-top",
-                    statusRowClass(issue.progressStatus)
-                  )}
-                >
+              {issues.map(issue => (
+                <tr key={issue.id} className="hover:bg-secondary/10 transition-colors align-top">
                   <td className="px-4 py-3">
                     <span className={cn(
                       "flex items-center gap-1.5 text-xs font-bold",
@@ -1780,26 +1891,42 @@ function IssueLogTab({ userRole }: { userRole: string }) {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground capitalize">
-                    {issue.category ? (ANDON_CATEGORY_LABELS[issue.category] ?? issue.category) : "—"}
+                    {ANDON_CATEGORY_LABELS[issue.category] ?? issue.category}
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
                     {STATION_LABELS_REPORT[issue.station] ?? issue.station}
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground max-w-[260px] truncate">
-                    <p className="font-medium text-foreground truncate">{issue.title}</p>
-                    {issue.description && <p className="text-xs truncate">{issue.description}</p>}
+                  <td className="px-4 py-3 text-muted-foreground max-w-[200px] truncate">
+                    {issue.description ?? "—"}
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground">{issue.submittedByName ?? "—"}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{issue.reportedByName ?? "—"}</td>
                   <td className="px-4 py-3 text-muted-foreground whitespace-nowrap text-xs">
                     {issue.createdAt ? format(new Date(issue.createdAt), "d MMM HH:mm") : "—"}
                   </td>
-                  <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
-                    <span className={cn("px-2 py-1 rounded-full text-xs", statusBadgeClass(issue.progressStatus))}>
-                      {IMPROVEMENT_PROGRESS_OPTIONS.find(o => o.value === issue.progressStatus)?.label ?? issue.progressStatus}
-                    </span>
+                  <td className="px-4 py-3 text-xs">
+                    {issue.acknowledgedAt ? (
+                      <div>
+                        <p className="text-emerald-600 dark:text-emerald-400 font-medium">Acknowledged</p>
+                        <p className="text-muted-foreground">{issue.acknowledgedByName ?? ""}</p>
+                        <p className="text-muted-foreground">{format(new Date(issue.acknowledgedAt), "d MMM HH:mm")}</p>
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-xs">
+                    {issue.resolvedAt ? (
+                      <div>
+                        <p className="text-emerald-600 dark:text-emerald-400 font-medium">Resolved</p>
+                        <p className="text-muted-foreground">{issue.resolvedByName ?? ""}</p>
+                        <p className="text-muted-foreground">{format(new Date(issue.resolvedAt), "d MMM HH:mm")}</p>
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">Open</span>
+                    )}
                   </td>
                   {isManager && (
-                    <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
+                    <td className="px-4 py-3 text-center">
                       <div className="flex flex-col gap-1.5 items-center">
                         {!issue.acknowledgedAt && (
                           <button
@@ -1833,323 +1960,6 @@ function IssueLogTab({ userRole }: { userRole: string }) {
           </table>
         </div>
       )}
-
-      {selectedIssueId !== null && (
-        <IssueDetailDialog
-          submissionId={selectedIssueId}
-          userRole={userRole}
-          onClose={() => setSelectedIssueId(null)}
-          onChange={load}
-        />
-      )}
-    </div>
-  );
-}
-
-// ── Shared detail dialog used by both the Issue Log and Improvements tabs ──
-function IssueDetailDialog({
-  submissionId,
-  userRole,
-  onClose,
-  onChange,
-}: {
-  submissionId: number;
-  userRole: string;
-  onClose: () => void;
-  onChange: () => void;
-}) {
-  const [record, setRecord] = useState<ImprovementRecord | null>(null);
-  const [comments, setComments] = useState<ImprovementCommentRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [savingStatus, setSavingStatus] = useState(false);
-  const [savingNotes, setSavingNotes] = useState(false);
-  const [notesDraft, setNotesDraft] = useState("");
-  const [newComment, setNewComment] = useState("");
-  const [postingComment, setPostingComment] = useState(false);
-
-  const isManager = userRole === "admin" || userRole === "manager";
-
-  async function loadAll() {
-    setLoading(true);
-    try {
-      // Pull the single record from the list endpoint (no individual GET exists).
-      const params = new URLSearchParams();
-      const res = await fetch(`${BASE}/api/improvements?${params.toString()}`, { credentials: "include" });
-      if (res.ok) {
-        const rows: ImprovementRecord[] = await res.json();
-        const row = rows.find(r => r.id === submissionId) ?? null;
-        setRecord(row);
-        setNotesDraft(row?.notes ?? "");
-      }
-      const cres = await fetch(`${BASE}/api/improvements/${submissionId}/comments`, { credentials: "include" });
-      if (cres.ok) setComments(await cres.json());
-    } catch (err) {
-      console.warn("[Reports] Failed to load issue detail:", err);
-      toast({ title: "Failed to load details", variant: "destructive" });
-    }
-    setLoading(false);
-  }
-
-  useEffect(() => { loadAll(); }, [submissionId]);
-
-  async function updateStatus(newStatus: string) {
-    if (!record) return;
-    setSavingStatus(true);
-    try {
-      const res = await fetch(`${BASE}/api/improvements/${submissionId}`, {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ progressStatus: newStatus }),
-      });
-      if (res.ok) {
-        const updated: ImprovementRecord = await res.json();
-        setRecord(updated);
-        onChange();
-      }
-    } catch (err) {
-      console.warn("[Reports] Failed to update status:", err);
-      toast({ title: "Status update failed", variant: "destructive" });
-    }
-    setSavingStatus(false);
-  }
-
-  async function saveNotes() {
-    if (!record) return;
-    setSavingNotes(true);
-    try {
-      const res = await fetch(`${BASE}/api/improvements/${submissionId}`, {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notes: notesDraft }),
-      });
-      if (res.ok) {
-        const updated: ImprovementRecord = await res.json();
-        setRecord(updated);
-        onChange();
-      }
-    } catch (err) {
-      console.warn("[Reports] Failed to save notes:", err);
-      toast({ title: "Notes save failed", variant: "destructive" });
-    }
-    setSavingNotes(false);
-  }
-
-  async function addComment() {
-    const trimmed = newComment.trim();
-    if (!trimmed) return;
-    setPostingComment(true);
-    try {
-      const res = await fetch(`${BASE}/api/improvements/${submissionId}/comments`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ comment: trimmed }),
-      });
-      if (res.ok) {
-        const created: ImprovementCommentRecord = await res.json();
-        setComments(prev => [...prev, created]);
-        setNewComment("");
-      }
-    } catch (err) {
-      console.warn("[Reports] Failed to add comment:", err);
-      toast({ title: "Comment failed", variant: "destructive" });
-    }
-    setPostingComment(false);
-  }
-
-  function handleCommentKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault();
-      addComment();
-    }
-  }
-
-  const isIssue = record?.type === "issue";
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-card border border-border rounded-2xl shadow-2xl max-w-2xl w-full my-4">
-        <div className="flex items-start justify-between gap-3 p-5 border-b border-border">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 mb-1">
-              {isIssue ? (
-                <AlertTriangle className="w-5 h-5 text-amber-500" />
-              ) : record?.type === "struggle" ? (
-                <AlertCircle className="w-5 h-5 text-orange-500" />
-              ) : (
-                <Lightbulb className="w-5 h-5 text-blue-500" />
-              )}
-              <span className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">
-                {isIssue ? "Issue" : record?.type === "struggle" ? "Struggle" : "Improvement"}
-              </span>
-            </div>
-            <h2 className="font-display text-xl font-bold leading-tight truncate">
-              {loading ? "Loading…" : record?.title ?? "Not found"}
-            </h2>
-          </div>
-          <button
-            onClick={onClose}
-            className="flex-shrink-0 p-1 rounded-lg hover:bg-secondary transition-colors"
-            aria-label="Close"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {loading ? (
-          <div className="p-10 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
-        ) : !record ? (
-          <div className="p-10 text-center text-muted-foreground">Submission not found.</div>
-        ) : (
-          <div className="p-5 space-y-5">
-            {/* Metadata grid */}
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div>
-                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Station</p>
-                <p className="font-medium">{STATION_LABELS_REPORT[record.station] ?? record.station}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Submitted by</p>
-                <p className="font-medium">{record.submittedByName ?? "—"}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Submitted</p>
-                <p className="font-medium">{format(new Date(record.createdAt), "d MMM yyyy HH:mm")}</p>
-              </div>
-              {isIssue && (
-                <>
-                  <div>
-                    <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Category</p>
-                    <p className="font-medium capitalize">
-                      {record.category ? (ANDON_CATEGORY_LABELS[record.category] ?? record.category) : "—"}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Severity</p>
-                    <p className={cn(
-                      "font-bold",
-                      record.severity === "red" ? "text-red-600 dark:text-red-400" : "text-yellow-600 dark:text-yellow-400"
-                    )}>
-                      {record.severity === "red" ? "Serious" : record.severity === "yellow" ? "Minor" : "—"}
-                    </p>
-                  </div>
-                  {record.acknowledgedAt && (
-                    <div>
-                      <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Acknowledged</p>
-                      <p className="font-medium">
-                        {record.acknowledgedByName ?? "—"}
-                        <span className="text-muted-foreground ml-1">({format(new Date(record.acknowledgedAt), "d MMM HH:mm")})</span>
-                      </p>
-                    </div>
-                  )}
-                  {record.resolvedAt && (
-                    <div>
-                      <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Resolved</p>
-                      <p className="font-medium">
-                        {record.resolvedByName ?? "—"}
-                        <span className="text-muted-foreground ml-1">({format(new Date(record.resolvedAt), "d MMM HH:mm")})</span>
-                      </p>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-
-            {/* Description */}
-            {record.description && (
-              <div>
-                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Description</p>
-                <p className="text-sm whitespace-pre-wrap">{record.description}</p>
-              </div>
-            )}
-
-            {/* Status select (manager) */}
-            <div>
-              <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Status</p>
-              {isManager ? (
-                <select
-                  value={record.progressStatus}
-                  onChange={e => updateStatus(e.target.value)}
-                  disabled={savingStatus}
-                  className={cn("px-3 py-2 border rounded-lg text-sm disabled:opacity-50", statusSelectClass(record.progressStatus))}
-                >
-                  {IMPROVEMENT_PROGRESS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-              ) : (
-                <span className={cn("inline-block px-3 py-1 rounded-full text-sm", statusBadgeClass(record.progressStatus))}>
-                  {IMPROVEMENT_PROGRESS_OPTIONS.find(o => o.value === record.progressStatus)?.label ?? record.progressStatus}
-                </span>
-              )}
-            </div>
-
-            {/* Notes (manager) */}
-            {isManager && (
-              <div>
-                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Manager notes</p>
-                <div className="flex items-start gap-2">
-                  <textarea
-                    value={notesDraft}
-                    onChange={e => setNotesDraft(e.target.value)}
-                    rows={3}
-                    placeholder="Add internal notes…"
-                    className="flex-1 px-3 py-2 border border-border rounded-lg text-sm bg-background resize-y"
-                  />
-                  {notesDraft !== (record.notes ?? "") && (
-                    <button
-                      onClick={saveNotes}
-                      disabled={savingNotes}
-                      className="text-xs px-3 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 whitespace-nowrap"
-                    >
-                      {savingNotes ? "Saving…" : "Save"}
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Comments */}
-            <div>
-              <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">
-                Comments ({comments.length})
-              </p>
-              <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                {comments.length === 0 ? (
-                  <p className="text-sm text-muted-foreground italic">No comments yet.</p>
-                ) : (
-                  comments.map(c => (
-                    <div key={c.id} className="rounded-lg border border-border bg-secondary/20 p-3">
-                      <div className="flex items-center justify-between mb-1 text-xs text-muted-foreground">
-                        <span className="font-semibold text-foreground">{c.userName ?? "Someone"}</span>
-                        <span>{format(new Date(c.createdAt), "d MMM HH:mm")}</span>
-                      </div>
-                      <p className="text-sm whitespace-pre-wrap">{c.comment}</p>
-                    </div>
-                  ))
-                )}
-              </div>
-              <div className="mt-2 flex items-start gap-2">
-                <textarea
-                  value={newComment}
-                  onChange={e => setNewComment(e.target.value)}
-                  onKeyDown={handleCommentKey}
-                  rows={2}
-                  placeholder="Add a comment… (⌘/Ctrl + Enter to post)"
-                  className="flex-1 px-3 py-2 border border-border rounded-lg text-sm bg-background resize-y"
-                />
-                <button
-                  onClick={addComment}
-                  disabled={postingComment || !newComment.trim()}
-                  className="text-xs px-3 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 whitespace-nowrap"
-                >
-                  {postingComment ? "Posting…" : "Post"}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
     </div>
   );
 }

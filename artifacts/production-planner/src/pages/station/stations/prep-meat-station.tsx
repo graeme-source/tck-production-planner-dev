@@ -2,14 +2,15 @@ import React from "react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import {
-  Loader2, CheckCircle2, Beef, ExternalLink,
+  Loader2, CheckCircle2, Beef, ExternalLink, Package, Check,
 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { BreakTracker } from "../shared/break-tracker";
 import { PrepDateBanner, toKg } from "../shared/prep-helpers";
 import { PrepSubNav, usePrepByRecipe } from "./prep-hub";
-import type { PrepRecipeDetail } from "./prep-hub";
+import type { PrepRecipeDetail, PrepIngredientDetail } from "./prep-hub";
 
 interface PrepTrayCompletion {
   id: number;
@@ -52,10 +53,91 @@ function usePrepMeatCompletions(planId: number) {
 // Left: recipe list. Right: selected recipe detail with clickable tray tasks.
 // ──────────────────────────────────────────────────────────────────────────────
 export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
+  const { toast } = useToast();
   const [isOnBreak, setIsOnBreak] = useState(false);
   const [selectedRecipeId, setSelectedRecipeId] = useState<number | null>(null);
   const { recipes, isLoading, nextPlan, targetPlanId, noFuturePlan } = usePrepByRecipe("prep_meat", plan.id, plan.planDate);
   const { completions, refetch } = usePrepMeatCompletions(targetPlanId ?? plan.id);
+
+  // Stock check state
+  const [stockValues, setStockValues] = useState<Record<number, string>>({});
+  const [savingStock, setSavingStock] = useState<Record<number, boolean>>({});
+  const dirtyStockIds = useRef<Set<number>>(new Set());
+  const stockCheckRef = useRef<HTMLDivElement>(null);
+  const checkDate = nextPlan?.planDate ?? plan.planDate;
+
+  const todayDayName = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date().getDay()];
+
+  const stockCheckActiveToday = (ing: PrepIngredientDetail): boolean => {
+    if (!ing.stockCheckEnabled) return false;
+    if (ing.stockCheckFrequency === "weekly") return ing.stockCheckDay === todayDayName;
+    return true;
+  };
+
+  // Fetch existing stock checks
+  const fetchStockChecks = useCallback(() => {
+    if (!checkDate) return;
+    fetch(`/api/production-plans/stock-checks?date=${checkDate}`, { credentials: "include" })
+      .then(r => r.json())
+      .then(d => {
+        if (d?.checks) {
+          const serverVals: Record<number, string> = {};
+          for (const c of d.checks) {
+            if (c.quantity) serverVals[c.ingredientId] = String(parseFloat(c.quantity));
+          }
+          setStockValues(prev => {
+            const merged = { ...serverVals };
+            for (const id of dirtyStockIds.current) {
+              if (id in prev) merged[id] = prev[id];
+            }
+            return merged;
+          });
+        }
+      })
+      .catch(() => {});
+  }, [checkDate]);
+
+  useEffect(() => {
+    if (!checkDate) return;
+    fetchStockChecks();
+    const interval = setInterval(fetchStockChecks, 5000);
+    return () => clearInterval(interval);
+  }, [fetchStockChecks]);
+
+  const saveStockCheck = async (ingredientId: number) => {
+    const val = stockValues[ingredientId];
+    if (val === undefined || val === "") return;
+    setSavingStock(s => ({ ...s, [ingredientId]: true }));
+    try {
+      await fetch("/api/production-plans/stock-checks", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ingredientId, checkDate, quantity: Number(val) }),
+      });
+      dirtyStockIds.current.delete(ingredientId);
+      toast({ title: "Stock check saved" });
+    } catch {
+      toast({ title: "Failed to save stock check", variant: "destructive" });
+    }
+    setSavingStock(s => ({ ...s, [ingredientId]: false }));
+  };
+
+  // Check if ALL trays for an ingredient are done across ALL recipes
+  const isIngredientFullyDone = (ingredientId: number): boolean => {
+    for (const r of recipes) {
+      for (const ing of r.ingredients) {
+        if (ing.ingredientId !== ingredientId || !ing.isRawMeat) continue;
+        if (!ing.trayCount) continue;
+        for (let tn = 1; tn <= ing.trayCount; tn++) {
+          if (!completions.some(c => c.ingredientId === ingredientId && c.recipeId === r.recipeId && c.tinNumber === tn)) {
+            return false;
+          }
+        }
+      }
+    }
+    return true;
+  };
 
   const totalTrays = recipes.reduce((sum, r) => sum + (r.trayCount ?? 0), 0);
 
@@ -468,6 +550,60 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                         </div>
                       </div>
                     )}
+
+                    {/* Stock check — shown when all trays for this ingredient are done across all recipes */}
+                    {stockCheckActiveToday(ing) && (() => {
+                      const allDoneGlobal = isIngredientFullyDone(ing.ingredientId);
+                      const stockSaved = stockValues[ing.ingredientId] !== undefined && stockValues[ing.ingredientId] !== "";
+                      if (!allDoneGlobal) {
+                        return ingAllDone ? (
+                          <div className="px-4 pb-3 bg-blue-50/30 dark:bg-blue-950/10 border-t border-blue-200/50 dark:border-blue-800/50">
+                            <div className="flex items-center gap-2 py-2">
+                              <Package className="w-4 h-4 text-blue-400" />
+                              <p className="text-sm text-blue-600 dark:text-blue-400">Stock check after all recipes completed</p>
+                            </div>
+                          </div>
+                        ) : null;
+                      }
+                      return (
+                        <div ref={stockCheckRef} className="px-4 pb-4 pt-3 bg-blue-50/70 dark:bg-blue-950/30 border-t-2 border-blue-400 dark:border-blue-600">
+                          <div className="flex items-center gap-2 mb-3">
+                            <Package className="w-5 h-5 text-blue-600 animate-pulse" />
+                            <p className="text-lg font-bold text-blue-800 dark:text-blue-200">Stock Check</p>
+                            <p className="text-sm text-blue-600 dark:text-blue-400">— how much {ing.ingredientName.toLowerCase()} remains?</p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number" step="0.01"
+                              placeholder={`Remaining ${ing.unit}`}
+                              className="flex-1 max-w-[160px] text-base border-2 border-blue-300 dark:border-blue-600 rounded-lg px-3 py-2 text-right bg-background focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                              value={stockValues[ing.ingredientId] ?? ""}
+                              onChange={e => { dirtyStockIds.current.add(ing.ingredientId); setStockValues(v => ({ ...v, [ing.ingredientId]: e.target.value })); }}
+                              onKeyDown={e => { if (e.key === "Enter") saveStockCheck(ing.ingredientId); }}
+                            />
+                            <span className="text-base text-muted-foreground">{ing.unit}</span>
+                            <button
+                              onClick={() => saveStockCheck(ing.ingredientId)}
+                              disabled={!stockValues[ing.ingredientId] || savingStock[ing.ingredientId]}
+                              className={cn(
+                                "px-4 py-2 rounded-lg text-base font-bold transition-all",
+                                stockValues[ing.ingredientId]
+                                  ? "bg-blue-600 text-white hover:bg-blue-700 shadow active:scale-95"
+                                  : "bg-blue-200 text-blue-400 cursor-not-allowed"
+                              )}
+                            >
+                              {savingStock[ing.ingredientId] ? <Loader2 className="w-4 h-4 animate-spin" /> : stockSaved ? <Check className="w-4 h-4" /> : "Save"}
+                            </button>
+                          </div>
+                          {stockSaved && (
+                            <p className="text-sm text-emerald-600 dark:text-emerald-400 mt-2 flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" />
+                              {stockValues[ing.ingredientId]} {ing.unit} recorded
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}

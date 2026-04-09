@@ -171,7 +171,10 @@ export default function Orders() {
     queryKey: ["order-calculate", selectedPlanId],
     queryFn: async () => {
       const res = await fetch(`${BASE}/api/orders/calculate?planId=${selectedPlanId}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to calculate orders");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || body.error || "Failed to calculate orders");
+      }
       return res.json();
     },
     enabled: !!selectedPlanId,

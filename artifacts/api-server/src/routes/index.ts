@@ -38,6 +38,7 @@ import improvementsRouter from "./improvements";
 import andonRouter from "./andon";
 import qrRouter from "./qr";
 import pnlRouter from "./pnl";
+import checklistsRouter from "./checklists";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -107,6 +108,7 @@ router.use("/improvements", improvementsRouter);
 router.use("/andon", andonRouter);
 router.use("/qr", qrRouter);
 router.use("/pnl", pnlRouter);
+router.use("/checklists", checklistsRouter);
 
 router.post("/backup/trigger", requireAdmin, (_req: Request, res: Response) => {
   res.json({ status: "started", message: "Backup triggered" });

@@ -1,73 +1,26 @@
-/**
- * Compatibility shim for the legacy /api/andon endpoints.
- *
- * @deprecated New code should use /api/improvements with type="issue".
- *
- * This file reads and writes to improvement_submissions (with type='issue')
- * and returns rows in the legacy andon_issues shape so existing callers
- * (dashboard banner, station badge) keep working during the migration to
- * the unified Issue Log. Once all callers have been migrated, this shim
- * can be deleted.
- */
 import { Router, type IRouter, type Request, type Response } from "express";
-import { db, improvementSubmissionsTable, usersTable } from "@workspace/db";
+import { db, andonIssuesTable, usersTable } from "@workspace/db";
 import { eq, isNull, desc, and, SQL } from "drizzle-orm";
-import type { ImprovementSubmission } from "@workspace/db";
+import type { AndonIssue } from "@workspace/db";
 
 const router: IRouter = Router();
-
-type LegacyAndon = {
-  id: number;
-  category: ImprovementSubmission["category"];
-  severity: ImprovementSubmission["severity"];
-  description: string | null;
-  station: string;
-  reportedBy: number | null;
-  reportedByName: string | null;
-  acknowledgedBy: number | null;
-  acknowledgedByName: string | null;
-  acknowledgedAt: Date | null;
-  resolvedBy: number | null;
-  resolvedByName: string | null;
-  resolvedAt: Date | null;
-  createdAt: Date;
-};
-
-function toLegacy(row: ImprovementSubmission): LegacyAndon {
-  return {
-    id: row.id,
-    category: row.category,
-    severity: row.severity,
-    description: row.description || null,
-    station: row.station,
-    reportedBy: row.submittedBy,
-    reportedByName: row.submittedByName,
-    acknowledgedBy: row.acknowledgedBy,
-    acknowledgedByName: row.acknowledgedByName,
-    acknowledgedAt: row.acknowledgedAt,
-    resolvedBy: row.resolvedBy,
-    resolvedByName: row.resolvedByName,
-    resolvedAt: row.resolvedAt,
-    createdAt: row.createdAt,
-  };
-}
 
 router.get("/", async (req: Request, res: Response) => {
   try {
     const { station, category, severity, open } = req.query;
-    const conditions: SQL[] = [eq(improvementSubmissionsTable.type, "issue")];
-    if (station) conditions.push(eq(improvementSubmissionsTable.station, String(station)));
-    if (category) conditions.push(eq(improvementSubmissionsTable.category, String(category) as NonNullable<ImprovementSubmission["category"]>));
-    if (severity) conditions.push(eq(improvementSubmissionsTable.severity, String(severity) as NonNullable<ImprovementSubmission["severity"]>));
-    if (open === "true") conditions.push(isNull(improvementSubmissionsTable.resolvedAt));
+    const conditions: SQL[] = [];
+    if (station) conditions.push(eq(andonIssuesTable.station, String(station)));
+    if (category) conditions.push(eq(andonIssuesTable.category, String(category) as AndonIssue["category"]));
+    if (severity) conditions.push(eq(andonIssuesTable.severity, String(severity) as AndonIssue["severity"]));
+    if (open === "true") conditions.push(isNull(andonIssuesTable.resolvedAt));
 
     const rows = await db
       .select()
-      .from(improvementSubmissionsTable)
-      .where(and(...conditions))
-      .orderBy(desc(improvementSubmissionsTable.createdAt));
+      .from(andonIssuesTable)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(andonIssuesTable.createdAt));
 
-    res.json(rows.map(toLegacy));
+    res.json(rows);
   } catch (err) {
     console.error("Error fetching andon issues:", err);
     res.status(500).json({ error: "Failed to fetch andon issues" });
@@ -76,7 +29,7 @@ router.get("/", async (req: Request, res: Response) => {
 
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { category, severity, description, station } = req.body;
+    const { category, severity, description, station, reportContext } = req.body;
     if (!category || !severity || !station) {
       res.status(400).json({ error: "category, severity, and station are required" });
       return;
@@ -89,27 +42,20 @@ router.post("/", async (req: Request, res: Response) => {
       reportedByName = user?.name ?? null;
     }
 
-    // Synthesize a title from category + severity — the legacy andon schema
-    // didn't have a title but the unified table requires one.
-    const title = description && description.trim()
-      ? description.trim().slice(0, 80)
-      : `${category} (${severity})`;
-
     const [row] = await db
-      .insert(improvementSubmissionsTable)
+      .insert(andonIssuesTable)
       .values({
-        title,
-        description: description ?? "",
-        station,
-        type: "issue",
         category,
         severity,
-        submittedBy: userId ?? null,
-        submittedByName: reportedByName,
+        description: description ?? null,
+        station,
+        reportedBy: userId ?? null,
+        reportedByName,
+        reportContext: reportContext || null,
       })
       .returning();
 
-    res.status(201).json(toLegacy(row));
+    res.status(201).json(row);
   } catch (err) {
     console.error("Error creating andon issue:", err);
     res.status(500).json({ error: "Failed to create andon issue" });
@@ -132,25 +78,22 @@ router.patch("/:id", async (req: Request, res: Response) => {
 
     const { category, severity, description, station } = req.body;
 
-    type UpdatePayload = Partial<Pick<
-      ImprovementSubmission,
-      "category" | "severity" | "description" | "station" | "updatedAt"
-    >>;
-    const updates: UpdatePayload = { updatedAt: new Date() };
+    type UpdatePayload = Partial<Pick<AndonIssue, "category" | "severity" | "description" | "station">>;
+    const updates: UpdatePayload = {};
     if (category !== undefined) updates.category = category;
     if (severity !== undefined) updates.severity = severity;
-    if (description !== undefined) updates.description = description ?? "";
+    if (description !== undefined) updates.description = description;
     if (station !== undefined) updates.station = station;
 
-    if (Object.keys(updates).length === 1) {
+    if (Object.keys(updates).length === 0) {
       res.status(400).json({ error: "No fields to update" });
       return;
     }
 
     const [row] = await db
-      .update(improvementSubmissionsTable)
+      .update(andonIssuesTable)
       .set(updates)
-      .where(and(eq(improvementSubmissionsTable.id, id), eq(improvementSubmissionsTable.type, "issue")))
+      .where(eq(andonIssuesTable.id, id))
       .returning();
 
     if (!row) {
@@ -158,7 +101,7 @@ router.patch("/:id", async (req: Request, res: Response) => {
       return;
     }
 
-    res.json(toLegacy(row));
+    res.json(row);
   } catch (err) {
     console.error("Error updating andon issue:", err);
     res.status(500).json({ error: "Failed to update andon issue" });
@@ -187,15 +130,13 @@ router.patch("/:id/acknowledge", async (req: Request, res: Response) => {
     }
 
     const [row] = await db
-      .update(improvementSubmissionsTable)
+      .update(andonIssuesTable)
       .set({
         acknowledgedBy: userId ?? null,
         acknowledgedByName,
         acknowledgedAt: new Date(),
-        progressStatus: "acknowledged",
-        updatedAt: new Date(),
       })
-      .where(and(eq(improvementSubmissionsTable.id, id), eq(improvementSubmissionsTable.type, "issue")))
+      .where(eq(andonIssuesTable.id, id))
       .returning();
 
     if (!row) {
@@ -203,7 +144,7 @@ router.patch("/:id/acknowledge", async (req: Request, res: Response) => {
       return;
     }
 
-    res.json(toLegacy(row));
+    res.json(row);
   } catch (err) {
     console.error("Error acknowledging andon issue:", err);
     res.status(500).json({ error: "Failed to acknowledge andon issue" });
@@ -232,15 +173,13 @@ router.patch("/:id/resolve", async (req: Request, res: Response) => {
     }
 
     const [row] = await db
-      .update(improvementSubmissionsTable)
+      .update(andonIssuesTable)
       .set({
         resolvedBy: userId ?? null,
         resolvedByName,
         resolvedAt: new Date(),
-        progressStatus: "complete",
-        updatedAt: new Date(),
       })
-      .where(and(eq(improvementSubmissionsTable.id, id), eq(improvementSubmissionsTable.type, "issue")))
+      .where(eq(andonIssuesTable.id, id))
       .returning();
 
     if (!row) {
@@ -248,7 +187,7 @@ router.patch("/:id/resolve", async (req: Request, res: Response) => {
       return;
     }
 
-    res.json(toLegacy(row));
+    res.json(row);
   } catch (err) {
     console.error("Error resolving andon issue:", err);
     res.status(500).json({ error: "Failed to resolve andon issue" });
@@ -270,9 +209,9 @@ router.delete("/:id", async (req: Request, res: Response) => {
     }
 
     const [row] = await db
-      .delete(improvementSubmissionsTable)
-      .where(and(eq(improvementSubmissionsTable.id, id), eq(improvementSubmissionsTable.type, "issue")))
-      .returning({ id: improvementSubmissionsTable.id });
+      .delete(andonIssuesTable)
+      .where(eq(andonIssuesTable.id, id))
+      .returning({ id: andonIssuesTable.id });
 
     if (!row) {
       res.status(404).json({ error: "Not found" });
