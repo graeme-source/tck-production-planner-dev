@@ -1,3 +1,5 @@
+import { shouldSkipSideEffect, logSkippedSideEffect } from "../lib/app-env";
+
 const STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN!;
 const CLIENT_ID = process.env.SHOPIFY_CLIENT_ID!;
 const CLIENT_SECRET = process.env.SHOPIFY_APP_SHARED_SECRET2!;
@@ -346,6 +348,15 @@ export async function fulfillOrder(
   trackingCompany: string = "APC Overnight",
   trackingUrl?: string,
 ): Promise<void> {
+  // Staging: never fulfil real Shopify orders. The staging DB may have
+  // been seeded from production, so every orderId here corresponds to a
+  // real customer's real order — fulfilling it would send them an APC
+  // tracking email and mark the order shipped in the real store.
+  if (shouldSkipSideEffect()) {
+    logSkippedSideEffect("shopify.fulfillOrder", { orderId, trackingNumber, trackingCompany });
+    return;
+  }
+
   const fulfillmentsRes = (await shopifyFetch(`/orders/${orderId}/fulfillment_orders.json`)) as {
     fulfillment_orders: Array<{ id: number; status: string; line_items: unknown[] }>;
   };
@@ -472,6 +483,14 @@ export async function findOrderByName(name: string): Promise<ShopifyOrder | null
 // Adjust inventory level for a Shopify variant by delta (positive = add, negative = remove).
 // Resolves the variant → inventory_item_id → location_id chain automatically.
 export async function adjustInventoryLevel(variantId: string, delta: number): Promise<{ newQuantity: number }> {
+  // Staging: don't touch the real Shopify inventory. Report the delta
+  // as if it succeeded (returning newQuantity: 0 is fine because the
+  // caller only uses it for logging, not for business logic).
+  if (shouldSkipSideEffect()) {
+    logSkippedSideEffect("shopify.adjustInventoryLevel", { variantId, delta });
+    return { newQuantity: 0 };
+  }
+
   const variantData = (await shopifyFetch(`/variants/${variantId}.json`)) as {
     variant: { inventory_item_id: number };
   };

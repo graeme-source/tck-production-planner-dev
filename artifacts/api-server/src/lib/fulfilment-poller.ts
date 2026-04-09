@@ -110,6 +110,16 @@ async function pollOnce(): Promise<void> {
 
 export async function startFulfilmentPoller(): Promise<void> {
   if (timer) return;
+  // Staging: don't run the poller at all. It's a belt-and-braces guard
+  // on top of the per-call side-effect skip — even though the decrement
+  // helper would no-op its Shopify writes, we don't want staging
+  // chewing through Shopify API rate-limit budget against the
+  // production store for no reason.
+  const { isStaging } = await import("./app-env");
+  if (isStaging()) {
+    console.log("[fulfilment-poller] staging: skipping scheduler start");
+    return;
+  }
   try {
     await seedTracking();
   } catch (err) {

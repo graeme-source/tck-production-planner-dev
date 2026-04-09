@@ -1,3 +1,5 @@
+import { shouldSkipSideEffect, logSkippedSideEffect } from "./app-env";
+
 export interface EmailPayload {
   to: string;
   subject: string;
@@ -9,6 +11,14 @@ const APP_NAME = "TCK Production Planner";
 const FROM_EMAIL = process.env["FROM_EMAIL"] ?? "noreply@thecalzonekitchen.co.uk";
 
 export async function sendEmail(payload: EmailPayload): Promise<void> {
+  // Staging: never actually send mail. Log it instead so the invite/reset
+  // flow can still be smoke-tested (the URL ends up in the server logs).
+  if (shouldSkipSideEffect()) {
+    logSkippedSideEffect("sendEmail", { to: payload.to, subject: payload.subject });
+    console.log(`[staging email body]\n${payload.text}`);
+    return;
+  }
+
   const klaviyoKey = process.env["KLAVIYO_API_KEY"];
   const resendKey = process.env["RESEND_API_KEY"];
 

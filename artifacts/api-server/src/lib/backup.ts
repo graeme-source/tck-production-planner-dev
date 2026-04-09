@@ -12,6 +12,7 @@ import { Readable } from "stream";
 import { readFileSync } from "fs";
 import { schedule } from "node-cron";
 import { ReplitConnectors } from "@replit/connectors-sdk";
+import { isStaging } from "./app-env";
 
 const OWNER = "graeme-source";
 const REPO  = "tck-production-planner";
@@ -173,6 +174,14 @@ export async function runBackup(): Promise<void> {
 // ── Scheduler — daily 18:00 Europe/London ─────────────────────────────────────
 
 export function startBackupScheduler(): void {
+  // Staging: don't run the backup scheduler. Production is the source
+  // of truth for backups and we don't want staging clobbering the
+  // backups/YYYY-MM-DD.sql.gz bucket with its snapshot data.
+  if (isStaging()) {
+    console.log("[backup] staging: scheduler disabled");
+    return;
+  }
+
   // "0 18 * * *" = 6pm, timezone handles BST/GMT automatically
   schedule("0 18 * * *", () => {
     runBackup().catch((err) => {

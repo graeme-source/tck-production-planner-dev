@@ -9,6 +9,7 @@ import { Layout } from "@/components/layout";
 import { PinSetupModal } from "@/components/pin-setup-modal";
 import { AppErrorBoundary } from "@/components/error-boundary";
 import { NetworkStatusBanner } from "@/components/network-status-banner";
+import { StagingEnvBanner } from "@/components/staging-env-banner";
 import { PullToRefresh } from "@/components/pull-to-refresh";
 import Dashboard from "@/pages/dashboard";
 import Ingredients from "@/pages/ingredients";
@@ -192,6 +193,7 @@ function App() {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <AuthProvider>
+            <StagingEnvBanner />
             <NetworkStatusBanner />
             <PullToRefresh />
             <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
