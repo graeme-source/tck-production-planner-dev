@@ -364,13 +364,31 @@ router.get("/production-kpis", async (req, res) => {
     stations: Array.from(us.stations),
   }));
 
-  // Overview KPIs only count building tables (the real production throughput)
-  const buildingSessions = dailySessions.filter(ds => ds.station === "building_1" || ds.station === "building_2");
-  const totalBatches = buildingSessions.reduce((s, ds) => s + ds.batchCount, 0);
-  const totalActiveMinutes = buildingSessions.reduce((s, ds) => s + ds.activeMinutes, 0);
-  const overallBph = totalActiveMinutes > 0
-    ? Math.round((totalBatches / (totalActiveMinutes / 60)) * 10) / 10
-    : 0;
+  // Overview KPIs only count building tables (the real production throughput).
+  //
+  // "Combined" BPH = the SUM of each building table's own rate, not the
+  // pooled average. Two builders running in parallel at 8/hr and 10/hr
+  // report 18/hr (the production line's actual throughput), not the 9/hr
+  // you'd get by pooling batches and minutes together first.
+  const building1Sessions = dailySessions.filter(ds => ds.station === "building_1");
+  const building2Sessions = dailySessions.filter(ds => ds.station === "building_2");
+  const buildingSessions = [...building1Sessions, ...building2Sessions];
+
+  const sumBatches = (xs: typeof dailySessions) => xs.reduce((s, ds) => s + ds.batchCount, 0);
+  const sumMinutes = (xs: typeof dailySessions) => xs.reduce((s, ds) => s + ds.activeMinutes, 0);
+  const bphOf = (batches: number, minutes: number) => minutes > 0 ? batches / (minutes / 60) : 0;
+
+  const building1Batches = sumBatches(building1Sessions);
+  const building1Minutes = sumMinutes(building1Sessions);
+  const building2Batches = sumBatches(building2Sessions);
+  const building2Minutes = sumMinutes(building2Sessions);
+
+  const building1Bph = bphOf(building1Batches, building1Minutes);
+  const building2Bph = bphOf(building2Batches, building2Minutes);
+  const overallBph = Math.round((building1Bph + building2Bph) * 10) / 10;
+
+  const totalBatches = building1Batches + building2Batches;
+  const totalActiveMinutes = building1Minutes + building2Minutes;
   const uniqueDays = new Set(buildingSessions.map(ds => ds.date)).size;
 
   // Production start/finish from earliest and latest building completion timestamps

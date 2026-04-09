@@ -451,7 +451,7 @@ function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: str
           icon={<Activity className="w-5 h-5 text-violet-600" />}
           label="Batches / Hour"
           value={String(data.overview.overallBph)}
-          sub="Building tables combined"
+          sub="Both building tables added"
         />
         <SummaryCard
           icon={<Timer className="w-5 h-5 text-amber-600" />}
