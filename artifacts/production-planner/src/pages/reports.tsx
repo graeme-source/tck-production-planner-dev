@@ -8,7 +8,7 @@ import {
   Loader2, Coffee, Utensils, Clock, Users,
   ArrowUp, ArrowDown, Minus as MinusIcon,
   TrendingUp, TrendingDown, Activity, Layers, Target, Timer,
-  ChevronDown, ChevronRight, Thermometer, ShieldCheck,
+  ChevronDown, ChevronUp, ChevronRight, Thermometer, ShieldCheck,
   Package, Zap, CalendarDays, Trophy, Snail, Hourglass,
   Lightbulb, AlertTriangle, CheckCircle, Filter, Play, Square,
   MessageSquare, Send, ClipboardCheck, FileText,
@@ -1064,6 +1064,13 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
   const [kindFilter, setKindFilter] = useState<"all" | "checklists" | "outstanding" | "temperatures">("all");
   const [categoryFilter, setCategoryFilter] = useState<"" | HaccpChecklistRow["category"]>("");
 
+  // Collapsible sections — default both the completed and outstanding
+  // sections to collapsed so the page is glanceable and the user opens the
+  // one they care about.
+  const [outstandingOpen, setOutstandingOpen] = useState(true);
+  const [completedOpen, setCompletedOpen] = useState(false);
+  const [tempsOpen, setTempsOpen] = useState(false);
+
   // Load users once (for filter dropdown)
   useEffect(() => {
     fetch(`${BASE}/api/users`, { credentials: "include" })
@@ -1125,12 +1132,11 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
     return true;
   });
 
-  // Pre-compute summary stats
-  const tempPass = filteredTemps.filter(r => parseFloat(r.temperatureC) >= 75).length;
-  const tempFail = filteredTemps.filter(r => parseFloat(r.temperatureC) < 75).length;
+  // Pre-compute summary stats (no pass/fail split on temperatures since
+  // readings span cooked-core, fridge, and delivery checks with different
+  // thresholds).
   const uniqueCheckUsers = new Set(filteredChecklists.map(c => c.completedByName ?? "").filter(Boolean)).size;
   const uniqueStations = new Set(filteredChecklists.map(c => c.stationType)).size;
-  const totalRecords = filteredChecklists.length + filteredTemps.length;
 
   const showChecks = kindFilter === "all" || kindFilter === "checklists";
   const showMissing = kindFilter === "all" || kindFilter === "outstanding";
@@ -1171,8 +1177,10 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
         </div>
       </div>
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {/* Summary cards — 75°C pass/fail is no longer shown because not all
+          readings are cooked-core (fridge, delivery, and ambient readings
+          also land in this log). */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <SummaryCard icon={<ClipboardCheck className="w-4 h-4 text-emerald-600" />} label="Checks Completed" value={String(filteredChecklists.length)} sub={`${uniqueCheckUsers} team member${uniqueCheckUsers !== 1 ? "s" : ""}, ${uniqueStations} station${uniqueStations !== 1 ? "s" : ""}`} />
         <SummaryCard
           icon={<AlertTriangle className={cn("w-4 h-4", filteredMissing.length > 0 ? "text-red-500" : "text-muted-foreground")} />}
@@ -1181,8 +1189,7 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
           sub={filteredMissing.length > 0 ? "Expected but not completed" : "All checks accounted for"}
           highlight={filteredMissing.length > 0 ? "red" : undefined}
         />
-        <SummaryCard icon={<Thermometer className="w-4 h-4 text-blue-500" />} label="Temp Readings" value={String(filteredTemps.length)} sub={filteredTemps.length > 0 ? `${tempPass} safe / ${tempFail} low` : undefined} />
-        <SummaryCard icon={<ShieldCheck className="w-4 h-4 text-green-600" />} label="Temps ≥ 75°C" value={String(tempPass)} sub={filteredTemps.length ? `${Math.round((tempPass / filteredTemps.length) * 100)}% pass rate` : undefined} highlight={filteredTemps.length > 0 ? "green" : undefined} />
+        <SummaryCard icon={<Thermometer className="w-4 h-4 text-blue-500" />} label="Temp Readings" value={String(filteredTemps.length)} sub={`${fromDate} → ${toDate}`} />
       </div>
 
       {/* Filter bar */}
@@ -1246,59 +1253,69 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
       {/* Outstanding (expected but not completed) checklist items */}
       {showMissing && (
         <div className="rounded-xl border border-border bg-card overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-border bg-red-50/40 dark:bg-red-950/20 flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-red-600" />
+          <button
+            type="button"
+            onClick={() => setOutstandingOpen(v => !v)}
+            className="w-full px-4 py-2.5 border-b border-border bg-red-50/40 dark:bg-red-950/20 flex items-center gap-2 text-left hover:bg-red-50/60 dark:hover:bg-red-950/30 transition-colors"
+            aria-expanded={outstandingOpen}
+          >
+            <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0" />
             <h3 className="text-sm font-semibold">Outstanding Items ({filteredMissing.length})</h3>
-            <span className="text-xs text-muted-foreground ml-2">Expected for the day but never ticked off</span>
-          </div>
-          {filteredMissing.length === 0 ? (
-            <div className="p-8 text-center text-sm text-muted-foreground">
-              <ShieldCheck className="w-5 h-5 text-emerald-500 inline-block mr-1 align-text-bottom" />
-              All expected checks have been completed in this date range.
-            </div>
-          ) : (
-            <div className="overflow-x-auto max-h-[560px] overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-secondary/40 backdrop-blur-sm">
-                  <tr className="border-b border-border">
-                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Expected For</th>
-                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Category</th>
-                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Station</th>
-                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Item</th>
-                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {filteredMissing.map(row => {
-                    const meta = HACCP_CATEGORY_META[row.category];
-                    return (
-                      <tr key={row.id} className="hover:bg-secondary/10 transition-colors align-top">
-                        <td className="px-4 py-2.5 tabular-nums text-muted-foreground whitespace-nowrap text-xs">
-                          {row.planDate ? format(new Date(`${row.planDate}T12:00:00Z`), "dd MMM yyyy") : "—"}
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <span className={cn("inline-block px-2 py-0.5 rounded-full text-xs font-semibold", meta.bg, meta.color)}>
-                            {meta.label}
-                          </span>
-                          {row.kind === "oneoff-missing" && (
-                            <span className="ml-1 text-[10px] text-amber-500 font-semibold uppercase">one-off</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
-                          {STATION_LABELS_REPORT[row.stationType] ?? row.stationType}
-                        </td>
-                        <td className="px-4 py-2.5 font-medium">{row.title}</td>
-                        <td className="px-4 py-2.5">
-                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-900/30 rounded-full px-2 py-0.5">
-                            <AlertTriangle className="w-3 h-3" /> Not completed
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <span className="text-xs text-muted-foreground ml-2 hidden sm:inline">Expected for the day but never ticked off</span>
+            {outstandingOpen
+              ? <ChevronUp className="w-4 h-4 text-muted-foreground ml-auto flex-shrink-0" />
+              : <ChevronDown className="w-4 h-4 text-muted-foreground ml-auto flex-shrink-0" />}
+          </button>
+          {outstandingOpen && (
+            filteredMissing.length === 0 ? (
+              <div className="p-8 text-center text-sm text-muted-foreground">
+                <ShieldCheck className="w-5 h-5 text-emerald-500 inline-block mr-1 align-text-bottom" />
+                All expected checks have been completed in this date range.
+              </div>
+            ) : (
+              <div className="overflow-x-auto max-h-[560px] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-secondary/40 backdrop-blur-sm">
+                    <tr className="border-b border-border">
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Expected For</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Category</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Station</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Item</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {filteredMissing.map(row => {
+                      const meta = HACCP_CATEGORY_META[row.category];
+                      return (
+                        <tr key={row.id} className="hover:bg-secondary/10 transition-colors align-top">
+                          <td className="px-4 py-2.5 tabular-nums text-muted-foreground whitespace-nowrap text-xs">
+                            {row.planDate ? format(new Date(`${row.planDate}T12:00:00Z`), "dd MMM yyyy") : "—"}
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <span className={cn("inline-block px-2 py-0.5 rounded-full text-xs font-semibold", meta.bg, meta.color)}>
+                              {meta.label}
+                            </span>
+                            {row.kind === "oneoff-missing" && (
+                              <span className="ml-1 text-[10px] text-amber-500 font-semibold uppercase">one-off</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
+                            {STATION_LABELS_REPORT[row.stationType] ?? row.stationType}
+                          </td>
+                          <td className="px-4 py-2.5 font-medium">{row.title}</td>
+                          <td className="px-4 py-2.5">
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-900/30 rounded-full px-2 py-0.5">
+                              <AlertTriangle className="w-3 h-3" /> Not completed
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
           )}
         </div>
       )}
@@ -1306,92 +1323,109 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
       {/* Checklist completions table */}
       {showChecks && !outstandingOnly && (
         <div className="rounded-xl border border-border bg-card overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-border bg-secondary/20 flex items-center gap-2">
-            <ClipboardCheck className="w-4 h-4 text-emerald-600" />
+          <button
+            type="button"
+            onClick={() => setCompletedOpen(v => !v)}
+            className="w-full px-4 py-2.5 border-b border-border bg-secondary/20 flex items-center gap-2 text-left hover:bg-secondary/40 transition-colors"
+            aria-expanded={completedOpen}
+          >
+            <ClipboardCheck className="w-4 h-4 text-emerald-600 flex-shrink-0" />
             <h3 className="text-sm font-semibold">Checklist Completions ({filteredChecklists.length})</h3>
-          </div>
-          {filteredChecklists.length === 0 ? (
-            <div className="p-8 text-center text-sm text-muted-foreground">
-              No checklist completions for the selected filters.
-            </div>
-          ) : (
-            <div className="overflow-x-auto max-h-[560px] overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-secondary/40 backdrop-blur-sm">
-                  <tr className="border-b border-border">
-                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Completed</th>
-                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Category</th>
-                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Station</th>
-                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Item</th>
-                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">By</th>
-                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Notes</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {filteredChecklists.map(row => {
-                    const meta = HACCP_CATEGORY_META[row.category];
-                    return (
-                      <tr key={`${row.kind}-${row.id}`} className="hover:bg-secondary/10 transition-colors align-top">
-                        <td className="px-4 py-2.5 tabular-nums text-muted-foreground whitespace-nowrap text-xs">
-                          {format(new Date(row.completedAt), "dd MMM, HH:mm")}
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <span className={cn("inline-block px-2 py-0.5 rounded-full text-xs font-semibold", meta.bg, meta.color)}>
-                            {meta.label}
-                          </span>
-                          {row.kind === "oneoff" && (
-                            <span className="ml-1 text-[10px] text-amber-500 font-semibold uppercase">one-off</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
-                          {STATION_LABELS_REPORT[row.stationType] ?? row.stationType}
-                        </td>
-                        <td className="px-4 py-2.5 font-medium">{row.title}</td>
-                        <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{row.completedByName ?? "—"}</td>
-                        <td className="px-4 py-2.5 text-muted-foreground text-xs max-w-[280px] whitespace-pre-wrap">
-                          {row.notes ?? "—"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            {completedOpen
+              ? <ChevronUp className="w-4 h-4 text-muted-foreground ml-auto flex-shrink-0" />
+              : <ChevronDown className="w-4 h-4 text-muted-foreground ml-auto flex-shrink-0" />}
+          </button>
+          {completedOpen && (
+            filteredChecklists.length === 0 ? (
+              <div className="p-8 text-center text-sm text-muted-foreground">
+                No checklist completions for the selected filters.
+              </div>
+            ) : (
+              <div className="overflow-x-auto max-h-[560px] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-secondary/40 backdrop-blur-sm">
+                    <tr className="border-b border-border">
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Completed</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Category</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Station</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Item</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">By</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {filteredChecklists.map(row => {
+                      const meta = HACCP_CATEGORY_META[row.category];
+                      return (
+                        <tr key={`${row.kind}-${row.id}`} className="hover:bg-secondary/10 transition-colors align-top">
+                          <td className="px-4 py-2.5 tabular-nums text-muted-foreground whitespace-nowrap text-xs">
+                            {format(new Date(row.completedAt), "dd MMM, HH:mm")}
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <span className={cn("inline-block px-2 py-0.5 rounded-full text-xs font-semibold", meta.bg, meta.color)}>
+                              {meta.label}
+                            </span>
+                            {row.kind === "oneoff" && (
+                              <span className="ml-1 text-[10px] text-amber-500 font-semibold uppercase">one-off</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
+                            {STATION_LABELS_REPORT[row.stationType] ?? row.stationType}
+                          </td>
+                          <td className="px-4 py-2.5 font-medium">{row.title}</td>
+                          <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{row.completedByName ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-muted-foreground text-xs max-w-[280px] whitespace-pre-wrap">
+                            {row.notes ?? "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
           )}
         </div>
       )}
 
-      {/* Temperature records table */}
+      {/* Temperature records table — no pass/fail column since readings
+          include cooked-core (≥75°C), fridge, delivery, and ambient
+          values with different thresholds. */}
       {showTemps && !outstandingOnly && (
         <div className="rounded-xl border border-border bg-card overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-border bg-secondary/20 flex items-center gap-2">
-            <Thermometer className="w-4 h-4 text-blue-600" />
+          <button
+            type="button"
+            onClick={() => setTempsOpen(v => !v)}
+            className="w-full px-4 py-2.5 border-b border-border bg-secondary/20 flex items-center gap-2 text-left hover:bg-secondary/40 transition-colors"
+            aria-expanded={tempsOpen}
+          >
+            <Thermometer className="w-4 h-4 text-blue-600 flex-shrink-0" />
             <h3 className="text-sm font-semibold">Temperature Readings ({filteredTemps.length})</h3>
-          </div>
-          {filteredTemps.length === 0 ? (
-            <div className="p-8 text-center text-sm text-muted-foreground">
-              No temperature records for the selected filters.
-            </div>
-          ) : (
-            <div className="overflow-x-auto max-h-[560px] overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-secondary/40 backdrop-blur-sm">
-                  <tr className="border-b border-border">
-                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Recorded</th>
-                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Recipe</th>
-                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Ingredient</th>
-                    <th className="text-center px-4 py-2.5 font-semibold text-muted-foreground">Tray</th>
-                    <th className="text-center px-4 py-2.5 font-semibold text-muted-foreground">Temp</th>
-                    <th className="text-center px-4 py-2.5 font-semibold text-muted-foreground">Status</th>
-                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">By</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {filteredTemps.map(rec => {
-                    const temp = parseFloat(rec.temperatureC);
-                    const safe = temp >= 75;
-                    return (
-                      <tr key={rec.id} className={cn("hover:bg-secondary/10 transition-colors", !safe && "bg-red-50/60 dark:bg-red-950/20")}>
+            {tempsOpen
+              ? <ChevronUp className="w-4 h-4 text-muted-foreground ml-auto flex-shrink-0" />
+              : <ChevronDown className="w-4 h-4 text-muted-foreground ml-auto flex-shrink-0" />}
+          </button>
+          {tempsOpen && (
+            filteredTemps.length === 0 ? (
+              <div className="p-8 text-center text-sm text-muted-foreground">
+                No temperature records for the selected filters.
+              </div>
+            ) : (
+              <div className="overflow-x-auto max-h-[560px] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-secondary/40 backdrop-blur-sm">
+                    <tr className="border-b border-border">
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Recorded</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Recipe</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Ingredient</th>
+                      <th className="text-center px-4 py-2.5 font-semibold text-muted-foreground">Tray</th>
+                      <th className="text-center px-4 py-2.5 font-semibold text-muted-foreground">Temp</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">By</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {filteredTemps.map(rec => (
+                      <tr key={rec.id} className="hover:bg-secondary/10 transition-colors">
                         <td className="px-4 py-2.5 tabular-nums text-muted-foreground whitespace-nowrap text-xs">
                           {format(new Date(rec.recordedAt), "dd MMM, HH:mm")}
                         </td>
@@ -1399,28 +1433,17 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
                         <td className="px-4 py-2.5 text-muted-foreground">{rec.ingredientName ?? `Ingredient #${rec.ingredientId}`}</td>
                         <td className="px-4 py-2.5 text-center tabular-nums">{rec.trayIndex + 1}</td>
                         <td className="px-4 py-2.5 text-center">
-                          <span className={cn("font-bold tabular-nums", safe ? "text-green-700 dark:text-green-400" : "text-red-600")}>
-                            {temp.toFixed(1)}°C
+                          <span className="font-bold tabular-nums text-foreground">
+                            {parseFloat(rec.temperatureC).toFixed(1)}°C
                           </span>
-                        </td>
-                        <td className="px-4 py-2.5 text-center">
-                          {safe ? (
-                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 dark:text-green-400 bg-green-100 dark:bg-green-900/30 rounded-full px-2 py-0.5">
-                              <ShieldCheck className="w-3 h-3" /> Safe
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-100 dark:bg-red-900/30 rounded-full px-2 py-0.5">
-                              <Thermometer className="w-3 h-3" /> Low
-                            </span>
-                          )}
                         </td>
                         <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{rec.userName ?? "Unknown"}</td>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
           )}
         </div>
       )}
