@@ -1099,29 +1099,21 @@ router.patch("/:id/order", async (req, res) => {
   const [plan] = await db.select().from(productionPlansTable).where(eq(productionPlansTable.id, id));
   if (!plan) { res.status(404).json({ error: "Not found" }); return; }
 
-  // Lock enforcement: fetch current items and verify no started item changes position (unless admin)
+  // Lock enforcement: fetch current items and verify no completed item changes position (unless admin).
+  // "in-progress" items are still moveable to match the frontend's locking behaviour
+  // (only building-started and complete items are pinned).
   if (sessionUserRole !== "admin") {
     const existingItems = await db.select({ id: productionPlanItemsTable.id, orderPosition: productionPlanItemsTable.orderPosition, status: productionPlanItemsTable.status })
       .from(productionPlanItemsTable)
       .where(eq(productionPlanItemsTable.planId, id));
 
-    const currentPositionMap = new Map(existingItems.map(it => [it.id, it.orderPosition]));
-    for (const { itemId, orderPosition } of order) {
-      const existing = existingItems.find(it => it.id === itemId);
-      if (existing && existing.status !== "pending" && existing.orderPosition !== orderPosition) {
-        res.status(409).json({ error: `Item ${itemId} has started and cannot be moved` });
+    for (const locked of existingItems.filter(it => it.status === "complete")) {
+      const newPos = order.find(o => o.itemId === locked.id)?.orderPosition;
+      if (newPos !== undefined && newPos !== locked.orderPosition) {
+        res.status(409).json({ error: `Completed recipe cannot be repositioned` });
         return;
       }
-      // Also check if a locked item is being displaced (its current position given to a different item)
-      for (const locked of existingItems.filter(it => it.status !== "pending")) {
-        const newPos = order.find(o => o.itemId === locked.id)?.orderPosition;
-        if (newPos !== undefined && newPos !== locked.orderPosition) {
-          res.status(409).json({ error: `Started recipe "${locked.id}" cannot be repositioned` });
-          return;
-        }
-      }
     }
-    void currentPositionMap;
   }
 
   await db.transaction(async (tx) => {
