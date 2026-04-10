@@ -350,6 +350,7 @@ router.get("/:id", async (req, res) => {
       includeInFillingMix: i.includeInFillingMix,
       quid: i.quid ?? false,
       isTopping: i.isTopping ?? false,
+      mixingOverage: Number(i.mixingOverage ?? 0),
       showInPrep: i.showInPrep ?? false,
     };
   });
@@ -377,6 +378,7 @@ router.get("/:id", async (req, res) => {
       includeInFillingMix: s.includeInFillingMix,
       quid: s.quid ?? false,
       isTopping: s.isTopping ?? false,
+      mixingOverage: Number(s.mixingOverage ?? 0),
       showInPrep: s.showInPrep ?? false,
     };
   });
@@ -472,55 +474,74 @@ router.put("/:id", preserveToppingFlags, validate(UpdateRecipeBody), async (req,
       .set(recipeFields)
       .where(eq(recipesTable.id, id))
       .returning();
+    if (!row) return [null];
+
+    // Save existing assemblyOrder values before deleting so they can be restored
+    const existingIngOrders = await tx.select({
+      ingredientId: recipeIngredientsTable.ingredientId,
+      assemblyOrder: recipeIngredientsTable.assemblyOrder,
+    }).from(recipeIngredientsTable).where(eq(recipeIngredientsTable.recipeId, id));
+    const ingOrderMap = new Map(existingIngOrders.map(r => [r.ingredientId, r.assemblyOrder]));
+
+    const existingSubOrders = await tx.select({
+      subRecipeId: recipeSubRecipesTable.subRecipeId,
+      assemblyOrder: recipeSubRecipesTable.assemblyOrder,
+    }).from(recipeSubRecipesTable).where(eq(recipeSubRecipesTable.recipeId, id));
+    const subOrderMap = new Map(existingSubOrders.map(r => [r.subRecipeId, r.assemblyOrder]));
+
+    // Delete and re-insert ingredients/sub-recipes inside the transaction
+    // so a failed insert cannot leave the recipe with no ingredients
+    await tx.delete(recipeIngredientsTable).where(eq(recipeIngredientsTable.recipeId, id));
+    await tx.delete(recipeSubRecipesTable).where(eq(recipeSubRecipesTable.recipeId, id));
+
+    if (marinades !== undefined) {
+      await tx.delete(recipeMeatMarinadesTable).where(eq(recipeMeatMarinadesTable.recipeId, id));
+    }
+
+    if (ingredients?.length) {
+      await tx.insert(recipeIngredientsTable).values(
+        ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
+          recipeId: id, ingredientId: i.ingredientId, quantity: String(i.quantity),
+          marinadeForIngredientId: i.marinadeForIngredientId ?? null,
+          includeInFillingMix: i.includeInFillingMix ?? false,
+          quid: i.quid ?? false,
+          isTopping: i.isTopping ?? false,
+          showInPrep: i.showInPrep ?? false,
+          mixingOverage: String(i.mixingOverage ?? 0),
+          assemblyOrder: ingOrderMap.get(i.ingredientId) ?? null,
+        }))
+      );
+    }
+    if (subRecipes?.length) {
+      await tx.insert(recipeSubRecipesTable).values(
+        subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
+          recipeId: id, subRecipeId: s.subRecipeId, quantity: String(s.quantity),
+          marinadeForIngredientId: s.marinadeForIngredientId ?? null,
+          includeInFillingMix: s.includeInFillingMix ?? false,
+          quid: s.quid ?? false,
+          isTopping: s.isTopping ?? false,
+          showInPrep: s.showInPrep ?? false,
+          mixingOverage: String(s.mixingOverage ?? 0),
+          assemblyOrder: subOrderMap.get(s.subRecipeId) ?? null,
+        }))
+      );
+    }
+    if (marinades?.length) {
+      await tx.insert(recipeMeatMarinadesTable).values(
+        marinades.map((m) => ({
+          recipeId: id,
+          rawMeatIngredientId: m.rawMeatIngredientId,
+          marinadeIngredientId: m.marinadeIngredientId ?? null,
+          marinadeSubRecipeId: m.marinadeSubRecipeId ?? null,
+          gramsPerKg: String(m.gramsPerKg),
+        }))
+      );
+    }
+
     return [row];
   });
 
   if (!updated) { res.status(404).json({ error: "Not found" }); return; }
-
-  await db.delete(recipeIngredientsTable).where(eq(recipeIngredientsTable.recipeId, id));
-  await db.delete(recipeSubRecipesTable).where(eq(recipeSubRecipesTable.recipeId, id));
-
-  if (marinades !== undefined) {
-    await db.delete(recipeMeatMarinadesTable).where(eq(recipeMeatMarinadesTable.recipeId, id));
-  }
-
-  if (ingredients?.length) {
-    await db.insert(recipeIngredientsTable).values(
-      ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
-        recipeId: id, ingredientId: i.ingredientId, quantity: String(i.quantity),
-        marinadeForIngredientId: i.marinadeForIngredientId ?? null,
-        includeInFillingMix: i.includeInFillingMix ?? false,
-        quid: i.quid ?? false,
-        isTopping: i.isTopping ?? false,
-        showInPrep: i.showInPrep ?? false,
-        mixingOverage: String(i.mixingOverage ?? 0),
-      }))
-    );
-  }
-  if (subRecipes?.length) {
-    await db.insert(recipeSubRecipesTable).values(
-      subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
-        recipeId: id, subRecipeId: s.subRecipeId, quantity: String(s.quantity),
-        marinadeForIngredientId: s.marinadeForIngredientId ?? null,
-        includeInFillingMix: s.includeInFillingMix ?? false,
-        quid: s.quid ?? false,
-        isTopping: s.isTopping ?? false,
-        showInPrep: s.showInPrep ?? false,
-        mixingOverage: String(s.mixingOverage ?? 0),
-      }))
-    );
-  }
-  if (marinades?.length) {
-    await db.insert(recipeMeatMarinadesTable).values(
-      marinades.map((m) => ({
-        recipeId: id,
-        rawMeatIngredientId: m.rawMeatIngredientId,
-        marinadeIngredientId: m.marinadeIngredientId ?? null,
-        marinadeSubRecipeId: m.marinadeSubRecipeId ?? null,
-        gramsPerKg: String(m.gramsPerKg),
-      }))
-    );
-  }
 
   const today = new Date().toISOString().slice(0, 10);
   const draftPlansWithRecipe = await db

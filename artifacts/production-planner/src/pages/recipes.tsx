@@ -39,6 +39,7 @@ const schema = z.object({
     marinadeForIngredientId: z.preprocess(v => (v === "" || v === "0" || v == null ? null : Number(v)), z.number().nullable().optional()),
     includeInFillingMix: z.boolean().optional(),
     isTopping: z.boolean().optional(),
+    quid: z.boolean().optional(),
     showInPrep: z.boolean().optional(),
     mixingOverage: z.preprocess(v => (v === "" || v == null ? 0 : Number(v)), z.number().min(0).optional()),
   })),
@@ -48,6 +49,7 @@ const schema = z.object({
     marinadeForIngredientId: z.preprocess(v => (v === "" || v === "0" || v == null ? null : Number(v)), z.number().nullable().optional()),
     includeInFillingMix: z.boolean().optional(),
     isTopping: z.boolean().optional(),
+    quid: z.boolean().optional(),
     showInPrep: z.boolean().optional(),
     mixingOverage: z.preprocess(v => (v === "" || v == null ? 0 : Number(v)), z.number().min(0).optional()),
   })),
@@ -894,8 +896,8 @@ function EditRecipeDialog({
         isCurrentSpecial: detail.isCurrentSpecial ?? false,
         color: detail.color ?? "",
         cookingLossPercent: (detail as Record<string, unknown>).cookingLossPercent != null ? Number((detail as Record<string, unknown>).cookingLossPercent) : 3,
-        ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, showInPrep: (i as Record<string, unknown>).showInPrep === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
-        subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, showInPrep: (s as Record<string, unknown>).showInPrep === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
+        ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, quid: (i as Record<string, unknown>).quid === true, showInPrep: (i as Record<string, unknown>).showInPrep === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
+        subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, quid: (s as Record<string, unknown>).quid === true, showInPrep: (s as Record<string, unknown>).showInPrep === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
       }
     : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", cookingLossPercent: 3, ingredients: [], subRecipes: [] };
 
@@ -1687,8 +1689,8 @@ export default function Recipes() {
         isCurrentSpecial: false,
         color: duplicateDetail.color ?? "",
         cookingLossPercent: (duplicateDetail as Record<string, unknown>).cookingLossPercent != null ? Number((duplicateDetail as Record<string, unknown>).cookingLossPercent) : 3,
-        ingredients: (duplicateDetail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, showInPrep: (i as Record<string, unknown>).showInPrep === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
-        subRecipes: (duplicateDetail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, showInPrep: (s as Record<string, unknown>).showInPrep === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
+        ingredients: (duplicateDetail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, quid: (i as Record<string, unknown>).quid === true, showInPrep: (i as Record<string, unknown>).showInPrep === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
+        subRecipes: (duplicateDetail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, quid: (s as Record<string, unknown>).quid === true, showInPrep: (s as Record<string, unknown>).showInPrep === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
       };
       setDuplicateDefaults(vals);
       setIsAddOpen(true);
