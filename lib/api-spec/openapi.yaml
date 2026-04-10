@@ -2295,6 +2295,16 @@ components:
         baseWeightGrams:
           type: number
           nullable: true
+        color:
+          type: string
+          nullable: true
+        isCoreMenu:
+          type: boolean
+        isCurrentSpecial:
+          type: boolean
+        cookingLossPercent:
+          type: number
+          nullable: true
         ingredients:
           type: array
           items:
@@ -2303,6 +2313,19 @@ components:
               ingredientId:
                 type: integer
               quantity:
+                type: number
+              marinadeForIngredientId:
+                type: integer
+                nullable: true
+              includeInFillingMix:
+                type: boolean
+              isTopping:
+                type: boolean
+              quid:
+                type: boolean
+              showInPrep:
+                type: boolean
+              mixingOverage:
                 type: number
             required:
               - ingredientId
@@ -2316,9 +2339,37 @@ components:
                 type: integer
               quantity:
                 type: number
+              marinadeForIngredientId:
+                type: integer
+                nullable: true
+              includeInFillingMix:
+                type: boolean
+              isTopping:
+                type: boolean
+              quid:
+                type: boolean
+              showInPrep:
+                type: boolean
+              mixingOverage:
+                type: number
             required:
               - subRecipeId
               - quantity
+        marinades:
+          type: array
+          items:
+            type: object
+            properties:
+              rawMeatIngredientId:
+                type: integer
+              marinadeIngredientId:
+                type: integer
+              gramsPerKg:
+                type: number
+            required:
+              - rawMeatIngredientId
+              - marinadeIngredientId
+              - gramsPerKg
       required:
         - name
         - servings

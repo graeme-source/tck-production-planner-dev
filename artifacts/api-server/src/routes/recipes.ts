@@ -158,31 +158,11 @@ function validateMarinades(marinades: MarinadeInput[], recipeIngredientIds: numb
   return null;
 }
 
-function preserveToppingFlags(req: import("express").Request, _res: import("express").Response, next: import("express").NextFunction) {
-  const rawIngs = Array.isArray(req.body?.ingredients) ? req.body.ingredients : [];
-  const rawSubs = Array.isArray(req.body?.subRecipes) ? req.body.subRecipes : [];
-  (req as Record<string, unknown>)._toppingIngs = rawIngs.map((i: Record<string, unknown>) => i.isTopping === true);
-  (req as Record<string, unknown>)._toppingSubs = rawSubs.map((s: Record<string, unknown>) => s.isTopping === true);
-  (req as Record<string, unknown>)._showInPrepIngs = rawIngs.map((i: Record<string, unknown>) => i.showInPrep === true);
-  (req as Record<string, unknown>)._showInPrepSubs = rawSubs.map((s: Record<string, unknown>) => s.showInPrep === true);
-  next();
-}
+// NOTE: preserveToppingFlags / applyToppingFlags workaround removed.
+// The validate middleware now uses .passthrough() so unknown fields are
+// never stripped, and the OpenAPI spec has been updated with all fields.
 
-function applyToppingFlags(req: import("express").Request) {
-  const toppingIngs = ((req as Record<string, unknown>)._toppingIngs ?? []) as boolean[];
-  const toppingSubs = ((req as Record<string, unknown>)._toppingSubs ?? []) as boolean[];
-  const showInPrepIngs = ((req as Record<string, unknown>)._showInPrepIngs ?? []) as boolean[];
-  const showInPrepSubs = ((req as Record<string, unknown>)._showInPrepSubs ?? []) as boolean[];
-  if (Array.isArray(req.body.ingredients)) {
-    req.body.ingredients.forEach((i: Record<string, unknown>, idx: number) => { i.isTopping = toppingIngs[idx] ?? false; i.showInPrep = showInPrepIngs[idx] ?? false; });
-  }
-  if (Array.isArray(req.body.subRecipes)) {
-    req.body.subRecipes.forEach((s: Record<string, unknown>, idx: number) => { s.isTopping = toppingSubs[idx] ?? false; s.showInPrep = showInPrepSubs[idx] ?? false; });
-  }
-}
-
-router.post("/", preserveToppingFlags, validate(CreateRecipeBody), async (req, res) => {
-  applyToppingFlags(req);
+router.post("/", validate(CreateRecipeBody), async (req, res) => {
   const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, targetBuildSeconds, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, ingredients, subRecipes, marinades } = req.body;
 
   if (marinades?.length) {
@@ -427,8 +407,7 @@ router.get("/:id", async (req, res) => {
   });
 });
 
-router.put("/:id", preserveToppingFlags, validate(UpdateRecipeBody), async (req, res) => {
-  applyToppingFlags(req);
+router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
   const id = Number(req.params.id);
   const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, targetBuildSeconds, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, ingredients, subRecipes, marinades } = req.body;
 
