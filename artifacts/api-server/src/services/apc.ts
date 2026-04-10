@@ -428,6 +428,11 @@ export async function checkPostcodeService(
     throw new Error("APC postcode check returned invalid JSON — the server may have returned an HTML error page (check APC credentials)");
   }
 
+  // Diagnostic log: surface exactly what APC returns so we can debug
+  // false positives. Remove or reduce to debug-level once the parser
+  // is confirmed correct.
+  console.log(`[APC PostcodeServiceCheck] ${postcode} / ${serviceCode} →`, JSON.stringify(json));
+
   const msgCode = json?.PostcodeServiceCheck?.Messages?.Code
     ?? json?.Messages?.Code;
   const msgDesc = json?.PostcodeServiceCheck?.Messages?.Description

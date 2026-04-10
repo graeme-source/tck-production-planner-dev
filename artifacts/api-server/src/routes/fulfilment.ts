@@ -125,8 +125,12 @@ async function validateOrderPostcode(
     return { ...result, serviceCode };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[Fulfilment] postcode check failed for order ${order.name}:`, msg);
-    return { available: true, reason: `Validation skipped: ${msg}`, serviceCode };
+    console.error(`[Fulfilment] postcode check FAILED for order ${order.name} (${order.shipping_address.zip}, ${serviceCode}):`, msg);
+    // SAFETY: failed checks must NOT silently pass. Previously this
+    // returned available:true which hid credential/network failures
+    // behind a green banner. Now surfaces the error so the user knows
+    // something went wrong.
+    return { available: false, reason: `Check failed: ${msg}`, serviceCode };
   }
 }
 
