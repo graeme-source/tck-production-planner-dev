@@ -386,49 +386,59 @@ export interface PostcodeCheckResult {
 
 /**
  * Check whether a specific APC service code can deliver to a given
- * postcode by calling the official ServiceAvailability endpoint.
+ * postcode by attempting a test booking on APC's TRAINING server.
  *
- * Per the APC API Integration Guide v3.1.2 (section 3), the correct
- * method is:
- *   POST /api/3.0/ServiceAvailability.json
- * with a JSON body containing collection/delivery postcodes, date,
- * weight, and shipment details. APC returns a list of available
- * services; we check if our target service code is in that list.
+ * APC's ServiceAvailability endpoint doesn't list depot-specific
+ * product codes (like WL16, WD16) — only generic APC-prefixed codes.
+ * The only reliable validation is to POST an order with the target
+ * service code and postcode to the training API. If APC rejects it,
+ * the postcode/code combo is invalid. If it accepts, we immediately
+ * cancel the test order.
  *
- * The previous implementation called a non-existent
- * GET /PostcodeServiceCheck endpoint which returned HTML error pages.
+ * Results are cached per (postcode, serviceCode) for 5 minutes so a
+ * batch of 80+ orders with overlapping postcodes is fast.
  */
-const COLLECTION_POSTCODE = "MK17 9FX"; // TCK factory
 
-// Short-lived cache: postcode → list of available ProductCodes.
-// Cleared after 5 minutes so the same batch of 80+ orders with
-// overlapping postcodes doesn't hammer the APC API.
-const availabilityCache = new Map<string, { codes: string[]; ts: number }>();
+// Short-lived cache: (postcode|serviceCode) → result.
+const validationCache = new Map<string, { result: PostcodeCheckResult; ts: number }>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 export async function checkPostcodeService(
   postcode: string,
   serviceCode: string,
-  apiBase?: string,
+  _apiBase?: string, // ignored — always uses training for validation
 ): Promise<PostcodeCheckResult> {
-  if (!isConfigured()) {
+  if (!APC_USERNAME || !APC_PASSWORD || !APC_ACCOUNT_NUMBER) {
     throw new Error("APC credentials not configured.");
   }
 
-  const base = apiBase ?? APC_API_BASE;
-  const url = `${base}/ServiceAvailability.json`;
-
-  // APC requires postcodes WITH a space (e.g. "MK17 9FX" not "MK179FX")
   const cleanPostcode = postcode.replace(/\s+/g, "").toUpperCase();
   const formattedPostcode = cleanPostcode.length > 3
     ? `${cleanPostcode.slice(0, -3)} ${cleanPostcode.slice(-3)}`
     : cleanPostcode;
 
-  // Use tomorrow as collection date (parcels are being dispatched, not
-  // collected today in most cases). APC rejects past dates.
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const collectionDate = `${String(tomorrow.getDate()).padStart(2, "0")}/${String(tomorrow.getMonth() + 1).padStart(2, "0")}/${tomorrow.getFullYear()}`;
+  // Cache check — same (postcode, serviceCode) combo doesn't need
+  // another round-trip within a 5-minute window.
+  const cacheKey = `${formattedPostcode}|${serviceCode.toUpperCase()}`;
+  const cached = validationCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+    return cached.result;
+  }
+
+  // Use the next weekday as collection date (APC rejects past dates
+  // and may reject weekends).
+  const collDate = new Date();
+  collDate.setDate(collDate.getDate() + 1);
+  while (collDate.getDay() === 0 || collDate.getDay() === 6) {
+    collDate.setDate(collDate.getDate() + 1);
+  }
+  const collectionDate = todayDDMMYYYY(collDate);
+
+  // Training credentials — fall back to production creds if training-
+  // specific ones aren't set (some APC accounts use the same login).
+  const tUser = APC_TRAINING_USERNAME || APC_USERNAME;
+  const tPass = APC_TRAINING_PASSWORD || APC_PASSWORD;
+  const authHeader = `Basic ${Buffer.from(`${tUser}:${tPass}`).toString("base64")}`;
 
   const payload = {
     Orders: {
@@ -436,17 +446,20 @@ export async function checkPostcodeService(
         CollectionDate: collectionDate,
         ReadyAt: "09:00",
         ClosedAt: "17:00",
-        Collection: {
-          PostalCode: COLLECTION_POSTCODE,
-          CountryCode: "GB",
-        },
+        ProductCode: serviceCode,
+        Reference: `VALIDATE-${cleanPostcode.slice(0, 15)}`,
         Delivery: {
+          CompanyName: "Validation Check",
+          AddressLine1: "1 Test Street",
           PostalCode: formattedPostcode,
+          City: "Test",
           CountryCode: "GB",
+          Contact: { PersonName: "Validation" },
         },
         GoodsInfo: {
           GoodsValue: "1",
-          Fragile: "False",
+          GoodsDescription: "validation",
+          Fragile: "false",
         },
         ShipmentDetails: {
           NumberOfPieces: "1",
@@ -465,116 +478,62 @@ export async function checkPostcodeService(
     },
   };
 
-  // Check the cache first — avoids redundant APC calls when validating
-  // 80+ orders with overlapping postcodes.
-  const cacheKey = `${formattedPostcode}|${base}`;
-  const cached = availabilityCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
-    const codeUpper = serviceCode.toUpperCase();
-    const hit = cached.codes.some(pc => {
-      const u = pc.toUpperCase();
-      return u === codeUpper || u === `APC${codeUpper}` || (u.startsWith("APC") && u.slice(3) === codeUpper);
+  const url = `${APC_TRAINING_BASE}/Orders.json`;
+  console.log(`[APC Validate] POST ${url} — testing ${serviceCode} → ${formattedPostcode}`);
+
+  let res: globalThis.Response;
+  let rawText: string;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "remote-user": authHeader,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
     });
-    if (hit) return { available: true };
-    const shortCodes = cached.codes.map(c => c.toUpperCase().startsWith("APC") ? c.slice(3) : c).join(", ");
-    return { available: false, reason: `Service ${serviceCode} not available to ${formattedPostcode}. Available: ${shortCodes || "none"}` };
-  }
-
-  console.log(`[APC ServiceAvailability] POST ${url} — checking ${formattedPostcode} for service ${serviceCode}`);
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "remote-user": basicAuthHeader(base),
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-
-  const rawText = await res.text();
-
-  if (!res.ok) {
-    console.error(`[APC ServiceAvailability] HTTP ${res.status}:`, rawText.slice(0, 500));
-    let detail = `(HTTP ${res.status})`;
-    try {
-      const errJson = JSON.parse(rawText);
-      const desc = errJson?.ServiceAvailability?.Messages?.Description
-        ?? errJson?.Messages?.Description;
-      if (desc) detail = desc;
-    } catch { /* fall through */ }
-    throw new Error(`APC service availability check failed ${detail}`);
+    rawText = await res.text();
+  } catch (err) {
+    throw new Error(`APC training API unreachable: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   let json: any;
   try {
     json = JSON.parse(rawText);
   } catch {
-    console.error(`[APC ServiceAvailability] non-JSON response (HTTP ${res.status}):`, rawText.slice(0, 500));
-    throw new Error(`APC returned invalid JSON (HTTP ${res.status}) — first 200 chars: ${rawText.slice(0, 200)}`);
+    console.error(`[APC Validate] non-JSON (HTTP ${res.status}):`, rawText.slice(0, 500));
+    throw new Error(`APC training returned non-JSON (HTTP ${res.status}) — check training credentials`);
   }
 
-  // Check the top-level messages for errors
-  const msgCode = json?.ServiceAvailability?.Messages?.Code;
-  const msgDesc = json?.ServiceAvailability?.Messages?.Description;
+  const topCode = json?.Orders?.Messages?.Code;
+  const orderCode = json?.Orders?.Order?.Messages?.Code;
+  const orderDesc = json?.Orders?.Order?.Messages?.Description
+    ?? json?.Orders?.Messages?.Description;
 
-  if (msgCode && msgCode !== "SUCCESS") {
-    console.warn(`[APC ServiceAvailability] ${formattedPostcode}: ${msgCode} — ${msgDesc}`);
-    return {
-      available: false,
-      reason: msgDesc ?? `APC error: ${msgCode}`,
-    };
+  if (topCode === "SUCCESS" && orderCode === "SUCCESS") {
+    // Test booking accepted → postcode + service is valid.
+    // Cancel immediately so training doesn't accumulate junk orders.
+    const waybill = json?.Orders?.Order?.WayBill;
+    if (waybill) {
+      cancelShipment({ waybill, apiBase: APC_TRAINING_BASE }).catch(err =>
+        console.warn(`[APC Validate] cancel ${waybill} failed:`, err),
+      );
+    }
+    console.log(`[APC Validate] ${formattedPostcode} ✓ ${serviceCode}`);
+    const result: PostcodeCheckResult = { available: true };
+    validationCache.set(cacheKey, { result, ts: Date.now() });
+    return result;
   }
 
-  // Parse the list of available services and check if our target code
-  // is among them. APC returns Services.Service as either an array or
-  // a single object.
-  const services = json?.ServiceAvailability?.Services?.Service;
-  if (!services) {
-    console.warn(`[APC ServiceAvailability] ${formattedPostcode}: no services returned`, JSON.stringify(json).slice(0, 300));
-    return {
-      available: false,
-      reason: `No APC services available to ${formattedPostcode}`,
-    };
-  }
-
-  const serviceList = Array.isArray(services) ? services : [services];
-
-  // Cache the available codes for this postcode
-  const allCodes = serviceList.map((s: { ProductCode?: string }) => s.ProductCode ?? "").filter(Boolean);
-  availabilityCache.set(cacheKey, { codes: allCodes, ts: Date.now() });
-
-  const codeUpper = serviceCode.toUpperCase();
-
-  // APC returns ProductCodes with an "APC" prefix (e.g. "APCLW16" for
-  // our configured "LW16"). Match both exact and prefix-stripped forms
-  // so the validation works regardless of how the admin entered the
-  // code in Settings.
-  const matchingService = serviceList.find((s: { ProductCode?: string }) => {
-    const pc = s.ProductCode?.toUpperCase() ?? "";
-    return pc === codeUpper                                // exact: "WL16" === "WL16"
-      || pc === `APC${codeUpper}`                          // prefixed: "APCWL16" === "APC" + "WL16"
-      || (pc.startsWith("APC") && pc.slice(3) === codeUpper); // strip prefix: "APCLW16".slice(3) === "LW16"
-  });
-
-  if (matchingService) {
-    console.log(`[APC ServiceAvailability] ${formattedPostcode} ✓ ${serviceCode} available (matched ${matchingService.ProductCode})`);
-    return { available: true };
-  }
-
-  // Show short codes (strip APC prefix) in the error message so they
-  // match what the admin sees in Settings.
-  const availableCodes = serviceList
-    .map((s: { ProductCode?: string }) => {
-      const pc = s.ProductCode ?? "";
-      return pc.toUpperCase().startsWith("APC") ? pc.slice(3) : pc;
-    })
-    .filter(Boolean)
-    .join(", ");
-  console.log(`[APC ServiceAvailability] ${formattedPostcode} ✗ ${serviceCode} NOT in [${availableCodes}]`);
-  return {
-    available: false,
-    reason: `Service ${serviceCode} not available to ${formattedPostcode}. Available: ${availableCodes || "none"}`,
-  };
+  // APC rejected — extract the reason (e.g. "Service WL16 is not
+  // available to KY11 2NS").
+  const reason = orderDesc && orderDesc !== "SUCCESS"
+    ? orderDesc
+    : `Service ${serviceCode} rejected for ${formattedPostcode}`;
+  console.log(`[APC Validate] ${formattedPostcode} ✗ ${serviceCode} — ${reason}`);
+  const result: PostcodeCheckResult = { available: false, reason };
+  validationCache.set(cacheKey, { result, ts: Date.now() });
+  return result;
 }
 
 export interface AddParcelRequest {
