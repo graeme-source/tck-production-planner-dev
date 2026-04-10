@@ -398,6 +398,8 @@ export async function checkPostcodeService(
 
   const url = `${base}/PostcodeServiceCheck/${encodeURIComponent(cleanPostcode)}/${encodeURIComponent(serviceCode)}.json`;
 
+  console.log(`[APC PostcodeServiceCheck] requesting ${url} (base: ${base})`);
+
   const res = await fetch(url, {
     method: "GET",
     headers: {
@@ -406,15 +408,17 @@ export async function checkPostcodeService(
     },
   });
 
+  // Read body as text first so we can log it before parsing
+  const rawText = await res.text();
+
   if (!res.ok) {
-    const text = await res.text();
+    console.error(`[APC PostcodeServiceCheck] HTTP ${res.status} for ${postcode}/${serviceCode}:`, rawText.slice(0, 500));
     if (res.status === 404) {
       return { available: false, reason: `Postcode ${postcode} not found in APC system` };
     }
-    // Try to surface APC's own error message (e.g. auth failures)
     let detail = `(${res.status})`;
     try {
-      const errJson = JSON.parse(text);
+      const errJson = JSON.parse(rawText);
       const desc = errJson?.Messages?.Description ?? errJson?.Orders?.Messages?.Description;
       if (desc) detail = desc;
     } catch { /* fall through */ }
@@ -423,9 +427,11 @@ export async function checkPostcodeService(
 
   let json: any;
   try {
-    json = await res.json();
+    json = JSON.parse(rawText);
   } catch {
-    throw new Error("APC postcode check returned invalid JSON — the server may have returned an HTML error page (check APC credentials)");
+    // Log the first 500 chars of whatever APC returned so we can debug
+    console.error(`[APC PostcodeServiceCheck] non-JSON response for ${postcode}/${serviceCode} (HTTP ${res.status}):`, rawText.slice(0, 500));
+    throw new Error(`APC postcode check returned invalid JSON (HTTP ${res.status}) — first 200 chars: ${rawText.slice(0, 200)}`);
   }
 
   // Diagnostic log: surface exactly what APC returns so we can debug
