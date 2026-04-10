@@ -561,5 +561,26 @@ function DynamicDataDisplay({ type, data, loading }: { type: string; data: unkno
     );
   }
 
+  if (type === "mozzarella_load") {
+    const mozzData = data[0] as { name?: string; unit?: string; totalQty?: number; bags?: number } | undefined;
+    if (!mozzData) return null;
+    const unit = mozzData.unit ?? "g";
+    const totalQty = mozzData.totalQty ?? 0;
+    const fmtTotal = unit === "kg" ? `${totalQty.toFixed(1)} kg` : `${Math.round(totalQty)} g`;
+    return (
+      <div className="mb-4 p-4 bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-xl text-center">
+        <p className="text-4xl font-display font-bold text-amber-700 dark:text-amber-300">
+          {mozzData.bags}
+        </p>
+        <p className="text-sm font-semibold text-amber-600 dark:text-amber-400">
+          x 2kg bags
+        </p>
+        <p className="text-xs text-muted-foreground mt-1">
+          {fmtTotal} {mozzData.name ?? "Mozzarella"} total for today's production
+        </p>
+      </div>
+    );
+  }
+
   return null;
 }

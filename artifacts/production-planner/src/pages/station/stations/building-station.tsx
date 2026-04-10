@@ -15,7 +15,7 @@ import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-cl
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import {
-  Plus, Minus, CheckCircle2, Loader2, Package, ChevronRight, RotateCcw,
+  Plus, Minus, CheckCircle2, Loader2, ChevronRight, RotateCcw,
   BarChart2, BookOpen, Target, Scale, GripVertical, Check, ExternalLink,
   ClipboardList, CheckSquare, Square, AlertCircle, Trophy, Eye, X, AlertTriangle,
 } from "lucide-react";
@@ -30,7 +30,7 @@ import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
 import { EodSummary } from "../shared/eod-summary";
 import { getStationCount, getAvailableFromPrev } from "../shared/constants";
-import { fmtQty } from "../shared/prep-helpers";
+
 import {
   DndContext,
   closestCenter,
@@ -413,44 +413,6 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
 
   const checklistKey = (itemId: number) => `checklist_done_${plan.id}_${stationType}_${itemId}`;
 
-  // Mozzarella closing check — total to load to building fridges (in 2kg bags)
-  type MozzarellaLoad = { name: string; unit: string; totalQty: number; bagWeight: number; bags: number };
-  const [mozzLoad, setMozzLoad] = useState<MozzarellaLoad | null>(null);
-  const [mozzConfirmed, setMozzConfirmed] = useState(false);
-  const [showMozzPopup, setShowMozzPopup] = useState(false);
-  const mozzPopupShownRef = useRef(false);
-  const MOZZ_KEY = `mozz_load_confirmed_${plan.id}`;
-  useEffect(() => {
-    fetch(`/api/production-plans/${plan.id}/mozzarella-load`, { credentials: "include" })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) setMozzLoad(d); })
-      .catch((err) => { console.warn("[BuildingStation] Mozz load fetch failed:", err); });
-    fetch(`/api/app-settings/${MOZZ_KEY}`, { credentials: "include" })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.value === "true") setMozzConfirmed(true); })
-      .catch((err) => { console.warn("[BuildingStation] Mozz setting fetch failed:", err); });
-  }, [plan.id]);
-  const confirmMozz = async () => {
-    setMozzConfirmed(true);
-    await fetch(`/api/app-settings/${MOZZ_KEY}`, {
-      method: "PUT", credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: "true" }),
-    }).catch((err) => {
-      console.warn("[BuildingStation] Failed to save mozz confirmation:", err);
-    });
-  };
-  const unconfirmMozz = async () => {
-    setMozzConfirmed(false);
-    await fetch(`/api/app-settings/${MOZZ_KEY}`, {
-      method: "PUT", credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: "false" }),
-    }).catch((err) => {
-      console.warn("[BuildingStation] Failed to save mozz unconfirmation:", err);
-    });
-  };
-
   function getCombinedBuildCount(it: ProductionPlanItem) {
     return getStationCount(it, "building_1") + getStationCount(it, "building_2");
   }
@@ -583,13 +545,6 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     }
   }, [checkedItems, currentItem?.id, assemblyMap, checklistLockedForItem]);
 
-  // Auto-show mozzarella popup once when production completes
-  useEffect(() => {
-    if (allDone && mozzLoad && !mozzPopupShownRef.current) {
-      mozzPopupShownRef.current = true;
-      setShowMozzPopup(true);
-    }
-  }, [allDone, mozzLoad]);
 
   const checklistPending = (() => {
     if (!currentItem) return false;
@@ -664,43 +619,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
         />
       )}
 
-      {/* Mozzarella load popup — fires once when all production is complete */}
-      {showMozzPopup && mozzLoad && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-card border-2 border-amber-400 dark:border-amber-600 rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/40 flex items-center justify-center flex-shrink-0">
-                <Package className="w-5 h-5 text-amber-600 dark:text-amber-400" />
-              </div>
-              <div>
-                <h2 className="font-bold text-lg leading-tight">Closing Check</h2>
-                <p className="text-xs text-muted-foreground">Production complete — load mozzarella to fridges</p>
-              </div>
-            </div>
-            <div className="bg-amber-50 dark:bg-amber-950/30 rounded-xl p-4 text-center">
-              <p className="text-4xl font-display font-bold text-amber-700 dark:text-amber-300">{mozzLoad.bags}</p>
-              <p className="text-sm font-semibold text-amber-600 dark:text-amber-400">× 2kg bags</p>
-              <p className="text-xs text-muted-foreground mt-1">{fmtQty(mozzLoad.totalQty, mozzLoad.unit)} {mozzLoad.name} total</p>
-            </div>
-            <p className="text-sm text-center text-muted-foreground">Load these to the building fridges before closing</p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => { confirmMozz(); setShowMozzPopup(false); }}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-semibold transition-colors"
-              >
-                <Check className="w-4 h-4" />
-                Confirmed — loaded
-              </button>
-              <button
-                onClick={() => setShowMozzPopup(false)}
-                className="px-4 py-3 rounded-xl border border-border hover:bg-secondary/60 text-sm font-medium transition-colors"
-              >
-                Dismiss
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+
 
       {/* Daily progress + break buttons */}
       <div className="bg-card border border-border rounded-xl p-4">
@@ -1164,50 +1083,6 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
         </table>
       </div>
 
-      {/* Mozzarella closing check — permanent card at bottom of page */}
-      {mozzLoad && (
-        <div className={cn(
-          "border-2 rounded-2xl p-4 flex items-center gap-4 transition-all",
-          mozzConfirmed
-            ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-950/20"
-            : "border-amber-300 dark:border-amber-700 bg-amber-50/40 dark:bg-amber-950/20"
-        )}>
-          <button
-            onClick={mozzConfirmed ? unconfirmMozz : confirmMozz}
-            className={cn(
-              "flex-shrink-0 w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all",
-              mozzConfirmed
-                ? "bg-emerald-500 border-emerald-500 text-white"
-                : "border-amber-400 bg-background hover:border-amber-500"
-            )}
-          >
-            {mozzConfirmed && <Check className="w-4 h-4" />}
-          </button>
-          <div className="flex-1 min-w-0">
-            <p className={cn(
-              "font-bold text-base",
-              mozzConfirmed && "line-through text-muted-foreground"
-            )}>
-              Load {mozzLoad.bags} × 2kg bags {mozzLoad.name} to the building fridges
-            </p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Closing check · {fmtQty(mozzLoad.totalQty, mozzLoad.unit)} needed · 2kg per bag
-            </p>
-          </div>
-          {mozzConfirmed && (
-            <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
-          )}
-          {!mozzConfirmed && (
-            <button
-              onClick={() => setShowMozzPopup(true)}
-              className="flex-shrink-0 p-1.5 rounded-lg hover:bg-amber-100 dark:hover:bg-amber-900/40 text-amber-500 transition-colors"
-              title="View details"
-            >
-              <Package className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }

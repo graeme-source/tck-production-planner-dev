@@ -5,6 +5,10 @@ import {
   checklistCompletionsTable,
   checklistOneoffItemsTable,
   productionPlansTable,
+  productionPlanItemsTable,
+  recipesTable,
+  recipeIngredientsTable,
+  ingredientsTable,
   temperatureRecordsTable,
   ovenEventsTable,
   usersTable,
@@ -637,6 +641,51 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
       .where(eq(ovenEventsTable.planId, planId))
       .orderBy(desc(ovenEventsTable.ovenInAt));
     res.json(rows);
+    return;
+  }
+
+  if (type === "mozzarella_load") {
+    // Calculate mozzarella load for the plan (same logic as production-plans mozzarella-load endpoint)
+    const planItems = await db
+      .select({
+        recipeId: productionPlanItemsTable.recipeId,
+        batchesTarget: productionPlanItemsTable.batchesTarget,
+        portionsPerBatch: recipesTable.portionsPerBatch,
+      })
+      .from(productionPlanItemsTable)
+      .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+      .where(eq(productionPlanItemsTable.planId, planId));
+
+    let totalQty = 0;
+    let mozzMeta: { name: string; unit: string } | null = null;
+
+    for (const pi of planItems) {
+      const bt = Number(pi.batchesTarget) || 0;
+      if (!pi.recipeId || bt === 0) continue;
+      const ppb = Number(pi.portionsPerBatch) || 10;
+      const rows = await db
+        .select({
+          quantity: recipeIngredientsTable.quantity,
+          ingredientName: ingredientsTable.name,
+          unit: ingredientsTable.unit,
+        })
+        .from(recipeIngredientsTable)
+        .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
+        .where(and(
+          eq(recipeIngredientsTable.recipeId, pi.recipeId),
+          isNull(recipeIngredientsTable.marinadeForIngredientId),
+        ));
+      for (const r of rows) {
+        if (!(r.ingredientName ?? "").toLowerCase().includes("mozzarella")) continue;
+        totalQty += (Number(r.quantity) || 0) * ppb * bt;
+        if (!mozzMeta) mozzMeta = { name: r.ingredientName ?? "Mozzarella", unit: r.unit ?? "g" };
+      }
+    }
+
+    if (totalQty === 0 || !mozzMeta) { res.json([]); return; }
+    const bagWeight = mozzMeta.unit === "kg" ? 2 : 2000;
+    const bags = Math.ceil(totalQty / bagWeight);
+    res.json([{ name: mozzMeta.name, unit: mozzMeta.unit, totalQty, bagWeight, bags }]);
     return;
   }
 
