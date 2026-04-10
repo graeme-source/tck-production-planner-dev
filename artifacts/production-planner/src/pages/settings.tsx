@@ -817,6 +817,7 @@ export default function Settings() {
                 {user?.role === "admin" && <DptSettingsSection />}
               </div>
               {user?.role === "admin" && <FactoryNumberSection />}
+              {(user?.role === "admin" || user?.role === "manager") && <BuildingTimerSection />}
               {user?.role === "admin" && <TimingStandardsSection />}
               {user?.role === "admin" && <MixerCapacitySection />}
               {user?.role === "admin" && <ProductionExtrasSection />}
@@ -1818,6 +1819,150 @@ function FactoryNumberSection() {
           disabled={saving}
           aria-label="Toggle core menu only scope"
         />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Building timer settings — on/off switch + global default build time.
+ *
+ * Controls the countdown timer inside the BATCH BUILT button on the
+ * building station. When enabled, each batch completion resets a
+ * countdown to the current recipe's target_build_seconds (or the
+ * default below if that recipe has no target set).
+ *
+ * Backed by two rows in app_settings:
+ *   - building_timer_enabled        ("true" | "false")
+ *   - building_timer_default_seconds ("480" = 8 minutes by default)
+ *
+ * Visible to admins and managers.
+ */
+function BuildingTimerSection() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [defaultMinutesStr, setDefaultMinutesStr] = useState<string>("8");
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/app-settings/building_timer_enabled", { credentials: "include" })
+        .then(r => r.ok ? r.json() : null),
+      fetch("/api/app-settings/building_timer_default_seconds", { credentials: "include" })
+        .then(r => r.ok ? r.json() : null),
+    ]).then(([e, d]) => {
+      setEnabled(e?.value === "true");
+      if (d?.value) {
+        const secs = Number(d.value) || 480;
+        setDefaultMinutesStr(String(Math.round((secs / 60) * 10) / 10));
+      }
+    }).catch(() => setEnabled(false));
+  }, []);
+
+  async function saveSetting(key: string, value: string) {
+    setSaving(true);
+    setSavedMsg(null);
+    try {
+      const res = await fetch(`/api/app-settings/${key}`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      setSavedMsg("Saved");
+      setTimeout(() => setSavedMsg(null), 2000);
+    } catch {
+      setSavedMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleToggle(next: boolean) {
+    setEnabled(next);
+    await saveSetting("building_timer_enabled", String(next));
+  }
+
+  async function handleDefaultBlur() {
+    const mins = Number(defaultMinutesStr);
+    if (!Number.isFinite(mins) || mins <= 0 || mins > 60) {
+      setSavedMsg("Must be 0.1\u201360 minutes");
+      return;
+    }
+    const seconds = Math.round(mins * 60);
+    await saveSetting("building_timer_default_seconds", String(seconds));
+  }
+
+  if (enabled === null) return null;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-base font-semibold flex items-center gap-2">
+          <Timer className="w-4 h-4 text-primary" /> Building Timer
+        </h2>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          Countdown timer inside the BATCH BUILT button on the building
+          stations. Starts when a builder taps the button and counts
+          down to the recipe&rsquo;s target build time. Pauses during
+          break sessions.
+        </p>
+      </div>
+
+      <div className="bg-card border border-border rounded-xl p-4 flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <p className="text-sm font-medium">Enable building timer</p>
+            {saving && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+            {savedMsg && <span className="text-xs text-emerald-600 font-medium">{savedMsg}</span>}
+          </div>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            {enabled ? (
+              <>
+                <span className="font-medium text-foreground">On.</span>{" "}
+                The countdown and progress bar appear inside the BATCH
+                BUILT button. At zero, a short beep plays and a snooze
+                option appears.
+              </>
+            ) : (
+              <>
+                <span className="font-medium text-foreground">Off.</span>{" "}
+                The button keeps its original layout. Nothing ticks,
+                nothing beeps.
+              </>
+            )}
+          </p>
+        </div>
+        <Switch
+          checked={enabled}
+          onCheckedChange={handleToggle}
+          disabled={saving}
+          aria-label="Toggle building timer"
+        />
+      </div>
+
+      <div className="bg-card border border-border rounded-xl p-4">
+        <label className="text-sm font-medium block mb-1">Default build time (minutes)</label>
+        <p className="text-xs text-muted-foreground mb-3">
+          Used for any recipe that doesn&rsquo;t have its own target
+          build time set in the Recipes page. Changes take effect on
+          the next page load.
+        </p>
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            step="0.1"
+            min="0.1"
+            max="60"
+            value={defaultMinutesStr}
+            onChange={e => setDefaultMinutesStr(e.target.value)}
+            onBlur={handleDefaultBlur}
+            disabled={saving}
+            className="w-32 px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 tabular-nums"
+          />
+          <span className="text-sm text-muted-foreground">minutes</span>
+        </div>
       </div>
     </div>
   );

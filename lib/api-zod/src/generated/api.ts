@@ -93,10 +93,6 @@ export const ListSuppliersResponseItem = zod.object({
   website: zod.string().nullish(),
   address: zod.string().nullish(),
   notes: zod.string().nullish(),
-  orderFrequency: zod.string().nullish(),
-  orderDays: zod.string().nullish(),
-  leadTimeDays: zod.number().int().nullish(),
-  cutoffTime: zod.string().nullish(),
   createdAt: zod.string(),
 });
 export const ListSuppliersResponse = zod.array(ListSuppliersResponseItem);
@@ -112,10 +108,6 @@ export const CreateSupplierBody = zod.object({
   website: zod.string().nullish(),
   address: zod.string().nullish(),
   notes: zod.string().nullish(),
-  orderFrequency: zod.string().nullish(),
-  orderDays: zod.string().nullish(),
-  leadTimeDays: zod.number().int().nullish(),
-  cutoffTime: zod.string().nullish(),
 });
 
 /**
@@ -134,10 +126,6 @@ export const GetSupplierResponse = zod.object({
   website: zod.string().nullish(),
   address: zod.string().nullish(),
   notes: zod.string().nullish(),
-  orderFrequency: zod.string().nullish(),
-  orderDays: zod.string().nullish(),
-  leadTimeDays: zod.number().int().nullish(),
-  cutoffTime: zod.string().nullish(),
   createdAt: zod.string(),
 });
 
@@ -156,10 +144,6 @@ export const UpdateSupplierBody = zod.object({
   website: zod.string().nullish(),
   address: zod.string().nullish(),
   notes: zod.string().nullish(),
-  orderFrequency: zod.string().nullish(),
-  orderDays: zod.string().nullish(),
-  leadTimeDays: zod.number().int().nullish(),
-  cutoffTime: zod.string().nullish(),
 });
 
 export const UpdateSupplierResponse = zod.object({
@@ -171,10 +155,6 @@ export const UpdateSupplierResponse = zod.object({
   website: zod.string().nullish(),
   address: zod.string().nullish(),
   notes: zod.string().nullish(),
-  orderFrequency: zod.string().nullish(),
-  orderDays: zod.string().nullish(),
-  leadTimeDays: zod.number().int().nullish(),
-  cutoffTime: zod.string().nullish(),
   createdAt: zod.string(),
 });
 
@@ -222,10 +202,6 @@ export const ListIngredientsResponseItem = zod.object({
     ),
   kanbanEnabled: zod.boolean().optional(),
   kanbanQuantity: zod.number().optional(),
-  kanbanUnit: zod.enum(["weight", "pack", "bottle"]).optional(),
-  kanbanOrderAmount: zod.number().nullish(),
-  perishable: zod.boolean().optional(),
-  palletSize: zod.number().nullish(),
   createdAt: zod.string(),
 });
 export const ListIngredientsResponse = zod.array(ListIngredientsResponseItem);
@@ -233,12 +209,6 @@ export const ListIngredientsResponse = zod.array(ListIngredientsResponseItem);
 /**
  * @summary Create an ingredient
  */
-export const UK14_ALLERGENS = [
-  "celery", "cereals_containing_gluten", "crustaceans", "eggs", "fish",
-  "lupin", "milk", "molluscs", "mustard", "nuts", "peanuts",
-  "sesame", "soybeans", "sulphur_dioxide",
-] as const;
-
 export const CreateIngredientBody = zod.object({
   name: zod.string(),
   unit: zod.string(),
@@ -252,36 +222,9 @@ export const CreateIngredientBody = zod.object({
   notes: zod.string().nullish(),
   processingRatio: zod.number().nullish(),
   category: zod.string().nullish(),
-  prepWeightMode: zod.enum(["raw", "processed"]).optional(),
   rawMeatTrayCapacityKg: zod.number().nullish(),
-  minCookingTempC: zod.number().nullish(),
-  estimatedCookTimeMin: zod.number().nullish(),
-  ovenTempC: zod.number().nullish(),
-  steamPct: zod.number().nullish(),
-  isBottle: zod.boolean().optional(),
-  bottleSize: zod.number().nullish(),
-  stockCheckEnabled: zod.boolean().optional(),
-  stockCheckFrequency: zod.string().optional(),
-  stockCheckDay: zod.string().nullish(),
-  surplusPercent: zod.number().optional(),
-  shelfLifeDays: zod.number().nullish(),
   kanbanEnabled: zod.boolean().optional(),
   kanbanQuantity: zod.number().optional(),
-  kanbanUnit: zod.enum(["weight", "pack", "bottle"]).optional(),
-  kanbanOrderAmount: zod.number().nullish(),
-  perishable: zod.boolean().optional(),
-  palletSize: zod.number().nullish(),
-  energyKj: zod.number().nullish(),
-  energyKcal: zod.number().nullish(),
-  fat: zod.number().nullish(),
-  saturates: zod.number().nullish(),
-  carbohydrate: zod.number().nullish(),
-  sugars: zod.number().nullish(),
-  protein: zod.number().nullish(),
-  fibre: zod.number().nullish(),
-  salt: zod.number().nullish(),
-  labelDeclaration: zod.string().nullish(),
-  allergens: zod.array(zod.string()).optional(),
 });
 
 /**
@@ -318,10 +261,6 @@ export const GetIngredientResponse = zod.object({
     ),
   kanbanEnabled: zod.boolean().optional(),
   kanbanQuantity: zod.number().optional(),
-  kanbanUnit: zod.enum(["weight", "pack", "bottle"]).optional(),
-  kanbanOrderAmount: zod.number().nullish(),
-  perishable: zod.boolean().optional(),
-  palletSize: zod.number().nullish(),
   createdAt: zod.string(),
 });
 
@@ -345,36 +284,9 @@ export const UpdateIngredientBody = zod.object({
   notes: zod.string().nullish(),
   processingRatio: zod.number().nullish(),
   category: zod.string().nullish(),
-  prepWeightMode: zod.enum(["raw", "processed"]).optional(),
   rawMeatTrayCapacityKg: zod.number().nullish(),
-  minCookingTempC: zod.number().nullish(),
-  estimatedCookTimeMin: zod.number().nullish(),
-  ovenTempC: zod.number().nullish(),
-  steamPct: zod.number().nullish(),
-  isBottle: zod.boolean().optional(),
-  bottleSize: zod.number().nullish(),
-  stockCheckEnabled: zod.boolean().optional(),
-  stockCheckFrequency: zod.string().optional(),
-  stockCheckDay: zod.string().nullish(),
-  surplusPercent: zod.number().optional(),
-  shelfLifeDays: zod.number().nullish(),
   kanbanEnabled: zod.boolean().optional(),
   kanbanQuantity: zod.number().optional(),
-  kanbanUnit: zod.enum(["weight", "pack", "bottle"]).optional(),
-  kanbanOrderAmount: zod.number().nullish(),
-  perishable: zod.boolean().optional(),
-  palletSize: zod.number().nullish(),
-  energyKj: zod.number().nullish(),
-  energyKcal: zod.number().nullish(),
-  fat: zod.number().nullish(),
-  saturates: zod.number().nullish(),
-  carbohydrate: zod.number().nullish(),
-  sugars: zod.number().nullish(),
-  protein: zod.number().nullish(),
-  fibre: zod.number().nullish(),
-  salt: zod.number().nullish(),
-  labelDeclaration: zod.string().nullish(),
-  allergens: zod.array(zod.string()).optional(),
 });
 
 export const UpdateIngredientResponse = zod.object({
@@ -404,10 +316,6 @@ export const UpdateIngredientResponse = zod.object({
     ),
   kanbanEnabled: zod.boolean().optional(),
   kanbanQuantity: zod.number().optional(),
-  kanbanUnit: zod.enum(["weight", "pack", "bottle"]).optional(),
-  kanbanOrderAmount: zod.number().nullish(),
-  perishable: zod.boolean().optional(),
-  palletSize: zod.number().nullish(),
   createdAt: zod.string(),
 });
 
@@ -447,8 +355,6 @@ export const CreateSubRecipeBody = zod.object({
   yieldUnit: zod.string(),
   notes: zod.string().nullish(),
   shelfLifeDays: zod.number().nullish(),
-  isBase: zod.boolean().optional(),
-  labelDeclaration: zod.string().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -536,8 +442,6 @@ export const UpdateSubRecipeBody = zod.object({
   yieldUnit: zod.string(),
   notes: zod.string().nullish(),
   shelfLifeDays: zod.number().nullish(),
-  isBase: zod.boolean().optional(),
-  labelDeclaration: zod.string().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -562,7 +466,6 @@ export const UpdateSubRecipeResponse = zod.object({
   yieldUnit: zod.string(),
   notes: zod.string().nullish(),
   shelfLifeDays: zod.number().nullish(),
-  isBase: zod.boolean().optional(),
   costPerYieldUnit: zod
     .number()
     .nullish()
@@ -595,6 +498,12 @@ export const ListRecipesResponseItem = zod.object({
   portionsPerBatch: zod
     .number()
     .describe("Number of portions produced per batch (e.g. 10 for calzones)"),
+  targetBuildSeconds: zod
+    .number()
+    .nullish()
+    .describe(
+      "Target time to build one batch of this recipe, in seconds. Drives the countdown timer inside the BATCH BUILT button on the building station. Null = fall back to the building_timer_default_seconds app setting.",
+    ),
   tinSize: zod.string().nullish().describe("Default tin size for this recipe"),
   maxBatchesPerTin: zod.number().nullish().describe("Maximum batches per tin"),
   sopUrl: zod
@@ -644,6 +553,10 @@ export const CreateRecipeBody = zod.object({
     .number()
     .optional()
     .describe("Number of portions produced per batch (e.g. 10 for calzones)"),
+  targetBuildSeconds: zod
+    .number()
+    .nullish()
+    .describe("Target time to build one batch of this recipe, in seconds."),
   tinSize: zod.string().nullish(),
   maxBatchesPerTin: zod.number().nullish(),
   sopUrl: zod.string().nullish(),
@@ -651,30 +564,16 @@ export const CreateRecipeBody = zod.object({
   fillWeightGrams: zod.number().nullish(),
   baseType: zod.string().nullish(),
   baseWeightGrams: zod.number().nullish(),
-  color: zod.string().nullish(),
-  isCoreMenu: zod.boolean().optional(),
-  isCurrentSpecial: zod.boolean().optional(),
-  cookingLossPercent: zod.number().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
       quantity: zod.number(),
-      marinadeForIngredientId: zod.number().nullish(),
-      includeInFillingMix: zod.boolean().optional(),
-      isTopping: zod.boolean().optional(),
-      quid: zod.boolean().optional(),
-      mixingOverage: zod.number().optional(),
     }),
   ),
   subRecipes: zod.array(
     zod.object({
       subRecipeId: zod.number(),
       quantity: zod.number(),
-      marinadeForIngredientId: zod.number().nullish(),
-      includeInFillingMix: zod.boolean().optional(),
-      isTopping: zod.boolean().optional(),
-      quid: zod.boolean().optional(),
-      mixingOverage: zod.number().optional(),
     }),
   ),
 });
@@ -702,6 +601,12 @@ export const GetRecipeResponse = zod
     portionsPerBatch: zod
       .number()
       .describe("Number of portions produced per batch (e.g. 10 for calzones)"),
+    targetBuildSeconds: zod
+      .number()
+      .nullish()
+      .describe(
+        "Target time to build one batch of this recipe, in seconds. Drives the countdown timer inside the BATCH BUILT button on the building station. Null = fall back to the building_timer_default_seconds app setting.",
+      ),
     tinSize: zod
       .string()
       .nullish()
@@ -792,6 +697,10 @@ export const UpdateRecipeBody = zod.object({
     .number()
     .optional()
     .describe("Number of portions produced per batch (e.g. 10 for calzones)"),
+  targetBuildSeconds: zod
+    .number()
+    .nullish()
+    .describe("Target time to build one batch of this recipe, in seconds."),
   tinSize: zod.string().nullish(),
   maxBatchesPerTin: zod.number().nullish(),
   sopUrl: zod.string().nullish(),
@@ -799,30 +708,16 @@ export const UpdateRecipeBody = zod.object({
   fillWeightGrams: zod.number().nullish(),
   baseType: zod.string().nullish(),
   baseWeightGrams: zod.number().nullish(),
-  color: zod.string().nullish(),
-  isCoreMenu: zod.boolean().optional(),
-  isCurrentSpecial: zod.boolean().optional(),
-  cookingLossPercent: zod.number().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
       quantity: zod.number(),
-      marinadeForIngredientId: zod.number().nullish(),
-      includeInFillingMix: zod.boolean().optional(),
-      isTopping: zod.boolean().optional(),
-      quid: zod.boolean().optional(),
-      mixingOverage: zod.number().optional(),
     }),
   ),
   subRecipes: zod.array(
     zod.object({
       subRecipeId: zod.number(),
       quantity: zod.number(),
-      marinadeForIngredientId: zod.number().nullish(),
-      includeInFillingMix: zod.boolean().optional(),
-      isTopping: zod.boolean().optional(),
-      quid: zod.boolean().optional(),
-      mixingOverage: zod.number().optional(),
     }),
   ),
 });
@@ -842,6 +737,12 @@ export const UpdateRecipeResponse = zod.object({
   portionsPerBatch: zod
     .number()
     .describe("Number of portions produced per batch (e.g. 10 for calzones)"),
+  targetBuildSeconds: zod
+    .number()
+    .nullish()
+    .describe(
+      "Target time to build one batch of this recipe, in seconds. Drives the countdown timer inside the BATCH BUILT button on the building station. Null = fall back to the building_timer_default_seconds app setting.",
+    ),
   tinSize: zod.string().nullish().describe("Default tin size for this recipe"),
   maxBatchesPerTin: zod.number().nullish().describe("Maximum batches per tin"),
   sopUrl: zod
@@ -956,6 +857,12 @@ export const GetProductionPlanResponse = zod
           recipeId: zod.number(),
           recipeName: zod.string(),
           portionsPerBatch: zod.number(),
+          targetBuildSeconds: zod
+            .number()
+            .nullish()
+            .describe(
+              "Target seconds per batch for this recipe (joined from recipes table). Null falls back to the global default.",
+            ),
           notes: zod.string().nullish(),
           status: zod.enum(["pending", "in-progress", "complete"]),
           orderPosition: zod.number(),
@@ -1044,6 +951,12 @@ export const UpdateProductionPlanItemResponse = zod.object({
   recipeId: zod.number(),
   recipeName: zod.string(),
   portionsPerBatch: zod.number(),
+  targetBuildSeconds: zod
+    .number()
+    .nullish()
+    .describe(
+      "Target seconds per batch for this recipe (joined from recipes table). Null falls back to the global default.",
+    ),
   notes: zod.string().nullish(),
   status: zod.enum(["pending", "in-progress", "complete"]),
   orderPosition: zod.number(),
@@ -1471,7 +1384,7 @@ export const CreateStockEntryBody = zod.object({
   itemType: zod.enum(["recipe", "ingredient", "stock_item"]),
   quantity: zod.number(),
   unit: zod.string(),
-  location: zod.string().optional(),
+  location: zod.string().nullish(),
   notes: zod.string().nullish(),
 });
 
@@ -1489,7 +1402,7 @@ export const UpdateStockEntryBody = zod.object({
   itemType: zod.enum(["recipe", "ingredient", "stock_item"]),
   quantity: zod.number(),
   unit: zod.string(),
-  location: zod.string().optional(),
+  location: zod.string().nullish(),
   notes: zod.string().nullish(),
 });
 
@@ -1788,7 +1701,6 @@ export const CreateCategoryDefaultBody = zod.object({
   category: zod.string(),
   defaultPackagingCost: zod.number(),
   defaultLabourCost: zod.number(),
-  defaultPackSize: zod.number().optional(),
 });
 
 /**
@@ -1802,7 +1714,6 @@ export const UpdateCategoryDefaultBody = zod.object({
   category: zod.string(),
   defaultPackagingCost: zod.number(),
   defaultLabourCost: zod.number(),
-  defaultPackSize: zod.number().optional(),
 });
 
 export const UpdateCategoryDefaultResponse = zod.object({
@@ -1810,7 +1721,6 @@ export const UpdateCategoryDefaultResponse = zod.object({
   category: zod.string(),
   defaultPackagingCost: zod.number(),
   defaultLabourCost: zod.number(),
-  defaultPackSize: zod.number(),
   createdAt: zod.string(),
 });
 
@@ -1830,7 +1740,6 @@ export const ListKanbansResponseItem = zod.object({
   ingredientName: zod.string().nullish(),
   ingredientUnit: zod.string().nullish(),
   kanbanQuantity: zod.number().nullish(),
-  kanbanUnit: zod.enum(["weight", "pack", "bottle"]).optional(),
   supplierId: zod.number().nullish(),
   supplierName: zod.string().nullish(),
   orderFrequency: zod.string().optional(),
@@ -1869,7 +1778,6 @@ export const PullKanbanResponse = zod.object({
   ingredientName: zod.string().nullish(),
   ingredientUnit: zod.string().nullish(),
   kanbanQuantity: zod.number().nullish(),
-  kanbanUnit: zod.enum(["weight", "pack", "bottle"]).optional(),
   supplierId: zod.number().nullish(),
   supplierName: zod.string().nullish(),
   orderFrequency: zod.string().optional(),
@@ -1898,7 +1806,6 @@ export const OrderKanbanResponse = zod.object({
   ingredientName: zod.string().nullish(),
   ingredientUnit: zod.string().nullish(),
   kanbanQuantity: zod.number().nullish(),
-  kanbanUnit: zod.enum(["weight", "pack", "bottle"]).optional(),
   supplierId: zod.number().nullish(),
   supplierName: zod.string().nullish(),
   orderFrequency: zod.string().optional(),

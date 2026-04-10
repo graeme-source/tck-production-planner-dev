@@ -18,6 +18,7 @@ export const recipesTable = pgTable("recipes", {
   packagingCost: numeric("packaging_cost", { precision: 10, scale: 4 }).notNull().default("0"),
   labourCost: numeric("labour_cost", { precision: 10, scale: 4 }).notNull().default("0"),
   portionsPerBatch: integer("portions_per_batch").notNull().default(10),
+  targetBuildSeconds: integer("target_build_seconds"),
   shelfLifeDays: integer("shelf_life_days"),
   tinSize: text("tin_size"),
   maxBatchesPerTin: integer("max_batches_per_tin"),

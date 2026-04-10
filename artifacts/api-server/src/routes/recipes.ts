@@ -183,7 +183,7 @@ function applyToppingFlags(req: import("express").Request) {
 
 router.post("/", preserveToppingFlags, validate(CreateRecipeBody), async (req, res) => {
   applyToppingFlags(req);
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, ingredients, subRecipes, marinades } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, targetBuildSeconds, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, ingredients, subRecipes, marinades } = req.body;
 
   if (marinades?.length) {
     const recipeIngIds = (ingredients ?? []).map(i => i.ingredientId);
@@ -205,6 +205,7 @@ router.post("/", preserveToppingFlags, validate(CreateRecipeBody), async (req, r
     packagingCost: String(packagingCost ?? 0),
     labourCost: String(labourCost ?? 0),
     portionsPerBatch: portionsPerBatch ?? 10,
+    targetBuildSeconds: targetBuildSeconds ?? null,
     shelfLifeDays: shelfLifeDays ?? null,
     tinSize: tinSize ?? null,
     maxBatchesPerTin: maxBatchesPerTin ?? null,
@@ -427,7 +428,7 @@ router.get("/:id", async (req, res) => {
 router.put("/:id", preserveToppingFlags, validate(UpdateRecipeBody), async (req, res) => {
   applyToppingFlags(req);
   const id = Number(req.params.id);
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, ingredients, subRecipes, marinades } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, targetBuildSeconds, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, ingredients, subRecipes, marinades } = req.body;
 
   if (marinades?.length) {
     const recipeIngIds = (ingredients ?? []).map(i => i.ingredientId);
@@ -449,6 +450,7 @@ router.put("/:id", preserveToppingFlags, validate(UpdateRecipeBody), async (req,
     packagingCost: String(packagingCost ?? 0),
     labourCost: String(labourCost ?? 0),
     portionsPerBatch: portionsPerBatch ?? 10,
+    targetBuildSeconds: targetBuildSeconds ?? null,
     shelfLifeDays: shelfLifeDays ?? null,
     tinSize: tinSize ?? null,
     maxBatchesPerTin: maxBatchesPerTin ?? null,

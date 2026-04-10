@@ -2091,6 +2091,10 @@ components:
         portionsPerBatch:
           type: integer
           description: Number of portions produced per batch (e.g. 10 for calzones)
+        targetBuildSeconds:
+          type: integer
+          nullable: true
+          description: Target time to build one batch of this recipe, in seconds. Drives the countdown timer inside the BATCH BUILT button on the building station. Null = fall back to the building_timer_default_seconds app setting.
         tinSize:
           type: string
           nullable: true
@@ -2266,6 +2270,10 @@ components:
         portionsPerBatch:
           type: integer
           description: Number of portions produced per batch (e.g. 10 for calzones)
+        targetBuildSeconds:
+          type: integer
+          nullable: true
+          description: Target time to build one batch of this recipe, in seconds.
         tinSize:
           type: string
           nullable: true
@@ -2365,6 +2373,10 @@ components:
           type: string
         portionsPerBatch:
           type: number
+        targetBuildSeconds:
+          type: integer
+          nullable: true
+          description: Target seconds per batch for this recipe (joined from recipes table). Null falls back to the global default.
         notes:
           type: string
           nullable: true

@@ -25,6 +25,10 @@ const schema = z.object({
   packagingCost: z.coerce.number().min(0),
   labourCost: z.coerce.number().min(0),
   portionsPerBatch: z.coerce.number().int().min(1, "Must be ≥ 1"),
+  targetBuildMinutes: z.preprocess(
+    v => (v === "" || v == null ? null : Number(v)),
+    z.number().positive().max(60, "Max 60 minutes").nullable().optional()
+  ),
   shelfLifeDays: z.coerce.number().int().nonnegative().optional(),
   tinSize: z.string().optional(),
   maxBatchesPerTin: z.preprocess(v => (v === "" || v == null ? null : Number(v)), z.number().int().positive().nullable().optional()),
@@ -204,6 +208,14 @@ function RecipeForm({
     defaultValues,
   });
 
+  // Only admins and managers can edit per-recipe build time targets; everyone
+  // else sees the field disabled. The target drives the countdown timer inside
+  // the BATCH BUILT button on the building station.
+  const { state: recipeFormAuthState } = useAuth();
+  const canEditBuildTime =
+    recipeFormAuthState.status === "authenticated" &&
+    (recipeFormAuthState.user.role === "admin" || recipeFormAuthState.user.role === "manager");
+
   useEffect(() => {
     onDirtyChange?.(isDirty);
   }, [isDirty, onDirtyChange]);
@@ -324,6 +336,25 @@ function RecipeForm({
             <label className="text-sm font-medium mb-1 block">Portions per batch *</label>
             <input type="number" step="1" min="1" {...register("portionsPerBatch")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
             {errors.portionsPerBatch && <span className="text-destructive text-xs">{errors.portionsPerBatch.message}</span>}
+          </div>
+          <div>
+            <label className="text-sm font-medium mb-1 block">Target build time (minutes)</label>
+            <input
+              type="number"
+              step="0.1"
+              min="0.1"
+              max="60"
+              {...register("targetBuildMinutes")}
+              disabled={!canEditBuildTime}
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60 disabled:cursor-not-allowed"
+              placeholder="e.g. 6 (blank = use default)"
+            />
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {canEditBuildTime
+                ? "Countdown timer inside the BATCH BUILT button. Blank = use global default."
+                : "Admin/manager only"}
+            </p>
+            {errors.targetBuildMinutes && <span className="text-destructive text-xs">{errors.targetBuildMinutes.message}</span>}
           </div>
           <div>
             <label className="text-sm font-medium mb-1 block">Shelf Life (days)</label>
@@ -886,6 +917,9 @@ function EditRecipeDialog({
         packagingCost: Number(detail.packagingCost) || 0,
         labourCost: Number(detail.labourCost) || 0,
         portionsPerBatch: Number(detail.portionsPerBatch) || 10,
+        targetBuildMinutes: (detail as Record<string, unknown>).targetBuildSeconds != null
+          ? Number((detail as Record<string, unknown>).targetBuildSeconds) / 60
+          : null,
         shelfLifeDays: detail.shelfLifeDays != null ? Number(detail.shelfLifeDays) : undefined,
         tinSize: detail.tinSize ?? "",
         maxBatchesPerTin: detail.maxBatchesPerTin != null ? Number(detail.maxBatchesPerTin) : null,
@@ -897,7 +931,7 @@ function EditRecipeDialog({
         ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, showInPrep: (i as Record<string, unknown>).showInPrep === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
         subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, showInPrep: (s as Record<string, unknown>).showInPrep === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
       }
-    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", cookingLossPercent: 3, ingredients: [], subRecipes: [] };
+    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", cookingLossPercent: 3, ingredients: [], subRecipes: [] };
 
   return (
     <>
@@ -946,7 +980,14 @@ function EditRecipeDialog({
                 thisRecipeIsSpecial={thisRecipeIsSpecial}
                 onDirtyChange={setFormIsDirty}
                 submitRef={submitRef}
-                onSubmit={(data) => updateRecipe.mutate({ id, data }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: [`/api/recipes/${id}`] }); onOpenChange(false); } })}
+                onSubmit={(data) => {
+                  const { targetBuildMinutes, ...rest } = data;
+                  const payload = {
+                    ...rest,
+                    targetBuildSeconds: targetBuildMinutes != null ? Math.round(targetBuildMinutes * 60) : null,
+                  } as unknown as typeof data;
+                  updateRecipe.mutate({ id, data: payload }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: [`/api/recipes/${id}`] }); onOpenChange(false); } });
+                }}
               />
 
               {/* Shopify Inventory Link */}
@@ -1679,6 +1720,9 @@ export default function Recipes() {
         packagingCost: Number(duplicateDetail.packagingCost) || 0,
         labourCost: Number(duplicateDetail.labourCost) || 0,
         portionsPerBatch: Number(duplicateDetail.portionsPerBatch) || 10,
+        targetBuildMinutes: (duplicateDetail as Record<string, unknown>).targetBuildSeconds != null
+          ? Number((duplicateDetail as Record<string, unknown>).targetBuildSeconds) / 60
+          : null,
         shelfLifeDays: duplicateDetail.shelfLifeDays != null ? Number(duplicateDetail.shelfLifeDays) : undefined,
         tinSize: duplicateDetail.tinSize ?? "",
         maxBatchesPerTin: duplicateDetail.maxBatchesPerTin != null ? Number(duplicateDetail.maxBatchesPerTin) : null,
@@ -1719,7 +1763,7 @@ export default function Recipes() {
 
   const addDefaults: FormValues = {
     name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "",
-    packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, shelfLifeDays: undefined,
+    packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined,
     tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", cookingLossPercent: 3, ingredients: [], subRecipes: [],
   };
 
@@ -1754,7 +1798,14 @@ export default function Recipes() {
             ingredients={ingredientList}
             subRecipes={subRecipeList}
             categoryDefaults={catDefaults}
-            onSubmit={(data) => createRecipe.mutate({ data }, { onSuccess: () => { setIsAddOpen(false); setDuplicateDefaults(null); } })}
+            onSubmit={(data) => {
+              const { targetBuildMinutes, ...rest } = data;
+              const payload = {
+                ...rest,
+                targetBuildSeconds: targetBuildMinutes != null ? Math.round(targetBuildMinutes * 60) : null,
+              } as unknown as typeof data;
+              createRecipe.mutate({ data: payload }, { onSuccess: () => { setIsAddOpen(false); setDuplicateDefaults(null); } });
+            }}
           />
         </DialogContent>
       </Dialog>

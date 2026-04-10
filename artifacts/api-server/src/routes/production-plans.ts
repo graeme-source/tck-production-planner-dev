@@ -135,7 +135,7 @@ function mapPlan(p: typeof productionPlansTable.$inferSelect) {
   };
 }
 
-function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?: string | null; portionsPerBatch?: number | null; packSize?: number | null; fillWeightGrams?: string | null; baseType?: string | null; baseWeightGrams?: string | null; wrappingComplete?: boolean | null; recipeColor?: string | null }, stationCompletions?: Record<string, number>) {
+function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?: string | null; portionsPerBatch?: number | null; packSize?: number | null; fillWeightGrams?: string | null; baseType?: string | null; baseWeightGrams?: string | null; wrappingComplete?: boolean | null; recipeColor?: string | null; targetBuildSeconds?: number | null }, stationCompletions?: Record<string, number>) {
   return {
     ...i,
     recipeName: i.recipeName ?? "",
@@ -145,6 +145,7 @@ function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?
     baseType: i.baseType ?? null,
     baseWeightGrams: i.baseWeightGrams ? Number(i.baseWeightGrams) : null,
     wrappingComplete: i.wrappingComplete ?? false,
+    targetBuildSeconds: i.targetBuildSeconds ?? null,
     stationCompletions: stationCompletions ?? {},
   };
 }
@@ -954,6 +955,7 @@ router.get("/:id", async (req, res) => {
       recipeName: recipesTable.name,
       portionsPerBatch: recipesTable.portionsPerBatch,
       packSize: recipesTable.packSize,
+      targetBuildSeconds: recipesTable.targetBuildSeconds,
       notes: productionPlanItemsTable.notes,
       status: productionPlanItemsTable.status,
       orderPosition: productionPlanItemsTable.orderPosition,

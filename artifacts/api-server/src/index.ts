@@ -157,6 +157,13 @@ async function runStartupMigrations() {
     await db.execute(sql`
       ALTER TABLE recipe_sub_recipes ADD COLUMN IF NOT EXISTS show_in_prep BOOLEAN NOT NULL DEFAULT FALSE
     `);
+    // Per-recipe build-time target in seconds, nullable. Drives the
+    // countdown timer inside the BATCH BUILT button on the building
+    // station. Null = fall back to building_timer_default_seconds app
+    // setting (default 480s = 8 minutes).
+    await db.execute(sql`
+      ALTER TABLE recipes ADD COLUMN IF NOT EXISTS target_build_seconds INTEGER
+    `);
     await db.execute(sql`
       ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS surplus_percent NUMERIC(5,2) NOT NULL DEFAULT 10
     `);

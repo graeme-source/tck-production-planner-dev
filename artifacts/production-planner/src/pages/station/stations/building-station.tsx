@@ -22,6 +22,8 @@ import {
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { useBuildTimerConfig } from "@/hooks/use-build-timer-config";
+import { useBatchBuildTimer } from "@/hooks/use-batch-build-timer";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 // ExtraPackControl removed — replaced by inline PackAdjustment
 import { BreakTracker } from "../shared/break-tracker";
@@ -290,12 +292,22 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     query: { queryKey: getGetStationKpiQueryKey(plan.id, { stationType }), refetchInterval: 5000 },
   });
 
+  // Build timer: starts on the first BATCH DONE tap, resets on every
+  // subsequent tap, pauses during breaks, fires an alert + beep when
+  // the current recipe's target build time elapses. Admin-toggled in
+  // Settings; dormant no-op when disabled. State is held here and the
+  // useBatchBuildTimer hook (called further down) reacts to
+  // lastBatchAt to reset its countdown.
+  const timerConfig = useBuildTimerConfig();
+  const [lastBatchAt, setLastBatchAt] = useState<Date | null>(null);
+
   const createBatch = useCreateBatchCompletion({
     mutation: {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
         setSessionBatches(prev => prev + 1);
         setPendingTap(false);
+        setLastBatchAt(new Date());
       },
       onError: () => setPendingTap(false),
     },
@@ -516,6 +528,18 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   const allDone = items.length > 0 && items.every(it =>
     getCombinedBuildCount(it) >= getEffectiveTarget(it)
   );
+
+  // Build timer state — drives the countdown readout + progress bar +
+  // alert beep + snooze inside the BATCH DONE button. Dormant no-op
+  // when the admin toggle is off.
+  const buildTimer = useBatchBuildTimer({
+    enabled: timerConfig.enabled === true,
+    recipeId: currentItem?.recipeId ?? null,
+    targetSeconds: (currentItem as { targetBuildSeconds?: number | null } | undefined)?.targetBuildSeconds ?? null,
+    defaultSeconds: timerConfig.defaultSeconds,
+    isOnBreak,
+    lastBatchAt,
+  });
 
   useEffect(() => {
     if (!currentItem) return;
@@ -823,12 +847,14 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                 </div>
               )}
 
-              {/* BATCH COMPLETE button — large, easy to tap */}
+              {/* BATCH COMPLETE button — large, easy to tap. When the
+                  build-timer feature is enabled, the button also hosts a
+                  countdown readout + drain bar and flashes on alert. */}
               <button
                 onClick={handleBatchComplete}
                 disabled={pendingTap || isOnBreak || available <= 0 || checklistPending}
                 className={cn(
-                  "w-full h-[200px] rounded-2xl text-xl sm:text-2xl font-bold transition-all select-none active:scale-95 flex items-center justify-center",
+                  "relative overflow-hidden w-full h-[200px] rounded-2xl text-xl sm:text-2xl font-bold transition-all select-none active:scale-95 flex flex-col items-center justify-center gap-1",
                   remaining === 0
                     ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 border-2 border-emerald-400 opacity-60 cursor-not-allowed"
                     : isOnBreak
@@ -839,23 +865,68 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                           ? "bg-amber-100 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 border-2 border-amber-300 cursor-not-allowed opacity-70"
                           : pendingTap
                             ? "bg-primary/60 text-primary-foreground cursor-wait"
-                            : "bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg hover:shadow-xl"
+                            : buildTimer.alerted
+                              ? "bg-amber-500 text-white border-2 border-amber-600 shadow-lg animate-pulse"
+                              : "bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg hover:shadow-xl"
                 )}
               >
-                {isOnBreak
-                  ? "On Break"
-                  : remaining === 0
-                    ? "All Done ✓"
-                    : checklistPending
-                      ? "Tick items ←"
-                      : available <= 0
-                        ? "Waiting…"
-                        : pendingTap
-                          ? "Recording..."
-                          : isLastBatchPartial
-                            ? `PARTIAL — ${lastBatchPackCount} pack${lastBatchPackCount !== 1 ? "s" : ""} ✓`
-                            : "BATCH DONE ✓"}
+                {/* Countdown readout — only shows when the build timer feature is
+                    enabled AND the builder has tapped at least once this session. */}
+                {timerConfig.enabled && buildTimer.running && !allDone && (
+                  <span className={cn(
+                    "text-4xl sm:text-5xl font-mono tabular-nums leading-none",
+                    buildTimer.alerted ? "text-white" : "text-current opacity-90"
+                  )}>
+                    {buildTimer.label}
+                  </span>
+                )}
+                <span>
+                  {isOnBreak
+                    ? "On Break"
+                    : remaining === 0
+                      ? "All Done ✓"
+                      : checklistPending
+                        ? "Tick items ←"
+                        : available <= 0
+                          ? "Waiting…"
+                          : pendingTap
+                            ? "Recording..."
+                            : isLastBatchPartial
+                              ? `PARTIAL — ${lastBatchPackCount} pack${lastBatchPackCount !== 1 ? "s" : ""} ✓`
+                              : "BATCH DONE ✓"}
+                </span>
+                {/* Progress drain bar along the bottom edge of the button. */}
+                {timerConfig.enabled && buildTimer.running && !allDone && !isOnBreak && (
+                  <div
+                    className="absolute inset-x-0 bottom-0 h-1.5 bg-black/10 overflow-hidden"
+                    aria-hidden="true"
+                  >
+                    <div
+                      className={cn(
+                        "h-full transition-all duration-200 ease-linear",
+                        buildTimer.alerted
+                          ? "bg-red-600"
+                          : buildTimer.fractionRemaining > 0.5
+                            ? "bg-emerald-400"
+                            : buildTimer.fractionRemaining > 0.2
+                              ? "bg-amber-400"
+                              : "bg-red-500"
+                      )}
+                      style={{ width: `${Math.round(buildTimer.fractionRemaining * 100)}%` }}
+                    />
+                  </div>
+                )}
               </button>
+
+              {/* Snooze button — only when the build timer is overdue. */}
+              {timerConfig.enabled && buildTimer.running && buildTimer.alerted && !isOnBreak && (
+                <button
+                  onClick={buildTimer.snooze}
+                  className="mt-1.5 w-full py-2.5 text-sm font-semibold text-amber-800 bg-amber-100 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-200 dark:hover:bg-amber-900/50 border border-amber-300 dark:border-amber-700 rounded-lg transition-colors"
+                >
+                  +1 min snooze
+                </button>
+              )}
 
               {/* Undo */}
               {buildingCount > 0 && !isOnBreak && (
