@@ -400,6 +400,12 @@ export interface PostcodeCheckResult {
  */
 const COLLECTION_POSTCODE = "MK17 9FX"; // TCK factory
 
+// Short-lived cache: postcode → list of available ProductCodes.
+// Cleared after 5 minutes so the same batch of 80+ orders with
+// overlapping postcodes doesn't hammer the APC API.
+const availabilityCache = new Map<string, { codes: string[]; ts: number }>();
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
 export async function checkPostcodeService(
   postcode: string,
   serviceCode: string,
@@ -459,6 +465,21 @@ export async function checkPostcodeService(
     },
   };
 
+  // Check the cache first — avoids redundant APC calls when validating
+  // 80+ orders with overlapping postcodes.
+  const cacheKey = `${formattedPostcode}|${base}`;
+  const cached = availabilityCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+    const codeUpper = serviceCode.toUpperCase();
+    const hit = cached.codes.some(pc => {
+      const u = pc.toUpperCase();
+      return u === codeUpper || u === `APC${codeUpper}` || (u.startsWith("APC") && u.slice(3) === codeUpper);
+    });
+    if (hit) return { available: true };
+    const shortCodes = cached.codes.map(c => c.toUpperCase().startsWith("APC") ? c.slice(3) : c).join(", ");
+    return { available: false, reason: `Service ${serviceCode} not available to ${formattedPostcode}. Available: ${shortCodes || "none"}` };
+  }
+
   console.log(`[APC ServiceAvailability] POST ${url} — checking ${formattedPostcode} for service ${serviceCode}`);
 
   const res = await fetch(url, {
@@ -517,17 +538,36 @@ export async function checkPostcodeService(
   }
 
   const serviceList = Array.isArray(services) ? services : [services];
-  const matchingService = serviceList.find(
-    (s: { ProductCode?: string }) => s.ProductCode?.toUpperCase() === serviceCode.toUpperCase(),
-  );
+
+  // Cache the available codes for this postcode
+  const allCodes = serviceList.map((s: { ProductCode?: string }) => s.ProductCode ?? "").filter(Boolean);
+  availabilityCache.set(cacheKey, { codes: allCodes, ts: Date.now() });
+
+  const codeUpper = serviceCode.toUpperCase();
+
+  // APC returns ProductCodes with an "APC" prefix (e.g. "APCLW16" for
+  // our configured "LW16"). Match both exact and prefix-stripped forms
+  // so the validation works regardless of how the admin entered the
+  // code in Settings.
+  const matchingService = serviceList.find((s: { ProductCode?: string }) => {
+    const pc = s.ProductCode?.toUpperCase() ?? "";
+    return pc === codeUpper                                // exact: "WL16" === "WL16"
+      || pc === `APC${codeUpper}`                          // prefixed: "APCWL16" === "APC" + "WL16"
+      || (pc.startsWith("APC") && pc.slice(3) === codeUpper); // strip prefix: "APCLW16".slice(3) === "LW16"
+  });
 
   if (matchingService) {
-    console.log(`[APC ServiceAvailability] ${formattedPostcode} ✓ ${serviceCode} available`);
+    console.log(`[APC ServiceAvailability] ${formattedPostcode} ✓ ${serviceCode} available (matched ${matchingService.ProductCode})`);
     return { available: true };
   }
 
+  // Show short codes (strip APC prefix) in the error message so they
+  // match what the admin sees in Settings.
   const availableCodes = serviceList
-    .map((s: { ProductCode?: string }) => s.ProductCode)
+    .map((s: { ProductCode?: string }) => {
+      const pc = s.ProductCode ?? "";
+      return pc.toUpperCase().startsWith("APC") ? pc.slice(3) : pc;
+    })
     .filter(Boolean)
     .join(", ");
   console.log(`[APC ServiceAvailability] ${formattedPostcode} ✗ ${serviceCode} NOT in [${availableCodes}]`);
