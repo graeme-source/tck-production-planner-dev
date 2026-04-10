@@ -207,9 +207,28 @@ export default function Dispatches() {
     setPostcodeLoading(true);
     setPostcodeIssues(null);
     try {
-      const res = await fetch(`${BASE}/api/fulfilment/postcode-validations?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
-      const data: PostcodeIssue[] = res.ok ? await res.json() : [];
-      setPostcodeIssues(data);
+      // Calls the live APC service-check endpoint (always production API,
+      // auto-selects the correct service code per order from Settings).
+      // Previously this just read stale cached results from the DB, which
+      // returned false positives when the cache was populated via the
+      // training API.
+      const res = await fetch(`${BASE}/api/fulfilment/service-check?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Check failed" }));
+        throw new Error(err.error ?? "Check failed");
+      }
+      const data = await res.json();
+      // Map the service-check response shape to PostcodeIssue[] (only
+      // the unavailable orders — the green banner shows when this is empty).
+      const issues: PostcodeIssue[] = (data.results ?? [])
+        .filter((r: { available: boolean }) => !r.available)
+        .map((r: { orderName?: string; postcode?: string; reason?: string; serviceCode?: string }) => ({
+          shopify_order_id: 0,
+          order_number: r.orderName ?? "",
+          postcode: r.postcode ?? "",
+          reason: r.reason ? `${r.serviceCode ? `[${r.serviceCode}] ` : ""}${r.reason}` : r.serviceCode ? `Service ${r.serviceCode} unavailable` : undefined,
+        }));
+      setPostcodeIssues(issues);
     } catch {
       setPostcodeIssues([]);
     } finally {
