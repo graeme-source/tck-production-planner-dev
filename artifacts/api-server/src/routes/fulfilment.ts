@@ -1,9 +1,10 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { db, skuLocationsTable, appSettingsTable, usersTable } from "@workspace/db";
+import { db, skuLocationsTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
-import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, findOrderByName, addTagToOrder, type ShopifyOrder } from "../services/shopify";
+import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, findOrderByName, addTagToOrder, getOrderById, type ShopifyOrder } from "../services/shopify";
 import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService } from "../services/apc";
+import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
 import { sql } from "drizzle-orm";
 
 const router = Router();
@@ -631,6 +632,37 @@ router.post("/orders/:id/complete", requireManagerOrAdmin, async (req: Request, 
   }
 
   const { consignmentNumber, trackingUrl } = parsed.data;
+
+  // Factory-number accounting loop: decrement production_fridge stock
+  // for the recipes in this order, BEFORE we call Shopify's fulfil
+  // endpoint. If this step fails we log and keep going — the dispatch
+  // must not be blocked by an inventory bug. The tracking table
+  // dedupes against the safety-net poller so no double-decrement.
+  try {
+    const [existing] = await db
+      .select({ shopifyOrderId: shopifyFulfilmentTrackingTable.shopifyOrderId })
+      .from(shopifyFulfilmentTrackingTable)
+      .where(eq(shopifyFulfilmentTrackingTable.shopifyOrderId, orderId));
+    if (!existing) {
+      const order = await getOrderById(orderId);
+      if (order?.line_items && order.line_items.length > 0) {
+        const result = await decrementFridgeForShopifyOrder(orderId, order.line_items);
+        if (result.unmapped.length > 0) {
+          console.warn(`[Fulfilment] order ${orderId} — unmapped variant ids:`, result.unmapped.join(", "));
+        }
+        if (result.decremented.length > 0) {
+          console.log(`[Fulfilment] order ${orderId} — decremented`, result.decremented);
+        }
+        await db.insert(shopifyFulfilmentTrackingTable).values({
+          shopifyOrderId: orderId,
+          fulfilledAt: new Date(),
+          source: "immediate",
+        }).onConflictDoNothing();
+      }
+    }
+  } catch (err) {
+    console.error(`[Fulfilment] inventory decrement failed for order ${orderId}:`, err);
+  }
 
   try {
     await fulfillOrder(orderId, consignmentNumber, "APC Overnight", trackingUrl);

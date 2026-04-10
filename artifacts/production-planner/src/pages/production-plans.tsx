@@ -29,7 +29,7 @@ import { format, addDays, parseISO, isWeekend, isToday, startOfWeek, isSameDay }
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 import {
   DndContext,
@@ -216,10 +216,11 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
         <input
           type="number"
           min={0}
-          value={item.fridgeStock}
-          onChange={e => onFridgeStockChange(item.id, Number(e.target.value))}
+          value={item.fridgeStock === 0 ? "" : item.fridgeStock}
+          onChange={e => onFridgeStockChange(item.id, e.target.value === "" ? 0 : Math.max(0, parseInt(e.target.value, 10) || 0))}
           disabled={saving}
-          className="w-16 px-1.5 py-1 bg-background border border-border rounded-lg text-xs text-center focus-ring disabled:opacity-40 tabular-nums"
+          className="w-20 px-1.5 py-1 bg-background border border-border rounded-lg text-xs text-center focus-ring disabled:opacity-40 tabular-nums"
+          placeholder="0"
         />
       </td>
       <td className="py-2 px-2 text-center tabular-nums text-xs text-red-500">
@@ -275,6 +276,7 @@ interface CreatePlanDialogProps {
   open: boolean;
   onClose: () => void;
   onCreated?: (planId: number) => void;
+  initialDate?: Date;
 }
 
 interface CalcRecipe {
@@ -288,7 +290,14 @@ interface CalcRecipe {
   tinSize: string | null;
   maxBatchesPerTin: number | null;
   sopUrl: string | null;
+  isCoreMenu?: boolean;
   fridgeStock: number;
+  // Predicted end-of-today fridge stock from /calculate (factory number
+  // accounting loop). Core recipes get the full prediction; non-core
+  // recipes fall back to `fridgeStock` while the feature flag is on.
+  predictedFridgeStock?: number;
+  remainingWrappingPacksToday?: number;
+  remainingFulfilmentPacksToday?: number;
   prevProduction: number;
   estimatedFactoryNumber: number;
   dispatch1Qty: number;
@@ -334,12 +343,14 @@ async function fetchCalculation(planDate: string): Promise<CalcResponse> {
   return res.json();
 }
 
-function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
+function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanDialogProps) {
   const { state: authState } = useAuth();
   const userRole = authState.status === "authenticated" ? authState.user.role : undefined;
   const isAdmin = userRole === "admin";
   const minPlanDate = getMinPlanDate();
-  const [planDate, setPlanDate] = useState(isAdmin ? toLocalDateStr(new Date()) : toLocalDateStr(minPlanDate));
+  const defaultDate = initialDate ?? (isAdmin ? new Date() : minPlanDate);
+  const [planDate, setPlanDate] = useState(toLocalDateStr(defaultDate));
+  const [prepDate, setPrepDate] = useState("");
   const [planName, setPlanName] = useState("");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<PlanItem[]>([]);
@@ -349,6 +360,26 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   const [totalBatchesOverride, setTotalBatchesOverride] = useState<number | null>(null);
   const [savedOrder, setSavedOrder] = useState<number[]>([]);
   const [orderSaved, setOrderSaved] = useState(false);
+
+  // Runtime feature flag from the backend — controls whether the
+  // Factory Number column shows a "Core menu only" scope badge. When
+  // the server-side flag flips to false, this automatically updates
+  // on the next dialog open without a frontend rebuild.
+  const [factoryConfig, setFactoryConfig] = useState<{ coreMenuOnly: boolean } | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    fetch("/api/stock-entries/factory-number-config", { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setFactoryConfig(d))
+      .catch(() => setFactoryConfig(null));
+  }, [open]);
+
+  // Sync date when dialog opens with a selected date
+  useEffect(() => {
+    if (open && initialDate) {
+      setPlanDate(toLocalDateStr(initialDate));
+    }
+  }, [open, initialDate]);
 
   // Fetch stored production order on open
   useEffect(() => {
@@ -388,10 +419,12 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
   const planDateRef = useRef(planDate);
   const planNameRef = useRef(planName);
   const notesRef = useRef(notes);
+  const prepDateRef = useRef(prepDate);
   useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => { planDateRef.current = planDate; }, [planDate]);
   useEffect(() => { planNameRef.current = planName; }, [planName]);
   useEffect(() => { notesRef.current = notes; }, [notes]);
+  useEffect(() => { prepDateRef.current = prepDate; }, [prepDate]);
 
   // Reset dirty state when dialog closes
   useEffect(() => {
@@ -415,6 +448,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
       if (currentItems.length === 0) return;
       const payload = {
         planDate: planDateRef.current,
+        prepDate: prepDateRef.current || null,
         name: planNameRef.current || `Plan ${planDateRef.current}`,
         notes: notesRef.current || undefined,
         status: "draft" as const,
@@ -570,7 +604,12 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
         packsPerBatch: r.packsPerBatch,
         sopUrl: r.sopUrl,
         isFromDpt: true,
-        fridgeStock: prev ? prev.fridgeStock : r.fridgeStock,
+        // Seed with predicted end-of-today fridge stock so the DPT
+        // calculation uses the right baseline regardless of what time
+        // the user opens the form. Non-core recipes (with the feature
+        // flag on) receive `predictedFridgeStock == fridgeStock` from
+        // the backend.
+        fridgeStock: prev ? prev.fridgeStock : (r.predictedFridgeStock ?? r.fridgeStock),
         prevProduction: r.prevProduction,
         estimatedFactoryNumber: r.estimatedFactoryNumber,
         dispatch1Qty: r.dispatch1Qty,
@@ -758,6 +797,7 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
     try {
       const data = {
         planDate,
+        prepDate: prepDate || null,
         name: planName || `Plan ${planDate}`,
         notes: notes || undefined,
         status: targetStatus,
@@ -832,6 +872,21 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                   <Info className="w-3 h-3 flex-shrink-0" />
                   {dateWarning}
                 </p>
+              )}
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block text-muted-foreground">
+                Prep Date <span className="font-normal text-muted-foreground/60">(optional override)</span>
+              </label>
+              <input
+                type="date"
+                value={prepDate}
+                max={planDate}
+                onChange={e => { isDirty.current = true; setPrepDate(e.target.value); }}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
+              />
+              {!prepDate && (
+                <p className="text-xs text-muted-foreground mt-1">Defaults to previous production day</p>
               )}
             </div>
             <div>
@@ -921,7 +976,19 @@ function CreatePlanDialog({ open, onClose, onCreated }: CreatePlanDialogProps) {
                               />
                             </th>
                             <th className="py-2 px-2 text-left font-medium text-muted-foreground">Recipe</th>
-                            <th className="py-2 px-2 text-center font-medium text-muted-foreground min-w-[70px]" title="Current packs in the production fridge">Factory Number</th>
+                            <th
+                              className="py-2 px-2 text-center font-medium text-muted-foreground min-w-[70px]"
+                              title="Predicted packs in the fridge at end-of-today = live + remaining wrapping − remaining fulfilment"
+                            >
+                              <div className="flex flex-col items-center gap-0.5">
+                                <span>Factory Number</span>
+                                {factoryConfig && (
+                                  <span className="text-[9px] text-primary/80 font-normal tracking-tight">
+                                    {factoryConfig.coreMenuOnly ? "Core menu · predicted" : "Predicted"}
+                                  </span>
+                                )}
+                              </div>
+                            </th>
                             <th className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]" title={dispatchDates[0] ? `Dispatched ${format(parseISO(dispatchDates[0]), "EEE d MMM")} — delivered ${deliveryDates[0] ? format(parseISO(deliveryDates[0]), "EEE d MMM") : ""}` : "Next dispatch"}>
                               {dispatchDates[0] ? `\u2212 ${format(parseISO(dispatchDates[0]), "EEE")} Dispatch` : "\u2212 Dispatch"}
                             </th>
@@ -1123,6 +1190,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const editUserRole = editAuthState.status === "authenticated" ? editAuthState.user.role : undefined;
   const editIsAdmin = editUserRole === "admin";
   const [planDate, setPlanDate] = useState(plan.planDate);
+  const [prepDate, setPrepDate] = useState((plan as any).prepDate ?? "");
   const [planName, setPlanName] = useState(plan.name);
   const [notes, setNotes] = useState(plan.notes ?? "");
   const [dateWarning, setDateWarning] = useState<string | null>(null);
@@ -1170,6 +1238,46 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const queryClient = useQueryClient();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
+  // ── Update Factory Number (re-run DPT) state ────────────────────────────────
+  // Clicking the Update button runs /calculate for this plan's date and
+  // opens a diff modal. The user accepts/rejects per recipe, then the
+  // selected rows overwrite batchesTarget in the local items state.
+  const [updateModalOpen, setUpdateModalOpen] = useState(false);
+  const [updateLoading, setUpdateLoading] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const [updateCalcData, setUpdateCalcData] = useState<CalcResponse | null>(null);
+
+  async function handleUpdateFactoryNumber() {
+    setUpdateLoading(true);
+    setUpdateError(null);
+    try {
+      const data = await fetchCalculation(planDate);
+      setUpdateCalcData(data);
+      setUpdateModalOpen(true);
+    } catch (err) {
+      setUpdateError(err instanceof Error ? err.message : "Failed to refresh factory numbers");
+    } finally {
+      setUpdateLoading(false);
+    }
+  }
+
+  function applyUpdatedBatches(selected: Array<{ recipeId: number; newBatches: number }>) {
+    isDirty.current = true;
+    setItems(prev => prev.map(it => {
+      const match = selected.find(s => s.recipeId === it.recipeId);
+      if (!match) return it;
+      return {
+        ...it,
+        batchesTarget: match.newBatches,
+        tinCount: it.maxBatchesPerTin && match.newBatches > 0
+          ? Math.ceil(match.newBatches / it.maxBatchesPerTin)
+          : null,
+      };
+    }));
+    setUpdateModalOpen(false);
+    setUpdateCalcData(null);
+  }
+
   // ── Auto-save state ──────────────────────────────────────────────────────────
   const isDirty = useRef(false);
   const [autoSavedAt, setAutoSavedAt] = useState<Date | null>(null);
@@ -1180,10 +1288,12 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const planDateRef = useRef(planDate);
   const planNameRef = useRef(planName);
   const notesRef = useRef(notes);
+  const prepDateRef = useRef(prepDate);
   useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => { planDateRef.current = planDate; }, [planDate]);
   useEffect(() => { planNameRef.current = planName; }, [planName]);
   useEffect(() => { notesRef.current = notes; }, [notes]);
+  useEffect(() => { prepDateRef.current = prepDate; }, [prepDate]);
 
   // Reset dirty state when dialog closes
   useEffect(() => {
@@ -1377,6 +1487,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
         id: plan.id,
         data: {
           planDate,
+          prepDate: prepDate || null,
           name: planName,
           notes: notes || undefined,
           status: targetStatus,
@@ -1429,6 +1540,21 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
               )}
             </div>
             <div>
+              <label className="text-sm font-medium mb-1 block text-muted-foreground">
+                Prep Date <span className="font-normal text-muted-foreground/60">(optional override)</span>
+              </label>
+              <input
+                type="date"
+                value={prepDate}
+                max={planDate}
+                onChange={e => { isDirty.current = true; setPrepDate(e.target.value); }}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
+              />
+              {!prepDate && (
+                <p className="text-xs text-muted-foreground mt-1">Defaults to previous production day</p>
+              )}
+            </div>
+            <div>
               <label className="text-sm font-medium mb-1 block text-muted-foreground">Plan Name</label>
               <input
                 value={planName}
@@ -1448,13 +1574,30 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
             </div>
           </div>
 
-          <h3 className="font-semibold text-sm mb-2 flex items-center gap-2">
-            <BarChart2 className="w-4 h-4 text-primary" />
-            Production Items
-            <span className="text-muted-foreground font-normal text-xs">
-              ({includedCount} of {items.length} included · drag to reorder)
-            </span>
-          </h3>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-semibold text-sm flex items-center gap-2">
+              <BarChart2 className="w-4 h-4 text-primary" />
+              Production Items
+              <span className="text-muted-foreground font-normal text-xs">
+                ({includedCount} of {items.length} included · drag to reorder)
+              </span>
+            </h3>
+            <button
+              type="button"
+              onClick={handleUpdateFactoryNumber}
+              disabled={updateLoading || items.length === 0}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 border border-border rounded-lg bg-background hover:bg-secondary/60 transition-colors disabled:opacity-40"
+              title="Refresh factory numbers from live stock and recompute DPT suggestions — old values stay until you accept the new ones."
+            >
+              {updateLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+              Update Factory Number
+            </button>
+          </div>
+          {updateError && (
+            <div className="mb-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+              {updateError}
+            </div>
+          )}
 
           {items.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground bg-secondary/20 rounded-xl mb-3">
@@ -1570,7 +1713,184 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
           </p>
         </div>
       </DialogContent>
+      {updateModalOpen && updateCalcData && (
+        <UpdateFactoryDiffModal
+          currentItems={items}
+          calcData={updateCalcData}
+          onApply={applyUpdatedBatches}
+          onCancel={() => { setUpdateModalOpen(false); setUpdateCalcData(null); }}
+        />
+      )}
     </Dialog>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Update Factory Number — diff modal
+// ──────────────────────────────────────────────────────────────────────────────
+// Shown when the user clicks the "Update Factory Number" button in the
+// Edit Plan dialog. For every recipe in the current plan, compares the
+// saved batchesTarget against the freshly-calculated suggestedBatches
+// from /calculate (which is now driven by the predicted fridge stock).
+// User accepts/rejects per row; only accepted rows overwrite the local
+// items state on apply.
+interface UpdateFactoryDiffModalProps {
+  currentItems: PlanItem[];
+  calcData: CalcResponse;
+  onApply: (selected: Array<{ recipeId: number; newBatches: number }>) => void;
+  onCancel: () => void;
+}
+
+function UpdateFactoryDiffModal({ currentItems, calcData, onApply, onCancel }: UpdateFactoryDiffModalProps) {
+  const rows = currentItems.map(item => {
+    const calc = calcData.recipes.find(r => r.recipeId === item.recipeId);
+    const oldBatches = item.batchesTarget;
+    const newBatches = calc?.suggestedBatches ?? oldBatches;
+    const delta = newBatches - oldBatches;
+    return {
+      recipeId: item.recipeId,
+      recipeName: item.recipeName,
+      recipeColor: item.recipeColor,
+      oldBatches,
+      newBatches,
+      delta,
+      predictedFridgeStock: (calc as unknown as { predictedFridgeStock?: number })?.predictedFridgeStock ?? calc?.fridgeStock ?? 0,
+      hasCalc: !!calc,
+    };
+  });
+
+  // Default: pre-check every row that has a change (delta != 0). Rows
+  // without changes are rendered but unchecked so the user can tick
+  // them explicitly if they want to force-apply.
+  const [checked, setChecked] = useState<Record<number, boolean>>(() => {
+    const initial: Record<number, boolean> = {};
+    for (const row of rows) {
+      initial[row.recipeId] = row.delta !== 0 && row.hasCalc;
+    }
+    return initial;
+  });
+
+  const selectedCount = Object.values(checked).filter(Boolean).length;
+  const changedCount = rows.filter(r => r.delta !== 0).length;
+
+  function toggle(recipeId: number) {
+    setChecked(prev => ({ ...prev, [recipeId]: !prev[recipeId] }));
+  }
+
+  function apply() {
+    const selected = rows
+      .filter(r => checked[r.recipeId])
+      .map(r => ({ recipeId: r.recipeId, newBatches: r.newBatches }));
+    onApply(selected);
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
+      <div className="bg-card border border-border rounded-2xl shadow-xl max-w-2xl w-full max-h-[85vh] flex flex-col">
+        <div className="p-5 border-b border-border flex items-start justify-between gap-3">
+          <div>
+            <h2 className="font-display text-lg font-bold flex items-center gap-2">
+              <RotateCcw className="w-4 h-4 text-primary" />
+              Update Factory Number
+            </h2>
+            <p className="text-xs text-muted-foreground mt-1">
+              New DPT suggestions based on the latest predicted end-of-day fridge stock.
+              Tick the rows you want to apply — unticked rows keep their current values.
+              {" "}
+              <span className="font-medium">{changedCount}</span> of {rows.length} have changed.
+            </p>
+          </div>
+          <button
+            onClick={onCancel}
+            className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors flex-shrink-0"
+            title="Cancel"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5">
+          <div className="border border-border rounded-xl overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-secondary/30 border-b border-border">
+                <tr>
+                  <th className="w-8 py-2 px-2">
+                    <input
+                      type="checkbox"
+                      checked={rows.length > 0 && rows.every(r => checked[r.recipeId])}
+                      onChange={e => {
+                        const all = e.target.checked;
+                        setChecked(Object.fromEntries(rows.map(r => [r.recipeId, all && r.hasCalc])));
+                      }}
+                      className="rounded border-border cursor-pointer"
+                      title="Select all"
+                    />
+                  </th>
+                  <th className="py-2 px-3 text-left font-medium text-muted-foreground">Recipe</th>
+                  <th className="py-2 px-3 text-center font-medium text-muted-foreground">Predicted Factory #</th>
+                  <th className="py-2 px-3 text-center font-medium text-muted-foreground">Old → New</th>
+                  <th className="py-2 px-3 text-center font-medium text-muted-foreground">Δ</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/50">
+                {rows.map(row => {
+                  const isChecked = !!checked[row.recipeId];
+                  const deltaColor = row.delta > 0 ? "text-emerald-600" : row.delta < 0 ? "text-red-600" : "text-muted-foreground";
+                  return (
+                    <tr key={row.recipeId} className={cn("transition-colors", isChecked ? "bg-primary/5" : "hover:bg-secondary/20")}>
+                      <td className="py-2 px-2 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          disabled={!row.hasCalc}
+                          onChange={() => toggle(row.recipeId)}
+                          className="rounded border-border cursor-pointer disabled:opacity-40"
+                        />
+                      </td>
+                      <td className="py-2 px-3 font-medium" style={row.recipeColor ? { color: row.recipeColor } : undefined}>
+                        {row.recipeName}
+                        {!row.hasCalc && <span className="ml-2 text-[10px] text-muted-foreground font-normal">(no DPT data)</span>}
+                      </td>
+                      <td className="py-2 px-3 text-center tabular-nums text-muted-foreground">{row.predictedFridgeStock}</td>
+                      <td className="py-2 px-3 text-center tabular-nums">
+                        <span className="text-muted-foreground">{row.oldBatches}</span>
+                        <span className="mx-1.5 text-muted-foreground">→</span>
+                        <span className="font-semibold">{row.newBatches}</span>
+                      </td>
+                      <td className={cn("py-2 px-3 text-center tabular-nums font-bold", deltaColor)}>
+                        {row.delta === 0 ? "—" : row.delta > 0 ? `+${row.delta}` : row.delta}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="p-5 border-t border-border flex items-center justify-between">
+          <span className="text-xs text-muted-foreground">
+            {selectedCount} recipe{selectedCount !== 1 ? "s" : ""} selected
+          </span>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onCancel}
+              className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-xl transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={apply}
+              disabled={selectedCount === 0}
+              className="px-5 py-2 text-sm bg-primary text-primary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center gap-2 shadow-md shadow-primary/20 hover:opacity-90 transition-opacity"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              Apply Selected
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -2369,7 +2689,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
           <BarChart2 className="w-5 h-5 text-primary" />
           Enter Station
         </h2>
-        <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-5 gap-4">
           {STATION_BUTTONS.map(s => {
             const Icon = s.icon;
             const isBuildingStation = s.key === "building_1" || s.key === "building_2";
@@ -2380,31 +2700,31 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
               <button
                 key={s.key}
                 onClick={() => navigate(`/plans/${planId}/station/${s.key}`)}
-                className="flex flex-col items-center gap-3 p-5 min-h-[130px] border-2 border-border rounded-xl hover:border-primary hover:bg-secondary/40 hover:shadow-md transition-all group relative"
+                className="flex flex-col items-center justify-center gap-4 p-6 min-h-[160px] border-2 border-border rounded-2xl hover:border-primary hover:bg-secondary/40 hover:shadow-md active:scale-[0.97] transition-all group relative"
               >
                 {/* Active user badge */}
                 {activeUsers > 0 && (
                   <span
-                    className="absolute top-2 right-2 min-w-[20px] h-5 px-1.5 rounded-full bg-blue-500 text-white text-[11px] font-bold flex items-center justify-center"
+                    className="absolute top-3 right-3 min-w-[24px] h-6 px-2 rounded-full bg-blue-500 text-white text-sm font-bold flex items-center justify-center"
                     title={`${activeUsers} active user${activeUsers !== 1 ? "s" : ""} today`}
                   >
                     {activeUsers}
                   </span>
                 )}
                 {isBuildingStation && stationComplete && activeUsers === 0 && (
-                  <span className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full bg-emerald-500" title="Complete" />
+                  <span className="absolute top-3 right-3 w-3 h-3 rounded-full bg-emerald-500" title="Complete" />
                 )}
                 {isBuildingStation && stationInProgress && activeUsers === 0 && (
-                  <span className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full bg-amber-400" title="In progress" />
+                  <span className="absolute top-3 right-3 w-3 h-3 rounded-full bg-amber-400" title="In progress" />
                 )}
-                <div className={cn("w-14 h-14 rounded-xl flex items-center justify-center", s.color)}>
-                  <Icon className="w-7 h-7" />
+                <div className={cn("w-20 h-20 rounded-2xl flex items-center justify-center", s.color)}>
+                  <Icon className="w-10 h-10" />
                 </div>
-                <span className="text-base font-extrabold text-center leading-snug text-black dark:text-white transition-colors">
+                <span className="text-lg font-extrabold text-center leading-snug text-black dark:text-white transition-colors">
                   {s.label}
                 </span>
                 {isBuildingStation && totalBatchesTarget > 0 && (
-                  <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden">
+                  <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
                     <div
                       className={cn("h-full rounded-full transition-all", stationComplete ? "bg-emerald-500" : "bg-primary")}
                       style={{ width: `${Math.min(progress, 100)}%` }}
@@ -2412,7 +2732,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                   </div>
                 )}
                 {!isBuildingStation && activeUsers === 0 && (
-                  <ArrowRight className="w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <ArrowRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                 )}
               </button>
             );
@@ -2856,6 +3176,13 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
             {selectedDayPlans.map(plan => {
               const statusConfig = STATUS_CONFIG[plan.status as keyof typeof STATUS_CONFIG] ?? STATUS_CONFIG.draft;
               const StatusIcon = statusConfig.icon;
+              // The list endpoint now returns a lightweight items array
+              // (id/recipeId/recipeName/recipeColor/batchesTarget/
+              // orderPosition). This field isn't in the generated
+              // ProductionPlan type yet, so read it through a local cast.
+              const planItems = (plan as unknown as {
+                items?: Array<{ id: number; recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; orderPosition: number }>
+              }).items ?? [];
 
               return (
                 <div
@@ -2903,6 +3230,40 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
                       </button>
                     </div>
                   </div>
+
+                  {/* Inline recipe breakdown — single column, colour-coded
+                      using each recipe's own colour (same pattern as the
+                      dashboard recipe list and the plan detail view) so
+                      the user can flick between days and instantly read
+                      the lineup at a glance. A single "Batches" header
+                      is printed once above the count column instead of
+                      repeating the word on every row. */}
+                  {planItems.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-border/60">
+                      <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
+                        <span>Recipe</span>
+                        <span>Batches</span>
+                      </div>
+                      <div className="space-y-1">
+                        {planItems.map(item => {
+                          const colorStyle = item.recipeColor ? { color: item.recipeColor } : undefined;
+                          return (
+                            <div
+                              key={item.id}
+                              className="flex items-baseline justify-between gap-3 text-sm min-w-0"
+                            >
+                              <span className="truncate font-medium" style={colorStyle}>
+                                {item.recipeName}
+                              </span>
+                              <span className="tabular-nums font-bold whitespace-nowrap" style={colorStyle}>
+                                {item.batchesTarget}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -2945,8 +3306,15 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
 // Main page
 // ──────────────────────────────────────────────────────────────────────────────
 export default function ProductionPlans() {
-  const [view, setView] = useState<PlanView>("list");
-  const [selectedPlanId, setSelectedPlanId] = useState<number | null>(null);
+  const search = useSearch();
+  const initialPlanId = useMemo(() => {
+    const params = new URLSearchParams(search);
+    const id = params.get("planId");
+    return id ? Number(id) : null;
+  }, []);
+
+  const [view, setView] = useState<PlanView>(initialPlanId ? "detail" : "list");
+  const [selectedPlanId, setSelectedPlanId] = useState<number | null>(initialPlanId);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [, navigate] = useLocation();
 
@@ -3019,6 +3387,7 @@ export default function ProductionPlans() {
         open={isCreateOpen}
         onClose={() => setIsCreateOpen(false)}
         onCreated={handlePlanCreated}
+        initialDate={selectedDate}
       />
     </div>
   );

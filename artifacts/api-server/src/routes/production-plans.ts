@@ -5,11 +5,17 @@ import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
 import * as z from "zod";
 import { resolveRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
-import { countProductsByTag, adjustInventoryLevel } from "../services/shopify";
+import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag } from "../services/shopify";
+import { getFactoryNumberCoreMenuOnly } from "../lib/inventory-sync";
 
 const router: IRouter = Router();
 
-async function syncRecipeFridgeStock(recipeId: number, deltaQty: number) {
+/** Applies a delta to the latest production_fridge stock_entries row
+ *  for a given recipe. Positive delta = wrapping added packs, negative
+ *  delta = fulfilment removed packs. Floors at 0. Exported so the
+ *  inventory-sync helper can call it from the fulfilment decrement
+ *  path and the one-off reset endpoint. */
+export async function syncRecipeFridgeStock(recipeId: number, deltaQty: number) {
   const existing = await db
     .select({ id: stockEntriesTable.id, quantity: stockEntriesTable.quantity })
     .from(stockEntriesTable)
@@ -138,6 +144,7 @@ function getPreviousStations(stationType: string): string[] {
 
 const CreatePlanBody = z.object({
   planDate: z.string(),
+  prepDate: z.string().nullish(),
   name: z.string(),
   notes: z.string().nullish(),
   status: z.enum(["draft", "active", "prep", "building", "complete"]).optional(),
@@ -158,6 +165,7 @@ type PlanStatus = typeof PLAN_STATUSES[number];
 
 const UpdatePlanBody = z.object({
   planDate: z.string().optional(),
+  prepDate: z.string().nullish(),
   name: z.string().optional(),
   notes: z.string().nullish(),
   status: z.enum(PLAN_STATUSES).optional(),
@@ -201,15 +209,49 @@ router.get("/", async (req, res) => {
 
   const totalsMap = new Map(totals.map(t => [t.planId, { totalBatchesTarget: Number(t.totalBatchesTarget) || 0, itemCount: Number(t.itemCount) || 0 }]));
 
+  // Lightweight item breakdown per plan so the list view can show the
+  // recipe lineup inline (used by the Production Plans day-card in the
+  // front-end). We only need id/recipeId/recipeName/batchesTarget/
+  // orderPosition — no completions, no ingredient joins.
+  const itemRows = await db
+    .select({
+      id: productionPlanItemsTable.id,
+      planId: productionPlanItemsTable.planId,
+      recipeId: productionPlanItemsTable.recipeId,
+      recipeName: recipesTable.name,
+      recipeColor: recipesTable.color,
+      batchesTarget: productionPlanItemsTable.batchesTarget,
+      orderPosition: productionPlanItemsTable.orderPosition,
+    })
+    .from(productionPlanItemsTable)
+    .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(inArray(productionPlanItemsTable.planId, planIds))
+    .orderBy(productionPlanItemsTable.planId, productionPlanItemsTable.orderPosition);
+
+  const itemsByPlan = new Map<number, typeof itemRows>();
+  for (const it of itemRows) {
+    const arr = itemsByPlan.get(it.planId) ?? [];
+    arr.push(it);
+    itemsByPlan.set(it.planId, arr);
+  }
+
   res.json(plans.map(p => ({
     ...mapPlan(p),
     totalBatchesTarget: totalsMap.get(p.id)?.totalBatchesTarget ?? 0,
     itemCount: totalsMap.get(p.id)?.itemCount ?? 0,
+    items: (itemsByPlan.get(p.id) ?? []).map(it => ({
+      id: it.id,
+      recipeId: it.recipeId,
+      recipeName: it.recipeName,
+      recipeColor: it.recipeColor,
+      batchesTarget: it.batchesTarget,
+      orderPosition: it.orderPosition,
+    })),
   })));
 });
 
 router.post("/", validate(CreatePlanBody), async (req, res) => {
-  const { planDate, name, notes, status, items } = req.body;
+  const { planDate, prepDate, name, notes, status, items } = req.body;
   // Enforce Mon–Fri only — parse at noon UTC to avoid timezone edge cases
   const dateObj = new Date(`${planDate}T12:00:00Z`);
   const dayOfWeek = dateObj.getUTCDay(); // 0=Sun, 6=Sat
@@ -233,6 +275,7 @@ router.post("/", validate(CreatePlanBody), async (req, res) => {
 
   const [plan] = await db.insert(productionPlansTable).values({
     planDate,
+    prepDate: prepDate ?? null,
     name,
     notes: notes ?? null,
     status: status ?? "draft",
@@ -380,6 +423,79 @@ router.get("/calculate", async (req, res) => {
     if (row.recipeId != null) {
       latestStock[row.recipeId] = Number(row.quantity);
     }
+  }
+
+  // ─── Predicted end-of-today fridge stock ───────────────────────────
+  // Two inputs feed the prediction: (1) remaining wrapping for TODAY's
+  // active plan (what the wrapping station still needs to push into the
+  // fridge), and (2) remaining fulfilment for today's dispatch (what the
+  // fulfilment station still needs to pull out). `today` is the real
+  // current calendar day, NOT the requested planDate — the operator
+  // building the plan at 3pm wants to know where the fridge will be by
+  // close of business, regardless of whether planDate is tomorrow or
+  // three days out.
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const coreMenuOnly = await getFactoryNumberCoreMenuOnly();
+
+  const todayPlanItems = await db
+    .select({
+      recipeId: productionPlanItemsTable.recipeId,
+      batchesTarget: productionPlanItemsTable.batchesTarget,
+      fridgeQty: productionPlanItemsTable.fridgeQty,
+      portionsPerBatch: recipesTable.portionsPerBatch,
+      packSize: recipesTable.packSize,
+    })
+    .from(productionPlanItemsTable)
+    .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
+    .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(and(
+      eq(productionPlansTable.planDate, todayStr),
+      inArray(productionPlansTable.status, ["active", "prep", "building"]),
+    ));
+
+  const remainingWrappingPacksToday: Record<number, number> = {};
+  for (const row of todayPlanItems) {
+    if (row.recipeId == null) continue;
+    const portionsPerBatch = Number(row.portionsPerBatch) || 10;
+    const packSize = Number(row.packSize) || 1;
+    const packsPerBatch = portionsPerBatch / packSize;
+    const targetPacks = (row.batchesTarget ?? 0) * packsPerBatch;
+    const remaining = Math.max(0, targetPacks - (row.fridgeQty ?? 0));
+    remainingWrappingPacksToday[row.recipeId] = (remainingWrappingPacksToday[row.recipeId] ?? 0) + remaining;
+  }
+
+  const remainingFulfilmentPacksToday: Record<number, number> = {};
+  try {
+    const unfulfilled = await getUnfulfilledOrdersByTag(todayStr);
+    if (unfulfilled.length > 0) {
+      const mappingRows = await db.execute<{
+        recipe_id: number;
+        shopify_variant_id: string;
+        wonky_variant_id: string | null;
+        is_core_menu: boolean;
+      }>(sql`
+        SELECT m.recipe_id, m.shopify_variant_id, m.wonky_variant_id, r.is_core_menu
+        FROM recipe_shopify_mappings m
+        INNER JOIN recipes r ON r.id = m.recipe_id
+      `);
+      const variantToRecipe = new Map<string, { recipeId: number; isCoreMenu: boolean }>();
+      for (const m of mappingRows) {
+        if (m.shopify_variant_id) variantToRecipe.set(String(m.shopify_variant_id), { recipeId: m.recipe_id, isCoreMenu: m.is_core_menu });
+        if (m.wonky_variant_id) variantToRecipe.set(String(m.wonky_variant_id), { recipeId: m.recipe_id, isCoreMenu: m.is_core_menu });
+      }
+      for (const order of unfulfilled) {
+        for (const line of order.line_items ?? []) {
+          if (!line.variant_id) continue;
+          const mapping = variantToRecipe.get(String(line.variant_id));
+          if (!mapping) continue;
+          if (coreMenuOnly && !mapping.isCoreMenu) continue;
+          remainingFulfilmentPacksToday[mapping.recipeId] =
+            (remainingFulfilmentPacksToday[mapping.recipeId] ?? 0) + (line.quantity || 0);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[/calculate] prediction: failed to fetch unfulfilled orders for today, falling back to live stock", err);
   }
 
   const shopifySalesPerDate: Record<string, Record<string, number>> = {};
@@ -572,7 +688,22 @@ router.get("/calculate", async (req, res) => {
     const totalDispatchQty = dispatch1Qty + dispatch2Qty + dispatch3Qty;
 
     const prevProduction = Math.round(prevProductionPacks[recipeId] ?? 0);
-    const estimatedFactoryNumber = fridgeStock - dispatch1Qty + prevProduction;
+
+    // Prediction-based factory number (end-of-today). For core recipes this
+    // drives the DPT deficit/suggestion math. For non-core recipes while
+    // the feature flag is on, we fall back to the legacy formula so those
+    // recipes behave identically to before.
+    const isCore = r.isCoreMenu ?? false;
+    const wrapRemain = remainingWrappingPacksToday[recipeId] ?? 0;
+    const fulRemain = remainingFulfilmentPacksToday[recipeId] ?? 0;
+    const useNewPrediction = !coreMenuOnly || isCore;
+    const predictedFridgeStock = useNewPrediction
+      ? Math.max(0, Math.round(fridgeStock + wrapRemain - fulRemain))
+      : Math.round(fridgeStock);
+    const legacyEstimatedFactoryNumber = fridgeStock - dispatch1Qty + prevProduction;
+    const estimatedFactoryNumber = useNewPrediction
+      ? predictedFridgeStock
+      : Math.round(legacyEstimatedFactoryNumber);
 
     const recipeSource: "shopify" | "dpt" = (hasRecipeMatch && shopifyDatesLoaded.size > 0) ? "shopify" : "dpt";
     const effectivePacksSold = totalDispatchQty;
@@ -602,8 +733,11 @@ router.get("/calculate", async (req, res) => {
       maxBatchesPerTin: r.maxBatchesPerTin ? Number(r.maxBatchesPerTin) : null,
       sopUrl: r.sopUrl ?? null,
       color: r.color ?? null,
-      isCoreMenu: r.isCoreMenu ?? false,
+      isCoreMenu: isCore,
       fridgeStock: Math.round(fridgeStock),
+      predictedFridgeStock,
+      remainingWrappingPacksToday: Math.round(wrapRemain),
+      remainingFulfilmentPacksToday: Math.round(fulRemain),
       prevProduction,
       estimatedFactoryNumber: Math.round(estimatedFactoryNumber),
       dispatch1Qty,
@@ -712,21 +846,31 @@ router.get("/next-active", async (req, res) => {
   }
 
   const plans = await db
-    .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate, name: productionPlansTable.name, status: productionPlansTable.status })
+    .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate, prepDate: productionPlansTable.prepDate, name: productionPlansTable.name, status: productionPlansTable.status })
     .from(productionPlansTable)
     .where(and(
       gt(productionPlansTable.planDate, afterDateStr),
       eq(productionPlansTable.status, "active")
     ))
-    .orderBy(asc(productionPlansTable.planDate))
-    .limit(1);
+    .orderBy(asc(productionPlansTable.planDate), asc(productionPlansTable.id));
 
   if (plans.length === 0) {
-    res.json({ planId: null, planDate: null, planName: null });
+    res.json({ planId: null, planDate: null, planName: null, prepDate: null, sameDayPlans: [] });
     return;
   }
 
-  res.json({ planId: plans[0].id, planDate: plans[0].planDate, planName: plans[0].name, status: plans[0].status });
+  // Return first plan, plus list of all plans on the same date
+  const firstDate = plans[0].planDate;
+  const sameDayPlans = plans.filter(p => p.planDate === firstDate).map(p => ({ planId: p.id, planName: p.name }));
+
+  res.json({
+    planId: plans[0].id,
+    planDate: plans[0].planDate,
+    planName: plans[0].name,
+    prepDate: plans[0].prepDate ?? null,
+    status: plans[0].status,
+    sameDayPlans: sameDayPlans.length > 1 ? sameDayPlans : [],
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -840,7 +984,7 @@ const LOCKED_STATUSES: PlanStatus[] = ["active", "prep", "building", "complete"]
 
 router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { planDate, name, notes, status, items } = req.body;
+  const { planDate, prepDate, name, notes, status, items } = req.body;
 
   const [existing] = await db.select().from(productionPlansTable).where(eq(productionPlansTable.id, id));
   if (!existing) { res.status(404).json({ error: "Not found" }); return; }
@@ -873,6 +1017,7 @@ router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
 
   const setPlan: Partial<typeof productionPlansTable.$inferInsert> = {};
   if (planDate !== undefined) setPlan.planDate = planDate;
+  if (prepDate !== undefined) setPlan.prepDate = prepDate ?? null;
   if (name !== undefined) setPlan.name = name;
   if (notes !== undefined) setPlan.notes = notes ?? null;
   if (status !== undefined) setPlan.status = status;
@@ -1649,6 +1794,9 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       estimatedCookTimeMin: number | null;
       ovenTempC: number | null;
       steamPct: number | null;
+      stockCheckEnabled: boolean;
+      stockCheckFrequency: string;
+      stockCheckDay: string | null;
       cookedQty: number;
       rawQty: number;
       prepQty: number;
@@ -1746,6 +1894,9 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
         estimatedCookTimeMin: ing.estimatedCookTimeMin,
         ovenTempC: ing.ovenTempC,
         steamPct: ing.steamPct,
+        stockCheckEnabled: ing.stockCheckEnabled ?? false,
+        stockCheckFrequency: ing.stockCheckFrequency ?? "daily",
+        stockCheckDay: ing.stockCheckDay ?? null,
         cookedQty: roundedCooked,
         rawQty: roundedRaw,
         prepQty: ing.prepWeightMode === "processed" ? roundedCooked : roundedRaw,
@@ -1951,6 +2102,7 @@ router.get("/:id/sub-recipe-requirements", async (req, res) => {
         ingredientName: ingredientsTable.name,
         unit: ingredientsTable.unit,
         quantity: subRecipeIngredientsTable.quantity,
+        packWeight: ingredientsTable.packWeight,
       })
       .from(subRecipeIngredientsTable)
       .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -1982,6 +2134,7 @@ router.get("/:id/sub-recipe-requirements", async (req, res) => {
         ingredientName: i.ingredientName ?? "",
         unit: i.unit ?? "kg",
         quantity: Number(i.quantity),
+        packWeight: i.packWeight ? Number(i.packWeight) : null,
       })),
       subRecipeComponents: nestedRows.map(n => ({
         id: n.id,
@@ -2144,7 +2297,8 @@ router.get("/:id/assembly-items", async (req, res) => {
 
     const planItemsResult = await db.execute(sql`
       SELECT ppi.id, ppi.recipe_id as "recipeId", r.name as "recipeName",
-             ppi.batches_target as "batchesTarget", r.portions_per_batch as "portionsPerBatch"
+             ppi.batches_target as "batchesTarget", r.portions_per_batch as "portionsPerBatch",
+             r.filling_assembly_order as "fillingAssemblyOrder"
       FROM production_plan_items ppi
       LEFT JOIN recipes r ON ppi.recipe_id = r.id
       WHERE ppi.plan_id = ${planId}
@@ -2153,6 +2307,7 @@ router.get("/:id/assembly-items", async (req, res) => {
     const planItems = planItemsResult.rows as Array<{
       id: number; recipeId: number; recipeName: string | null;
       batchesTarget: number | null; portionsPerBatch: number | null;
+      fillingAssemblyOrder: number | null;
     }>;
 
     if (planItems.length === 0) {
@@ -2185,7 +2340,8 @@ router.get("/:id/assembly-items", async (req, res) => {
     const nonFillingIngRows = await db.execute(sql`
       SELECT ri.recipe_id as "recipeId", ri.ingredient_id as "ingredientId",
              i.name as "ingredientName", i.unit, ri.quantity,
-             ri.assembly_order as "assemblyOrder"
+             ri.assembly_order as "assemblyOrder",
+             ri.is_topping as "isTopping"
       FROM recipe_ingredients ri
       LEFT JOIN ingredients i ON ri.ingredient_id = i.id
       WHERE ri.recipe_id IN (${sql.join(recipeIds.map(id => sql`${id}`), sql`, `)})
@@ -2197,7 +2353,8 @@ router.get("/:id/assembly-items", async (req, res) => {
       SELECT rs.recipe_id as "recipeId", rs.sub_recipe_id as "subRecipeId",
              s.name as "subRecipeName", s.yield_unit as unit, rs.quantity,
              s.is_base as "isBase",
-             rs.assembly_order as "assemblyOrder"
+             rs.assembly_order as "assemblyOrder",
+             rs.is_topping as "isTopping"
       FROM recipe_sub_recipes rs
       LEFT JOIN sub_recipes s ON rs.sub_recipe_id = s.id
       WHERE rs.recipe_id IN (${sql.join(recipeIds.map(id => sql`${id}`), sql`, `)})
@@ -2209,8 +2366,8 @@ router.get("/:id/assembly-items", async (req, res) => {
 
     const fiRows = fillingIngRows.rows as Array<{ recipeId: number; quantity: string; unit: string }>;
     const fsRows = fillingSubRows.rows as Array<{ recipeId: number; quantity: string; unit: string }>;
-    const nfiRows = nonFillingIngRows.rows as Array<{ recipeId: number; ingredientId: number; ingredientName: string; unit: string; quantity: string; assemblyOrder: number | null }>;
-    const nfsRows = nonFillingSubRows.rows as Array<{ recipeId: number; subRecipeId: number; subRecipeName: string; unit: string; quantity: string; isBase: boolean; assemblyOrder: number | null }>;
+    const nfiRows = nonFillingIngRows.rows as Array<{ recipeId: number; ingredientId: number; ingredientName: string; unit: string; quantity: string; assemblyOrder: number | null; isTopping: boolean | null }>;
+    const nfsRows = nonFillingSubRows.rows as Array<{ recipeId: number; subRecipeId: number; subRecipeName: string; unit: string; quantity: string; isBase: boolean; assemblyOrder: number | null; isTopping: boolean | null }>;
 
     const toGrams = (qty: number, unit: string): number => {
       const u = (unit || "").toLowerCase();
@@ -2232,7 +2389,7 @@ router.get("/:id/assembly-items", async (req, res) => {
       const fillingWeightPerBatch = fillingTotalGrams * ppb;
       const fillingWeightHalfBatch = fillingWeightPerBatch / 2;
 
-      type AssemblyEntry = { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number; sourceType: "ingredient" | "sub_recipe"; sourceId: number; assemblyOrder: number | null };
+      type AssemblyEntry = { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number; sourceType: "ingredient" | "sub_recipe"; sourceId: number; assemblyOrder: number | null; isTopping: boolean };
       const assemblyItems: AssemblyEntry[] = [];
       const postOvenItems: AssemblyEntry[] = [];
 
@@ -2240,7 +2397,7 @@ router.get("/:id/assembly-items", async (req, res) => {
 
       for (const row of nfiRows.filter(r => r.recipeId === item.recipeId)) {
         const wt = toGrams(Number(row.quantity), row.unit) * ppb;
-        const entry: AssemblyEntry = { name: row.ingredientName, unit: "g", weightPerBatch: wt, weightHalfBatch: wt / 2, sourceType: "ingredient", sourceId: row.ingredientId, assemblyOrder: row.assemblyOrder };
+        const entry: AssemblyEntry = { name: row.ingredientName, unit: "g", weightPerBatch: wt, weightHalfBatch: wt / 2, sourceType: "ingredient", sourceId: row.ingredientId, assemblyOrder: row.assemblyOrder, isTopping: row.isTopping ?? false };
         if (isPostOven(row.ingredientName)) {
           postOvenItems.push(entry);
         } else {
@@ -2251,7 +2408,7 @@ router.get("/:id/assembly-items", async (req, res) => {
       for (const row of nfsRows.filter(r => r.recipeId === item.recipeId)) {
         if (row.isBase) continue;
         const wt = toGrams(Number(row.quantity), row.unit) * ppb;
-        const entry: AssemblyEntry = { name: row.subRecipeName, unit: "g", weightPerBatch: wt, weightHalfBatch: wt / 2, sourceType: "sub_recipe", sourceId: row.subRecipeId, assemblyOrder: row.assemblyOrder };
+        const entry: AssemblyEntry = { name: row.subRecipeName, unit: "g", weightPerBatch: wt, weightHalfBatch: wt / 2, sourceType: "sub_recipe", sourceId: row.subRecipeId, assemblyOrder: row.assemblyOrder, isTopping: row.isTopping ?? false };
         if (isPostOven(row.subRecipeName)) {
           postOvenItems.push(entry);
         } else {
@@ -2274,6 +2431,7 @@ router.get("/:id/assembly-items", async (req, res) => {
         recipeName: item.recipeName,
         fillingWeightPerBatch,
         fillingWeightHalfBatch,
+        fillingAssemblyOrder: item.fillingAssemblyOrder ?? 0,
         assemblyItems,
         postOvenItems,
       };
@@ -3348,6 +3506,49 @@ router.get("/:id/dough-prep", async (req, res) => {
     };
   });
 
+  // ── 9. Fetch next plan's items with dough_prep station completions ──
+  // The frontend needs these to track dough ball completions against the correct plan
+  let nextPlanItems: Array<{ id: number; recipeId: number | null; batchesTarget: number; orderPosition: number; recipeName: string; stationCompletions: Record<string, number> }> = [];
+  if (targetPlanId !== planId) {
+    const nextItems = await db
+      .select({
+        id: productionPlanItemsTable.id,
+        recipeId: productionPlanItemsTable.recipeId,
+        batchesTarget: productionPlanItemsTable.batchesTarget,
+        orderPosition: productionPlanItemsTable.orderPosition,
+        recipeName: recipesTable.name,
+      })
+      .from(productionPlanItemsTable)
+      .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+      .where(eq(productionPlanItemsTable.planId, targetPlanId))
+      .orderBy(productionPlanItemsTable.orderPosition);
+
+    const nextItemIds = nextItems.map(it => it.id);
+    let completionsByItem: Record<number, Record<string, number>> = {};
+    if (nextItemIds.length > 0) {
+      const completionRows = await db.execute(sql`
+        SELECT plan_item_id, station_type, COUNT(*)::int as cnt
+        FROM batch_completions
+        WHERE plan_item_id IN (${sql.join(nextItemIds.map(id => sql`${id}`), sql`, `)})
+          AND station_type = 'dough_prep'
+        GROUP BY plan_item_id, station_type
+      `);
+      for (const row of completionRows.rows as Array<{ plan_item_id: number; station_type: string; cnt: number }>) {
+        if (!completionsByItem[row.plan_item_id]) completionsByItem[row.plan_item_id] = {};
+        completionsByItem[row.plan_item_id][row.station_type] = row.cnt;
+      }
+    }
+
+    nextPlanItems = nextItems.map(it => ({
+      id: it.id,
+      recipeId: it.recipeId,
+      batchesTarget: it.batchesTarget ?? 0,
+      orderPosition: it.orderPosition,
+      recipeName: it.recipeName ?? `Recipe #${it.recipeId}`,
+      stationCompletions: completionsByItem[it.id] ?? {},
+    }));
+  }
+
   res.json({
     totalDoughKg: Math.round(totalDoughKg * 100) / 100,
     totalFlourKg: Math.round(totalFlourKg * 100) / 100,
@@ -3359,6 +3560,7 @@ router.get("/:id/dough-prep", async (req, res) => {
     ingredients,
     recipes: recipeResults,
     nextPlan,
+    nextPlanItems,
     extraBalls: {
       extraPack: { count: extraPackBallCount, weightG: extraPackBallWeightG },
       snack: { count: snackBallCount, weightG: snackBallWeightG },
@@ -3549,6 +3751,7 @@ router.get("/:id/main-prep", async (req, res) => {
         bottleSize: ingredientsTable.bottleSize,
         packWeight: ingredientsTable.packWeight,
         isTopping: recipeIngredientsTable.isTopping,
+        showInPrep: recipeIngredientsTable.showInPrep,
       })
       .from(recipeIngredientsTable)
       .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -3644,6 +3847,7 @@ router.get("/:id/main-prep", async (req, res) => {
           yieldUnit: subRecipesTable.yieldUnit,
           isBase: subRecipesTable.isBase,
           isTopping: recipeSubRecipesTable.isTopping,
+          showInPrep: recipeSubRecipesTable.showInPrep,
         })
         .from(recipeSubRecipesTable)
         .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
@@ -3656,7 +3860,7 @@ router.get("/:id/main-prep", async (req, res) => {
         const nameLc = (sr.subRecipeName ?? "").toLowerCase();
         if (nameLc.includes("dough")) continue;
         if (sr.marinadeForIngredientId != null) continue;
-        if (sr.includeInFillingMix) continue;
+        if (sr.includeInFillingMix && !sr.showInPrep) continue;
 
         const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
         const qtyPerPortion = Number(sr.quantity) || 0;

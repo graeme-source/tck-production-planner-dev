@@ -10,8 +10,9 @@ import {
   Plus, Trash2, Edit2, Loader2, Users, ShieldCheck, Eye, Wrench,
   CheckCircle2, XCircle, KeyRound, Package, ChevronDown, ChevronUp,
   Lock, Timer, BarChart2, Coffee, Truck, Mail, Warehouse,
-  Camera, User,
+  Camera, User, CircleDot, ToggleRight, Boxes,
 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { upsertDptSettingByRecipe, updateTimingStandard, getListDptSettingsQueryKey, getListTimingStandardsQueryKey } from "@workspace/api-client-react";
 import { useForm } from "react-hook-form";
@@ -422,13 +423,14 @@ function PinSection() {
   );
 }
 
-type SettingsSection = "profile" | "team" | "production" | "storage";
+type SettingsSection = "profile" | "team" | "production" | "storage" | "features";
 
 const NAV_ITEMS: { id: SettingsSection; label: string; icon: typeof User }[] = [
   { id: "profile", label: "My Profile", icon: User },
   { id: "team", label: "Team & Access", icon: Users },
   { id: "production", label: "Production", icon: BarChart2 },
   { id: "storage", label: "Storage & Inventory", icon: Warehouse },
+  { id: "features", label: "Features", icon: ToggleRight },
 ];
 
 function TeamAccessContent({
@@ -739,7 +741,7 @@ export default function Settings() {
 
   const params = new URLSearchParams(search);
   const sectionParam = params.get("section") as SettingsSection | null;
-  const validSections: SettingsSection[] = ["profile", "team", "production", "storage"];
+  const validSections: SettingsSection[] = ["profile", "team", "production", "storage", "features"];
   const activeSection: SettingsSection = sectionParam && validSections.includes(sectionParam) ? sectionParam : "profile";
 
   const setSection = (s: SettingsSection) => {
@@ -814,11 +816,27 @@ export default function Settings() {
               <div ref={dptRef}>
                 {user?.role === "admin" && <DptSettingsSection />}
               </div>
+              {user?.role === "admin" && <FactoryNumberSection />}
               {user?.role === "admin" && <TimingStandardsSection />}
               {user?.role === "admin" && <MixerCapacitySection />}
               {user?.role === "admin" && <ProductionExtrasSection />}
               {user?.role === "admin" && <BreakDefaultsSection />}
               {user?.role === "admin" && <ApcServiceCodesSection />}
+            </div>
+          )}
+
+          {activeSection === "features" && user?.role === "admin" && (
+            <div className="space-y-8">
+              <FeaturesSection />
+              <QuickIdeaTabsSection />
+            </div>
+          )}
+
+          {activeSection === "features" && user?.role !== "admin" && (
+            <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
+              <Lock className="w-8 h-8 mx-auto mb-3 opacity-50" />
+              <p className="font-medium">Admin access required</p>
+              <p className="text-sm mt-1">Only admins can manage feature flags.</p>
             </div>
           )}
 
@@ -829,8 +847,101 @@ export default function Settings() {
               {user?.role === "admin" && <IngredientStorageAssignmentsSection />}
             </div>
           )}
+
+          {activeSection === "features" && user?.role === "admin" && (
+            <div className="space-y-8">
+              <FeaturesSection />
+            </div>
+          )}
+
+          {activeSection === "features" && user?.role !== "admin" && (
+            <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
+              <Lock className="w-8 h-8 mx-auto mb-3 opacity-50" />
+              <p className="font-medium">Admin access required</p>
+              <p className="text-sm mt-1">Only admins can manage feature flags.</p>
+            </div>
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Feature Flags Section ───────────────────────────────────────────
+
+const FEATURE_FLAGS: { key: string; label: string; description: string }[] = [
+  {
+    key: "feature_checklists",
+    label: "Station Checklists",
+    description: "Enable daily opening, cleaning, and closing checklists for each station. When enabled, stations auto-open to checklist view at start and end of day.",
+  },
+];
+
+function FeaturesSection() {
+  const queryClient = useQueryClient();
+  const [flags, setFlags] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`${BASE}/api/app-settings/`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : {})
+      .then(data => { setFlags(data); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  const toggleFlag = async (key: string, enabled: boolean) => {
+    const newVal = enabled ? "true" : "false";
+    setFlags(prev => ({ ...prev, [key]: newVal }));
+    try {
+      const res = await fetch(`${BASE}/api/app-settings/${key}`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: newVal }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      queryClient.invalidateQueries({ queryKey: ["app-settings", "feature-flags"] });
+      toast({ title: `Feature ${enabled ? "enabled" : "disabled"}` });
+    } catch {
+      setFlags(prev => ({ ...prev, [key]: enabled ? "false" : "true" }));
+      toast({ title: "Failed to update feature flag", variant: "destructive" });
+    }
+  };
+
+  return (
+    <div>
+      <h2 className="text-base font-semibold mb-1 flex items-center gap-2">
+        <ToggleRight className="w-5 h-5 text-primary" />
+        Feature Flags
+      </h2>
+      <p className="text-sm text-muted-foreground mb-4">
+        Toggle features on and off across the application.
+      </p>
+
+      {loading ? (
+        <div className="flex items-center gap-2 text-muted-foreground py-4">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Loading...
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {FEATURE_FLAGS.map(flag => (
+            <div
+              key={flag.key}
+              className="flex items-center justify-between gap-4 p-4 bg-card border border-border rounded-xl"
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">{flag.label}</p>
+                <p className="text-sm text-muted-foreground mt-0.5">{flag.description}</p>
+              </div>
+              <Switch
+                checked={flags[flag.key] === "true"}
+                onCheckedChange={(checked) => toggleFlag(flag.key, checked)}
+              />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1616,6 +1727,102 @@ function ProductionExtrasSection() {
   );
 }
 
+/**
+ * Factory number accounting loop scope toggle.
+ *
+ * Reads and writes GET/PUT /api/stock-entries/factory-number-config, which
+ * is backed by the `factory_number_core_menu_only` row in app_settings.
+ * When enabled, the fulfilment decrement path, the /calculate predicted
+ * fridge stock, and the reset endpoint all ignore non-core recipes.
+ * Flip it off once every recipe has a Shopify variant mapping set.
+ */
+function FactoryNumberSection() {
+  const [coreMenuOnly, setCoreMenuOnly] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/stock-entries/factory-number-config", { credentials: "include" })
+      .then(r => r.ok ? r.json() : { coreMenuOnly: true })
+      .then((d: { coreMenuOnly: boolean }) => setCoreMenuOnly(d.coreMenuOnly))
+      .catch(() => setCoreMenuOnly(true));
+  }, []);
+
+  async function handleToggle(next: boolean) {
+    setSaving(true);
+    setSavedMsg(null);
+    try {
+      const res = await fetch("/api/stock-entries/factory-number-config", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ coreMenuOnly: next }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      const data = (await res.json()) as { coreMenuOnly: boolean };
+      setCoreMenuOnly(data.coreMenuOnly);
+      setSavedMsg("Saved");
+      setTimeout(() => setSavedMsg(null), 2000);
+    } catch {
+      setSavedMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (coreMenuOnly === null) return null;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-base font-semibold flex items-center gap-2">
+          <Boxes className="w-4 h-4 text-primary" /> Factory Number Scope
+        </h2>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          Controls which recipes participate in the factory-number
+          accounting loop (fridge stock increments from wrapping and
+          decrements from Shopify fulfilment).
+        </p>
+      </div>
+
+      <div className="bg-card border border-border rounded-xl p-4 flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <p className="text-sm font-medium">Core menu items only</p>
+            {saving && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+            {savedMsg && <span className="text-xs text-emerald-600 font-medium">{savedMsg}</span>}
+          </div>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            {coreMenuOnly ? (
+              <>
+                <span className="font-medium text-foreground">Enabled.</span>{" "}
+                Only recipes flagged as core menu items have their fridge
+                stock tracked. Non-core recipes show live values only with
+                no prediction, and Shopify fulfilments of non-core variants
+                are not deducted. Turn off once every recipe has a Shopify
+                variant mapping configured via the recipe edit dialog.
+              </>
+            ) : (
+              <>
+                <span className="font-medium text-foreground">Disabled.</span>{" "}
+                All recipes participate in the factory-number loop. Any
+                recipe without a Shopify variant mapping will log an unmapped
+                warning on fulfilment but won't block dispatch.
+              </>
+            )}
+          </p>
+        </div>
+        <Switch
+          checked={coreMenuOnly}
+          onCheckedChange={handleToggle}
+          disabled={saving}
+          aria-label="Toggle core menu only scope"
+        />
+      </div>
+    </div>
+  );
+}
+
 function BreakDefaultsSection() {
   const [breakMins, setBreakMins] = useState<string>("15");
   const [lunchMins, setLunchMins] = useState<string>("45");
@@ -1712,6 +1919,77 @@ function BreakDefaultsSection() {
             Save
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function QuickIdeaTabsSection() {
+  const [tabs, setTabs] = useState({ kanban: true, idea: true, struggle: true, issue: true });
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/app-settings/quick_idea_tabs", { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.value) { try { setTabs(prev => ({ ...prev, ...JSON.parse(d.value) })); } catch {} } })
+      .catch(() => {})
+      .finally(() => setLoaded(true));
+  }, []);
+
+  const handleToggle = async (key: keyof typeof tabs) => {
+    const updated = { ...tabs, [key]: !tabs[key] };
+    setTabs(updated);
+    setSaving(true);
+    try {
+      const r = await fetch("/api/app-settings/quick_idea_tabs", {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: JSON.stringify(updated) }),
+      });
+      if (!r.ok) throw new Error("Failed to save");
+      setSavedMsg("Saved");
+      setTimeout(() => setSavedMsg(null), 2000);
+    } catch {
+      setTabs(tabs); // revert
+      setSavedMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const items: { key: keyof typeof tabs; label: string }[] = [
+    { key: "kanban", label: "Pull Kanban" },
+    { key: "idea", label: "Improvement Idea" },
+    { key: "struggle", label: "Struggle" },
+    { key: "issue", label: "Issue" },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <CircleDot className="w-4 h-4 text-blue-500" /> Quick Idea Tabs
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Toggle which tabs appear in the Quick Idea modal (blue button, bottom-right of every page).
+          </p>
+        </div>
+        {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
+      </div>
+      <div className="space-y-3">
+        {items.map(({ key, label }) => (
+          <div key={key} className="flex items-center justify-between gap-4 p-4 bg-card border border-border rounded-xl">
+            <span className="text-sm font-semibold">{label}</span>
+            <Switch
+              checked={tabs[key]}
+              onCheckedChange={() => handleToggle(key)}
+              disabled={!loaded || saving}
+            />
+          </div>
+        ))}
       </div>
     </div>
   );

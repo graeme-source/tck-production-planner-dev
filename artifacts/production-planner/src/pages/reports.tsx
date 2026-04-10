@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useSearch, useLocation } from "wouter";
 import { toast } from "@/hooks/use-toast";
@@ -8,12 +8,14 @@ import {
   Loader2, Coffee, Utensils, Clock, Users,
   ArrowUp, ArrowDown, Minus as MinusIcon,
   TrendingUp, TrendingDown, Activity, Layers, Target, Timer,
-  ChevronDown, ChevronRight, Thermometer, ShieldCheck,
+  ChevronDown, ChevronUp, ChevronRight, Thermometer, ShieldCheck,
   Package, Zap, CalendarDays, Trophy, Snail, Hourglass,
-  Lightbulb, AlertTriangle, CheckCircle, Filter,
+  Lightbulb, AlertTriangle, CheckCircle, Filter, Play, Square,
+  MessageSquare, Send, ClipboardCheck, FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -53,8 +55,11 @@ interface KpiOverview {
   totalBatches: number;
   totalActiveMinutes: number;
   overallBph: number;
+  wallClockMinutes: number;
   uniqueDays: number;
   avgBatchesPerDay: number;
+  productionStartTime: string | null;
+  productionFinishTime: string | null;
 }
 
 interface StationSummary {
@@ -142,7 +147,10 @@ interface PackingSpeedData {
   source?: string;
 }
 
-type TabId = "kpis" | "breaks" | "temperature" | "packing-speed" | "improvements" | "andon";
+// Packing-speed is now a subsection inside the Production KPIs view, so it's
+// no longer a top-level tab. The URL ?tab=packing-speed redirects to ?tab=kpis
+// for backward compat.
+type TabId = "kpis" | "breaks" | "temperature" | "haccp" | "improvements" | "issues";
 
 interface ImprovementRecord {
   id: number;
@@ -154,8 +162,18 @@ interface ImprovementRecord {
   approvalTier: "minor" | "medium" | "major" | null;
   progressStatus: "submitted_for_review" | "acknowledged" | "approved" | "testing" | "complete" | "rejected";
   notes: string | null;
+  reportContext: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+interface ImprovementComment {
+  id: number;
+  improvementId: number;
+  userId: number | null;
+  userName: string | null;
+  comment: string;
+  createdAt: string;
 }
 
 interface AndonIssueRecord {
@@ -222,12 +240,32 @@ function DateShortcutsDropdown({ onSelect }: { onSelect: (from: string, to: stri
   );
 }
 
-const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "packing-speed", "improvements", "andon"];
+const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "haccp", "improvements", "issues"];
+
+interface ReportsNavItem {
+  id: TabId;
+  label: string;
+  icon: typeof TrendingUp;
+}
+
+const REPORTS_NAV_ITEMS: ReportsNavItem[] = [
+  { id: "kpis", label: "Production KPIs", icon: TrendingUp },
+  { id: "breaks", label: "Breaks & Lunches", icon: Coffee },
+  { id: "temperature", label: "Temperature Log", icon: Thermometer },
+  { id: "haccp", label: "HACCP", icon: ShieldCheck },
+  { id: "improvements", label: "Improvements & Struggles", icon: Lightbulb },
+  { id: "issues", label: "Issue Log", icon: AlertTriangle },
+];
 
 export default function Reports() {
   const search = useSearch();
   const [, navigate] = useLocation();
-  const queryTab = new URLSearchParams(search).get("tab") as TabId | null;
+  const rawTab = new URLSearchParams(search).get("tab");
+  // Backward compat: legacy "andon" tab id redirects to "issues", and
+  // "packing-speed" redirects to "kpis" since it's now a subsection there.
+  const normalisedTab =
+    rawTab === "andon" ? "issues" : rawTab === "packing-speed" ? "kpis" : rawTab;
+  const queryTab = normalisedTab as TabId | null;
   const initialTab: TabId = queryTab && VALID_TABS.includes(queryTab) ? queryTab : "kpis";
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);
   const { state } = useAuth();
@@ -243,7 +281,7 @@ export default function Reports() {
   const [fromDate, setFromDate] = useState(todayStr);
   const [toDate, setToDate] = useState(todayStr);
 
-  const showDatePicker = activeTab !== "packing-speed" && activeTab !== "improvements" && activeTab !== "andon";
+  const showDatePicker = activeTab !== "improvements" && activeTab !== "issues";
 
   return (
     <div className="space-y-6">
@@ -252,75 +290,94 @@ export default function Reports() {
         description="Production KPIs, break and lunch tracking analytics."
       />
 
-      <div className="flex items-center gap-4 flex-wrap">
-        <div className="flex items-center gap-1 bg-secondary/30 rounded-xl p-1 flex-wrap">
-          <TabButton active={activeTab === "kpis"} onClick={() => switchTab("kpis")}>
-            <TrendingUp className="w-4 h-4" /> Production KPIs
-          </TabButton>
-          <TabButton active={activeTab === "breaks"} onClick={() => switchTab("breaks")}>
-            <Coffee className="w-4 h-4" /> Breaks & Lunches
-          </TabButton>
-          <TabButton active={activeTab === "temperature"} onClick={() => switchTab("temperature")}>
-            <Thermometer className="w-4 h-4" /> Temperature Log
-          </TabButton>
-          <TabButton active={activeTab === "packing-speed"} onClick={() => switchTab("packing-speed")}>
-            <Zap className="w-4 h-4" /> Packing Speed
-          </TabButton>
-          <TabButton active={activeTab === "improvements"} onClick={() => switchTab("improvements")}>
-            <Lightbulb className="w-4 h-4" /> Improvements & Struggles
-          </TabButton>
-          <TabButton active={activeTab === "andon"} onClick={() => switchTab("andon")}>
-            <AlertTriangle className="w-4 h-4" /> Andon Log
-          </TabButton>
+      <div className="flex gap-6 items-start">
+        {/* Left nav — mirrors the settings page sidebar pattern */}
+        <nav className="w-52 flex-shrink-0 sticky top-6 hidden md:block">
+          <ul className="space-y-1">
+            {REPORTS_NAV_ITEMS.map((item) => {
+              const Icon = item.icon;
+              const active = activeTab === item.id;
+              return (
+                <li key={item.id}>
+                  <button
+                    onClick={() => switchTab(item.id)}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors text-left",
+                      active
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
+                    )}
+                  >
+                    <Icon className="w-4 h-4 flex-shrink-0" />
+                    {item.label}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+
+        {/* Mobile: horizontal scroll of the same nav, shown above the content */}
+        <nav className="md:hidden w-full overflow-x-auto pb-2 -mb-2">
+          <ul className="flex gap-1 min-w-max">
+            {REPORTS_NAV_ITEMS.map((item) => {
+              const Icon = item.icon;
+              const active = activeTab === item.id;
+              return (
+                <li key={item.id}>
+                  <button
+                    onClick={() => switchTab(item.id)}
+                    className={cn(
+                      "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap",
+                      active
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
+                    )}
+                  >
+                    <Icon className="w-4 h-4 flex-shrink-0" />
+                    {item.label}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+
+        {/* Right content panel */}
+        <div className="flex-1 min-w-0 space-y-4">
+          {showDatePicker && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <DateShortcutsDropdown onSelect={(f, t) => { setFromDate(f); setToDate(t); }} />
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-muted-foreground">From</label>
+                <input
+                  type="date"
+                  value={fromDate}
+                  onChange={e => setFromDate(e.target.value)}
+                  className="px-3 py-2 border border-border rounded-lg text-sm bg-background"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-muted-foreground">To</label>
+                <input
+                  type="date"
+                  value={toDate}
+                  onChange={e => setToDate(e.target.value)}
+                  className="px-3 py-2 border border-border rounded-lg text-sm bg-background"
+                />
+              </div>
+            </div>
+          )}
+
+          {activeTab === "kpis" && <ProductionKpisTab fromDate={fromDate} toDate={toDate} />}
+          {activeTab === "breaks" && <BreaksTab fromDate={fromDate} toDate={toDate} />}
+          {activeTab === "temperature" && <TemperatureRecordsTab fromDate={fromDate} toDate={toDate} />}
+          {activeTab === "haccp" && <HaccpTab fromDate={fromDate} toDate={toDate} />}
+          {activeTab === "improvements" && <ImprovementsTab userRole={userRole} currentUserName={state.status === "authenticated" ? state.user.name : null} />}
+          {activeTab === "issues" && <AndonLogTab userRole={userRole} />}
         </div>
-        {showDatePicker && (
-          <div className="flex items-center gap-2 ml-auto flex-wrap">
-            <DateShortcutsDropdown onSelect={(f, t) => { setFromDate(f); setToDate(t); }} />
-            <div className="flex items-center gap-2">
-              <label className="text-sm font-medium text-muted-foreground">From</label>
-              <input
-                type="date"
-                value={fromDate}
-                onChange={e => setFromDate(e.target.value)}
-                className="px-3 py-2 border border-border rounded-lg text-sm bg-background"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-sm font-medium text-muted-foreground">To</label>
-              <input
-                type="date"
-                value={toDate}
-                onChange={e => setToDate(e.target.value)}
-                className="px-3 py-2 border border-border rounded-lg text-sm bg-background"
-              />
-            </div>
-          </div>
-        )}
       </div>
-
-      {activeTab === "kpis" && <ProductionKpisTab fromDate={fromDate} toDate={toDate} />}
-      {activeTab === "breaks" && <BreaksTab fromDate={fromDate} toDate={toDate} />}
-      {activeTab === "temperature" && <TemperatureRecordsTab fromDate={fromDate} toDate={toDate} />}
-      {activeTab === "packing-speed" && <PackingSpeedTab />}
-      {activeTab === "improvements" && <ImprovementsTab userRole={userRole} currentUserName={state.status === "authenticated" ? state.user.name : null} />}
-      {activeTab === "andon" && <AndonLogTab userRole={userRole} />}
     </div>
-  );
-}
-
-function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
-        active
-          ? "bg-background text-foreground shadow-sm"
-          : "text-muted-foreground hover:text-foreground"
-      )}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -371,22 +428,30 @@ function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: str
     <>
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <SummaryCard
+          icon={<Play className="w-5 h-5 text-emerald-600" />}
+          label="Start Time"
+          value={data.overview.productionStartTime ? format(new Date(data.overview.productionStartTime), "HH:mm") : "—"}
+          sub={data.overview.productionStartTime ? format(new Date(data.overview.productionStartTime), "d MMM yyyy") : "No data"}
+        />
+        <SummaryCard
+          icon={<Square className="w-5 h-5 text-red-500" />}
+          label="Finish Time"
+          value={data.overview.productionFinishTime ? format(new Date(data.overview.productionFinishTime), "HH:mm") : "—"}
+          sub={data.overview.wallClockMinutes > 0
+            ? `${Math.floor(data.overview.wallClockMinutes / 60)}h ${data.overview.wallClockMinutes % 60}m wall clock`
+            : "No data"}
+        />
+        <SummaryCard
           icon={<Layers className="w-5 h-5 text-blue-600" />}
           label="Total Batches"
           value={String(data.overview.totalBatches)}
           sub={`Over ${data.overview.uniqueDays} day${data.overview.uniqueDays !== 1 ? "s" : ""}`}
         />
         <SummaryCard
-          icon={<Activity className="w-5 h-5 text-emerald-600" />}
-          label="Overall BPH"
+          icon={<Activity className="w-5 h-5 text-violet-600" />}
+          label="Batches / Hour"
           value={String(data.overview.overallBph)}
-          sub="Batches per hour"
-        />
-        <SummaryCard
-          icon={<Target className="w-5 h-5 text-violet-600" />}
-          label="Avg / Day"
-          value={String(data.overview.avgBatchesPerDay)}
-          sub="Batches per day"
+          sub="Building tables combined"
         />
         <SummaryCard
           icon={<Timer className="w-5 h-5 text-amber-600" />}
@@ -395,12 +460,6 @@ function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: str
             ? `${Math.floor(data.overview.totalActiveMinutes / 60)}h ${data.overview.totalActiveMinutes % 60}m`
             : `${data.overview.totalActiveMinutes}m`}
           sub="Total productive time"
-        />
-        <SummaryCard
-          icon={<Users className="w-5 h-5 text-rose-600" />}
-          label="Stations Active"
-          value={String(data.stationSummaries.length)}
-          sub={`${data.userSummaries.length} user${data.userSummaries.length !== 1 ? "s" : ""}`}
         />
       </div>
 
@@ -584,6 +643,18 @@ function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: str
             })}
           </div>
         )}
+      </div>
+
+      {/* Packing speed — previously a separate tab, now a section inside
+          Production KPIs since packing throughput is a production metric.
+          Has its own "today" + custom date range controls because its
+          reporting window is typically wider than the KPI date range. */}
+      <div className="pt-8 border-t border-border">
+        <div className="flex items-center gap-2 mb-4">
+          <Zap className="w-5 h-5 text-amber-500" />
+          <h2 className="text-lg font-bold">Packing Speed</h2>
+        </div>
+        <PackingSpeedTab />
       </div>
     </>
   );
@@ -928,6 +999,458 @@ function TemperatureRecordsTab({ fromDate, toDate }: { fromDate: string; toDate:
   );
 }
 
+// ── HACCP Tab ──────────────────────────────────────────────────────────────
+// Unified reporting view for EHO-relevant records: checklist completions
+// (opening/cleaning/closing checks) and cooked-core temperature readings.
+// Filterable by date range, station, user, and record kind. Intended as the
+// single place auditors or managers can pull evidence of daily food-safety
+// procedures.
+
+interface HaccpChecklistRow {
+  id: number;
+  kind: "template" | "oneoff";
+  templateId: number | null;
+  planId: number;
+  stationType: string;
+  category: "opening" | "cleaning" | "closing";
+  title: string;
+  description: string | null;
+  completedBy: number | null;
+  completedByName: string | null;
+  completedAt: string;
+  notes: string | null;
+}
+
+interface HaccpMissingRow {
+  id: string; // "tpl-{templateId}-plan-{planId}" or "oneoff-{id}"
+  kind: "template-missing" | "oneoff-missing";
+  templateId: number | null;
+  planId: number;
+  stationType: string;
+  category: "opening" | "cleaning" | "closing";
+  title: string;
+  description: string | null;
+  planDate: string;
+  missing: true;
+}
+
+interface UserLite {
+  id: number;
+  name: string;
+  email?: string;
+  role?: string;
+  isActive?: boolean;
+}
+
+const HACCP_CATEGORY_META: Record<HaccpChecklistRow["category"], { label: string; color: string; bg: string }> = {
+  opening: { label: "Opening", color: "text-amber-700 dark:text-amber-300", bg: "bg-amber-100 dark:bg-amber-900/30" },
+  cleaning: { label: "Cleaning", color: "text-blue-700 dark:text-blue-300", bg: "bg-blue-100 dark:bg-blue-900/30" },
+  closing: { label: "Closing", color: "text-indigo-700 dark:text-indigo-300", bg: "bg-indigo-100 dark:bg-indigo-900/30" },
+};
+
+function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
+  const [checklists, setChecklists] = useState<HaccpChecklistRow[]>([]);
+  const [missing, setMissing] = useState<HaccpMissingRow[]>([]);
+  const [temps, setTemps] = useState<TemperatureRecord[]>([]);
+  const [users, setUsers] = useState<UserLite[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Filters
+  const [stationFilter, setStationFilter] = useState("");
+  const [userFilter, setUserFilter] = useState("");
+  // "all" = completed + outstanding + temperatures
+  // "outstanding" = only expected-but-not-completed checklist items
+  const [kindFilter, setKindFilter] = useState<"all" | "checklists" | "outstanding" | "temperatures">("all");
+  const [categoryFilter, setCategoryFilter] = useState<"" | HaccpChecklistRow["category"]>("");
+
+  // Collapsible sections — default both the completed and outstanding
+  // sections to collapsed so the page is glanceable and the user opens the
+  // one they care about.
+  const [outstandingOpen, setOutstandingOpen] = useState(true);
+  const [completedOpen, setCompletedOpen] = useState(false);
+  const [tempsOpen, setTempsOpen] = useState(false);
+
+  // Load users once (for filter dropdown)
+  useEffect(() => {
+    fetch(`${BASE}/api/users`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : [])
+      .then((rows: UserLite[]) => setUsers(rows))
+      .catch(() => { /* ignore */ });
+  }, []);
+
+  // Reload data when date range or server-side filters change. Station/user
+  // filters are passed as query params so the backend does the heavy lifting.
+  // We always pull the "missing" set too so the Outstanding filter can flip
+  // on without another round-trip and so the summary card stays accurate.
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    const params = new URLSearchParams({ from: fromDate, to: toDate });
+    if (stationFilter) params.set("stationType", stationFilter);
+    if (userFilter) params.set("userId", userFilter);
+
+    const checklistUrl = `${BASE}/api/checklists/completions?${params.toString()}`;
+    const tempParams = new URLSearchParams({ from: fromDate, to: toDate });
+    const tempUrl = `${BASE}/api/temperature-records?${tempParams.toString()}`;
+
+    // The /missing endpoint does not take userId (un-done items have no
+    // user), but it does honour stationType.
+    const missingParams = new URLSearchParams({ from: fromDate, to: toDate });
+    if (stationFilter) missingParams.set("stationType", stationFilter);
+    const missingUrl = `${BASE}/api/checklists/missing?${missingParams.toString()}`;
+
+    Promise.all([
+      fetch(checklistUrl, { credentials: "include" }).then(r => r.ok ? r.json() : []),
+      fetch(tempUrl, { credentials: "include" }).then(r => r.ok ? r.json() : []),
+      fetch(missingUrl, { credentials: "include" }).then(r => r.ok ? r.json() : []),
+    ])
+      .then(([c, t, m]: [HaccpChecklistRow[], TemperatureRecord[], HaccpMissingRow[]]) => {
+        setChecklists(c);
+        setTemps(t);
+        setMissing(m);
+        setLoading(false);
+      })
+      .catch((err: Error) => { setError(err.message); setLoading(false); });
+  }, [fromDate, toDate, stationFilter, userFilter]);
+
+  // Temperature records have no station column in the schema (they're tied
+  // to a plan), so station filter is only applied to the checklist dataset.
+  // User filter for temps uses the user_id from the record.
+  const filteredTemps = temps.filter(t => {
+    if (userFilter && String(t.userId ?? "") !== userFilter) return false;
+    return true;
+  });
+
+  const filteredChecklists = checklists.filter(c => {
+    if (categoryFilter && c.category !== categoryFilter) return false;
+    return true;
+  });
+
+  const filteredMissing = missing.filter(m => {
+    if (categoryFilter && m.category !== categoryFilter) return false;
+    return true;
+  });
+
+  // Pre-compute summary stats (no pass/fail split on temperatures since
+  // readings span cooked-core, fridge, and delivery checks with different
+  // thresholds).
+  const uniqueCheckUsers = new Set(filteredChecklists.map(c => c.completedByName ?? "").filter(Boolean)).size;
+  const uniqueStations = new Set(filteredChecklists.map(c => c.stationType)).size;
+
+  const showChecks = kindFilter === "all" || kindFilter === "checklists";
+  const showMissing = kindFilter === "all" || kindFilter === "outstanding";
+  const showTemps = kindFilter === "all" || kindFilter === "temperatures";
+  // When the user explicitly filters to Outstanding, hide the other
+  // sections so the list is unambiguous.
+  const outstandingOnly = kindFilter === "outstanding";
+
+  function clearFilters() {
+    setStationFilter("");
+    setUserFilter("");
+    setKindFilter("all");
+    setCategoryFilter("");
+  }
+
+  const hasFilters = stationFilter || userFilter || kindFilter !== "all" || categoryFilter;
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-16 text-muted-foreground gap-2">
+      <Loader2 className="w-5 h-5 animate-spin" /> Loading HACCP records…
+    </div>
+  );
+  if (error) return (
+    <div className="rounded-xl border border-red-200 bg-red-50 dark:bg-red-900/20 p-4 text-red-700 dark:text-red-400 text-sm">{error}</div>
+  );
+
+  return (
+    <div className="space-y-4">
+      {/* Info banner */}
+      <div className="rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20 px-4 py-3 flex items-start gap-3">
+        <FileText className="w-5 h-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+        <div className="text-sm">
+          <p className="font-semibold text-blue-800 dark:text-blue-300">HACCP Evidence Log</p>
+          <p className="text-blue-700/80 dark:text-blue-300/80 mt-0.5">
+            Daily opening/cleaning/closing checks and cooked-core temperature readings for EHO inspections.
+            Use the filters below to narrow by date, station, or team member.
+          </p>
+        </div>
+      </div>
+
+      {/* Summary cards — 75°C pass/fail is no longer shown because not all
+          readings are cooked-core (fridge, delivery, and ambient readings
+          also land in this log). */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <SummaryCard icon={<ClipboardCheck className="w-4 h-4 text-emerald-600" />} label="Checks Completed" value={String(filteredChecklists.length)} sub={`${uniqueCheckUsers} team member${uniqueCheckUsers !== 1 ? "s" : ""}, ${uniqueStations} station${uniqueStations !== 1 ? "s" : ""}`} />
+        <SummaryCard
+          icon={<AlertTriangle className={cn("w-4 h-4", filteredMissing.length > 0 ? "text-red-500" : "text-muted-foreground")} />}
+          label="Outstanding Checks"
+          value={String(filteredMissing.length)}
+          sub={filteredMissing.length > 0 ? "Expected but not completed" : "All checks accounted for"}
+          highlight={filteredMissing.length > 0 ? "red" : undefined}
+        />
+        <SummaryCard icon={<Thermometer className="w-4 h-4 text-blue-500" />} label="Temp Readings" value={String(filteredTemps.length)} sub={`${fromDate} → ${toDate}`} />
+      </div>
+
+      {/* Filter bar */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card px-3 py-2">
+        <Filter className="w-4 h-4 text-muted-foreground" />
+        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mr-1">Filter</span>
+        <select
+          value={kindFilter}
+          onChange={e => setKindFilter(e.target.value as typeof kindFilter)}
+          className="px-2.5 py-1.5 border border-border rounded-lg text-sm bg-background"
+          title="Record type"
+        >
+          <option value="all">All records</option>
+          <option value="checklists">Checklists only</option>
+          <option value="outstanding">Outstanding only</option>
+          <option value="temperatures">Temperatures only</option>
+        </select>
+        <select
+          value={stationFilter}
+          onChange={e => setStationFilter(e.target.value)}
+          className="px-2.5 py-1.5 border border-border rounded-lg text-sm bg-background"
+          title="Station"
+        >
+          <option value="">All stations</option>
+          {Object.entries(STATION_LABELS_REPORT).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+        <select
+          value={userFilter}
+          onChange={e => setUserFilter(e.target.value)}
+          className="px-2.5 py-1.5 border border-border rounded-lg text-sm bg-background"
+          title="User"
+        >
+          <option value="">All users</option>
+          {users.filter(u => u.isActive !== false).map(u => (
+            <option key={u.id} value={String(u.id)}>{u.name}</option>
+          ))}
+        </select>
+        {showChecks && (
+          <select
+            value={categoryFilter}
+            onChange={e => setCategoryFilter(e.target.value as typeof categoryFilter)}
+            className="px-2.5 py-1.5 border border-border rounded-lg text-sm bg-background"
+            title="Checklist category"
+          >
+            <option value="">All categories</option>
+            <option value="opening">Opening</option>
+            <option value="cleaning">Cleaning</option>
+            <option value="closing">Closing</option>
+          </select>
+        )}
+        {hasFilters && (
+          <button
+            onClick={clearFilters}
+            className="ml-auto text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
+          >
+            Clear filters
+          </button>
+        )}
+      </div>
+
+      {/* Outstanding (expected but not completed) checklist items */}
+      {showMissing && (
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setOutstandingOpen(v => !v)}
+            className="w-full px-4 py-2.5 border-b border-border bg-red-50/40 dark:bg-red-950/20 flex items-center gap-2 text-left hover:bg-red-50/60 dark:hover:bg-red-950/30 transition-colors"
+            aria-expanded={outstandingOpen}
+          >
+            <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0" />
+            <h3 className="text-sm font-semibold">Outstanding Items ({filteredMissing.length})</h3>
+            <span className="text-xs text-muted-foreground ml-2 hidden sm:inline">Expected for the day but never ticked off</span>
+            {outstandingOpen
+              ? <ChevronUp className="w-4 h-4 text-muted-foreground ml-auto flex-shrink-0" />
+              : <ChevronDown className="w-4 h-4 text-muted-foreground ml-auto flex-shrink-0" />}
+          </button>
+          {outstandingOpen && (
+            filteredMissing.length === 0 ? (
+              <div className="p-8 text-center text-sm text-muted-foreground">
+                <ShieldCheck className="w-5 h-5 text-emerald-500 inline-block mr-1 align-text-bottom" />
+                All expected checks have been completed in this date range.
+              </div>
+            ) : (
+              <div className="overflow-x-auto max-h-[560px] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-secondary/40 backdrop-blur-sm">
+                    <tr className="border-b border-border">
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Expected For</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Category</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Station</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Item</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {filteredMissing.map(row => {
+                      const meta = HACCP_CATEGORY_META[row.category];
+                      return (
+                        <tr key={row.id} className="hover:bg-secondary/10 transition-colors align-top">
+                          <td className="px-4 py-2.5 tabular-nums text-muted-foreground whitespace-nowrap text-xs">
+                            {row.planDate ? format(new Date(`${row.planDate}T12:00:00Z`), "dd MMM yyyy") : "—"}
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <span className={cn("inline-block px-2 py-0.5 rounded-full text-xs font-semibold", meta.bg, meta.color)}>
+                              {meta.label}
+                            </span>
+                            {row.kind === "oneoff-missing" && (
+                              <span className="ml-1 text-[10px] text-amber-500 font-semibold uppercase">one-off</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
+                            {STATION_LABELS_REPORT[row.stationType] ?? row.stationType}
+                          </td>
+                          <td className="px-4 py-2.5 font-medium">{row.title}</td>
+                          <td className="px-4 py-2.5">
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-900/30 rounded-full px-2 py-0.5">
+                              <AlertTriangle className="w-3 h-3" /> Not completed
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
+          )}
+        </div>
+      )}
+
+      {/* Checklist completions table */}
+      {showChecks && !outstandingOnly && (
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setCompletedOpen(v => !v)}
+            className="w-full px-4 py-2.5 border-b border-border bg-secondary/20 flex items-center gap-2 text-left hover:bg-secondary/40 transition-colors"
+            aria-expanded={completedOpen}
+          >
+            <ClipboardCheck className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+            <h3 className="text-sm font-semibold">Checklist Completions ({filteredChecklists.length})</h3>
+            {completedOpen
+              ? <ChevronUp className="w-4 h-4 text-muted-foreground ml-auto flex-shrink-0" />
+              : <ChevronDown className="w-4 h-4 text-muted-foreground ml-auto flex-shrink-0" />}
+          </button>
+          {completedOpen && (
+            filteredChecklists.length === 0 ? (
+              <div className="p-8 text-center text-sm text-muted-foreground">
+                No checklist completions for the selected filters.
+              </div>
+            ) : (
+              <div className="overflow-x-auto max-h-[560px] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-secondary/40 backdrop-blur-sm">
+                    <tr className="border-b border-border">
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Completed</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Category</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Station</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Item</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">By</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {filteredChecklists.map(row => {
+                      const meta = HACCP_CATEGORY_META[row.category];
+                      return (
+                        <tr key={`${row.kind}-${row.id}`} className="hover:bg-secondary/10 transition-colors align-top">
+                          <td className="px-4 py-2.5 tabular-nums text-muted-foreground whitespace-nowrap text-xs">
+                            {format(new Date(row.completedAt), "dd MMM, HH:mm")}
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <span className={cn("inline-block px-2 py-0.5 rounded-full text-xs font-semibold", meta.bg, meta.color)}>
+                              {meta.label}
+                            </span>
+                            {row.kind === "oneoff" && (
+                              <span className="ml-1 text-[10px] text-amber-500 font-semibold uppercase">one-off</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
+                            {STATION_LABELS_REPORT[row.stationType] ?? row.stationType}
+                          </td>
+                          <td className="px-4 py-2.5 font-medium">{row.title}</td>
+                          <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{row.completedByName ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-muted-foreground text-xs max-w-[280px] whitespace-pre-wrap">
+                            {row.notes ?? "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
+          )}
+        </div>
+      )}
+
+      {/* Temperature records table — no pass/fail column since readings
+          include cooked-core (≥75°C), fridge, delivery, and ambient
+          values with different thresholds. */}
+      {showTemps && !outstandingOnly && (
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setTempsOpen(v => !v)}
+            className="w-full px-4 py-2.5 border-b border-border bg-secondary/20 flex items-center gap-2 text-left hover:bg-secondary/40 transition-colors"
+            aria-expanded={tempsOpen}
+          >
+            <Thermometer className="w-4 h-4 text-blue-600 flex-shrink-0" />
+            <h3 className="text-sm font-semibold">Temperature Readings ({filteredTemps.length})</h3>
+            {tempsOpen
+              ? <ChevronUp className="w-4 h-4 text-muted-foreground ml-auto flex-shrink-0" />
+              : <ChevronDown className="w-4 h-4 text-muted-foreground ml-auto flex-shrink-0" />}
+          </button>
+          {tempsOpen && (
+            filteredTemps.length === 0 ? (
+              <div className="p-8 text-center text-sm text-muted-foreground">
+                No temperature records for the selected filters.
+              </div>
+            ) : (
+              <div className="overflow-x-auto max-h-[560px] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-secondary/40 backdrop-blur-sm">
+                    <tr className="border-b border-border">
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Recorded</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Recipe</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Ingredient</th>
+                      <th className="text-center px-4 py-2.5 font-semibold text-muted-foreground">Tray</th>
+                      <th className="text-center px-4 py-2.5 font-semibold text-muted-foreground">Temp</th>
+                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">By</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {filteredTemps.map(rec => (
+                      <tr key={rec.id} className="hover:bg-secondary/10 transition-colors">
+                        <td className="px-4 py-2.5 tabular-nums text-muted-foreground whitespace-nowrap text-xs">
+                          {format(new Date(rec.recordedAt), "dd MMM, HH:mm")}
+                        </td>
+                        <td className="px-4 py-2.5 font-medium">{rec.recipeName ?? `Recipe #${rec.recipeId}`}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{rec.ingredientName ?? `Ingredient #${rec.ingredientId}`}</td>
+                        <td className="px-4 py-2.5 text-center tabular-nums">{rec.trayIndex + 1}</td>
+                        <td className="px-4 py-2.5 text-center">
+                          <span className="font-bold tabular-nums text-foreground">
+                            {parseFloat(rec.temperatureC).toFixed(1)}°C
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{rec.userName ?? "Unknown"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Packing Speed Tab ──────────────────────────────────────────────────────
 function PackingSpeedTab() {
   const todayStr = format(new Date(), "yyyy-MM-dd");
@@ -1244,6 +1767,7 @@ const IMPROVEMENT_PROGRESS_OPTIONS = [
   { value: "submitted_for_review", label: "Submitted for Review" },
   { value: "acknowledged", label: "Acknowledged" },
   { value: "approved", label: "Approved" },
+  { value: "in_development", label: "In Development" },
   { value: "testing", label: "Testing" },
   { value: "complete", label: "Complete" },
   { value: "rejected", label: "Rejected" },
@@ -1253,6 +1777,7 @@ function statusRowClass(status: string) {
   if (status === "submitted_for_review") return "bg-yellow-50/60 dark:bg-yellow-900/10";
   if (status === "acknowledged") return "bg-violet-50/60 dark:bg-violet-900/10";
   if (status === "approved") return "bg-green-50/60 dark:bg-green-900/10";
+  if (status === "in_development") return "bg-amber-50/60 dark:bg-amber-900/10";
   if (status === "testing") return "bg-blue-50/60 dark:bg-blue-900/10";
   if (status === "complete") return "bg-emerald-50/60 dark:bg-emerald-900/10";
   if (status === "rejected") return "bg-red-50/60 dark:bg-red-900/10";
@@ -1263,6 +1788,7 @@ function statusBadgeClass(status: string) {
   if (status === "submitted_for_review") return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300";
   if (status === "acknowledged") return "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400";
   if (status === "approved") return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";
+  if (status === "in_development") return "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400";
   if (status === "testing") return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
   if (status === "complete") return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400 font-semibold";
   if (status === "rejected") return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
@@ -1273,6 +1799,7 @@ function statusSelectClass(status: string) {
   if (status === "submitted_for_review") return "border-yellow-300 bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300 dark:border-yellow-700";
   if (status === "acknowledged") return "border-violet-300 bg-violet-50 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400 dark:border-violet-700";
   if (status === "approved") return "border-green-300 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400 dark:border-green-700";
+  if (status === "in_development") return "border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700";
   if (status === "testing") return "border-blue-300 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-700";
   if (status === "complete") return "border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-700";
   if (status === "rejected") return "border-red-300 bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400 dark:border-red-700";
@@ -1291,6 +1818,53 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<number | null>(null);
   const [editNotes, setEditNotes] = useState<Record<number, string>>({});
+
+  // Detail dialog state
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [comments, setComments] = useState<ImprovementComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [newComment, setNewComment] = useState("");
+  const [postingComment, setPostingComment] = useState(false);
+  const commentsEndRef = useRef<HTMLDivElement>(null);
+
+  const selectedImp = selectedId !== null ? improvements.find(i => i.id === selectedId) ?? null : null;
+
+  const loadComments = useCallback(async (id: number) => {
+    setCommentsLoading(true);
+    try {
+      const res = await fetch(`${BASE}/api/improvements/${id}/comments`, { credentials: "include" });
+      if (res.ok) setComments(await res.json());
+    } catch { /* ignore */ }
+    setCommentsLoading(false);
+  }, []);
+
+  const openDetail = (id: number) => {
+    setSelectedId(id);
+    setNewComment("");
+    loadComments(id);
+  };
+
+  const postComment = async () => {
+    if (!selectedId || !newComment.trim()) return;
+    setPostingComment(true);
+    try {
+      const res = await fetch(`${BASE}/api/improvements/${selectedId}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ comment: newComment.trim() }),
+      });
+      if (res.ok) {
+        const row = await res.json();
+        setComments(prev => [...prev, row]);
+        setNewComment("");
+        setTimeout(() => commentsEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+      }
+    } catch {
+      toast({ title: "Failed to post comment", variant: "destructive" });
+    }
+    setPostingComment(false);
+  };
 
   // Filters
   const [viewTab, setViewTab] = useState<"all" | "mine">("all");
@@ -1482,10 +2056,10 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
             </thead>
             <tbody className="divide-y divide-border/50">
               {filtered.map(imp => (
-                <tr key={imp.id} className={cn("transition-colors align-top", statusRowClass(imp.progressStatus))}>
+                <tr key={imp.id} className={cn("transition-colors align-top cursor-pointer hover:bg-secondary/40", statusRowClass(imp.progressStatus))} onClick={() => openDetail(imp.id)}>
                   <td className="px-4 py-3">
                     <p className="font-medium">{imp.title}</p>
-                    {imp.description && <p className="text-xs text-muted-foreground mt-0.5 max-w-xs">{imp.description}</p>}
+                    {imp.description && <p className="text-xs text-muted-foreground mt-0.5 max-w-xs line-clamp-2">{imp.description}</p>}
                   </td>
                   <td className="px-4 py-3 text-center">
                     <span className={cn(
@@ -1504,7 +2078,7 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
                   <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
                     {imp.createdAt ? format(new Date(imp.createdAt), "d MMM yyyy") : "—"}
                   </td>
-                  <td className="px-4 py-3 text-center">
+                  <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
                     {isManager ? (
                       <select
                         value={imp.approvalTier ?? ""}
@@ -1518,7 +2092,7 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
                       <span className="text-muted-foreground capitalize">{imp.approvalTier ?? "—"}</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-center">
+                  <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
                     {isManager ? (
                       <select
                         value={imp.progressStatus}
@@ -1534,7 +2108,7 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                     {isManager ? (
                       <div className="flex items-start gap-2">
                         <textarea
@@ -1559,7 +2133,7 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
                     )}
                   </td>
                   {isAdmin && (
-                    <td className="px-4 py-3 text-center">
+                    <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
                       <button
                         onClick={() => deleteEntry(imp.id)}
                         className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-xs px-2 py-1 rounded-lg border border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
@@ -1574,6 +2148,125 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
           </table>
         </div>
       )}
+
+      {/* Detail dialog */}
+      <Dialog open={selectedId !== null} onOpenChange={open => { if (!open) setSelectedId(null); }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+          {selectedImp && (
+            <>
+              <DialogHeader>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={cn(
+                    "px-2.5 py-0.5 rounded-full text-xs font-medium",
+                    (selectedImp.type ?? "improvement") === "struggle"
+                      ? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
+                      : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                  )}>
+                    {(selectedImp.type ?? "improvement") === "struggle" ? "Struggle" : "Improvement"}
+                  </span>
+                  <span className={cn("px-2 py-0.5 rounded-full text-xs", statusBadgeClass(selectedImp.progressStatus))}>
+                    {IMPROVEMENT_PROGRESS_OPTIONS.find(o => o.value === selectedImp.progressStatus)?.label ?? selectedImp.progressStatus}
+                  </span>
+                  {selectedImp.approvalTier && (
+                    <span className="px-2 py-0.5 rounded-full text-xs bg-secondary text-muted-foreground capitalize">
+                      {selectedImp.approvalTier}
+                    </span>
+                  )}
+                </div>
+                <DialogTitle className="text-xl">{selectedImp.title}</DialogTitle>
+                <DialogDescription className="text-sm text-muted-foreground">
+                  {STATION_LABELS_REPORT[selectedImp.station] ?? selectedImp.station}
+                  {" · "}
+                  {selectedImp.submittedByName ?? "Unknown"}
+                  {" · "}
+                  {selectedImp.createdAt ? format(new Date(selectedImp.createdAt), "d MMM yyyy, HH:mm") : "—"}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="flex-1 overflow-y-auto space-y-4 mt-2">
+                {/* Full description */}
+                <div className="bg-secondary/30 rounded-xl p-4">
+                  <p className="text-sm font-medium text-muted-foreground mb-1">Description</p>
+                  <p className="text-sm whitespace-pre-wrap">{selectedImp.description}</p>
+                </div>
+
+                {/* Report context */}
+                {selectedImp.reportContext && (
+                  <div className="bg-blue-50/50 dark:bg-blue-950/20 border border-blue-200/50 dark:border-blue-800/50 rounded-xl px-4 py-3 flex items-start gap-2">
+                    <Package className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-xs font-medium text-blue-700 dark:text-blue-400 mb-0.5">Reported from</p>
+                      <p className="text-sm text-blue-800 dark:text-blue-300">{selectedImp.reportContext}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Manager notes */}
+                {selectedImp.notes && (
+                  <div className="bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/50 dark:border-amber-800/50 rounded-xl p-4">
+                    <p className="text-sm font-medium text-amber-700 dark:text-amber-400 mb-1">Manager Notes</p>
+                    <p className="text-sm whitespace-pre-wrap">{selectedImp.notes}</p>
+                  </div>
+                )}
+
+                {/* Comments section */}
+                <div className="border-t border-border pt-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <MessageSquare className="w-4 h-4 text-muted-foreground" />
+                    <p className="text-sm font-semibold">Comments ({comments.length})</p>
+                  </div>
+
+                  {commentsLoading ? (
+                    <div className="flex items-center justify-center py-6 text-muted-foreground">
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />Loading...
+                    </div>
+                  ) : comments.length === 0 ? (
+                    <p className="text-sm text-muted-foreground italic py-3">No comments yet. Be the first to add an update.</p>
+                  ) : (
+                    <div className="space-y-3 max-h-[240px] overflow-y-auto pr-1">
+                      {comments.map(c => (
+                        <div key={c.id} className="bg-secondary/20 rounded-lg px-3.5 py-2.5">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-sm font-medium">{c.userName ?? "Unknown"}</span>
+                            <span className="text-xs text-muted-foreground">{format(new Date(c.createdAt), "d MMM yyyy, HH:mm")}</span>
+                          </div>
+                          <p className="text-sm whitespace-pre-wrap">{c.comment}</p>
+                        </div>
+                      ))}
+                      <div ref={commentsEndRef} />
+                    </div>
+                  )}
+
+                  {/* Add comment input */}
+                  <div className="flex items-start gap-2 mt-3">
+                    <textarea
+                      value={newComment}
+                      onChange={e => setNewComment(e.target.value)}
+                      placeholder="Add a comment or update..."
+                      rows={2}
+                      className="flex-1 px-3 py-2 border border-border rounded-lg text-sm bg-background resize-none focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                      onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) postComment(); }}
+                    />
+                    <button
+                      onClick={postComment}
+                      disabled={!newComment.trim() || postingComment}
+                      className={cn(
+                        "px-3 py-2 rounded-lg transition-all mt-0.5",
+                        newComment.trim()
+                          ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow active:scale-95"
+                          : "bg-secondary text-muted-foreground cursor-not-allowed"
+                      )}
+                    >
+                      {postingComment ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">Press Cmd+Enter to send</p>
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1586,6 +2279,15 @@ const ANDON_CATEGORY_LABELS: Record<string, string> = {
   other: "Other",
 };
 
+interface AndonComment {
+  id: number;
+  andonId: number;
+  userId: number | null;
+  userName: string | null;
+  comment: string;
+  createdAt: string;
+}
+
 function AndonLogTab({ userRole }: { userRole: string }) {
   const [issues, setIssues] = useState<AndonIssueRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1594,7 +2296,54 @@ function AndonLogTab({ userRole }: { userRole: string }) {
   const [categoryFilter, setCategoryFilter] = useState("");
   const [severityFilter, setSeverityFilter] = useState("");
 
+  // Detail dialog + comments state (mirrors ImprovementsTab)
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [comments, setComments] = useState<AndonComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [newComment, setNewComment] = useState("");
+  const [postingComment, setPostingComment] = useState(false);
+  const commentsEndRef = useRef<HTMLDivElement>(null);
+
+  const selectedIssue = selectedId !== null ? issues.find(i => i.id === selectedId) ?? null : null;
+
   const isManager = userRole === "admin" || userRole === "manager";
+
+  const loadComments = useCallback(async (id: number) => {
+    setCommentsLoading(true);
+    try {
+      const res = await fetch(`${BASE}/api/andon/${id}/comments`, { credentials: "include" });
+      if (res.ok) setComments(await res.json());
+    } catch { /* ignore */ }
+    setCommentsLoading(false);
+  }, []);
+
+  const openDetail = (id: number) => {
+    setSelectedId(id);
+    setNewComment("");
+    loadComments(id);
+  };
+
+  const postComment = async () => {
+    if (!selectedId || !newComment.trim()) return;
+    setPostingComment(true);
+    try {
+      const res = await fetch(`${BASE}/api/andon/${selectedId}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ comment: newComment.trim() }),
+      });
+      if (res.ok) {
+        const row = await res.json();
+        setComments(prev => [...prev, row]);
+        setNewComment("");
+        setTimeout(() => commentsEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+      }
+    } catch {
+      toast({ title: "Failed to post comment", variant: "destructive" });
+    }
+    setPostingComment(false);
+  };
 
   async function load() {
     setLoading(true);
@@ -1677,7 +2426,7 @@ function AndonLogTab({ userRole }: { userRole: string }) {
       ) : issues.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border p-12 text-center">
           <AlertTriangle className="w-10 h-10 mx-auto mb-3 opacity-30" />
-          <p className="font-medium text-muted-foreground">No Andon issues found</p>
+          <p className="font-medium text-muted-foreground">No issues found</p>
         </div>
       ) : (
         <div className="rounded-2xl border border-border bg-card overflow-x-auto">
@@ -1697,7 +2446,11 @@ function AndonLogTab({ userRole }: { userRole: string }) {
             </thead>
             <tbody className="divide-y divide-border/50">
               {issues.map(issue => (
-                <tr key={issue.id} className="hover:bg-secondary/10 transition-colors align-top">
+                <tr
+                  key={issue.id}
+                  onClick={() => openDetail(issue.id)}
+                  className="hover:bg-secondary/20 cursor-pointer transition-colors align-top"
+                >
                   <td className="px-4 py-3">
                     <span className={cn(
                       "flex items-center gap-1.5 text-xs font-bold",
@@ -1743,7 +2496,7 @@ function AndonLogTab({ userRole }: { userRole: string }) {
                     )}
                   </td>
                   {isManager && (
-                    <td className="px-4 py-3 text-center">
+                    <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
                       <div className="flex flex-col gap-1.5 items-center">
                         {!issue.acknowledgedAt && (
                           <button
@@ -1777,6 +2530,161 @@ function AndonLogTab({ userRole }: { userRole: string }) {
           </table>
         </div>
       )}
+
+      {/* Detail dialog (mirrors ImprovementsTab) */}
+      <Dialog open={selectedId !== null} onOpenChange={open => { if (!open) setSelectedId(null); }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+          {selectedIssue && (
+            <>
+              <DialogHeader>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={cn(
+                    "flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold",
+                    selectedIssue.severity === "red"
+                      ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                      : "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+                  )}>
+                    <span className={cn("w-2 h-2 rounded-full", selectedIssue.severity === "red" ? "bg-red-500" : "bg-yellow-400")} />
+                    {selectedIssue.severity === "red" ? "Serious" : "Minor"}
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary text-muted-foreground capitalize">
+                    {ANDON_CATEGORY_LABELS[selectedIssue.category] ?? selectedIssue.category}
+                  </span>
+                  {selectedIssue.resolvedAt ? (
+                    <span className="px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 font-semibold">Resolved</span>
+                  ) : selectedIssue.acknowledgedAt ? (
+                    <span className="px-2 py-0.5 rounded-full text-xs bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400">Acknowledged</span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-full text-xs bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300">Open</span>
+                  )}
+                </div>
+                <DialogTitle className="text-xl">
+                  {selectedIssue.description && selectedIssue.description.trim()
+                    ? selectedIssue.description.split("\n")[0].slice(0, 100)
+                    : `${ANDON_CATEGORY_LABELS[selectedIssue.category] ?? selectedIssue.category} issue`}
+                </DialogTitle>
+                <DialogDescription className="text-sm text-muted-foreground">
+                  {STATION_LABELS_REPORT[selectedIssue.station] ?? selectedIssue.station}
+                  {" · "}
+                  {selectedIssue.reportedByName ?? "Unknown"}
+                  {" · "}
+                  {selectedIssue.createdAt ? format(new Date(selectedIssue.createdAt), "d MMM yyyy, HH:mm") : "—"}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="flex-1 overflow-y-auto space-y-4 mt-2">
+                {/* Full description */}
+                {selectedIssue.description && (
+                  <div className="bg-secondary/30 rounded-xl p-4">
+                    <p className="text-sm font-medium text-muted-foreground mb-1">Description</p>
+                    <p className="text-sm whitespace-pre-wrap">{selectedIssue.description}</p>
+                  </div>
+                )}
+
+                {/* Resolution metadata */}
+                {(selectedIssue.acknowledgedAt || selectedIssue.resolvedAt) && (
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    {selectedIssue.acknowledgedAt && (
+                      <div className="bg-violet-50/50 dark:bg-violet-950/20 border border-violet-200/50 dark:border-violet-800/50 rounded-xl px-3 py-2">
+                        <p className="font-medium text-violet-700 dark:text-violet-400">Acknowledged</p>
+                        <p className="text-muted-foreground">{selectedIssue.acknowledgedByName ?? "—"}</p>
+                        <p className="text-muted-foreground">{format(new Date(selectedIssue.acknowledgedAt), "d MMM yyyy, HH:mm")}</p>
+                      </div>
+                    )}
+                    {selectedIssue.resolvedAt && (
+                      <div className="bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/50 dark:border-emerald-800/50 rounded-xl px-3 py-2">
+                        <p className="font-medium text-emerald-700 dark:text-emerald-400">Resolved</p>
+                        <p className="text-muted-foreground">{selectedIssue.resolvedByName ?? "—"}</p>
+                        <p className="text-muted-foreground">{format(new Date(selectedIssue.resolvedAt), "d MMM yyyy, HH:mm")}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Manager quick actions */}
+                {isManager && (!selectedIssue.acknowledgedAt || !selectedIssue.resolvedAt) && (
+                  <div className="flex gap-2">
+                    {!selectedIssue.acknowledgedAt && (
+                      <button
+                        onClick={() => acknowledge(selectedIssue.id)}
+                        disabled={actioningId === selectedIssue.id}
+                        className="flex items-center gap-1.5 text-sm px-3 py-2 border border-border rounded-lg hover:bg-secondary transition-colors disabled:opacity-50"
+                      >
+                        <CheckCircle className="w-4 h-4" />
+                        Acknowledge
+                      </button>
+                    )}
+                    {!selectedIssue.resolvedAt && (
+                      <button
+                        onClick={() => resolve(selectedIssue.id)}
+                        disabled={actioningId === selectedIssue.id}
+                        className="flex items-center gap-1.5 text-sm px-3 py-2 border border-emerald-500 text-emerald-600 dark:text-emerald-400 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors disabled:opacity-50"
+                      >
+                        <CheckCircle className="w-4 h-4" />
+                        Resolve
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Comments section */}
+                <div className="border-t border-border pt-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <MessageSquare className="w-4 h-4 text-muted-foreground" />
+                    <p className="text-sm font-semibold">Comments ({comments.length})</p>
+                  </div>
+
+                  {commentsLoading ? (
+                    <div className="flex items-center justify-center py-6 text-muted-foreground">
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />Loading...
+                    </div>
+                  ) : comments.length === 0 ? (
+                    <p className="text-sm text-muted-foreground italic py-3">No comments yet. Be the first to add an update.</p>
+                  ) : (
+                    <div className="space-y-3 max-h-[240px] overflow-y-auto pr-1">
+                      {comments.map(c => (
+                        <div key={c.id} className="bg-secondary/20 rounded-lg px-3.5 py-2.5">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-sm font-medium">{c.userName ?? "Unknown"}</span>
+                            <span className="text-xs text-muted-foreground">{format(new Date(c.createdAt), "d MMM yyyy, HH:mm")}</span>
+                          </div>
+                          <p className="text-sm whitespace-pre-wrap">{c.comment}</p>
+                        </div>
+                      ))}
+                      <div ref={commentsEndRef} />
+                    </div>
+                  )}
+
+                  {/* Add comment input */}
+                  <div className="flex items-start gap-2 mt-3">
+                    <textarea
+                      value={newComment}
+                      onChange={e => setNewComment(e.target.value)}
+                      placeholder="Add a comment or update..."
+                      rows={2}
+                      className="flex-1 px-3 py-2 border border-border rounded-lg text-sm bg-background resize-none focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                      onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) postComment(); }}
+                    />
+                    <button
+                      onClick={postComment}
+                      disabled={!newComment.trim() || postingComment}
+                      className={cn(
+                        "px-3 py-2 rounded-lg transition-all mt-0.5",
+                        newComment.trim()
+                          ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow active:scale-95"
+                          : "bg-secondary text-muted-foreground cursor-not-allowed"
+                      )}
+                    >
+                      {postingComment ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">Press Cmd+Enter to send</p>
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

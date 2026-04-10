@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useLocation, useSearch } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ChevronLeft, BarChart2, ClipboardList, Layers, Beef, Menu, X,
+  ChevronLeft, ChevronDown, ChevronUp, BarChart2, ClipboardList, Layers, Beef, Menu, X, LayoutGrid,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -72,6 +72,7 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
   const [location, navigate] = useLocation();
   const search = useSearch();
   const [navOpen, setNavOpen] = useState(false);
+  const [stationNavOpen, setStationNavOpen] = useState(false);
   const { state, logout, lockStation } = useAuth();
   const { canAccess } = usePagePermissions();
   const andonBadge = useAndonBadge(stationType);
@@ -174,7 +175,9 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
         )}
       </AnimatePresence>
 
-      {/* Sticky station top-bar */}
+      {/* Sticky station top-bar (contains the collapsible station nav so it
+          always renders at the current viewport top instead of the original
+          top of the document) */}
       <div className="border-b border-border bg-card sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-4 py-3">
           <div className="flex items-center justify-between gap-4">
@@ -211,29 +214,20 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
             </div>
 
             <div className="flex items-center gap-2">
-              <div className="hidden md:flex items-center gap-0.5">
-                {STATIONS.map(s => {
-                  const Icon = s.icon;
-                  const prepSubStations = ["main_prep", "prep_bases", "prep_meat"] as const;
-                  const isActive = s.key === stationType || (s.key === "prep" && prepSubStations.includes(stationType as typeof prepSubStations[number]));
-                  return (
-                    <button
-                      key={s.key}
-                      onClick={() => navigate(`/plans/${planId}/station/${s.key}`)}
-                      className={cn(
-                        "flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-lg font-medium transition-colors min-w-[44px]",
-                        isActive
-                          ? "bg-primary text-primary-foreground"
-                          : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
-                      )}
-                      title={s.label}
-                    >
-                      <Icon className="w-4 h-4 flex-shrink-0" />
-                      <span className="text-[9px] leading-tight text-center">{s.short}</span>
-                    </button>
-                  );
-                })}
-              </div>
+              <button
+                onClick={() => setStationNavOpen(v => !v)}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-2 rounded-lg font-medium text-sm transition-colors",
+                  stationNavOpen
+                    ? "bg-primary text-primary-foreground"
+                    : "border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60"
+                )}
+                title="Switch station"
+              >
+                <LayoutGrid className="w-4 h-4" />
+                <span className="hidden sm:inline">Stations</span>
+                {stationNavOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
 
               {(() => {
                 const prepSubKeys = ["main_prep", "prep_bases", "prep_meat"] as const;
@@ -251,13 +245,73 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
             </div>
           </div>
         </div>
+
+        {/* Collapsible station navigation grid — rendered INSIDE the sticky
+            top-bar so it appears at the current viewport top regardless of
+            scroll position. */}
+        <AnimatePresence>
+          {stationNavOpen && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="border-t border-border bg-card overflow-hidden"
+            >
+              <div className="max-w-7xl mx-auto px-4 py-4">
+              <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-3">
+                {STATIONS.map(s => {
+                  const Icon = s.icon;
+                  const prepSubStations = ["main_prep", "prep_bases", "prep_meat"] as const;
+                  const isActive = s.key === stationType || (s.key === "prep" && prepSubStations.includes(stationType as typeof prepSubStations[number]));
+                  const bgColors: Record<string, string> = {
+                    dough_prep: "bg-amber-50 dark:bg-amber-900/20",
+                    dough_sheeting: "bg-amber-50 dark:bg-amber-900/20",
+                    prep: "bg-green-50 dark:bg-green-900/20",
+                    mixing: "bg-blue-50 dark:bg-blue-900/20",
+                    building_1: "bg-orange-50 dark:bg-orange-900/20",
+                    building_2: "bg-orange-50 dark:bg-orange-900/20",
+                    ovens: "bg-red-50 dark:bg-red-900/20",
+                    wrapping: "bg-purple-50 dark:bg-purple-900/20",
+                    packing: "bg-indigo-50 dark:bg-indigo-900/20",
+                  };
+                  return (
+                    <button
+                      key={s.key}
+                      onClick={() => { navigate(`/plans/${planId}/station/${s.key}`); setStationNavOpen(false); }}
+                      className={cn(
+                        "flex flex-col items-center justify-center gap-3 p-4 min-h-[120px] rounded-2xl transition-all active:scale-[0.97]",
+                        isActive
+                          ? "border-2 border-primary bg-primary/5 shadow-sm"
+                          : "border-2 border-border hover:border-primary/50 hover:bg-secondary/40"
+                      )}
+                    >
+                      <div className={cn("w-16 h-16 rounded-xl flex items-center justify-center", bgColors[s.key] ?? "", s.color)}>
+                        <Icon className="w-8 h-8" />
+                      </div>
+                      <span className="text-sm font-bold text-center leading-tight">{s.short}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       </div>
 
       <div className="max-w-7xl mx-auto px-4 py-6">
         {children}
       </div>
 
-      <ReportButton defaultStation={stationType} />
+      <ReportButton
+        defaultStation={stationType}
+        reportContext={
+          plan
+            ? `${meta.label} station · Plan: ${format(parseISO(plan.planDate), "EEEE d MMM yyyy")}${plan.batchNumber ? ` · Batch #${plan.batchNumber}` : ""}`
+            : `${meta.label} station`
+        }
+      />
     </div>
   );
 }

@@ -93,11 +93,11 @@ function SortableAssemblyRow({
         {locked || checked
           ? <CheckSquare className="w-6 h-6 text-emerald-500 flex-shrink-0" />
           : <Square className="w-6 h-6 text-slate-400 flex-shrink-0" />}
-        <span className="text-lg font-semibold flex-1">{ai.name}</span>
-        <div className="text-right flex-shrink-0">
-          <span className="text-xl font-bold font-mono tabular-nums">{Math.round(ai.weightPerBatch)}g</span>
-          <span className="block text-sm text-muted-foreground font-mono tabular-nums">{Math.round(ai.weightHalfBatch)}g half</span>
-        </div>
+        <span className="text-2xl font-bold flex-1 leading-tight">{ai.name}</span>
+        {ai.isTopping
+          ? <span className="text-2xl font-bold font-mono flex-shrink-0 text-slate-500 dark:text-slate-400">Sprinkle</span>
+          : <span className="text-2xl font-bold font-mono tabular-nums flex-shrink-0">{Math.round(ai.weightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(ai.weightHalfBatch)}g</span></span>
+        }
       </button>
     </div>
   );
@@ -153,18 +153,15 @@ function SortableFillingRow({
         {locked || checked
           ? <CheckSquare className="w-6 h-6 text-emerald-500 flex-shrink-0" />
           : <Square className="w-6 h-6 text-slate-400 flex-shrink-0" />}
-        <span className="text-lg font-semibold text-blue-700 dark:text-blue-400 flex-1">Filling</span>
-        <div className="text-right flex-shrink-0">
-          <span className="text-xl font-bold font-mono tabular-nums">{Math.round(weightPerBatch)}g</span>
-          <span className="block text-sm text-muted-foreground font-mono tabular-nums">{Math.round(weightHalfBatch)}g half</span>
-        </div>
+        <span className="text-2xl font-bold text-blue-700 dark:text-blue-400 flex-1 leading-tight">Filling</span>
+        <span className="text-2xl font-bold font-mono tabular-nums flex-shrink-0">{Math.round(weightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(weightHalfBatch)}g</span></span>
       </button>
     </div>
   );
 }
 
-type AssemblyItemData = { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number; sourceType: "ingredient" | "sub_recipe"; sourceId: number; assemblyOrder: number | null };
-type AssemblyData = { itemId: number; recipeId: number; fillingWeightPerBatch: number; fillingWeightHalfBatch: number; assemblyItems: AssemblyItemData[]; postOvenItems?: AssemblyItemData[] };
+type AssemblyItemData = { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number; sourceType: "ingredient" | "sub_recipe"; sourceId: number; assemblyOrder: number | null; isTopping?: boolean };
+type AssemblyData = { itemId: number; recipeId: number; fillingWeightPerBatch: number; fillingWeightHalfBatch: number; fillingAssemblyOrder: number; assemblyItems: AssemblyItemData[]; postOvenItems?: AssemblyItemData[] };
 
 function ChecklistItems({
   asm, hasFilling, isAdmin, isLocked, checkedItems, toggleCheck, dndSensors, onDragEnd,
@@ -178,11 +175,14 @@ function ChecklistItems({
   dndSensors: ReturnType<typeof useSensors>;
   onDragEnd: (event: DragEndEvent) => void;
 }) {
-  // Build unified list: filling (if present) + assembly items
+  // Build unified list: assembly items with filling inserted at its saved position
   type Entry = { key: string; isFilling: boolean; ai?: AssemblyItemData };
   const allItems: Entry[] = [];
-  if (hasFilling) allItems.push({ key: "filling", isFilling: true });
   asm.assemblyItems.forEach(ai => allItems.push({ key: `${ai.sourceType}-${ai.sourceId}`, isFilling: false, ai }));
+  if (hasFilling) {
+    const pos = Math.min(asm.fillingAssemblyOrder ?? 0, allItems.length);
+    allItems.splice(pos, 0, { key: "filling", isFilling: true });
+  }
 
   if (isAdmin && !isLocked) {
     return (
@@ -238,17 +238,15 @@ function ChecklistItems({
           {isLocked || checkedItems[entry.key]
             ? <CheckSquare className="w-6 h-6 text-emerald-500 flex-shrink-0" />
             : <Square className="w-6 h-6 text-slate-400 flex-shrink-0" />}
-          <span className={cn("text-lg font-semibold flex-1", entry.isFilling && "text-blue-700 dark:text-blue-400")}>
+          <span className={cn("text-2xl font-bold flex-1 leading-tight", entry.isFilling && "text-blue-700 dark:text-blue-400")}>
             {entry.isFilling ? "Filling" : entry.ai!.name}
           </span>
-          <div className="text-right flex-shrink-0">
-            <span className="text-xl font-bold font-mono tabular-nums">
-              {Math.round(entry.isFilling ? asm.fillingWeightPerBatch : entry.ai!.weightPerBatch)}g
-            </span>
-            <span className="block text-sm text-muted-foreground font-mono tabular-nums">
-              {Math.round(entry.isFilling ? asm.fillingWeightHalfBatch : entry.ai!.weightHalfBatch)}g half
-            </span>
-          </div>
+          {!entry.isFilling && entry.ai!.isTopping
+            ? <span className="text-2xl font-bold font-mono flex-shrink-0 text-slate-500 dark:text-slate-400">Sprinkle</span>
+            : <span className="text-2xl font-bold font-mono tabular-nums flex-shrink-0">
+                {Math.round(entry.isFilling ? asm.fillingWeightPerBatch : entry.ai!.weightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(entry.isFilling ? asm.fillingWeightHalfBatch : entry.ai!.weightHalfBatch)}g</span>
+              </span>
+          }
         </button>
       ))}
     </div>
@@ -351,11 +349,14 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
       const asm = prev[itemId];
       if (!asm) return prev;
 
-      // Build unified list: filling (if present) + assembly items
+      // Build unified list: assembly items with filling at its saved position
       type UnifiedItem = { key: string; isFilling: boolean; ai?: AssemblyItemData };
       const allItems: UnifiedItem[] = [];
-      if (asm.fillingWeightPerBatch > 0) allItems.push({ key: "filling", isFilling: true });
       asm.assemblyItems.forEach(ai => allItems.push({ key: `${ai.sourceType}-${ai.sourceId}`, isFilling: false, ai }));
+      if (asm.fillingWeightPerBatch > 0) {
+        const pos = Math.min(asm.fillingAssemblyOrder ?? 0, allItems.length);
+        allItems.splice(pos, 0, { key: "filling", isFilling: true });
+      }
 
       const oldIdx = allItems.findIndex(a => a.key === active.id);
       const newIdx = allItems.findIndex(a => a.key === over.id);
@@ -366,20 +367,19 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
       const newAssemblyItems = reordered.filter(a => !a.isFilling).map(a => a.ai!);
 
       // Build order payload including filling position
-      const orderPayload = reordered.filter(a => !a.isFilling).map((a, i) => ({
+      const orderItems = reordered.filter(a => !a.isFilling).map((a, i) => ({
         sourceType: a.ai!.sourceType,
         sourceId: a.ai!.sourceId,
         order: i,
       }));
 
-      // Save filling position as a separate field
       const fillingOrder = reordered.findIndex(a => a.isFilling);
 
       fetch(`/api/recipes/${asm.recipeId}/assembly-order`, {
         method: "PUT",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(orderPayload),
+        body: JSON.stringify({ items: orderItems, fillingOrder: fillingOrder >= 0 ? fillingOrder : null }),
       })
         .then(r => {
           if (!r.ok) throw new Error("Save failed");
@@ -389,7 +389,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
           console.warn("[BuildingStation] Assembly order save failed:", err);
           toast({ title: "Failed to save order", variant: "destructive" });
         });
-      return { ...prev, [itemId]: { ...asm, assemblyItems: newAssemblyItems } };
+      return { ...prev, [itemId]: { ...asm, assemblyItems: newAssemblyItems, fillingAssemblyOrder: fillingOrder >= 0 ? fillingOrder : 0 } };
     });
   }, []);
 
@@ -467,11 +467,36 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
   const otherStation = stationType === "building_1" ? "building_2" : "building_1";
+  // Per-builder currentItem: when a recipe has only 1 batch remaining AND the other
+  // station has already completed more of this recipe than we have, yield the last
+  // batch to that builder and advance to the next recipe. This unblocks the "other"
+  // builder so they can start the next recipe while the last batch is still being made.
   const currentItem = items.find(it => {
     const combined = getCombinedBuildCount(it);
     const effectiveTarget = getEffectiveTarget(it);
-    return combined < effectiveTarget;
+    if (combined >= effectiveTarget) return false;
+    const remainingForItem = effectiveTarget - combined;
+    if (remainingForItem === 1) {
+      const myCountForItem = getStationCount(it, stationType);
+      const otherCountForItem = getStationCount(it, otherStation);
+      if (otherCountForItem > myCountForItem) return false;
+    }
+    return true;
   });
+  // If currentItem is undefined but there's still an unfinished item we've yielded
+  // to the other builder, surface it so the UI can show a "waiting on other builder"
+  // state instead of falsely declaring allDone.
+  const waitingOnOtherItem = !currentItem
+    ? items.find(it => {
+        const combined = getCombinedBuildCount(it);
+        const effectiveTarget = getEffectiveTarget(it);
+        if (combined >= effectiveTarget) return false;
+        if (effectiveTarget - combined !== 1) return false;
+        const myCountForItem = getStationCount(it, stationType);
+        const otherCountForItem = getStationCount(it, otherStation);
+        return otherCountForItem > myCountForItem;
+      })
+    : undefined;
 
   // Combined count from both lines — used for display and progress
   const buildingCount = currentItem ? getCombinedBuildCount(currentItem) : 0;
@@ -485,7 +510,12 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   const remaining = currentItem ? Math.max(0, effectiveBatches - buildingCount) : 0;
   const isLastBatchPartial = currentItem ? remaining === 1 && getLastBatchPacks(currentItem) > 0 : false;
   const lastBatchPackCount = currentItem ? getLastBatchPacks(currentItem) : 0;
-  const allDone = items.length > 0 && !currentItem;
+  // Production is fully done only when every item's combined count has hit its
+  // effective target — not just when this builder has no currentItem (they may
+  // have yielded the last batch of the final recipe to the other builder).
+  const allDone = items.length > 0 && items.every(it =>
+    getCombinedBuildCount(it) >= getEffectiveTarget(it)
+  );
 
   useEffect(() => {
     if (!currentItem) return;
@@ -798,7 +828,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                 onClick={handleBatchComplete}
                 disabled={pendingTap || isOnBreak || available <= 0 || checklistPending}
                 className={cn(
-                  "w-full flex-1 min-h-[100px] rounded-2xl text-xl sm:text-2xl font-bold transition-all select-none active:scale-95 flex items-center justify-center",
+                  "w-full h-[200px] rounded-2xl text-xl sm:text-2xl font-bold transition-all select-none active:scale-95 flex items-center justify-center",
                   remaining === 0
                     ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 border-2 border-emerald-400 opacity-60 cursor-not-allowed"
                     : isOnBreak
@@ -848,6 +878,19 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
               isOnBreak={isOnBreak}
             />
           )}
+        </div>
+      ) : waitingOnOtherItem ? (
+        <div className="bg-card border-2 border-amber-300 dark:border-amber-700 rounded-2xl p-10 text-center">
+          <AlertCircle className="w-16 h-16 text-amber-500 mx-auto mb-4" />
+          <h2 className="font-display text-2xl font-bold mb-2">Waiting on Table {lineNumber === 1 ? 2 : 1}</h2>
+          <p className="text-muted-foreground">
+            Finishing the last batch of{" "}
+            <span className="font-semibold text-foreground">
+              {waitingOnOtherItem.recipeName ?? `Recipe #${waitingOnOtherItem.recipeId}`}
+            </span>
+            .
+          </p>
+          <p className="text-xs text-muted-foreground mt-2">The next recipe will appear here automatically.</p>
         </div>
       ) : (
         <div className="bg-card border border-border rounded-2xl p-10 text-center">
@@ -932,20 +975,17 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                   <div className="divide-y divide-slate-100 dark:divide-slate-800">
                     {hasFilling && (
                       <div className="flex items-center gap-3 px-3 py-3">
-                        <span className="text-base font-semibold text-blue-700 dark:text-blue-400 flex-1">Filling</span>
-                        <div className="text-right flex-shrink-0">
-                          <span className="text-lg font-bold font-mono tabular-nums">{Math.round(asm.fillingWeightPerBatch)}g</span>
-                          <span className="block text-xs text-muted-foreground font-mono tabular-nums">{Math.round(asm.fillingWeightHalfBatch)}g half</span>
-                        </div>
+                        <span className="text-xl font-bold text-blue-700 dark:text-blue-400 flex-1 leading-tight">Filling</span>
+                        <span className="text-xl font-bold font-mono tabular-nums flex-shrink-0">{Math.round(asm.fillingWeightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(asm.fillingWeightHalfBatch)}g</span></span>
                       </div>
                     )}
                     {hasItems && asm.assemblyItems.map((ai, i) => (
                       <div key={i} className="flex items-center gap-3 px-3 py-3">
-                        <span className="text-base font-semibold flex-1">{ai.name}</span>
-                        <div className="text-right flex-shrink-0">
-                          <span className="text-lg font-bold font-mono tabular-nums">{Math.round(ai.weightPerBatch)}g</span>
-                          <span className="block text-xs text-muted-foreground font-mono tabular-nums">{Math.round(ai.weightHalfBatch)}g half</span>
-                        </div>
+                        <span className="text-xl font-bold flex-1 leading-tight">{ai.name}</span>
+                        {ai.isTopping
+                          ? <span className="text-xl font-bold font-mono flex-shrink-0 text-slate-500 dark:text-slate-400">Sprinkle</span>
+                          : <span className="text-xl font-bold font-mono tabular-nums flex-shrink-0">{Math.round(ai.weightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(ai.weightHalfBatch)}g</span></span>
+                        }
                       </div>
                     ))}
                   </div>

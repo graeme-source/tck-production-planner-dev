@@ -96,7 +96,9 @@ export interface NextActivePlan {
   planId: number | null;
   planDate: string | null;
   planName: string | null;
+  prepDate: string | null;
   status: string | null;
+  sameDayPlans?: Array<{ planId: number; planName: string }>;
 }
 
 export function useNextActivePlan(afterDate?: string) {

@@ -1,6 +1,6 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { db, andonIssuesTable, usersTable } from "@workspace/db";
-import { eq, isNull, desc, and, SQL } from "drizzle-orm";
+import { db, andonIssuesTable, andonCommentsTable, usersTable } from "@workspace/db";
+import { eq, isNull, desc, asc, and, SQL } from "drizzle-orm";
 import type { AndonIssue } from "@workspace/db";
 
 const router: IRouter = Router();
@@ -29,7 +29,7 @@ router.get("/", async (req: Request, res: Response) => {
 
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { category, severity, description, station } = req.body;
+    const { category, severity, description, station, reportContext } = req.body;
     if (!category || !severity || !station) {
       res.status(400).json({ error: "category, severity, and station are required" });
       return;
@@ -51,6 +51,7 @@ router.post("/", async (req: Request, res: Response) => {
         station,
         reportedBy: userId ?? null,
         reportedByName,
+        reportContext: reportContext || null,
       })
       .returning();
 
@@ -221,6 +222,52 @@ router.delete("/:id", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("Error deleting andon issue:", err);
     res.status(500).json({ error: "Failed to delete andon issue" });
+  }
+});
+
+// --- Comments ---------------------------------------------------------------
+
+router.get("/:id/comments", async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(String(req.params.id), 10);
+    if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+    const rows = await db
+      .select()
+      .from(andonCommentsTable)
+      .where(eq(andonCommentsTable.andonId, id))
+      .orderBy(asc(andonCommentsTable.createdAt));
+    res.json(rows);
+  } catch (err) {
+    console.error("Error fetching andon comments:", err);
+    res.status(500).json({ error: "Failed to fetch comments" });
+  }
+});
+
+router.post("/:id/comments", async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(String(req.params.id), 10);
+    if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+    const { comment } = req.body;
+    if (!comment || typeof comment !== "string" || !comment.trim()) {
+      res.status(400).json({ error: "comment is required" });
+      return;
+    }
+
+    const userId = req.session.userId;
+    let userName: string | null = null;
+    if (userId) {
+      const [user] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId));
+      userName = user?.name ?? null;
+    }
+
+    const [row] = await db
+      .insert(andonCommentsTable)
+      .values({ andonId: id, userId: userId ?? null, userName, comment: comment.trim() })
+      .returning();
+    res.status(201).json(row);
+  } catch (err) {
+    console.error("Error creating andon comment:", err);
+    res.status(500).json({ error: "Failed to create comment" });
   }
 });
 

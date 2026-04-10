@@ -95,8 +95,8 @@ function YieldSanityCheck({
   for (const row of ingredientRows) {
     const ing = allIngredients.find(i => i.id === row.ingredientId);
     if (!ing) continue;
-    if (ing.unit === "kg") cookedKg += row.quantity;
-    else if (ing.unit === "g") cookedKg += row.quantity / 1000;
+    if (ing.unit === "kg") cookedKg += Number(row.quantity);
+    else if (ing.unit === "g") cookedKg += Number(row.quantity) / 1000;
     else { allWeight = false; continue; }
   }
 
