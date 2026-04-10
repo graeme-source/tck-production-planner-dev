@@ -1084,6 +1084,13 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                   <span className="italic">{viewItem.notes}</span>
                 )}
               </div>
+
+              {/* Pack adjustment — allows editing extras/shorts on completed recipes */}
+              <PackAdjustment
+                planId={plan.id}
+                item={viewItem}
+                isOnBreak={isOnBreak}
+              />
             </div>
           </div>
         );
