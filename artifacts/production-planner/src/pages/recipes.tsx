@@ -761,7 +761,7 @@ function EditRecipeDialog({
     (authState.user.role === "admin" || authState.user.role === "manager");
 
   const queryClient = useQueryClient();
-  const { data: detail, isLoading } = useGetRecipe(id, { query: { enabled: open } });
+  const { data: detail, isLoading, isFetching } = useGetRecipe(id, { query: { enabled: open } });
   const { data: allRecipes } = useListRecipes({ query: { enabled: open } });
   const { updateRecipe } = useAppMutations();
 
@@ -966,12 +966,12 @@ function EditRecipeDialog({
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent className="sm:max-w-[720px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle className="font-display text-xl">Edit Recipe</DialogTitle></DialogHeader>
-          {isLoading ? (
+          {(isLoading || isFetching) ? (
             <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
           ) : (
             <>
               <RecipeForm
-                key={id}
+                key={`${id}-${detail?.ingredients?.length}`}
                 defaultValues={defaultValues}
                 isEdit
                 isPending={updateRecipe.isPending}
