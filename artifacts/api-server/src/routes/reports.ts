@@ -396,6 +396,7 @@ router.get("/production-kpis", async (req, res) => {
   let productionStartTime: string | null = null;
   let productionFinishTime: string | null = null;
   let wallClockMinutes = 0;
+  let productionActiveMinutes = 0;
   if (buildingCompletions.length > 0) {
     const times = buildingCompletions.map(c => c.completedAt.getTime());
     const earliest = new Date(Math.min(...times));
@@ -403,12 +404,37 @@ router.get("/production-kpis", async (req, res) => {
     productionStartTime = earliest.toISOString();
     productionFinishTime = latest.toISOString();
     wallClockMinutes = Math.round((latest.getTime() - earliest.getTime()) / 60000);
+
+    // Merge all building-station breaks within the production window into
+    // non-overlapping intervals, then subtract from wall-clock time.
+    const buildingBreaks = breaks.filter(
+      b => (b.stationType === "building_1" || b.stationType === "building_2") && b.endedAt
+    );
+    const intervals: { start: number; end: number }[] = [];
+    for (const b of buildingBreaks) {
+      const s = Math.max(new Date(b.startedAt!).getTime(), earliest.getTime());
+      const e = Math.min(new Date(b.endedAt!).getTime(), latest.getTime());
+      if (e > s) intervals.push({ start: s, end: e });
+    }
+    // Sort and merge overlapping intervals
+    intervals.sort((a, b) => a.start - b.start);
+    const merged: { start: number; end: number }[] = [];
+    for (const iv of intervals) {
+      const last = merged[merged.length - 1];
+      if (last && iv.start <= last.end) {
+        last.end = Math.max(last.end, iv.end);
+      } else {
+        merged.push({ ...iv });
+      }
+    }
+    const totalBreakMins = merged.reduce((s, iv) => s + (iv.end - iv.start) / 60000, 0);
+    productionActiveMinutes = Math.round(Math.max(0, wallClockMinutes - totalBreakMins));
   }
 
   res.json({
     overview: {
       totalBatches,
-      totalActiveMinutes,
+      totalActiveMinutes: productionActiveMinutes,
       wallClockMinutes,
       overallBph,
       uniqueDays,

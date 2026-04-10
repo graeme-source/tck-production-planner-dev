@@ -459,7 +459,7 @@ function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: str
           value={data.overview.totalActiveMinutes >= 60
             ? `${Math.floor(data.overview.totalActiveMinutes / 60)}h ${data.overview.totalActiveMinutes % 60}m`
             : `${data.overview.totalActiveMinutes}m`}
-          sub="Total productive time"
+          sub="Start to finish minus breaks"
         />
       </div>
 
