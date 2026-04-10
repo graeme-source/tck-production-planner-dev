@@ -384,6 +384,22 @@ export interface PostcodeCheckResult {
   reason?: string;
 }
 
+/**
+ * Check whether a specific APC service code can deliver to a given
+ * postcode by calling the official ServiceAvailability endpoint.
+ *
+ * Per the APC API Integration Guide v3.1.2 (section 3), the correct
+ * method is:
+ *   POST /api/3.0/ServiceAvailability.json
+ * with a JSON body containing collection/delivery postcodes, date,
+ * weight, and shipment details. APC returns a list of available
+ * services; we check if our target service code is in that list.
+ *
+ * The previous implementation called a non-existent
+ * GET /PostcodeServiceCheck endpoint which returned HTML error pages.
+ */
+const COLLECTION_POSTCODE = "MK17 9FX"; // TCK factory
+
 export async function checkPostcodeService(
   postcode: string,
   serviceCode: string,
@@ -394,79 +410,130 @@ export async function checkPostcodeService(
   }
 
   const base = apiBase ?? APC_API_BASE;
+  const url = `${base}/ServiceAvailability.json`;
+
+  // APC requires postcodes WITH a space (e.g. "MK17 9FX" not "MK179FX")
   const cleanPostcode = postcode.replace(/\s+/g, "").toUpperCase();
+  const formattedPostcode = cleanPostcode.length > 3
+    ? `${cleanPostcode.slice(0, -3)} ${cleanPostcode.slice(-3)}`
+    : cleanPostcode;
 
-  const url = `${base}/PostcodeServiceCheck/${encodeURIComponent(cleanPostcode)}/${encodeURIComponent(serviceCode)}.json`;
+  // Use tomorrow as collection date (parcels are being dispatched, not
+  // collected today in most cases). APC rejects past dates.
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const collectionDate = `${String(tomorrow.getDate()).padStart(2, "0")}/${String(tomorrow.getMonth() + 1).padStart(2, "0")}/${tomorrow.getFullYear()}`;
 
-  console.log(`[APC PostcodeServiceCheck] requesting ${url} (base: ${base})`);
+  const payload = {
+    Orders: {
+      Order: {
+        CollectionDate: collectionDate,
+        ReadyAt: "09:00",
+        ClosedAt: "17:00",
+        Collection: {
+          PostalCode: COLLECTION_POSTCODE,
+          CountryCode: "GB",
+        },
+        Delivery: {
+          PostalCode: formattedPostcode,
+          CountryCode: "GB",
+        },
+        GoodsInfo: {
+          GoodsValue: "1",
+          Fragile: "False",
+        },
+        ShipmentDetails: {
+          NumberOfPieces: "1",
+          Items: {
+            Item: {
+              Type: "PARCEL",
+              Weight: "1",
+              Length: "30",
+              Width: "20",
+              Height: "15",
+              Value: "15",
+            },
+          },
+        },
+      },
+    },
+  };
+
+  console.log(`[APC ServiceAvailability] POST ${url} — checking ${formattedPostcode} for service ${serviceCode}`);
 
   const res = await fetch(url, {
-    method: "GET",
+    method: "POST",
     headers: {
       "remote-user": basicAuthHeader(base),
       "Content-Type": "application/json",
     },
+    body: JSON.stringify(payload),
   });
 
-  // Read body as text first so we can log it before parsing
   const rawText = await res.text();
 
   if (!res.ok) {
-    console.error(`[APC PostcodeServiceCheck] HTTP ${res.status} for ${postcode}/${serviceCode}:`, rawText.slice(0, 500));
-    if (res.status === 404) {
-      return { available: false, reason: `Postcode ${postcode} not found in APC system` };
-    }
-    let detail = `(${res.status})`;
+    console.error(`[APC ServiceAvailability] HTTP ${res.status}:`, rawText.slice(0, 500));
+    let detail = `(HTTP ${res.status})`;
     try {
       const errJson = JSON.parse(rawText);
-      const desc = errJson?.Messages?.Description ?? errJson?.Orders?.Messages?.Description;
+      const desc = errJson?.ServiceAvailability?.Messages?.Description
+        ?? errJson?.Messages?.Description;
       if (desc) detail = desc;
     } catch { /* fall through */ }
-    throw new Error(`APC postcode check failed ${detail}`);
+    throw new Error(`APC service availability check failed ${detail}`);
   }
 
   let json: any;
   try {
     json = JSON.parse(rawText);
   } catch {
-    // Log the first 500 chars of whatever APC returned so we can debug
-    console.error(`[APC PostcodeServiceCheck] non-JSON response for ${postcode}/${serviceCode} (HTTP ${res.status}):`, rawText.slice(0, 500));
-    throw new Error(`APC postcode check returned invalid JSON (HTTP ${res.status}) — first 200 chars: ${rawText.slice(0, 200)}`);
+    console.error(`[APC ServiceAvailability] non-JSON response (HTTP ${res.status}):`, rawText.slice(0, 500));
+    throw new Error(`APC returned invalid JSON (HTTP ${res.status}) — first 200 chars: ${rawText.slice(0, 200)}`);
   }
 
-  // Diagnostic log: surface exactly what APC returns so we can debug
-  // false positives. Remove or reduce to debug-level once the parser
-  // is confirmed correct.
-  console.log(`[APC PostcodeServiceCheck] ${postcode} / ${serviceCode} →`, JSON.stringify(json));
+  // Check the top-level messages for errors
+  const msgCode = json?.ServiceAvailability?.Messages?.Code;
+  const msgDesc = json?.ServiceAvailability?.Messages?.Description;
 
-  const msgCode = json?.PostcodeServiceCheck?.Messages?.Code
-    ?? json?.Messages?.Code;
-  const msgDesc = json?.PostcodeServiceCheck?.Messages?.Description
-    ?? json?.Messages?.Description;
-
-  if (msgCode === "SUCCESS" || msgCode === "AVAILABLE") {
-    return { available: true };
-  }
-
-  if (msgCode === "NOT_AVAILABLE" || msgCode === "UNAVAILABLE" || msgCode === "ERROR") {
+  if (msgCode && msgCode !== "SUCCESS") {
+    console.warn(`[APC ServiceAvailability] ${formattedPostcode}: ${msgCode} — ${msgDesc}`);
     return {
       available: false,
-      reason: msgDesc ?? `Service ${serviceCode} not available for postcode ${postcode}`,
+      reason: msgDesc ?? `APC error: ${msgCode}`,
     };
   }
 
-  const isAvailable = json?.PostcodeServiceCheck?.Available === true
-    || json?.PostcodeServiceCheck?.Available === "true"
-    || json?.Available === true
-    || json?.Available === "true";
+  // Parse the list of available services and check if our target code
+  // is among them. APC returns Services.Service as either an array or
+  // a single object.
+  const services = json?.ServiceAvailability?.Services?.Service;
+  if (!services) {
+    console.warn(`[APC ServiceAvailability] ${formattedPostcode}: no services returned`, JSON.stringify(json).slice(0, 300));
+    return {
+      available: false,
+      reason: `No APC services available to ${formattedPostcode}`,
+    };
+  }
 
-  if (isAvailable) {
+  const serviceList = Array.isArray(services) ? services : [services];
+  const matchingService = serviceList.find(
+    (s: { ProductCode?: string }) => s.ProductCode?.toUpperCase() === serviceCode.toUpperCase(),
+  );
+
+  if (matchingService) {
+    console.log(`[APC ServiceAvailability] ${formattedPostcode} ✓ ${serviceCode} available`);
     return { available: true };
   }
 
+  const availableCodes = serviceList
+    .map((s: { ProductCode?: string }) => s.ProductCode)
+    .filter(Boolean)
+    .join(", ");
+  console.log(`[APC ServiceAvailability] ${formattedPostcode} ✗ ${serviceCode} NOT in [${availableCodes}]`);
   return {
     available: false,
-    reason: msgDesc ?? `Service ${serviceCode} may not be available for postcode ${postcode}`,
+    reason: `Service ${serviceCode} not available to ${formattedPostcode}. Available: ${availableCodes || "none"}`,
   };
 }
 
