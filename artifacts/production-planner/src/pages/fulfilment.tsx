@@ -115,19 +115,23 @@ async function fetchConfigStatus(): Promise<ConfigStatus> {
   return res.json();
 }
 
-interface WeekendCheckOrderResult {
+// WeekendCheckOrderResult kept as alias for backwards compat with any
+// callers — the canonical type is now ServiceCheckOrderResult above.
+type WeekendCheckOrderResult = ServiceCheckOrderResult;
+
+interface ServiceCheckResult {
+  tag: string;
+  results: ServiceCheckOrderResult[];
+  summary: { available: number; unavailable: number; total: number };
+}
+
+interface ServiceCheckOrderResult {
   orderName: string;
   customerName: string;
   postcode: string;
   available: boolean;
   reason?: string;
-}
-
-interface WeekendCheckResult {
-  tag: string;
-  serviceCode: string;
-  results: WeekendCheckOrderResult[];
-  summary: { available: number; unavailable: number; total: number };
+  serviceCode?: string;
 }
 
 interface DispatchProgress {
@@ -516,21 +520,20 @@ export default function Fulfilment() {
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
   const [weekendCheckTag, setWeekendCheckTag] = useState(today);
-  const [weekendCheckServiceCode, setWeekendCheckServiceCode] = useState("WL16");
   const [weekendCheckLoading, setWeekendCheckLoading] = useState(false);
   const [weekendCheckError, setWeekendCheckError] = useState<string | null>(null);
-  const [weekendCheckResults, setWeekendCheckResults] = useState<WeekendCheckResult | null>(null);
+  const [weekendCheckResults, setWeekendCheckResults] = useState<ServiceCheckResult | null>(null);
 
   async function runWeekendCheck() {
     setWeekendCheckLoading(true);
     setWeekendCheckError(null);
     setWeekendCheckResults(null);
     try {
-      const params = new URLSearchParams({ tag: weekendCheckTag, serviceCode: weekendCheckServiceCode });
-      const res = await fetch(`${BASE}/api/fulfilment/weekend-service-check?${params}`, { credentials: "include" });
+      const params = new URLSearchParams({ tag: weekendCheckTag });
+      const res = await fetch(`${BASE}/api/fulfilment/service-check?${params}`, { credentials: "include" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Check failed");
-      setWeekendCheckResults(data as WeekendCheckResult);
+      setWeekendCheckResults(data as ServiceCheckResult);
     } catch (err: any) {
       setWeekendCheckError(err.message ?? "Unknown error");
     } finally {
@@ -1621,12 +1624,18 @@ export default function Fulfilment() {
           </div>
         )}
 
-        {/* Weekend Service Check */}
+        {/* APC Service Check — validates postcodes against the correct service
+            code for the delivery date, using the codes configured in Settings. */}
         <details className="text-sm">
           <summary className="cursor-pointer font-medium text-foreground hover:text-primary transition-colors select-none">
-            Weekend Service Check
+            APC Service Check
           </summary>
           <div className="mt-4 space-y-4">
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Checks every order for this delivery date against APC&rsquo;s production postcode database.
+              The correct service code is selected automatically per order from your Settings
+              (based on box size and delivery day).
+            </p>
             <div className="flex flex-wrap gap-3 items-end">
               <div>
                 <label className="text-xs font-medium mb-1 block text-muted-foreground">Delivery date tag</label>
@@ -1637,19 +1646,9 @@ export default function Fulfilment() {
                   className="px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                 />
               </div>
-              <div>
-                <label className="text-xs font-medium mb-1 block text-muted-foreground">APC service code</label>
-                <input
-                  type="text"
-                  value={weekendCheckServiceCode}
-                  onChange={e => { setWeekendCheckServiceCode(e.target.value.toUpperCase()); setWeekendCheckResults(null); }}
-                  placeholder="WL16"
-                  className="px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 w-28 font-mono uppercase"
-                />
-              </div>
               <button
                 onClick={runWeekendCheck}
-                disabled={weekendCheckLoading || !weekendCheckTag || !weekendCheckServiceCode}
+                disabled={weekendCheckLoading || !weekendCheckTag}
                 className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {weekendCheckLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldAlert className="w-4 h-4" />}
@@ -1674,7 +1673,7 @@ export default function Fulfilment() {
                     {weekendCheckResults.summary.unavailable} unavailable
                   </span>
                   <span className="px-3 py-1 rounded-full bg-secondary text-muted-foreground font-medium">
-                    {weekendCheckResults.summary.total} total — service code {weekendCheckResults.serviceCode}
+                    {weekendCheckResults.summary.total} total
                   </span>
                 </div>
 
@@ -1688,6 +1687,7 @@ export default function Fulfilment() {
                           <th className="px-4 py-2.5 font-semibold text-muted-foreground">Order</th>
                           <th className="px-4 py-2.5 font-semibold text-muted-foreground">Customer</th>
                           <th className="px-4 py-2.5 font-semibold text-muted-foreground">Postcode</th>
+                          <th className="px-4 py-2.5 font-semibold text-muted-foreground">Service</th>
                           <th className="px-4 py-2.5 font-semibold text-muted-foreground">Status</th>
                         </tr>
                       </thead>
@@ -1697,6 +1697,7 @@ export default function Fulfilment() {
                             <td className="px-4 py-2.5 font-mono font-medium">{row.orderName}</td>
                             <td className="px-4 py-2.5 text-muted-foreground">{row.customerName}</td>
                             <td className="px-4 py-2.5 font-mono">{row.postcode || <span className="text-muted-foreground italic">none</span>}</td>
+                            <td className="px-4 py-2.5 font-mono text-muted-foreground">{row.serviceCode ?? "—"}</td>
                             <td className="px-4 py-2.5">
                               {row.available ? (
                                 <span className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 font-medium">

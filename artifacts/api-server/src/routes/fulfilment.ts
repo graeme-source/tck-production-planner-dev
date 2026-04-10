@@ -54,9 +54,13 @@ function pickServiceCode(
   const hasSmallTag = tags.includes("small box");
   const isLargeBox = hasLargeTag || (!hasSmallTag && weightG >= weightThresholdG);
 
-  // Friday if tag present OR the actual dispatch date falls on a Friday (day=5)
+  // Friday/weekend: use the Friday service codes for deliveries on
+  // Friday (5), Saturday (6), or Sunday (0). The settings label these as
+  // "Friday/weekend" codes — previously only day 5 matched, which meant
+  // Saturday deliveries incorrectly used weekday codes.
   const refDate = dispatchDate ?? new Date();
-  const isFriday = tags.includes("friday-delivery") || refDate.getDay() === 5;
+  const dow = refDate.getDay();
+  const isFriday = tags.includes("friday-delivery") || dow === 5 || dow === 6 || dow === 0;
 
   if (isLargeBox && isFriday) return codes.largeFriday;
   if (isLargeBox) return codes.largeWeekday;
@@ -92,8 +96,12 @@ async function validateOrderPostcode(
     return { available: true, serviceCode: "" };
   }
 
-  const isTestMode = testModeSetting === "true";
-  const apiBase = isTestMode ? APC_TRAINING_BASE : undefined;
+  // ALWAYS validate against APC production — the purpose of validation is
+  // to check real-world postcode coverage before uploading consignments to
+  // the production system. The training environment has different coverage
+  // data and produced false positives (e.g. KY11 2NS passed training but
+  // failed production for WL16). Test mode only gates shipment creation.
+  const apiBase = undefined; // = APC production
   const dispatchDate = dispatchTag.match(/^\d{4}-\d{2}-\d{2}$/) ? new Date(dispatchTag) : new Date();
   const weightThresholdG = Number(weightThreshStr) || 1000;
 
@@ -852,21 +860,26 @@ router.get("/desserts-report", requireManagerOrAdmin, async (req: Request, res: 
   }
 });
 
-router.get("/weekend-service-check", requireManagerOrAdmin, async (req: Request, res: Response) => {
-  const { tag, serviceCode } = req.query as { tag?: string; serviceCode?: string };
+// GET /service-check?tag=YYYY-MM-DD
+// Pre-flight validation: for every unfulfilled order tagged with this
+// delivery date, automatically picks the correct APC service code from
+// Settings (based on weight/tags/delivery day) and checks with APC's
+// PRODUCTION postcode-service endpoint whether the order can be shipped.
+//
+// Previously this was "weekend-service-check" and took a manual service
+// code input, defaulting to "WL16". It now uses validateOrderPostcode
+// which reads the configured codes from app_settings and picks per-order.
+// It also always hits APC production (never training) so the results
+// match what happens when you actually upload consignments.
+router.get("/service-check", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const { tag } = req.query as { tag?: string };
 
   if (!tag) {
-    res.status(400).json({ error: "tag query param required" });
+    res.status(400).json({ error: "tag query param required (delivery date YYYY-MM-DD)" });
     return;
   }
 
-  const code = serviceCode?.trim() || "WL16";
-
   try {
-    const testModeSetting = await getAppSetting("apc_test_mode");
-    const isTestMode = testModeSetting === "true";
-    const apiBase = isTestMode ? APC_TRAINING_BASE : undefined;
-
     const orders = await getUnfulfilledOrdersByTag(tag);
 
     const results = await Promise.all(
@@ -876,49 +889,35 @@ router.get("/weekend-service-check", requireManagerOrAdmin, async (req: Request,
           `${order.customer?.first_name ?? ""} ${order.customer?.last_name ?? ""}`.trim() ||
           "Unknown";
 
-        const postcode = order.shipping_address?.zip;
+        const { available, reason, serviceCode } = await validateOrderPostcode(order, tag);
 
-        if (!postcode) {
-          return {
-            orderName: order.name,
-            customerName,
-            postcode: "",
-            available: false,
-            reason: "Order has no postcode",
-          };
-        }
-
-        try {
-          const result = await checkPostcodeService(postcode, code, apiBase);
-          return {
-            orderName: order.name,
-            customerName,
-            postcode,
-            available: result.available,
-            reason: result.reason,
-          };
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err);
-          return {
-            orderName: order.name,
-            customerName,
-            postcode,
-            available: false,
-            reason: `Check failed: ${msg}`,
-          };
-        }
+        return {
+          orderName: order.name,
+          customerName,
+          postcode: order.shipping_address?.zip ?? "",
+          available,
+          reason,
+          serviceCode,
+        };
       }),
     );
 
     const available = results.filter(r => r.available).length;
     const unavailable = results.filter(r => !r.available).length;
 
-    res.json({ tag, serviceCode: code, results, summary: { available, unavailable, total: results.length } });
+    res.json({ tag, results, summary: { available, unavailable, total: results.length } });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("[Fulfilment] weekend-service-check error:", msg);
+    console.error("[Fulfilment] service-check error:", msg);
     res.status(502).json({ error: msg });
   }
+});
+
+// Keep the old endpoint name alive as an alias so any bookmarked/cached
+// URLs don't break. Redirects to /service-check with the same query.
+router.get("/weekend-service-check", requireManagerOrAdmin, (req: Request, res: Response) => {
+  const qs = new URLSearchParams(req.query as Record<string, string>).toString();
+  res.redirect(307, `/api/fulfilment/service-check${qs ? `?${qs}` : ""}`);
 });
 
 router.get("/config-status", requireManagerOrAdmin, async (_req: Request, res: Response) => {
