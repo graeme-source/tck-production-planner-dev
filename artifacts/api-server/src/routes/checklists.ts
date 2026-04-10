@@ -70,11 +70,11 @@ const CreateTemplateBody = z.object({
   stationType: z.string().min(1),
   category: z.enum(["opening", "cleaning", "closing"]),
   title: z.string().min(1),
-  description: z.string().optional(),
+  description: z.string().nullish(),
   schedule: z.enum(["daily", "weekly", "specific_days"]).default("daily"),
-  scheduleDays: z.array(z.string()).optional(),
+  scheduleDays: z.array(z.string()).nullish(),
   orderPosition: z.number().int().optional(),
-  dynamicDataType: z.string().nullable().optional(),
+  dynamicDataType: z.string().nullish(),
 });
 
 router.get("/templates", async (req: Request, res: Response) => {
