@@ -2,6 +2,7 @@ import { Router, type IRouter, type Request, type Response, type NextFunction } 
 import { db, appSettingsTable, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
+import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
 
 const router: IRouter = Router();
 
@@ -65,6 +66,14 @@ router.put("/:key", async (req, res) => {
     .returning();
 
   res.json({ key: row.key, value: row.value });
+
+  // When total_daily_batches changes, recalculate DPT ingredient requirements
+  // so the ordering surplus calculation stays current.
+  if (key === "total_daily_batches") {
+    recalculateDptRequirements().catch(err =>
+      console.error("Auto-recalculate after total_daily_batches change failed:", err)
+    );
+  }
 });
 
 export default router;

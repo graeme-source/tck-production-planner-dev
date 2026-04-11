@@ -1,15 +1,24 @@
 import { Router, type IRouter } from "express";
-import { db, dptSettingsTable, dptIngredientRequirementsTable, recipesTable } from "@workspace/db";
+import { db, dptSettingsTable, dptIngredientRequirementsTable, recipesTable, appSettingsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { resolveRecipeIngredients, aggregateIngredients } from "../lib/ingredient-resolver";
 
 const router: IRouter = Router();
 
 export async function recalculateDptRequirements() {
+  // Fetch total daily batches from app settings — this is the master number
+  // the admin sets on the DPT settings page.
+  const [totalBatchesSetting] = await db
+    .select()
+    .from(appSettingsTable)
+    .where(eq(appSettingsTable.key, "total_daily_batches"));
+  const totalDailyBatches = totalBatchesSetting ? Number(totalBatchesSetting.value) : 0;
+
   const dptRows = await db
     .select({
       recipeId: dptSettingsTable.recipeId,
       defaultBatchesPerDay: dptSettingsTable.defaultBatchesPerDay,
+      packsSold: dptSettingsTable.packsSold,
       isActive: dptSettingsTable.isActive,
       portionsPerBatch: recipesTable.portionsPerBatch,
     })
@@ -18,10 +27,21 @@ export async function recalculateDptRequirements() {
 
   const activeRows = dptRows.filter(r => r.isActive);
 
+  // Calculate total packs sold across all active recipes so we can
+  // distribute totalDailyBatches proportionally — exactly the same
+  // formula the settings page uses on the frontend.
+  const totalPacksSold = activeRows.reduce((s, r) => s + (r.packsSold ?? 0), 0);
+
   const globalAgg = new Map<number, { qty: number; unit: string; cookedQty: number }>();
 
   for (const row of activeRows) {
-    const batchesPerDay = Number(row.defaultBatchesPerDay) || 0;
+    // Compute batches per day from packsSold proportion of totalDailyBatches.
+    // Fall back to the stored defaultBatchesPerDay if totalDailyBatches isn't set.
+    let batchesPerDay = Number(row.defaultBatchesPerDay) || 0;
+    if (totalDailyBatches > 0 && totalPacksSold > 0) {
+      const salesPercent = (row.packsSold ?? 0) / totalPacksSold;
+      batchesPerDay = salesPercent * totalDailyBatches;
+    }
     if (batchesPerDay <= 0) continue;
 
     const portionsPerBatch = Number(row.portionsPerBatch) || 1;

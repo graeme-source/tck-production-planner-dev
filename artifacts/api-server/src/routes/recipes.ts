@@ -7,6 +7,7 @@ import { CreateRecipeBody, UpdateRecipeBody } from "@workspace/api-zod";
 import { validate } from "../middleware/validate";
 import { computeSubRecipeCosts } from "../lib/sub-recipe-costs";
 import { generateQrCode } from "../lib/qr-code";
+import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
 import * as z from "zod";
 
 function requireAdmin(req: Request, res: Response, next: NextFunction) {
@@ -548,6 +549,11 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
   const mapped = mapRecipe(updated);
   const rawCosts = await computeCosts([id]);
   res.json(enrichWithCosts(mapped, rawCosts[id] ?? 0));
+
+  // Recipe ingredients changed — recalculate DPT ingredient requirements
+  recalculateDptRequirements().catch(err =>
+    console.error("Auto-recalculate DPT after recipe update failed:", err)
+  );
 });
 
 router.patch("/:id/special", async (req, res) => {
