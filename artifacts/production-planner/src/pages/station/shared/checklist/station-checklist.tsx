@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import {
   CheckCircle2, Circle, ClipboardCheck, Plus, Undo2, Loader2,
-  Sun, Sparkles, Moon, ChevronDown, ChevronUp, GripVertical, Trash2, Pencil,
+  Sun, Sparkles, Moon, ChevronDown, ChevronUp, GripVertical, Trash2, Pencil, Eye, EyeOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -35,6 +35,7 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
 
   const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
   const [adminMode, setAdminMode] = useState(false);
+  const [showCompletedByCategory, setShowCompletedByCategory] = useState<Record<string, boolean>>({});
   const [addingOneoff, setAddingOneoff] = useState(false);
   const [oneoffTitle, setOneoffTitle] = useState("");
   const [oneoffCategory, setOneoffCategory] = useState<Category>("opening");
@@ -227,17 +228,15 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
             <span className="text-sm text-muted-foreground">{summary.done}/{summary.total} complete</span>
           </div>
           <div className="flex items-center gap-2">
-            {isAdmin && (
-              <button
-                onClick={() => setAdminMode(!adminMode)}
-                className={cn(
-                  "text-xs px-2.5 py-1 rounded-lg font-medium transition-colors",
-                  adminMode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary/60",
-                )}
-              >
-                {adminMode ? "Done Editing" : "Edit Templates"}
-              </button>
-            )}
+            <button
+              onClick={() => setAdminMode(!adminMode)}
+              className={cn(
+                "text-xs px-2.5 py-1 rounded-lg font-medium transition-colors",
+                adminMode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary/60",
+              )}
+            >
+              {adminMode ? "Done Editing" : "Edit Templates"}
+            </button>
             <button
               onClick={() => setAddingOneoff(!addingOneoff)}
               className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
@@ -312,6 +311,8 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                   const meta = CATEGORY_META[cat];
                   const Icon = meta.icon;
                   const catDone = items.filter(i => i.completed).length;
+                  const showCompleted = showCompletedByCategory[cat] ?? false;
+                  const visibleItems = showCompleted ? items : items.filter(i => !i.completed);
                   return (
                     <div key={cat} className={cn(ci > 0 && "border-t border-border")}>
                       <div className={cn("px-4 py-2 flex items-center justify-between", meta.bg)}>
@@ -321,11 +322,28 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                             {meta.label}
                           </p>
                         </div>
-                        <span className={cn("text-sm font-medium", meta.color)}>
-                          {catDone}/{items.length}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          {catDone > 0 && (
+                            <button
+                              onClick={() => setShowCompletedByCategory(prev => ({ ...prev, [cat]: !showCompleted }))}
+                              className={cn("text-xs flex items-center gap-1 font-medium transition-colors", meta.color)}
+                              title={showCompleted ? "Hide completed" : "Show completed"}
+                            >
+                              {showCompleted ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                              {catDone} done
+                            </button>
+                          )}
+                          <span className={cn("text-sm font-medium", meta.color)}>
+                            {catDone}/{items.length}
+                          </span>
+                        </div>
                       </div>
-                      {items.map(item => {
+                      {visibleItems.length === 0 && (
+                        <div className="px-4 py-3 text-center text-xs text-muted-foreground">
+                          All tasks complete
+                        </div>
+                      )}
+                      {visibleItems.map(item => {
                         const ik = itemKey({ ...item, category: cat });
                         const isSelected = ik === selectedItemKey;
                         return (

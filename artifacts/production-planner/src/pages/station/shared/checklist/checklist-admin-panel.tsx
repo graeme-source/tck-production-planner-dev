@@ -308,6 +308,19 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Days</label>
                 <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setFormDays(["monday", "tuesday", "wednesday", "thursday", "friday"])}
+                    className={cn(
+                      "px-2.5 py-1 rounded-lg text-xs font-medium transition-colors",
+                      formDays.length === 5 &&
+                        ["monday", "tuesday", "wednesday", "thursday", "friday"].every(d => formDays.includes(d))
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-secondary text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    Weekdays
+                  </button>
                   {DAYS.map(day => (
                     <button
                       key={day}

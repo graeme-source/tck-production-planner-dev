@@ -1,4 +1,4 @@
-import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import {
   db,
   checklistTemplatesTable,
@@ -20,19 +20,6 @@ type ChecklistCompletion = typeof checklistCompletionsTable.$inferSelect;
 
 const router: IRouter = Router();
 
-// ─── Helpers ─────────────────────────────────────────────────────────
-
-async function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  if (req.session.userRole === "admin") { next(); return; }
-  if (req.session.userId && !req.session.userRole) {
-    const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
-    if (user) {
-      req.session.userRole = user.role as "admin" | "manager" | "viewer";
-      if (user.role === "admin") { next(); return; }
-    }
-  }
-  res.status(403).json({ error: "Admin access required" });
-}
 
 // Shared checklists: building_1 and building_2 share one checklist stored under building_1
 const SHARED_CHECKLIST_STATIONS: Record<string, string> = {
@@ -86,7 +73,7 @@ router.get("/templates", async (req: Request, res: Response) => {
   res.json(rows);
 });
 
-router.post("/templates", requireAdmin, async (req: Request, res: Response) => {
+router.post("/templates", async (req: Request, res: Response) => {
   const parsed = CreateTemplateBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
   const { scheduleDays, ...rest } = parsed.data;
@@ -108,7 +95,7 @@ const UpdateTemplateBody = z.object({
   isActive: z.boolean().optional(),
 });
 
-router.put("/templates/:id", requireAdmin, async (req: Request, res: Response) => {
+router.put("/templates/:id", async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   const parsed = UpdateTemplateBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
@@ -122,7 +109,7 @@ router.put("/templates/:id", requireAdmin, async (req: Request, res: Response) =
   res.json(row);
 });
 
-router.delete("/templates/:id", requireAdmin, async (req: Request, res: Response) => {
+router.delete("/templates/:id", async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   const [row] = await db.delete(checklistTemplatesTable).where(eq(checklistTemplatesTable.id, id)).returning();
   if (!row) { res.status(404).json({ error: "Template not found" }); return; }
@@ -136,7 +123,7 @@ const ReorderBody = z.object({
   })),
 });
 
-router.patch("/templates/reorder", requireAdmin, async (req: Request, res: Response) => {
+router.patch("/templates/reorder", async (req: Request, res: Response) => {
   const parsed = ReorderBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
   await db.transaction(async (tx: typeof db) => {
