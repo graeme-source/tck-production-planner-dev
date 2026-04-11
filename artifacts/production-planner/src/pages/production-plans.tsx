@@ -656,14 +656,15 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
         suggestedBatches: suggested,
         batchesTarget: suggested,
         surplusBatches: alloc[allocIdx].surplusBatches,
-        tinCount: item.maxBatchesPerTin && suggested > 0 ? Math.ceil(suggested / item.maxBatchesPerTin) : null,
+        tinCount: (() => { if (!item.maxBatchesPerTin || suggested <= 0) return null; const raw = Math.ceil(suggested / item.maxBatchesPerTin); return suggested > 5 ? Math.max(2, raw) : raw; })(),
       };
     }));
   }, [calcData, allocateBatches]);
 
   const recalcTins = (batchesTarget: number, maxBatchesPerTin: number | null): number | null => {
     if (!maxBatchesPerTin || batchesTarget <= 0) return null;
-    return Math.ceil(batchesTarget / maxBatchesPerTin);
+    const raw = Math.ceil(batchesTarget / maxBatchesPerTin);
+    return batchesTarget > 5 ? Math.max(2, raw) : raw;
   };
 
   const updateItem = (id: string, updates: Partial<PlanItem>) => {
@@ -1206,8 +1207,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
       included: true,
       suggestedBatches: 0,
       batchesTarget: it.batchesTarget ?? 0,
-      tinCount: it.maxBatchesPerTin && (it.batchesTarget ?? 0) > 0
-        ? Math.ceil((it.batchesTarget ?? 0) / it.maxBatchesPerTin) : null,
+      tinCount: (() => { const b = it.batchesTarget ?? 0; if (!it.maxBatchesPerTin || b <= 0) return null; const raw = Math.ceil(b / it.maxBatchesPerTin); return b > 5 ? Math.max(2, raw) : raw; })(),
       maxBatchesPerTin: it.maxBatchesPerTin ?? null,
       tinSize: it.tinSize ?? null,
       salesPercent: 0,
@@ -1269,9 +1269,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
       return {
         ...it,
         batchesTarget: match.newBatches,
-        tinCount: it.maxBatchesPerTin && match.newBatches > 0
-          ? Math.ceil(match.newBatches / it.maxBatchesPerTin)
-          : null,
+        tinCount: (() => { if (!it.maxBatchesPerTin || match.newBatches <= 0) return null; const raw = Math.ceil(match.newBatches / it.maxBatchesPerTin); return match.newBatches > 5 ? Math.max(2, raw) : raw; })(),
       };
     }));
     setUpdateModalOpen(false);
@@ -1380,7 +1378,8 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
 
   const recalcTins = (batchesTarget: number, maxBatchesPerTin: number | null): number | null => {
     if (!maxBatchesPerTin || batchesTarget <= 0) return null;
-    return Math.ceil(batchesTarget / maxBatchesPerTin);
+    const raw = Math.ceil(batchesTarget / maxBatchesPerTin);
+    return batchesTarget > 5 ? Math.max(2, raw) : raw;
   };
 
   const updateItem = (id: string, updates: Partial<PlanItem>) => {
@@ -2819,9 +2818,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                 complete: { color: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400", label: "Done" },
               }[item.status ?? "pending"] ?? { color: "bg-secondary text-secondary-foreground", label: item.status };
 
-              const tinCount = item.maxBatchesPerTin && (item.batchesTarget ?? 0) > 0
-                ? Math.ceil((item.batchesTarget ?? 0) / item.maxBatchesPerTin)
-                : null;
+              const tinCount = (() => { const b = item.batchesTarget ?? 0; if (!item.maxBatchesPerTin || b <= 0) return null; const raw = Math.ceil(b / item.maxBatchesPerTin); return b > 5 ? Math.max(2, raw) : raw; })();
 
               return (
                 <tr key={item.id} className="border-b border-border/50 last:border-0">
