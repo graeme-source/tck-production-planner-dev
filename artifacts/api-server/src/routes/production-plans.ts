@@ -935,6 +935,35 @@ router.post("/stock-checks", async (req, res) => {
       })
       .returning();
 
+    // Also update stock_entries so storage location stays in sync
+    const [ingredient] = await db
+      .select({ unit: ingredientsTable.unit, category: ingredientsTable.category })
+      .from(ingredientsTable)
+      .where(eq(ingredientsTable.id, ingredientId))
+      .limit(1);
+
+    if (ingredient) {
+      const locationMap: Record<string, string> = {
+        raw_meat: "raw_meat_fridge",
+        meat: "raw_meat_fridge",
+        dairy: "production_fridge",
+        vegetable: "production_fridge",
+        cheese: "production_fridge",
+        frozen: "production_freezer",
+        dry: "dry_store",
+      };
+      const location = locationMap[ingredient.category ?? ""] ?? "production_fridge";
+
+      await db.insert(stockEntriesTable).values({
+        ingredientId,
+        itemType: "ingredient",
+        quantity: String(quantity),
+        unit: ingredient.unit ?? "kg",
+        location,
+        checkedAt: new Date(),
+      });
+    }
+
     res.json(row);
   } catch (err: any) {
     console.error("Stock check save error:", err.message);

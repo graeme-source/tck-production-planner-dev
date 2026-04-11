@@ -22,6 +22,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Calendar,
+  RefreshCw,
+  Clock,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -48,6 +50,7 @@ type OrderLine = {
   packsToOrder: number;
   isKanban: boolean;
   orderingUrl: string | null;
+  lastStockCheckAt: string | null;
 };
 
 type SupplierOrder = {
@@ -103,6 +106,8 @@ type Plan = {
 type EditableLine = OrderLine & {
   checked: boolean;
   editedPacks: number;
+  editedStock: number;
+  stockDirty: boolean;
 };
 
 type KanbanIngredient = {
@@ -197,6 +202,8 @@ export default function Orders() {
           ...l,
           checked: false,
           editedPacks: l.packsToOrder,
+          editedStock: l.stockOnHand,
+          stockDirty: false,
         }));
       }
       setEditableLines(newLines);
@@ -254,8 +261,11 @@ export default function Orders() {
         orderQty: qty,
         packsToOrder: qty,
         isKanban: true,
+        lastStockCheckAt: null,
         checked: false,
         editedPacks: qty,
+        editedStock: 0,
+        stockDirty: false,
       };
       const supplierId = kanban.supplierId!;
       setEditableLines(prev => {
@@ -347,6 +357,52 @@ export default function Orders() {
       return updated;
     });
   }, []);
+
+  const updateStock = useCallback((supplierId: number, idx: number, newStock: number) => {
+    setEditableLines(prev => {
+      const updated = { ...prev };
+      const lines = [...(updated[supplierId] || [])];
+      const line = { ...lines[idx], editedStock: Math.max(0, newStock), stockDirty: true };
+      // Recalculate packs based on new stock
+      const rawOrderQty = Math.max(0, line.totalRequired + line.surplusTarget - Math.max(0, newStock));
+      const packsToOrder = line.packWeight > 0 ? Math.ceil(rawOrderQty / line.packWeight) : 0;
+      line.editedPacks = packsToOrder;
+      lines[idx] = line;
+      updated[supplierId] = lines;
+      return updated;
+    });
+  }, []);
+
+  const saveStockCheck = useCallback(async (ingredientId: number, quantity: number) => {
+    try {
+      const res = await fetch(`${BASE}/api/orders/stock-check`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ ingredientId, quantity }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      const data = await res.json();
+      // Update the lastStockCheckAt for this ingredient across all suppliers
+      setEditableLines(prev => {
+        const updated = { ...prev };
+        for (const [sid, lines] of Object.entries(updated)) {
+          updated[Number(sid)] = lines.map(l =>
+            l.ingredientId === ingredientId
+              ? { ...l, stockOnHand: quantity, lastStockCheckAt: data.checkedAt, stockDirty: false }
+              : l
+          );
+        }
+        return updated;
+      });
+    } catch (err) {
+      console.error("Stock check save failed:", err);
+    }
+  }, []);
+
+  const handleRecalculate = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["order-calculate", selectedPlanId] });
+  }, [queryClient, selectedPlanId]);
 
   const getDeliveryDateForSupplier = useCallback((supplierId: number, leadTimeDays?: number, cutoffTime?: string): Date => {
     if (deliveryDates[supplierId]) return deliveryDates[supplierId];
@@ -481,8 +537,17 @@ export default function Orders() {
           Placed Today ({totalPlacedToday})
         </button>
         <button
+          onClick={handleRecalculate}
+          disabled={calcLoading}
+          className="ml-auto px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-secondary text-secondary-foreground hover:bg-secondary/80 flex items-center gap-1.5 disabled:opacity-50"
+          title="Recalculate orders using latest stock check values"
+        >
+          <RefreshCw className={cn("w-4 h-4", calcLoading && "animate-spin")} />
+          Recalculate
+        </button>
+        <button
           onClick={() => { setKanbanSearchOpen(true); setKanbanSearch(""); setSelectedKanbanIds(new Set()); }}
-          className="ml-auto px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 border border-amber-500/30 flex items-center gap-1.5"
+          className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 border border-amber-500/30 flex items-center gap-1.5"
         >
           <LayoutGrid className="w-4 h-4" />
           Add Kanbans
@@ -590,7 +655,7 @@ export default function Orders() {
                         <th className="p-3 text-right font-medium text-muted-foreground">Surplus</th>
                         <th className="p-3 text-right font-medium text-muted-foreground">Pack Size</th>
                         <th className="p-3 text-center font-medium text-muted-foreground">Packs</th>
-                        <th className="p-3 text-right font-medium text-muted-foreground">Order Qty</th>
+                        <th className="p-3 text-right font-semibold text-green-600 dark:text-green-400">Order Qty</th>
                         {lines.some(l => l.costPerPack > 0) && (
                           <th className="p-3 text-right font-medium text-muted-foreground">Line Total</th>
                         )}
@@ -632,8 +697,41 @@ export default function Orders() {
                           <td className="p-3 text-right tabular-nums">
                             {line.totalRequired.toLocaleString()} {line.unit}
                           </td>
-                          <td className="p-3 text-right tabular-nums">
-                            {line.stockOnHand.toLocaleString()} {line.unit}
+                          <td className="p-3 text-right">
+                            <div className="flex flex-col items-end gap-0.5">
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step="any"
+                                  value={line.editedStock}
+                                  onChange={e => updateStock(so.supplier.id, idx, parseFloat(e.target.value) || 0)}
+                                  onBlur={() => { if (line.stockDirty) saveStockCheck(line.ingredientId, line.editedStock); }}
+                                  className="w-20 h-7 rounded border border-border bg-background text-right text-sm tabular-nums px-1.5"
+                                />
+                                <span className="text-xs text-muted-foreground">{line.unit}</span>
+                              </div>
+                              {line.lastStockCheckAt ? (() => {
+                                const d = new Date(line.lastStockCheckAt);
+                                const now = new Date();
+                                const isToday = d.toDateString() === now.toDateString();
+                                const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1);
+                                const isYesterday = d.toDateString() === yesterday.toDateString();
+                                const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+                                const label = isToday ? `Today ${timeStr}` : isYesterday ? `Yesterday ${timeStr}` : `${d.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit" })} ${timeStr}`;
+                                return (
+                                  <span className={cn("text-[10px] flex items-center gap-0.5", isToday ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>
+                                    <Clock className="w-2.5 h-2.5" />
+                                    {label}
+                                  </span>
+                                );
+                              })() : (
+                                <span className="text-[10px] text-red-500 flex items-center gap-0.5">
+                                  <AlertCircle className="w-2.5 h-2.5" />
+                                  No stock check
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="p-3 text-right tabular-nums">
                             {line.surplusTarget.toLocaleString()} {line.unit}
@@ -650,7 +748,7 @@ export default function Orders() {
                               className="w-16 h-8 rounded border border-border bg-background text-center text-sm tabular-nums"
                             />
                           </td>
-                          <td className="p-3 text-right tabular-nums font-medium">
+                          <td className="p-3 text-right tabular-nums font-bold text-lg text-green-600 dark:text-green-400">
                             {(line.unit === "packs" || line.unit === "bottles")
                               ? `${line.editedPacks} ${line.unit}`
                               : `${(line.editedPacks * line.packWeight).toLocaleString()} ${line.unit}`}

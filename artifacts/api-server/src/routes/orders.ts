@@ -142,9 +142,11 @@ router.get("/calculate", async (req, res) => {
     .orderBy(desc(stockEntriesTable.checkedAt));
 
   const latestStockByIngredient: Record<number, number> = {};
+  const stockCheckTimestamps: Record<number, string> = {};
   for (const row of stockRows) {
     if (row.ingredientId != null && latestStockByIngredient[row.ingredientId] === undefined) {
       latestStockByIngredient[row.ingredientId] = Number(row.quantity);
+      if (row.checkedAt) stockCheckTimestamps[row.ingredientId] = new Date(row.checkedAt).toISOString();
     }
   }
 
@@ -153,6 +155,7 @@ router.get("/calculate", async (req, res) => {
     .select({
       ingredientId: dailyStockChecksTable.ingredientId,
       quantity: dailyStockChecksTable.quantity,
+      checkedAt: dailyStockChecksTable.checkedAt,
     })
     .from(dailyStockChecksTable)
     .where(eq(dailyStockChecksTable.checkDate, today));
@@ -160,6 +163,9 @@ router.get("/calculate", async (req, res) => {
   for (const sc of stockChecks) {
     if (sc.quantity !== null) {
       latestStockByIngredient[sc.ingredientId] = Number(sc.quantity);
+    }
+    if (sc.checkedAt) {
+      stockCheckTimestamps[sc.ingredientId] = new Date(sc.checkedAt).toISOString();
     }
   }
 
@@ -277,6 +283,7 @@ router.get("/calculate", async (req, res) => {
       packsToOrder,
       isKanban,
       orderingUrl: detail.orderingUrl ?? null,
+      lastStockCheckAt: stockCheckTimestamps[iid] ?? null,
     });
   }
 
@@ -621,6 +628,84 @@ router.get("/summary", async (req, res) => {
     pendingCount: pending.length,
     suppliers: todayOrders.map(o => ({ id: o.supplierId, name: o.supplierName })),
   });
+});
+
+// ── Update stock check from orders page ─────────────────────────────
+// Upserts daily_stock_checks and inserts a stock_entries row so
+// the ingredient's storage location stays in sync.
+router.patch("/stock-check", async (req, res) => {
+  const { ingredientId, quantity } = req.body;
+  if (!ingredientId || quantity === undefined) {
+    res.status(400).json({ error: "ingredientId and quantity are required" });
+    return;
+  }
+
+  const userId = (req.session as any)?.userId ?? null;
+  const today = new Date().toISOString().split("T")[0];
+
+  try {
+    // 1. Upsert daily stock check
+    const [row] = await db
+      .insert(dailyStockChecksTable)
+      .values({ ingredientId, checkDate: today, quantity: String(quantity), userId })
+      .onConflictDoUpdate({
+        target: [dailyStockChecksTable.ingredientId, dailyStockChecksTable.checkDate],
+        set: { quantity: String(quantity), userId, checkedAt: sql`now()` },
+      })
+      .returning();
+
+    // 2. Insert stock entry for the ingredient's location
+    const [ingredient] = await db
+      .select({ unit: ingredientsTable.unit, category: ingredientsTable.category })
+      .from(ingredientsTable)
+      .where(eq(ingredientsTable.id, ingredientId))
+      .limit(1);
+
+    if (ingredient) {
+      // Map ingredient category to storage location
+      const locationMap: Record<string, string> = {
+        raw_meat: "raw_meat_fridge",
+        meat: "raw_meat_fridge",
+        dairy: "production_fridge",
+        vegetable: "production_fridge",
+        cheese: "production_fridge",
+        frozen: "production_freezer",
+        dry: "dry_store",
+      };
+      const location = locationMap[ingredient.category ?? ""] ?? "production_fridge";
+
+      await db.insert(stockEntriesTable).values({
+        ingredientId,
+        itemType: "ingredient",
+        quantity: String(quantity),
+        unit: ingredient.unit ?? "kg",
+        location,
+        checkedAt: new Date(),
+      });
+    }
+
+    res.json({ ...row, checkedAt: row.checkedAt ? new Date(row.checkedAt).toISOString() : new Date().toISOString() });
+  } catch (err: any) {
+    console.error("[Orders] Stock check update failed:", err.message);
+    res.status(500).json({ error: "Failed to update stock check" });
+  }
+});
+
+// ── Delete draft purchase orders ────────────────────────────────────
+router.delete("/purchase-orders/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  const [order] = await db
+    .select({ id: purchaseOrdersTable.id, status: purchaseOrdersTable.status })
+    .from(purchaseOrdersTable)
+    .where(eq(purchaseOrdersTable.id, id))
+    .limit(1);
+
+  if (!order) { res.status(404).json({ error: "Order not found" }); return; }
+  if (order.status !== "draft") { res.status(409).json({ error: "Only draft orders can be deleted" }); return; }
+
+  await db.delete(purchaseOrderLinesTable).where(eq(purchaseOrderLinesTable.purchaseOrderId, id));
+  await db.delete(purchaseOrdersTable).where(eq(purchaseOrdersTable.id, id));
+  res.status(204).send();
 });
 
 export default router;
