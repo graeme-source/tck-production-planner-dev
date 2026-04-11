@@ -711,7 +711,10 @@ export default function Orders() {
                                   step="any"
                                   value={line.editedStock}
                                   onChange={e => updateStock(so.supplier.id, idx, parseFloat(e.target.value) || 0)}
-                                  onBlur={() => { if (line.stockDirty) saveStockCheck(line.ingredientId, line.editedStock); }}
+                                  onBlur={e => {
+                                    const val = parseFloat(e.target.value) || 0;
+                                    saveStockCheck(line.ingredientId, val);
+                                  }}
                                   className="w-20 h-7 rounded border border-border bg-background text-right text-sm tabular-nums px-1.5"
                                 />
                                 <span className="text-xs text-muted-foreground">{line.unit}</span>
