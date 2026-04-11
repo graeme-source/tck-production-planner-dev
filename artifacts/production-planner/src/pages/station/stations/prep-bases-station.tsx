@@ -1012,21 +1012,36 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
                   </div>
                 )}
 
-                {/* Linked ingredients — displayed prominently */}
+                {/* Linked ingredients — displayed prominently with per-tin breakdown */}
                 {(linkedItems[ing.ingredientId] ?? []).length > 0 && (
                   <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-xl p-3 mb-3">
                     <p className="text-xs font-semibold uppercase tracking-wider text-yellow-600 dark:text-yellow-400 mb-2">
                       Linked — prep together
                     </p>
                     {(linkedItems[ing.ingredientId] ?? []).map((li, liIdx) => (
-                      <div key={liIdx} className="flex items-center justify-between py-1">
-                        <span className="flex items-center gap-2 text-base font-medium">
-                          <span className="text-yellow-500">↳</span>
-                          {li.ingredientName}
-                        </span>
-                        <span className="text-lg font-bold tabular-nums text-yellow-700 dark:text-yellow-300">
-                          {fmtQty(li.totalQty, li.unit)}
-                        </span>
+                      <div key={liIdx}>
+                        <div className="flex items-center justify-between py-1">
+                          <span className="flex items-center gap-2 text-base font-medium">
+                            <span className="text-yellow-500">↳</span>
+                            {li.ingredientName}
+                          </span>
+                          <span className="text-lg font-bold tabular-nums text-yellow-700 dark:text-yellow-300">
+                            {fmtQty(li.totalQty, li.unit)}
+                          </span>
+                        </div>
+                        {/* Per-tin breakdown matching parent's tin structure */}
+                        {li.recipes && li.recipes.some(r => r.tinCount > 1) && (
+                          <div className="pl-6 pb-1 space-y-0.5">
+                            {li.recipes.map(r =>
+                              Array.from({ length: r.tinCount }, (_, tn) => (
+                                <div key={`${r.recipeId}-${tn}`} className="flex items-center justify-between text-sm text-yellow-700 dark:text-yellow-300">
+                                  <span>Tin {tn + 1}</span>
+                                  <span className="tabular-nums font-semibold">{fmtQty(r.qtyPerTin, li.unit)}</span>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>

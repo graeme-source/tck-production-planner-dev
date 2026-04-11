@@ -4026,8 +4026,21 @@ router.get("/:id/main-prep", async (req, res) => {
 
   // ── Linked ingredients: fetch items where marinadeForIngredientId points to
   // a parent ingredient that appears in this station's ingredient list.
-  // These are displayed as sub-rows under the parent ingredient.
-  const linkedItemsMap: Record<number, Array<{ ingredientName: string; unit: string; totalQty: number }>> = {};
+  // These are displayed as sub-rows under the parent ingredient, with per-recipe
+  // tin breakdowns matching the parent's tin structure.
+  type LinkedItemDetail = {
+    ingredientName: string;
+    unit: string;
+    totalQty: number;
+    recipes: Array<{
+      recipeId: number;
+      recipeName: string;
+      qtyForRecipe: number;
+      tinCount: number;
+      qtyPerTin: number;
+    }>;
+  };
+  const linkedItemsMap: Record<number, LinkedItemDetail[]> = {};
   for (const planItem of planItems) {
     const batchesTarget = Number(planItem.batchesTarget) || 0;
     if (!planItem.recipeId || batchesTarget === 0) continue;
@@ -4048,26 +4061,44 @@ router.get("/:id/main-prep", async (req, res) => {
       ));
 
     const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
+    const tinCount = planItem.maxBatchesPerTin && batchesTarget > 0
+      ? Math.ceil(batchesTarget / planItem.maxBatchesPerTin)
+      : 1;
+
     for (const lr of linkedRows) {
       const parentId = lr.marinadeForIngredientId!;
-      // Only include if the parent ingredient is in this station's list
       if (!ingredientMap.has(parentId)) continue;
       const qtyPerPortion = Number(lr.quantity) || 0;
       const totalQty = qtyPerPortion * portionsPerBatch * batchesTarget;
       const unit = lr.unit ?? "g";
       const roundedQty = roundByUnit(totalQty, unit);
       if (roundedQty <= 0) continue;
+      const qtyPerTin = tinCount > 0 ? roundByUnit(roundedQty / tinCount, unit) : roundedQty;
 
       if (!linkedItemsMap[parentId]) linkedItemsMap[parentId] = [];
-      // Aggregate by ingredient
-      const existing = linkedItemsMap[parentId].find(x => x.ingredientName === (lr.ingredientName ?? ""));
+      const ingName = lr.ingredientName ?? `Ingredient #${lr.ingredientId}`;
+      const existing = linkedItemsMap[parentId].find(x => x.ingredientName === ingName);
       if (existing) {
         existing.totalQty += roundedQty;
+        existing.recipes.push({
+          recipeId: planItem.recipeId!,
+          recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
+          qtyForRecipe: roundedQty,
+          tinCount,
+          qtyPerTin,
+        });
       } else {
         linkedItemsMap[parentId].push({
-          ingredientName: lr.ingredientName ?? `Ingredient #${lr.ingredientId}`,
+          ingredientName: ingName,
           unit,
           totalQty: roundedQty,
+          recipes: [{
+            recipeId: planItem.recipeId!,
+            recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
+            qtyForRecipe: roundedQty,
+            tinCount,
+            qtyPerTin,
+          }],
         });
       }
     }
