@@ -47,6 +47,7 @@ interface PnlSummary {
   to: string;
   dayCount: number;
   orderCount: number;
+  totalPacksSold: number;
   revenue: { gross: number; refunds: number; net: number };
   cogs: {
     total: number;
@@ -479,6 +480,24 @@ function PnLDashboard() {
               <p className="text-2xl font-bold tabular-nums text-red-600 dark:text-red-400">{formatGBP(summary.actualLabour.totalCost)}</p>
             </div>
           </div>
+          {/* Per-pack cost */}
+          {summary.totalPacksSold > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 border-t border-border/50 pt-3">
+              <div>
+                <p className="text-sm text-muted-foreground">Packs Produced</p>
+                <p className="text-2xl font-bold tabular-nums">{summary.totalPacksSold.toLocaleString()}</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Labour Cost / Pack</p>
+                <p className="text-2xl font-bold tabular-nums text-primary">{formatGBP(summary.actualLabour.totalCost / summary.totalPacksSold)}</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Gross Wages / Pack</p>
+                <p className="text-2xl font-bold tabular-nums">{formatGBP(summary.actualLabour.grossWages / summary.totalPacksSold)}</p>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center gap-6 text-sm text-muted-foreground border-t border-border/50 pt-3">
             <span><strong>{summary.actualLabour.shiftCount}</strong> shifts</span>
             <span><strong>{summary.actualLabour.totalHours}</strong> hours</span>
