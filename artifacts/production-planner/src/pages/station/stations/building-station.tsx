@@ -972,7 +972,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                             <p className="text-lg font-light text-muted-foreground">/ {effTarget}</p>
                             {item.maxBatchesPerTin && effTarget > 0 && (
                               <p className="text-xs text-amber-600 dark:text-amber-400 font-semibold mt-0.5">
-                                {Math.ceil(effTarget / item.maxBatchesPerTin)} tins
+                                {(() => { const raw = Math.ceil(effTarget / item.maxBatchesPerTin); return effTarget > 5 ? Math.max(2, raw) : raw; })()} tins
                               </p>
                             )}
                             {itemMyCount > 0 && (
