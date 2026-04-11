@@ -72,6 +72,22 @@ interface PnlSummary {
   contributionMarginPercent: number;
   netProfit: number;
   netMarginPercent: number;
+  actualLabour?: {
+    available: boolean;
+    grossWages: number;
+    employerNI: number;
+    pension: number;
+    totalCost: number;
+    shiftCount: number;
+    totalHours: number;
+    costPerHour: number;
+    settings: {
+      niRate: number;
+      niWeeklyThreshold: number;
+      employmentAllowanceAnnual: number;
+      pensionRate: number;
+    };
+  };
 }
 
 interface RecipeBreakdown {
@@ -438,6 +454,47 @@ function PnLDashboard() {
         </div>
       )}
 
+      {/* ── Actual Labour Cost (Planday) ─────────────────────────────────── */}
+      {summary?.actualLabour?.available && (
+        <div className="glass-panel p-5 rounded-2xl">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Actual Labour Cost (Planday)</h2>
+            <span className="text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full font-medium">Live data</span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
+            <div>
+              <p className="text-sm text-muted-foreground">Gross Wages</p>
+              <p className="text-2xl font-bold tabular-nums">{formatGBP(summary.actualLabour.grossWages)}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Employer NI ({summary.actualLabour.settings.niRate}%)</p>
+              <p className="text-2xl font-bold tabular-nums text-amber-600 dark:text-amber-400">{formatGBP(summary.actualLabour.employerNI)}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Pension ({summary.actualLabour.settings.pensionRate}%)</p>
+              <p className="text-2xl font-bold tabular-nums text-blue-600 dark:text-blue-400">{formatGBP(summary.actualLabour.pension)}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground font-semibold">Total Labour Cost</p>
+              <p className="text-2xl font-bold tabular-nums text-red-600 dark:text-red-400">{formatGBP(summary.actualLabour.totalCost)}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-6 text-sm text-muted-foreground border-t border-border/50 pt-3">
+            <span><strong>{summary.actualLabour.shiftCount}</strong> shifts</span>
+            <span><strong>{summary.actualLabour.totalHours}</strong> hours</span>
+            <span><strong>{formatGBP(summary.actualLabour.costPerHour)}</strong>/hr (fully loaded)</span>
+            {summary.cogs.labourCost > 0 && (
+              <span className="ml-auto text-xs">
+                vs recipe estimate: {formatGBP(summary.cogs.labourCost)}
+                <span className={summary.actualLabour.totalCost > summary.cogs.labourCost ? " text-red-500 font-medium" : " text-emerald-500 font-medium"}>
+                  {" "}({summary.actualLabour.totalCost > summary.cogs.labourCost ? "+" : ""}{formatGBP(summary.actualLabour.totalCost - summary.cogs.labourCost)})
+                </span>
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── P&L Waterfall Chart ──────────────────────────────────────────── */}
       {summary && (
         <div className="glass-panel p-6 rounded-2xl">
@@ -614,6 +671,38 @@ function PnLDashboard() {
                   Daily rate: {formatGBP((overheads.reduce((s, o) => s + o.monthlyAmount, 0) * 12) / 365)}
                 </p>
               )}
+            </div>
+
+            {/* Employer Cost Settings */}
+            <div>
+              <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
+                <DollarSign className="w-4 h-4" /> Employer Cost Settings (Planday Labour)
+              </h3>
+              <p className="text-xs text-muted-foreground mb-3">
+                These rates are applied on top of gross wages from Planday to calculate true employer cost.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <SettingInput
+                  label="Employer's NI Rate (%)"
+                  value={settings?.employer_ni_rate ?? "15"}
+                  onSave={(v) => updateSetting.mutate({ key: "employer_ni_rate", value: v })}
+                />
+                <SettingInput
+                  label="NI Weekly Threshold (£)"
+                  value={settings?.employer_ni_weekly_threshold ?? "96.15"}
+                  onSave={(v) => updateSetting.mutate({ key: "employer_ni_weekly_threshold", value: v })}
+                />
+                <SettingInput
+                  label="Employment Allowance (£/year)"
+                  value={settings?.employment_allowance_annual ?? "10500"}
+                  onSave={(v) => updateSetting.mutate({ key: "employment_allowance_annual", value: v })}
+                />
+                <SettingInput
+                  label="Pension Contribution (%)"
+                  value={settings?.employer_pension_rate ?? "3"}
+                  onSave={(v) => updateSetting.mutate({ key: "employer_pension_rate", value: v })}
+                />
+              </div>
             </div>
           </div>
         )}
