@@ -16,7 +16,7 @@ import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtQty, toastDraftB
 import type { NextActivePlan } from "../shared/prep-helpers";
 import { PrepSubNav } from "./prep-hub";
 import { useMainPrepData } from "./main-prep-station";
-import type { MainPrepIngredient } from "./main-prep-station";
+import type { MainPrepIngredient, LinkedItem } from "./main-prep-station";
 
 interface SubRecipePlanRequirement {
   subRecipeId: number;
@@ -637,6 +637,7 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
     i => !i.ingredientName.toLowerCase().includes("normal base")
   );
   const completions = data?.completions ?? [];
+  const linkedItems = data?.linkedItems ?? {};
 
   const isCompleted = (ingredientId: number, recipeId: number, tinNumber: number) =>
     completions.some(c => c.ingredientId === ingredientId && c.recipeId === recipeId && c.tinNumber === tinNumber);
@@ -843,9 +844,10 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
                   {group.items.map(({ ing }) => {
                     const rStatus = recipeIngredientStatus(ing, group.recipeId);
                     const isSelected = selectedItem === ing.ingredientId;
+                    const ingLinkedItems = linkedItems[ing.ingredientId] ?? [];
                     return (
+                      <React.Fragment key={`${group.recipeId}-${ing.ingredientId}`}>
                       <button
-                        key={`${group.recipeId}-${ing.ingredientId}`}
                         onClick={() => setSelectedItem(ing.ingredientId)}
                         className={cn(
                           "w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors border-t border-border/30",
@@ -906,6 +908,22 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
                           )}
                         </div>
                       </button>
+                      {/* Linked ingredient sub-rows */}
+                      {ingLinkedItems.map((li, liIdx) => (
+                        <div
+                          key={`linked-${ing.ingredientId}-${liIdx}`}
+                          className="flex items-center justify-between pl-10 pr-4 py-1.5 border-t border-border/20 text-sm text-muted-foreground bg-yellow-50/30 dark:bg-yellow-950/10"
+                        >
+                          <span className="flex items-center gap-2">
+                            <span className="text-yellow-500">↳</span>
+                            <span>{li.ingredientName}</span>
+                          </span>
+                          <span className="tabular-nums font-medium text-foreground">
+                            {fmtQty(li.totalQty, li.unit)}
+                          </span>
+                        </div>
+                      ))}
+                      </React.Fragment>
                     );
                   })}
                 </div>
