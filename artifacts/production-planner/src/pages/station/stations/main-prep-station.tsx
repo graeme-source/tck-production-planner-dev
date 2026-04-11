@@ -66,6 +66,13 @@ export interface LinkedItem {
   ingredientName: string;
   unit: string;
   totalQty: number;
+  recipes?: Array<{
+    recipeId: number;
+    recipeName: string;
+    qtyForRecipe: number;
+    tinCount: number;
+    qtyPerTin: number;
+  }>;
 }
 
 export function useMainPrepData(planId: number, station: string = "main_prep") {
