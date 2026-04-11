@@ -62,8 +62,14 @@ interface StockCheckEntry {
   userId: number | null;
 }
 
+export interface LinkedItem {
+  ingredientName: string;
+  unit: string;
+  totalQty: number;
+}
+
 export function useMainPrepData(planId: number, station: string = "main_prep") {
-  const [data, setData] = useState<{ ingredients: MainPrepIngredient[]; completions: PrepTinCompletion[] } | null>(null);
+  const [data, setData] = useState<{ ingredients: MainPrepIngredient[]; completions: PrepTinCompletion[]; linkedItems?: Record<number, LinkedItem[]> } | null>(null);
   const [loading, setLoading] = useState(true);
   const initialLoadDone = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -173,6 +179,7 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
 
   const ingredients = data?.ingredients ?? [];
   const completions = data?.completions ?? [];
+  const linkedItems = data?.linkedItems ?? {};
 
   const isCompleted = (ingredientId: number, recipeId: number, tinNumber: number, isSubRecipe?: boolean) =>
     completions.some(c => c.ingredientId === ingredientId && c.recipeId === recipeId && c.tinNumber === tinNumber && !!c.isSubRecipe === !!isSubRecipe);
@@ -449,9 +456,10 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                       const ik = itemKey(ing);
                       const isSelected = ik === selectedItemKey;
                       const presence = presenceData[ing.ingredientId] ?? [];
+                      const ingLinkedItems = linkedItems[ing.ingredientId] ?? [];
                       return (
+                        <React.Fragment key={`${group.recipeId}-${ik}`}>
                         <button
-                          key={`${group.recipeId}-${ik}`}
                           onClick={() => {
                             setSelectedItemKey(ik);
                             activeIngIdRef.current = ing.ingredientId;
@@ -531,6 +539,22 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
                             ) : null}
                           </div>
                         </button>
+                        {/* Linked ingredient sub-rows */}
+                        {ingLinkedItems.map((li, liIdx) => (
+                          <div
+                            key={`linked-${ing.ingredientId}-${liIdx}`}
+                            className="flex items-center justify-between pl-10 pr-4 py-1.5 border-t border-border/20 text-sm text-muted-foreground bg-secondary/10"
+                          >
+                            <span className="flex items-center gap-2">
+                              <span className="text-primary/60">↳</span>
+                              <span>{li.ingredientName}</span>
+                            </span>
+                            <span className="tabular-nums font-medium text-foreground">
+                              {fmtQty(li.totalQty, li.unit)}
+                            </span>
+                          </div>
+                        ))}
+                        </React.Fragment>
                       );
                     })}
                   </div>
