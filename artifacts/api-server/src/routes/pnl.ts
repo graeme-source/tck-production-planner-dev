@@ -91,6 +91,8 @@ router.get("/summary", async (req: Request, res: Response) => {
     // COGS
     const cogs = await calculateCogs(countable);
 
+    const totalPacksSold = cogs.perRecipe.reduce((s, r) => s + r.unitsSold, 0);
+
     const grossProfit = netRevenue - cogs.totalCogs;
     const grossMarginPercent = netRevenue > 0 ? (grossProfit / netRevenue) * 100 : 0;
 
@@ -145,6 +147,7 @@ router.get("/summary", async (req: Request, res: Response) => {
       to,
       dayCount,
       orderCount: countable.length,
+      totalPacksSold,
       revenue: {
         gross: round2(grossRevenue),
         refunds: round2(refunds),
