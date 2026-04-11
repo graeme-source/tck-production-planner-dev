@@ -2345,6 +2345,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const { state: authState } = useAuth();
   const userRole = authState.status === "authenticated" ? authState.user.role : undefined;
   const canManageOrders = userRole === "admin" || userRole === "manager";
+  const canEditPlan = userRole === "admin" || userRole === "manager";
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmResync, setConfirmResync] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -2509,7 +2510,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
             {statusConfig.label}
           </span>
 
-          {plan.status === "draft" && (
+          {plan.status === "draft" && canEditPlan && (
             <>
               <button
                 onClick={() => setIsEditingDraft(true)}
@@ -2575,7 +2576,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
               Reset Plan
             </button>
           )}
-          {plan.status !== "complete" && (
+          {plan.status !== "complete" && canEditPlan && (
             <button
               onClick={() => setConfirmDelete(true)}
               className="px-3 py-1.5 text-xs text-red-600 hover:text-red-700 border border-red-200 dark:border-red-900/40 rounded-lg transition-colors"
@@ -3052,6 +3053,9 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
   const { data: plans, isLoading } = useListProductionPlans();
   const { deletePlan } = useAppMutations();
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
+  const { state: listAuthState } = useAuth();
+  const listUserRole = listAuthState.status === "authenticated" ? listAuthState.user.role : undefined;
+  const canEditPlanList = listUserRole === "admin" || listUserRole === "manager";
 
   const weekStart = useMemo(() => startOfWeek(currentDate, { weekStartsOn: 1 }), [currentDate]);
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
@@ -3262,16 +3266,18 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <ArrowRight className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
-                      <button
-                        onClick={e => {
-                          e.stopPropagation();
-                          setDeleteTarget({ id: plan.id, name: plan.name });
-                        }}
-                        className="opacity-0 group-hover:opacity-100 p-2 text-muted-foreground hover:text-destructive transition-all rounded-lg hover:bg-destructive/10"
-                        title="Delete plan"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {canEditPlanList && (
+                        <button
+                          onClick={e => {
+                            e.stopPropagation();
+                            setDeleteTarget({ id: plan.id, name: plan.name });
+                          }}
+                          className="opacity-0 group-hover:opacity-100 p-2 text-muted-foreground hover:text-destructive transition-all rounded-lg hover:bg-destructive/10"
+                          title="Delete plan"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </div>
 

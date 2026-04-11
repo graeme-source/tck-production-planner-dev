@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   useCreateBatchCompletion,
   getGetProductionPlanQueryKey,
@@ -6,7 +6,7 @@ import {
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Loader2, CheckCircle2, ChevronRight, Info, Minus, Plus, Package, Check,
+  Loader2, CheckCircle2, ChevronRight, ChevronDown, Info, Minus, Plus, Package, Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -22,6 +22,8 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
   const queryClient = useQueryClient();
   const { data: doughData } = useDoughPrepData(plan.id, "current");
   const [isOnBreak, setIsOnBreak] = useState(false);
+  const [expandedItemId, setExpandedItemId] = useState<number | null>(null);
+  const userOverrideRef = useRef(false);
 
   // Extra ball sheeting state — per-ball ticks in app_settings
   const extraSheetKey = `extra_balls_sheeted_${plan.id}`;
@@ -85,24 +87,49 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
     return target > 0 && sheeted < target;
   });
 
-  const sheetNext = () => {
-    if (isOnBreak || !nextItem) return;
-    createBatch.mutate({ id: plan.id, data: { planItemId: nextItem.id, stationType: "dough_sheeting" } });
+  // Auto-expand current recipe
+  const [prevNextId, setPrevNextId] = useState<number | null>(null);
+  useEffect(() => {
+    const curId = nextItem?.id ?? null;
+    if (prevNextId !== null && curId !== prevNextId) {
+      setExpandedItemId(curId);
+      userOverrideRef.current = false;
+    }
+    setPrevNextId(curId);
+  }, [nextItem?.id]);
+
+  useEffect(() => {
+    if (expandedItemId === null && nextItem) {
+      setExpandedItemId(nextItem.id);
+    }
+  }, [nextItem?.id]);
+
+  const toggleExpanded = (itemId: number) => {
+    if (expandedItemId === itemId) {
+      setExpandedItemId(null);
+      userOverrideRef.current = false;
+    } else {
+      setExpandedItemId(itemId);
+      userOverrideRef.current = itemId !== nextItem?.id;
+    }
+  };
+
+  const sheetBatch = (itemId: number) => {
+    if (isOnBreak) return;
+    createBatch.mutate({ id: plan.id, data: { planItemId: itemId, stationType: "dough_sheeting" } });
   };
 
   const [runUndo, undoBusy] = useGuardedAction({
     onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
   });
 
-  const undoLast = async () => {
+  const undoBatch = async (itemId: number) => {
     if (isOnBreak) return;
-    const lastItemWithCount = [...items].reverse().find(it => getStationCount(it, "dough_sheeting") > 0);
-    if (!lastItemWithCount) return;
     await runUndo(async (signal) => {
       await guardedFetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planItemId: lastItemWithCount.id, stationType: "dough_sheeting" }),
+        body: JSON.stringify({ planItemId: itemId, stationType: "dough_sheeting" }),
         signal,
       });
     });
@@ -113,81 +140,24 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
   const overallProgress = totalTarget > 0 ? Math.round((totalSheeted / totalTarget) * 100) : 0;
   const allDone = totalTarget > 0 && totalSheeted >= totalTarget;
 
-  const nextBallWeight = nextItem
-    ? doughData?.recipes.find(r => r.recipeId === nextItem.recipeId)?.ballWeightG
-    : null;
-
   return (
     <div className="space-y-4">
-      {allDone ? (
-        <div className="bg-card border-2 border-emerald-400 dark:border-emerald-600 rounded-xl p-6">
-          <div className="text-center mb-4">
-            <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
-            <h2 className="font-semibold text-xl mb-1">All sheeting complete!</h2>
-            <p className="text-muted-foreground text-base">{totalSheeted} batches sheeted and passed to builders.</p>
-          </div>
-          <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden mb-4">
-            <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: "100%" }} />
-          </div>
-          <div className="pt-3 border-t border-border/50">
-            <BreakTracker planId={plan.id} stationType="dough_sheeting" onBreakActiveChange={setIsOnBreak} />
-          </div>
+      {/* Progress + break tracker */}
+      <div className="bg-card border border-border rounded-xl p-4">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-base font-medium">Daily Progress — {totalSheeted} / {totalTarget} batches</p>
+          <span className="text-2xl font-bold">{overallProgress}%</span>
         </div>
-      ) : (
-        <div className="bg-card border-2 border-amber-400 dark:border-amber-600 rounded-xl p-5">
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400 mb-0.5">
-                Now Sheeting
-              </p>
-              <h2 className="font-display text-2xl font-bold">
-                {nextItem?.recipeName ?? "—"}
-              </h2>
-            </div>
-            <div className="text-right">
-              <p className="text-3xl font-bold font-display tabular-nums">{nextItem ? getStationCount(nextItem, "dough_sheeting") : 0} <span className="text-lg text-muted-foreground font-normal">/ {nextItem?.batchesTarget ?? 0}</span></p>
-              <p className="text-sm text-muted-foreground">this recipe</p>
-              <p className="text-xs text-muted-foreground/70 tabular-nums mt-0.5">{totalSheeted} / {totalTarget} today</p>
-            </div>
-          </div>
-
-          <div className="w-full bg-secondary rounded-full h-3 mb-3">
-            <div
-              className="bg-amber-500 h-3 rounded-full transition-all duration-300"
-              style={{ width: `${overallProgress}%` }}
-            />
-          </div>
-
-          <div className="mb-3 pb-3 border-b border-border/50">
-            <BreakTracker planId={plan.id} stationType="dough_sheeting" onBreakActiveChange={setIsOnBreak} />
-          </div>
-
-          {nextBallWeight && (
-            <p className="text-base text-muted-foreground mb-3">
-              Ball weight: <span className="font-semibold text-amber-600 dark:text-amber-400">{nextBallWeight}g</span>
-            </p>
-          )}
-
-          <div className="flex items-center gap-3">
-            <button
-              onClick={undoLast}
-              disabled={isOnBreak || totalSheeted === 0 || createBatch.isPending || undoBusy}
-              className="flex items-center gap-1.5 px-4 py-3 text-base rounded-xl border border-border text-muted-foreground hover:bg-secondary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              <Minus className="w-4 h-4" />
-              {undoBusy ? "Undoing\u2026" : "Undo"}
-            </button>
-            <button
-              onClick={sheetNext}
-              disabled={isOnBreak || !nextItem || createBatch.isPending}
-              className="flex-1 flex items-center justify-center gap-2 px-6 py-3 text-base rounded-xl bg-primary text-primary-foreground font-semibold hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              <Plus className="w-5 h-5" />
-              Sheet Batch
-            </button>
-          </div>
+        <div className="w-full bg-secondary rounded-full h-2.5 overflow-hidden">
+          <div
+            className={cn("h-full rounded-full transition-all", allDone ? "bg-emerald-500" : "bg-amber-500")}
+            style={{ width: `${Math.min(overallProgress, 100)}%` }}
+          />
         </div>
-      )}
+        <div className="mt-3 pt-3 border-t border-border/50">
+          <BreakTracker planId={plan.id} stationType="dough_sheeting" onBreakActiveChange={setIsOnBreak} />
+        </div>
+      </div>
 
       {/* Sheet Extra Balls — secondary collapsible */}
       {extraSheetLoaded && extraSheetItems.length > 0 && (
@@ -243,57 +213,135 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
         </div>
       )}
 
+      {/* Unified accordion queue */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-border">
-          <h3 className="font-semibold text-base">Recipe Breakdown</h3>
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <h3 className="font-semibold text-base">Sheeting Queue</h3>
+          {allDone && (
+            <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-sm font-medium">
+              <CheckCircle2 className="w-4 h-4" /> All done
+            </span>
+          )}
         </div>
+
         <div className="divide-y divide-border/50">
           {items.map(item => {
             const target = item.batchesTarget ?? 0;
             const sheeted = getStationCount(item, "dough_sheeting");
             const isDone = sheeted >= target && target > 0;
-            const isActive = item.id === nextItem?.id;
+            const isCurrent = item.id === nextItem?.id;
+            const isExpanded = expandedItemId === item.id;
             const ballWeight = doughData?.recipes.find(r => r.recipeId === item.recipeId)?.ballWeightG;
             const progress = target > 0 ? Math.round((sheeted / target) * 100) : 0;
+            const recipeColour = item.recipeColor || undefined;
 
             return (
-              <div
-                key={item.id}
-                className={cn(
-                  "px-4 py-3 transition-colors",
-                  isDone ? "bg-emerald-50/30 dark:bg-emerald-900/10" :
-                  isActive ? "bg-amber-50/40 dark:bg-amber-900/10" : ""
-                )}
-              >
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-2 min-w-0">
-                    {isDone ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                    ) : isActive ? (
-                      <div className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
-                    ) : null}
-                    <span className={cn("text-base font-medium truncate", isDone && "text-muted-foreground line-through")}>
-                      {item.recipeName ?? `Recipe #${item.recipeId}`}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3 flex-shrink-0 ml-2">
-                    {ballWeight && (
-                      <span className="text-sm text-muted-foreground">{ballWeight}g</span>
-                    )}
-                    <span className={cn("text-base font-bold tabular-nums", isDone ? "text-emerald-600 dark:text-emerald-400" : "")}>
-                      {sheeted}/{target}
-                    </span>
-                  </div>
-                </div>
-                <div className="w-full bg-secondary rounded-full h-1.5">
-                  <div
+              <div key={item.id}>
+                {/* Collapsed summary row */}
+                <button
+                  onClick={() => toggleExpanded(item.id)}
+                  className={cn(
+                    "w-full text-left px-3 py-2.5 flex items-center gap-2 transition-colors",
+                    isExpanded
+                      ? isCurrent
+                        ? "bg-amber-50/60 dark:bg-amber-900/15"
+                        : "bg-blue-50/60 dark:bg-blue-900/15"
+                      : isCurrent
+                        ? "bg-amber-50/40 dark:bg-amber-900/10"
+                        : isDone
+                          ? "bg-emerald-50/30 dark:bg-emerald-900/10"
+                          : "hover:bg-secondary/20"
+                  )}
+                >
+                  <span
                     className={cn(
-                      "h-1.5 rounded-full transition-all duration-300",
-                      isDone ? "bg-emerald-500" : "bg-amber-500"
+                      "flex-1 font-bold text-sm truncate",
+                      isDone && !isExpanded ? "line-through opacity-60" : ""
                     )}
-                    style={{ width: `${Math.min(progress, 100)}%` }}
-                  />
-                </div>
+                    style={{ color: recipeColour }}
+                  >
+                    {item.recipeName ?? `Recipe #${item.recipeId}`}
+                  </span>
+
+                  <span className="text-sm tabular-nums font-medium flex-shrink-0">
+                    {sheeted}/{target}
+                  </span>
+                  {ballWeight && (
+                    <span className="text-xs tabular-nums text-muted-foreground flex-shrink-0">
+                      {ballWeight}g
+                    </span>
+                  )}
+
+                  {isDone ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                  ) : (
+                    <ChevronDown className={cn(
+                      "w-4 h-4 text-muted-foreground flex-shrink-0 transition-transform",
+                      isExpanded ? "rotate-180" : ""
+                    )} />
+                  )}
+                </button>
+
+                {/* Expanded panel */}
+                {isExpanded && (
+                  <div className={cn(
+                    "border-t-2 px-4 py-4 space-y-3",
+                    isCurrent
+                      ? "border-amber-400 dark:border-amber-600"
+                      : "border-blue-300 dark:border-blue-700"
+                  )}>
+                    <div className="flex items-center justify-between">
+                      <h2 className="font-display text-2xl font-bold leading-tight" style={{ color: recipeColour }}>
+                        {item.recipeName ?? `Recipe #${item.recipeId}`}
+                      </h2>
+                      <div className="text-right">
+                        <p className="text-3xl font-bold font-display tabular-nums">
+                          {sheeted} <span className="text-lg text-muted-foreground font-normal">/ {target}</span>
+                        </p>
+                      </div>
+                    </div>
+
+                    {ballWeight && (
+                      <p className="text-base text-muted-foreground">
+                        Ball weight: <span className="font-semibold text-amber-600 dark:text-amber-400">{ballWeight}g</span>
+                      </p>
+                    )}
+
+                    {/* Progress bar */}
+                    <div className="w-full bg-secondary rounded-full h-2">
+                      <div
+                        className={cn("h-2 rounded-full transition-all", isDone ? "bg-emerald-500" : "bg-amber-500")}
+                        style={{ width: `${Math.min(progress, 100)}%` }}
+                      />
+                    </div>
+
+                    {isDone && (
+                      <p className="text-sm text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                        <CheckCircle2 className="w-4 h-4" /> Complete
+                      </p>
+                    )}
+
+                    {/* Sheet / Undo buttons */}
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => undoBatch(item.id)}
+                        disabled={isOnBreak || sheeted === 0 || createBatch.isPending || undoBusy}
+                        className="flex items-center gap-1.5 px-4 py-3 text-base rounded-xl border border-border text-muted-foreground hover:bg-secondary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <Minus className="w-4 h-4" />
+                        {undoBusy ? "Undoing\u2026" : "Undo"}
+                      </button>
+                      <button
+                        onClick={() => sheetBatch(item.id)}
+                        disabled={isOnBreak || isDone || createBatch.isPending}
+                        className="flex-1 flex items-center justify-center gap-2 px-6 py-3 text-base rounded-xl bg-primary text-primary-foreground font-semibold hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <Plus className="w-5 h-5" />
+                        Sheet Batch
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -346,233 +394,86 @@ export function ChillerRackVisual({
 
   // Wonky tray sits at position 28 (the bottom) of rack 1.
   // Reserve that slot — regular trays only fill positions 1-27 of rack 1.
-  const RACK0_REGULAR = hasWonky ? TRAYS_PER_RACK - 1 : TRAYS_PER_RACK;
+  const regularSlotsRack1 = hasWonky ? TRAYS_PER_RACK - 1 : TRAYS_PER_RACK;
 
-  // Build wonky gradient background
-  const wonkyBackground =
-    wonkyItems.length === 1
-      ? wonkyItems[0].colour
-      : `linear-gradient(90deg, ${wonkyItems
-          .map((w, i, arr) => {
-            const step = 100 / arr.length;
-            return `${w.colour} ${i * step}%, ${w.colour} ${(i + 1) * step}%`;
-          })
-          .join(", ")})`;
+  // Split trays across racks
+  const rack1Regular = allRegularTrays.slice(0, regularSlotsRack1);
+  const rack2Regular = allRegularTrays.slice(regularSlotsRack1, regularSlotsRack1 + TRAYS_PER_RACK);
+  const overflow = allRegularTrays.length > regularSlotsRack1 + TRAYS_PER_RACK
+    ? allRegularTrays.length - regularSlotsRack1 - TRAYS_PER_RACK
+    : 0;
 
-  type Slot = { colour: string; recipeName: string; isWonky?: boolean } | null;
+  const showRack2 = rack2Regular.length > 0;
 
-  // Rack 0: regular trays fill slots 0..(RACK0_REGULAR-1), wonky tray at slot 27
-  const rack0Regular = allRegularTrays.slice(0, RACK0_REGULAR);
-  const restRegular = allRegularTrays.slice(RACK0_REGULAR);
-
-  const racks: Slot[][] = [];
-  const rack0: Slot[] = [...rack0Regular];
-  while (rack0.length < RACK0_REGULAR) rack0.push(null);
-  if (hasWonky) rack0.push({ colour: "wonky", recipeName: "Wonky", isWonky: true });
-  racks.push(rack0);
-
-  for (let i = 0; i < restRegular.length; i += TRAYS_PER_RACK) {
-    racks.push(restRegular.slice(i, i + TRAYS_PER_RACK));
-  }
-
-  const totalTrays = allRegularTrays.length + (hasWonky ? 1 : 0);
-
-  return (
-    <div className="bg-card border border-border rounded-xl p-4">
-      {/* Header + legend */}
-      <div className="mb-4">
-        <div className="flex items-center justify-between mb-2.5">
-          <div>
-            <h3 className="font-semibold text-base">Chiller Rack</h3>
-            <p className="text-sm text-muted-foreground">
-              {totalTrays} tray{totalTrays !== 1 ? "s" : ""} · {racks.length} rack{racks.length !== 1 ? "s" : ""} · fills top to bottom
-            </p>
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-          {rackItems.map(r => (
-            <div key={r.recipeId} className="flex items-center gap-1.5">
-              <div
-                className="w-3.5 h-3.5 rounded-[3px] flex-shrink-0 border border-black/10"
-                style={{ backgroundColor: r.colour }}
-              />
-              <span className="text-sm text-muted-foreground">
-                {r.recipeName.length > 18 ? r.recipeName.slice(0, 18) + "…" : r.recipeName}
-                <span className="font-semibold text-foreground ml-1">×{r.trayCount}</span>
-              </span>
-            </div>
+  const renderRack = (
+    regularTrays: Array<{ colour: string; recipeName: string }>,
+    totalSlots: number,
+    rackLabel: string,
+    wonky: boolean,
+  ) => {
+    const emptySlots = Math.max(0, totalSlots - regularTrays.length - (wonky ? 1 : 0));
+    return (
+      <div className="bg-card border border-border rounded-xl p-3 flex-1 min-w-[140px]">
+        <p className="text-xs font-semibold text-muted-foreground uppercase mb-2 text-center tracking-wider">{rackLabel}</p>
+        <div className="flex flex-col gap-[3px]">
+          {/* Regular trays, top-down */}
+          {regularTrays.map((t, i) => (
+            <div
+              key={i}
+              className="h-3 rounded-[3px]"
+              style={{ backgroundColor: t.colour }}
+              title={t.recipeName}
+            />
           ))}
-          {hasWonky && (
-            <div className="flex items-center gap-1.5">
-              <div
-                className="w-3.5 h-3.5 rounded-[3px] flex-shrink-0 border border-black/10"
-                style={{ background: wonkyBackground }}
-              />
-              <span className="text-sm text-muted-foreground">
-                Wonky
-                <span className="font-semibold text-foreground ml-1">×1 tray</span>
-              </span>
+          {/* Empty slots */}
+          {Array.from({ length: emptySlots }).map((_, i) => (
+            <div key={`e-${i}`} className="h-3 rounded-[3px] bg-secondary/40" />
+          ))}
+          {/* Wonky slot */}
+          {wonky && (
+            <div className="h-3 rounded-[3px] mt-px relative overflow-hidden" title={`Wonky: ${wonkyItems.map(w => w.recipeName).join(", ")}`}>
+              <div className="flex h-full">
+                {wonkyItems.map((w, i) => (
+                  <div
+                    key={i}
+                    className="h-full flex-1"
+                    style={{
+                      backgroundColor: w.colour,
+                      backgroundImage: "repeating-linear-gradient(135deg,transparent,transparent 2px,rgba(255,0,0,0.25) 2px,rgba(255,0,0,0.25) 4px)",
+                    }}
+                  />
+                ))}
+              </div>
             </div>
           )}
         </div>
       </div>
+    );
+  };
 
-      {/* Racks — scrollable row */}
-      <div className="flex gap-6 overflow-x-auto pb-1">
-        {racks.map((rackSlots, rackIdx) => {
-          // Pad to full 28 slots so the rack body always has a fixed height
-          const slots: Slot[] = [...rackSlots];
-          while (slots.length < TRAYS_PER_RACK) slots.push(null);
-
-          return (
-            <div key={rackIdx} className="flex-shrink-0">
-              {racks.length > 1 && (
-                <p className="text-sm text-center text-muted-foreground mb-2 font-medium">
-                  Rack {rackIdx + 1}
-                </p>
-              )}
-              <div className="flex items-stretch gap-2">
-                {/* Left: top/bottom labels */}
-                <div className="flex flex-col justify-between py-[6px]" style={{ height: 28 * 15 + 27 * 2 + 12 }}>
-                  <span className="text-[9px] text-muted-foreground leading-none">1</span>
-                  <span className="text-[9px] text-muted-foreground leading-none">28</span>
-                </div>
-
-                {/* Rack body */}
-                <div
-                  className="relative border-[3px] border-border rounded-md bg-secondary/10 px-1.5 py-[6px]"
-                  style={{ minWidth: 140 }}
-                >
-                  {/* Rack rails */}
-                  <div className="absolute inset-y-2 left-[7px] w-[2px] bg-border/40 rounded-full pointer-events-none" />
-                  <div className="absolute inset-y-2 right-[7px] w-[2px] bg-border/40 rounded-full pointer-events-none" />
-
-                  {/* Trays — slot 0 at top (position 1), slot 27 at bottom (position 28) */}
-                  <div className="flex flex-col gap-[2px] relative z-10">
-                    {slots.map((slot, i) => {
-                      if (slot?.isWonky) {
-                        return (
-                          <div
-                            key={i}
-                            className="h-[15px] rounded-[2px] flex items-center px-1.5 overflow-hidden shadow-sm"
-                            style={{ background: wonkyBackground }}
-                            title={`Wonky packs — ${wonkyItems.map(w => w.recipeName).join(", ")}`}
-                          >
-                            <span
-                              className="text-white text-[8px] font-semibold leading-none truncate"
-                              style={{ textShadow: "0 0 4px rgba(0,0,0,0.8)" }}
-                            >
-                              Wonky
-                            </span>
-                          </div>
-                        );
-                      }
-                      if (slot) {
-                        return (
-                          <div
-                            key={i}
-                            className="h-[15px] rounded-[2px] flex items-center px-1.5 overflow-hidden shadow-sm"
-                            style={{ backgroundColor: slot.colour }}
-                            title={`${slot.recipeName} — position ${i + 1}`}
-                          >
-                            <span
-                              className="text-white text-[8px] font-semibold leading-none truncate"
-                              style={{ textShadow: "0 0 4px rgba(0,0,0,0.7)" }}
-                            >
-                              {slot.recipeName}
-                            </span>
-                          </div>
-                        );
-                      }
-                      return (
-                        <div
-                          key={i}
-                          className="h-[15px] rounded-[2px] border border-dashed border-border/30"
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Right: recipe stacked bar — sub-count per recipe, total shown if split across racks */}
-                {(() => {
-                  // Group consecutive filled slots into recipe segments
-                  const segs: Array<{ colour: string; recipeName: string; count: number; isWonky: boolean }> = [];
-                  for (const slot of slots) {
-                    if (!slot) continue;
-                    const last = segs[segs.length - 1];
-                    if (slot.isWonky) {
-                      if (last?.isWonky) last.count++;
-                      else segs.push({ colour: wonkyBackground, recipeName: "Wonky", count: 1, isWonky: true });
-                    } else if (last && last.recipeName === slot.recipeName && !last.isWonky) {
-                      last.count++;
-                    } else {
-                      segs.push({ colour: slot.colour, recipeName: slot.recipeName, count: 1, isWonky: false });
-                    }
-                  }
-
-                  // Total trays per recipe across ALL racks
-                  const totalByName = new Map<string, number>(rackItems.map(r => [r.recipeName, r.trayCount]));
-                  if (hasWonky) totalByName.set("Wonky", 1);
-
-                  // Recipes whose trays are split across multiple racks
-                  const splitSegs = segs.filter(s => (totalByName.get(s.recipeName) ?? s.count) > s.count);
-
-                  return (
-                    <div className="flex flex-col" style={{ minWidth: 34 }}>
-                      {/* Stacked bar — heights match tray slot heights exactly */}
-                      <div className="flex flex-col gap-[2px] py-[6px]">
-                        {segs.map((seg, si) => {
-                          const h = seg.count * 15 + Math.max(0, seg.count - 1) * 2;
-                          const total = totalByName.get(seg.recipeName) ?? seg.count;
-                          const isPartial = total > seg.count;
-                          return (
-                            <div
-                              key={si}
-                              style={{ height: h, background: seg.colour }}
-                              className="rounded-[2px] flex flex-col items-center justify-center overflow-hidden"
-                            >
-                              <span
-                                className="text-white font-extrabold text-[11px] leading-none"
-                                style={{ textShadow: "0 0 4px rgba(0,0,0,0.9)" }}
-                              >
-                                {seg.count}
-                              </span>
-                              {isPartial && (
-                                <span
-                                  className="text-white/80 text-[8px] leading-none mt-0.5"
-                                  style={{ textShadow: "0 0 3px rgba(0,0,0,0.8)" }}
-                                >
-                                  /{total}
-                                </span>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                      {/* Below bar: grand total for recipes that span multiple racks */}
-                      {splitSegs.length > 0 && (
-                        <div className="mt-1.5 flex flex-col gap-0.5">
-                          {splitSegs.map((seg, si) => (
-                            <div key={si} className="flex items-center gap-1 justify-center">
-                              <div
-                                className="w-2 h-2 rounded-[1px] flex-shrink-0 border border-black/10"
-                                style={{ background: seg.colour }}
-                              />
-                              <span className="text-[9px] font-bold tabular-nums text-foreground">
-                                {totalByName.get(seg.recipeName)}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-            </div>
-          );
-        })}
+  return (
+    <div className="space-y-2">
+      <div className={cn("flex gap-3", !showRack2 && "max-w-xs")}>
+        {renderRack(rack1Regular, TRAYS_PER_RACK, "Rack 1", hasWonky)}
+        {showRack2 && renderRack(rack2Regular, TRAYS_PER_RACK, "Rack 2", false)}
+      </div>
+      {overflow > 0 && (
+        <p className="text-xs text-amber-600 dark:text-amber-400 text-center">+{overflow} trays won't fit — need another rack!</p>
+      )}
+      {/* Legend */}
+      <div className="flex flex-wrap gap-2 justify-center">
+        {rackItems.map(r => (
+          <div key={r.recipeId} className="flex items-center gap-1.5">
+            <div className="w-3 h-3 rounded-[2px]" style={{ backgroundColor: r.colour }} />
+            <span className="text-xs text-muted-foreground">{r.recipeName} ({r.trayCount})</span>
+          </div>
+        ))}
+        {hasWonky && (
+          <div className="flex items-center gap-1.5">
+            <div className="w-3 h-3 rounded-[2px] bg-red-400" style={{ backgroundImage: "repeating-linear-gradient(135deg,transparent,transparent 2px,rgba(255,0,0,0.3) 2px,rgba(255,0,0,0.3) 4px)" }} />
+            <span className="text-xs text-red-500 font-medium">Wonky</span>
+          </div>
+        )}
       </div>
     </div>
   );
