@@ -240,7 +240,10 @@ router.get("/calculate", async (req, res) => {
     const costPerPack = Number(detail.costPerPack) || 0;
     const stockOnHand = latestStockByIngredient[iid] ?? 0;
     const surplusPercent = Number(detail.surplusPercent) || 10;
-    const surplusTarget = (dptLookup[iid] ?? 0) * (surplusPercent / 100);
+    // Use DPT daily requirement if available, otherwise fall back to
+    // the current plan's totalRequired for this ingredient.
+    const dailyRequirement = dptLookup[iid] ?? ing.totalRequired;
+    const surplusTarget = dailyRequirement * (surplusPercent / 100);
 
     const rawOrderQty = Math.max(0, ing.totalRequired + surplusTarget - stockOnHand);
     const packsToOrder = packWeight > 0 ? Math.ceil(rawOrderQty / packWeight) : 0;
