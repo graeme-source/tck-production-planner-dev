@@ -2356,9 +2356,6 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const [validationData, setValidationData] = useState<ValidationResult | null>(null);
   const [validationLoading, setValidationLoading] = useState(false);
   const [regeneratingOrders, setRegeneratingOrders] = useState(false);
-  const [showPlanOrders, setShowPlanOrders] = useState(false);
-  const [planOrders, setPlanOrders] = useState<Array<{ id: number; supplierName: string | null; status: string; lineCount: number; createdAt: string; placedAt: string | null; expectedDeliveryDate: string | null }>>([]);
-  const [planOrdersLoading, setPlanOrdersLoading] = useState(false);
   const [, navigate] = useLocation();
   const { data: stationActivity } = useGetStationActivity(planId, {
     query: { queryKey: getGetStationActivityQueryKey(planId), refetchInterval: 10000 },
@@ -2482,22 +2479,6 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
     }
   };
 
-  const handleViewPlanOrders = async () => {
-    setPlanOrdersLoading(true);
-    setShowPlanOrders(true);
-    try {
-      const resp = await fetch(`/api/orders/by-plan/${planId}`, { credentials: "include" });
-      if (!resp.ok) throw new Error("Failed to fetch orders");
-      const data = await resp.json();
-      setPlanOrders(data);
-    } catch (err) {
-      toast({ title: "Failed to load orders", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
-      setShowPlanOrders(false);
-    } finally {
-      setPlanOrdersLoading(false);
-    }
-  };
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -2561,7 +2542,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
             Raw Materials
           </button>
           <button
-            onClick={handleViewPlanOrders}
+            onClick={() => navigate(`/orders?planId=${planId}`)}
             className="px-3 py-1.5 text-xs border border-border bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-colors font-medium flex items-center gap-1"
           >
             <ClipboardList className="w-3.5 h-3.5" />
@@ -3050,52 +3031,6 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
         />
       )}
 
-      <Dialog open={showPlanOrders} onOpenChange={setShowPlanOrders}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Orders for {plan.name}</DialogTitle>
-          </DialogHeader>
-          {planOrdersLoading ? (
-            <div className="flex items-center justify-center py-8 text-muted-foreground">
-              <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading orders...
-            </div>
-          ) : planOrders.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-6 text-center">No orders found for this plan.</p>
-          ) : (
-            <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-              {planOrders.map(order => (
-                <div
-                  key={order.id}
-                  className="border border-border rounded-lg p-3 flex items-center justify-between"
-                >
-                  <div>
-                    <div className="font-medium text-sm">{order.supplierName ?? `Supplier #${order.id}`}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {order.lineCount} item{order.lineCount !== 1 ? "s" : ""}
-                      {" · "}
-                      {order.status === "draft" && <span className="text-amber-600 font-medium">Draft</span>}
-                      {order.status === "placed" && <span className="text-blue-600 font-medium">Placed</span>}
-                      {order.status === "received" && <span className="text-emerald-600 font-medium">Received</span>}
-                      {order.expectedDeliveryDate && (
-                        <span> · Due {order.expectedDeliveryDate}</span>
-                      )}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => {
-                      setShowPlanOrders(false);
-                      navigate(`/orders?planId=${planId}`);
-                    }}
-                    className="text-xs text-primary hover:underline flex items-center gap-1"
-                  >
-                    View <ExternalLink className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

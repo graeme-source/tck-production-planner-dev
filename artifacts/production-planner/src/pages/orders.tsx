@@ -650,12 +650,12 @@ export default function Orders() {
                       <tr className="border-b border-border bg-secondary/30">
                         <th className="p-3 text-left w-10"></th>
                         <th className="p-3 text-left font-medium text-muted-foreground">Ingredient</th>
+                        <th className="p-3 text-right font-semibold text-green-600 dark:text-green-400">Order Qty</th>
                         <th className="p-3 text-right font-medium text-muted-foreground">Required</th>
                         <th className="p-3 text-right font-medium text-muted-foreground">In Stock</th>
                         <th className="p-3 text-right font-medium text-muted-foreground">Surplus</th>
                         <th className="p-3 text-right font-medium text-muted-foreground">Pack Size</th>
                         <th className="p-3 text-center font-medium text-muted-foreground">Packs</th>
-                        <th className="p-3 text-right font-semibold text-green-600 dark:text-green-400">Order Qty</th>
                         {lines.some(l => l.costPerPack > 0) && (
                           <th className="p-3 text-right font-medium text-muted-foreground">Line Total</th>
                         )}
@@ -693,6 +693,11 @@ export default function Orders() {
                                 Kanban
                               </span>
                             )}
+                          </td>
+                          <td className="p-3 text-right tabular-nums font-bold text-lg text-green-600 dark:text-green-400">
+                            {(line.unit === "packs" || line.unit === "bottles")
+                              ? `${line.editedPacks} ${line.unit}`
+                              : `${(line.editedPacks * line.packWeight).toLocaleString()} ${line.unit}`}
                           </td>
                           <td className="p-3 text-right tabular-nums">
                             {line.totalRequired.toLocaleString()} {line.unit}
@@ -747,11 +752,6 @@ export default function Orders() {
                               onChange={e => updatePacks(so.supplier.id, idx, parseInt(e.target.value) || 0)}
                               className="w-16 h-8 rounded border border-border bg-background text-center text-sm tabular-nums"
                             />
-                          </td>
-                          <td className="p-3 text-right tabular-nums font-bold text-lg text-green-600 dark:text-green-400">
-                            {(line.unit === "packs" || line.unit === "bottles")
-                              ? `${line.editedPacks} ${line.unit}`
-                              : `${(line.editedPacks * line.packWeight).toLocaleString()} ${line.unit}`}
                           </td>
                           {lines.some(l => l.costPerPack > 0) && (
                             <td className="p-3 text-right tabular-nums">
