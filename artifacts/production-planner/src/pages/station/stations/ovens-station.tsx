@@ -11,7 +11,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import {
   Loader2, CheckCircle2, Flame, RefreshCw, AlertCircle, BarChart2,
-  Minus, Plus, Snowflake,
+  Minus, Plus, Snowflake, X, Eye,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -31,6 +31,10 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
   const isAdmin = state.status === "authenticated" && state.user.role === "admin";
   const [wonlyLoading, setWonlyLoading] = useState<number | null>(null);
   const [isOnBreak, setIsOnBreak] = useState(false);
+  const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
+  // Prompt state: when a recipe finishes all batches, prompt for wonky before moving on
+  const [promptItemId, setPromptItemId] = useState<number | null>(null);
+  const [prevCurrentId, setPrevCurrentId] = useState<number | null>(null);
 
   const createBatch = useCreateBatchCompletion({
     mutation: {
@@ -40,6 +44,17 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
   const currentItem = items.find(it => getStationCount(it, "ovens") < (it.batchesTarget ?? 0));
+
+  // Detect when the current recipe changes (one recipe finished, moved to next)
+  // and prompt for wonky packs on the just-completed recipe.
+  useEffect(() => {
+    const curId = currentItem?.id ?? null;
+    if (prevCurrentId !== null && curId !== prevCurrentId) {
+      // The previous recipe just completed — prompt for wonky
+      setPromptItemId(prevCurrentId);
+    }
+    setPrevCurrentId(curId);
+  }, [currentItem?.id]);
 
   const addBatch = (item: ProductionPlanItem) => {
     if (isOnBreak) return;
@@ -92,6 +107,36 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
     });
     setWonlyLoading(null);
   };
+
+  // Extra packs adjustment
+  const [runExtraAction, extraBusy] = useGuardedAction({
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
+  });
+
+  const addExtraPack = async (item: ProductionPlanItem) => {
+    if (isOnBreak) return;
+    await runExtraAction(async (signal) => {
+      await guardedFetch(`/api/production-plans/${plan.id}/items/${item.id}/extra-packs-built`, {
+        method: "PATCH", signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ delta: 1 }),
+      });
+    });
+  };
+
+  const removeExtraPack = async (item: ProductionPlanItem) => {
+    if ((item.extraPacksBuilt ?? 0) <= 0) return;
+    await runExtraAction(async (signal) => {
+      await guardedFetch(`/api/production-plans/${plan.id}/items/${item.id}/extra-packs-built`, {
+        method: "PATCH", signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ delta: -1 }),
+      });
+    });
+  };
+
+  const selectedItem = selectedItemId != null ? items.find(it => it.id === selectedItemId) : null;
+  const promptItem = promptItemId != null ? items.find(it => it.id === promptItemId) : null;
 
   const totalOvenComplete = items.reduce((s, it) => s + getStationCount(it, "ovens"), 0);
   const totalTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
@@ -278,6 +323,164 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
         </div>
       )}
 
+      {/* Wonky prompt — shown when a recipe just finished all batches */}
+      {promptItem && (
+        <div className="bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-400 dark:border-amber-600 rounded-xl p-5">
+          <div className="flex items-start gap-3 mb-3">
+            <AlertCircle className="w-6 h-6 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <h3 className="font-bold text-lg text-amber-800 dark:text-amber-200">
+                Any wonky calzones for {promptItem.recipeName ?? "this recipe"}?
+              </h3>
+              <p className="text-sm text-amber-700 dark:text-amber-300 mt-0.5">
+                Record any quality rejects before moving on.
+                Current wonky count: <strong>{promptItem.wonlyCount ?? 0}</strong>
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => undoWonly(promptItem)}
+                disabled={(promptItem.wonlyCount ?? 0) === 0 || wonlyLoading === promptItem.id || wonlyBusy}
+                className="w-12 h-12 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
+              >
+                <Minus className="w-5 h-5" />
+              </button>
+              <span className="text-3xl font-bold tabular-nums w-12 text-center text-red-600 dark:text-red-400">
+                {wonlyLoading === promptItem.id ? "…" : (promptItem.wonlyCount ?? 0)}
+              </span>
+              <button
+                onClick={() => addWonly(promptItem)}
+                disabled={wonlyLoading === promptItem.id || wonlyBusy}
+                className="w-12 h-12 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
+              >
+                <Plus className="w-5 h-5" />
+              </button>
+            </div>
+            <button
+              onClick={() => setPromptItemId(null)}
+              className="px-5 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-semibold transition-colors"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Selected recipe editing panel — tap any recipe in the queue to edit */}
+      {selectedItem && (
+        <div className="bg-card border-2 border-blue-300 dark:border-blue-700 rounded-xl overflow-hidden">
+          <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-700">
+            <Eye className="w-5 h-5 text-blue-500 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <h3 className="font-bold text-lg leading-tight truncate">
+                {selectedItem.recipeName ?? `Recipe #${selectedItem.recipeId}`}
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                {getStationCount(selectedItem, "ovens")} / {selectedItem.batchesTarget ?? 0} batches
+                {" · "}{netPacks(selectedItem)} net packs
+                {(selectedItem.wonlyCount ?? 0) > 0 && ` · ${selectedItem.wonlyCount} wonky`}
+              </p>
+            </div>
+            <button
+              onClick={() => setSelectedItemId(null)}
+              className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-blue-100 dark:hover:bg-blue-800/40 text-blue-500 transition-colors flex-shrink-0"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="p-4 space-y-4">
+            {/* Batch adjustment */}
+            <div>
+              <p className="text-sm font-semibold text-muted-foreground mb-2">Batches</p>
+              <div className="flex items-center justify-center gap-6">
+                <button
+                  onClick={() => removeBatch(selectedItem)}
+                  disabled={getStationCount(selectedItem, "ovens") === 0 || isOnBreak || removePending}
+                  className="w-12 h-12 flex items-center justify-center rounded-full border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
+                >
+                  <Minus className="w-5 h-5" />
+                </button>
+                <div className="text-center">
+                  <span className="font-display text-4xl font-bold tabular-nums">
+                    {getStationCount(selectedItem, "ovens")}
+                  </span>
+                  <span className="text-xl text-muted-foreground font-light tabular-nums ml-1">
+                    / {selectedItem.batchesTarget ?? 0}
+                  </span>
+                </div>
+                <button
+                  onClick={() => addBatch(selectedItem)}
+                  disabled={
+                    createBatch.isPending ||
+                    (getStationCount(selectedItem, "ovens") >= (selectedItem.batchesTarget ?? 0) && !isAdmin) ||
+                    getAvailableFromPrev(selectedItem, "ovens") <= 0 ||
+                    isOnBreak
+                  }
+                  className="w-12 h-12 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
+                >
+                  <Plus className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Wonky adjustment */}
+            <div className="flex items-center justify-between border-t border-border pt-3">
+              <div>
+                <p className="text-sm font-semibold text-muted-foreground">Wonky</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => undoWonly(selectedItem)}
+                  disabled={(selectedItem.wonlyCount ?? 0) === 0 || wonlyLoading === selectedItem.id || wonlyBusy || isOnBreak}
+                  className="w-10 h-10 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
+                >
+                  <Minus className="w-4 h-4" />
+                </button>
+                <span className="text-2xl font-bold tabular-nums w-9 text-center text-red-600 dark:text-red-400">
+                  {wonlyLoading === selectedItem.id ? "…" : (selectedItem.wonlyCount ?? 0)}
+                </span>
+                <button
+                  onClick={() => addWonly(selectedItem)}
+                  disabled={wonlyLoading === selectedItem.id || wonlyBusy || isOnBreak}
+                  className="w-10 h-10 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Extra packs adjustment */}
+            <div className="flex items-center justify-between border-t border-border pt-3">
+              <div>
+                <p className="text-sm font-semibold text-muted-foreground">Extra Packs</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => removeExtraPack(selectedItem)}
+                  disabled={(selectedItem.extraPacksBuilt ?? 0) <= 0 || extraBusy || isOnBreak}
+                  className="w-10 h-10 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
+                >
+                  <Minus className="w-4 h-4" />
+                </button>
+                <span className="text-2xl font-bold tabular-nums w-9 text-center text-emerald-600 dark:text-emerald-400">
+                  {selectedItem.extraPacksBuilt ?? 0}
+                </span>
+                <button
+                  onClick={() => addExtraPack(selectedItem)}
+                  disabled={extraBusy || isOnBreak}
+                  className="w-10 h-10 flex items-center justify-center rounded-full bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50 transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Session totals */}
       <div className="grid grid-cols-4 gap-2">
         <div className="bg-card border border-border rounded-xl p-3 text-center">
@@ -331,11 +534,15 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
               const wonlys = item.wonlyCount ?? 0;
               const recipeColour = item.recipeColor ?? RECIPE_RACK_COLOURS[idx % RECIPE_RACK_COLOURS.length];
               return (
-                <tr key={item.id} className={cn(
-                  "border-b border-border/50 last:border-0",
-                  isCurrentRow ? "bg-red-50/40 dark:bg-red-900/10" :
-                  item.status === "complete" ? "bg-emerald-50/30 dark:bg-emerald-900/10" : ""
-                )}>
+                <tr
+                  key={item.id}
+                  onClick={() => setSelectedItemId(selectedItemId === item.id ? null : item.id)}
+                  className={cn(
+                    "border-b border-border/50 last:border-0 cursor-pointer transition-colors",
+                    selectedItemId === item.id ? "bg-blue-50/60 dark:bg-blue-900/20 ring-1 ring-blue-300 dark:ring-blue-700" :
+                    isCurrentRow ? "bg-red-50/40 dark:bg-red-900/10" :
+                    item.status === "complete" ? "bg-emerald-50/30 dark:bg-emerald-900/10" : "hover:bg-secondary/20"
+                  )}>
                   <td className={cn("py-2 px-3 font-medium text-sm", item.status === "complete" ? "line-through text-muted-foreground" : "")}>
                     <div className="flex items-center gap-1.5">
                       {trays > 0 && (

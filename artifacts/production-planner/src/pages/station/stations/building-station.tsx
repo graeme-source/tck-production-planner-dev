@@ -410,6 +410,9 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   const [checklistLoadedForItem, setChecklistLoadedForItem] = useState<number | null>(null);
   const prevRecipeIdRef = useRef<number | null>(null);
   const [viewingItemId, setViewingItemId] = useState<number | null>(null);
+  // Prompt for extra packs when a recipe finishes
+  const [extraPromptItemId, setExtraPromptItemId] = useState<number | null>(null);
+  const [prevCurrentItemId, setPrevCurrentItemId] = useState<number | null>(null);
 
   const checklistKey = (itemId: number) => `checklist_done_${plan.id}_${stationType}_${itemId}`;
 
@@ -545,6 +548,17 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
     }
   }, [checkedItems, currentItem?.id, assemblyMap, checklistLockedForItem]);
 
+  // Detect when the current recipe changes (one recipe finished, moved to next)
+  // and prompt for extra packs on the just-completed recipe.
+  useEffect(() => {
+    const curId = currentItem?.id ?? null;
+    if (prevCurrentItemId !== null && curId !== prevCurrentItemId) {
+      setExtraPromptItemId(prevCurrentItemId);
+    }
+    setPrevCurrentItemId(curId);
+  }, [currentItem?.id]);
+
+  const extraPromptItem = extraPromptItemId != null ? items.find(it => it.id === extraPromptItemId) : null;
 
   const checklistPending = (() => {
     if (!currentItem) return false;
@@ -908,6 +922,32 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
         serverKpi={serverKpi}
       />
 
+      {/* Extra packs prompt — shown when a recipe just finished all batches */}
+      {extraPromptItem && (
+        <div className="bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-400 dark:border-amber-600 rounded-xl p-5">
+          <div className="flex items-start gap-3 mb-3">
+            <AlertCircle className="w-6 h-6 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <h3 className="font-bold text-lg text-amber-800 dark:text-amber-200">
+                Any extra packs for {extraPromptItem.recipeName ?? "this recipe"}?
+              </h3>
+              <p className="text-sm text-amber-700 dark:text-amber-300 mt-0.5">
+                Add extra packs or shorts before moving on.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center justify-between">
+            <PackAdjustment planId={plan.id} item={extraPromptItem} isOnBreak={isOnBreak} />
+            <button
+              onClick={() => setExtraPromptItemId(null)}
+              className="px-5 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-semibold transition-colors ml-3 flex-shrink-0"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* End of day button + queue */}
       <div className="flex justify-end">
         <button
@@ -1002,6 +1042,45 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                 {viewItem.notes && (
                   <span className="italic">{viewItem.notes}</span>
                 )}
+              </div>
+
+              {/* Batch adjustment — add/remove batches on any recipe */}
+              <div className="border border-border rounded-xl px-3 py-2 mt-3">
+                <div className="flex items-center gap-3">
+                  <p className="text-sm text-muted-foreground font-semibold">Batches</p>
+                  <div className="flex items-center gap-3 ml-auto">
+                    <button
+                      onClick={() => {
+                        runUndo((signal) =>
+                          guardedFetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
+                            method: "DELETE", signal,
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ planItemId: viewItem.id, stationType }),
+                          })
+                        );
+                      }}
+                      disabled={getStationCount(viewItem, stationType) === 0 || undoPending || isOnBreak}
+                      className="w-10 h-10 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
+                    >
+                      <Minus className="w-4 h-4" />
+                    </button>
+                    <span className="text-xl font-bold tabular-nums min-w-[3rem] text-center">
+                      {viewBuildCount} / {viewItem.batchesTarget ?? 0}
+                    </span>
+                    <button
+                      onClick={() => {
+                        createBatch.mutate({
+                          id: plan.id,
+                          data: { planItemId: viewItem.id, stationType, completedAt: new Date().toISOString() },
+                        });
+                      }}
+                      disabled={createBatch.isPending || isOnBreak || (viewBuildCount >= (viewItem.batchesTarget ?? 0) && !isAdmin)}
+                      className="w-10 h-10 flex items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-30 transition-colors"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
               </div>
 
               {/* Pack adjustment — allows editing extras/shorts on completed recipes */}
