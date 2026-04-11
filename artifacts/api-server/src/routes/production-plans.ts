@@ -7,7 +7,6 @@ import * as z from "zod";
 import { resolveRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
 import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag } from "../services/shopify";
 import { getFactoryNumberCoreMenuOnly } from "../lib/inventory-sync";
-import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
 
 const router: IRouter = Router();
 
@@ -319,11 +318,6 @@ router.post("/", validate(CreatePlanBody), async (req, res) => {
         notes: i.notes ?? null,
         status: "pending",
       }))
-    );
-
-    // New plan created with items — recalculate DPT ingredient requirements
-    recalculateDptRequirements().catch(err =>
-      console.error("Auto-recalculate DPT after plan creation failed:", err)
     );
   }
   res.status(201).json(mapPlan(plan));
@@ -1120,12 +1114,6 @@ router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
         }))
       );
     }
-
-    // Plan batch targets changed — recalculate DPT ingredient requirements
-    // so ordering surplus stays accurate.
-    recalculateDptRequirements().catch(err =>
-      console.error("Auto-recalculate DPT after plan item update failed:", err)
-    );
   }
   res.json(mapPlan(updated));
 });
