@@ -4024,6 +4024,55 @@ router.get("/:id/main-prep", async (req, res) => {
       };
     });
 
+  // ── Linked ingredients: fetch items where marinadeForIngredientId points to
+  // a parent ingredient that appears in this station's ingredient list.
+  // These are displayed as sub-rows under the parent ingredient.
+  const linkedItemsMap: Record<number, Array<{ ingredientName: string; unit: string; totalQty: number }>> = {};
+  for (const planItem of planItems) {
+    const batchesTarget = Number(planItem.batchesTarget) || 0;
+    if (!planItem.recipeId || batchesTarget === 0) continue;
+
+    const linkedRows = await db
+      .select({
+        ingredientId: recipeIngredientsTable.ingredientId,
+        ingredientName: ingredientsTable.name,
+        unit: ingredientsTable.unit,
+        quantity: recipeIngredientsTable.quantity,
+        marinadeForIngredientId: recipeIngredientsTable.marinadeForIngredientId,
+      })
+      .from(recipeIngredientsTable)
+      .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
+      .where(and(
+        eq(recipeIngredientsTable.recipeId, planItem.recipeId),
+        isNotNull(recipeIngredientsTable.marinadeForIngredientId),
+      ));
+
+    const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
+    for (const lr of linkedRows) {
+      const parentId = lr.marinadeForIngredientId!;
+      // Only include if the parent ingredient is in this station's list
+      if (!ingredientMap.has(parentId)) continue;
+      const qtyPerPortion = Number(lr.quantity) || 0;
+      const totalQty = qtyPerPortion * portionsPerBatch * batchesTarget;
+      const unit = lr.unit ?? "g";
+      const roundedQty = roundByUnit(totalQty, unit);
+      if (roundedQty <= 0) continue;
+
+      if (!linkedItemsMap[parentId]) linkedItemsMap[parentId] = [];
+      // Aggregate by ingredient
+      const existing = linkedItemsMap[parentId].find(x => x.ingredientName === (lr.ingredientName ?? ""));
+      if (existing) {
+        existing.totalQty += roundedQty;
+      } else {
+        linkedItemsMap[parentId].push({
+          ingredientName: lr.ingredientName ?? `Ingredient #${lr.ingredientId}`,
+          unit,
+          totalQty: roundedQty,
+        });
+      }
+    }
+  }
+
   const allItems = [...ingredients, ...subRecipeIngredients]
     .sort((a, b) => a.ingredientName.localeCompare(b.ingredientName));
 
@@ -4055,7 +4104,7 @@ router.get("/:id/main-prep", async (req, res) => {
     validItemKeys.has(`${c.ingredientId}_${c.isSubRecipe}`)
   );
 
-  res.json({ ingredients: allItems, completions });
+  res.json({ ingredients: allItems, completions, linkedItems: linkedItemsMap });
 });
 
 router.post("/:id/prep-completions", async (req, res) => {
