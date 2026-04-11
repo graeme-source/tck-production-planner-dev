@@ -8,6 +8,14 @@ import { resolveRecipeIngredients, aggregateIngredients, roundByUnit, type Resol
 import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag } from "../services/shopify";
 import { getFactoryNumberCoreMenuOnly } from "../lib/inventory-sync";
 
+/** Calculate tin count with minimum-2-tins rule for prep/mixing stations.
+ *  When batches > 5, always at least 2 tins. ≤5 batches uses normal calc. */
+function calcTinCount(batchesTarget: number, maxBatchesPerTin: number | null): number | null {
+  if (!maxBatchesPerTin || batchesTarget <= 0) return null;
+  const raw = Math.ceil(batchesTarget / maxBatchesPerTin);
+  return batchesTarget > 5 ? Math.max(2, raw) : raw;
+}
+
 const router: IRouter = Router();
 
 /** Applies a delta to the latest production_fridge stock_entries row
@@ -2078,7 +2086,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       sopUrl: planItem.sopUrlFromItem ?? planItem.sopUrlFromRecipe ?? null,
       tinSize: planItem.tinSize ?? null,
       maxBatchesPerTin: planItem.maxBatchesPerTin ?? null,
-      tinCount: planItem.maxBatchesPerTin && batchesTarget > 0 ? Math.ceil(batchesTarget / planItem.maxBatchesPerTin) : null,
+      tinCount: calcTinCount(batchesTarget, planItem.maxBatchesPerTin ?? null),
       trayCount,
       ingredients,
       marinades,
@@ -3806,9 +3814,7 @@ router.get("/:id/main-prep", async (req, res) => {
         isNull(recipeIngredientsTable.marinadeForIngredientId),
       ));
 
-    const tinCount = planItem.maxBatchesPerTin && batchesTarget > 0
-      ? Math.ceil(batchesTarget / planItem.maxBatchesPerTin)
-      : 1;
+    const tinCount = calcTinCount(batchesTarget, planItem.maxBatchesPerTin ?? null) ?? 1;
 
     for (const row of directIngredients) {
       if (row.isTopping) continue;
@@ -4061,9 +4067,7 @@ router.get("/:id/main-prep", async (req, res) => {
       ));
 
     const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
-    const tinCount = planItem.maxBatchesPerTin && batchesTarget > 0
-      ? Math.ceil(batchesTarget / planItem.maxBatchesPerTin)
-      : 1;
+    const tinCount = calcTinCount(batchesTarget, planItem.maxBatchesPerTin ?? null) ?? 1;
 
     for (const lr of linkedRows) {
       const parentId = lr.marinadeForIngredientId!;
