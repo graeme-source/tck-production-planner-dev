@@ -3,6 +3,7 @@ import { db, usersTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { getOrdersForPnl, getOrderTransactionFees, type ShopifyOrder } from "../services/shopify";
 import { calculateCogs, classifyBoxes } from "../lib/pnl-calculator";
+import { getPayrollCosts } from "../services/planday";
 
 const router = Router();
 
@@ -124,6 +125,15 @@ router.get("/summary", async (req: Request, res: Response) => {
     const dayCount = Math.max(1, Math.ceil((toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1);
     const totalOverheads = dailyOverhead * dayCount;
 
+    // Actual labour from Planday (runs in parallel with nothing — just awaited here)
+    let actualLabour: Awaited<ReturnType<typeof getPayrollCosts>>;
+    try {
+      actualLabour = await getPayrollCosts(from, to);
+    } catch (err) {
+      console.warn("[pnl/summary] Planday fetch failed:", err instanceof Error ? err.message : err);
+      actualLabour = { available: false, grossWages: 0, employerNI: 0, pension: 0, totalCost: 0, shiftCount: 0, totalHours: 0, costPerHour: 0, settings: { niRate: 0, niWeeklyThreshold: 0, employmentAllowanceAnnual: 0, pensionRate: 0 } };
+    }
+
     // Net profit
     const contributionProfit = grossProfit - totalTransactionFees - totalPP;
     const contributionMarginPercent = netRevenue > 0 ? (contributionProfit / netRevenue) * 100 : 0;
@@ -167,6 +177,7 @@ router.get("/summary", async (req: Request, res: Response) => {
       contributionMarginPercent: round1(contributionMarginPercent),
       netProfit: round2(netProfit),
       netMarginPercent: round1(netMarginPercent),
+      actualLabour,
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
