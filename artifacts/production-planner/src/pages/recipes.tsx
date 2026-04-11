@@ -460,9 +460,10 @@ function RecipeForm({
 
         {/* Unified Ingredients & Prep Items */}
         {(() => {
-          const rawMeatIngs = (watchedIngredients ?? [])
+          // All ingredients in this recipe that can be linked to (for connected ingredient pairs)
+          const linkableIngs = (watchedIngredients ?? [])
             .map(wi => localIngredients.find(i => i.id === Number(wi.ingredientId)))
-            .filter((i): i is IngredientOption => !!i && i.category === "raw_meat");
+            .filter((i): i is IngredientOption => !!i);
 
           return (
             <div className="border-t border-border pt-4 space-y-0">
@@ -577,24 +578,27 @@ function RecipeForm({
                           </div>
                           <button type="button" onClick={() => removeIng(index)} className="text-muted-foreground hover:text-destructive flex justify-center"><X className="w-3.5 h-3.5" /></button>
                         </div>
-                        {!isRawMeat && rawMeatIngs.length > 0 && (
-                          ingMarinadeSet ? (
+                        {(() => {
+                          // Other ingredients this one can be linked to (exclude self)
+                          const targets = linkableIngs.filter(i => i.id !== Number(watchedIngredients?.[index]?.ingredientId));
+                          if (targets.length === 0) return null;
+                          return ingMarinadeSet ? (
                             <div className="pl-1 flex items-center gap-1.5">
                               <select
                                 {...register(`ingredients.${index}.marinadeForIngredientId`)}
                                 className="px-1.5 py-0.5 bg-muted/50 border border-border rounded text-xs text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/30"
                               >
-                                <option value="">Not a marinade</option>
-                                {rawMeatIngs.map(m => <option key={m.id} value={m.id}>Marinade for {m.name}</option>)}
+                                <option value="">Not linked</option>
+                                {targets.map(m => <option key={m.id} value={m.id}>Linked to {m.name}</option>)}
                               </select>
                               <button type="button" onClick={() => setValue(`ingredients.${index}.marinadeForIngredientId`, null)} className="text-muted-foreground/60 hover:text-muted-foreground"><X className="w-3 h-3" /></button>
                             </div>
                           ) : (
-                            <button type="button" onClick={() => { setValue(`ingredients.${index}.marinadeForIngredientId`, rawMeatIngs[0]?.id ?? 0); }} className="pl-1 text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors">
-                              + Mark as marinade
+                            <button type="button" onClick={() => { setValue(`ingredients.${index}.marinadeForIngredientId`, targets[0]?.id ?? 0); }} className="pl-1 text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors">
+                              + Link ingredient
                             </button>
-                          )
-                        )}
+                          );
+                        })()}
                       </div>
                     );
                   })}
@@ -691,21 +695,21 @@ function RecipeForm({
                           </div>
                           <button type="button" onClick={() => removeSub(index)} className="text-muted-foreground hover:text-destructive flex justify-center"><X className="w-3.5 h-3.5" /></button>
                         </div>
-                        {rawMeatIngs.length > 0 && (
+                        {linkableIngs.length > 0 && (
                           subMarinadeSet ? (
                             <div className="pl-1 flex items-center gap-1.5">
                               <select
                                 {...register(`subRecipes.${index}.marinadeForIngredientId`)}
                                 className="px-1.5 py-0.5 bg-muted/50 border border-border rounded text-xs text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/30"
                               >
-                                <option value="">Not a marinade</option>
-                                {rawMeatIngs.map(m => <option key={m.id} value={m.id}>Marinade for {m.name}</option>)}
+                                <option value="">Not linked</option>
+                                {linkableIngs.map(m => <option key={m.id} value={m.id}>Linked to {m.name}</option>)}
                               </select>
                               <button type="button" onClick={() => setValue(`subRecipes.${index}.marinadeForIngredientId`, null)} className="text-muted-foreground/60 hover:text-muted-foreground"><X className="w-3 h-3" /></button>
                             </div>
                           ) : (
-                            <button type="button" onClick={() => { setValue(`subRecipes.${index}.marinadeForIngredientId`, rawMeatIngs[0]?.id ?? 0); }} className="pl-1 text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors">
-                              + Mark as marinade
+                            <button type="button" onClick={() => { setValue(`subRecipes.${index}.marinadeForIngredientId`, linkableIngs[0]?.id ?? 0); }} className="pl-1 text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors">
+                              + Link ingredient
                             </button>
                           )
                         )}

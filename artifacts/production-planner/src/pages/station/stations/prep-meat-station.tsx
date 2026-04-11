@@ -403,7 +403,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                 <div>
                   <p className="text-base font-semibold tabular-nums">{selTotalRawKg.toFixed(3)} kg raw meat</p>
                   {selTotalMarinadeG > 0 && (
-                    <p className="text-sm text-muted-foreground">+ {selTotalMarinadeG >= 1000 ? `${(selTotalMarinadeG / 1000).toFixed(3)} kg` : `${selTotalMarinadeG}g`} marinade</p>
+                    <p className="text-sm text-muted-foreground">+ {selTotalMarinadeG >= 1000 ? `${(selTotalMarinadeG / 1000).toFixed(3)} kg` : `${selTotalMarinadeG}g`} linked</p>
                   )}
                   {selRawMeat.length > 1 && <p className="text-sm text-rose-600 dark:text-rose-400 font-medium mt-0.5">across {selRawMeat.length} meat types</p>}
                 </div>
@@ -423,7 +423,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                   </div>
                   {selTotalMarinadeG > 0 && (
                     <div className="text-center">
-                      <p className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-1">Marinade</p>
+                      <p className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-1">Linked</p>
                       <p className="text-3xl font-bold font-display tabular-nums text-orange-500">
                         {selTotalMarinadeG >= 1000 ? `${(selTotalMarinadeG / 1000).toFixed(3)}` : selTotalMarinadeG}
                         <span className="text-xl font-normal ml-1 text-muted-foreground">{selTotalMarinadeG >= 1000 ? "kg" : "g"}</span>
@@ -492,7 +492,7 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
                       )}
                     </div>
 
-                    {/* Marinade sub-rows */}
+                    {/* Linked ingredient sub-rows */}
                     {meatMarinades.map((m, mi) => {
                       const name = m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown";
                       const perTrayG = ingTrays && ingTrays > 0 ? Math.round(m.totalGrams / ingTrays) : null;
