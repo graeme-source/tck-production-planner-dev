@@ -1,4 +1,4 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { calcExpectedDeliveryDate, toISODate } from "@workspace/business-days";
 import {
   db,
@@ -13,9 +13,20 @@ import {
   purchaseOrderLinesTable,
   kanbanItemsTable,
   dptIngredientRequirementsTable,
+  usersTable,
 } from "@workspace/db";
 import { eq, and, desc, sql, inArray, notInArray } from "drizzle-orm";
 import { resolveRecipeIngredients, aggregateIngredients } from "../lib/ingredient-resolver";
+
+async function requireManagerOrAdmin(req: Request, res: Response, next: NextFunction) {
+  let role = (req.session as any).userRole;
+  if (!role && (req.session as any).userId) {
+    const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, (req.session as any).userId));
+    if (user) { role = user.role; (req.session as any).userRole = role; }
+  }
+  if (role === "admin" || role === "manager") { next(); return; }
+  res.status(403).json({ error: "Manager or admin access required" });
+}
 
 const router: IRouter = Router();
 
@@ -692,6 +703,163 @@ router.patch("/stock-check", async (req, res) => {
     console.error("[Orders] Stock check update failed:", err.message);
     res.status(500).json({ error: "Failed to update stock check" });
   }
+});
+
+// ── Regenerate orders for a plan ──────────────────────────────────────
+// Deletes all DRAFT purchase orders linked to the plan, then re-creates
+// new draft orders from the latest calculate results.
+router.post("/regenerate", requireManagerOrAdmin, async (req, res) => {
+  const planId = Number(req.body.planId);
+  if (!planId || isNaN(planId)) {
+    res.status(400).json({ error: "planId is required" });
+    return;
+  }
+
+  try {
+    // 1. Find all draft purchase orders for this plan
+    const draftOrders = await db
+      .select({ id: purchaseOrdersTable.id })
+      .from(purchaseOrdersTable)
+      .where(and(
+        eq(purchaseOrdersTable.planId, planId),
+        eq(purchaseOrdersTable.status, "draft"),
+      ));
+
+    const deletedCount = draftOrders.length;
+
+    // 2. Delete them (lines cascade or delete explicitly)
+    if (draftOrders.length > 0) {
+      const draftIds = draftOrders.map(o => o.id);
+      await db.delete(purchaseOrderLinesTable).where(inArray(purchaseOrderLinesTable.purchaseOrderId, draftIds));
+      await db.delete(purchaseOrdersTable).where(inArray(purchaseOrdersTable.id, draftIds));
+    }
+
+    // 3. Re-run the calculate logic by calling the same endpoint internally
+    //    We simulate a request to /calculate to get the supplier/line data.
+    const calcUrl = `${req.protocol}://${req.get("host")}/api/orders/calculate?planId=${planId}`;
+    const calcRes = await fetch(calcUrl, {
+      headers: { cookie: req.headers.cookie ?? "" },
+    });
+    if (!calcRes.ok) {
+      const err = await calcRes.json().catch(() => ({}));
+      res.status(500).json({ error: "Failed to calculate orders", detail: (err as any).error ?? calcRes.statusText });
+      return;
+    }
+    const calcData = await calcRes.json() as {
+      planId: number;
+      planName: string;
+      suppliers: Array<{
+        supplier: { id: number; name: string };
+        lines: Array<{
+          ingredientId: number;
+          totalRequired: number;
+          orderQty: number;
+          packsToOrder: number;
+          unit: string;
+          costPerPack: number;
+          notes?: string;
+        }>;
+      }>;
+    };
+
+    // 4. Create new draft purchase orders grouped by supplier
+    const created: Array<{ orderId: number; supplierName: string; lineCount: number }> = [];
+
+    for (const group of calcData.suppliers) {
+      const linesWithOrder = group.lines.filter(l => l.packsToOrder > 0);
+      if (linesWithOrder.length === 0) continue;
+
+      const [order] = await db.insert(purchaseOrdersTable).values({
+        supplierId: group.supplier.id,
+        planId,
+        status: "draft",
+        notes: null,
+      }).returning();
+
+      await db.insert(purchaseOrderLinesTable).values(
+        linesWithOrder.map(l => ({
+          purchaseOrderId: order.id,
+          ingredientId: l.ingredientId,
+          quantityRequired: String(l.totalRequired),
+          quantityOrdered: String(l.orderQty),
+          quantityReceived: "0",
+          unit: l.unit,
+          unitPrice: l.costPerPack ? String(l.costPerPack) : null,
+          checkedOff: false,
+          notes: null,
+        }))
+      );
+
+      created.push({
+        orderId: order.id,
+        supplierName: group.supplier.name,
+        lineCount: linesWithOrder.length,
+      });
+    }
+
+    res.json({
+      deletedDraftOrders: deletedCount,
+      createdOrders: created.length,
+      orders: created,
+    });
+  } catch (err) {
+    console.error("[Orders] Regenerate failed:", err);
+    res.status(500).json({ error: "Failed to regenerate orders", detail: String(err) });
+  }
+});
+
+// ── Get orders for a specific plan ───────────────────────────────────
+router.get("/by-plan/:planId", async (req, res) => {
+  const planId = Number(req.params.planId);
+  if (!planId || isNaN(planId)) {
+    res.status(400).json({ error: "Invalid planId" });
+    return;
+  }
+
+  const rows = await db
+    .select({
+      id: purchaseOrdersTable.id,
+      supplierId: purchaseOrdersTable.supplierId,
+      supplierName: suppliersTable.name,
+      status: purchaseOrdersTable.status,
+      createdAt: purchaseOrdersTable.createdAt,
+      placedAt: purchaseOrdersTable.placedAt,
+      expectedDeliveryDate: purchaseOrdersTable.expectedDeliveryDate,
+      notes: purchaseOrdersTable.notes,
+    })
+    .from(purchaseOrdersTable)
+    .leftJoin(suppliersTable, eq(purchaseOrdersTable.supplierId, suppliersTable.id))
+    .where(eq(purchaseOrdersTable.planId, planId))
+    .orderBy(desc(purchaseOrdersTable.createdAt));
+
+  // Get line counts per order
+  const orderIds = rows.map(r => r.id);
+  let lineCounts: Record<number, number> = {};
+  if (orderIds.length > 0) {
+    const counts = await db
+      .select({
+        purchaseOrderId: purchaseOrderLinesTable.purchaseOrderId,
+        count: sql<number>`count(*)`,
+      })
+      .from(purchaseOrderLinesTable)
+      .where(inArray(purchaseOrderLinesTable.purchaseOrderId, orderIds))
+      .groupBy(purchaseOrderLinesTable.purchaseOrderId);
+    for (const c of counts) {
+      lineCounts[c.purchaseOrderId] = Number(c.count);
+    }
+  }
+
+  res.json(rows.map(r => ({
+    id: r.id,
+    supplierId: r.supplierId,
+    supplierName: r.supplierName,
+    status: r.status,
+    createdAt: r.createdAt.toISOString(),
+    placedAt: r.placedAt?.toISOString() ?? null,
+    expectedDeliveryDate: r.expectedDeliveryDate,
+    notes: r.notes,
+    lineCount: lineCounts[r.id] ?? 0,
+  })));
 });
 
 // ── Delete draft purchase orders ────────────────────────────────────
