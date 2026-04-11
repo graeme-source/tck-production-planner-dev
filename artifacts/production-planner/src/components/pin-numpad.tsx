@@ -147,14 +147,16 @@ export function PinNumpad({
         })}
       </div>
 
-      {pin.length > 0 && !submitting && (
-        <button
-          onClick={handleClear}
-          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-        >
-          Clear
-        </button>
-      )}
+      <div className="h-6">
+        {pin.length > 0 && !submitting ? (
+          <button
+            onClick={handleClear}
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Clear
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

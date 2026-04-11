@@ -60,10 +60,10 @@ export function PinLockOverlay() {
             label="Enter your 4-digit PIN"
           />
 
-          <div className="mt-5 text-center">
+          <div className="mt-5">
             <button
               onClick={() => logout()}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+              className="w-full py-3 rounded-xl border-2 border-border bg-secondary/40 hover:bg-secondary text-sm font-semibold text-foreground transition-colors active:scale-[0.98]"
             >
               Sign in as a different user
             </button>
