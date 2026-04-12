@@ -2,7 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { db, skuLocationsTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
-import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, findOrderByName, addTagToOrder, getOrderById, type ShopifyOrder } from "../services/shopify";
+import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, type ShopifyOrder } from "../services/shopify";
 import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService } from "../services/apc";
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
 import { sql } from "drizzle-orm";
@@ -967,6 +967,7 @@ router.get("/tag-audit", requireManagerOrAdmin, async (_req: Request, res: Respo
       issue: "no_date_tag" | "bad_format";
       tags: string[];
       badTag?: string;
+      suggestedFix?: string;
     }> = [];
 
     for (const order of orders) {
@@ -980,6 +981,28 @@ router.get("/tag-audit", requireManagerOrAdmin, async (_req: Request, res: Respo
           return /\d{4}.*\d{2}.*\d{2}/.test(t) && !DATE_TAG_RE.test(t);
         });
 
+        // Try to parse a corrected date from the bad tag
+        let suggestedFix: string | undefined;
+        if (badDateTag) {
+          // Extract all digit groups
+          const digits = badDateTag.match(/\d+/g);
+          if (digits && digits.length >= 3) {
+            const [a, b, c] = digits.map(Number);
+            // Try to figure out format: YYYY-MM-DD, DD-MM-YYYY, YYYY/MM/DD, etc.
+            if (a > 1000) {
+              // First number is year: YYYY-?-?
+              const m = String(b).padStart(2, "0");
+              const d = String(c).padStart(2, "0");
+              if (b >= 1 && b <= 12 && c >= 1 && c <= 31) suggestedFix = `${a}-${m}-${d}`;
+            } else if (c > 1000) {
+              // Last number is year: DD-MM-YYYY
+              const m = String(b).padStart(2, "0");
+              const d = String(a).padStart(2, "0");
+              if (b >= 1 && b <= 12 && a >= 1 && a <= 31) suggestedFix = `${c}-${m}-${d}`;
+            }
+          }
+        }
+
         problems.push({
           orderId: order.id,
           orderName: order.name,
@@ -990,6 +1013,7 @@ router.get("/tag-audit", requireManagerOrAdmin, async (_req: Request, res: Respo
           issue: badDateTag ? "bad_format" : "no_date_tag",
           tags,
           badTag: badDateTag ?? undefined,
+          suggestedFix,
         });
       }
     }
@@ -1007,6 +1031,30 @@ router.get("/tag-audit", requireManagerOrAdmin, async (_req: Request, res: Respo
     });
   } catch (err: any) {
     console.error("[fulfilment/tag-audit]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Fix a bad date tag on a Shopify order
+router.post("/tag-fix", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const { orderId, currentTags, badTag, correctTag } = req.body as {
+    orderId: number;
+    currentTags: string;
+    badTag: string;
+    correctTag: string;
+  };
+
+  if (!orderId || !correctTag || !DATE_TAG_RE.test(correctTag)) {
+    res.status(400).json({ error: "orderId and a valid correctTag (YYYY-MM-DD) are required" });
+    return;
+  }
+
+  try {
+    const tagsStr = Array.isArray(currentTags) ? currentTags.join(", ") : (currentTags ?? "");
+    const updatedTags = await replaceTagOnOrder(orderId, tagsStr, badTag ?? "", correctTag);
+    res.json({ ok: true, updatedTags });
+  } catch (err: any) {
+    console.error("[fulfilment/tag-fix]", err.message);
     res.status(500).json({ error: err.message });
   }
 });
