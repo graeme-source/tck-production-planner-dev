@@ -170,7 +170,8 @@ export default function Dispatches() {
   const [queryTag, setQueryTag] = useState<string | null>(null);
   const [postcodeIssues, setPostcodeIssues] = useState<PostcodeIssue[] | null>(null);
   const [postcodeLoading, setPostcodeLoading] = useState(false);
-  const [tagAuditResult, setTagAuditResult] = useState<{ totalUnfulfilled: number; problemCount: number; problems: Array<{ orderId: number; orderName: string; createdAt: string; customerName: string | null; issue: "no_date_tag" | "bad_format"; tags: string[]; badTag?: string }> } | null>(null);
+  const [tagAuditResult, setTagAuditResult] = useState<{ totalUnfulfilled: number; problemCount: number; problems: Array<{ orderId: number; orderName: string; createdAt: string; customerName: string | null; issue: "no_date_tag" | "bad_format"; tags: string[]; badTag?: string; suggestedFix?: string }> } | null>(null);
+  const [tagFixing, setTagFixing] = useState<number | null>(null);
   const [tagAuditLoading, setTagAuditLoading] = useState(false);
   const [sortCol, setSortCol] = useState<SortCol>("qty");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -250,6 +251,29 @@ export default function Dispatches() {
       setTagAuditResult({ totalUnfulfilled: 0, problemCount: 0, problems: [] });
     } finally {
       setTagAuditLoading(false);
+    }
+  }
+
+  async function fixTag(orderId: number, badTag: string, correctTag: string, currentTags: string[]) {
+    setTagFixing(orderId);
+    try {
+      const res = await fetch(`${BASE}/api/fulfilment/tag-fix`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId, currentTags: currentTags.join(", "), badTag, correctTag }),
+      });
+      if (!res.ok) throw new Error("Fix failed");
+      // Remove fixed order from results
+      setTagAuditResult(prev => prev ? {
+        ...prev,
+        problemCount: prev.problemCount - 1,
+        problems: prev.problems.filter(p => p.orderId !== orderId),
+      } : null);
+    } catch {
+      // Silently fail — user can retry
+    } finally {
+      setTagFixing(null);
     }
   }
 
@@ -655,7 +679,21 @@ export default function Dispatches() {
                               </span>
                             </div>
                             {p.customerName && <p className="text-xs text-muted-foreground">{p.customerName}</p>}
-                            {p.badTag && <p className="text-xs text-red-600 dark:text-red-400 font-mono">Found: "{p.badTag}"</p>}
+                            {p.badTag && (
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <p className="text-xs text-red-600 dark:text-red-400 font-mono">Found: "{p.badTag}"</p>
+                                {p.suggestedFix && (
+                                  <button
+                                    onClick={() => fixTag(p.orderId, p.badTag!, p.suggestedFix!, p.tags)}
+                                    disabled={tagFixing === p.orderId}
+                                    className="text-xs px-2 py-0.5 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50 font-medium transition-colors flex items-center gap-1"
+                                  >
+                                    {tagFixing === p.orderId ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                                    Fix → {p.suggestedFix}
+                                  </button>
+                                )}
+                              </div>
+                            )}
                             <p className="text-xs text-muted-foreground">Tags: {p.tags.length > 0 ? p.tags.join(", ") : "none"}</p>
                           </div>
                         </div>

@@ -709,3 +709,13 @@ export async function addTagToOrder(orderId: number, currentTags: string, newTag
   const updated = [...existing, newTag].join(", ");
   await shopifyPut(`/orders/${orderId}.json`, { order: { id: orderId, tags: updated } });
 }
+
+/** Replace a specific tag on an order. Removes oldTag and adds newTag. */
+export async function replaceTagOnOrder(orderId: number, currentTags: string, oldTag: string, newTag: string): Promise<string> {
+  const existing = currentTags.split(",").map(t => t.trim()).filter(Boolean);
+  const filtered = existing.filter(t => t !== oldTag);
+  if (!filtered.includes(newTag)) filtered.push(newTag);
+  const updated = filtered.join(", ");
+  await shopifyPut(`/orders/${orderId}.json`, { order: { id: orderId, tags: updated } });
+  return updated;
+}
