@@ -952,4 +952,65 @@ router.get("/config-status", requireManagerOrAdmin, async (_req: Request, res: R
   }
 });
 
+// ── Tag audit: find unfulfilled orders with missing or malformed date tags ───
+
+const DATE_TAG_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+router.get("/tag-audit", requireManagerOrAdmin, async (_req: Request, res: Response) => {
+  try {
+    // Fetch ALL unfulfilled orders (up to 365 days back to cover everything)
+    const orders = await getRecentUnfulfilledOrders(365);
+
+    const problems: Array<{
+      orderId: number;
+      orderName: string;
+      createdAt: string;
+      customerName: string | null;
+      issue: "no_date_tag" | "bad_format";
+      tags: string[];
+      badTag?: string;
+    }> = [];
+
+    for (const order of orders) {
+      const tags = (order.tags ?? "").split(",").map(t => t.trim()).filter(Boolean);
+      const dateTags = tags.filter(t => DATE_TAG_RE.test(t));
+
+      if (dateTags.length === 0) {
+        // Check if there's a tag that LOOKS like a date but is malformed
+        const badDateTag = tags.find(t => {
+          // Matches things like "2026/04/13", "13-04-2026", "20260413", "2026-4-13", etc.
+          return /\d{4}.*\d{2}.*\d{2}/.test(t) && !DATE_TAG_RE.test(t);
+        });
+
+        problems.push({
+          orderId: order.id,
+          orderName: order.name,
+          createdAt: order.created_at,
+          customerName: order.customer
+            ? `${order.customer.first_name ?? ""} ${order.customer.last_name ?? ""}`.trim() || null
+            : null,
+          issue: badDateTag ? "bad_format" : "no_date_tag",
+          tags,
+          badTag: badDateTag ?? undefined,
+        });
+      }
+    }
+
+    // Sort: bad format first, then no tag, then by created date desc
+    problems.sort((a, b) => {
+      if (a.issue !== b.issue) return a.issue === "bad_format" ? -1 : 1;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+
+    res.json({
+      totalUnfulfilled: orders.length,
+      problemCount: problems.length,
+      problems,
+    });
+  } catch (err: any) {
+    console.error("[fulfilment/tag-audit]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
