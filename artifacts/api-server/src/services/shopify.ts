@@ -515,6 +515,82 @@ export async function adjustInventoryLevel(variantId: string, delta: number): Pr
   return { newQuantity: result.inventory_level.available };
 }
 
+// ── Inventory item costs (for COGS fallback on unmapped products) ────────────
+
+let variantCostCache: { data: Map<string, number>; expiry: number } | null = null;
+const COST_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+/**
+ * Fetch Shopify cost-of-goods for a set of variant IDs.
+ * Returns a Map of variant_id → cost (number in shop currency).
+ * Results are cached for 1 hour.
+ */
+export async function getVariantCosts(variantIds: string[]): Promise<Map<string, number>> {
+  if (variantIds.length === 0) return new Map();
+
+  // Return from cache if still fresh
+  if (variantCostCache && Date.now() < variantCostCache.expiry) {
+    const cached = new Map<string, number>();
+    for (const vid of variantIds) {
+      const cost = variantCostCache.data.get(vid);
+      if (cost !== undefined) cached.set(vid, cost);
+    }
+    if (cached.size === variantIds.length) return cached;
+  }
+
+  const result = new Map<string, number>();
+
+  // Step 1: Get inventory_item_id for each variant (batch in groups of 10 to avoid rate limits)
+  const inventoryItemMap = new Map<string, number>(); // variant_id → inventory_item_id
+  for (let i = 0; i < variantIds.length; i += 10) {
+    const batch = variantIds.slice(i, i + 10);
+    await Promise.all(batch.map(async (vid) => {
+      try {
+        const data = (await shopifyFetch(`/variants/${vid}.json`)) as {
+          variant: { inventory_item_id: number };
+        };
+        inventoryItemMap.set(vid, data.variant.inventory_item_id);
+      } catch (err) {
+        console.warn(`[shopify] Failed to fetch variant ${vid} for cost lookup:`, err);
+      }
+    }));
+    if (i + 10 < variantIds.length) await new Promise(r => setTimeout(r, 250));
+  }
+
+  // Step 2: Batch-fetch inventory items (up to 100 IDs per request)
+  const invItemIds = [...inventoryItemMap.values()];
+  const invItemToVariant = new Map<number, string>();
+  for (const [vid, iid] of inventoryItemMap) invItemToVariant.set(iid, vid);
+
+  for (let i = 0; i < invItemIds.length; i += 100) {
+    const batch = invItemIds.slice(i, i + 100);
+    try {
+      const data = (await shopifyFetch("/inventory_items.json", {
+        ids: batch.join(","),
+        limit: "100",
+      })) as { inventory_items: Array<{ id: number; cost: string | null }> };
+
+      for (const item of data.inventory_items) {
+        const vid = invItemToVariant.get(item.id);
+        if (vid && item.cost != null) {
+          const cost = parseFloat(item.cost);
+          if (!isNaN(cost) && cost > 0) result.set(vid, cost);
+        }
+      }
+    } catch (err) {
+      console.warn("[shopify] Failed to fetch inventory item costs:", err);
+    }
+    if (i + 100 < invItemIds.length) await new Promise(r => setTimeout(r, 250));
+  }
+
+  // Update cache
+  if (!variantCostCache) variantCostCache = { data: new Map(), expiry: 0 };
+  for (const [k, v] of result) variantCostCache.data.set(k, v);
+  variantCostCache.expiry = Date.now() + COST_CACHE_TTL;
+
+  return result;
+}
+
 // Fetch all orders created within a date range (YYYY-MM-DD), paginating fully.
 export async function getOrdersByDateRange(
   fromDate: string,

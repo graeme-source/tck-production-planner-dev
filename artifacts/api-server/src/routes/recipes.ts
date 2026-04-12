@@ -594,6 +594,7 @@ router.delete("/:id", async (req, res) => {
 });
 
 // ── Recipe → Shopify variant mapping CRUD ────────────────────────────────────
+// Multiple Shopify variants can map to the same recipe.
 
 router.get("/:id/shopify-mapping", async (req, res) => {
   const parsed = RecipeIdParams.safeParse({ id: req.params.id });
@@ -601,16 +602,49 @@ router.get("/:id/shopify-mapping", async (req, res) => {
   const recipeId = parsed.data.id;
   try {
     const rows = await db.execute(sql`
-      SELECT * FROM recipe_shopify_mappings WHERE recipe_id = ${recipeId}
+      SELECT * FROM recipe_shopify_mappings WHERE recipe_id = ${recipeId} ORDER BY created_at
     `);
-    if (rows.rows.length === 0) { res.json(null); return; }
-    res.json(rows.rows[0]);
+    res.json(rows.rows);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: msg });
   }
 });
 
+// Add a variant mapping (POST instead of PUT — multiple allowed per recipe)
+router.post("/:id/shopify-mapping", async (req, res) => {
+  const parsedParams = RecipeIdParams.safeParse({ id: req.params.id });
+  if (!parsedParams.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
+  const parsedBody = ShopifyMappingBody.safeParse(req.body);
+  if (!parsedBody.success) {
+    res.status(400).json({ error: parsedBody.error.issues[0]?.message ?? "Invalid request body" });
+    return;
+  }
+  const recipeId = parsedParams.data.id;
+  const { shopifyVariantId, shopifyProductTitle, shopifyVariantTitle, wonkyVariantId, wonkyProductTitle, wonkyVariantTitle } = parsedBody.data;
+  try {
+    const [recipe] = await db.select({ id: recipesTable.id }).from(recipesTable).where(eq(recipesTable.id, recipeId));
+    if (!recipe) { res.status(404).json({ error: "Recipe not found" }); return; }
+    await db.execute(sql`
+      INSERT INTO recipe_shopify_mappings (recipe_id, shopify_variant_id, shopify_product_title, shopify_variant_title, wonky_variant_id, wonky_product_title, wonky_variant_title)
+      VALUES (${recipeId}, ${shopifyVariantId}, ${shopifyProductTitle ?? null}, ${shopifyVariantTitle ?? null}, ${wonkyVariantId ?? null}, ${wonkyProductTitle ?? null}, ${wonkyVariantTitle ?? null})
+      ON CONFLICT (shopify_variant_id) DO UPDATE SET
+        recipe_id             = EXCLUDED.recipe_id,
+        shopify_product_title = EXCLUDED.shopify_product_title,
+        shopify_variant_title = EXCLUDED.shopify_variant_title,
+        wonky_variant_id      = EXCLUDED.wonky_variant_id,
+        wonky_product_title   = EXCLUDED.wonky_product_title,
+        wonky_variant_title   = EXCLUDED.wonky_variant_title
+    `);
+    const saved = await db.execute(sql`SELECT * FROM recipe_shopify_mappings WHERE recipe_id = ${recipeId} ORDER BY created_at`);
+    res.json(saved.rows);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: msg });
+  }
+});
+
+// Legacy PUT — still works, adds/updates a mapping
 router.put("/:id/shopify-mapping", async (req, res) => {
   const parsedParams = RecipeIdParams.safeParse({ id: req.params.id });
   if (!parsedParams.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
@@ -627,28 +661,42 @@ router.put("/:id/shopify-mapping", async (req, res) => {
     await db.execute(sql`
       INSERT INTO recipe_shopify_mappings (recipe_id, shopify_variant_id, shopify_product_title, shopify_variant_title, wonky_variant_id, wonky_product_title, wonky_variant_title)
       VALUES (${recipeId}, ${shopifyVariantId}, ${shopifyProductTitle ?? null}, ${shopifyVariantTitle ?? null}, ${wonkyVariantId ?? null}, ${wonkyProductTitle ?? null}, ${wonkyVariantTitle ?? null})
-      ON CONFLICT (recipe_id) DO UPDATE SET
-        shopify_variant_id    = EXCLUDED.shopify_variant_id,
+      ON CONFLICT (shopify_variant_id) DO UPDATE SET
+        recipe_id             = EXCLUDED.recipe_id,
         shopify_product_title = EXCLUDED.shopify_product_title,
         shopify_variant_title = EXCLUDED.shopify_variant_title,
         wonky_variant_id      = EXCLUDED.wonky_variant_id,
         wonky_product_title   = EXCLUDED.wonky_product_title,
         wonky_variant_title   = EXCLUDED.wonky_variant_title
     `);
-    const saved = await db.execute(sql`SELECT * FROM recipe_shopify_mappings WHERE recipe_id = ${recipeId}`);
-    res.json(saved.rows[0]);
+    const saved = await db.execute(sql`SELECT * FROM recipe_shopify_mappings WHERE recipe_id = ${recipeId} ORDER BY created_at`);
+    res.json(saved.rows);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: msg });
   }
 });
 
+// Delete a specific variant mapping
+router.delete("/:id/shopify-mapping/:variantId", async (req, res) => {
+  const parsed = RecipeIdParams.safeParse({ id: req.params.id });
+  if (!parsed.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
+  const variantId = req.params.variantId;
+  try {
+    await db.execute(sql`DELETE FROM recipe_shopify_mappings WHERE recipe_id = ${parsed.data.id} AND shopify_variant_id = ${variantId}`);
+    res.json({ ok: true });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: msg });
+  }
+});
+
+// Delete all mappings for a recipe (legacy)
 router.delete("/:id/shopify-mapping", async (req, res) => {
   const parsed = RecipeIdParams.safeParse({ id: req.params.id });
   if (!parsed.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
-  const recipeId = parsed.data.id;
   try {
-    await db.execute(sql`DELETE FROM recipe_shopify_mappings WHERE recipe_id = ${recipeId}`);
+    await db.execute(sql`DELETE FROM recipe_shopify_mappings WHERE recipe_id = ${parsed.data.id}`);
     res.json({ ok: true });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

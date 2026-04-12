@@ -606,6 +606,15 @@ async function runStartupMigrations() {
 
     await db.execute(sql`ALTER TABLE production_plans ADD COLUMN IF NOT EXISTS prep_date DATE`);
 
+    // Multi-variant recipe mapping: remove unique-per-recipe constraint,
+    // add unique-per-variant instead (many variants can map to one recipe)
+    await db.execute(sql`
+      ALTER TABLE recipe_shopify_mappings DROP CONSTRAINT IF EXISTS recipe_shopify_mappings_recipe_id_key
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS recipe_shopify_mappings_variant_unique ON recipe_shopify_mappings (shopify_variant_id)
+    `);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);
