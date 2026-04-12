@@ -432,15 +432,16 @@ export async function getRecentUnfulfilledOrders(daysBack = 30): Promise<Shopify
   let pageInfo: string | null = null;
 
   do {
-    const params: Record<string, string> = {
-      limit: "250",
-      status: "open",
-      fulfillment_status: "unshipped",
-      created_at_min: since,
-      fields:
-        "id,name,tags,created_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,total_weight,customer,shipping_address,line_items,note",
-    };
-    if (pageInfo) params.page_info = pageInfo;
+    const params: Record<string, string> = pageInfo
+      ? { limit: "250", page_info: pageInfo }
+      : {
+          limit: "250",
+          status: "open",
+          fulfillment_status: "unfulfilled",
+          created_at_min: since,
+          fields:
+            "id,name,tags,created_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,total_weight,customer,shipping_address,line_items,note",
+        };
 
     const res = await shopifyFetchRaw("/orders.json", params);
     const data = (await res.json()) as { orders: ShopifyOrder[] };
