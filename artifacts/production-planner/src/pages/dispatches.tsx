@@ -170,6 +170,8 @@ export default function Dispatches() {
   const [queryTag, setQueryTag] = useState<string | null>(null);
   const [postcodeIssues, setPostcodeIssues] = useState<PostcodeIssue[] | null>(null);
   const [postcodeLoading, setPostcodeLoading] = useState(false);
+  const [tagAuditResult, setTagAuditResult] = useState<{ totalUnfulfilled: number; problemCount: number; problems: Array<{ orderId: number; orderName: string; createdAt: string; customerName: string | null; issue: "no_date_tag" | "bad_format"; tags: string[]; badTag?: string }> } | null>(null);
+  const [tagAuditLoading, setTagAuditLoading] = useState(false);
   const [sortCol, setSortCol] = useState<SortCol>("qty");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [variantFilter, setVariantFilter] = useState("2 Pack");
@@ -233,6 +235,21 @@ export default function Dispatches() {
       setPostcodeIssues([]);
     } finally {
       setPostcodeLoading(false);
+    }
+  }
+
+  async function runTagAudit() {
+    setTagAuditLoading(true);
+    setTagAuditResult(null);
+    try {
+      const res = await fetch(`${BASE}/api/fulfilment/tag-audit`, { credentials: "include" });
+      if (!res.ok) throw new Error("Audit failed");
+      const data = await res.json();
+      setTagAuditResult(data);
+    } catch {
+      setTagAuditResult({ totalUnfulfilled: 0, problemCount: 0, problems: [] });
+    } finally {
+      setTagAuditLoading(false);
     }
   }
 
@@ -592,7 +609,62 @@ export default function Dispatches() {
                 {postcodeLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <MapPin className="w-4 h-4" />}
                 Validate Orders
               </button>
+              <button
+                onClick={runTagAudit}
+                disabled={tagAuditLoading}
+                className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-medium flex items-center gap-2 transition-colors disabled:opacity-60"
+              >
+                {tagAuditLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Tag className="w-4 h-4" />}
+                Audit Tags
+              </button>
             </div>
+
+            {/* Tag audit results */}
+            {tagAuditResult && (
+              <div className={`rounded-xl border p-4 ${tagAuditResult.problemCount === 0 ? "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800" : "bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800"}`}>
+                {tagAuditResult.problemCount === 0 ? (
+                  <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300">
+                    <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                    <span className="text-sm font-medium">All {tagAuditResult.totalUnfulfilled} unfulfilled orders have valid date tags</span>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                      <span className="text-sm font-semibold">
+                        {tagAuditResult.problemCount} order{tagAuditResult.problemCount !== 1 ? "s" : ""} with tag issues
+                        <span className="font-normal text-muted-foreground"> (of {tagAuditResult.totalUnfulfilled} unfulfilled)</span>
+                      </span>
+                    </div>
+                    <div className="divide-y divide-amber-200 dark:divide-amber-800">
+                      {tagAuditResult.problems.map((p) => (
+                        <div key={p.orderId} className="flex items-start gap-3 py-2">
+                          <Tag className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <a
+                                href={`https://admin.shopify.com/store/the-calzone-kitchen/orders/${p.orderId}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-sm font-semibold text-amber-700 dark:text-amber-300 hover:underline"
+                              >
+                                {p.orderName}
+                              </a>
+                              <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${p.issue === "bad_format" ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300" : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"}`}>
+                                {p.issue === "bad_format" ? "Bad format" : "No date tag"}
+                              </span>
+                            </div>
+                            {p.customerName && <p className="text-xs text-muted-foreground">{p.customerName}</p>}
+                            {p.badTag && <p className="text-xs text-red-600 dark:text-red-400 font-mono">Found: "{p.badTag}"</p>}
+                            <p className="text-xs text-muted-foreground">Tags: {p.tags.length > 0 ? p.tags.join(", ") : "none"}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {postcodeIssues !== null && (
               <div className={`rounded-xl border p-4 ${postcodeIssues.length === 0 ? "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800" : "bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800"}`}>
