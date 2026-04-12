@@ -54,6 +54,8 @@ interface PnlSummary {
     ingredientCost: number;
     packagingCost: number;
     labourCost: number;
+    shopifyCostItems: number;
+    shopifyCostTotal: number;
     unmappedItemCount: number;
     unmappedRevenue: number;
   };
@@ -416,7 +418,7 @@ function PnLDashboard() {
         <KpiCard
           title="Cost of Goods"
           value={summary ? formatGBP(summary.cogs.total) : "—"}
-          sub={summary ? `Ingredients: ${formatGBP(summary.cogs.ingredientCost)} | Pkg: ${formatGBP(summary.cogs.packagingCost)} | Labour: ${formatGBP(summary.cogs.labourCost)}` : undefined}
+          sub={summary ? `Ingredients: ${formatGBP(summary.cogs.ingredientCost)} | Pkg: ${formatGBP(summary.cogs.packagingCost)} | Labour: ${formatGBP(summary.cogs.labourCost)}${summary.cogs.shopifyCostTotal > 0 ? ` | Shopify: ${formatGBP(summary.cogs.shopifyCostTotal)}` : ""}` : undefined}
           icon={ShoppingCart}
           color="text-red-500"
           bg="bg-red-500/10"

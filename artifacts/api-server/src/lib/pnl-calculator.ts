@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { inArray } from "drizzle-orm";
 import { computeCosts } from "../routes/recipes";
 import type { ShopifyOrder } from "../services/shopify";
+import { getVariantCosts } from "../services/shopify";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -29,6 +30,8 @@ export interface CogsResult {
   ingredientCost: number;
   packagingCost: number;
   labourCost: number;
+  shopifyCostItems: number;
+  shopifyCostTotal: number;
   unmappedItemCount: number;
   unmappedRevenue: number;
   perRecipe: Array<{
@@ -155,13 +158,16 @@ export async function calculateCogs(orders: ShopifyOrder[]): Promise<CogsResult>
 
   const recipeCosts = await loadRecipeCosts([...neededRecipeIds]);
 
-  // Accumulate per-recipe totals
+  // First pass: accumulate recipe-mapped items + collect unmapped variant IDs
   const perRecipeAccum = new Map<number, { unitsSold: number; totalCost: number; revenue: number }>();
   let totalIngredientCost = 0;
   let totalPackagingCost = 0;
   let totalLabourCost = 0;
   let unmappedItemCount = 0;
   let unmappedRevenue = 0;
+
+  // Track unmapped items for Shopify cost fallback
+  const unmappedVariantItems: Array<{ variantId: string; quantity: number; revenue: number; title: string }> = [];
 
   for (const order of countableOrders) {
     for (const item of order.line_items) {
@@ -170,8 +176,12 @@ export async function calculateCogs(orders: ShopifyOrder[]): Promise<CogsResult>
       const itemRevenue = parseFloat(item.price) * item.quantity;
 
       if (!recipeId || !recipeCosts.has(recipeId)) {
-        unmappedItemCount += item.quantity;
-        unmappedRevenue += itemRevenue;
+        if (vid) {
+          unmappedVariantItems.push({ variantId: vid, quantity: item.quantity, revenue: itemRevenue, title: item.title });
+        } else {
+          unmappedItemCount += item.quantity;
+          unmappedRevenue += itemRevenue;
+        }
         continue;
       }
 
@@ -194,7 +204,36 @@ export async function calculateCogs(orders: ShopifyOrder[]): Promise<CogsResult>
     }
   }
 
-  const totalCogs = totalIngredientCost + totalPackagingCost + totalLabourCost;
+  // Shopify cost fallback for unmapped items
+  let shopifyCostItems = 0;
+  let shopifyCostTotal = 0;
+
+  if (unmappedVariantItems.length > 0) {
+    const uniqueVariantIds = [...new Set(unmappedVariantItems.map(i => i.variantId))];
+    try {
+      const variantCosts = await getVariantCosts(uniqueVariantIds);
+      for (const item of unmappedVariantItems) {
+        const cost = variantCosts.get(item.variantId);
+        if (cost != null && cost > 0) {
+          shopifyCostItems += item.quantity;
+          shopifyCostTotal += cost * item.quantity;
+        } else {
+          // No cost in Shopify either — truly unmapped
+          unmappedItemCount += item.quantity;
+          unmappedRevenue += item.revenue;
+        }
+      }
+    } catch (err) {
+      console.warn("[pnl-calculator] Shopify cost fallback failed:", err);
+      // Fall back to unmapped
+      for (const item of unmappedVariantItems) {
+        unmappedItemCount += item.quantity;
+        unmappedRevenue += item.revenue;
+      }
+    }
+  }
+
+  const totalCogs = totalIngredientCost + totalPackagingCost + totalLabourCost + shopifyCostTotal;
 
   const perRecipe = [...perRecipeAccum.entries()].map(([recipeId, accum]) => {
     const cost = recipeCosts.get(recipeId)!;
@@ -217,6 +256,8 @@ export async function calculateCogs(orders: ShopifyOrder[]): Promise<CogsResult>
     ingredientCost: totalIngredientCost,
     packagingCost: totalPackagingCost,
     labourCost: totalLabourCost,
+    shopifyCostItems,
+    shopifyCostTotal,
     unmappedItemCount,
     unmappedRevenue,
     perRecipe,

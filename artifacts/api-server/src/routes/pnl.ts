@@ -158,6 +158,8 @@ router.get("/summary", async (req: Request, res: Response) => {
         ingredientCost: round2(cogs.ingredientCost),
         packagingCost: round2(cogs.packagingCost),
         labourCost: round2(cogs.labourCost),
+        shopifyCostItems: cogs.shopifyCostItems,
+        shopifyCostTotal: round2(cogs.shopifyCostTotal),
         unmappedItemCount: cogs.unmappedItemCount,
         unmappedRevenue: round2(cogs.unmappedRevenue),
       },
