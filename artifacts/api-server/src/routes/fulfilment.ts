@@ -954,8 +954,6 @@ router.get("/config-status", requireManagerOrAdmin, async (_req: Request, res: R
 
 // ── Tag audit: find unfulfilled orders with missing or malformed date tags ───
 
-const DATE_TAG_RE = /^\d{4}-\d{2}-\d{2}$/;
-
 router.get("/tag-audit", requireManagerOrAdmin, async (_req: Request, res: Response) => {
   try {
     // Fetch ALL unfulfilled orders (up to 365 days back to cover everything)
