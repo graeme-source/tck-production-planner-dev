@@ -14,13 +14,15 @@ import { eq, and, gte, lte, sql, desc, asc, inArray } from "drizzle-orm";
 
 const router: IRouter = Router();
 
+// Raw materials never go in production_fridge (that's finished product only).
+// Chilled ingredients → prep_fridge, dry goods → dry_store, raw meat → raw_meat_fridge.
 const CATEGORY_LOCATION_MAP: Record<string, string> = {
   vegetable: "prep_fridge",
   herb: "prep_fridge",
-  base: "production_fridge",
-  dairy: "production_fridge",
-  cheese: "production_fridge",
-  cooked_meat: "production_fridge",
+  base: "prep_fridge",
+  dairy: "prep_fridge",
+  cheese: "prep_fridge",
+  cooked_meat: "prep_fridge",
   raw_meat: "raw_meat_fridge",
   sauce: "dry_store",
   spice: "dry_store",
@@ -469,16 +471,49 @@ router.post("/:id/receive", async (req, res) => {
     );
   }
 
+  // Look up latest stock per ingredient+location so we can insert cumulative totals
+  const ingredientIds = [...new Set(stockInserts.map(si => si.ingredientId))];
+  const existingStockMap: Record<string, number> = {};
+  if (ingredientIds.length > 0) {
+    const existingRows = await db
+      .select({
+        id: stockEntriesTable.id,
+        ingredientId: stockEntriesTable.ingredientId,
+        location: stockEntriesTable.location,
+        quantity: stockEntriesTable.quantity,
+      })
+      .from(stockEntriesTable)
+      .where(and(
+        eq(stockEntriesTable.itemType, "ingredient"),
+        inArray(stockEntriesTable.ingredientId, ingredientIds),
+      ))
+      .orderBy(desc(stockEntriesTable.checkedAt));
+
+    for (const row of existingRows) {
+      const key = `${row.ingredientId}|${row.location}`;
+      if (existingStockMap[key] === undefined) {
+        existingStockMap[key] = Number(row.quantity);
+      }
+    }
+  }
+
   for (const si of stockInserts) {
+    const key = `${si.ingredientId}|${si.location}`;
+    const existingQty = existingStockMap[key] ?? 0;
+    const cumulativeQty = existingQty + Number(si.quantity);
+
     await db.insert(stockEntriesTable).values({
       ingredientId: si.ingredientId,
       itemType: "ingredient",
-      quantity: si.quantity,
+      quantity: String(cumulativeQty),
       unit: si.unit,
       location: si.location,
       useByDate: si.useByDate,
       notes: `Delivery from PO #${poId}`,
     });
+
+    // Update map so subsequent inserts for same ingredient accumulate correctly
+    existingStockMap[key] = cumulativeQty;
   }
 
   const allLines = await db

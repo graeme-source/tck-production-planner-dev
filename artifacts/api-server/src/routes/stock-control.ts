@@ -37,10 +37,23 @@ router.get("/", async (_req, res) => {
       ingredientId: stockEntriesTable.ingredientId,
       quantity: stockEntriesTable.quantity,
       unit: stockEntriesTable.unit,
+      checkedAt: stockEntriesTable.checkedAt,
     })
-    .from(stockEntriesTable);
+    .from(stockEntriesTable)
+    .orderBy(desc(stockEntriesTable.checkedAt));
 
-  const positiveRows = rows.filter(r => parseFloat(String(r.quantity)) > 0);
+  // Use latest entry per item+location as the current stock level (snapshot model).
+  // Each stock entry represents the cumulative quantity at that point in time.
+  const latestSeen = new Set<string>();
+  const latestRows = rows.filter(r => {
+    const itemId = r.itemType === "recipe" ? `r:${r.recipeId}` : `i:${r.ingredientId}`;
+    const key = `${r.location}|${itemId}`;
+    if (latestSeen.has(key)) return false;
+    latestSeen.add(key);
+    return true;
+  });
+
+  const positiveRows = latestRows.filter(r => parseFloat(String(r.quantity)) > 0);
 
   const recipeIds = [...new Set(positiveRows.filter(r => r.recipeId).map(r => r.recipeId as number))];
   const ingredientIds = [...new Set(positiveRows.filter(r => r.ingredientId).map(r => r.ingredientId as number))];
