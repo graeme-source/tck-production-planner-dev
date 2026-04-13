@@ -13,6 +13,8 @@ interface VariantCount {
   title: string;
   quantity: number;
   orderCount: number;
+  fulfilledQuantity: number;
+  unfulfilledQuantity: number;
 }
 
 interface ShopifyProduct {
@@ -20,6 +22,8 @@ interface ShopifyProduct {
   variants: VariantCount[];
   totalQuantity: number;
   orderCount: number;
+  fulfilledQuantity: number;
+  unfulfilledQuantity: number;
   specialCount?: number;
 }
 
@@ -35,6 +39,8 @@ interface FilteredProduct {
   variants: VariantCount[];
   totalQuantity: number;
   orderCount: number;
+  fulfilledQuantity: number;
+  unfulfilledQuantity: number;
   specialCount?: number;
 }
 
@@ -265,8 +271,10 @@ export default function Dispatches() {
 
       const totalQuantity = remainingVariants.reduce((s, v) => s + v.quantity, 0);
       const orderCount = remainingVariants.reduce((s, v) => s + v.orderCount, 0);
+      const fulfilledQuantity = remainingVariants.reduce((s, v) => s + (v.fulfilledQuantity ?? 0), 0);
+      const unfulfilledQuantity = remainingVariants.reduce((s, v) => s + (v.unfulfilledQuantity ?? 0), 0);
 
-      filtered.push({ productTitle: p.productTitle, variants: remainingVariants, totalQuantity, orderCount, specialCount: p.specialCount });
+      filtered.push({ productTitle: p.productTitle, variants: remainingVariants, totalQuantity, orderCount, fulfilledQuantity, unfulfilledQuantity, specialCount: p.specialCount });
     }
 
     return filtered.sort((a, b) => {
@@ -736,6 +744,8 @@ export default function Dispatches() {
                           Total Qty <SortIcon col="qty" sortCol={sortCol} sortDir={sortDir} />
                         </button>
                       </th>
+                      <th className="text-right px-5 py-3.5 text-sm font-medium text-green-600">Packed</th>
+                      <th className="text-right px-5 py-3.5 text-sm font-medium text-amber-600">Remaining</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -757,6 +767,20 @@ export default function Dispatches() {
                         <td className="px-5 py-3.5 text-right">
                           <span className="font-bold text-lg bg-secondary px-3 py-1 rounded-lg">{p.totalQuantity}</span>
                         </td>
+                        <td className="px-5 py-3.5 text-right">
+                          {p.fulfilledQuantity > 0 ? (
+                            <span className="text-green-600 font-semibold">{p.fulfilledQuantity}</span>
+                          ) : (
+                            <span className="text-muted-foreground">0</span>
+                          )}
+                        </td>
+                        <td className="px-5 py-3.5 text-right">
+                          {p.unfulfilledQuantity > 0 ? (
+                            <span className="font-bold text-lg text-amber-600 bg-amber-50 dark:bg-amber-950/30 px-3 py-1 rounded-lg">{p.unfulfilledQuantity}</span>
+                          ) : (
+                            <span className="text-green-600 font-semibold">✓</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -768,6 +792,16 @@ export default function Dispatches() {
                       <td className="px-5 py-3.5 text-right">
                         <span className="font-bold text-lg">
                           {sortedProducts.reduce((s, p) => s + p.totalQuantity, 0)}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3.5 text-right">
+                        <span className="font-semibold text-green-600">
+                          {sortedProducts.reduce((s, p) => s + p.fulfilledQuantity, 0)}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3.5 text-right">
+                        <span className="font-bold text-lg text-amber-600">
+                          {sortedProducts.reduce((s, p) => s + p.unfulfilledQuantity, 0)}
                         </span>
                       </td>
                     </tr>
