@@ -98,33 +98,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const interval = setInterval(() => {
       if (document.visibilityState === "visible") {
         checkSession(true);
+        // Also check idle timeout on each poll (catches tabs left open all night)
+        const idleMs = Date.now() - lastActivityRef.current;
+        if (idleMs >= IDLE_TIMEOUT_MS && state.status === "authenticated" && !pinLocked) {
+          setPinLocked(true);
+          fetch("/api/auth/pin/lock", { method: "POST", credentials: "include" })
+            .catch((err) => { console.warn("[Auth] Idle lock failed:", err); });
+        }
       }
     }, 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [checkSession]);
+  }, [checkSession, state, pinLocked]);
 
-  const hiddenAtRef = useRef<number | null>(null);
+  // ── Inactivity timeout & visibility-change lock ───────────────────────
+  // Tracks last user interaction. When the tab becomes visible again (any
+  // device — iPad, PC, etc.) we check: if idle for 1+ hour, force a PIN
+  // lock. We also always re-check the session so server-side resets (7pm
+  // evening lock, 4am morning lock) are picked up immediately.
+  const IDLE_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour
+  const lastActivityRef = useRef<number>(Date.now());
+
+  // Update activity timestamp on any user interaction
+  useEffect(() => {
+    const touch = () => { lastActivityRef.current = Date.now(); };
+    const events = ["pointerdown", "keydown", "scroll", "touchstart"] as const;
+    for (const evt of events) document.addEventListener(evt, touch, { passive: true });
+    return () => { for (const evt of events) document.removeEventListener(evt, touch); };
+  }, []);
 
   useEffect(() => {
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
-      || ("ontouchstart" in window && window.innerWidth < 1024);
-
-    if (!isMobile) return;
-
     const handleVisibility = () => {
-      if (document.visibilityState === "hidden") {
-        hiddenAtRef.current = Date.now();
-      } else if (document.visibilityState === "visible" && hiddenAtRef.current !== null) {
-        hiddenAtRef.current = null;
-        if (state.status === "authenticated" && state.user.hasPin && !pinLocked) {
-          setPinLocked(true);
-          fetch("/api/auth/pin/lock", { method: "POST", credentials: "include" }).catch((err) => { console.warn("[Auth] Pin lock failed:", err); });
-        }
+      if (document.visibilityState !== "visible") return;
+
+      // Always re-check session so server-side time-based locks are picked up
+      checkSession(true);
+
+      // If idle for 1+ hour, force PIN lock (works on all devices)
+      const idleMs = Date.now() - lastActivityRef.current;
+      if (idleMs >= IDLE_TIMEOUT_MS && state.status === "authenticated" && !pinLocked) {
+        setPinLocked(true);
+        fetch("/api/auth/pin/lock", { method: "POST", credentials: "include" })
+          .catch((err) => { console.warn("[Auth] Pin lock failed:", err); });
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, [state, pinLocked]);
+  }, [state, pinLocked, checkSession]);
 
   const refreshUser = useCallback(async () => {
     await checkSession();
