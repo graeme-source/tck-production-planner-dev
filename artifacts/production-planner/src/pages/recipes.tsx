@@ -784,6 +784,7 @@ function EditRecipeDialog({
   const [selectedVariant, setSelectedVariant] = useState<ShopifyVariantOption | null>(null);
   const [shopifyError, setShopifyError] = useState<string | null>(null);
   const [shopifyAdding, setShopifyAdding] = useState(false);
+  const [shopifyEditing, setShopifyEditing] = useState(false);
 
   useEffect(() => {
     if (!open) return;

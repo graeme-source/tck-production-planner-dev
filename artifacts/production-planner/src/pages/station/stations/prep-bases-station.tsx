@@ -1059,7 +1059,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                                 ) : (
                                   <div className="w-4 h-4 rounded-full border-2 border-muted-foreground/40" />
                                 )}
-                                <span className="text-base font-bold">Tin {tn}</span>
+                                <span className="text-base font-bold">Tin {tn}{recipe.tinSize ? ` (${recipe.tinSize})` : ""}</span>
                               </div>
                               <span className={cn("text-xl font-bold tabular-nums", done ? "text-yellow-700 dark:text-yellow-300" : "text-foreground")}>
                                 {fmtQty(recipe.qtyPerTin, ing.unit)}

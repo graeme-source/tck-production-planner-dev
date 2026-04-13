@@ -4147,7 +4147,17 @@ router.get("/:id/main-prep", async (req, res) => {
     totalTinCount: sr.recipes.reduce((s, r) => s + r.tinCount, 0),
   }));
 
-  const FIXED_TWO_TIN_IDS = new Set([18, 19]);
+  // Ingredients that always get 1 tin per recipe (no splitting within a recipe)
+  const SINGLE_TIN_PER_RECIPE_IDS = new Set([18, 19, 202]); // Basil, Basil puree, Garlic Butter
+  for (const [ingId, ing] of ingredientMap) {
+    if (!SINGLE_TIN_PER_RECIPE_IDS.has(ingId)) continue;
+    for (const r of ing.recipes) {
+      r.tinCount = 1;
+      r.qtyPerTin = roundByUnit(r.qtyForRecipe, ing.unit);
+    }
+  }
+
+  const FIXED_TWO_TIN_IDS = new Set<number>();
   for (const [ingId, ing] of ingredientMap) {
     if (!FIXED_TWO_TIN_IDS.has(ingId)) continue;
     if (ing.recipes.length <= 1 && ing.recipes[0]?.tinCount === 2) continue;
