@@ -676,17 +676,26 @@ router.patch("/stock-check", async (req, res) => {
       .limit(1);
 
     if (ingredient) {
-      // Map ingredient category to storage location
+      // Raw materials never go in production_fridge (finished product only).
+      // Chilled ingredients → prep_fridge, dry goods → dry_store, raw meat → raw_meat_fridge.
       const locationMap: Record<string, string> = {
+        vegetable: "prep_fridge",
+        herb: "prep_fridge",
+        base: "prep_fridge",
+        dairy: "prep_fridge",
+        cheese: "prep_fridge",
+        cooked_meat: "prep_fridge",
         raw_meat: "raw_meat_fridge",
         meat: "raw_meat_fridge",
-        dairy: "production_fridge",
-        vegetable: "production_fridge",
-        cheese: "production_fridge",
+        sauce: "dry_store",
+        spice: "dry_store",
+        seasoning: "dry_store",
+        other: "dry_store",
+        dough: "dry_store",
         frozen: "production_freezer",
         dry: "dry_store",
       };
-      const location = locationMap[ingredient.category ?? ""] ?? "production_fridge";
+      const location = locationMap[ingredient.category ?? ""] ?? "prep_fridge";
 
       await db.insert(stockEntriesTable).values({
         ingredientId,
