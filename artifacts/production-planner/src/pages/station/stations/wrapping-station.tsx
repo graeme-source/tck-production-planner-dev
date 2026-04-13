@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   useListTimingStandards,
   useGetStationKpi,
@@ -8,7 +8,7 @@ import {
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Loader2, Plus, Minus, CheckCircle2, Snowflake, AlertCircle, Gift, Flame,
+  Loader2, Plus, Minus, CheckCircle2, Snowflake, AlertCircle, Gift, Flame, ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -43,6 +43,8 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   } | null>(null);
   const [postOvenMap, setPostOvenMap] = useState<PostOvenMap>({});
   const addingRef = useRef(false);
+  const [expandedItemId, setExpandedItemId] = useState<number | null>(null);
+  const userOverrideRef = useRef(false);
 
   const [runWonlyAction, wonlyBusy] = useGuardedAction({
     onSuccess: () => queryClient.invalidateQueries({ queryKey: [`/api/production-plans/${plan.id}`] }),
@@ -138,6 +140,37 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
   const totalEightPackBags = items.reduce((s, it) => s + (it.eightPackBagCount ?? 0), 0);
   const wrappedCount = items.filter(it => it.wrappingComplete).length;
   const allWrapped = items.length > 0 && items.every(it => it.wrappingComplete);
+
+  // Current item = first non-wrapped recipe with stock in chiller
+  const currentWrappingItem = useMemo(() =>
+    items.find(it => !it.wrappingComplete && netPacks(it) > 0), [items]);
+
+  // Auto-expand
+  const [prevCurrentWrappingId, setPrevCurrentWrappingId] = useState<number | null>(null);
+  useEffect(() => {
+    const curId = currentWrappingItem?.id ?? null;
+    if (prevCurrentWrappingId !== null && curId !== prevCurrentWrappingId) {
+      setExpandedItemId(curId);
+      userOverrideRef.current = false;
+    }
+    setPrevCurrentWrappingId(curId);
+  }, [currentWrappingItem?.id]);
+
+  useEffect(() => {
+    if (expandedItemId === null && currentWrappingItem) {
+      setExpandedItemId(currentWrappingItem.id);
+    }
+  }, [currentWrappingItem?.id]);
+
+  const toggleExpanded = (itemId: number) => {
+    if (expandedItemId === itemId) {
+      setExpandedItemId(null);
+      userOverrideRef.current = false;
+    } else {
+      setExpandedItemId(itemId);
+      userOverrideRef.current = itemId !== currentWrappingItem?.id;
+    }
+  };
 
   const [shopifyMappings, setShopifyMappings] = useState<Record<number, { productTitle: string; variantTitle: string | null; variantId: string }>>({});
   useEffect(() => {
@@ -302,6 +335,7 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
             <p className="text-sm text-muted-foreground">
               {wrappedCount} of {items.length} recipes wrapped · {totalNet} in chiller · {totalWonly} wonky
               {totalShort > 0 && <span className="text-red-500"> · {totalShort} short</span>}
+              {totalEightPackBags > 0 && <span className="text-indigo-500"> · {totalEightPackBags} 8-packs</span>}
             </p>
           </div>
           {allWrapped && (
@@ -323,217 +357,275 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
         <BreakTracker planId={plan.id} stationType="wrapping" onBreakActiveChange={setIsOnBreak} />
       </div>
 
-      {/* ── Top: Net production cards (no wonky counts or freezer transfers here) ── */}
-      <div className="space-y-2">
-        {items.map(item => {
-          const planned = plannedPacks(item);
-          const gross = grossPacks(item);
-          const net = netTwoPacks(item);
-          const eightPkCount = item.eightPackBagCount ?? 0;
-          const eightPkFridge = item.fridgeEightPackQty ?? 0;
-          const eightPkRemaining = eightPkCount - eightPkFridge;
-          const fridge = item.fridgeQty ?? 0;
-          const freezer = item.freezerQty ?? 0;
-          const totalStored = fridge + freezer;
-          const remaining = net - totalStored;
-          const isWrapped = item.wrappingComplete;
-          const isLoading = wrappingLoading === item.id;
-          const isStorageLoading = storageLoading === item.id;
-          const isCustomOpen = showCustom[item.id] ?? false;
-          const customVal = customAmounts[item.id] ?? "";
-          const customNum = parseInt(customVal, 10);
-          const postOvenItems = postOvenMap[item.id] ?? [];
+      {/* Unified accordion queue */}
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <h3 className="font-semibold text-base">Wrapping Queue</h3>
+          {allWrapped && (
+            <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-sm font-medium">
+              <CheckCircle2 className="w-4 h-4" /> All wrapped
+            </span>
+          )}
+        </div>
 
-          return (
-            <div
-              key={item.id}
-              className={cn(
-                "bg-card border rounded-xl p-4 transition-all",
-                isWrapped
-                  ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/30 dark:bg-emerald-900/10"
-                  : gross > 0
-                    ? "border-purple-300 dark:border-purple-700 bg-purple-50/30 dark:bg-purple-900/10"
-                    : "border-border"
-              )}
-            >
-              {/* Recipe header + wrapping toggle */}
-              <div className="flex items-center gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <h3 className={cn("font-semibold text-xl", isWrapped ? "line-through text-muted-foreground" : "")}>
-                      {item.recipeName ?? `Recipe #${item.recipeId}`}
-                    </h3>
-                    {isWrapped && <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />}
-                  </div>
-                  <div className="flex items-center gap-3 text-base">
-                    <div className="text-center">
-                      <span className="text-sm text-muted-foreground block">Planned</span>
-                      <span className="text-lg font-bold tabular-nums">{planned}</span>
-                    </div>
-                    <div className="text-center">
-                      <span className="text-sm text-purple-600 dark:text-purple-400 block">In Chiller</span>
-                      <span className="text-2xl font-bold tabular-nums text-purple-700 dark:text-purple-300">{net}</span>
-                    </div>
-                    <div className="text-center border-l border-border/50 pl-3">
-                      <span className="text-sm text-primary block">Wrapped</span>
-                      <span className="text-2xl font-bold tabular-nums text-primary">{fridge}</span>
-                    </div>
-                    {(item.wonlyCount ?? 0) > 0 && (
-                      <div className="text-center">
-                        <span className="text-sm text-red-500 block">Wonky</span>
-                        <span className="text-lg font-bold tabular-nums text-red-500">{item.wonlyCount}</span>
-                      </div>
-                    )}
-                    {eightPkCount > 0 && (
-                      <div className="text-center border-l border-border/50 pl-3">
-                        <span className="text-sm text-indigo-600 dark:text-indigo-400 block">8-Packs</span>
-                        <span className="text-lg font-bold tabular-nums text-indigo-600 dark:text-indigo-400">{eightPkFridge}/{eightPkCount}</span>
-                      </div>
-                    )}
-                    {remaining > 0 && (
-                      <div className="text-center">
-                        <span className="text-sm text-amber-600 dark:text-amber-400 block">Left</span>
-                        <span className="text-lg font-bold tabular-nums text-amber-600 dark:text-amber-400">{remaining}</span>
-                      </div>
-                    )}
-                  </div>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {getStationCount(item, "ovens")} / {item.batchesTarget ?? 0} oven loads
-                    {(item.shortCount ?? 0) > 0 && <span className="text-red-500"> · {item.shortCount} short</span>}
-                  </p>
-                </div>
+        <div className="divide-y divide-border/50">
+          {items.map(item => {
+            const planned = plannedPacks(item);
+            const gross = grossPacks(item);
+            const net = netTwoPacks(item);
+            const eightPkCount = item.eightPackBagCount ?? 0;
+            const eightPkFridge = item.fridgeEightPackQty ?? 0;
+            const eightPkRemaining = eightPkCount - eightPkFridge;
+            const fridge = item.fridgeQty ?? 0;
+            const freezer = item.freezerQty ?? 0;
+            const totalStored = fridge + freezer;
+            const remaining = net - totalStored;
+            const isWrapped = item.wrappingComplete;
+            const isLoading = wrappingLoading === item.id;
+            const isStorageLoading = storageLoading === item.id;
+            const isCustomOpen = showCustom[item.id] ?? false;
+            const customVal = customAmounts[item.id] ?? "";
+            const customNum = parseInt(customVal, 10);
+            const postOvenItems = postOvenMap[item.id] ?? [];
+            const isExpanded = expandedItemId === item.id;
+            const isCurrent = item.id === currentWrappingItem?.id;
+            const recipeColour = item.recipeColor || undefined;
+
+            return (
+              <div key={item.id}>
+                {/* Collapsed summary row */}
                 <button
-                  onClick={() => toggleWrapping(item)}
-                  disabled={isLoading || wrappingBusy || isOnBreak}
+                  onClick={() => toggleExpanded(item.id)}
                   className={cn(
-                    "w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 transition-all",
-                    isWrapped
-                      ? "bg-emerald-500 text-white shadow-md"
-                      : "bg-secondary border-2 border-purple-300 dark:border-purple-700 text-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20"
+                    "w-full text-left px-3 py-2.5 flex items-center gap-2 transition-colors",
+                    isExpanded
+                      ? isCurrent
+                        ? "bg-purple-50/60 dark:bg-purple-900/15"
+                        : "bg-blue-50/60 dark:bg-blue-900/15"
+                      : isCurrent
+                        ? "bg-purple-50/40 dark:bg-purple-900/10"
+                        : isWrapped
+                          ? "bg-emerald-50/30 dark:bg-emerald-900/10"
+                          : "hover:bg-secondary/20"
                   )}
-                  title={isWrapped ? "Mark as not wrapped" : "Mark wrapping complete"}
                 >
-                  {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
-                </button>
-              </div>
-
-              {/* Post-oven items (garlic butter) */}
-              {postOvenItems.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-amber-200 dark:border-amber-800">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Flame className="w-4 h-4 text-amber-500" />
-                    <span className="text-sm font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">After Oven</span>
-                  </div>
-                  <div className="space-y-1.5">
-                    {postOvenItems.map((poi, idx) => {
-                      const totalWeight = poi.weightPerBatch * (item.batchesTarget ?? 0);
-                      return (
-                        <div key={idx} className="flex items-center justify-between bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
-                          <span className="text-base font-medium text-amber-800 dark:text-amber-200">{poi.name}</span>
-                          <div className="text-right">
-                            <span className="text-lg font-bold tabular-nums text-amber-700 dark:text-amber-300">{Math.round(totalWeight)}g</span>
-                            <span className="text-sm text-muted-foreground ml-1">total</span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Storage controls — always targets Production Fridge */}
-              <div className="mt-3 pt-3 border-t border-border/40">
-                {fridge > 0 && (
-                  <p className="text-xs text-muted-foreground mb-2">Wrapped: <span className="font-bold">{fridge}</span> in Production Fridge</p>
-                )}
-                <div className="flex items-center gap-2 flex-wrap">
-                  {remaining > 0 && (
-                  <button
-                    onClick={() => addToStorage(item, Math.min(STACK_SIZE, remaining), "fridge")}
-                    disabled={isStorageLoading || isOnBreak || addingRef.current || storageBusy}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                  <span
+                    className={cn(
+                      "flex-1 font-bold text-sm truncate",
+                      isWrapped && !isExpanded ? "line-through opacity-60" : ""
+                    )}
+                    style={{ color: recipeColour }}
                   >
-                    {isStorageLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                    {remaining < STACK_SIZE ? `Add ${remaining} to Fridge` : `Add ${STACK_SIZE}`}
-                  </button>
-                  )}
+                    {item.recipeName ?? `Recipe #${item.recipeId}`}
+                  </span>
 
-                  {!isCustomOpen ? (
-                    <button
-                      onClick={() => setShowCustom(prev => ({ ...prev, [item.id]: true }))}
-                      className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-border text-base text-muted-foreground hover:bg-secondary/50 transition-colors"
-                    >
-                      Custom
-                    </button>
+                  {/* Key stats */}
+                  <span className="text-xs tabular-nums text-purple-600 dark:text-purple-400 font-semibold flex-shrink-0">
+                    {net > 0 ? net : "—"}
+                  </span>
+                  <span className="text-xs tabular-nums text-primary font-semibold flex-shrink-0">
+                    {fridge > 0 ? fridge : "—"}
+                  </span>
+
+                  {isWrapped ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
                   ) : (
-                    <div className="inline-flex items-center gap-1.5">
-                      <input
-                        type="number"
-                        min="1"
-                        placeholder="Qty"
-                        value={customVal}
-                        onChange={e => setCustomAmounts(prev => ({ ...prev, [item.id]: e.target.value }))}
-                        onKeyDown={e => { if (e.key === "Enter" && customNum > 0) addToStorage(item, customNum, "fridge"); }}
-                        className="w-20 h-10 rounded-lg border border-border bg-background px-2 text-base tabular-nums text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        autoFocus
-                      />
+                    <ChevronDown className={cn(
+                      "w-4 h-4 text-muted-foreground flex-shrink-0 transition-transform",
+                      isExpanded ? "rotate-180" : ""
+                    )} />
+                  )}
+                </button>
+
+                {/* Expanded panel */}
+                {isExpanded && (
+                  <div className={cn(
+                    "border-t-2 px-4 py-4 space-y-3",
+                    isCurrent
+                      ? "border-purple-400 dark:border-purple-600"
+                      : "border-blue-300 dark:border-blue-700"
+                  )}>
+                    {/* Header + wrapping toggle */}
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <h3 className={cn("font-semibold text-xl", isWrapped ? "line-through opacity-60" : "")} style={{ color: recipeColour }}>
+                            {item.recipeName ?? `Recipe #${item.recipeId}`}
+                          </h3>
+                          {isWrapped && <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />}
+                        </div>
+                        <div className="flex items-center gap-3 text-base">
+                          <div className="text-center">
+                            <span className="text-sm text-muted-foreground block">Planned</span>
+                            <span className="text-lg font-bold tabular-nums">{planned}</span>
+                          </div>
+                          <div className="text-center">
+                            <span className="text-sm text-purple-600 dark:text-purple-400 block">In Chiller</span>
+                            <span className="text-2xl font-bold tabular-nums text-purple-700 dark:text-purple-300">{net}</span>
+                          </div>
+                          <div className="text-center border-l border-border/50 pl-3">
+                            <span className="text-sm text-primary block">Wrapped</span>
+                            <span className="text-2xl font-bold tabular-nums text-primary">{fridge}</span>
+                          </div>
+                          {(item.wonlyCount ?? 0) > 0 && (
+                            <div className="text-center">
+                              <span className="text-sm text-red-500 block">Wonky</span>
+                              <span className="text-lg font-bold tabular-nums text-red-500">{item.wonlyCount}</span>
+                            </div>
+                          )}
+                          {eightPkCount > 0 && (
+                            <div className="text-center border-l border-border/50 pl-3">
+                              <span className="text-sm text-indigo-600 dark:text-indigo-400 block">8-Packs</span>
+                              <span className="text-lg font-bold tabular-nums text-indigo-600 dark:text-indigo-400">{eightPkFridge}/{eightPkCount}</span>
+                            </div>
+                          )}
+                          {remaining > 0 && (
+                            <div className="text-center">
+                              <span className="text-sm text-amber-600 dark:text-amber-400 block">Left</span>
+                              <span className="text-lg font-bold tabular-nums text-amber-600 dark:text-amber-400">{remaining}</span>
+                            </div>
+                          )}
+                        </div>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          {getStationCount(item, "ovens")} / {item.batchesTarget ?? 0} oven loads
+                          {(item.shortCount ?? 0) > 0 && <span className="text-red-500"> · {item.shortCount} short</span>}
+                        </p>
+                      </div>
                       <button
-                        onClick={() => { if (customNum > 0) addToStorage(item, customNum, "fridge"); }}
-                        disabled={isStorageLoading || !(customNum > 0) || isOnBreak || addingRef.current || storageBusy}
-                        className="px-3 py-2 rounded-lg bg-primary text-primary-foreground text-base font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                        onClick={(e) => { e.stopPropagation(); toggleWrapping(item); }}
+                        disabled={isLoading || wrappingBusy || isOnBreak}
+                        className={cn(
+                          "w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 transition-all",
+                          isWrapped
+                            ? "bg-emerald-500 text-white shadow-md"
+                            : "bg-secondary border-2 border-purple-300 dark:border-purple-700 text-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20"
+                        )}
+                        title={isWrapped ? "Mark as not wrapped" : "Mark wrapping complete"}
                       >
-                        Add
-                      </button>
-                      <button
-                        onClick={() => { setShowCustom(prev => ({ ...prev, [item.id]: false })); setCustomAmounts(prev => ({ ...prev, [item.id]: "" })); }}
-                        className="px-2 py-2 rounded-lg text-muted-foreground hover:bg-secondary/50 text-base transition-colors"
-                      >
-                        ✕
+                        {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
                       </button>
                     </div>
-                  )}
 
-                  {fridge > 0 && (() => {
-                    const undoAmt = Math.min(STACK_SIZE, fridge);
-                    return (
-                    <button
-                      onClick={() => undoStorage(item, undoAmt, "fridge")}
-                      disabled={isStorageLoading || storageBusy}
-                      className="ml-auto inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-base hover:bg-red-50 dark:hover:bg-red-950/20 disabled:opacity-50 transition-colors"
-                    >
-                      <Minus className="w-3.5 h-3.5" />
-                      Undo {undoAmt}
-                    </button>
-                    );
-                  })()}
-                </div>
+                    {/* Post-oven items (garlic butter) */}
+                    {postOvenItems.length > 0 && (
+                      <div className="pt-3 border-t border-amber-200 dark:border-amber-800">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Flame className="w-4 h-4 text-amber-500" />
+                          <span className="text-sm font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">After Oven</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {postOvenItems.map((poi, idx) => {
+                            const totalWeight = poi.weightPerBatch * (item.batchesTarget ?? 0);
+                            return (
+                              <div key={idx} className="flex items-center justify-between bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+                                <span className="text-base font-medium text-amber-800 dark:text-amber-200">{poi.name}</span>
+                                <div className="text-right">
+                                  <span className="text-lg font-bold tabular-nums text-amber-700 dark:text-amber-300">{Math.round(totalWeight)}g</span>
+                                  <span className="text-sm text-muted-foreground ml-1">total</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
 
-                {/* 8-Pack Bag fridge controls */}
-                {eightPkCount > 0 && (
-                  <div className="flex items-center gap-2 flex-wrap mt-2 pt-2 border-t border-indigo-200/50 dark:border-indigo-800/50">
-                    <span className="text-sm font-medium text-indigo-600 dark:text-indigo-400">8-Pack Bags:</span>
-                    {eightPkRemaining > 0 && (
-                      <button
-                        onClick={() => addToStorage(item, eightPkRemaining, "fridge", 8)}
-                        disabled={isStorageLoading || isOnBreak || addingRef.current || storageBusy}
-                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-indigo-500 text-white text-sm font-medium hover:bg-indigo-600 disabled:opacity-50 transition-colors"
-                      >
-                        {isStorageLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                        Add {eightPkRemaining} to Fridge
-                      </button>
-                    )}
-                    {eightPkFridge > 0 && (
-                      <span className="text-sm text-muted-foreground">{eightPkFridge} in fridge</span>
-                    )}
-                    {eightPkRemaining <= 0 && eightPkFridge > 0 && (
-                      <span className="text-sm text-emerald-600 font-medium">All 8-packs stored ✓</span>
-                    )}
+                    {/* Storage controls */}
+                    <div className="pt-3 border-t border-border/40">
+                      {fridge > 0 && (
+                        <p className="text-xs text-muted-foreground mb-2">Wrapped: <span className="font-bold">{fridge}</span> in Production Fridge</p>
+                      )}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {remaining > 0 && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); addToStorage(item, Math.min(STACK_SIZE, remaining), "fridge"); }}
+                            disabled={isStorageLoading || isOnBreak || addingRef.current || storageBusy}
+                            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                          >
+                            {isStorageLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                            {remaining < STACK_SIZE ? `Add ${remaining} to Fridge` : `Add ${STACK_SIZE}`}
+                          </button>
+                        )}
+
+                        {!isCustomOpen ? (
+                          <button
+                            onClick={() => setShowCustom(prev => ({ ...prev, [item.id]: true }))}
+                            className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-border text-base text-muted-foreground hover:bg-secondary/50 transition-colors"
+                          >
+                            Custom
+                          </button>
+                        ) : (
+                          <div className="inline-flex items-center gap-1.5">
+                            <input
+                              type="number"
+                              min="1"
+                              placeholder="Qty"
+                              value={customVal}
+                              onChange={e => setCustomAmounts(prev => ({ ...prev, [item.id]: e.target.value }))}
+                              onKeyDown={e => { if (e.key === "Enter" && customNum > 0) addToStorage(item, customNum, "fridge"); }}
+                              className="w-20 h-10 rounded-lg border border-border bg-background px-2 text-base tabular-nums text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              autoFocus
+                            />
+                            <button
+                              onClick={() => { if (customNum > 0) addToStorage(item, customNum, "fridge"); }}
+                              disabled={isStorageLoading || !(customNum > 0) || isOnBreak || addingRef.current || storageBusy}
+                              className="px-3 py-2 rounded-lg bg-primary text-primary-foreground text-base font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                            >
+                              Add
+                            </button>
+                            <button
+                              onClick={() => { setShowCustom(prev => ({ ...prev, [item.id]: false })); setCustomAmounts(prev => ({ ...prev, [item.id]: "" })); }}
+                              className="px-2 py-2 rounded-lg text-muted-foreground hover:bg-secondary/50 text-base transition-colors"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        )}
+
+                        {fridge > 0 && (() => {
+                          const undoAmt = Math.min(STACK_SIZE, fridge);
+                          return (
+                            <button
+                              onClick={() => undoStorage(item, undoAmt, "fridge")}
+                              disabled={isStorageLoading || storageBusy}
+                              className="ml-auto inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-base hover:bg-red-50 dark:hover:bg-red-950/20 disabled:opacity-50 transition-colors"
+                            >
+                              <Minus className="w-3.5 h-3.5" />
+                              Undo {undoAmt}
+                            </button>
+                          );
+                        })()}
+                      </div>
+
+                      {/* 8-Pack Bag fridge controls */}
+                      {eightPkCount > 0 && (
+                        <div className="flex items-center gap-2 flex-wrap mt-2 pt-2 border-t border-indigo-200/50 dark:border-indigo-800/50">
+                          <span className="text-sm font-medium text-indigo-600 dark:text-indigo-400">8-Pack Bags:</span>
+                          {eightPkRemaining > 0 && (
+                            <button
+                              onClick={() => addToStorage(item, eightPkRemaining, "fridge", 8)}
+                              disabled={isStorageLoading || isOnBreak || addingRef.current || storageBusy}
+                              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-indigo-500 text-white text-sm font-medium hover:bg-indigo-600 disabled:opacity-50 transition-colors"
+                            >
+                              {isStorageLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                              Add {eightPkRemaining} to Fridge
+                            </button>
+                          )}
+                          {eightPkFridge > 0 && (
+                            <span className="text-sm text-muted-foreground">{eightPkFridge} in fridge</span>
+                          )}
+                          {eightPkRemaining <= 0 && eightPkFridge > 0 && (
+                            <span className="text-sm text-emerald-600 font-medium">All 8-packs stored ✓</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
 
       {/* ── Bottom: Wonky Rack dedicated panel ── */}
