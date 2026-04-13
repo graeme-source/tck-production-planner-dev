@@ -5232,6 +5232,10 @@ router.post("/:id/reset", async (req, res) => {
       await tx.update(productionPlansTable)
         .set({ status: "draft" })
         .where(eq(productionPlansTable.id, planId));
+
+      // Clear building station checklist lock states (keyed by plan+item ID)
+      await tx.delete(appSettingsTable)
+        .where(sql`${appSettingsTable.key} LIKE ${"checklist_done_" + planId + "_%"}`);
     });
 
     res.json({ message: "Production plan has been reset to draft with all progress cleared." });
