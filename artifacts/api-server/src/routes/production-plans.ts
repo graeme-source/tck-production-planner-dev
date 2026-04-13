@@ -160,9 +160,11 @@ function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?
   };
 }
 
+// Building is the start of the dependency chain — no mixing dependency.
+// Chain: Building → Ovens → Wrapping (mixing runs independently).
 const STATION_DEPENDENCIES: Record<string, string[]> = {
-  building_1: ["mixing"],
-  building_2: ["mixing"],
+  building_1: [],
+  building_2: [],
   ovens: ["building_1", "building_2"],
   wrapping: ["ovens"],
 };
