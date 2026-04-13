@@ -353,7 +353,11 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
         setPendingTap(false);
         setLastBatchAt(new Date());
       },
-      onError: () => setPendingTap(false),
+      onError: (err: any) => {
+        setPendingTap(false);
+        const msg = err?.response?.data?.error ?? err?.message ?? "Failed to record batch";
+        toast({ title: "Batch not recorded", description: msg, variant: "destructive" });
+      },
     },
   });
 

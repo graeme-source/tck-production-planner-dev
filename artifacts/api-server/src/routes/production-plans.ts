@@ -5217,11 +5217,14 @@ router.post("/:id/reset", async (req, res) => {
         .set({
           batchesComplete: 0,
           wonlyCount: 0,
+          shortCount: 0,
+          extraPacksBuilt: 0,
+          eightPackBagCount: 0,
           wrappingComplete: false,
           fridgeQty: 0,
+          fridgeEightPackQty: 0,
           freezerQty: 0,
           prepFridgeQty: 0,
-          extraPacksBuilt: 0,
           status: "pending",
         })
         .where(eq(productionPlanItemsTable.planId, planId));
