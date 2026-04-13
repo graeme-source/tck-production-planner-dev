@@ -623,6 +623,30 @@ async function runStartupMigrations() {
     await db.execute(sql`ALTER TABLE recipe_shopify_mappings ADD COLUMN IF NOT EXISTS eight_pack_product_title TEXT`);
     await db.execute(sql`ALTER TABLE recipe_shopify_mappings ADD COLUMN IF NOT EXISTS eight_pack_variant_title TEXT`);
 
+    // Deduplicate station_breaks: old code created one row per station type per break.
+    // Keep only the lowest id per (plan_id, user_id, break_type, started_at) group.
+    await db.execute(sql`
+      DELETE FROM station_breaks
+      WHERE id NOT IN (
+        SELECT MIN(id)
+        FROM station_breaks
+        GROUP BY plan_id, user_id, break_type, started_at
+      )
+    `);
+
+    // Move any ingredient stock entries out of production_fridge (finished product only)
+    await db.execute(sql`
+      UPDATE stock_entries
+      SET location = 'prep_fridge'
+      WHERE item_type = 'ingredient' AND location = 'production_fridge'
+    `);
+    // Same for production_freezer
+    await db.execute(sql`
+      UPDATE stock_entries
+      SET location = 'prep_fridge'
+      WHERE item_type = 'ingredient' AND location = 'production_freezer'
+    `);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

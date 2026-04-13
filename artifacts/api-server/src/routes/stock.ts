@@ -109,6 +109,7 @@ router.get("/", async (req, res) => {
 
 router.post("/", validate(CreateStockEntryBody), async (req, res) => {
   const { recipeId, ingredientId, stockItemId, itemType, quantity, unit, location, notes } = req.body;
+  const defaultLocation = itemType === "recipe" ? "production_fridge" : "prep_fridge";
   const [row] = await db.insert(stockEntriesTable).values({
     recipeId: recipeId ?? null,
     ingredientId: ingredientId ?? null,
@@ -116,7 +117,7 @@ router.post("/", validate(CreateStockEntryBody), async (req, res) => {
     itemType,
     quantity: String(quantity),
     unit,
-    location: location ?? "production_fridge",
+    location: location ?? defaultLocation,
     notes,
   }).returning();
   res.status(201).json({ ...row, quantity: Number(row.quantity), checkedAt: row.checkedAt.toISOString() });
@@ -216,6 +217,7 @@ router.post("/reset-fridge-stock", requireAdmin, async (_req, res) => {
 router.put("/:id", validate(UpdateStockEntryBody), async (req, res) => {
   const id = Number(req.params.id);
   const { recipeId, ingredientId, stockItemId, itemType, quantity, unit, location, notes } = req.body;
+  const defaultLocation = itemType === "recipe" ? "production_fridge" : "prep_fridge";
   const [row] = await db.update(stockEntriesTable).set({
     recipeId: recipeId ?? null,
     ingredientId: ingredientId ?? null,
@@ -223,7 +225,7 @@ router.put("/:id", validate(UpdateStockEntryBody), async (req, res) => {
     itemType,
     quantity: String(quantity),
     unit,
-    location: location ?? "production_fridge",
+    location: location ?? defaultLocation,
     notes,
   }).where(eq(stockEntriesTable.id, id)).returning();
   if (!row) { res.status(404).json({ error: "Not found" }); return; }

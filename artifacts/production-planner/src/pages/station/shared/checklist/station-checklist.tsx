@@ -36,9 +36,10 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
   const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
   const [adminMode, setAdminMode] = useState(false);
   const [showCompletedByCategory, setShowCompletedByCategory] = useState<Record<string, boolean>>({});
-  const [addingOneoff, setAddingOneoff] = useState(false);
-  const [oneoffTitle, setOneoffTitle] = useState("");
-  const [oneoffCategory, setOneoffCategory] = useState<Category>("opening");
+  const [addingItem, setAddingItem] = useState(false);
+  const [addTitle, setAddTitle] = useState("");
+  const [addCategory, setAddCategory] = useState<Category>("opening");
+  const [addRecurring, setAddRecurring] = useState(true);
   const [completionNotes, setCompletionNotes] = useState("");
 
   // Refs to checklist item buttons, keyed by item key. Used for scroll-into-view
@@ -197,23 +198,59 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
     });
   };
 
-  const handleAddOneoff = () => {
-    if (!oneoffTitle.trim()) return;
+  const handleAddItem = () => {
+    if (!addTitle.trim()) return;
     runOneoff(async (signal) => {
-      await guardedFetch(`${BASE}/api/checklists/oneoff`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          planId,
-          stationType,
-          category: oneoffCategory,
-          title: oneoffTitle.trim(),
-        }),
-        signal,
-      });
-      setOneoffTitle("");
-      setAddingOneoff(false);
-      toast({ title: "Item added" });
+      if (addRecurring) {
+        // Create a template (recurring task)
+        await guardedFetch(`${BASE}/api/checklists/templates`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            stationType,
+            category: addCategory,
+            title: addTitle.trim(),
+            schedule: "daily",
+            orderPosition: 999,
+          }),
+          signal,
+        });
+        toast({ title: "Recurring task added" });
+      } else {
+        // Create a one-off item (today only)
+        await guardedFetch(`${BASE}/api/checklists/oneoff`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            planId,
+            stationType,
+            category: addCategory,
+            title: addTitle.trim(),
+          }),
+          signal,
+        });
+        toast({ title: "One-off item added" });
+      }
+      setAddTitle("");
+      setAddingItem(false);
+    });
+  };
+
+  const handleDeleteOneoff = (item: ChecklistItem) => {
+    if (item.type !== "oneoff") return;
+    runOneoff(async (signal) => {
+      await guardedFetch(`${BASE}/api/checklists/oneoff/${item.id}`, { method: "DELETE", signal });
+      if (selectedItemKey && selectedItemKey === itemKey(item)) setSelectedItemKey(null);
+      toast({ title: "Item deleted" });
+    });
+  };
+
+  const handleDeleteTemplate = (item: ChecklistItem) => {
+    if (item.type !== "template") return;
+    runOneoff(async (signal) => {
+      await guardedFetch(`${BASE}/api/checklists/templates/${item.id}`, { method: "DELETE", signal });
+      if (selectedItemKey && selectedItemKey === itemKey(item)) setSelectedItemKey(null);
+      toast({ title: "Recurring task deleted" });
     });
   };
 
@@ -238,7 +275,7 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
               {adminMode ? "Done Editing" : "Edit Templates"}
             </button>
             <button
-              onClick={() => setAddingOneoff(!addingOneoff)}
+              onClick={() => setAddingItem(!addingItem)}
               className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -254,37 +291,59 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
         </div>
       </div>
 
-      {/* Add one-off item form */}
-      {addingOneoff && (
+      {/* Add item form */}
+      {addingItem && (
         <div className="bg-card border border-border rounded-xl px-5 py-4 space-y-3">
-          <p className="text-sm font-semibold">Add One-off Item</p>
+          <p className="text-sm font-semibold">Add Checklist Item</p>
           <input
             type="text"
             placeholder="Item title..."
-            value={oneoffTitle}
-            onChange={e => setOneoffTitle(e.target.value)}
+            value={addTitle}
+            onChange={e => setAddTitle(e.target.value)}
             className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background"
             autoFocus
           />
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <select
-              value={oneoffCategory}
-              onChange={e => setOneoffCategory(e.target.value as Category)}
+              value={addCategory}
+              onChange={e => setAddCategory(e.target.value as Category)}
               className="px-3 py-2 border border-border rounded-lg text-sm bg-background"
             >
               <option value="opening">Opening</option>
               <option value="cleaning">Cleaning</option>
               <option value="closing">Closing</option>
             </select>
+            <div className="flex items-center bg-secondary/40 rounded-lg p-0.5">
+              <button
+                type="button"
+                onClick={() => setAddRecurring(true)}
+                className={cn(
+                  "px-3 py-1.5 rounded-md text-xs font-medium transition-colors",
+                  addRecurring ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                Recurring
+              </button>
+              <button
+                type="button"
+                onClick={() => setAddRecurring(false)}
+                className={cn(
+                  "px-3 py-1.5 rounded-md text-xs font-medium transition-colors",
+                  !addRecurring ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                Today Only
+              </button>
+            </div>
             <button
-              onClick={handleAddOneoff}
-              disabled={oneoffBusy || !oneoffTitle.trim()}
+              onClick={handleAddItem}
+              disabled={oneoffBusy || !addTitle.trim()}
               className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium disabled:opacity-50"
             >
               {oneoffBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add"}
             </button>
             <button
-              onClick={() => setAddingOneoff(false)}
+              onClick={() => setAddingItem(false)}
               className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground"
             >
               Cancel
@@ -383,6 +442,17 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                                 <span className="text-xs text-amber-500 font-medium">one-off</span>
                               )}
                             </div>
+                            <div
+                              className="flex-shrink-0 p-1.5 rounded-lg text-muted-foreground/40 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
+                              role="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (item.type === "oneoff") handleDeleteOneoff(item);
+                                else handleDeleteTemplate(item);
+                              }}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </div>
                           </button>
                         );
                       })}
@@ -466,14 +536,26 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                         <p className="text-sm text-emerald-600 dark:text-emerald-400 mt-1">{selectedItem.notes}</p>
                       )}
                     </div>
-                    <button
-                      onClick={() => handleUndo(selectedItem)}
-                      disabled={undoBusy}
-                      className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      <Undo2 className="w-4 h-4" />
-                      Undo completion
-                    </button>
+                    <div className="flex items-center gap-4">
+                      <button
+                        onClick={() => handleUndo(selectedItem)}
+                        disabled={undoBusy}
+                        className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        <Undo2 className="w-4 h-4" />
+                        Undo completion
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (selectedItem.type === "oneoff") handleDeleteOneoff(selectedItem);
+                          else handleDeleteTemplate(selectedItem);
+                        }}
+                        className="flex items-center gap-2 text-sm text-muted-foreground hover:text-red-500 transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Delete
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <div className="mt-4 space-y-3">
@@ -495,6 +577,16 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                         <CheckCircle2 className="w-5 h-5" />
                       )}
                       Mark Complete
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (selectedItem.type === "oneoff") handleDeleteOneoff(selectedItem);
+                        else handleDeleteTemplate(selectedItem);
+                      }}
+                      className="flex items-center justify-center gap-2 text-sm text-muted-foreground hover:text-red-500 transition-colors pt-1"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Delete task
                     </button>
                   </div>
                 )}

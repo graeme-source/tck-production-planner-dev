@@ -19,7 +19,7 @@ import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
-import { getStationCount, getAvailableFromPrev, getPrevStationCount } from "../shared/constants";
+import { getStationCount, getAvailableFromPrev } from "../shared/constants";
 import { RECIPE_RACK_COLOURS, WonkyColour, ChillerRackItem, ChillerRackVisual } from "./dough-sheeting-station";
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -349,18 +349,9 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                     {item.recipeName ?? `Recipe #${item.recipeId}`}
                   </span>
 
-                  {/* Stats */}
+                  {/* Batch count */}
                   <span className="text-sm tabular-nums font-medium flex-shrink-0">
                     {getStationCount(item, "ovens")}/{item.batchesTarget ?? 0}
-                  </span>
-                  <span className="text-sm tabular-nums text-indigo-600 dark:text-indigo-400 font-semibold flex-shrink-0">
-                    {nTwoPacks > 0 ? nTwoPacks : "—"}
-                    {eightPacks > 0 && (
-                      <span className="text-xs text-indigo-400 dark:text-indigo-500 ml-0.5">+{eightPacks}x8</span>
-                    )}
-                  </span>
-                  <span className="text-sm tabular-nums text-cyan-600 dark:text-cyan-400 font-semibold w-6 text-right flex-shrink-0">
-                    {trays > 0 ? trays : "—"}
                   </span>
 
                   {/* Status icon */}
@@ -393,12 +384,6 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                             <CheckCircle2 className="w-4 h-4" /> Complete
                           </p>
                         )}
-                      </div>
-                      <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg px-3 py-1.5 text-center flex-shrink-0">
-                        <p className="text-xs text-blue-600 dark:text-blue-400 font-medium">Built</p>
-                        <p className="text-2xl font-bold text-blue-600 dark:text-blue-400 tabular-nums">
-                          {getPrevStationCount(item, "ovens")}
-                        </p>
                       </div>
                     </div>
 

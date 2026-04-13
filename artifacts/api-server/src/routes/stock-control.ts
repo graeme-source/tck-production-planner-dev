@@ -129,11 +129,19 @@ router.get("/", async (_req, res) => {
     });
   }
 
+  // Build a lookup of allowed item types per location from LOCATION_DEFS
+  const allowedTypes = new Map<string, readonly string[]>();
+  for (const def of LOCATION_DEFS) allowedTypes.set(def.key, def.itemTypes);
+
   const aggMap = new Map<string, AggItem>();
 
   for (const row of positiveRows) {
     const qty = parseFloat(String(row.quantity)) || 0;
     if (qty <= 0) continue;
+
+    // Enforce item-type restrictions: e.g. production_fridge only allows "recipe"
+    const allowed = allowedTypes.get(row.location);
+    if (allowed && !allowed.includes(row.itemType)) continue;
 
     let locEntry = locationMap.get(row.location);
     if (!locEntry) {

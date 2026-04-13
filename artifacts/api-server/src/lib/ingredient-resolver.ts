@@ -28,7 +28,7 @@ export interface ResolvedIngredient {
   includeInFillingMix: boolean;
 }
 
-async function resolveSubRecipeIngredients(
+export async function resolveSubRecipeIngredients(
   subRecipeId: number,
   scale: number,
   ancestorPath: Set<number>,

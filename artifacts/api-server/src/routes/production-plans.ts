@@ -4,7 +4,7 @@ import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as driz
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
 import * as z from "zod";
-import { resolveRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
+import { resolveRecipeIngredients, resolveSubRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
 import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag } from "../services/shopify";
 import { getFactoryNumberCoreMenuOnly } from "../lib/inventory-sync";
 
@@ -1620,9 +1620,6 @@ router.get("/:id/station-breaks/active", async (req, res) => {
   res.json({ ...row, startedAt: row.startedAt.toISOString(), endedAt: null });
 });
 
-// All station types — breaks are synced globally across all stations
-const ALL_STATION_TYPES = ["mixing", "building_1", "building_2", "ovens", "wrapping", "prep_veg", "prep_bases", "prep_meat"];
-
 router.post("/:id/station-breaks", async (req, res) => {
   const planId = Number(req.params.id);
   const { stationType, breakType, startedAt } = req.body;
@@ -1641,21 +1638,17 @@ router.post("/:id/station-breaks", async (req, res) => {
     return;
   }
 
-  // Create one break record per station type so KPI calculations remain accurate per station
+  // Single record for the station the user is actually on
   const ts = startedAt ? new Date(startedAt) : new Date();
-  const rows = await db.insert(stationBreaksTable).values(
-    ALL_STATION_TYPES.map(st => ({
-      planId,
-      stationType: st,
-      userId: sessionUserId,
-      breakType: breakType ?? "morning",
-      startedAt: ts,
-    }))
-  ).returning();
+  const [row] = await db.insert(stationBreaksTable).values({
+    planId,
+    stationType,
+    userId: sessionUserId,
+    breakType: breakType ?? "morning",
+    startedAt: ts,
+  }).returning();
 
-  // Return the row for the calling station (or first row)
-  const primary = rows.find(r => r.stationType === stationType) ?? rows[0];
-  res.status(201).json({ ...primary, startedAt: primary.startedAt.toISOString(), endedAt: null });
+  res.status(201).json({ ...row, startedAt: row.startedAt.toISOString(), endedAt: null });
 });
 
 router.patch("/:id/station-breaks/:breakId", async (req, res) => {
@@ -1776,6 +1769,36 @@ router.get("/:id/prep-requirements", async (req, res) => {
       if (planItem.recipeName && !aggregated[iid].recipes.includes(planItem.recipeName)) {
         aggregated[iid].recipes.push(planItem.recipeName);
       }
+    }
+  }
+
+  // Add extra tomato base surplus — resolve sub-recipe #2 ingredients scaled to the extra kg
+  const [extraTbSetting] = await db.select().from(appSettingsTable).where(eq(appSettingsTable.key, "extra_tomato_base_kg"));
+  const extraTbKg = extraTbSetting ? Number(extraTbSetting.value) || 0 : 0;
+  if (extraTbKg > 0) {
+    const extraIngredients = await resolveSubRecipeIngredients(2, extraTbKg, new Set());
+    const extraAgg = aggregateIngredients(extraIngredients);
+    for (const [iid, ing] of extraAgg) {
+      const totalCookedQty = ing.quantityPerBatch; // already scaled to extraTbKg
+      const totalRawQty = ing.processingRatio ? totalCookedQty / ing.processingRatio : totalCookedQty;
+      if (!aggregated[iid]) {
+        aggregated[iid] = {
+          ingredientId: iid,
+          ingredientName: ing.ingredientName,
+          unit: ing.unit,
+          category: ing.category,
+          processingRatio: ing.processingRatio,
+          prepWeightMode: ing.prepWeightMode,
+          rawMeatTrayCapacityKg: ing.rawMeatTrayCapacityKg,
+          totalCookedQty: 0,
+          totalRawQty: 0,
+          prepQty: 0,
+          trayCount: null,
+          recipes: [],
+        };
+      }
+      aggregated[iid].totalCookedQty += totalCookedQty;
+      aggregated[iid].totalRawQty += totalRawQty;
     }
   }
 
@@ -2221,6 +2244,16 @@ router.get("/:id/sub-recipe-requirements", async (req, res) => {
         quantity: Number(n.quantity),
       })),
     });
+  }
+
+  // Add extra tomato base surplus from settings (applies to sub-recipe ID 2 = "Tomato Base")
+  const [extraTbSetting] = await db.select().from(appSettingsTable).where(eq(appSettingsTable.key, "extra_tomato_base_kg"));
+  const extraTbKg = extraTbSetting ? Number(extraTbSetting.value) || 0 : 0;
+  if (extraTbKg > 0) {
+    const tbEntry = result.find(r => r.subRecipeId === 2);
+    if (tbEntry) {
+      tbEntry.totalRequired += extraTbKg;
+    }
   }
 
   res.json({ subRecipes: result });
@@ -2769,10 +2802,12 @@ router.get("/:id/eod-summary", async (req, res) => {
 
 // GET /:id/kpi?stationType=...&date=YYYY-MM-DD
 // Returns server-side KPI computed from batch_completions minus station_breaks for today
+// Building stations use team-level BPH: all batches from both lines, longest break per break type
 router.get("/:id/kpi", async (req, res) => {
   const planId = Number(req.params.id);
   const stationType = String(req.query.stationType ?? "");
   const sessionUserId = (req.session as { userId?: number }).userId ?? null;
+  const isBuilding = stationType === "building_1" || stationType === "building_2";
 
   if (!stationType) {
     res.status(400).json({ error: "stationType is required" });
@@ -2789,12 +2824,74 @@ router.get("/:id/kpi", async (req, res) => {
     return;
   }
 
-  // Batch completions for this station (today, this user if logged in)
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
+  if (isBuilding) {
+    // Team-level BPH for building: all batches from both lines, all users
+    const completions = await db.select({ completedAt: batchCompletionsTable.completedAt, startedAt: batchCompletionsTable.startedAt })
+      .from(batchCompletionsTable)
+      .where(
+        and(
+          inArray(batchCompletionsTable.planItemId, itemIds),
+          sql`${batchCompletionsTable.stationType} IN ('building_1', 'building_2')`,
+          sql`completed_at >= ${today.toISOString()} AND completed_at < ${tomorrow.toISOString()}`,
+        )
+      );
+
+    // All building breaks today (all users) — to find the longest per break type
+    const breaksRows = await db.select({
+      breakType: stationBreaksTable.breakType,
+      startedAt: stationBreaksTable.startedAt,
+      endedAt: stationBreaksTable.endedAt,
+    })
+      .from(stationBreaksTable)
+      .where(
+        and(
+          eq(stationBreaksTable.planId, planId),
+          sql`${stationBreaksTable.stationType} IN ('building_1', 'building_2')`,
+          sql`started_at >= ${today.toISOString()} AND started_at < ${tomorrow.toISOString()}`,
+        )
+      );
+
+    const batchesCompleted = completions.length;
+
+    // For each break type (morning/lunch), take the MAX duration across all builders
+    const maxByType = new Map<string, number>();
+    for (const b of breaksRows) {
+      const end = b.endedAt ?? new Date();
+      const mins = Math.max(0, (end.getTime() - b.startedAt.getTime()) / 60000);
+      const prev = maxByType.get(b.breakType) ?? 0;
+      if (mins > prev) maxByType.set(b.breakType, mins);
+    }
+    let breakMinutes = 0;
+    for (const mins of maxByType.values()) breakMinutes += mins;
+
+    // Production time from first batch to now
+    let activeMinutes = 0;
+    if (completions.length > 0) {
+      const earliest = completions.reduce((min, c) => {
+        const ts = c.startedAt ?? c.completedAt;
+        return ts < min ? ts : min;
+      }, completions[0].startedAt ?? completions[0].completedAt);
+      const totalElapsedMinutes = (new Date().getTime() - earliest.getTime()) / 60000;
+      activeMinutes = Math.max(0, totalElapsedMinutes - breakMinutes);
+    }
+
+    const batchesPerHour = activeMinutes > 0 ? (batchesCompleted / (activeMinutes / 60)) : 0;
+
+    res.json({
+      batchesCompleted,
+      activeMinutes: Math.round(activeMinutes),
+      breakMinutes: Math.round(breakMinutes),
+      batchesPerHour: Math.round(batchesPerHour * 10) / 10,
+    });
+    return;
+  }
+
+  // Non-building stations: per-user KPI as before
   const completions = await db.select({ completedAt: batchCompletionsTable.completedAt, startedAt: batchCompletionsTable.startedAt })
     .from(batchCompletionsTable)
     .where(
@@ -2806,8 +2903,6 @@ router.get("/:id/kpi", async (req, res) => {
       )
     );
 
-  // Station breaks for this station (today, this plan, this user)
-  // Scoped to sessionUserId to match completion scoping — a user's KPI only subtracts their own breaks
   const breaksRows = await db.select({
     startedAt: stationBreaksTable.startedAt,
     endedAt: stationBreaksTable.endedAt,
@@ -2824,7 +2919,6 @@ router.get("/:id/kpi", async (req, res) => {
 
   const batchesCompleted = completions.length;
 
-  // Calculate break minutes (sum of all completed breaks; active break counted up to now)
   let breakMinutes = 0;
   for (const b of breaksRows) {
     const end = b.endedAt ?? new Date();
@@ -2832,7 +2926,6 @@ router.get("/:id/kpi", async (req, res) => {
     breakMinutes += mins;
   }
 
-  // Calculate active minutes from first completion to now (or 0 if no completions)
   let activeMinutes = 0;
   if (completions.length > 0) {
     const earliest = completions.reduce((min, c) => {
