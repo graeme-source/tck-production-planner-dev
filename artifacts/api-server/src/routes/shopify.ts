@@ -122,6 +122,8 @@ router.get("/order-summary", async (req, res) => {
                 ...p,
                 totalQuantity: p.totalQuantity + specialQty,
                 orderCount: p.orderCount + specialEntry.orderCount,
+                fulfilledQuantity: (p.fulfilledQuantity ?? 0) + (specialEntry.fulfilledQuantity ?? 0),
+                unfulfilledQuantity: (p.unfulfilledQuantity ?? 0) + (specialEntry.unfulfilledQuantity ?? 0),
                 specialCount: specialQty,
                 variants: [...p.variants, ...specialEntry.variants],
               }
