@@ -507,8 +507,9 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   const buildingCount = currentItem ? getCombinedBuildCount(currentItem) : 0;
   const effectiveBatches = currentItem ? getEffectiveTarget(currentItem) : 0;
   const myCount = currentItem ? getStationCount(currentItem, stationType) : 0;
-  const mixingCount = currentItem ? getStationCount(currentItem, "mixing") : 0;
-  const available = currentItem ? Math.max(0, mixingCount - buildingCount) : 0;
+  // Building is the start of the dependency chain — no mixing dependency.
+  // Available = remaining batches to build (not gated by mixing).
+  const available = currentItem ? Math.max(0, effectiveBatches - buildingCount) : 0;
   const remaining = currentItem ? Math.max(0, effectiveBatches - buildingCount) : 0;
   const isLastBatchPartial = currentItem ? remaining === 1 && getLastBatchPacks(currentItem) > 0 : false;
   const lastBatchPackCount = currentItem ? getLastBatchPacks(currentItem) : 0;
@@ -812,8 +813,8 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
             const effTarget = getEffectiveTarget(item);
             const isDone = combinedCount >= effTarget;
             const itemMyCount = getStationCount(item, stationType);
-            const itemMixing = getStationCount(item, "mixing");
-            const itemAvailable = Math.max(0, itemMixing - combinedCount);
+            // Building is the start of the chain — available = remaining to build
+            const itemAvailable = Math.max(0, effTarget - combinedCount);
             const itemRemaining = Math.max(0, effTarget - combinedCount);
             const itemPct = effTarget > 0 ? Math.round((combinedCount / effTarget) * 100) : 0;
             const itemIsLastPartial = itemRemaining === 1 && getLastBatchPacks(item) > 0;
@@ -994,11 +995,11 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
                             <p className="text-xs text-muted-foreground text-center mt-0.5">{itemRemaining} left</p>
                           </div>
 
-                          {/* Waiting for mixing */}
+                          {/* All batches built for this item */}
                           {itemAvailable <= 0 && (
-                            <div className="w-full flex items-center justify-center gap-1 px-2 py-1.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg mb-2">
-                              <AlertCircle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-                              <p className="text-xs font-medium text-amber-700 dark:text-amber-300">Waiting for Mixing</p>
+                            <div className="w-full flex items-center justify-center gap-1 px-2 py-1.5 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 rounded-lg mb-2">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                              <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300">All batches built</p>
                             </div>
                           )}
 
