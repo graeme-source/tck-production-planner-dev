@@ -11,7 +11,7 @@ import {
   ChevronDown, ChevronUp, ChevronRight, Thermometer, ShieldCheck,
   Package, Zap, CalendarDays, Trophy, Snail, Hourglass,
   Lightbulb, AlertTriangle, CheckCircle, Filter, Play, Square,
-  MessageSquare, Send, ClipboardCheck, FileText,
+  MessageSquare, Send, ClipboardCheck, FileText, Eye, EyeOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
@@ -2248,10 +2248,12 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
                       onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) postComment(); }}
                     />
                     <button
+                      type="button"
                       onClick={postComment}
+                      onTouchEnd={e => { e.preventDefault(); postComment(); }}
                       disabled={!newComment.trim() || postingComment}
                       className={cn(
-                        "px-3 py-2 rounded-lg transition-all mt-0.5",
+                        "px-3 py-2 rounded-lg transition-all mt-0.5 touch-manipulation",
                         newComment.trim()
                           ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow active:scale-95"
                           : "bg-secondary text-muted-foreground cursor-not-allowed"
@@ -2295,6 +2297,7 @@ function AndonLogTab({ userRole }: { userRole: string }) {
   const [stationFilter, setStationFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [severityFilter, setSeverityFilter] = useState("");
+  const [showResolved, setShowResolved] = useState(false);
 
   // Detail dialog + comments state (mirrors ImprovementsTab)
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -2419,14 +2422,37 @@ function AndonLogTab({ userRole }: { userRole: string }) {
           <option value="yellow">Yellow (Minor)</option>
           <option value="red">Red (Serious)</option>
         </select>
+        <button
+          type="button"
+          onClick={() => setShowResolved(prev => !prev)}
+          className={cn(
+            "flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm transition-colors",
+            showResolved
+              ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400"
+              : "border-border bg-background text-muted-foreground hover:bg-secondary"
+          )}
+        >
+          {showResolved ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+          {showResolved ? "Hide Resolved" : "Show Resolved"}
+          {!showResolved && issues.filter(i => !!i.resolvedAt).length > 0 && (
+            <span className="text-xs bg-secondary px-1.5 py-0.5 rounded-full">{issues.filter(i => !!i.resolvedAt).length}</span>
+          )}
+        </button>
       </div>
 
       {loading ? (
         <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
-      ) : issues.length === 0 ? (
+      ) : issues.filter(i => showResolved || !i.resolvedAt).length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border p-12 text-center">
           <AlertTriangle className="w-10 h-10 mx-auto mb-3 opacity-30" />
-          <p className="font-medium text-muted-foreground">No issues found</p>
+          <p className="font-medium text-muted-foreground">
+            {issues.length === 0 ? "No issues found" : "All issues resolved"}
+          </p>
+          {issues.length > 0 && !showResolved && (
+            <button type="button" onClick={() => setShowResolved(true)} className="mt-2 text-sm text-primary hover:underline">
+              Show {issues.filter(i => !!i.resolvedAt).length} resolved issue{issues.filter(i => !!i.resolvedAt).length !== 1 ? "s" : ""}
+            </button>
+          )}
         </div>
       ) : (
         <div className="rounded-2xl border border-border bg-card overflow-x-auto">
@@ -2445,7 +2471,7 @@ function AndonLogTab({ userRole }: { userRole: string }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
-              {issues.map(issue => (
+              {issues.filter(issue => showResolved || !issue.resolvedAt).map(issue => (
                 <tr
                   key={issue.id}
                   onClick={() => openDetail(issue.id)}
@@ -2666,10 +2692,12 @@ function AndonLogTab({ userRole }: { userRole: string }) {
                       onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) postComment(); }}
                     />
                     <button
+                      type="button"
                       onClick={postComment}
+                      onTouchEnd={e => { e.preventDefault(); postComment(); }}
                       disabled={!newComment.trim() || postingComment}
                       className={cn(
-                        "px-3 py-2 rounded-lg transition-all mt-0.5",
+                        "px-3 py-2 rounded-lg transition-all mt-0.5 touch-manipulation",
                         newComment.trim()
                           ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow active:scale-95"
                           : "bg-secondary text-muted-foreground cursor-not-allowed"
