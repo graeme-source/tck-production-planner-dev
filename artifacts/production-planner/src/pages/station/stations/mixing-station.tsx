@@ -59,11 +59,10 @@ interface MixingStationProps {
   plan: ProductionPlanDetail;
 }
 
-export function MixingStation({ plan }: MixingStationProps) {
+export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & { isOnBreak?: boolean }) {
   const { state } = useAuth();
   const isAdmin = state.status === "authenticated" && state.user.role === "admin";
   const queryClient = useQueryClient();
-  const [isOnBreak, setIsOnBreak] = useState(false);
   const [activeItemId, setActiveItemId] = useState<number | null>(null);
   const [checkedIngredients, setCheckedIngredients] = useState<Record<string, boolean>>({});
   const [completing, setCompleting] = useState(false);
@@ -502,9 +501,6 @@ export function MixingStation({ plan }: MixingStationProps) {
           />
         </div>
 
-        <div className="mt-3 pt-3 border-t border-border/50">
-          <BreakTracker planId={plan.id} stationType="mixing" onBreakActiveChange={setIsOnBreak} />
-        </div>
       </div>
 
       {/* ── Big tab switcher ── */}

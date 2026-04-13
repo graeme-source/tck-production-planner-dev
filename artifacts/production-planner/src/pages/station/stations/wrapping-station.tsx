@@ -28,12 +28,11 @@ interface ShopifyWrapConfirmState {
 type PostOvenItem = { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number };
 type PostOvenMap = Record<number, PostOvenItem[]>;
 
-export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
+export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const queryClient = useQueryClient();
   const [wrappingLoading, setWrappingLoading] = useState<number | null>(null);
   const [storageLoading, setStorageLoading] = useState<number | null>(null);
   const [wonlyLoading, setWonlyLoading] = useState<number | null>(null);
-  const [isOnBreak, setIsOnBreak] = useState(false);
   const [customAmounts, setCustomAmounts] = useState<Record<number, string>>({});
   const [showCustom, setShowCustom] = useState<Record<number, boolean>>({});
   const [shopifyConfirm, setShopifyConfirm] = useState<ShopifyWrapConfirmState | null>(null);
@@ -354,7 +353,6 @@ export function WrappingStation({ plan }: { plan: ProductionPlanDetail }) {
             style={{ width: `${items.length > 0 ? Math.min(Math.round((wrappedCount / items.length) * 100), 100) : 0}%` }}
           />
         </div>
-        <BreakTracker planId={plan.id} stationType="wrapping" onBreakActiveChange={setIsOnBreak} />
       </div>
 
       {/* Unified accordion queue */}

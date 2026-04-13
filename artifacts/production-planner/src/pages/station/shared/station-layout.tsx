@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import { STATIONS, type StationType } from "./constants";
+import { BreakTracker } from "./break-tracker";
 import {
   NavLinks,
   AccountButton,
@@ -66,9 +67,11 @@ interface StationLayoutProps {
   stationType: StationType;
   plan: ProductionPlanDetail | undefined;
   children: React.ReactNode;
+  headerSlot?: React.ReactNode;
+  onBreakActiveChange?: (active: boolean) => void;
 }
 
-export function StationLayout({ planId, stationType, plan, children }: StationLayoutProps) {
+export function StationLayout({ planId, stationType, plan, children, headerSlot, onBreakActiveChange }: StationLayoutProps) {
   const [location, navigate] = useLocation();
   const search = useSearch();
   const [navOpen, setNavOpen] = useState(false);
@@ -214,6 +217,8 @@ export function StationLayout({ planId, stationType, plan, children }: StationLa
             </div>
 
             <div className="flex items-center gap-2">
+              {headerSlot}
+              <BreakTracker planId={planId} stationType={stationType} onBreakActiveChange={onBreakActiveChange} />
               <button
                 onClick={() => setStationNavOpen(v => !v)}
                 className={cn(

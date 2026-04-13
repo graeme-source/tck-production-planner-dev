@@ -308,9 +308,10 @@ function ReadOnlyAssemblyList({ asm }: { asm: AssemblyData }) {
 interface BuildingStationProps {
   plan: ProductionPlanDetail;
   lineNumber: 1 | 2;
+  isOnBreak?: boolean;
 }
 
-export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
+export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = false }: BuildingStationProps) {
   const stationType = lineNumber === 1 ? "building_1" : "building_2";
   const queryClient = useQueryClient();
   const { state } = useAuth();
@@ -325,7 +326,7 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
   const [activeBreakMinutes, setActiveBreakMinutes] = useState(0);
   const [showEod, setShowEod] = useState(false);
   const [pendingTap, setPendingTap] = useState(false);
-  const [isOnBreak, setIsOnBreak] = useState(false);
+  const isOnBreak = isOnBreakProp;
 
   // Accordion state
   const [expandedItemId, setExpandedItemId] = useState<number | null>(null);
@@ -743,9 +744,6 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
           </div>
         )}
 
-        <div className="mt-3 pt-3 border-t border-border/50">
-          <BreakTracker planId={plan.id} stationType={stationType} onBreakChange={handleBreakChange} onBreakActiveChange={setIsOnBreak} />
-        </div>
       </div>
 
       {/* Extra packs prompt — overlay dialog when a recipe just finished */}

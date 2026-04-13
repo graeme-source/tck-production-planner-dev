@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import { useParams } from "wouter";
 import { useGetProductionPlan, getGetProductionPlanQueryKey } from "@workspace/api-client-react";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
@@ -88,6 +88,9 @@ export default function StationPage() {
     refetch: () => void;
   };
 
+  const [isOnBreak, setIsOnBreak] = useState(false);
+  const handleBreakActiveChange = useCallback((active: boolean) => setIsOnBreak(active), []);
+
   // Compute default view based on time of day and plan status
   const defaults = useMemo(
     () => getDefaultView(plan?.status),
@@ -140,36 +143,36 @@ export default function StationPage() {
 
     switch (stationType) {
       case "mixing":
-        return <MixingStation plan={plan} />;
+        return <MixingStation plan={plan} isOnBreak={isOnBreak} />;
       case "building_1":
-        return <BuildingStation key="building_1" plan={plan} lineNumber={1} />;
+        return <BuildingStation key="building_1" plan={plan} lineNumber={1} isOnBreak={isOnBreak} />;
       case "building_2":
-        return <BuildingStation key="building_2" plan={plan} lineNumber={2} />;
+        return <BuildingStation key="building_2" plan={plan} lineNumber={2} isOnBreak={isOnBreak} />;
       case "ovens":
-        return <OvensStation plan={plan} />;
+        return <OvensStation plan={plan} isOnBreak={isOnBreak} />;
       case "wrapping":
-        return <WrappingStation plan={plan} />;
+        return <WrappingStation plan={plan} isOnBreak={isOnBreak} />;
       case "packing":
         return <PackingStation plan={plan} />;
       case "dough_prep":
-        return <DoughPrepStation plan={plan} />;
+        return <DoughPrepStation plan={plan} isOnBreak={isOnBreak} />;
       case "dough_sheeting":
-        return <DoughSheetingStation plan={plan} />;
+        return <DoughSheetingStation plan={plan} isOnBreak={isOnBreak} />;
       case "prep":
         return <PrepHub planId={planId} planDate={plan.planDate} />;
       case "main_prep":
-        return <MainPrepStation plan={plan} />;
+        return <MainPrepStation plan={plan} isOnBreak={isOnBreak} />;
       case "prep_bases":
-        return <PrepBasesStation plan={plan} />;
+        return <PrepBasesStation plan={plan} isOnBreak={isOnBreak} />;
       case "prep_meat":
-        return <PrepMeatStation plan={plan} />;
+        return <PrepMeatStation plan={plan} isOnBreak={isOnBreak} />;
       default:
         return <div className="text-center py-12 text-muted-foreground">Unknown station: {stationType}</div>;
     }
   };
 
   return (
-    <StationLayout planId={planId} stationType={stationType} plan={plan}>
+    <StationLayout planId={planId} stationType={stationType} plan={plan} onBreakActiveChange={handleBreakActiveChange}>
       {/* View toggle — only shown when checklists feature is enabled */}
       {checklistsEnabled && (
         <div className="flex items-center gap-1 mb-4 p-1 bg-secondary/40 rounded-xl w-fit">

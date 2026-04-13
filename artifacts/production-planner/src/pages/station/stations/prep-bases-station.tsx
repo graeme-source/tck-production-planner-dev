@@ -609,8 +609,7 @@ function usePlanSubRecipeRequirements(planId: number) {
   return { subRecipes: data, loading };
 }
 
-export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
-  const [isOnBreak, setIsOnBreak] = useState(false);
+export function PrepBasesStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const [selectedItem, setSelectedItem] = useState<"tomato_base" | number>("tomato_base");
   const [completedSubRecipeIds, setCompletedSubRecipeIds] = useState<Set<number>>(new Set());
   const { data: nextPlanData, isLoading: isNextPlanLoading } = useNextActivePlan(plan.planDate);
@@ -785,9 +784,6 @@ export function PrepBasesStation({ plan }: { plan: ProductionPlanDetail }) {
             className={cn("h-full rounded-full transition-all", overallPct >= 100 && ingredients.length > 0 ? "bg-yellow-500" : "bg-yellow-400")}
             style={{ width: `${ingredients.length > 0 ? Math.min(overallPct, 100) : 0}%` }}
           />
-        </div>
-        <div className="pt-3 border-t border-border/50">
-          <BreakTracker planId={targetPlanId} stationType="prep_bases" onBreakActiveChange={setIsOnBreak} />
         </div>
       </div>
 

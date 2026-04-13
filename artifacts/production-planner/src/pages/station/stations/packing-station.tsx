@@ -222,9 +222,6 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
             style={{ width: `${progress && progress.totalOrders > 0 ? Math.min(Math.round((progress.totalFulfilled / progress.totalOrders) * 100), 100) : 0}%` }}
           />
         </div>
-        <div className="pt-3 border-t border-border/50">
-          <BreakTracker planId={plan.id} stationType="packing" onBreakActiveChange={() => {}} />
-        </div>
       </div>
 
       {loading && !progress && (

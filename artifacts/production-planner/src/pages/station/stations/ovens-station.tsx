@@ -25,12 +25,11 @@ import { RECIPE_RACK_COLOURS, WonkyColour, ChillerRackItem, ChillerRackVisual } 
 // ──────────────────────────────────────────────────────────────────────────────
 // Ovens Station
 // ──────────────────────────────────────────────────────────────────────────────
-export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
+export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const queryClient = useQueryClient();
   const { state } = useAuth();
   const isAdmin = state.status === "authenticated" && state.user.role === "admin";
   const [wonlyLoading, setWonlyLoading] = useState<number | null>(null);
-  const [isOnBreak, setIsOnBreak] = useState(false);
   const [expandedItemId, setExpandedItemId] = useState<number | null>(null);
   // Prompt state: when a recipe finishes all batches, prompt for wonky before moving on
   const [promptItemId, setPromptItemId] = useState<number | null>(null);
@@ -246,9 +245,6 @@ export function OvensStation({ plan }: { plan: ProductionPlanDetail }) {
             className={cn("h-full rounded-full transition-all", overallPct >= 100 ? "bg-emerald-500" : "bg-red-500")}
             style={{ width: `${Math.min(overallPct, 100)}%` }}
           />
-        </div>
-        <div className="mt-3 pt-3 border-t border-border/50">
-          <BreakTracker planId={plan.id} stationType="ovens" onBreakActiveChange={setIsOnBreak} />
         </div>
       </div>
 

@@ -52,9 +52,8 @@ function usePrepMeatCompletions(planId: number) {
 // Raw Meat Prep Station
 // Left: recipe list. Right: selected recipe detail with clickable tray tasks.
 // ──────────────────────────────────────────────────────────────────────────────
-export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
+export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const { toast } = useToast();
-  const [isOnBreak, setIsOnBreak] = useState(false);
   const [selectedRecipeId, setSelectedRecipeId] = useState<number | null>(null);
   const { recipes, isLoading, nextPlan, targetPlanId, noFuturePlan } = usePrepByRecipe("prep_meat", plan.id, plan.planDate);
   const isDraft = nextPlan?.status === "draft";
@@ -283,9 +282,6 @@ export function PrepMeatStation({ plan }: { plan: ProductionPlanDetail }) {
             className={cn("h-full rounded-full transition-all", overallPct >= 100 ? "bg-rose-500" : "bg-rose-400")}
             style={{ width: `${Math.min(overallPct, 100)}%` }}
           />
-        </div>
-        <div className="pt-3 border-t border-border/50 mt-3">
-          <BreakTracker planId={targetPlanId} stationType="prep_meat" onBreakActiveChange={setIsOnBreak} />
         </div>
       </div>
 

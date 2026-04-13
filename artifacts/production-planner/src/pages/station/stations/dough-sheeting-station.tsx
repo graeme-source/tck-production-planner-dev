@@ -18,10 +18,9 @@ import { useDoughPrepData } from "./dough-prep-station";
 // ──────────────────────────────────────────────────────────────────────────────
 // Dough Sheeting Station
 // ──────────────────────────────────────────────────────────────────────────────
-export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
+export function DoughSheetingStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const queryClient = useQueryClient();
   const { data: doughData } = useDoughPrepData(plan.id, "current");
-  const [isOnBreak, setIsOnBreak] = useState(false);
   const [expandedItemId, setExpandedItemId] = useState<number | null>(null);
   const userOverrideRef = useRef(false);
 
@@ -153,9 +152,6 @@ export function DoughSheetingStation({ plan }: { plan: ProductionPlanDetail }) {
             className={cn("h-full rounded-full transition-all", allDone ? "bg-emerald-500" : "bg-amber-500")}
             style={{ width: `${Math.min(overallProgress, 100)}%` }}
           />
-        </div>
-        <div className="mt-3 pt-3 border-t border-border/50">
-          <BreakTracker planId={plan.id} stationType="dough_sheeting" onBreakActiveChange={setIsOnBreak} />
         </div>
       </div>
 

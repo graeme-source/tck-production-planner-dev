@@ -103,7 +103,7 @@ export function useMainPrepData(planId: number, station: string = "main_prep") {
   return { data, loading, refetch };
 }
 
-export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
+export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const { data: nextPlanData, isLoading: isNextPlanLoading } = useNextActivePlan(plan.planDate);
   const nextPlan = nextPlanData as NextActivePlan | null;
   const noFuturePlan = !isNextPlanLoading && nextPlan != null && nextPlan.planId == null;
@@ -114,7 +114,6 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
   const [savingStock, setSavingStock] = useState<Record<number, boolean>>({});
   const dirtyStockIds = useRef<Set<number>>(new Set());
   const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
-  const [isOnBreak, setIsOnBreak] = useState(false);
   const [presenceData, setPresenceData] = useState<PrepPresenceData>({});
   const activeIngIdRef = useRef<number | null>(null);
   const stockCheckRef = useRef<HTMLDivElement>(null);
@@ -427,9 +426,6 @@ export function MainPrepStation({ plan }: { plan: ProductionPlanDetail }) {
             className={cn("h-full rounded-full transition-all", overallPct >= 100 ? "bg-emerald-500" : "bg-emerald-400")}
             style={{ width: `${Math.min(overallPct, 100)}%` }}
           />
-        </div>
-        <div className="mt-3 pt-3 border-t border-border/50">
-          <BreakTracker planId={targetPlanId} stationType="main_prep" onBreakActiveChange={setIsOnBreak} />
         </div>
       </div>
 

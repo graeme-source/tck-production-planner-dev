@@ -99,11 +99,10 @@ export function useDoughPrepData(planId: number, mode?: "current") {
 
 type DoughView = "mixing" | "balling" | "overview";
 
-export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
+export function DoughPrepStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const queryClient = useQueryClient();
   const { data: doughData, loading: doughLoading, refetch: refetchDough } = useDoughPrepData(plan.id);
   const [activeMix, setActiveMix] = useState<number>(1);
-  const [isOnBreak, setIsOnBreak] = useState(false);
   const [activeView, setActiveView] = useState<DoughView>("mixing");
   const [checkedIngredients, setCheckedIngredients] = useState<Record<number, Set<string>>>({});
   const [completedMixes, setCompletedMixes] = useState<Set<number>>(new Set());
@@ -410,9 +409,6 @@ export function DoughPrepStation({ plan }: { plan: ProductionPlanDetail }) {
             )}
             style={{ width: `${Math.min(overallPct, 100)}%` }}
           />
-        </div>
-        <div className="mt-3 pt-3 border-t border-border/50">
-          <BreakTracker planId={plan.id} stationType="dough_prep" onBreakActiveChange={setIsOnBreak} />
         </div>
       </div>
 
