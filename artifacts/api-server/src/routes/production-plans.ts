@@ -1216,15 +1216,24 @@ router.post("/:id/batch-completions", async (req, res) => {
     id: productionPlanItemsTable.id,
     batchesComplete: productionPlanItemsTable.batchesComplete,
     batchesTarget: productionPlanItemsTable.batchesTarget,
+    extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
+    shortCount: productionPlanItemsTable.shortCount,
+    portionsPerBatch: recipesTable.portionsPerBatch,
   })
     .from(productionPlanItemsTable)
+    .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
     .where(and(eq(productionPlanItemsTable.id, Number(planItemId)), eq(productionPlanItemsTable.planId, planId)));
   if (!planItem) {
     res.status(400).json({ error: "planItemId does not belong to this plan" });
     return;
   }
 
-  const target = planItem.batchesTarget ?? 0;
+  // Effective target accounts for extra packs and shorts (matches frontend getEffectiveTarget)
+  const rawTarget = planItem.batchesTarget ?? 0;
+  const packsPerBatch = Math.max(1, Math.floor((Number(planItem.portionsPerBatch) || 10) / 2));
+  const totalPacksTarget = rawTarget * packsPerBatch;
+  const effectivePacksNeeded = Math.max(0, totalPacksTarget - (planItem.shortCount ?? 0) + (planItem.extraPacksBuilt ?? 0));
+  const target = Math.ceil(effectivePacksNeeded / packsPerBatch);
 
   // Per-station cap check: count THIS station's completions (not the shared batches_complete)
   if (stationType && target > 0) {
@@ -1320,15 +1329,23 @@ router.post("/:id/batch-completions/bulk", async (req, res) => {
   const [planItem] = await db.select({
     id: productionPlanItemsTable.id,
     batchesTarget: productionPlanItemsTable.batchesTarget,
+    extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
+    shortCount: productionPlanItemsTable.shortCount,
+    portionsPerBatch: recipesTable.portionsPerBatch,
   })
     .from(productionPlanItemsTable)
+    .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
     .where(and(eq(productionPlanItemsTable.id, Number(planItemId)), eq(productionPlanItemsTable.planId, planId)));
   if (!planItem) {
     res.status(400).json({ error: "planItemId does not belong to this plan" });
     return;
   }
 
-  const target = planItem.batchesTarget ?? 0;
+  // Effective target accounts for extra packs and shorts (matches frontend getEffectiveTarget)
+  const rawTarget2 = planItem.batchesTarget ?? 0;
+  const ppb2 = Math.max(1, Math.floor((Number(planItem.portionsPerBatch) || 10) / 2));
+  const effPacks2 = Math.max(0, rawTarget2 * ppb2 - (planItem.shortCount ?? 0) + (planItem.extraPacksBuilt ?? 0));
+  const target = Math.ceil(effPacks2 / ppb2);
 
   if (stationType && target > 0) {
     const stationCountResult = await db.execute(sql`
