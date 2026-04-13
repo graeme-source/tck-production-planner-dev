@@ -33,6 +33,7 @@ export const stockEntriesTable = pgTable("stock_entries", {
   checkedAt: timestamp("checked_at").notNull().defaultNow(),
   notes: text("notes"),
   useByDate: date("use_by_date"),
+  packSize: integer("pack_size").notNull().default(2),
 });
 
 export const insertStockEntrySchema = createInsertSchema(stockEntriesTable).omit({ id: true });

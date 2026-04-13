@@ -615,6 +615,14 @@ async function runStartupMigrations() {
       CREATE UNIQUE INDEX IF NOT EXISTS recipe_shopify_mappings_variant_unique ON recipe_shopify_mappings (shopify_variant_id)
     `);
 
+    // 8-pack bag support
+    await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS eight_pack_bag_count INTEGER NOT NULL DEFAULT 0`);
+    await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS fridge_eight_pack_qty INTEGER NOT NULL DEFAULT 0`);
+    await db.execute(sql`ALTER TABLE stock_entries ADD COLUMN IF NOT EXISTS pack_size INTEGER NOT NULL DEFAULT 2`);
+    await db.execute(sql`ALTER TABLE recipe_shopify_mappings ADD COLUMN IF NOT EXISTS eight_pack_variant_id TEXT`);
+    await db.execute(sql`ALTER TABLE recipe_shopify_mappings ADD COLUMN IF NOT EXISTS eight_pack_product_title TEXT`);
+    await db.execute(sql`ALTER TABLE recipe_shopify_mappings ADD COLUMN IF NOT EXISTS eight_pack_variant_title TEXT`);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

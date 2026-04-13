@@ -23,7 +23,7 @@ const router: IRouter = Router();
  *  delta = fulfilment removed packs. Floors at 0. Exported so the
  *  inventory-sync helper can call it from the fulfilment decrement
  *  path and the one-off reset endpoint. */
-export async function syncRecipeFridgeStock(recipeId: number, deltaQty: number) {
+export async function syncRecipeFridgeStock(recipeId: number, deltaQty: number, packSize: number = 2) {
   const existing = await db
     .select({ id: stockEntriesTable.id, quantity: stockEntriesTable.quantity })
     .from(stockEntriesTable)
@@ -31,6 +31,7 @@ export async function syncRecipeFridgeStock(recipeId: number, deltaQty: number) 
       eq(stockEntriesTable.recipeId, recipeId),
       eq(stockEntriesTable.itemType, "recipe"),
       eq(stockEntriesTable.location, "production_fridge"),
+      eq(stockEntriesTable.packSize, packSize),
     ))
     .orderBy(desc(stockEntriesTable.checkedAt))
     .limit(1);
@@ -45,9 +46,10 @@ export async function syncRecipeFridgeStock(recipeId: number, deltaQty: number) 
       recipeId,
       itemType: "recipe",
       quantity: String(Math.max(0, deltaQty)),
-      unit: "packs",
+      unit: packSize === 8 ? "8-pack bags" : "packs",
       location: "production_fridge",
-      notes: "Auto-created from wrapping station",
+      packSize,
+      notes: packSize === 8 ? "Auto-created from wrapping station (8-pack bags)" : "Auto-created from wrapping station",
     });
   }
 }
@@ -1008,6 +1010,8 @@ router.get("/:id", async (req, res) => {
       sopUrl: productionPlanItemsTable.sopUrl,
       extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
       shortCount: productionPlanItemsTable.shortCount,
+      eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
+      fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
       fillWeightGrams: recipesTable.fillWeightGrams,
       baseType: recipesTable.baseType,
       baseWeightGrams: recipesTable.baseWeightGrams,
@@ -3183,6 +3187,43 @@ router.patch("/:id/items/:itemId/extra-packs-built", async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
+// PATCH /:id/items/:itemId/eight-pack-bag-count — adjust 8-pack bag allocation
+// Works on any plan status (like wonky/short). Each 8-pack bag deducts 4 two-packs.
+// ──────────────────────────────────────────────────────────────────────────────
+router.patch("/:id/items/:itemId/eight-pack-bag-count", async (req, res) => {
+  const planId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+  const { delta } = req.body; // +1 or -1
+  if (typeof delta !== "number" || (delta !== 1 && delta !== -1)) {
+    res.status(400).json({ error: "Body must contain { delta: 1 | -1 }" });
+    return;
+  }
+
+  const [item] = await db.select({
+    id: productionPlanItemsTable.id,
+    eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
+  })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
+
+  if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
+  if (delta === -1 && (item.eightPackBagCount ?? 0) <= 0) {
+    res.status(409).json({ error: "Eight-pack bag count is already 0" });
+    return;
+  }
+
+  const [updated] = await db
+    .update(productionPlanItemsTable)
+    .set({ eightPackBagCount: delta === 1
+      ? sql`${productionPlanItemsTable.eightPackBagCount} + 1`
+      : sql`GREATEST(${productionPlanItemsTable.eightPackBagCount} - 1, 0)` })
+    .where(eq(productionPlanItemsTable.id, itemId))
+    .returning({ eightPackBagCount: productionPlanItemsTable.eightPackBagCount });
+
+  res.json({ itemId, eightPackBagCount: updated.eightPackBagCount });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
 // POST /:id/items/:itemId/fridge — add wrapped packs to fridge stock (atomic increment)
 // Also upserts the master stock_entries for the production fridge so Factory Number stays in sync.
 // ──────────────────────────────────────────────────────────────────────────────
@@ -3190,6 +3231,7 @@ router.post("/:id/items/:itemId/fridge", async (req, res) => {
   const planId = Number(req.params.id);
   const itemId = Number(req.params.itemId);
   const qty = Number(req.body.qty);
+  const packSize = Number(req.body.packSize) || 2;
   if (!Number.isInteger(qty) || qty < 1) {
     res.status(400).json({ error: "Body must contain { qty: positive integer }" });
     return;
@@ -3204,15 +3246,21 @@ router.post("/:id/items/:itemId/fridge", async (req, res) => {
 
   if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
 
+  const col = packSize === 8 ? productionPlanItemsTable.fridgeEightPackQty : productionPlanItemsTable.fridgeQty;
   const [updated] = await db
     .update(productionPlanItemsTable)
-    .set({ fridgeQty: sql`${productionPlanItemsTable.fridgeQty} + ${qty}` })
+    .set(packSize === 8
+      ? { fridgeEightPackQty: sql`${productionPlanItemsTable.fridgeEightPackQty} + ${qty}` }
+      : { fridgeQty: sql`${productionPlanItemsTable.fridgeQty} + ${qty}` })
     .where(eq(productionPlanItemsTable.id, itemId))
-    .returning({ fridgeQty: productionPlanItemsTable.fridgeQty });
+    .returning({
+      fridgeQty: productionPlanItemsTable.fridgeQty,
+      fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
+    });
 
-  await syncRecipeFridgeStock(item.recipeId, qty);
+  await syncRecipeFridgeStock(item.recipeId, qty, packSize);
 
-  res.json({ itemId, fridgeQty: updated.fridgeQty });
+  res.json({ itemId, fridgeQty: updated.fridgeQty, fridgeEightPackQty: updated.fridgeEightPackQty });
 });
 
 // DELETE /:id/items/:itemId/fridge — undo last fridge addition (atomic decrement, floor 0)
@@ -3220,6 +3268,7 @@ router.delete("/:id/items/:itemId/fridge", async (req, res) => {
   const planId = Number(req.params.id);
   const itemId = Number(req.params.itemId);
   const qty = Number(req.body.qty);
+  const packSize = Number(req.body.packSize) || 2;
   if (!Number.isInteger(qty) || qty < 1) {
     res.status(400).json({ error: "Body must contain { qty: positive integer }" });
     return;
@@ -3236,13 +3285,18 @@ router.delete("/:id/items/:itemId/fridge", async (req, res) => {
 
   const [updated] = await db
     .update(productionPlanItemsTable)
-    .set({ fridgeQty: sql`GREATEST(${productionPlanItemsTable.fridgeQty} - ${qty}, 0)` })
+    .set(packSize === 8
+      ? { fridgeEightPackQty: sql`GREATEST(${productionPlanItemsTable.fridgeEightPackQty} - ${qty}, 0)` }
+      : { fridgeQty: sql`GREATEST(${productionPlanItemsTable.fridgeQty} - ${qty}, 0)` })
     .where(eq(productionPlanItemsTable.id, itemId))
-    .returning({ fridgeQty: productionPlanItemsTable.fridgeQty });
+    .returning({
+      fridgeQty: productionPlanItemsTable.fridgeQty,
+      fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
+    });
 
-  await syncRecipeFridgeStock(item.recipeId, -qty);
+  await syncRecipeFridgeStock(item.recipeId, -qty, packSize);
 
-  res.json({ itemId, fridgeQty: updated.fridgeQty });
+  res.json({ itemId, fridgeQty: updated.fridgeQty, fridgeEightPackQty: updated.fridgeEightPackQty });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -3643,6 +3697,10 @@ router.get("/:id/packing", async (req, res) => {
       wonlyCount: productionPlanItemsTable.wonlyCount,
       wrappingComplete: productionPlanItemsTable.wrappingComplete,
       fridgeQty: productionPlanItemsTable.fridgeQty,
+      fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
+      eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
+      extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
+      shortCount: productionPlanItemsTable.shortCount,
       status: productionPlanItemsTable.status,
       orderPosition: productionPlanItemsTable.orderPosition,
       portionsPerBatch: recipesTable.portionsPerBatch,
@@ -3672,8 +3730,11 @@ router.get("/:id/packing", async (req, res) => {
     const batchesComplete = Number(item.batchesComplete) || 0;
     const portionsPerBatch = Number(item.portionsPerBatch) || 10;
     const wonlyCount = Number(item.wonlyCount) || 0;
+    const shortCount = Number(item.shortCount) || 0;
+    const extraPacksBuilt = Number(item.extraPacksBuilt) || 0;
+    const eightPackBagCount = Number(item.eightPackBagCount) || 0;
     const grossPacks = Math.floor((batchesComplete * portionsPerBatch) / 2); // 2 portions per pack
-    const netPacks = Math.max(0, grossPacks - wonlyCount);
+    const netPacks = Math.max(0, grossPacks - (eightPackBagCount * 4) - wonlyCount - shortCount) + extraPacksBuilt;
     const itemDispatches = dispatches.filter(d => d.recipeId === item.recipeId);
 
     return {
@@ -3684,6 +3745,8 @@ router.get("/:id/packing", async (req, res) => {
       batchesComplete,
       portionsPerBatch: Number(item.portionsPerBatch) || 10,
       fridgeQty: Number(item.fridgeQty) || 0,
+      fridgeEightPackQty: Number(item.fridgeEightPackQty) || 0,
+      eightPackBagCount,
       wonlyCount,
       grossPacks,
       netPacks,

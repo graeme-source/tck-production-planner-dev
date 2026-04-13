@@ -35,6 +35,8 @@ export const productionPlanItemsTable = pgTable("production_plan_items", {
   sopUrl: text("sop_url"),
   extraPacksBuilt: integer("extra_packs_built").notNull().default(0),
   shortCount: integer("short_count").notNull().default(0),
+  eightPackBagCount: integer("eight_pack_bag_count").notNull().default(0),
+  fridgeEightPackQty: integer("fridge_eight_pack_qty").notNull().default(0),
 });
 
 export const batchCompletionsTable = pgTable("batch_completions", {

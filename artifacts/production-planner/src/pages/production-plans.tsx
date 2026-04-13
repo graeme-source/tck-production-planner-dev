@@ -2801,6 +2801,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
               <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Packs</th>
               <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Done</th>
               <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Wonky</th>
+              <th className="py-2.5 px-4 text-center font-medium text-indigo-600 dark:text-indigo-400">8-Pack</th>
               <th className="py-2.5 px-4 text-right font-medium text-muted-foreground">Tin Size</th>
               <th className="py-2.5 px-4 text-right font-medium text-muted-foreground">Tins</th>
               <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Status</th>
@@ -2845,6 +2846,22 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                     ) : (
                       <span className="text-muted-foreground opacity-40">0</span>
                     )}
+                  </td>
+                  <td className="py-3 px-4 text-center">
+                    <div className="flex items-center justify-center gap-1">
+                      <button
+                        onClick={async (e) => { e.stopPropagation(); if ((item.eightPackBagCount ?? 0) > 0) { await fetch(`/api/production-plans/${plan.id}/items/${item.id}/eight-pack-bag-count`, { method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ delta: -1 }) }); refetch(); } }}
+                        disabled={(item.eightPackBagCount ?? 0) === 0}
+                        className="w-6 h-6 flex items-center justify-center rounded-full border border-border text-xs hover:bg-secondary disabled:opacity-30 transition-colors"
+                      >−</button>
+                      <span className={cn("font-bold tabular-nums w-6 text-center", (item.eightPackBagCount ?? 0) > 0 ? "text-indigo-600 dark:text-indigo-400" : "text-muted-foreground opacity-40")}>
+                        {item.eightPackBagCount ?? 0}
+                      </span>
+                      <button
+                        onClick={async (e) => { e.stopPropagation(); await fetch(`/api/production-plans/${plan.id}/items/${item.id}/eight-pack-bag-count`, { method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ delta: 1 }) }); refetch(); }}
+                        className="w-6 h-6 flex items-center justify-center rounded-full bg-indigo-500 text-white text-xs hover:bg-indigo-600 transition-colors"
+                      >+</button>
+                    </div>
                   </td>
                   <td className="py-3 px-4 text-right text-muted-foreground text-xs">
                     {item.tinSize ?? <span className="opacity-40">—</span>}
