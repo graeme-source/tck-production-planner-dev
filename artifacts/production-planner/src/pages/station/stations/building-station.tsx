@@ -26,6 +26,7 @@ import { toast } from "@/hooks/use-toast";
 import { useBuildTimerConfig } from "@/hooks/use-build-timer-config";
 import { useBatchBuildTimer } from "@/hooks/use-batch-build-timer";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 // ExtraPackControl removed — replaced by inline PackAdjustment
 import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
@@ -747,31 +748,35 @@ export function BuildingStation({ plan, lineNumber }: BuildingStationProps) {
         </div>
       </div>
 
-      {/* Extra packs prompt — shown when a recipe just finished */}
-      {extraPromptItem && (
-        <div className="bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-400 dark:border-amber-600 rounded-xl p-5">
-          <div className="flex items-start gap-3 mb-3">
-            <AlertCircle className="w-6 h-6 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <h3 className="font-bold text-lg text-amber-800 dark:text-amber-200">
-                Any extra packs for {extraPromptItem.recipeName ?? "this recipe"}?
-              </h3>
-              <p className="text-sm text-amber-700 dark:text-amber-300 mt-0.5">
-                Add extra packs or shorts before moving on.
-              </p>
+      {/* Extra packs prompt — overlay dialog when a recipe just finished */}
+      <Dialog open={!!extraPromptItem} onOpenChange={(open) => { if (!open) setExtraPromptItemId(null); }}>
+        <DialogContent className="max-w-md mx-auto" onPointerDownOutside={e => e.preventDefault()} onEscapeKeyDown={e => e.preventDefault()}>
+          {extraPromptItem && (
+            <div className="space-y-5 pt-2">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-7 h-7 text-amber-500 flex-shrink-0 mt-0.5" />
+                <div>
+                  <h3 className="font-bold text-xl text-foreground">
+                    {extraPromptItem.recipeName ?? "Recipe"} complete
+                  </h3>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Any extra packs or shorts to record before moving on?
+                  </p>
+                </div>
+              </div>
+              <PackAdjustment planId={plan.id} item={extraPromptItem} isOnBreak={isOnBreak} />
+              <button
+                type="button"
+                onClick={() => setExtraPromptItemId(null)}
+                onTouchEnd={e => { e.preventDefault(); setExtraPromptItemId(null); }}
+                className="w-full py-4 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 font-bold text-lg transition-colors touch-manipulation"
+              >
+                Done — Move On
+              </button>
             </div>
-          </div>
-          <div className="flex items-center justify-between">
-            <PackAdjustment planId={plan.id} item={extraPromptItem} isOnBreak={isOnBreak} />
-            <button
-              onClick={() => setExtraPromptItemId(null)}
-              className="px-5 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-semibold transition-colors ml-3 flex-shrink-0"
-            >
-              Done
-            </button>
-          </div>
-        </div>
-      )}
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Waiting on other builder */}
       {waitingOnOtherItem && !currentItem && (
