@@ -7,6 +7,8 @@ import {
 import { format, parseISO, addDays } from "date-fns";
 import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/auth-context";
+import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { BreakTracker } from "../shared/break-tracker";
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -68,6 +70,10 @@ interface PackingShortfallItem {
 
 export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
   const [, navigate] = useLocation();
+  const { state } = useAuth();
+  const { canAccess } = usePagePermissions();
+  const userRole = state.status === "authenticated" ? state.user.role : "viewer";
+  const canPack = canAccess(userRole, "/fulfilment");
 
   // Dates: production happens today (plan.planDate); orders are tagged with delivery date (tomorrow)
   const packingDate = parseISO(plan.planDate);
@@ -342,7 +348,7 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
         </div>
       )}
 
-      {progress && progress.totalOrders - progress.totalFulfilled > 0 && (
+      {canPack && progress && progress.totalOrders - progress.totalFulfilled > 0 && (
         <button
           onClick={() => navigate(`/fulfilment?tag=${dispatchTag}`)}
           className="w-full py-4 bg-primary text-primary-foreground rounded-2xl font-semibold text-base flex items-center justify-center gap-3 hover:opacity-90 transition-opacity active:scale-[0.98]"

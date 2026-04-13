@@ -22,8 +22,9 @@ import { cn } from "@/lib/utils";
  *     threshold (80px), the page reloads. Otherwise the indicator animates
  *     back out.
  */
-const THRESHOLD = 80; // px the user must drag before a reload triggers
-const MAX_PULL = 140; // visual cap so the indicator doesn't keep growing
+const THRESHOLD = 160; // px the user must drag before a reload triggers (iPad-friendly)
+const MAX_PULL = 220; // visual cap so the indicator doesn't keep growing
+const DEAD_ZONE = 30; // px of initial vertical movement before we treat it as a pull
 
 export function PullToRefresh() {
   const [enabled, setEnabled] = useState(false);
@@ -77,9 +78,12 @@ export function PullToRefresh() {
         setPullDistance(0);
         return;
       }
+      // Ignore small movements so a casual scroll-up doesn't trigger the pull.
+      if (dy < DEAD_ZONE) return;
+      const effective = dy - DEAD_ZONE;
       // Resistance curve: the pull feels heavier past the threshold so users
       // get tactile feedback even on long drags.
-      const resisted = dy < THRESHOLD ? dy : THRESHOLD + (dy - THRESHOLD) * 0.4;
+      const resisted = effective < THRESHOLD ? effective : THRESHOLD + (effective - THRESHOLD) * 0.4;
       const capped = Math.min(resisted, MAX_PULL);
       setPullDistance(capped);
       activeRef.current = capped > 5;
