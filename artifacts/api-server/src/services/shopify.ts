@@ -297,6 +297,8 @@ export interface VariantCount {
   title: string;
   quantity: number;
   orderCount: number;
+  fulfilledQuantity: number;
+  unfulfilledQuantity: number;
 }
 
 export interface ProductCount {
@@ -304,6 +306,8 @@ export interface ProductCount {
   variants: VariantCount[];
   totalQuantity: number;
   orderCount: number;
+  fulfilledQuantity: number;
+  unfulfilledQuantity: number;
 }
 
 export async function countProductsByTag(tag: string): Promise<ProductCount[]> {
@@ -311,27 +315,45 @@ export async function countProductsByTag(tag: string): Promise<ProductCount[]> {
   const counts = new Map<string, ProductCount>();
 
   for (const order of orders) {
+    const isFulfilled = order.fulfillment_status === "fulfilled" || order.fulfillment_status === "shipped";
+
     for (const item of order.line_items) {
       const productKey = item.title;
       const variantKey = item.variant_title ?? "";
+      const qty = item.quantity;
 
       const product = counts.get(productKey);
       if (product) {
-        product.totalQuantity += item.quantity;
+        product.totalQuantity += qty;
         product.orderCount += 1;
+        if (isFulfilled) product.fulfilledQuantity += qty;
+        else product.unfulfilledQuantity += qty;
+
         const variant = product.variants.find(v => v.title === variantKey);
         if (variant) {
-          variant.quantity += item.quantity;
+          variant.quantity += qty;
           variant.orderCount += 1;
+          if (isFulfilled) variant.fulfilledQuantity += qty;
+          else variant.unfulfilledQuantity += qty;
         } else if (variantKey) {
-          product.variants.push({ title: variantKey, quantity: item.quantity, orderCount: 1 });
+          product.variants.push({
+            title: variantKey, quantity: qty, orderCount: 1,
+            fulfilledQuantity: isFulfilled ? qty : 0,
+            unfulfilledQuantity: isFulfilled ? 0 : qty,
+          });
         }
       } else {
         counts.set(productKey, {
           productTitle: item.title,
-          variants: variantKey ? [{ title: variantKey, quantity: item.quantity, orderCount: 1 }] : [],
-          totalQuantity: item.quantity,
+          variants: variantKey ? [{
+            title: variantKey, quantity: qty, orderCount: 1,
+            fulfilledQuantity: isFulfilled ? qty : 0,
+            unfulfilledQuantity: isFulfilled ? 0 : qty,
+          }] : [],
+          totalQuantity: qty,
           orderCount: 1,
+          fulfilledQuantity: isFulfilled ? qty : 0,
+          unfulfilledQuantity: isFulfilled ? 0 : qty,
         });
       }
     }
