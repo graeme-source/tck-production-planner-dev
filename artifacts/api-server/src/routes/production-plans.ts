@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable } from "@workspace/db";
+import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, fridgeStockBatchesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable } from "@workspace/db";
 import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as drizzleSum, ne, isNotNull, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
@@ -23,8 +23,8 @@ const router: IRouter = Router();
  *  delta = fulfilment removed packs. Floors at 0. Exported so the
  *  inventory-sync helper can call it from the fulfilment decrement
  *  path and the one-off reset endpoint. */
-export async function syncRecipeFridgeStock(recipeId: number, deltaQty: number, packSize: number = 2) {
-  const existing = await db
+export async function syncRecipeFridgeStock(recipeId: number, deltaQty: number, packSize: number = 2, txOrDb: typeof db = db) {
+  const existing = await txOrDb
     .select({ id: stockEntriesTable.id, quantity: stockEntriesTable.quantity })
     .from(stockEntriesTable)
     .where(and(
@@ -38,11 +38,11 @@ export async function syncRecipeFridgeStock(recipeId: number, deltaQty: number, 
 
   if (existing.length > 0) {
     const newQty = Math.max(0, Number(existing[0].quantity) + deltaQty);
-    await db.update(stockEntriesTable)
+    await txOrDb.update(stockEntriesTable)
       .set({ quantity: String(newQty), checkedAt: new Date() })
       .where(eq(stockEntriesTable.id, existing[0].id));
   } else {
-    await db.insert(stockEntriesTable).values({
+    await txOrDb.insert(stockEntriesTable).values({
       recipeId,
       itemType: "recipe",
       quantity: String(Math.max(0, deltaQty)),
@@ -3358,7 +3358,6 @@ router.post("/:id/items/:itemId/fridge", async (req, res) => {
 
   if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
 
-  const col = packSize === 8 ? productionPlanItemsTable.fridgeEightPackQty : productionPlanItemsTable.fridgeQty;
   const [updated] = await db
     .update(productionPlanItemsTable)
     .set(packSize === 8
@@ -3371,6 +3370,26 @@ router.post("/:id/items/:itemId/fridge", async (req, res) => {
     });
 
   await syncRecipeFridgeStock(item.recipeId, qty, packSize);
+
+  // Upsert batch-level fridge stock tracking
+  const [plan] = await db.select({ batchNumber: productionPlansTable.batchNumber, planDate: productionPlansTable.planDate })
+    .from(productionPlansTable).where(eq(productionPlansTable.id, planId));
+  if (plan?.batchNumber && plan.planDate) {
+    const [recipe] = await db.select({ shelfLifeDays: recipesTable.shelfLifeDays })
+      .from(recipesTable).where(eq(recipesTable.id, item.recipeId));
+    const shelfDays = recipe?.shelfLifeDays ?? 14;
+    const planDateObj = new Date(plan.planDate + "T00:00:00");
+    const useByDate = new Date(planDateObj);
+    useByDate.setDate(useByDate.getDate() + shelfDays);
+    const useByStr = useByDate.toISOString().split("T")[0];
+
+    await db.execute(sql`
+      INSERT INTO fridge_stock_batches (recipe_id, batch_number, pack_size, quantity, use_by_date)
+      VALUES (${item.recipeId}, ${plan.batchNumber}, ${packSize}, ${qty}, ${useByStr})
+      ON CONFLICT (recipe_id, batch_number, pack_size)
+      DO UPDATE SET quantity = fridge_stock_batches.quantity + ${qty}
+    `);
+  }
 
   res.json({ itemId, fridgeQty: updated.fridgeQty, fridgeEightPackQty: updated.fridgeEightPackQty });
 });
@@ -3407,6 +3426,22 @@ router.delete("/:id/items/:itemId/fridge", async (req, res) => {
     });
 
   await syncRecipeFridgeStock(item.recipeId, -qty, packSize);
+
+  // Decrement batch-level fridge stock tracking
+  const [plan] = await db.select({ batchNumber: productionPlansTable.batchNumber })
+    .from(productionPlansTable).where(eq(productionPlansTable.id, planId));
+  if (plan?.batchNumber) {
+    await db.execute(sql`
+      UPDATE fridge_stock_batches
+      SET quantity = GREATEST(quantity - ${qty}, 0)
+      WHERE recipe_id = ${item.recipeId} AND batch_number = ${plan.batchNumber} AND pack_size = ${packSize}
+    `);
+    // Clean up zero-quantity rows
+    await db.execute(sql`
+      DELETE FROM fridge_stock_batches
+      WHERE recipe_id = ${item.recipeId} AND batch_number = ${plan.batchNumber} AND pack_size = ${packSize} AND quantity = 0
+    `);
+  }
 
   res.json({ itemId, fridgeQty: updated.fridgeQty, fridgeEightPackQty: updated.fridgeEightPackQty });
 });

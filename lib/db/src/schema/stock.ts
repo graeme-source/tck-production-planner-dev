@@ -39,3 +39,15 @@ export const stockEntriesTable = pgTable("stock_entries", {
 export const insertStockEntrySchema = createInsertSchema(stockEntriesTable).omit({ id: true });
 export type InsertStockEntry = z.infer<typeof insertStockEntrySchema>;
 export type StockEntry = typeof stockEntriesTable.$inferSelect;
+
+export const fridgeStockBatchesTable = pgTable("fridge_stock_batches", {
+  id: serial("id").primaryKey(),
+  recipeId: integer("recipe_id").notNull().references(() => recipesTable.id, { onDelete: "cascade" }),
+  batchNumber: integer("batch_number").notNull(),
+  packSize: integer("pack_size").notNull().default(2),
+  quantity: integer("quantity").notNull().default(0),
+  useByDate: date("use_by_date").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type FridgeStockBatch = typeof fridgeStockBatchesTable.$inferSelect;

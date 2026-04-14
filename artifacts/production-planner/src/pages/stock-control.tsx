@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
-import { Thermometer, Snowflake, Package, RefreshCw, ChevronRight, Settings2, Plus, Pencil, Trash2, X, Save, Loader2, Lock, LockOpen, Check } from "lucide-react";
+import { Thermometer, Snowflake, Package, RefreshCw, ChevronRight, ChevronDown, Settings2, Plus, Pencil, Trash2, X, Save, Loader2, Lock, LockOpen, Check, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -165,6 +165,38 @@ async function createStockEntry(data: {
   }
 }
 
+interface FridgeStockBatch {
+  id: number;
+  batchNumber: number;
+  packSize: number;
+  quantity: number;
+  useByDate: string;
+  createdAt: string;
+}
+
+async function fetchFridgeBatches(recipeId: number): Promise<FridgeStockBatch[]> {
+  const res = await fetch(`${BASE}/api/stock/fridge-batches/${recipeId}`, { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to fetch batch data");
+  return res.json();
+}
+
+function formatBatchNumber(bn: number): string {
+  const year = 2000 + Math.floor(bn / 1000);
+  const dayOfYear = bn % 1000;
+  const d = new Date(year, 0, dayOfYear);
+  return `${bn} (${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })})`;
+}
+
+function useByDateStatus(dateStr: string): "ok" | "warning" | "expired" {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const useBy = new Date(dateStr + "T00:00:00");
+  const diffDays = Math.floor((useBy.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays < 0) return "expired";
+  if (diffDays <= 2) return "warning";
+  return "ok";
+}
+
 function ZoneIcon({ zone, className }: { zone: string; className?: string }) {
   if (zone === "freezer") return <Snowflake className={className} />;
   if (zone === "fridge") return <Thermometer className={className} />;
@@ -209,6 +241,17 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
   const [addQty, setAddQty] = useState("");
   const [addUnit, setAddUnit] = useState("packs");
   const [stockError, setStockError] = useState<string | null>(null);
+
+  // Batch detail expansion (production fridge recipes only)
+  const [expandedRecipeId, setExpandedRecipeId] = useState<number | null>(null);
+  const isFridgeLocation = location.key === "production_fridge";
+
+  const { data: batchData, isLoading: batchLoading } = useQuery<FridgeStockBatch[]>({
+    queryKey: ["fridge-batches", expandedRecipeId],
+    queryFn: () => fetchFridgeBatches(expandedRecipeId!),
+    enabled: isFridgeLocation && expandedRecipeId !== null,
+    staleTime: 30_000,
+  });
 
   // Bulk edit mode
   const [bulkEdit, setBulkEdit] = useState(false);
@@ -295,6 +338,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
     setBulkEdit(false);
     setBulkValues({});
     setStockError(null);
+    setExpandedRecipeId(null);
   }, [location.key]);
 
   const { data: recipes } = useQuery<Recipe[]>({
@@ -652,49 +696,119 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
               }
 
               // ── Normal row ─────────────────────────────────────────────
+              const canExpand = isFridgeLocation && item.type === "recipe" && item.recipeId !== null;
+              const isExpanded = canExpand && expandedRecipeId === item.recipeId;
+
               return (
-                <div key={primaryId} className="px-6 py-4 hover:bg-secondary/30 transition-colors group">
-                  <div className="flex items-center gap-3 mb-2">
-                    <span className="text-xs font-semibold text-muted-foreground w-5 tabular-nums shrink-0">
-                      {idx + 1}
-                    </span>
-                    <span
-                      className="flex-1 font-medium text-sm truncate"
-                      style={item.color ? { color: item.color } : undefined}
-                    >
-                      {item.name}
-                    </span>
-                    <span className="text-sm font-bold tabular-nums shrink-0">
-                      {Math.round(item.qty).toLocaleString()}
-                      <span className="text-xs font-normal text-muted-foreground ml-1">{item.unit}</span>
-                    </span>
-                    <span className="text-xs text-muted-foreground w-9 text-right shrink-0">{pct}%</span>
-                    <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={() => startEdit(item)}
-                        className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary/60 rounded-lg transition-colors"
-                        title="Edit quantity"
+                <div key={primaryId}>
+                  <div
+                    className={cn("px-6 py-4 hover:bg-secondary/30 transition-colors group", canExpand && "cursor-pointer")}
+                    onClick={canExpand ? () => setExpandedRecipeId(isExpanded ? null : item.recipeId) : undefined}
+                  >
+                    <div className="flex items-center gap-3 mb-2">
+                      {canExpand ? (
+                        <span className="w-5 shrink-0 flex items-center justify-center">
+                          {isExpanded
+                            ? <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                            : <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                          }
+                        </span>
+                      ) : (
+                        <span className="text-xs font-semibold text-muted-foreground w-5 tabular-nums shrink-0">
+                          {idx + 1}
+                        </span>
+                      )}
+                      <span
+                        className="flex-1 font-medium text-sm truncate"
+                        style={item.color ? { color: item.color } : undefined}
                       >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => { setDeletingEntryId(primaryId); setEditingEntryId(null); setAddingStock(false); setStockError(null); }}
-                        className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
-                        title="Remove stock entry"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                        {item.name}
+                      </span>
+                      <span className="text-sm font-bold tabular-nums shrink-0">
+                        {Math.round(item.qty).toLocaleString()}
+                        <span className="text-xs font-normal text-muted-foreground ml-1">{item.unit}</span>
+                      </span>
+                      <span className="text-xs text-muted-foreground w-9 text-right shrink-0">{pct}%</span>
+                      <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                        <button
+                          onClick={() => startEdit(item)}
+                          className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary/60 rounded-lg transition-colors"
+                          title="Edit quantity"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => { setDeletingEntryId(primaryId); setEditingEntryId(null); setAddingStock(false); setStockError(null); }}
+                          className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
+                          title="Remove stock entry"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="ml-8 h-2 bg-secondary rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-500"
+                        style={{
+                          width: `${barWidth}%`,
+                          background: item.color ?? "hsl(var(--primary))",
+                        }}
+                      />
                     </div>
                   </div>
-                  <div className="ml-8 h-2 bg-secondary rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all duration-500"
-                      style={{
-                        width: `${barWidth}%`,
-                        background: item.color ?? "hsl(var(--primary))",
-                      }}
-                    />
-                  </div>
+
+                  {/* Batch breakdown sub-rows */}
+                  {isExpanded && (
+                    <div className="bg-secondary/10 border-t border-border/30">
+                      {batchLoading ? (
+                        <div className="px-6 py-3 flex items-center gap-2 text-xs text-muted-foreground">
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading batch data…
+                        </div>
+                      ) : !batchData || batchData.length === 0 ? (
+                        <div className="px-6 py-3 text-xs text-muted-foreground italic">
+                          No batch data available — tracking starts from next wrapping
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-border/20">
+                          <div className="px-6 py-2 flex items-center gap-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                            <span className="w-5 shrink-0" />
+                            <span className="flex-1">Batch</span>
+                            <span className="w-16 text-right">Qty</span>
+                            <span className="w-24 text-right">Use by</span>
+                            <span className="w-5 shrink-0" />
+                          </div>
+                          {batchData.map((batch) => {
+                            const status = useByDateStatus(batch.useByDate);
+                            const ubDate = new Date(batch.useByDate + "T00:00:00");
+                            return (
+                              <div key={batch.id} className="px-6 py-2.5 flex items-center gap-3">
+                                <span className="w-5 shrink-0" />
+                                <span className="flex-1 text-xs font-medium text-foreground/80">
+                                  {formatBatchNumber(batch.batchNumber)}
+                                  {batch.packSize === 8 && <span className="ml-1.5 text-[10px] text-muted-foreground">(8-pack)</span>}
+                                </span>
+                                <span className="w-16 text-right text-xs font-bold tabular-nums">
+                                  {batch.quantity}
+                                </span>
+                                <span className={cn(
+                                  "w-24 text-right text-xs tabular-nums font-medium",
+                                  status === "expired" && "text-red-500",
+                                  status === "warning" && "text-amber-500",
+                                  status === "ok" && "text-muted-foreground",
+                                )}>
+                                  {ubDate.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                                </span>
+                                <span className="w-5 shrink-0 flex items-center justify-center">
+                                  {status === "expired" && <AlertTriangle className="w-3.5 h-3.5 text-red-500" />}
+                                  {status === "warning" && <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}

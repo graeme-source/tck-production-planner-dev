@@ -647,6 +647,27 @@ async function runStartupMigrations() {
       WHERE item_type = 'ingredient' AND location = 'production_freezer'
     `);
 
+    // Batch-level fridge stock tracking
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS fridge_stock_batches (
+        id SERIAL PRIMARY KEY,
+        recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+        batch_number INTEGER NOT NULL,
+        pack_size INTEGER NOT NULL DEFAULT 2,
+        quantity INTEGER NOT NULL DEFAULT 0,
+        use_by_date DATE NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_fridge_stock_batches_recipe_batch_packsize
+        ON fridge_stock_batches (recipe_id, batch_number, pack_size)
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS idx_fridge_stock_batches_recipe_usebydate
+        ON fridge_stock_batches (recipe_id, pack_size, use_by_date ASC)
+    `);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

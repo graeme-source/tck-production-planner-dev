@@ -1,6 +1,6 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
-import { db, stockEntriesTable, recipesTable, ingredientsTable, stockItemsTable, usersTable, appSettingsTable } from "@workspace/db";
-import { eq, and, desc, notInArray } from "drizzle-orm";
+import { db, stockEntriesTable, recipesTable, ingredientsTable, stockItemsTable, usersTable, appSettingsTable, fridgeStockBatchesTable } from "@workspace/db";
+import { eq, and, desc, gt, asc, notInArray } from "drizzle-orm";
 import { CreateStockEntryBody, UpdateStockEntryBody } from "@workspace/api-zod";
 import { validate } from "../middleware/validate";
 import {
@@ -204,12 +204,47 @@ router.post("/reset-fridge-stock", requireAdmin, async (_req, res) => {
     }))
   );
 
+  // Also clear batch-level tracking for reset recipes
+  const recipeIds = recipes.map(r => r.id);
+  for (const rid of recipeIds) {
+    await db.delete(fridgeStockBatchesTable).where(eq(fridgeStockBatchesTable.recipeId, rid));
+  }
+
   res.json({
     reset: recipes.map(r => ({ recipeId: r.id, recipeName: r.name })),
     count: recipes.length,
     coreMenuOnly,
     resetAt: now.toISOString(),
   });
+});
+
+/**
+ * Batch breakdown for a recipe's fridge stock. Returns individual batch
+ * rows ordered by use-by date (oldest first, matching FIFO order).
+ */
+router.get("/fridge-batches/:recipeId", async (req, res) => {
+  const recipeId = Number(req.params.recipeId);
+  if (!recipeId || isNaN(recipeId)) {
+    res.status(400).json({ error: "Invalid recipeId" });
+    return;
+  }
+  const batches = await db
+    .select({
+      id: fridgeStockBatchesTable.id,
+      batchNumber: fridgeStockBatchesTable.batchNumber,
+      packSize: fridgeStockBatchesTable.packSize,
+      quantity: fridgeStockBatchesTable.quantity,
+      useByDate: fridgeStockBatchesTable.useByDate,
+      createdAt: fridgeStockBatchesTable.createdAt,
+    })
+    .from(fridgeStockBatchesTable)
+    .where(and(
+      eq(fridgeStockBatchesTable.recipeId, recipeId),
+      gt(fridgeStockBatchesTable.quantity, 0),
+    ))
+    .orderBy(asc(fridgeStockBatchesTable.useByDate));
+
+  res.json(batches);
 });
 
 // ─── Generic stock entry CRUD (parametric routes — keep these last) ──

@@ -15,8 +15,8 @@
  * it end-to-end. Flip it off once all recipes have correct Shopify
  * variant mappings.
  */
-import { db, appSettingsTable } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { db, appSettingsTable, fridgeStockBatchesTable } from "@workspace/db";
+import { eq, and, gt, asc, sql } from "drizzle-orm";
 import { syncRecipeFridgeStock } from "../routes/production-plans";
 import type { ShopifyLineItem } from "../services/shopify";
 
@@ -169,7 +169,33 @@ export async function decrementFridgeForShopifyOrder(
   for (const [recipeId, packs] of perRecipe) {
     if (packs <= 0) continue;
     try {
+      // Decrement aggregate stock entry
       await syncRecipeFridgeStock(recipeId, -packs);
+
+      // FIFO batch deduction — oldest use-by date first
+      let remaining = packs;
+      const batches = await db
+        .select()
+        .from(fridgeStockBatchesTable)
+        .where(and(
+          eq(fridgeStockBatchesTable.recipeId, recipeId),
+          gt(fridgeStockBatchesTable.quantity, 0),
+        ))
+        .orderBy(asc(fridgeStockBatchesTable.useByDate));
+
+      for (const batch of batches) {
+        if (remaining <= 0) break;
+        const deduct = Math.min(remaining, batch.quantity);
+        if (deduct >= batch.quantity) {
+          await db.delete(fridgeStockBatchesTable).where(eq(fridgeStockBatchesTable.id, batch.id));
+        } else {
+          await db.update(fridgeStockBatchesTable)
+            .set({ quantity: batch.quantity - deduct })
+            .where(eq(fridgeStockBatchesTable.id, batch.id));
+        }
+        remaining -= deduct;
+      }
+
       result.decremented.push({ recipeId, packs });
     } catch (err) {
       console.error(`[inventory-sync] syncRecipeFridgeStock failed for recipe ${recipeId}:`, err);
