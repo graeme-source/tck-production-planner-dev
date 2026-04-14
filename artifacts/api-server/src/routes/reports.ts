@@ -348,6 +348,8 @@ router.get("/production-kpis", async (req, res) => {
 
   const sumMinutes = (xs: typeof dailySessions) => xs.reduce((s, ds) => s + ds.activeMinutes, 0);
 
+  const building1Minutes = sumMinutes(building1Sessions);
+  const building2Minutes = sumMinutes(building2Sessions);
   const totalActiveMinutes = building1Minutes + building2Minutes;
 
   // Source of truth for "Total Batches": building completions per recipe,
