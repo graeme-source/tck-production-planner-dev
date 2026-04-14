@@ -317,30 +317,17 @@ router.get("/production-kpis", async (req, res) => {
     ss.sessionCount++;
   }
 
-  // For building stations, cap batch counts so they sum to oven total (the real production count).
-  // Split proportionally by each builder's share of raw completions.
-  const b1Raw = stationSummary.get("building_1")?.totalBatches ?? 0;
-  const b2Raw = stationSummary.get("building_2")?.totalBatches ?? 0;
-  const buildingRawTotal = b1Raw + b2Raw;
-
-  const stationSummaries = Array.from(stationSummary.entries()).map(([station, ss]) => {
-    let adjustedBatches = ss.totalBatches;
-    if ((station === "building_1" || station === "building_2") && buildingRawTotal > 0 && totalBatches < buildingRawTotal) {
-      // Scale down to match oven total, keeping proportional split
-      adjustedBatches = Math.round((ss.totalBatches / buildingRawTotal) * totalBatches);
-    }
-    return {
-      station,
-      label: ss.label,
-      totalBatches: adjustedBatches,
-      avgBph: ss.totalActiveMinutes > 0
-        ? Math.round((adjustedBatches / (ss.totalActiveMinutes / 60)) * 10) / 10
-        : 0,
-      sessionCount: ss.sessionCount,
-      targetBph: ss.targetBph,
-      minBph: ss.minBph,
-    };
-  });
+  const stationSummaries = Array.from(stationSummary.entries()).map(([station, ss]) => ({
+    station,
+    label: ss.label,
+    totalBatches: ss.totalBatches,
+    avgBph: ss.totalActiveMinutes > 0
+      ? Math.round((ss.totalBatches / (ss.totalActiveMinutes / 60)) * 10) / 10
+      : 0,
+    sessionCount: ss.sessionCount,
+    targetBph: ss.targetBph,
+    minBph: ss.minBph,
+  }));
 
   const userSummary = new Map<number, {
     name: string;
@@ -391,11 +378,13 @@ router.get("/production-kpis", async (req, res) => {
 
   const totalActiveMinutes = building1Minutes + building2Minutes;
 
-  // Source of truth for "Total Batches": count of oven station completions.
-  // Everything that makes it through the ovens is counted as produced.
-  // BPH uses builder active time as the speed denominator.
-  const ovenCompletions = completions.filter(c => c.stationType === "ovens");
-  const totalBatches = ovenCompletions.length;
+  // Source of truth for "Total Batches": current batch_completions count
+  // for building stations combined. This is the net count after any undos —
+  // rows are deleted when builders click minus, so the count reflects
+  // what was actually submitted, not total clicks.
+  const b1Count = completions.filter(c => c.stationType === "building_1").length;
+  const b2Count = completions.filter(c => c.stationType === "building_2").length;
+  const totalBatches = b1Count + b2Count;
 
   // overallBph calculated after productionActiveMinutes is computed below
 

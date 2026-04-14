@@ -1364,11 +1364,8 @@ router.post("/:id/batch-completions/bulk", async (req, res) => {
     return;
   }
 
-  // Effective target accounts for extra packs and shorts (matches frontend getEffectiveTarget)
-  const rawTarget2 = planItem.batchesTarget ?? 0;
-  const ppb2 = Math.max(1, Math.floor((Number(planItem.portionsPerBatch) || 10) / 2));
-  const effPacks2 = Math.max(0, rawTarget2 * ppb2 - (planItem.shortCount ?? 0) + (planItem.extraPacksBuilt ?? 0));
-  const target = Math.ceil(effPacks2 / ppb2);
+  // Use batchesTarget directly as the cap. Extra packs don't create extra batch slots.
+  const target = planItem.batchesTarget ?? 0;
 
   if (stationType && target > 0) {
     const stationCountResult = await db.execute(sql`
