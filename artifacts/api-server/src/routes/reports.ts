@@ -113,6 +113,7 @@ router.get("/breaks", async (req, res) => {
 });
 
 router.get("/production-kpis", async (req, res) => {
+  try {
   const { from, to } = req.query;
 
   if (from && isNaN(new Date(String(from)).getTime())) {
@@ -438,6 +439,10 @@ router.get("/production-kpis", async (req, res) => {
     userSummaries,
     dailySessions,
   });
+  } catch (err) {
+    console.error("[production-kpis] error:", err);
+    res.status(500).json({ error: "Failed to compute production KPIs" });
+  }
 });
 
 // ── Packing Speed ──────────────────────────────────────────────────────────
