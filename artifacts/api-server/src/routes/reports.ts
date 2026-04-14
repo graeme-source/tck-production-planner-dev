@@ -365,31 +365,47 @@ router.get("/production-kpis", async (req, res) => {
   }));
 
   // Overview KPIs only count building tables (the real production throughput).
-  //
-  // "Combined" BPH = the SUM of each building table's own rate, not the
-  // pooled average. Two builders running in parallel at 8/hr and 10/hr
-  // report 18/hr (the production line's actual throughput), not the 9/hr
-  // you'd get by pooling batches and minutes together first.
   const building1Sessions = dailySessions.filter(ds => ds.station === "building_1");
   const building2Sessions = dailySessions.filter(ds => ds.station === "building_2");
   const buildingSessions = [...building1Sessions, ...building2Sessions];
 
-  const sumBatches = (xs: typeof dailySessions) => xs.reduce((s, ds) => s + ds.batchCount, 0);
   const sumMinutes = (xs: typeof dailySessions) => xs.reduce((s, ds) => s + ds.activeMinutes, 0);
-  const bphOf = (batches: number, minutes: number) => minutes > 0 ? batches / (minutes / 60) : 0;
 
-  const building1Batches = sumBatches(building1Sessions);
   const building1Minutes = sumMinutes(building1Sessions);
-  const building2Batches = sumBatches(building2Sessions);
   const building2Minutes = sumMinutes(building2Sessions);
 
-  const building1Bph = bphOf(building1Batches, building1Minutes);
-  const building2Bph = bphOf(building2Batches, building2Minutes);
-  const overallBph = Math.round((building1Bph + building2Bph) * 10) / 10;
-
-  const totalBatches = building1Batches + building2Batches;
   const totalActiveMinutes = building1Minutes + building2Minutes;
-  const uniqueDays = new Set(buildingSessions.map(ds => ds.date)).size;
+
+  // Source of truth for "Total Batches": actual packs wrapped (fridgeQty)
+  // divided by packs-per-batch. This counts what was actually produced,
+  // not how many times a button was clicked.
+  const planIds = [...new Set(completions.map(c => c.planId))];
+  let totalBatches = 0;
+  if (planIds.length > 0) {
+    const planItemRows = await db
+      .select({
+        fridgeQty: productionPlanItemsTable.fridgeQty,
+        fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
+        wonlyCount: productionPlanItemsTable.wonlyCount,
+        portionsPerBatch: recipesTable.portionsPerBatch,
+      })
+      .from(productionPlanItemsTable)
+      .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+      .where(inArray(productionPlanItemsTable.planId, planIds));
+
+    for (const pi of planItemRows) {
+      const ppb = Number(pi.portionsPerBatch) || 10;
+      const packsPerBatch = Math.max(1, Math.floor(ppb / 2));
+      // Total packs = 2-packs in fridge + wonky packs (they were still built)
+      const totalPacks = (pi.fridgeQty ?? 0) + (pi.wonlyCount ?? 0);
+      totalBatches += totalPacks / packsPerBatch;
+    }
+    totalBatches = Math.round(totalBatches * 10) / 10;
+  }
+
+  const overallBph = totalActiveMinutes > 0
+    ? Math.round((totalBatches / (totalActiveMinutes / 60)) * 10) / 10
+    : 0;
 
   // Production start/finish from earliest and latest building completion timestamps
   const buildingCompletions = completions.filter(c => c.stationType === "building_1" || c.stationType === "building_2");
