@@ -317,18 +317,6 @@ router.get("/production-kpis", async (req, res) => {
     ss.sessionCount++;
   }
 
-  const stationSummaries = Array.from(stationSummary.entries()).map(([station, ss]) => ({
-    station,
-    label: ss.label,
-    totalBatches: ss.totalBatches,
-    avgBph: ss.totalActiveMinutes > 0
-      ? Math.round((ss.totalBatches / (ss.totalActiveMinutes / 60)) * 10) / 10
-      : 0,
-    sessionCount: ss.sessionCount,
-    targetBph: ss.targetBph,
-    minBph: ss.minBph,
-  }));
-
   const userSummary = new Map<number, {
     name: string;
     totalBatches: number;
@@ -354,37 +342,48 @@ router.get("/production-kpis", async (req, res) => {
     us.stations.add(ds.stationLabel);
   }
 
-  const userSummaries = Array.from(userSummary.entries()).map(([userId, us]) => ({
-    userId,
-    userName: us.name,
-    totalBatches: us.totalBatches,
-    avgBph: us.totalActiveMinutes > 0
-      ? Math.round((us.totalBatches / (us.totalActiveMinutes / 60)) * 10) / 10
-      : 0,
-    totalActiveMinutes: us.totalActiveMinutes,
-    sessionCount: us.sessionCount,
-    stations: Array.from(us.stations),
-  }));
-
   // Overview KPIs only count building tables (the real production throughput).
   const building1Sessions = dailySessions.filter(ds => ds.station === "building_1");
   const building2Sessions = dailySessions.filter(ds => ds.station === "building_2");
-  const buildingSessions = [...building1Sessions, ...building2Sessions];
 
   const sumMinutes = (xs: typeof dailySessions) => xs.reduce((s, ds) => s + ds.activeMinutes, 0);
 
-  const building1Minutes = sumMinutes(building1Sessions);
-  const building2Minutes = sumMinutes(building2Sessions);
-
   const totalActiveMinutes = building1Minutes + building2Minutes;
 
-  // Source of truth for "Total Batches": current batch_completions count
-  // for building stations combined. This is the net count after any undos —
-  // rows are deleted when builders click minus, so the count reflects
-  // what was actually submitted, not total clicks.
-  const b1Count = completions.filter(c => c.stationType === "building_1").length;
-  const b2Count = completions.filter(c => c.stationType === "building_2").length;
-  const totalBatches = b1Count + b2Count;
+  // Source of truth for "Total Batches": building completions per recipe,
+  // capped at batchesTarget per recipe so inflated completions can't exceed
+  // what was actually planned. Extra packs add fractional batches.
+  const buildingCompletionsByItem = new Map<number, number>();
+  for (const c of completions) {
+    if (c.stationType !== "building_1" && c.stationType !== "building_2") continue;
+    buildingCompletionsByItem.set(c.planItemId, (buildingCompletionsByItem.get(c.planItemId) ?? 0) + 1);
+  }
+
+  // Look up batchesTarget + extraPacksBuilt per plan item to cap and add fractional extras
+  const planIds = [...new Set(completions.map(c => c.planId))];
+  let totalBatches = 0;
+  if (planIds.length > 0) {
+    const planItemRows = await db
+      .select({
+        id: productionPlanItemsTable.id,
+        batchesTarget: productionPlanItemsTable.batchesTarget,
+        extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
+        portionsPerBatch: recipesTable.portionsPerBatch,
+      })
+      .from(productionPlanItemsTable)
+      .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+      .where(inArray(productionPlanItemsTable.planId, planIds));
+
+    for (const pi of planItemRows) {
+      const target = pi.batchesTarget ?? 0;
+      const built = buildingCompletionsByItem.get(pi.id) ?? 0;
+      const capped = Math.min(built, target); // Can't exceed target
+      const extras = pi.extraPacksBuilt ?? 0;
+      const ppb = Math.max(1, Math.floor((Number(pi.portionsPerBatch) || 10) / 2));
+      totalBatches += capped + (extras > 0 ? extras / ppb : 0);
+    }
+    totalBatches = Math.round(totalBatches * 10) / 10;
+  }
 
   // overallBph calculated after productionActiveMinutes is computed below
 
@@ -424,7 +423,89 @@ router.get("/production-kpis", async (req, res) => {
     productionActiveMinutes = Math.round(Math.max(0, wallClockMinutes - totalBreakMins));
   }
 
-  // BPH = total batches (through ovens) ÷ production active hours (wall clock minus breaks)
+  // Cap per-builder and per-user station summaries for building stations
+  // so they match the capped totalBatches (not inflated raw completions).
+  // Compute per-station capped counts from completions, per plan item.
+  if (totalBatches > 0 && planIds.length > 0) {
+    // Get capped count per plan item (already computed above in buildingCompletionsByItem)
+    const planItemTargets = new Map<number, number>();
+    const piRows = await db
+      .select({ id: productionPlanItemsTable.id, batchesTarget: productionPlanItemsTable.batchesTarget })
+      .from(productionPlanItemsTable)
+      .where(inArray(productionPlanItemsTable.planId, planIds));
+    for (const pi of piRows) planItemTargets.set(pi.id, pi.batchesTarget ?? 0);
+
+    // Count per station per plan item
+    const stationItemCounts = new Map<string, Map<number, number>>();
+    const userItemCounts = new Map<number, Map<number, number>>();
+    for (const c of completions) {
+      if (c.stationType !== "building_1" && c.stationType !== "building_2") continue;
+      // Per station
+      if (!stationItemCounts.has(c.stationType)) stationItemCounts.set(c.stationType, new Map());
+      const sic = stationItemCounts.get(c.stationType)!;
+      sic.set(c.planItemId, (sic.get(c.planItemId) ?? 0) + 1);
+      // Per user
+      if (c.userId) {
+        if (!userItemCounts.has(c.userId)) userItemCounts.set(c.userId, new Map());
+        const uic = userItemCounts.get(c.userId)!;
+        uic.set(c.planItemId, (uic.get(c.planItemId) ?? 0) + 1);
+      }
+    }
+
+    // Cap each station's per-item count at its share of the target
+    for (const [station, itemCounts] of stationItemCounts) {
+      let cappedTotal = 0;
+      for (const [itemId, count] of itemCounts) {
+        const totalForItem = buildingCompletionsByItem.get(itemId) ?? count;
+        const target = planItemTargets.get(itemId) ?? count;
+        const cappedTarget = Math.min(totalForItem, target);
+        // This station's share = its count / total building count for this item * capped target
+        cappedTotal += totalForItem > 0 ? Math.round((count / totalForItem) * cappedTarget) : 0;
+      }
+      const ss = stationSummary.get(station);
+      if (ss) ss.totalBatches = cappedTotal;
+    }
+
+    // Cap each user's building counts the same way
+    for (const [userId, itemCounts] of userItemCounts) {
+      let cappedTotal = 0;
+      for (const [itemId, count] of itemCounts) {
+        const totalForItem = buildingCompletionsByItem.get(itemId) ?? count;
+        const target = planItemTargets.get(itemId) ?? count;
+        const cappedTarget = Math.min(totalForItem, target);
+        cappedTotal += totalForItem > 0 ? Math.round((count / totalForItem) * cappedTarget) : 0;
+      }
+      const us = userSummary.get(userId);
+      if (us) us.totalBatches = cappedTotal;
+    }
+  }
+
+  // Rebuild summaries with capped counts
+  const stationSummariesFinal = Array.from(stationSummary.entries()).map(([station, ss]) => ({
+    station,
+    label: ss.label,
+    totalBatches: ss.totalBatches,
+    avgBph: ss.totalActiveMinutes > 0
+      ? Math.round((ss.totalBatches / (ss.totalActiveMinutes / 60)) * 10) / 10
+      : 0,
+    sessionCount: ss.sessionCount,
+    targetBph: ss.targetBph,
+    minBph: ss.minBph,
+  }));
+
+  const userSummariesFinal = Array.from(userSummary.entries()).map(([userId, us]) => ({
+    userId,
+    userName: us.name,
+    totalBatches: us.totalBatches,
+    avgBph: us.totalActiveMinutes > 0
+      ? Math.round((us.totalBatches / (us.totalActiveMinutes / 60)) * 10) / 10
+      : 0,
+    totalActiveMinutes: us.totalActiveMinutes,
+    sessionCount: us.sessionCount,
+    stations: Array.from(us.stations),
+  }));
+
+  // BPH = total batches ÷ production active hours (wall clock minus breaks)
   const overallBph = productionActiveMinutes > 0
     ? Math.round((totalBatches / (productionActiveMinutes / 60)) * 10) / 10
     : 0;
@@ -438,8 +519,8 @@ router.get("/production-kpis", async (req, res) => {
       productionStartTime,
       productionFinishTime,
     },
-    stationSummaries,
-    userSummaries,
+    stationSummaries: stationSummariesFinal,
+    userSummaries: userSummariesFinal,
     dailySessions,
   });
   } catch (err) {
