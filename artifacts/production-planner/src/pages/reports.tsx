@@ -445,7 +445,7 @@ function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: str
           icon={<Layers className="w-5 h-5 text-blue-600" />}
           label="Total Batches"
           value={String(data.overview.totalBatches)}
-          sub={`Over ${data.overview.uniqueDays} day${data.overview.uniqueDays !== 1 ? "s" : ""}`}
+          sub="Building tables combined"
         />
         <SummaryCard
           icon={<Activity className="w-5 h-5 text-violet-600" />}
