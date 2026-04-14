@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, prepTinOverridesTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, fridgeStockBatchesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable } from "@workspace/db";
+import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, stationChangeoversTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, prepTinOverridesTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, fridgeStockBatchesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable } from "@workspace/db";
 import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as drizzleSum, ne, isNotNull, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
@@ -1477,6 +1477,34 @@ router.delete("/:id/batch-completions/bulk", async (req, res) => {
   }
 
   res.status(204).send();
+});
+
+// POST /:id/station-changeovers — record changeover time when builder finishes checklist
+router.post("/:id/station-changeovers", async (req, res) => {
+  const planId = Number(req.params.id);
+  const { planItemId, stationType, recipeId, startedAt, completedAt, durationMs } = req.body;
+  const sessionUserId = (req.session as { userId?: number }).userId ?? null;
+
+  // Verify planItemId belongs to this plan
+  const [planItem] = await db.select({ id: productionPlanItemsTable.id })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, Number(planItemId)), eq(productionPlanItemsTable.planId, planId)));
+  if (!planItem) {
+    res.status(400).json({ error: "planItemId does not belong to this plan" });
+    return;
+  }
+
+  const [row] = await db.insert(stationChangeoversTable).values({
+    planItemId: Number(planItemId),
+    stationType: stationType ?? "",
+    userId: sessionUserId,
+    recipeId: Number(recipeId),
+    startedAt: startedAt ? new Date(startedAt) : new Date(),
+    completedAt: completedAt ? new Date(completedAt) : new Date(),
+    durationMs: durationMs != null ? Number(durationMs) : null,
+  }).returning();
+
+  res.status(201).json(row);
 });
 
 // GET /:id/batch-completions/pace — avg mins/batch per plan item for a given station

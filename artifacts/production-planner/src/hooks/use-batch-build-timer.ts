@@ -30,6 +30,8 @@ export interface UseBatchBuildTimerArgs {
   isOnBreak: boolean;
   /** Timestamp of the most recent batch completion. Null = dormant. */
   lastBatchAt: Date | null;
+  /** When true, suppress the batch timer (changeover in progress). */
+  changeoverActive?: boolean;
 }
 
 export interface BatchBuildTimerState {
@@ -92,7 +94,7 @@ function formatTimer(ms: number): string {
 }
 
 export function useBatchBuildTimer(args: UseBatchBuildTimerArgs): BatchBuildTimerState {
-  const { enabled, recipeId, targetSeconds, defaultSeconds, isOnBreak, lastBatchAt } = args;
+  const { enabled, recipeId, targetSeconds, defaultSeconds, isOnBreak, lastBatchAt, changeoverActive = false } = args;
 
   const effectiveTargetSeconds = Math.max(1,
     (targetSeconds && targetSeconds > 0) ? targetSeconds : defaultSeconds,
@@ -106,7 +108,7 @@ export function useBatchBuildTimer(args: UseBatchBuildTimerArgs): BatchBuildTime
   const [alerted, setAlerted] = useState(false);
   const [now, setNow] = useState<number>(() => Date.now());
 
-  const running = lastBatchAt !== null && enabled;
+  const running = lastBatchAt !== null && enabled && !changeoverActive;
 
   // Re-arm the countdown every time lastBatchAt changes (i.e. a new
   // batch has just been recorded). This is also how the timer starts
@@ -123,8 +125,10 @@ export function useBatchBuildTimer(args: UseBatchBuildTimerArgs): BatchBuildTime
   // Separately react to recipe changes without a new batch event — e.g.
   // the other builder finishes the last of the current recipe and
   // `currentItem` advances to the next recipe. Reset to the new target.
+  // Skip if changeover is active — the timer will start when the
+  // changeover completes (checklist locked) and setLastBatchAt fires.
   useEffect(() => {
-    if (!enabled || !lastBatchAt || !recipeId) return;
+    if (!enabled || !lastBatchAt || !recipeId || changeoverActive) return;
     endTimeRef.current = Date.now() + effectiveTargetSeconds * 1000;
     pausedRemainingRef.current = null;
     setAlerted(false);

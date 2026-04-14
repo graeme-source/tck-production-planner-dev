@@ -49,6 +49,17 @@ export const batchCompletionsTable = pgTable("batch_completions", {
   completedAt: timestamp("completed_at").notNull().defaultNow(),
 });
 
+export const stationChangeoversTable = pgTable("station_changeovers", {
+  id: serial("id").primaryKey(),
+  planItemId: integer("plan_item_id").notNull().references(() => productionPlanItemsTable.id, { onDelete: "cascade" }),
+  stationType: text("station_type").notNull(),
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  recipeId: integer("recipe_id").notNull().references(() => recipesTable.id, { onDelete: "cascade" }),
+  startedAt: timestamp("started_at").notNull().defaultNow(),
+  completedAt: timestamp("completed_at"),
+  durationMs: integer("duration_ms"),
+});
+
 export const stationBreaksTable = pgTable("station_breaks", {
   id: serial("id").primaryKey(),
   planId: integer("plan_id").notNull().references(() => productionPlansTable.id, { onDelete: "cascade" }),
@@ -90,6 +101,7 @@ export type AppSetting = typeof appSettingsTable.$inferSelect;
 export const insertProductionPlanSchema = createInsertSchema(productionPlansTable).omit({ id: true, createdAt: true });
 export const insertProductionPlanItemSchema = createInsertSchema(productionPlanItemsTable).omit({ id: true });
 export const insertBatchCompletionSchema = createInsertSchema(batchCompletionsTable).omit({ id: true });
+export const insertStationChangeoverSchema = createInsertSchema(stationChangeoversTable).omit({ id: true });
 export const insertStationBreakSchema = createInsertSchema(stationBreaksTable).omit({ id: true });
 export const insertDptSettingSchema = createInsertSchema(dptSettingsTable).omit({ id: true, updatedAt: true });
 export const insertTimingStandardSchema = createInsertSchema(timingStandardsTable).omit({ id: true, updatedAt: true });
@@ -169,6 +181,7 @@ export type InsertProductionPlan = z.infer<typeof insertProductionPlanSchema>;
 export type ProductionPlan = typeof productionPlansTable.$inferSelect;
 export type ProductionPlanItem = typeof productionPlanItemsTable.$inferSelect;
 export type BatchCompletion = typeof batchCompletionsTable.$inferSelect;
+export type StationChangeover = typeof stationChangeoversTable.$inferSelect;
 export type StationBreak = typeof stationBreaksTable.$inferSelect;
 export type DptSetting = typeof dptSettingsTable.$inferSelect;
 export type TimingStandard = typeof timingStandardsTable.$inferSelect;

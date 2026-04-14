@@ -311,6 +311,13 @@ interface BuildingStationProps {
   isOnBreak?: boolean;
 }
 
+function formatChangeover(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
 export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = false }: BuildingStationProps) {
   const stationType = lineNumber === 1 ? "building_1" : "building_2";
   const queryClient = useQueryClient();
@@ -346,6 +353,10 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   // Build timer
   const timerConfig = useBuildTimerConfig();
   const [lastBatchAt, setLastBatchAt] = useState<Date | null>(null);
+
+  // Changeover timer — tracks time spent ticking off checklist before first batch
+  const [changeoverStartedAt, setChangeoverStartedAt] = useState<Date | null>(null);
+  const [changeoverElapsedMs, setChangeoverElapsedMs] = useState<number>(0);
 
   const createBatch = useCreateBatchCompletion({
     mutation: {
@@ -508,6 +519,16 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     getCombinedBuildCount(it) >= getEffectiveTarget(it)
   );
 
+  // checklistPending is computed below but we need it here for the timer.
+  // Inline the same logic to avoid forward-reference issues.
+  const changeoverActive = (() => {
+    if (!currentItem) return false;
+    const asm = assemblyMap[currentItem.id];
+    if (!asm) return false;
+    if (asm.fillingWeightPerBatch === 0 && asm.assemblyItems.length === 0) return false;
+    return checklistLockedForItem !== currentItem.id && changeoverStartedAt !== null;
+  })();
+
   const buildTimer = useBatchBuildTimer({
     enabled: timerConfig.enabled === true,
     recipeId: currentItem?.recipeId ?? null,
@@ -515,6 +536,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     defaultSeconds: timerConfig.defaultSeconds,
     isOnBreak,
     lastBatchAt,
+    changeoverActive,
   });
 
   // Checklist load
@@ -526,6 +548,8 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
       .then(d => {
         if (d?.value === "true") {
           setChecklistLockedForItem(currentItem.id);
+          // Checklist already done — cancel changeover (returning builder)
+          setChangeoverStartedAt(null);
         }
         setChecklistLoadedForItem(currentItem.id);
       })
@@ -541,8 +565,20 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
       setCheckedItems({});
       setChecklistLockedForItem(null);
       setChecklistLoadedForItem(null);
+      // Start changeover timer for this recipe
+      setChangeoverStartedAt(new Date());
+      setChangeoverElapsedMs(0);
     }
   }, [currentItem?.id]);
+
+  // Changeover tick — count up while checklist is pending
+  useEffect(() => {
+    if (!changeoverStartedAt || !changeoverActive || isOnBreak) return;
+    const id = window.setInterval(() => {
+      setChangeoverElapsedMs(Date.now() - changeoverStartedAt.getTime());
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [changeoverStartedAt, changeoverActive, isOnBreak]);
 
   // Auto-lock checklist when all items checked
   useEffect(() => {
@@ -559,6 +595,28 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ value: "true" }),
       }).catch((err) => { console.warn("[BuildingStation] Checklist lock save failed:", err); });
+
+      // Complete changeover — record duration and start batch timer
+      if (changeoverStartedAt) {
+        const completedAt = new Date();
+        const durationMs = completedAt.getTime() - changeoverStartedAt.getTime();
+        setChangeoverStartedAt(null);
+        setLastBatchAt(completedAt); // arms the batch countdown timer
+
+        // Fire-and-forget POST to record changeover
+        fetch(`/api/production-plans/${plan.id}/station-changeovers`, {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            planItemId: currentItem.id,
+            stationType,
+            recipeId: currentItem.recipeId,
+            startedAt: changeoverStartedAt.toISOString(),
+            completedAt: completedAt.toISOString(),
+            durationMs,
+          }),
+        }).catch((err) => { console.warn("[BuildingStation] Changeover save failed:", err); });
+      }
     }
   }, [checkedItems, currentItem?.id, assemblyMap, checklistLockedForItem]);
 
@@ -999,7 +1057,9 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                               : isOnBreak
                                 ? "bg-amber-100 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 border-2 border-amber-300 cursor-not-allowed opacity-70"
                                 : checklistPending
-                                  ? "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 border-2 border-slate-300 dark:border-slate-600 cursor-not-allowed opacity-70"
+                                  ? changeoverActive
+                                    ? "bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400 border-2 border-blue-300 dark:border-blue-700 cursor-not-allowed"
+                                    : "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 border-2 border-slate-300 dark:border-slate-600 cursor-not-allowed opacity-70"
                                   : itemAvailable <= 0
                                     ? "bg-amber-100 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 border-2 border-amber-300 cursor-not-allowed opacity-70"
                                     : pendingTap
@@ -1009,7 +1069,14 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                                         : "bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg hover:shadow-xl"
                           )}
                         >
-                          {timerConfig.enabled && buildTimer.running && !allDone && (
+                          {/* Changeover count-up timer */}
+                          {timerConfig.enabled && changeoverActive && changeoverStartedAt && !allDone && (
+                            <span className="text-4xl sm:text-5xl font-mono tabular-nums leading-none text-current opacity-90">
+                              {formatChangeover(changeoverElapsedMs)}
+                            </span>
+                          )}
+                          {/* Batch countdown timer */}
+                          {timerConfig.enabled && buildTimer.running && !changeoverActive && !allDone && (
                             <span className={cn(
                               "text-4xl sm:text-5xl font-mono tabular-nums leading-none",
                               buildTimer.alerted ? "text-white" : "text-current opacity-90"
@@ -1023,7 +1090,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                               : itemRemaining === 0
                                 ? "All Done ✓"
                                 : checklistPending
-                                  ? "Tick items ←"
+                                  ? (changeoverActive ? "Changeover" : "Tick items ←")
                                   : itemAvailable <= 0
                                     ? "Waiting…"
                                     : pendingTap
