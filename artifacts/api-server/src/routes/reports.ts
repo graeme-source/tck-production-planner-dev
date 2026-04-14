@@ -400,29 +400,25 @@ router.get("/production-kpis", async (req, res) => {
     productionFinishTime = latest.toISOString();
     wallClockMinutes = Math.round((latest.getTime() - earliest.getTime()) / 60000);
 
-    // Merge all building-station breaks within the production window into
-    // non-overlapping intervals, then subtract from wall-clock time.
+    // For each break type (morning/lunch), calculate the average duration
+    // across all builders, then deduct a single average break per type.
+    // e.g. 3 snack breaks of 15, 20, 25 mins → deduct one 20 min break.
     const buildingBreaks = breaks.filter(
       b => (b.stationType === "building_1" || b.stationType === "building_2") && b.endedAt
     );
-    const intervals: { start: number; end: number }[] = [];
+    const breaksByType = new Map<string, number[]>();
     for (const b of buildingBreaks) {
-      const s = Math.max(new Date(b.startedAt!).getTime(), earliest.getTime());
-      const e = Math.min(new Date(b.endedAt!).getTime(), latest.getTime());
-      if (e > s) intervals.push({ start: s, end: e });
+      const mins = Math.max(0, (new Date(b.endedAt!).getTime() - new Date(b.startedAt!).getTime()) / 60000);
+      if (mins <= 0) continue;
+      const type = b.breakType ?? "other";
+      if (!breaksByType.has(type)) breaksByType.set(type, []);
+      breaksByType.get(type)!.push(mins);
     }
-    // Sort and merge overlapping intervals
-    intervals.sort((a, b) => a.start - b.start);
-    const merged: { start: number; end: number }[] = [];
-    for (const iv of intervals) {
-      const last = merged[merged.length - 1];
-      if (last && iv.start <= last.end) {
-        last.end = Math.max(last.end, iv.end);
-      } else {
-        merged.push({ ...iv });
-      }
+    let totalBreakMins = 0;
+    for (const durations of breaksByType.values()) {
+      const avg = durations.reduce((s, d) => s + d, 0) / durations.length;
+      totalBreakMins += avg;
     }
-    const totalBreakMins = merged.reduce((s, iv) => s + (iv.end - iv.start) / 60000, 0);
     productionActiveMinutes = Math.round(Math.max(0, wallClockMinutes - totalBreakMins));
   }
 
