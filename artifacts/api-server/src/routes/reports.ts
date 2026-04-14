@@ -175,6 +175,7 @@ router.get("/production-kpis", async (req, res) => {
       planId: stationBreaksTable.planId,
       stationType: stationBreaksTable.stationType,
       userId: stationBreaksTable.userId,
+      breakType: stationBreaksTable.breakType,
       startedAt: stationBreaksTable.startedAt,
       endedAt: stationBreaksTable.endedAt,
     })
