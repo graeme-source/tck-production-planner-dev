@@ -364,6 +364,32 @@ router.get("/production-kpis", async (req, res) => {
     stations: Array.from(us.stations),
   }));
 
+  // For reporting, use batchesTarget as the source of truth for "Total Batches",
+  // plus fractional batches for any extra packs built.
+  // This prevents extraPacksBuilt rounding up to whole batches and inflating the count.
+  const planIds = [...new Set(completions.map(c => c.planId))];
+  let trueBatchTotal = 0;
+  if (planIds.length > 0) {
+    const planItemRows = await db
+      .select({
+        batchesTarget: productionPlanItemsTable.batchesTarget,
+        extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
+        portionsPerBatch: recipesTable.portionsPerBatch,
+      })
+      .from(productionPlanItemsTable)
+      .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+      .where(inArray(productionPlanItemsTable.planId, planIds));
+
+    for (const pi of planItemRows) {
+      const bt = pi.batchesTarget ?? 0;
+      const extras = pi.extraPacksBuilt ?? 0;
+      const ppb = Math.max(1, Math.floor((Number(pi.portionsPerBatch) || 10) / 2));
+      // Add batchesTarget + fractional batch for extras (e.g. 6 extras / 5 packs per batch = 1.2)
+      trueBatchTotal += bt + (extras > 0 ? extras / ppb : 0);
+    }
+    trueBatchTotal = Math.round(trueBatchTotal * 10) / 10;
+  }
+
   // Overview KPIs only count building tables (the real production throughput).
   //
   // "Combined" BPH = the SUM of each building table's own rate, not the
@@ -431,14 +457,21 @@ router.get("/production-kpis", async (req, res) => {
     productionActiveMinutes = Math.round(Math.max(0, wallClockMinutes - totalBreakMins));
   }
 
+  // Use trueBatchTotal (batchesTarget + fractional extras) instead of raw completion count
+  // for the overview. This prevents extraPacksBuilt inflating each recipe by a whole batch.
+  const displayBatches = trueBatchTotal || totalBatches; // fallback to raw count if no plan items found
+  const displayBph = productionActiveMinutes > 0
+    ? Math.round((displayBatches / (productionActiveMinutes / 60)) * 10) / 10
+    : overallBph;
+
   res.json({
     overview: {
-      totalBatches,
+      totalBatches: displayBatches,
       totalActiveMinutes: productionActiveMinutes,
       wallClockMinutes,
-      overallBph,
+      overallBph: displayBph,
       uniqueDays,
-      avgBatchesPerDay: uniqueDays > 0 ? Math.round(totalBatches / uniqueDays) : 0,
+      avgBatchesPerDay: uniqueDays > 0 ? Math.round(displayBatches / uniqueDays) : 0,
       productionStartTime,
       productionFinishTime,
     },

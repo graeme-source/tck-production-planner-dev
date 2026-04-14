@@ -300,6 +300,8 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
                   <option value="temperature_records">Temperature Records</option>
                   <option value="oven_events">Oven Events</option>
                   <option value="mozzarella_load">Mozzarella Load</option>
+                  <option value="desserts_report">Desserts Report</option>
+                  <option value="first_pack_batch_numbers">First Pack Batch Numbers</option>
                 </select>
               </div>
             </div>

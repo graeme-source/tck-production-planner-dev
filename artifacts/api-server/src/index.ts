@@ -671,6 +671,18 @@ async function runStartupMigrations() {
     // Tin count overrides for prep stations
     await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS mixing_tin_override INTEGER`);
     await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS packing_batch_records (
+        id SERIAL PRIMARY KEY,
+        plan_id INTEGER NOT NULL REFERENCES production_plans(id) ON DELETE CASCADE,
+        recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+        batch_number INTEGER NOT NULL,
+        user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        recorded_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE(plan_id, recipe_id)
+      )
+    `);
+
+    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS prep_tin_overrides (
         id SERIAL PRIMARY KEY,
         plan_id INTEGER NOT NULL REFERENCES production_plans(id) ON DELETE CASCADE,

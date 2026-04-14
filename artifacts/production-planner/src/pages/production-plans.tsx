@@ -2499,6 +2499,15 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const { data: stationActivity } = useGetStationActivity(planId, {
     query: { queryKey: getGetStationActivityQueryKey(planId), refetchInterval: 10000 },
   });
+  const { data: prepProgress } = useQuery<{ totalWeightG: number; completedWeightG: number; pct: number }>({
+    queryKey: ["prep-progress", planId],
+    queryFn: async () => {
+      const res = await fetch(`/api/production-plans/${planId}/prep-progress`, { credentials: "include" });
+      if (!res.ok) return { totalWeightG: 0, completedWeightG: 0, pct: 0 };
+      return res.json();
+    },
+    refetchInterval: 15000,
+  });
 
   if (isLoading) {
     return (
@@ -2526,6 +2535,27 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const totalBatchesComplete = plan.items?.reduce((s, it) => s + (it.batchesComplete ?? 0), 0) ?? 0;
   const totalPacks = plan.items?.reduce((s, it) => s + (it.batchesTarget ?? 0) * (it.portionsPerBatch ?? 10) / (it.packSize ?? 2), 0) ?? 0;
   const progress = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
+
+  // Per-station completion counts aggregated from all plan items
+  const stationProgress: Record<string, { done: number; target: number }> = {};
+  {
+    const items = plan.items ?? [];
+    const target = totalBatchesTarget;
+    for (const s of STATION_BUTTONS) {
+      if (s.key === "building_1" || s.key === "building_2") {
+        const b1 = items.reduce((sum, it) => sum + ((it.stationCompletions as Record<string, number> | undefined)?.["building_1"] ?? 0), 0);
+        const b2 = items.reduce((sum, it) => sum + ((it.stationCompletions as Record<string, number> | undefined)?.["building_2"] ?? 0), 0);
+        stationProgress[s.key] = { done: b1 + b2, target };
+      } else if (s.key === "prep") {
+        stationProgress[s.key] = { done: prepProgress?.pct ?? 0, target: 100 };
+      } else if (s.key === "packing") {
+        stationProgress[s.key] = { done: 0, target: 0 };
+      } else {
+        const done = items.reduce((sum, it) => sum + ((it.stationCompletions as Record<string, number> | undefined)?.[s.key] ?? 0), 0);
+        stationProgress[s.key] = { done, target };
+      }
+    }
+  }
 
   const handleValidate = async () => {
     setValidationLoading(true);
@@ -2641,25 +2671,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
       />
 
       {/* Progress summary */}
-      {totalBatchesTarget > 0 && (
-        <div className="bg-card border border-border rounded-xl p-4">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium">Overall Progress</span>
-            <span className="text-sm text-muted-foreground">
-              {totalBatchesComplete} / {totalBatchesTarget} batches ({progress}%)
-            </span>
-          </div>
-          <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
-            <div
-              className={cn(
-                "h-full rounded-full transition-all",
-                progress >= 100 ? "bg-emerald-500" : "bg-primary"
-              )}
-              style={{ width: `${Math.min(progress, 100)}%` }}
-            />
-          </div>
-        </div>
-      )}
+      {/* Overall progress box removed — per-station progress shown on station cards below */}
 
       {/* Validation results */}
       {showValidation && validationData && (
@@ -2789,15 +2801,16 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-5 gap-4">
           {STATION_BUTTONS.map(s => {
             const Icon = s.icon;
-            const isBuildingStation = s.key === "building_1" || s.key === "building_2";
-            const stationComplete = totalBatchesTarget > 0 && totalBatchesComplete >= totalBatchesTarget;
-            const stationInProgress = !stationComplete && totalBatchesComplete > 0;
             const activeUsers = (stationActivity as Record<string, number> | undefined)?.[s.key] ?? 0;
+            const sp = stationProgress[s.key];
+            const hasProgress = sp && sp.target > 0;
+            const pct = hasProgress ? Math.min(Math.round((sp.done / sp.target) * 100), 100) : 0;
+            const stationDone = hasProgress && sp.done >= sp.target;
             return (
               <button
                 key={s.key}
                 onClick={() => navigate(`/plans/${planId}/station/${s.key}`)}
-                className="flex flex-col items-center justify-center gap-4 p-6 min-h-[160px] border-2 border-border rounded-2xl hover:border-primary hover:bg-secondary/40 hover:shadow-md active:scale-[0.97] transition-all group relative"
+                className="flex flex-col items-center justify-center gap-3 p-5 min-h-[160px] border-2 border-border rounded-2xl hover:border-primary hover:bg-secondary/40 hover:shadow-md active:scale-[0.97] transition-all group relative"
               >
                 {/* Active user badge */}
                 {activeUsers > 0 && (
@@ -2808,27 +2821,25 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                     {activeUsers}
                   </span>
                 )}
-                {isBuildingStation && stationComplete && activeUsers === 0 && (
-                  <span className="absolute top-3 right-3 w-3 h-3 rounded-full bg-emerald-500" title="Complete" />
-                )}
-                {isBuildingStation && stationInProgress && activeUsers === 0 && (
-                  <span className="absolute top-3 right-3 w-3 h-3 rounded-full bg-amber-400" title="In progress" />
-                )}
-                <div className={cn("w-20 h-20 rounded-2xl flex items-center justify-center", s.color)}>
-                  <Icon className="w-10 h-10" />
+                <div className={cn("w-16 h-16 rounded-2xl flex items-center justify-center", s.color)}>
+                  <Icon className="w-8 h-8" />
                 </div>
-                <span className="text-lg font-extrabold text-center leading-snug text-black dark:text-white transition-colors">
+                <span className="text-base font-extrabold text-center leading-snug text-black dark:text-white transition-colors">
                   {s.label}
                 </span>
-                {isBuildingStation && totalBatchesTarget > 0 && (
-                  <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
-                    <div
-                      className={cn("h-full rounded-full transition-all", stationComplete ? "bg-emerald-500" : "bg-primary")}
-                      style={{ width: `${Math.min(progress, 100)}%` }}
-                    />
+                {hasProgress ? (
+                  <div className="w-full space-y-1">
+                    <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
+                      <div
+                        className={cn("h-full rounded-full transition-all", stationDone ? "bg-emerald-500" : "bg-primary")}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <p className={cn("text-xs text-center tabular-nums font-semibold", stationDone ? "text-emerald-600" : "text-muted-foreground")}>
+                      {s.key === "prep" ? `${pct}%` : `${sp.done} / ${sp.target}`}
+                    </p>
                   </div>
-                )}
-                {!isBuildingStation && activeUsers === 0 && (
+                ) : (
                   <ArrowRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                 )}
               </button>

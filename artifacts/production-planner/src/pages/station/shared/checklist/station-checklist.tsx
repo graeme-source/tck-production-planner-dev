@@ -517,6 +517,7 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                     type={selectedItem.dynamicDataType}
                     data={dynamicData}
                     loading={dynamicLoading}
+                    planId={planId}
                   />
                 )}
 
@@ -610,7 +611,168 @@ function itemKey(item: { type: string; id: number; category: string }): string {
 
 // ─── Dynamic Data Display ────────────────────────────────────────────
 
-function DynamicDataDisplay({ type, data, loading }: { type: string; data: unknown[]; loading: boolean }) {
+function FirstPackBatchNumbers({ data, planId }: { data: unknown[]; planId: number }) {
+  const items = data as Array<{
+    recipeId: number;
+    recipeName: string;
+    fridgeQty?: number;
+    suggestedBatchNumber: number | null;
+    suggestedUseByDate: string | null;
+    recordedBatchNumber: number | null;
+    recordedAt: string | null;
+  }>;
+  const [values, setValues] = useState<Record<number, string>>({});
+  const [saving, setSaving] = useState<Record<number, boolean>>({});
+
+  // Initialize values from recorded or suggested
+  useEffect(() => {
+    const init: Record<number, string> = {};
+    for (const item of items) {
+      if (item.recipeId != null) {
+        init[item.recipeId] = String(item.recordedBatchNumber ?? item.suggestedBatchNumber ?? "");
+      }
+    }
+    setValues(init);
+  }, [data]);
+
+  const saveBatch = async (recipeId: number) => {
+    const val = parseInt(values[recipeId]);
+    if (!val || isNaN(val)) return;
+    setSaving(s => ({ ...s, [recipeId]: true }));
+    try {
+      const res = await fetch(`${BASE}/api/checklists/packing-batch-record`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planId, recipeId, batchNumber: val }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      toast({ title: "Saved", description: "Batch number recorded" });
+    } catch {
+      toast({ title: "Error", description: "Failed to save batch number", variant: "destructive" });
+    } finally {
+      setSaving(s => ({ ...s, [recipeId]: false }));
+    }
+  };
+
+  if (items.length === 0) {
+    return (
+      <div className="mb-4 p-3 bg-secondary/30 rounded-lg text-sm text-muted-foreground">
+        No recipes currently in the production fridge.
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-4 space-y-2">
+      <p className="text-sm font-semibold text-foreground mb-2">
+        Record first pack batch number for each recipe in the fridge
+      </p>
+      {items.map(item => {
+        if (!item.recipeId) return null;
+        const val = values[item.recipeId] ?? "";
+        const isSaved = item.recordedBatchNumber != null && String(item.recordedBatchNumber) === val;
+        return (
+          <div key={item.recipeId} className={cn(
+            "flex items-center gap-3 p-3 rounded-xl border transition-colors",
+            isSaved ? "bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800" : "bg-secondary/20 border-border"
+          )}>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold truncate">{item.recipeName}</p>
+              <p className="text-xs text-muted-foreground">
+                {item.fridgeQty != null ? `${Math.round(item.fridgeQty)} packs in fridge` : ""}
+                {item.suggestedBatchNumber && !isSaved ? ` · Suggested: #${item.suggestedBatchNumber}` : ""}
+              </p>
+              {isSaved && (
+                <p className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" /> Recorded
+                </p>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="text-xs text-muted-foreground">#</span>
+              <input
+                type="number"
+                className="w-20 px-2 py-1.5 text-sm text-center font-mono font-bold border border-border rounded-lg bg-background tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30"
+                value={val}
+                onChange={e => setValues(v => ({ ...v, [item.recipeId!]: e.target.value }))}
+                onKeyDown={e => { if (e.key === "Enter") saveBatch(item.recipeId!); }}
+                placeholder="—"
+              />
+              <button
+                onClick={() => saveBatch(item.recipeId!)}
+                disabled={!val || saving[item.recipeId!]}
+                className="p-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+              >
+                {saving[item.recipeId!] ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DynamicDataDisplay({ type, data, loading, planId }: { type: string; data: unknown[]; loading: boolean; planId: number }) {
+  if (type === "desserts_report") {
+    if (loading) {
+      return (
+        <div className="mb-4 p-3 bg-blue-50/60 dark:bg-blue-950/20 rounded-lg flex items-center gap-2 text-sm text-blue-600">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Loading dessert report...
+        </div>
+      );
+    }
+    const report = (data as any[])[0] as { tag: string; deliveryLabel: string; products: Array<{ title: string; quantity: number; orderCount: number }>; totalQuantity: number; dessertProductCount: number } | undefined;
+    if (!report || report.products.length === 0) {
+      return (
+        <div className="mb-4 p-3 bg-secondary/30 rounded-lg text-sm text-muted-foreground">
+          No dessert orders found for delivery.
+        </div>
+      );
+    }
+    return (
+      <div className="mb-4 p-4 bg-purple-50/60 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800 rounded-xl">
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-sm font-semibold text-purple-700 dark:text-purple-300">
+            Dessert Report
+          </p>
+          <span className="text-xs text-purple-600 dark:text-purple-400 font-medium">
+            Delivery: {report.deliveryLabel}
+          </span>
+        </div>
+        <div className="space-y-1.5">
+          {report.products.map((p, i) => (
+            <div key={i} className="flex items-center justify-between text-sm">
+              <span className="truncate text-foreground/80">{p.title}</span>
+              <div className="flex items-center gap-3 shrink-0 ml-2">
+                <span className="text-xs text-muted-foreground">{p.orderCount} order{p.orderCount !== 1 ? "s" : ""}</span>
+                <span className="font-bold tabular-nums text-purple-700 dark:text-purple-300 w-8 text-right">{p.quantity}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 pt-2 border-t border-purple-200 dark:border-purple-700 flex items-center justify-between">
+          <span className="text-sm font-semibold text-purple-700 dark:text-purple-300">Total</span>
+          <span className="text-lg font-bold tabular-nums text-purple-700 dark:text-purple-300">{report.totalQuantity}</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (type === "first_pack_batch_numbers") {
+    if (loading) {
+      return (
+        <div className="mb-4 p-3 bg-blue-50/60 dark:bg-blue-950/20 rounded-lg flex items-center gap-2 text-sm text-blue-600">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Loading recipe batch data...
+        </div>
+      );
+    }
+    return <FirstPackBatchNumbers data={data} planId={planId} />;
+  }
+
   if (loading) {
     return (
       <div className="mb-4 p-3 bg-blue-50/60 dark:bg-blue-950/20 rounded-lg flex items-center gap-2 text-sm text-blue-600">

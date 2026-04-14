@@ -12,8 +12,11 @@ import {
   temperatureRecordsTable,
   ovenEventsTable,
   usersTable,
+  fridgeStockBatchesTable,
+  packingBatchRecordsTable,
+  stockEntriesTable,
 } from "@workspace/db";
-import { eq, and, asc, desc, gte, lte, sql, isNull, inArray } from "drizzle-orm";
+import { eq, and, gt, asc, desc, gte, lte, sql, isNull, inArray } from "drizzle-orm";
 import * as z from "zod";
 
 type ChecklistCompletion = typeof checklistCompletionsTable.$inferSelect;
@@ -676,7 +679,154 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
     return;
   }
 
+  if (type === "desserts_report") {
+    // Always use tomorrow's date for delivery tag (dispatch is always for next day)
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tag = tomorrow.toISOString().split("T")[0]; // yyyy-MM-dd
+
+    try {
+      const { getProductsByTag, getOrdersByTag } = await import("../services/shopify");
+      const [dessertTitles, orders] = await Promise.all([
+        getProductsByTag("Desserts"),
+        getOrdersByTag(tag),
+      ]);
+
+      const productTotals = new Map<string, { quantity: number; orderCount: number }>();
+      for (const order of orders) {
+        for (const item of order.line_items) {
+          if (dessertTitles.has(item.title)) {
+            const existing = productTotals.get(item.title) ?? { quantity: 0, orderCount: 0 };
+            existing.quantity += item.quantity;
+            existing.orderCount += 1;
+            productTotals.set(item.title, existing);
+          }
+        }
+      }
+
+      const products = [...productTotals.entries()]
+        .map(([title, stats]) => ({ title, ...stats }))
+        .sort((a, b) => a.title.localeCompare(b.title));
+
+      const totalQuantity = products.reduce((s, p) => s + p.quantity, 0);
+      const deliveryLabel = tomorrow.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short" });
+
+      res.json([{ tag, deliveryLabel, products, totalQuantity, dessertProductCount: dessertTitles.size }]);
+    } catch (err: any) {
+      console.error("[checklist] desserts_report error:", err.message);
+      res.json([]);
+    }
+    return;
+  }
+
+  if (type === "first_pack_batch_numbers") {
+    // Get ALL recipes currently in the production fridge from stock_entries
+    // (the aggregate stock table that always has data, unlike fridge_stock_batches
+    // which only populates from new wrapping going forward)
+    const fridgeStock = await db
+      .select({
+        recipeId: stockEntriesTable.recipeId,
+        recipeName: recipesTable.name,
+        quantity: stockEntriesTable.quantity,
+      })
+      .from(stockEntriesTable)
+      .leftJoin(recipesTable, eq(stockEntriesTable.recipeId, recipesTable.id))
+      .where(and(
+        eq(stockEntriesTable.itemType, "recipe"),
+        eq(stockEntriesTable.location, "production_fridge"),
+        gt(stockEntriesTable.quantity, "0"),
+      ))
+      .orderBy(asc(recipesTable.name));
+
+    // Deduplicate by recipeId (stock_entries may have multiple rows per recipe)
+    const fridgeRecipes = new Map<number, { recipeName: string; qty: number }>();
+    for (const row of fridgeStock) {
+      if (!row.recipeId) continue;
+      const existing = fridgeRecipes.get(row.recipeId);
+      if (!existing || Number(row.quantity) > existing.qty) {
+        fridgeRecipes.set(row.recipeId, {
+          recipeName: row.recipeName ?? `Recipe #${row.recipeId}`,
+          qty: Number(row.quantity),
+        });
+      }
+    }
+
+    // Get oldest batch per recipe from fridge_stock_batches (if available — may be empty for pre-migration stock)
+    const fridgeRecipeIds = [...fridgeRecipes.keys()];
+    const batchRows = fridgeRecipeIds.length > 0
+      ? await db
+          .select({
+            recipeId: fridgeStockBatchesTable.recipeId,
+            batchNumber: fridgeStockBatchesTable.batchNumber,
+            useByDate: fridgeStockBatchesTable.useByDate,
+          })
+          .from(fridgeStockBatchesTable)
+          .where(and(
+            inArray(fridgeStockBatchesTable.recipeId, fridgeRecipeIds),
+            sql`${fridgeStockBatchesTable.quantity} > 0`,
+          ))
+          .orderBy(asc(fridgeStockBatchesTable.useByDate))
+      : [];
+
+    const oldestBatch = new Map<number, { batchNumber: number; useByDate: string }>();
+    for (const b of batchRows) {
+      if (!oldestBatch.has(b.recipeId)) {
+        oldestBatch.set(b.recipeId, { batchNumber: b.batchNumber, useByDate: b.useByDate });
+      }
+    }
+
+    // Get any already-recorded batch numbers for this plan
+    const existingRecords = await db
+      .select()
+      .from(packingBatchRecordsTable)
+      .where(eq(packingBatchRecordsTable.planId, planId));
+    const recordMap = new Map<number, { batchNumber: number; recordedAt: string }>();
+    for (const r of existingRecords) {
+      recordMap.set(r.recipeId, { batchNumber: r.batchNumber, recordedAt: r.recordedAt.toISOString() });
+    }
+
+    const result = fridgeRecipeIds.map(recipeId => {
+      const recipe = fridgeRecipes.get(recipeId)!;
+      const suggested = oldestBatch.get(recipeId);
+      const recorded = recordMap.get(recipeId);
+      return {
+        recipeId,
+        recipeName: recipe.recipeName,
+        fridgeQty: recipe.qty,
+        suggestedBatchNumber: suggested?.batchNumber ?? null,
+        suggestedUseByDate: suggested?.useByDate ?? null,
+        recordedBatchNumber: recorded?.batchNumber ?? null,
+        recordedAt: recorded?.recordedAt ?? null,
+      };
+    });
+
+    res.json(result);
+    return;
+  }
+
   res.status(400).json({ error: `Unknown dynamic data type: ${type}` });
+});
+
+// POST /packing-batch-record — save or update a first-pack batch number for a recipe
+router.post("/packing-batch-record", async (req: Request, res: Response) => {
+  const { planId, recipeId, batchNumber } = req.body as { planId: number; recipeId: number; batchNumber: number };
+  if (!planId || !recipeId || !batchNumber) {
+    res.status(400).json({ error: "planId, recipeId, and batchNumber are required" });
+    return;
+  }
+  const userId = (req.session as any)?.userId ?? null;
+  try {
+    await db.execute(sql`
+      INSERT INTO packing_batch_records (plan_id, recipe_id, batch_number, user_id)
+      VALUES (${planId}, ${recipeId}, ${batchNumber}, ${userId})
+      ON CONFLICT (plan_id, recipe_id)
+      DO UPDATE SET batch_number = ${batchNumber}, user_id = ${userId}, recorded_at = NOW()
+    `);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("packing-batch-record error:", err);
+    res.status(500).json({ error: "Failed to save batch record" });
+  }
 });
 
 export default router;

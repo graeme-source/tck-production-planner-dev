@@ -397,7 +397,21 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
     const status = ingredientDoneStatus(ing);
     return s + status.completedTinCount;
   }, 0);
-  const overallPct = totalTins > 0 ? Math.round((Math.min(completedTins, totalTins) / totalTins) * 100) : 0;
+
+  // Weight-based progress: sum completed tin weights vs total ingredient weight
+  const totalWeight = ingredients.reduce((s, ing) => s + ing.totalQty, 0);
+  const completedWeight = ingredients.reduce((s, ing) => {
+    let w = 0;
+    for (const r of ing.recipes) {
+      for (let tn = 1; tn <= r.tinCount; tn++) {
+        if (isCompleted(ing.ingredientId, r.recipeId, tn, ing.isSubRecipe)) {
+          w += r.qtyPerTin;
+        }
+      }
+    }
+    return s + w;
+  }, 0);
+  const overallPct = totalWeight > 0 ? Math.round((Math.min(completedWeight, totalWeight) / totalWeight) * 100) : 0;
 
   if (loading || isNextPlanLoading) {
     return <div className="flex items-center justify-center py-20 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin mr-2" />Loading…</div>;
@@ -443,7 +457,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
             <ClipboardList className="w-6 h-6 text-emerald-600" />
             <div>
               <h2 className="font-semibold text-lg">Main Prep</h2>
-              <p className="text-sm text-muted-foreground">{completedTins} of {totalTins} items completed</p>
+              <p className="text-sm text-muted-foreground">{completedTins} of {totalTins} tins completed</p>
             </div>
           </div>
           <span className="text-2xl font-bold font-display">{overallPct}%</span>

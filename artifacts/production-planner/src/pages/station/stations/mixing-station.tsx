@@ -273,11 +273,18 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
     );
   };
 
+  // Matches server-side calcTinCount: min 2 tins when batches > 5
+  const calcTins = (batchesTarget: number, maxBpt: number | null) => {
+    if (!maxBpt || batchesTarget <= 0) return 1;
+    const raw = Math.ceil(batchesTarget / maxBpt);
+    return batchesTarget > 5 ? Math.max(2, raw) : raw;
+  };
+
   const getTinInfo = (item: ProductionPlanItem) => {
     const bpt = item.maxBatchesPerTin ?? 1;
     const target = item.batchesTarget ?? 0;
     const mixed = getStationCount(item, "mixing");
-    const tinsTarget = item.mixingTinOverride ?? Math.ceil(target / bpt);
+    const tinsTarget = item.mixingTinOverride ?? calcTins(target, bpt);
     const batchesPerTinEven = tinsTarget > 0 ? Math.ceil(target / tinsTarget) : target;
     const tinsComplete = tinsTarget > 0 ? Math.min(Math.floor(mixed / batchesPerTinEven), tinsTarget) : 0;
     if (mixed >= target && target > 0) {
@@ -410,7 +417,7 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
     const target = activeItem.batchesTarget ?? 0;
     const bpt = activeItem.maxBatchesPerTin ?? 1;
     const mixingCount = getStationCount(activeItem, "mixing");
-    const tinsTarget = Math.ceil(target / bpt);
+    const tinsTarget = activeItem.mixingTinOverride ?? calcTins(target, bpt);
     const batchesPerTinEven = tinsTarget > 0 ? Math.ceil(target / tinsTarget) : target;
     let tinsComplete = tinsTarget > 0 ? Math.min(Math.floor(mixingCount / batchesPerTinEven), tinsTarget) : 0;
     if (mixingCount >= target && target > 0) tinsComplete = tinsTarget;
@@ -726,7 +733,7 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                 const mixingCount = getStationCount(item, "mixing");
                 const target = item.batchesTarget ?? 0;
                 const bpt = item.maxBatchesPerTin ?? 1;
-                const tinsTarget = Math.ceil(target / bpt);
+                const tinsTarget = item.mixingTinOverride ?? calcTins(target, bpt);
                 const batchesPerTinEven = tinsTarget > 0 ? Math.ceil(target / tinsTarget) : target;
                 let tinsComplete = tinsTarget > 0 ? Math.min(Math.floor(mixingCount / batchesPerTinEven), tinsTarget) : 0;
                 if (mixingCount >= target && target > 0) tinsComplete = tinsTarget;

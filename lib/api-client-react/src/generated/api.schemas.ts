@@ -328,6 +328,7 @@ export interface ProductionPlanItem {
   baseType?: string | null;
   baseWeightGrams?: number | null;
   mixingTinOverride?: number | null;
+  stationCompletions?: Record<string, number>;
 }
 
 export type ProductionPlanStatus =

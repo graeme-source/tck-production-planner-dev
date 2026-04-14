@@ -159,6 +159,19 @@ export const ovenEventsTable = pgTable("oven_events", {
   userName: text("user_name"),
 });
 
+export const packingBatchRecordsTable = pgTable("packing_batch_records", {
+  id: serial("id").primaryKey(),
+  planId: integer("plan_id").notNull().references(() => productionPlansTable.id, { onDelete: "cascade" }),
+  recipeId: integer("recipe_id").notNull().references(() => recipesTable.id, { onDelete: "cascade" }),
+  batchNumber: integer("batch_number").notNull(),
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  recordedAt: timestamp("recorded_at").notNull().defaultNow(),
+}, (table) => [
+  unique("uq_packing_batch_record").on(table.planId, table.recipeId),
+]);
+
+export type PackingBatchRecord = typeof packingBatchRecordsTable.$inferSelect;
+
 export const prepTinOverridesTable = pgTable("prep_tin_overrides", {
   id: serial("id").primaryKey(),
   planId: integer("plan_id").notNull().references(() => productionPlansTable.id, { onDelete: "cascade" }),
