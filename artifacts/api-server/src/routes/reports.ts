@@ -379,12 +379,10 @@ router.get("/production-kpis", async (req, res) => {
     for (const pi of planItemRows) {
       const target = pi.batchesTarget ?? 0;
       const built = buildingCompletionsByItem.get(pi.id) ?? 0;
-      const capped = Math.min(built, target); // Can't exceed target
-      const extras = pi.extraPacksBuilt ?? 0;
-      const ppb = Math.max(1, Math.floor((Number(pi.portionsPerBatch) || 10) / 2));
-      totalBatches += capped + (extras > 0 ? extras / ppb : 0);
+      // Combined building_1 + building_2 for this recipe, capped at target
+      totalBatches += Math.min(built, target);
     }
-    totalBatches = Math.round(totalBatches * 10) / 10;
+    // Note: built is already combined (building_1 + building_2) from buildingCompletionsByItem
   }
 
   // overallBph calculated after productionActiveMinutes is computed below

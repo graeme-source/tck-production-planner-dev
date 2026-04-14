@@ -1368,9 +1368,15 @@ router.post("/:id/batch-completions/bulk", async (req, res) => {
   const target = planItem.batchesTarget ?? 0;
 
   if (stationType && target > 0) {
+    // For building stations, check COMBINED count across both tables (they share the target).
+    // For other stations, check per-station count.
+    const isBuildingType = stationType === "building_1" || stationType === "building_2";
     const stationCountResult = await db.execute(sql`
       SELECT COUNT(*)::int as cnt FROM batch_completions
-      WHERE plan_item_id = ${Number(planItemId)} AND station_type = ${stationType}
+      WHERE plan_item_id = ${Number(planItemId)}
+        AND ${isBuildingType
+          ? sql`station_type IN ('building_1', 'building_2')`
+          : sql`station_type = ${stationType}`}
     `);
     const stationCount = (stationCountResult.rows[0] as { cnt: number })?.cnt ?? 0;
     if (stationCount + n > target) {
