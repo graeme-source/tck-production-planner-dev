@@ -37,6 +37,7 @@ export const productionPlanItemsTable = pgTable("production_plan_items", {
   shortCount: integer("short_count").notNull().default(0),
   eightPackBagCount: integer("eight_pack_bag_count").notNull().default(0),
   fridgeEightPackQty: integer("fridge_eight_pack_qty").notNull().default(0),
+  mixingTinOverride: integer("mixing_tin_override"),
 });
 
 export const batchCompletionsTable = pgTable("batch_completions", {
@@ -145,6 +146,19 @@ export const ovenEventsTable = pgTable("oven_events", {
   userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
   userName: text("user_name"),
 });
+
+export const prepTinOverridesTable = pgTable("prep_tin_overrides", {
+  id: serial("id").primaryKey(),
+  planId: integer("plan_id").notNull().references(() => productionPlansTable.id, { onDelete: "cascade" }),
+  recipeId: integer("recipe_id").notNull().references(() => recipesTable.id, { onDelete: "cascade" }),
+  ingredientId: integer("ingredient_id").references(() => ingredientsTable.id, { onDelete: "cascade" }),
+  tinCount: integer("tin_count").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => [
+  unique("uq_prep_tin_override").on(table.planId, table.recipeId, table.ingredientId),
+]);
+
+export type PrepTinOverride = typeof prepTinOverridesTable.$inferSelect;
 
 export const insertPrepCompletionSchema = createInsertSchema(prepCompletionsTable).omit({ id: true });
 export const insertDailyStockCheckSchema = createInsertSchema(dailyStockChecksTable).omit({ id: true, checkedAt: true });

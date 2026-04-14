@@ -2,7 +2,7 @@ import React from "react";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import {
-  ClipboardList, Loader2, CheckCircle2, Package, Plus, Minus, Check, Snowflake, Salad,
+  ClipboardList, Loader2, CheckCircle2, Package, Plus, Minus, Check, Snowflake, Salad, Pencil, RotateCcw,
 } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -36,6 +36,8 @@ export interface MainPrepIngredient {
     maxBatchesPerTin: number | null;
     tinCount: number;
     qtyPerTin: number;
+    isOverridden?: boolean;
+    isFillingMix?: boolean;
   }>;
 }
 
@@ -118,6 +120,31 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
   const activeIngIdRef = useRef<number | null>(null);
   const stockCheckRef = useRef<HTMLDivElement>(null);
   const prevNeedsStockCheckRef = useRef(false);
+
+  // Tin count override state
+  const [editingTinKey, setEditingTinKey] = useState<string | null>(null); // "ingredientId_recipeId"
+  const [editTinValue, setEditTinValue] = useState("");
+  const [savingTinOverride, setSavingTinOverride] = useState(false);
+
+  const setTinOverride = async (recipeId: number, ingredientId: number, isFillingMix: boolean, tinCount: number | null) => {
+    setSavingTinOverride(true);
+    try {
+      const res = await fetch(`/api/production-plans/${targetPlanId}/prep-tin-override`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recipeId, ingredientId, isFillingMix, tinCount }),
+      });
+      if (!res.ok) throw new Error("Failed to set override");
+      setEditingTinKey(null);
+      setEditTinValue("");
+      refetch();
+    } catch (err) {
+      toast({ title: "Error", description: "Failed to update tin count", variant: "destructive" });
+    } finally {
+      setSavingTinOverride(false);
+    }
+  };
 
   const checkDate = nextPlan?.planDate ?? plan.planDate;
 
@@ -725,6 +752,8 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                         const rTins = Array.from({ length: recipe.tinCount }, (_, i) => i + 1);
                         const rDone = rTins.filter(tn => isCompleted(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe)).length;
                         const allRecipeDone = rTins.length > 0 && rDone >= rTins.length;
+                        const tinEditKey = `${ing.ingredientId}_${recipe.recipeId}`;
+                        const isEditingTins = editingTinKey === tinEditKey;
                         return (
                           <div key={recipe.recipeId} className={cn(ri > 0 && "mt-4")}>
                             <div className={cn(
@@ -746,14 +775,72 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                                 <span className="text-sm text-muted-foreground tabular-nums">
                                   {fmtQty(recipe.qtyForRecipe, ing.unit)}
                                 </span>
-                                <span className={cn(
-                                  "text-sm font-semibold tabular-nums",
-                                  allRecipeDone ? "text-emerald-600" : "text-muted-foreground"
-                                )}>
-                                  {rDone}/{rTins.length}
-                                </span>
+                                {isEditingTins ? (
+                                  <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      step="1"
+                                      autoFocus
+                                      className="w-12 px-1.5 py-0.5 text-sm text-center border border-primary rounded-md bg-background tabular-nums"
+                                      value={editTinValue}
+                                      onChange={e => setEditTinValue(e.target.value)}
+                                      onKeyDown={e => {
+                                        if (e.key === "Enter") {
+                                          const v = parseInt(editTinValue);
+                                          if (v >= 1) setTinOverride(recipe.recipeId, ing.ingredientId, !!recipe.isFillingMix, v);
+                                        }
+                                        if (e.key === "Escape") { setEditingTinKey(null); setEditTinValue(""); }
+                                      }}
+                                    />
+                                    <button
+                                      disabled={savingTinOverride}
+                                      onClick={() => {
+                                        const v = parseInt(editTinValue);
+                                        if (v >= 1) setTinOverride(recipe.recipeId, ing.ingredientId, !!recipe.isFillingMix, v);
+                                      }}
+                                      className="p-1 text-primary hover:bg-primary/10 rounded"
+                                    >
+                                      {savingTinOverride ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                                    </button>
+                                    <button
+                                      onClick={() => { setEditingTinKey(null); setEditTinValue(""); }}
+                                      className="p-1 text-muted-foreground hover:bg-secondary rounded"
+                                    >
+                                      ×
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-1">
+                                    <span className={cn(
+                                      "text-sm font-semibold tabular-nums",
+                                      recipe.isOverridden ? "text-blue-600" : (allRecipeDone ? "text-emerald-600" : "text-muted-foreground")
+                                    )}>
+                                      {rDone}/{rTins.length}
+                                    </span>
+                                    {recipe.isOverridden && (
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); setTinOverride(recipe.recipeId, ing.ingredientId, !!recipe.isFillingMix, null); }}
+                                        className="p-0.5 text-blue-500 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded"
+                                        title="Reset to auto"
+                                      >
+                                        <RotateCcw className="w-3 h-3" />
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); setEditingTinKey(tinEditKey); setEditTinValue(String(recipe.tinCount)); }}
+                                      className="p-0.5 text-muted-foreground hover:text-foreground hover:bg-secondary rounded"
+                                      title="Edit tin count"
+                                    >
+                                      <Pencil className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                )}
                               </div>
                             </div>
+                            {recipe.isFillingMix && recipe.isOverridden && (
+                              <p className="text-xs text-blue-600 dark:text-blue-400 px-3 -mt-1 mb-2">Mixing tin count overridden for this recipe</p>
+                            )}
                             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
                               {rTins.map(tn => {
                                 const done = isCompleted(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe);

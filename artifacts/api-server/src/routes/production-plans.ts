@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, fridgeStockBatchesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable } from "@workspace/db";
+import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, prepTinOverridesTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, fridgeStockBatchesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable } from "@workspace/db";
 import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as drizzleSum, ne, isNotNull, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
@@ -1247,6 +1247,20 @@ router.post("/:id/batch-completions", async (req, res) => {
       return;
     }
 
+    // Combined building count check: building_1 + building_2 must not exceed target
+    if (stationType === "building_1" || stationType === "building_2") {
+      const combinedResult = await db.execute(sql`
+        SELECT COUNT(*)::int as cnt FROM batch_completions
+        WHERE plan_item_id = ${Number(planItemId)}
+          AND station_type IN ('building_1', 'building_2')
+      `);
+      const combinedCount = (combinedResult.rows[0] as { cnt: number })?.cnt ?? 0;
+      if (combinedCount >= target) {
+        res.status(409).json({ error: "Batch target already met" });
+        return;
+      }
+    }
+
     // Cascade check: previous station(s) must have enough completions
     const prevStations = getPreviousStations(stationType);
     if (prevStations.length > 0) {
@@ -1270,11 +1284,18 @@ router.post("/:id/batch-completions", async (req, res) => {
   const startedAtDate = startedAt ? new Date(startedAt) : null;
   const isWrapping = stationType === "wrapping";
 
+  const isBuilding = stationType === "building_1" || stationType === "building_2";
+
   const result = await db.execute(sql`
     WITH station_check AS (
       SELECT COUNT(*)::int as cnt FROM batch_completions
       WHERE plan_item_id = ${Number(planItemId)}
         AND station_type = ${stationType ?? ''}
+    ),
+    combined_check AS (
+      SELECT COUNT(*)::int as cnt FROM batch_completions
+      WHERE plan_item_id = ${Number(planItemId)}
+        AND station_type IN ('building_1', 'building_2')
     ),
     incremented AS (
       UPDATE production_plan_items
@@ -1283,6 +1304,7 @@ router.post("/:id/batch-completions", async (req, res) => {
         status = 'in-progress'
       WHERE id = ${Number(planItemId)}
         AND (${target} = 0 OR (SELECT cnt FROM station_check) < ${target})
+        AND (NOT ${isBuilding}::boolean OR ${target} = 0 OR (SELECT cnt FROM combined_check) < ${target})
       RETURNING id
     )
     INSERT INTO batch_completions (plan_item_id, station_type, user_id, started_at, completed_at)
@@ -2268,13 +2290,14 @@ router.get("/:id/filling-mix", async (req, res) => {
     SELECT ppi.id, ppi.recipe_id as "recipeId", r.name as "recipeName",
            ppi.batches_target as "batchesTarget", r.portions_per_batch as "portionsPerBatch",
            ppi.max_batches_per_tin as "maxBatchesPerTin", ppi.tin_size as "tinSize",
-           ppi.order_position as "orderPosition"
+           ppi.order_position as "orderPosition",
+           ppi.mixing_tin_override as "mixingTinOverride"
     FROM production_plan_items ppi
     LEFT JOIN recipes r ON ppi.recipe_id = r.id
     WHERE ppi.plan_id = ${planId}
     ORDER BY ppi.order_position
   `);
-  const planItems = planItemsResult.rows as Array<{ id: number; recipeId: number; recipeName: string | null; batchesTarget: number | null; portionsPerBatch: number | null; maxBatchesPerTin: number | null; tinSize: string | null; orderPosition: number }>;
+  const planItems = planItemsResult.rows as Array<{ id: number; recipeId: number; recipeName: string | null; batchesTarget: number | null; portionsPerBatch: number | null; maxBatchesPerTin: number | null; tinSize: string | null; orderPosition: number; mixingTinOverride: number | null }>;
 
   if (planItems.length === 0) {
     res.json({ items: [] });
@@ -2315,7 +2338,8 @@ router.get("/:id/filling-mix", async (req, res) => {
   const result = planItems.map(item => {
     const bpt = item.maxBatchesPerTin ?? 1;
     const target = item.batchesTarget ?? 0;
-    const tinsTarget = Math.ceil(target / bpt);
+    const tinsTarget = item.mixingTinOverride ?? Math.ceil(target / bpt);
+    const isOverridden = item.mixingTinOverride != null;
     const batchesPerTin = tinsTarget > 0 ? Math.ceil(target / tinsTarget) : target;
     const servingsPerTin = batchesPerTin * (item.portionsPerBatch ?? 1);
 
@@ -2386,6 +2410,7 @@ router.get("/:id/filling-mix", async (req, res) => {
       recipeName: item.recipeName,
       tinSize: item.tinSize,
       tinsTarget,
+      isOverridden,
       batchesPerTin,
       servingsPerTin,
       fillingIngredients: ingredients,
@@ -3941,6 +3966,7 @@ router.get("/:id/main-prep", async (req, res) => {
       portionsPerBatch: recipesTable.portionsPerBatch,
       tinSize: productionPlanItemsTable.tinSize,
       maxBatchesPerTin: productionPlanItemsTable.maxBatchesPerTin,
+      mixingTinOverride: productionPlanItemsTable.mixingTinOverride,
     })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
@@ -3949,6 +3975,19 @@ router.get("/:id/main-prep", async (req, res) => {
   if (planItems.length === 0) {
     res.json({ ingredients: [], completions: [] });
     return;
+  }
+
+  // Load prep tin overrides for this plan
+  const tinOverrideRows = await db
+    .select()
+    .from(prepTinOverridesTable)
+    .where(eq(prepTinOverridesTable.planId, planId));
+  // Key: "recipeId_ingredientId" → tinCount
+  const prepTinOverrideMap = new Map<string, number>();
+  for (const ov of tinOverrideRows) {
+    if (ov.ingredientId != null) {
+      prepTinOverrideMap.set(`${ov.recipeId}_${ov.ingredientId}`, ov.tinCount);
+    }
   }
 
   const BASES_CATEGORIES = ["base", "sauce"];
@@ -3974,6 +4013,8 @@ router.get("/:id/main-prep", async (req, res) => {
       maxBatchesPerTin: number | null;
       tinCount: number;
       qtyPerTin: number;
+      isOverridden: boolean;
+      isFillingMix: boolean;
     }>;
   }>();
 
@@ -3991,6 +4032,8 @@ router.get("/:id/main-prep", async (req, res) => {
       maxBatchesPerTin: number | null;
       tinCount: number;
       qtyPerTin: number;
+      isOverridden: boolean;
+      isFillingMix: boolean;
     }>;
   }>();
 
@@ -4024,7 +4067,7 @@ router.get("/:id/main-prep", async (req, res) => {
         isNull(recipeIngredientsTable.marinadeForIngredientId),
       ));
 
-    const tinCount = calcTinCount(batchesTarget, planItem.maxBatchesPerTin ?? null) ?? 1;
+    const defaultTinCount = calcTinCount(batchesTarget, planItem.maxBatchesPerTin ?? null) ?? 1;
 
     for (const row of directIngredients) {
       if (row.isTopping) continue;
@@ -4043,6 +4086,24 @@ router.get("/:id/main-prep", async (req, res) => {
         // UNLESS this recipe row is flagged as include_in_filling_mix, in which case it
         // needs to be portioned as part of the filling and must appear here.
         if (isMozzType && !row.includeInFillingMix) continue;
+      }
+
+      // Determine effective tin count with overrides
+      const isFillingMix = row.includeInFillingMix ?? false;
+      let tinCount = defaultTinCount;
+      let isOverridden = false;
+      if (isFillingMix && planItem.mixingTinOverride != null) {
+        // Filling mix ingredients use recipe-level mixing override
+        tinCount = planItem.mixingTinOverride;
+        isOverridden = true;
+      } else if (!isFillingMix) {
+        // Non-filling ingredients check per-ingredient override
+        const overrideKey = `${planItem.recipeId}_${row.ingredientId}`;
+        const override = prepTinOverrideMap.get(overrideKey);
+        if (override != null) {
+          tinCount = override;
+          isOverridden = true;
+        }
       }
 
       const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
@@ -4069,6 +4130,8 @@ router.get("/:id/main-prep", async (req, res) => {
           maxBatchesPerTin: planItem.maxBatchesPerTin ?? null,
           tinCount,
           qtyPerTin,
+          isOverridden,
+          isFillingMix,
         });
       } else {
         const isBottle = row.isBottle ?? false;
@@ -4093,6 +4156,8 @@ router.get("/:id/main-prep", async (req, res) => {
             maxBatchesPerTin: planItem.maxBatchesPerTin ?? null,
             tinCount,
             qtyPerTin,
+            isOverridden,
+            isFillingMix,
           }],
         });
       }
@@ -4124,13 +4189,22 @@ router.get("/:id/main-prep", async (req, res) => {
         if (sr.marinadeForIngredientId != null) continue;
         if (sr.includeInFillingMix && !sr.showInPrep) continue;
 
+        // Determine effective tin count with overrides for sub-recipes
+        const srIsFillingMix = sr.includeInFillingMix ?? false;
+        let srTinCount = defaultTinCount;
+        let srIsOverridden = false;
+        if (srIsFillingMix && planItem.mixingTinOverride != null) {
+          srTinCount = planItem.mixingTinOverride;
+          srIsOverridden = true;
+        }
+
         const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
         const qtyPerPortion = Number(sr.quantity) || 0;
         const totalQty = qtyPerPortion * portionsPerBatch * batchesTarget;
         const unit = sr.yieldUnit ?? "kg";
         const roundedQty = roundByUnit(totalQty, unit);
         if (roundedQty <= 0) continue;
-        const qtyPerTin = tinCount > 0 ? roundByUnit(roundedQty / tinCount, unit) : roundedQty;
+        const qtyPerTin = srTinCount > 0 ? roundByUnit(roundedQty / srTinCount, unit) : roundedQty;
 
         const mapKey = `sr_${sr.subRecipeId}`;
         const existing = subRecipeMap.get(mapKey);
@@ -4143,8 +4217,10 @@ router.get("/:id/main-prep", async (req, res) => {
             qtyForRecipe: roundedQty,
             tinSize: planItem.tinSize ?? null,
             maxBatchesPerTin: planItem.maxBatchesPerTin ?? null,
-            tinCount,
+            tinCount: srTinCount,
             qtyPerTin,
+            isOverridden: srIsOverridden,
+            isFillingMix: srIsFillingMix,
           });
         } else {
           subRecipeMap.set(mapKey, {
@@ -4159,8 +4235,10 @@ router.get("/:id/main-prep", async (req, res) => {
               qtyForRecipe: roundedQty,
               tinSize: planItem.tinSize ?? null,
               maxBatchesPerTin: planItem.maxBatchesPerTin ?? null,
-              tinCount,
+              tinCount: srTinCount,
               qtyPerTin,
+              isOverridden: srIsOverridden,
+              isFillingMix: srIsFillingMix,
             }],
           });
         }
@@ -4360,6 +4438,65 @@ router.get("/:id/main-prep", async (req, res) => {
   );
 
   res.json({ ingredients: allItems, completions, linkedItems: linkedItemsMap });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PUT /:id/prep-tin-override — set or clear a tin count override for prep
+// ──────────────────────────────────────────────────────────────────────────────
+router.put("/:id/prep-tin-override", async (req, res) => {
+  const planId = Number(req.params.id);
+  const { recipeId, ingredientId, isFillingMix, tinCount } = req.body as {
+    recipeId: number;
+    ingredientId: number | null;
+    isFillingMix: boolean;
+    tinCount: number | null;
+  };
+
+  if (!recipeId) { res.status(400).json({ error: "recipeId is required" }); return; }
+  if (tinCount !== null && (typeof tinCount !== "number" || tinCount < 1 || !Number.isInteger(tinCount))) {
+    res.status(400).json({ error: "tinCount must be a positive integer or null" });
+    return;
+  }
+
+  try {
+    if (isFillingMix) {
+      // Filling mix override → set mixing_tin_override on the plan item
+      const [item] = await db
+        .update(productionPlanItemsTable)
+        .set({ mixingTinOverride: tinCount })
+        .where(and(
+          eq(productionPlanItemsTable.planId, planId),
+          eq(productionPlanItemsTable.recipeId, recipeId),
+        ))
+        .returning({ id: productionPlanItemsTable.id, mixingTinOverride: productionPlanItemsTable.mixingTinOverride });
+
+      if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
+      res.json({ ok: true, tinCount: item.mixingTinOverride });
+    } else {
+      // Non-filling override → upsert into prep_tin_overrides
+      if (!ingredientId) { res.status(400).json({ error: "ingredientId is required for non-filling overrides" }); return; }
+
+      if (tinCount === null) {
+        await db.delete(prepTinOverridesTable).where(and(
+          eq(prepTinOverridesTable.planId, planId),
+          eq(prepTinOverridesTable.recipeId, recipeId),
+          eq(prepTinOverridesTable.ingredientId, ingredientId),
+        ));
+        res.json({ ok: true, tinCount: null });
+      } else {
+        await db.execute(sql`
+          INSERT INTO prep_tin_overrides (plan_id, recipe_id, ingredient_id, tin_count)
+          VALUES (${planId}, ${recipeId}, ${ingredientId}, ${tinCount})
+          ON CONFLICT (plan_id, recipe_id, ingredient_id)
+          DO UPDATE SET tin_count = ${tinCount}
+        `);
+        res.json({ ok: true, tinCount });
+      }
+    }
+  } catch (err) {
+    console.error("prep-tin-override error:", err);
+    res.status(500).json({ error: "Failed to set tin override" });
+  }
 });
 
 router.post("/:id/prep-completions", async (req, res) => {

@@ -327,6 +327,7 @@ export interface ProductionPlanItem {
   fillWeightGrams?: number | null;
   baseType?: string | null;
   baseWeightGrams?: number | null;
+  mixingTinOverride?: number | null;
 }
 
 export type ProductionPlanStatus =

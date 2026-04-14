@@ -357,6 +357,8 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
       },
       onError: (err: any) => {
         setPendingTap(false);
+        // Refetch plan so builder sees up-to-date counts (e.g. if other builder completed the batch first)
+        queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
         const msg = err?.response?.data?.error ?? err?.message ?? "Failed to record batch";
         toast({ title: "Batch not recorded", description: msg, variant: "destructive" });
       },
@@ -484,31 +486,14 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   }
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
-  const otherStation = stationType === "building_1" ? "building_2" : "building_1";
+  // Find the first recipe that still has batches to build.
+  // Both builders can always take the next available batch — the server-side
+  // combined count check prevents over-recording if both tap simultaneously.
   const currentItem = items.find(it => {
     const combined = getCombinedBuildCount(it);
     const effectiveTarget = getEffectiveTarget(it);
-    if (combined >= effectiveTarget) return false;
-    const remainingForItem = effectiveTarget - combined;
-    if (remainingForItem === 1) {
-      const myCountForItem = getStationCount(it, stationType);
-      const otherCountForItem = getStationCount(it, otherStation);
-      if (otherCountForItem > myCountForItem) return false;
-    }
-    return true;
+    return combined < effectiveTarget;
   });
-
-  const waitingOnOtherItem = !currentItem
-    ? items.find(it => {
-        const combined = getCombinedBuildCount(it);
-        const effectiveTarget = getEffectiveTarget(it);
-        if (combined >= effectiveTarget) return false;
-        if (effectiveTarget - combined !== 1) return false;
-        const myCountForItem = getStationCount(it, stationType);
-        const otherCountForItem = getStationCount(it, otherStation);
-        return otherCountForItem > myCountForItem;
-      })
-    : undefined;
 
   const buildingCount = currentItem ? getCombinedBuildCount(currentItem) : 0;
   const effectiveBatches = currentItem ? getEffectiveTarget(currentItem) : 0;
@@ -581,7 +566,12 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   useEffect(() => {
     const curId = currentItem?.id ?? null;
     if (prevCurrentItemId !== null && curId !== prevCurrentItemId) {
-      setExtraPromptItemId(prevCurrentItemId);
+      // Only show extra packs prompt if the previous recipe is actually done
+      // (not just skipped by last-batch coordination logic)
+      const prevItem = items.find(it => it.id === prevCurrentItemId);
+      if (prevItem && getCombinedBuildCount(prevItem) >= getEffectiveTarget(prevItem)) {
+        setExtraPromptItemId(prevCurrentItemId);
+      }
       setExpandedItemId(curId);
       userOverrideRef.current = false;
     }
@@ -776,19 +766,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
         </DialogContent>
       </Dialog>
 
-      {/* Waiting on other builder */}
-      {waitingOnOtherItem && !currentItem && (
-        <div className="bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-300 dark:border-amber-700 rounded-xl p-5 text-center">
-          <AlertCircle className="w-10 h-10 text-amber-500 mx-auto mb-2" />
-          <h3 className="font-bold text-lg">Waiting on Table {lineNumber === 1 ? 2 : 1}</h3>
-          <p className="text-sm text-muted-foreground mt-1">
-            Finishing the last batch of{" "}
-            <span className="font-semibold text-foreground">
-              {waitingOnOtherItem.recipeName ?? `Recipe #${waitingOnOtherItem.recipeId}`}
-            </span>
-          </p>
-        </div>
-      )}
+      {/* All recipes complete */}
 
       {/* Unified accordion queue */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
@@ -979,8 +957,8 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                             </p>
                             <p className="text-lg font-light text-muted-foreground">/ {effTarget}</p>
                             {item.maxBatchesPerTin && effTarget > 0 && (
-                              <p className="text-xs text-amber-600 dark:text-amber-400 font-semibold mt-0.5">
-                                {(() => { const raw = Math.ceil(effTarget / item.maxBatchesPerTin); return effTarget > 5 ? Math.max(2, raw) : raw; })()} tins
+                              <p className={cn("text-xs font-semibold mt-0.5", item.mixingTinOverride ? "text-blue-600 dark:text-blue-400" : "text-amber-600 dark:text-amber-400")}>
+                                {item.mixingTinOverride ?? (() => { const raw = Math.ceil(effTarget / item.maxBatchesPerTin); return effTarget > 5 ? Math.max(2, raw) : raw; })()} tins
                               </p>
                             )}
                             {itemMyCount > 0 && (

@@ -22,6 +22,7 @@ import {
   Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef,
   ArrowRight, GripVertical, AlertTriangle, AlertCircle, BookmarkCheck, ShoppingCart,
   FlaskConical, Printer, X, ChevronDown, ChevronUp, PoundSterling, ShieldCheck, RotateCcw,
+  Menu, MoreHorizontal,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -2328,6 +2329,144 @@ interface ValidationResult {
   valid: boolean;
 }
 
+// ── Responsive Plan Detail Header ──────────────────────────────────────────
+function PlanDetailHeader({
+  plan, statusConfig, StatusIcon, canEditPlan, canManageOrders,
+  onBack, onEditDraft, onStatusChange, onShowManifest, onViewOrders,
+  onRegenerateOrders, regeneratingOrders, onValidate, validationLoading,
+  onResetPlan, onDeletePlan,
+}: {
+  plan: ProductionPlanDetail;
+  statusConfig: { label: string; color: string };
+  StatusIcon: React.ComponentType<{ className?: string }>;
+  canEditPlan: boolean;
+  canManageOrders: boolean;
+  onBack: () => void;
+  onEditDraft: () => void;
+  onStatusChange: (status: string) => void;
+  onShowManifest: () => void;
+  onViewOrders: () => void;
+  onRegenerateOrders: () => void;
+  regeneratingOrders: boolean;
+  onValidate: () => void;
+  validationLoading: boolean;
+  onResetPlan: () => void;
+  onDeletePlan: () => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const actionBtnClass = "w-full px-3 py-2.5 text-sm rounded-lg font-medium flex items-center gap-2 transition-colors border border-border bg-card text-foreground hover:bg-secondary/80";
+  const dangerBtnClass = "w-full px-3 py-2.5 text-sm rounded-lg font-medium flex items-center gap-2 transition-colors border border-red-200 dark:border-red-900/40 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20";
+
+  // Build action list
+  const actions: Array<{ key: string; label: string; icon: React.ReactNode; onClick: () => void; className: string; disabled?: boolean }> = [];
+
+  if (plan.status === "draft" && canEditPlan) {
+    actions.push({ key: "edit", label: "Edit Draft", icon: <ClipboardList className="w-4 h-4" />, onClick: onEditDraft, className: actionBtnClass });
+    actions.push({ key: "activate", label: "Activate & Lock", icon: <CheckCircle2 className="w-4 h-4" />, onClick: () => onStatusChange("active"), className: actionBtnClass });
+  }
+  if (plan.status === "active") {
+    actions.push({ key: "complete", label: "Mark Complete", icon: <CheckCircle2 className="w-4 h-4" />, onClick: () => onStatusChange("complete"), className: actionBtnClass });
+  }
+  actions.push({ key: "materials", label: "Raw Materials", icon: <FlaskConical className="w-4 h-4" />, onClick: onShowManifest, className: actionBtnClass });
+  actions.push({ key: "orders", label: "View Orders", icon: <ClipboardList className="w-4 h-4" />, onClick: onViewOrders, className: actionBtnClass });
+  if (canManageOrders) {
+    actions.push({ key: "regen", label: "Regenerate Orders", icon: regeneratingOrders ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />, onClick: onRegenerateOrders, className: actionBtnClass, disabled: regeneratingOrders });
+  }
+  actions.push({ key: "validate", label: "Validate", icon: validationLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />, onClick: onValidate, className: actionBtnClass, disabled: validationLoading });
+  if (plan.status !== "complete") {
+    actions.push({ key: "reset", label: "Reset Plan", icon: <RotateCcw className="w-4 h-4" />, onClick: onResetPlan, className: dangerBtnClass });
+  }
+  if (plan.status !== "complete" && canEditPlan) {
+    actions.push({ key: "delete", label: "Delete Plan", icon: <Trash2 className="w-4 h-4" />, onClick: onDeletePlan, className: dangerBtnClass });
+  }
+
+  return (
+    <div>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <button
+            onClick={onBack}
+            className="text-sm text-muted-foreground hover:text-foreground mb-2 flex items-center gap-1 transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            Back to plans
+          </button>
+          <h1 className="font-display text-2xl font-bold">{plan.name}</h1>
+          <div className="flex items-center gap-3 mt-1 flex-wrap">
+            <span className="text-muted-foreground text-sm flex items-center gap-1">
+              <CalendarDays className="w-4 h-4" />
+              {format(parseISO(plan.planDate), "EEEE d MMMM yyyy")}
+            </span>
+            <span className="text-muted-foreground text-sm font-mono">
+              Batch #{plan.batchNumber ?? julianBatchNumber(plan.planDate)}
+            </span>
+            <span className={cn("px-2.5 py-1 rounded-full text-xs font-medium inline-flex items-center gap-1", statusConfig.color)}>
+              <StatusIcon className="w-3.5 h-3.5" />
+              {statusConfig.label}
+            </span>
+          </div>
+        </div>
+
+        {/* Desktop: inline buttons */}
+        <div className="hidden lg:flex items-center gap-1.5 flex-wrap justify-end shrink-0">
+          {actions.map(a => (
+            <button
+              key={a.key}
+              onClick={() => { a.onClick(); }}
+              disabled={a.disabled}
+              className={cn(
+                "px-3 py-1.5 text-xs rounded-lg font-medium flex items-center gap-1.5 transition-colors border whitespace-nowrap disabled:opacity-50",
+                a.key === "delete" || a.key === "reset"
+                  ? "border-red-200 dark:border-red-900/40 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
+                  : "border-border bg-secondary text-secondary-foreground hover:bg-secondary/80"
+              )}
+            >
+              {a.icon}
+              {a.key !== "delete" && a.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Mobile/Tablet: burger menu */}
+        <div className="lg:hidden relative shrink-0">
+          <button
+            onClick={() => setMenuOpen(o => !o)}
+            className="p-2.5 rounded-xl border border-border bg-card hover:bg-secondary/80 transition-colors"
+            aria-label="Plan actions"
+          >
+            {menuOpen ? <X className="w-5 h-5" /> : <MoreHorizontal className="w-5 h-5" />}
+          </button>
+
+          {menuOpen && (
+            <>
+              {/* Backdrop */}
+              <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+              {/* Dropdown */}
+              <div className="absolute right-0 top-full mt-2 z-50 w-56 rounded-xl border border-border bg-card shadow-xl p-1.5 space-y-0.5">
+                {actions.map(a => (
+                  <button
+                    key={a.key}
+                    onClick={() => { setMenuOpen(false); a.onClick(); }}
+                    disabled={a.disabled}
+                    className={cn(
+                      a.key === "delete" || a.key === "reset" ? dangerBtnClass : actionBtnClass,
+                      "disabled:opacity-50"
+                    )}
+                  >
+                    {a.icon}
+                    {a.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface PlanDetailProps {
   planId: number;
   onBack: () => void;
@@ -2482,109 +2621,24 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <button
-            onClick={onBack}
-            className="text-sm text-muted-foreground hover:text-foreground mb-2 flex items-center gap-1 transition-colors"
-          >
-            <ChevronLeft className="w-4 h-4" />
-            Back to plans
-          </button>
-          <h1 className="font-display text-2xl font-bold">{plan.name}</h1>
-          <div className="flex items-center gap-3 mt-1">
-            <span className="text-muted-foreground text-sm flex items-center gap-1">
-              <CalendarDays className="w-4 h-4" />
-              {format(parseISO(plan.planDate), "EEEE d MMMM yyyy")}
-            </span>
-            <span className="text-muted-foreground text-sm font-mono">
-              Batch #{plan.batchNumber ?? julianBatchNumber(plan.planDate)}
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span className={cn("px-2.5 py-1 rounded-full text-xs font-medium flex items-center gap-1", statusConfig.color)}>
-            <StatusIcon className="w-3.5 h-3.5" />
-            {statusConfig.label}
-          </span>
-
-          {plan.status === "draft" && canEditPlan && (
-            <>
-              <button
-                onClick={() => setIsEditingDraft(true)}
-                className="px-3 py-1.5 text-xs border border-border bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-colors font-medium flex items-center gap-1"
-              >
-                <ClipboardList className="w-3.5 h-3.5" />
-                Edit Draft
-              </button>
-              <button
-                onClick={() => handleStatusChange("active")}
-                className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
-              >
-                Activate & Lock
-              </button>
-            </>
-          )}
-          {plan.status === "active" && (
-            <button
-              onClick={() => handleStatusChange("complete")}
-              className="px-3 py-1.5 text-xs bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-medium"
-            >
-              Mark Complete
-            </button>
-          )}
-          <button
-            onClick={() => setShowManifest(true)}
-            className="px-3 py-1.5 text-xs border border-border bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-colors font-medium flex items-center gap-1"
-          >
-            <FlaskConical className="w-3.5 h-3.5" />
-            Raw Materials
-          </button>
-          <button
-            onClick={() => navigate(`/orders?planId=${planId}`)}
-            className="px-3 py-1.5 text-xs border border-border bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-colors font-medium flex items-center gap-1"
-          >
-            <ClipboardList className="w-3.5 h-3.5" />
-            View Orders
-          </button>
-          {canManageOrders && (
-            <button
-              onClick={handleRegenerateOrders}
-              disabled={regeneratingOrders}
-              className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors font-medium flex items-center gap-1"
-            >
-              {regeneratingOrders ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-              Regenerate Orders
-            </button>
-          )}
-          <button
-            onClick={handleValidate}
-            disabled={validationLoading}
-            className="px-3 py-1.5 text-xs border border-border bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-colors font-medium flex items-center gap-1"
-          >
-            {validationLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
-            Validate
-          </button>
-          {plan.status !== "complete" && (
-            <button
-              onClick={() => setConfirmReset(true)}
-              className="px-3 py-1.5 text-xs text-orange-600 hover:text-orange-700 border border-orange-200 dark:border-orange-900/40 rounded-lg hover:bg-orange-50 dark:hover:bg-orange-900/20 transition-colors font-medium flex items-center gap-1"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              Reset Plan
-            </button>
-          )}
-          {plan.status !== "complete" && canEditPlan && (
-            <button
-              onClick={() => setConfirmDelete(true)}
-              className="px-3 py-1.5 text-xs text-red-600 hover:text-red-700 border border-red-200 dark:border-red-900/40 rounded-lg transition-colors"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-      </div>
+      <PlanDetailHeader
+        plan={plan}
+        statusConfig={statusConfig}
+        StatusIcon={StatusIcon}
+        canEditPlan={canEditPlan}
+        canManageOrders={canManageOrders}
+        onBack={onBack}
+        onEditDraft={() => setIsEditingDraft(true)}
+        onStatusChange={handleStatusChange}
+        onShowManifest={() => setShowManifest(true)}
+        onViewOrders={() => navigate(`/orders?planId=${planId}`)}
+        onRegenerateOrders={handleRegenerateOrders}
+        regeneratingOrders={regeneratingOrders}
+        onValidate={handleValidate}
+        validationLoading={validationLoading}
+        onResetPlan={() => setConfirmReset(true)}
+        onDeletePlan={() => setConfirmDelete(true)}
+      />
 
       {/* Progress summary */}
       {totalBatchesTarget > 0 && (

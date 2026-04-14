@@ -668,6 +668,20 @@ async function runStartupMigrations() {
         ON fridge_stock_batches (recipe_id, pack_size, use_by_date ASC)
     `);
 
+    // Tin count overrides for prep stations
+    await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS mixing_tin_override INTEGER`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS prep_tin_overrides (
+        id SERIAL PRIMARY KEY,
+        plan_id INTEGER NOT NULL REFERENCES production_plans(id) ON DELETE CASCADE,
+        recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+        ingredient_id INTEGER REFERENCES ingredients(id) ON DELETE CASCADE,
+        tin_count INTEGER NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE(plan_id, recipe_id, ingredient_id)
+      )
+    `);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);
