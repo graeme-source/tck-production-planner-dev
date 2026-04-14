@@ -317,17 +317,30 @@ router.get("/production-kpis", async (req, res) => {
     ss.sessionCount++;
   }
 
-  const stationSummaries = Array.from(stationSummary.entries()).map(([station, ss]) => ({
-    station,
-    label: ss.label,
-    totalBatches: ss.totalBatches,
-    avgBph: ss.totalActiveMinutes > 0
-      ? Math.round((ss.totalBatches / (ss.totalActiveMinutes / 60)) * 10) / 10
-      : 0,
-    sessionCount: ss.sessionCount,
-    targetBph: ss.targetBph,
-    minBph: ss.minBph,
-  }));
+  // For building stations, cap batch counts so they sum to oven total (the real production count).
+  // Split proportionally by each builder's share of raw completions.
+  const b1Raw = stationSummary.get("building_1")?.totalBatches ?? 0;
+  const b2Raw = stationSummary.get("building_2")?.totalBatches ?? 0;
+  const buildingRawTotal = b1Raw + b2Raw;
+
+  const stationSummaries = Array.from(stationSummary.entries()).map(([station, ss]) => {
+    let adjustedBatches = ss.totalBatches;
+    if ((station === "building_1" || station === "building_2") && buildingRawTotal > 0 && totalBatches < buildingRawTotal) {
+      // Scale down to match oven total, keeping proportional split
+      adjustedBatches = Math.round((ss.totalBatches / buildingRawTotal) * totalBatches);
+    }
+    return {
+      station,
+      label: ss.label,
+      totalBatches: adjustedBatches,
+      avgBph: ss.totalActiveMinutes > 0
+        ? Math.round((adjustedBatches / (ss.totalActiveMinutes / 60)) * 10) / 10
+        : 0,
+      sessionCount: ss.sessionCount,
+      targetBph: ss.targetBph,
+      minBph: ss.minBph,
+    };
+  });
 
   const userSummary = new Map<number, {
     name: string;
