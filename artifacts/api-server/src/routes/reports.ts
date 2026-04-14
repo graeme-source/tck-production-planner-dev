@@ -430,8 +430,6 @@ router.get("/production-kpis", async (req, res) => {
       totalActiveMinutes: productionActiveMinutes,
       wallClockMinutes,
       overallBph,
-      uniqueDays,
-      avgBatchesPerDay: uniqueDays > 0 ? Math.round(totalBatches / uniqueDays) : 0,
       productionStartTime,
       productionFinishTime,
     },
