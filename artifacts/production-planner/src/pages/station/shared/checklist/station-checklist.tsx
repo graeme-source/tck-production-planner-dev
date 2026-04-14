@@ -279,7 +279,7 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
               className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
               <Plus className="w-3.5 h-3.5" />
-              Add Item
+              Add One-off Task
             </button>
           </div>
         </div>
