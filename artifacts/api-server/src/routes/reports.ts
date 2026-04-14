@@ -384,9 +384,7 @@ router.get("/production-kpis", async (req, res) => {
   const ovenCompletions = completions.filter(c => c.stationType === "ovens");
   const totalBatches = ovenCompletions.length;
 
-  const overallBph = totalActiveMinutes > 0
-    ? Math.round((totalBatches / (totalActiveMinutes / 60)) * 10) / 10
-    : 0;
+  // overallBph calculated after productionActiveMinutes is computed below
 
   // Production start/finish from earliest and latest building completion timestamps
   const buildingCompletions = completions.filter(c => c.stationType === "building_1" || c.stationType === "building_2");
@@ -423,6 +421,11 @@ router.get("/production-kpis", async (req, res) => {
     }
     productionActiveMinutes = Math.round(Math.max(0, wallClockMinutes - totalBreakMins));
   }
+
+  // BPH = total batches (through ovens) ÷ production active hours (wall clock minus breaks)
+  const overallBph = productionActiveMinutes > 0
+    ? Math.round((totalBatches / (productionActiveMinutes / 60)) * 10) / 10
+    : 0;
 
   res.json({
     overview: {
