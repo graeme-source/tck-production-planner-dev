@@ -376,32 +376,11 @@ router.get("/production-kpis", async (req, res) => {
 
   const totalActiveMinutes = building1Minutes + building2Minutes;
 
-  // Source of truth for "Total Batches": actual packs wrapped (fridgeQty)
-  // divided by packs-per-batch. This counts what was actually produced,
-  // not how many times a button was clicked.
-  const planIds = [...new Set(completions.map(c => c.planId))];
-  let totalBatches = 0;
-  if (planIds.length > 0) {
-    const planItemRows = await db
-      .select({
-        fridgeQty: productionPlanItemsTable.fridgeQty,
-        fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
-        wonlyCount: productionPlanItemsTable.wonlyCount,
-        portionsPerBatch: recipesTable.portionsPerBatch,
-      })
-      .from(productionPlanItemsTable)
-      .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
-      .where(inArray(productionPlanItemsTable.planId, planIds));
-
-    for (const pi of planItemRows) {
-      const ppb = Number(pi.portionsPerBatch) || 10;
-      const packsPerBatch = Math.max(1, Math.floor(ppb / 2));
-      // Total packs = 2-packs in fridge + wonky packs (they were still built)
-      const totalPacks = (pi.fridgeQty ?? 0) + (pi.wonlyCount ?? 0);
-      totalBatches += totalPacks / packsPerBatch;
-    }
-    totalBatches = Math.round(totalBatches * 10) / 10;
-  }
+  // Source of truth for "Total Batches": count of oven station completions.
+  // Everything that makes it through the ovens is counted as produced.
+  // BPH uses builder active time as the speed denominator.
+  const ovenCompletions = completions.filter(c => c.stationType === "ovens");
+  const totalBatches = ovenCompletions.length;
 
   const overallBph = totalActiveMinutes > 0
     ? Math.round((totalBatches / (totalActiveMinutes / 60)) * 10) / 10
