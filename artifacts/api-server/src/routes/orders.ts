@@ -240,12 +240,18 @@ router.get("/calculate", async (req, res) => {
     const isKanban = kanbanIngredientIds.has(iid);
     const isStockChecked = detail.stockCheckEnabled ?? false;
 
-    if (!isStockChecked && !isKanban) continue;
+    if (!isStockChecked && !isKanban) {
+      console.log(`[Orders] Skipping ${ing.ingredientName} (id=${iid}): stockCheckEnabled=${isStockChecked}, isKanban=${isKanban}`);
+      continue;
+    }
 
     const suppId = isKanban && kanbanSupplierOverrides[iid]
       ? kanbanSupplierOverrides[iid]
       : detail.supplierId;
-    if (!suppId) continue;
+    if (!suppId) {
+      console.log(`[Orders] Skipping ${ing.ingredientName} (id=${iid}): no supplier assigned`);
+      continue;
+    }
 
     const packWeight = Number(detail.packWeight) || 1;
     const costPerPack = Number(detail.costPerPack) || 0;
@@ -374,6 +380,8 @@ router.get("/calculate", async (req, res) => {
   }
 
   const suppliers = Object.values(supplierOrderMap).sort((a, b) => a.supplier.name.localeCompare(b.supplier.name));
+
+  console.log(`[Orders] Calculate for plan ${planId}: ${Object.keys(ingredientMap).length} ingredients resolved, ${ingredientIds.length} looked up, ${suppliers.length} suppliers with orders: ${suppliers.map(s => `${s.supplier.name} (${s.lines.length} lines)`).join(", ")}`);
 
   res.json({
     planId,
