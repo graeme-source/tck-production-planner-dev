@@ -779,7 +779,7 @@ router.delete("/sku-locations/:sku", requireAdmin, async (req: Request, res: Res
   }
 });
 
-router.get("/dispatch-progress", requireManagerOrAdmin, async (req: Request, res: Response) => {
+router.get("/dispatch-progress", async (req: Request, res: Response) => {
   const { tag } = req.query as { tag?: string };
   if (!tag) {
     res.status(400).json({ error: "tag query param required" });
@@ -825,7 +825,7 @@ router.get("/dispatch-progress", requireManagerOrAdmin, async (req: Request, res
   }
 });
 
-router.get("/desserts-report", requireManagerOrAdmin, async (req: Request, res: Response) => {
+router.get("/desserts-report", async (req: Request, res: Response) => {
   const { tag } = req.query as { tag?: string };
   if (!tag) {
     res.status(400).json({ error: "tag query param required" });
