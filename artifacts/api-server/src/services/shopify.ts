@@ -295,6 +295,7 @@ export async function getProductsByTag(productTag: string): Promise<Set<string>>
 
 export interface VariantCount {
   title: string;
+  variantId: number | null;
   quantity: number;
   orderCount: number;
   fulfilledQuantity: number;
@@ -337,7 +338,7 @@ export async function countProductsByTag(tag: string): Promise<ProductCount[]> {
           else variant.unfulfilledQuantity += qty;
         } else if (variantKey) {
           product.variants.push({
-            title: variantKey, quantity: qty, orderCount: 1,
+            title: variantKey, variantId: item.variant_id, quantity: qty, orderCount: 1,
             fulfilledQuantity: isFulfilled ? qty : 0,
             unfulfilledQuantity: isFulfilled ? 0 : qty,
           });
@@ -346,7 +347,7 @@ export async function countProductsByTag(tag: string): Promise<ProductCount[]> {
         counts.set(productKey, {
           productTitle: item.title,
           variants: variantKey ? [{
-            title: variantKey, quantity: qty, orderCount: 1,
+            title: variantKey, variantId: item.variant_id, quantity: qty, orderCount: 1,
             fulfilledQuantity: isFulfilled ? qty : 0,
             unfulfilledQuantity: isFulfilled ? 0 : qty,
           }] : [],

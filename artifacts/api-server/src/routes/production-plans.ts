@@ -535,6 +535,9 @@ router.get("/calculate", async (req, res) => {
 
   const shopifySalesPerDate: Record<string, Record<string, number>> = {};
   const shopifySalesCombined: Record<string, number> = {};
+  // Variant-ID-based sales: variantId → { perDate: { date → qty }, combined: qty }
+  const variantSalesPerDate: Record<string, Record<string, number>> = {};
+  const variantSalesCombined: Record<string, number> = {};
   const shopifyDatesLoaded = new Set<string>();
   let shopifyError: string | null = null;
 
@@ -552,25 +555,38 @@ router.get("/calculate", async (req, res) => {
       }
       const { date, products } = result.value;
       shopifySalesPerDate[date] = {};
+      if (!variantSalesPerDate[date]) variantSalesPerDate[date] = {};
       shopifyDatesLoaded.add(date);
       for (const p of products) {
-        const twoPackVariant = p.variants.find(v => {
+        const packVariant = p.variants.find(v => {
           const t = v.title.toLowerCase();
           return t.includes("2 pack") || t.includes("2-pack") || t === "2pack" || t.includes("serves 2");
         });
-        if (twoPackVariant) {
+        if (packVariant) {
           const key = p.productTitle.toLowerCase().trim();
-          shopifySalesPerDate[date][key] = (shopifySalesPerDate[date][key] ?? 0) + twoPackVariant.quantity;
-          shopifySalesCombined[key] = (shopifySalesCombined[key] ?? 0) + twoPackVariant.quantity;
+          shopifySalesPerDate[date][key] = (shopifySalesPerDate[date][key] ?? 0) + packVariant.quantity;
+          shopifySalesCombined[key] = (shopifySalesCombined[key] ?? 0) + packVariant.quantity;
+          // Also track by variant ID for precise recipe matching
+          if (packVariant.variantId) {
+            const vid = String(packVariant.variantId);
+            variantSalesPerDate[date][vid] = (variantSalesPerDate[date][vid] ?? 0) + packVariant.quantity;
+            variantSalesCombined[vid] = (variantSalesCombined[vid] ?? 0) + packVariant.quantity;
+          }
         } else if (p.variants.length === 0) {
-          // Products with no variants at all (single-variant Shopify products
-          // like mac cheese) — use totalQuantity directly
           const key = p.productTitle.toLowerCase().trim();
           shopifySalesPerDate[date][key] = (shopifySalesPerDate[date][key] ?? 0) + p.totalQuantity;
           shopifySalesCombined[key] = (shopifySalesCombined[key] ?? 0) + p.totalQuantity;
         } else {
-          // Log unmatched products with variants for debugging
-          console.log(`[calculate] Skipped product "${p.productTitle}" — variants: [${p.variants.map(v => v.title).join(", ")}] (no "2 pack" match)`);
+          console.log(`[calculate] Skipped product "${p.productTitle}" — variants: [${p.variants.map(v => `${v.title} (${v.variantId})`).join(", ")}] (no "2 pack"/"serves 2" match)`);
+        }
+        // Track ALL variants by ID (including non-pack variants) for variant-mapped recipes
+        for (const v of p.variants) {
+          if (v.variantId) {
+            const vid = String(v.variantId);
+            if (!variantSalesPerDate[date]) variantSalesPerDate[date] = {};
+            variantSalesPerDate[date][vid] = (variantSalesPerDate[date][vid] ?? 0) + v.quantity;
+            variantSalesCombined[vid] = (variantSalesCombined[vid] ?? 0) + v.quantity;
+          }
         }
       }
     }
@@ -675,13 +691,23 @@ router.get("/calculate", async (req, res) => {
     .where(eq(appSettingsTable.key, "total_daily_batches"));
   const totalDailyBatches = totalBatchesSetting ? Number(totalBatchesSetting.value) : 0;
 
+  // Load recipe → Shopify variant mappings for precise matching
+  const recipeVariantMappings = await db.execute<{ recipe_id: number; shopify_variant_id: string | null; wonky_variant_id: string | null }>(sql`
+    SELECT recipe_id, shopify_variant_id, wonky_variant_id FROM recipe_shopify_mappings
+  `);
+  const recipeToVariantIds = new Map<number, string[]>();
+  for (const m of recipeVariantMappings.rows ?? recipeVariantMappings) {
+    const ids: string[] = [];
+    if (m.shopify_variant_id) ids.push(String(m.shopify_variant_id));
+    if (m.wonky_variant_id) ids.push(String(m.wonky_variant_id));
+    if (ids.length > 0) recipeToVariantIds.set(m.recipe_id, ids);
+  }
+
   function normalizeForMatch(s: string): string {
     return s.toLowerCase().trim().replace(/[''`]/g, "'").replace(/&/g, "and").replace(/\s+/g, " ");
   }
 
   // Match recipe to the BEST Shopify product — pick the closest-length match
-  // to avoid "Big Nanny's Macaroni Cheese" matching both the original AND the
-  // pigs-in-blankets variant (since the longer name contains the shorter).
   function bestShopifyMatch(recipeNorm: string, salesMap: Record<string, number>): { product: string | null; qty: number } {
     let bestProduct: string | null = null;
     let bestQty = 0;
@@ -700,13 +726,31 @@ router.get("/calculate", async (req, res) => {
     return { product: bestProduct, qty: bestQty };
   }
 
-  function matchShopifySalesForDate(recipeName: string, date: string): number {
+  // Prefer variant-ID-based matching when recipe has a Shopify mapping
+  function matchShopifySalesForDate(recipeName: string, date: string, recipeId?: number): number {
+    // 1. Try variant ID match first (most accurate)
+    if (recipeId && recipeToVariantIds.has(recipeId)) {
+      const variantIds = recipeToVariantIds.get(recipeId)!;
+      const dateSales = variantSalesPerDate[date] ?? {};
+      let total = 0;
+      for (const vid of variantIds) total += dateSales[vid] ?? 0;
+      if (total > 0) return total;
+    }
+    // 2. Fall back to name matching
     const recipeNorm = normalizeForMatch(recipeName);
     const salesForDate = shopifySalesPerDate[date] ?? {};
     return bestShopifyMatch(recipeNorm, salesForDate).qty;
   }
 
-  function matchShopifySalesCombined(recipeName: string): { qty: number; matchedProduct: string | null } {
+  function matchShopifySalesCombined(recipeName: string, recipeId?: number): { qty: number; matchedProduct: string | null } {
+    // 1. Try variant ID match first
+    if (recipeId && recipeToVariantIds.has(recipeId)) {
+      const variantIds = recipeToVariantIds.get(recipeId)!;
+      let total = 0;
+      for (const vid of variantIds) total += variantSalesCombined[vid] ?? 0;
+      if (total > 0) return { qty: total, matchedProduct: `variant:${variantIds[0]}` };
+    }
+    // 2. Fall back to name matching
     const recipeNorm = normalizeForMatch(recipeName);
     const { product, qty } = bestShopifyMatch(recipeNorm, shopifySalesCombined);
     return { qty, matchedProduct: product };
@@ -727,13 +771,13 @@ router.get("/calculate", async (req, res) => {
     const recipeDptPercent = totalDptPacksSold > 0 ? ((r.packsSold ?? 0) / totalDptPacksSold) * 100 : 0;
     const dptDailyPacks = Math.round((recipeDptPercent / 100) * totalDailyBatches * packsPerBatch);
 
-    const shopifyMatch = matchShopifySalesCombined(recipeName);
+    const shopifyMatch = matchShopifySalesCombined(recipeName, recipeId);
     const hasRecipeMatch = shopifyMatch.matchedProduct !== null;
 
     function resolveDispatchQty(date: string): number {
       if (!shopifyDatesLoaded.has(date)) return dptDailyPacks;
       if (!hasRecipeMatch) return dptDailyPacks;
-      return matchShopifySalesForDate(recipeName, date);
+      return matchShopifySalesForDate(recipeName, date, recipeId);
     }
 
     const dispatch1Qty = resolveDispatchQty(deliveryDates[0]);
