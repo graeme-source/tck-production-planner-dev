@@ -114,6 +114,7 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
   const [saving, setSaving] = useState(false);
   const [recipes, setRecipes] = useState<MacCheeseCalcRecipe[]>([]);
   const [extraOverrides, setExtraOverrides] = useState<Record<number, number>>({});
+  const [stockOverrides, setStockOverrides] = useState<Record<number, number>>({});
 
   useEffect(() => {
     setLoading(true);
@@ -155,8 +156,10 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
         const defaultExtra = isThursday ? 0 : 5;
 
         // Map calculate response to our format
+        // Use fridgeStock (production fridge) as the stock value — this is what's
+        // physically in the fridge right now, not the predicted end-of-day number.
         const mapped: MacCheeseCalcRecipe[] = macCalcRecipes.map((r: any) => {
-          const stock = r.estimatedFactoryNumber ?? r.fridgeStock ?? 0;
+          const stock = Math.round(r.fridgeStock ?? 0);
           const d1 = r.dispatch2Qty ?? 0; // dispatch2 = today's dispatch (next day sales)
           const d2 = r.dispatch3Qty ?? 0; // dispatch3 = tomorrow's dispatch
           const d3 = 0; // 3rd dispatch day not in current calculate response
@@ -166,7 +169,7 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
             recipeName: r.recipeName,
             color: r.color ?? null,
             packsPerBatch: r.packsPerBatch ?? 5,
-            leftOverStock: Math.round(stock),
+            leftOverStock: stock,
             salesNextDay: d1,
             salesNextDayPlus1: d2,
             salesNextDayPlus2: d3,
@@ -198,9 +201,11 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
       .catch(() => setLoading(false));
   }, [planDate]);
 
+  const getStock = (r: MacCheeseCalcRecipe) => stockOverrides[r.recipeId] ?? r.leftOverStock;
+  const getDeficit = (r: MacCheeseCalcRecipe) => Math.max(0, r.salesNextDay - getStock(r));
   const getToMake = (r: MacCheeseCalcRecipe) => {
     const extra = extraOverrides[r.recipeId] ?? r.extraToMake;
-    return r.neededForDispatch + r.salesNextDayPlus1 + r.salesNextDayPlus2 + extra;
+    return getDeficit(r) + r.salesNextDayPlus1 + r.salesNextDayPlus2 + extra;
   };
 
   const handleSubmit = async () => {
@@ -272,9 +277,17 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
                       {r.recipeName}
                     </div>
                   </td>
-                  <td className="py-2.5 px-2 text-right tabular-nums">{r.leftOverStock}</td>
+                  <td className="py-2.5 px-2 text-right">
+                    <input
+                      type="number"
+                      min={0}
+                      value={stockOverrides[r.recipeId] ?? r.leftOverStock}
+                      onChange={e => setStockOverrides(prev => ({ ...prev, [r.recipeId]: Math.max(0, Number(e.target.value) || 0) }))}
+                      className="w-16 px-2 py-1 text-right bg-background border border-border rounded text-sm tabular-nums"
+                    />
+                  </td>
                   <td className="py-2.5 px-2 text-right tabular-nums">{r.salesNextDay}</td>
-                  <td className="py-2.5 px-2 text-right tabular-nums text-amber-600">{r.neededForDispatch}</td>
+                  <td className="py-2.5 px-2 text-right tabular-nums text-amber-600">{getDeficit(r)}</td>
                   <td className="py-2.5 px-2 text-right tabular-nums">{r.salesNextDayPlus1}</td>
                   <td className="py-2.5 px-2 text-right tabular-nums">{r.salesNextDayPlus2}</td>
                   <td className="py-2.5 px-2 text-right">
