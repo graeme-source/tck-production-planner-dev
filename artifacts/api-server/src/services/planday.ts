@@ -14,9 +14,19 @@ const API_BASE = "https://openapi.planday.com";
 function getConfig() {
   const clientId = process.env["PLANDAY_CLIENT_ID"];
   const refreshToken = process.env["PLANDAY_REFRESH_TOKEN"];
-  const departmentId = process.env["PLANDAY_DEPARTMENT_ID"];
-  if (!clientId || !refreshToken || !departmentId) return null;
-  return { clientId, refreshToken, departmentId };
+  const departmentIdRaw = process.env["PLANDAY_DEPARTMENT_ID"];
+  if (!clientId || !refreshToken || !departmentIdRaw) return null;
+  // PLANDAY_DEPARTMENT_ID may be a single id or comma-separated list (e.g. "2388,24022").
+  const departmentIds = departmentIdRaw.split(",").map(s => s.trim()).filter(Boolean);
+  if (departmentIds.length === 0) return null;
+  return {
+    clientId,
+    refreshToken,
+    // Comma-separated string for endpoints that accept `departmentIds=` natively (e.g. payroll).
+    departmentId: departmentIds.join(","),
+    // Array for endpoints that only accept a single `departmentId=` per call.
+    departmentIds,
+  };
 }
 
 // ── Token cache ────────────────────────────────────────────────────────────
@@ -290,10 +300,26 @@ export async function getPlandayShifts(from: string, to: string): Promise<Planda
   if (!config) return [];
   const token = await getAccessToken();
   if (!token) return [];
-  return fetchAllPages<PlandayShift>(
-    `/scheduling/v1.0/shifts?from=${from}&to=${to}&departmentId=${config.departmentId}`,
-    token,
+  // Scheduling API accepts only a single departmentId per call — fetch each in parallel and merge.
+  const perDeptResults = await Promise.all(
+    config.departmentIds.map(id =>
+      fetchAllPages<PlandayShift>(
+        `/scheduling/v1.0/shifts?from=${from}&to=${to}&departmentId=${id}`,
+        token,
+      ),
+    ),
   );
+  // Dedupe by shift id in case Plan Day ever returns the same shift from both departments.
+  const seen = new Set<number>();
+  const merged: PlandayShift[] = [];
+  for (const arr of perDeptResults) {
+    for (const s of arr) {
+      if (seen.has(s.id)) continue;
+      seen.add(s.id);
+      merged.push(s);
+    }
+  }
+  return merged;
 }
 
 // ── Absence records (sickness, vacation, etc) ──────────────────────────────
