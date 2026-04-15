@@ -199,6 +199,8 @@ const DATE_PRESETS = [
   { label: "Last Week", getRange: () => { const lw = subWeeks(new Date(), 1); return [format(startOfWeek(lw, { weekStartsOn: 1 }), "yyyy-MM-dd"), format(endOfWeek(lw, { weekStartsOn: 1 }), "yyyy-MM-dd")]; } },
   { label: "This Month", getRange: () => { const now = new Date(); return [format(startOfMonth(now), "yyyy-MM-dd"), format(endOfMonth(now), "yyyy-MM-dd")]; } },
   { label: "Last Month", getRange: () => { const lm = subMonths(new Date(), 1); return [format(startOfMonth(lm), "yyyy-MM-dd"), format(endOfMonth(lm), "yyyy-MM-dd")]; } },
+  { label: "Last 6 Months", getRange: () => { const now = new Date(); return [format(subMonths(now, 6), "yyyy-MM-dd"), format(now, "yyyy-MM-dd")]; } },
+  { label: "Last 12 Months", getRange: () => { const now = new Date(); return [format(subMonths(now, 12), "yyyy-MM-dd"), format(now, "yyyy-MM-dd")]; } },
 ] as const;
 
 function DateShortcutsDropdown({ onSelect }: { onSelect: (from: string, to: string) => void }) {
@@ -3004,47 +3006,61 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
             <thead>
               <tr className="bg-secondary/50 border-b border-border">
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Employee</th>
-                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Total shifts</th>
-                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Arrived late</th>
-                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Sick</th>
-                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Sick unpaid</th>
+                <th className="text-right px-3 py-3 font-medium text-muted-foreground">Total shifts</th>
+                <th className="text-right px-3 py-3 font-medium text-muted-foreground">Arrived late</th>
+                <th className="text-right px-3 py-3 font-medium text-muted-foreground">Late %</th>
+                <th className="text-right px-3 py-3 font-medium text-muted-foreground">Sick</th>
+                <th className="text-right px-3 py-3 font-medium text-muted-foreground">Sick unpaid</th>
+                <th className="text-right px-3 py-3 font-medium text-muted-foreground">Sick %</th>
               </tr>
             </thead>
             <tbody>
               {rowsToShow.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="text-center text-muted-foreground py-8">
+                  <td colSpan={7} className="text-center text-muted-foreground py-8">
                     No employees to show.
                   </td>
                 </tr>
               )}
-              {rowsToShow.map(r => (
-                <tr
-                  key={r.userId}
-                  className={cn(
-                    "border-b border-border last:border-b-0",
-                    !r.linked && "opacity-60",
-                  )}
-                >
-                  <td className="px-4 py-3">
-                    <div className="font-medium">{r.userName}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {r.userEmail}
-                      {!r.linked && <span className="ml-2 text-amber-600">• not linked</span>}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">{r.totalShifts}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {r.lateShifts > 0 ? <span className="text-amber-700 font-medium">{r.lateShifts}</span> : r.lateShifts}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {r.sickShifts > 0 ? <span className="text-rose-700 font-medium">{r.sickShifts}</span> : r.sickShifts}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {r.sickUnpaidShifts > 0 ? <span className="text-red-800 font-medium">{r.sickUnpaidShifts}</span> : r.sickUnpaidShifts}
-                  </td>
-                </tr>
-              ))}
+              {rowsToShow.map(r => {
+                const latePct = r.totalShifts > 0 ? (r.lateShifts / r.totalShifts) * 100 : 0;
+                const sickTotal = r.sickShifts + r.sickUnpaidShifts;
+                const sickPct = r.totalShifts > 0 ? (sickTotal / r.totalShifts) * 100 : 0;
+                const fmtPct = (n: number) => n === 0 ? "—" : `${n.toFixed(1)}%`;
+                return (
+                  <tr
+                    key={r.userId}
+                    className={cn(
+                      "border-b border-border last:border-b-0",
+                      !r.linked && "opacity-60",
+                    )}
+                  >
+                    <td className="px-4 py-3">
+                      <div className="font-medium">{r.userName}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {r.userEmail}
+                        {!r.linked && <span className="ml-2 text-amber-600">• not linked</span>}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums">{r.totalShifts}</td>
+                    <td className="px-3 py-3 text-right tabular-nums">
+                      {r.lateShifts > 0 ? <span className="text-amber-700 font-medium">{r.lateShifts}</span> : r.lateShifts}
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">
+                      {r.lateShifts > 0 ? <span className="text-amber-700">{fmtPct(latePct)}</span> : fmtPct(latePct)}
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums">
+                      {r.sickShifts > 0 ? <span className="text-rose-700 font-medium">{r.sickShifts}</span> : r.sickShifts}
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums">
+                      {r.sickUnpaidShifts > 0 ? <span className="text-red-800 font-medium">{r.sickUnpaidShifts}</span> : r.sickUnpaidShifts}
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">
+                      {sickTotal > 0 ? <span className="text-rose-700">{fmtPct(sickPct)}</span> : fmtPct(sickPct)}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
