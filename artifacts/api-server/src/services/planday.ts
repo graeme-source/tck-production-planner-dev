@@ -222,3 +222,118 @@ export async function getPayrollCosts(from: string, to: string): Promise<ActualL
 export function isPlandayConfigured(): boolean {
   return getConfig() !== null;
 }
+
+// ── Employees, shifts, shift types (for attendance reports) ────────────────
+
+export interface PlandayEmployee {
+  id: number;
+  firstName: string;
+  lastName: string;
+  email?: string | null;
+}
+
+export interface PlandayShift {
+  id: number;
+  employeeId: number | null;
+  date: string;
+  startDateTime?: string | null;
+  endDateTime?: string | null;
+  shiftTypeId?: number | null;
+  status?: string | null;
+}
+
+export interface PlandayShiftType {
+  id: number;
+  name: string;
+}
+
+interface Paged<T> { data: T[] }
+
+async function fetchAllPages<T>(pathWithoutPaging: string, token: string): Promise<T[]> {
+  const limit = 50;
+  let offset = 0;
+  const all: T[] = [];
+  while (true) {
+    const sep = pathWithoutPaging.includes("?") ? "&" : "?";
+    const page = await plandayGet<Paged<T>>(
+      `${pathWithoutPaging}${sep}limit=${limit}&offset=${offset}`,
+      token,
+    );
+    if (!page?.data || page.data.length === 0) break;
+    all.push(...page.data);
+    if (page.data.length < limit) break;
+    offset += limit;
+    if (offset > 10000) break; // safety cap
+  }
+  return all;
+}
+
+export async function getPlandayEmployees(): Promise<PlandayEmployee[]> {
+  const token = await getAccessToken();
+  if (!token) return [];
+  // /hr/v1.0/employees — fields includes email + names
+  const employees = await fetchAllPages<PlandayEmployee>(
+    `/hr/v1.0/employees?includeFields=firstName,lastName,email`,
+    token,
+  );
+  return employees;
+}
+
+export async function getPlandayShiftTypes(): Promise<PlandayShiftType[]> {
+  const token = await getAccessToken();
+  if (!token) return [];
+  return fetchAllPages<PlandayShiftType>(`/scheduling/v1.0/shifttypes`, token);
+}
+
+export async function getPlandayShifts(from: string, to: string): Promise<PlandayShift[]> {
+  const config = getConfig();
+  if (!config) return [];
+  const token = await getAccessToken();
+  if (!token) return [];
+  return fetchAllPages<PlandayShift>(
+    `/scheduling/v1.0/shifts?from=${from}&to=${to}&departmentId=${config.departmentId}`,
+    token,
+  );
+}
+
+// ── Absence records (sickness, vacation, etc) ──────────────────────────────
+
+export interface PlandayAbsenceRecord {
+  id: number;
+  employeeId: number;
+  status: "Declined" | "Approved" | string;
+  absencePeriod?: { start?: string; end?: string };
+  registrations?: Array<{
+    date?: string;
+    account?: { id?: number };
+  }>;
+}
+
+export interface PlandayAbsenceAccount {
+  id: number;
+  name: string;
+}
+
+/**
+ * Fetches approved absence records overlapping the given period.
+ * Only "Approved" records are counted as attendance events.
+ */
+export async function getPlandayAbsenceRecords(from: string, to: string): Promise<PlandayAbsenceRecord[]> {
+  const token = await getAccessToken();
+  if (!token) return [];
+  return fetchAllPages<PlandayAbsenceRecord>(
+    `/absence/v1.0/absencerecords?startDate=${from}&endDate=${to}&statuses=Approved`,
+    token,
+  );
+}
+
+/**
+ * Fetches all absence account definitions so we can resolve account ids to names
+ * (e.g. "Sick", "Sick Unpaid", "Vacation").
+ */
+export async function getPlandayAbsenceAccounts(): Promise<PlandayAbsenceAccount[]> {
+  const token = await getAccessToken();
+  if (!token) return [];
+  // Endpoint: /absence/v1.0/accounts — paged like the rest.
+  return fetchAllPages<PlandayAbsenceAccount>(`/absence/v1.0/accounts`, token);
+}

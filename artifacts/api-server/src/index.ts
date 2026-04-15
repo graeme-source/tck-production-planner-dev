@@ -375,6 +375,8 @@ async function runStartupMigrations() {
     await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS pin_attempts INTEGER NOT NULL DEFAULT 0`);
     await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS pin_locked_until TIMESTAMP`);
     await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS avatar_url TEXT`);
+    // Plan Day integration — employee record mapping for attendance reports
+    await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS planday_employee_id INTEGER`);
     // Shopify inventory sync — recipe→variant mapping (Task #37)
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS recipe_shopify_mappings (

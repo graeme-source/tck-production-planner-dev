@@ -12,7 +12,7 @@ import {
   Package, Zap, CalendarDays, Trophy, Snail, Hourglass,
   Lightbulb, AlertTriangle, CheckCircle, Filter, Play, Square,
   MessageSquare, Send, ClipboardCheck, FileText, Eye, EyeOff,
-  Droplets,
+  Droplets, UserCog,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
@@ -151,7 +151,7 @@ interface PackingSpeedData {
 // Packing-speed is now a subsection inside the Production KPIs view, so it's
 // no longer a top-level tab. The URL ?tab=packing-speed redirects to ?tab=kpis
 // for backward compat.
-type TabId = "kpis" | "breaks" | "temperature" | "haccp" | "improvements" | "issues" | "leftover-filling";
+type TabId = "kpis" | "breaks" | "temperature" | "haccp" | "improvements" | "issues" | "leftover-filling" | "employees";
 
 interface ImprovementRecord {
   id: number;
@@ -241,7 +241,7 @@ function DateShortcutsDropdown({ onSelect }: { onSelect: (from: string, to: stri
   );
 }
 
-const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "haccp", "improvements", "issues", "leftover-filling"];
+const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "haccp", "improvements", "issues", "leftover-filling", "employees"];
 
 interface ReportsNavItem {
   id: TabId;
@@ -257,7 +257,11 @@ const REPORTS_NAV_ITEMS: ReportsNavItem[] = [
   { id: "improvements", label: "Improvements & Struggles", icon: Lightbulb },
   { id: "issues", label: "Issue Log", icon: AlertTriangle },
   { id: "leftover-filling", label: "Leftover Filling", icon: Droplets },
+  { id: "employees", label: "Employee Records", icon: UserCog },
 ];
+
+// Tabs only visible to admins (not managers).
+const ADMIN_ONLY_TABS: TabId[] = ["employees"];
 
 export default function Reports() {
   const search = useSearch();
@@ -266,9 +270,10 @@ export default function Reports() {
   const userRole = state.status === "authenticated" ? state.user.role : "viewer";
   const isManagerOrAdmin = userRole === "admin" || userRole === "manager";
 
-  // Viewers only see the Issue Log tab; managers/admins see everything
+  // Viewers only see the Issue Log tab; managers see everything except admin-only tabs; admins see everything.
+  const isAdmin = userRole === "admin";
   const visibleTabs = isManagerOrAdmin
-    ? REPORTS_NAV_ITEMS
+    ? (isAdmin ? REPORTS_NAV_ITEMS : REPORTS_NAV_ITEMS.filter(item => !ADMIN_ONLY_TABS.includes(item.id)))
     : REPORTS_NAV_ITEMS.filter(item => item.id === "issues");
   const allowedTabIds = visibleTabs.map(t => t.id);
 
@@ -293,6 +298,19 @@ export default function Reports() {
   const [toDate, setToDate] = useState(todayStr);
 
   const showDatePicker = activeTab !== "improvements" && activeTab !== "issues";
+
+  // Default range for employees tab: last 30 days (only applied once when tab first opened).
+  const [employeesRangeInit, setEmployeesRangeInit] = useState(false);
+  useEffect(() => {
+    if (activeTab === "employees" && !employeesRangeInit) {
+      const today = new Date();
+      const thirtyAgo = new Date();
+      thirtyAgo.setDate(today.getDate() - 29);
+      setFromDate(format(thirtyAgo, "yyyy-MM-dd"));
+      setToDate(format(today, "yyyy-MM-dd"));
+      setEmployeesRangeInit(true);
+    }
+  }, [activeTab, employeesRangeInit]);
 
   return (
     <div className="space-y-6">
@@ -391,6 +409,7 @@ export default function Reports() {
           {activeTab === "improvements" && <ImprovementsTab userRole={userRole} currentUserName={state.status === "authenticated" ? state.user.name : null} />}
           {activeTab === "issues" && <AndonLogTab userRole={userRole} initialIssueId={issueIdParam ? parseInt(issueIdParam, 10) : undefined} />}
           {activeTab === "leftover-filling" && <LeftoverFillingTab fromDate={fromDate} toDate={toDate} />}
+          {activeTab === "employees" && isAdmin && <EmployeesTab fromDate={fromDate} toDate={toDate} />}
         </div>
       </div>
     </div>
@@ -2847,5 +2866,218 @@ function AndonLogTab({ userRole, initialIssueId }: { userRole: string; initialIs
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+// ── Employee Records tab ───────────────────────────────────────────────────
+
+interface EmployeeAttendanceRow {
+  userId: number;
+  userName: string;
+  userEmail: string;
+  role: string;
+  plandayEmployeeId: number | null;
+  linked: boolean;
+  totalShifts: number;
+  lateShifts: number;
+  sickShifts: number;
+  sickUnpaidShifts: number;
+}
+
+interface AttendanceResponse {
+  available: boolean;
+  from: string;
+  to: string;
+  rows: EmployeeAttendanceRow[];
+  unmatchedAppUsers: Array<{ userId: number; name: string; email: string }>;
+  shiftTypeNames: string[];
+  absenceAccountNames: string[];
+}
+
+function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
+  const [data, setData] = useState<AttendanceResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [showUnlinked, setShowUnlinked] = useState(false);
+
+  useEffect(() => {
+    if (!fromDate || !toDate) return;
+    setLoading(true);
+    const params = new URLSearchParams({ from: fromDate, to: toDate });
+    fetch(`${BASE}/api/employees/attendance?${params.toString()}`, { credentials: "include" })
+      .then(r => { if (!r.ok) throw new Error("Failed"); return r.json() as Promise<AttendanceResponse>; })
+      .then(d => { setData(d); setLoading(false); })
+      .catch((err) => {
+        console.warn("[Reports] Employees fetch failed:", err);
+        toast({ title: "Failed to load employee records", variant: "destructive" });
+        setData(null);
+        setLoading(false);
+      });
+  }, [fromDate, toDate]);
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-12">
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (!data) {
+    return <div className="text-center text-muted-foreground py-8">Failed to load employee records</div>;
+  }
+
+  if (!data.available) {
+    return (
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 text-sm">
+        <div className="font-medium text-amber-900 mb-1">Plan Day is not configured</div>
+        <p className="text-amber-800">
+          Set <code className="bg-amber-100 px-1 rounded">PLANDAY_CLIENT_ID</code>,{" "}
+          <code className="bg-amber-100 px-1 rounded">PLANDAY_REFRESH_TOKEN</code>, and{" "}
+          <code className="bg-amber-100 px-1 rounded">PLANDAY_DEPARTMENT_ID</code> to enable attendance records.
+        </p>
+      </div>
+    );
+  }
+
+  const linkedRows = data.rows.filter(r => r.linked);
+  const rowsToShow = showUnlinked ? data.rows : linkedRows;
+
+  const totals = linkedRows.reduce(
+    (acc, r) => ({
+      total: acc.total + r.totalShifts,
+      late: acc.late + r.lateShifts,
+      sick: acc.sick + r.sickShifts,
+      sickUnpaid: acc.sickUnpaid + r.sickUnpaidShifts,
+    }),
+    { total: 0, late: 0, sick: 0, sickUnpaid: 0 },
+  );
+
+  return (
+    <>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <SummaryCard
+          icon={<Users className="w-5 h-5 text-blue-600" />}
+          label="Total Shifts"
+          value={String(totals.total)}
+          sub={`${linkedRows.length} linked employee${linkedRows.length === 1 ? "" : "s"}`}
+        />
+        <SummaryCard
+          icon={<Clock className="w-5 h-5 text-amber-600" />}
+          label="Arrived Late"
+          value={String(totals.late)}
+          sub={totals.total > 0 ? `${Math.round((totals.late / totals.total) * 100)}% of shifts` : "—"}
+        />
+        <SummaryCard
+          icon={<Thermometer className="w-5 h-5 text-rose-600" />}
+          label="Sick"
+          value={String(totals.sick)}
+          sub={totals.total > 0 ? `${Math.round((totals.sick / totals.total) * 100)}% of shifts` : "—"}
+        />
+        <SummaryCard
+          icon={<AlertTriangle className="w-5 h-5 text-red-700" />}
+          label="Sick Unpaid"
+          value={String(totals.sickUnpaid)}
+          sub={totals.total > 0 ? `${Math.round((totals.sickUnpaid / totals.total) * 100)}% of shifts` : "—"}
+        />
+      </div>
+
+      {data.unmatchedAppUsers.length > 0 && (
+        <div className="bg-secondary/50 border border-border rounded-xl p-4 text-sm">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <span className="font-medium">{data.unmatchedAppUsers.length}</span>{" "}
+              app user{data.unmatchedAppUsers.length === 1 ? "" : "s"} could not be matched to a Plan Day employee by email.
+            </div>
+            <button
+              onClick={() => setShowUnlinked(v => !v)}
+              className="text-xs px-2 py-1 rounded-md bg-background border border-border hover:bg-secondary transition-colors"
+            >
+              {showUnlinked ? "Hide unlinked" : "Show unlinked"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-secondary/50 border-b border-border">
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Employee</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Total shifts</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Arrived late</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Sick</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Sick unpaid</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rowsToShow.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="text-center text-muted-foreground py-8">
+                    No employees to show.
+                  </td>
+                </tr>
+              )}
+              {rowsToShow.map(r => (
+                <tr
+                  key={r.userId}
+                  className={cn(
+                    "border-b border-border last:border-b-0",
+                    !r.linked && "opacity-60",
+                  )}
+                >
+                  <td className="px-4 py-3">
+                    <div className="font-medium">{r.userName}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {r.userEmail}
+                      {!r.linked && <span className="ml-2 text-amber-600">• not linked</span>}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">{r.totalShifts}</td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {r.lateShifts > 0 ? <span className="text-amber-700 font-medium">{r.lateShifts}</span> : r.lateShifts}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {r.sickShifts > 0 ? <span className="text-rose-700 font-medium">{r.sickShifts}</span> : r.sickShifts}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {r.sickUnpaidShifts > 0 ? <span className="text-red-800 font-medium">{r.sickUnpaidShifts}</span> : r.sickUnpaidShifts}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {(data.shiftTypeNames.length > 0 || data.absenceAccountNames.length > 0) && (
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer">Plan Day data sources</summary>
+          {data.shiftTypeNames.length > 0 && (
+            <div className="mt-2">
+              <div className="font-medium mb-1">Shift types ({data.shiftTypeNames.length})</div>
+              <div className="flex flex-wrap gap-1">
+                {data.shiftTypeNames.map(name => (
+                  <span key={name} className="px-2 py-0.5 rounded-md bg-secondary">{name}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {data.absenceAccountNames.length > 0 && (
+            <div className="mt-2">
+              <div className="font-medium mb-1">Absence accounts ({data.absenceAccountNames.length})</div>
+              <div className="flex flex-wrap gap-1">
+                {data.absenceAccountNames.map(name => (
+                  <span key={name} className="px-2 py-0.5 rounded-md bg-secondary">{name}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          <p className="mt-2">
+            Shift types containing “late” count as Arrived Late. Absence records are classified by their account name: “sick unpaid” → Sick Unpaid, other “sick” → Sick.
+          </p>
+        </details>
+      )}
+    </>
   );
 }
