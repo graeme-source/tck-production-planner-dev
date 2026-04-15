@@ -67,19 +67,37 @@ async function plandayGet<T>(path: string, token: string): Promise<T | null> {
   const config = getConfig();
   if (!config) return null;
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "X-ClientId": config.clientId,
-    },
-  });
+  // Retry on 429 (rate limit) and 5xx, respecting Retry-After when provided.
+  // Plan Day tolerates ~20 req/sec; back off hard when we see 429.
+  const maxAttempts = 4;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const res = await fetch(`${API_BASE}${path}`, {
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "X-ClientId": config.clientId,
+      },
+    });
 
-  if (!res.ok) {
+    if (res.ok) return res.json() as Promise<T>;
+
+    if (res.status === 429 || res.status >= 500) {
+      if (attempt === maxAttempts) {
+        console.error(`[planday] GET ${path} gave up after ${attempt} attempts:`, res.status);
+        return null;
+      }
+      const retryAfter = Number(res.headers.get("retry-after"));
+      const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+        ? retryAfter * 1000
+        : Math.min(2000 * Math.pow(2, attempt - 1), 8000); // 2s, 4s, 8s
+      console.warn(`[planday] ${res.status} on GET ${path} — retrying in ${waitMs}ms (attempt ${attempt}/${maxAttempts})`);
+      await new Promise(r => setTimeout(r, waitMs));
+      continue;
+    }
+
     console.error(`[planday] GET ${path} failed:`, res.status);
     return null;
   }
-
-  return res.json() as Promise<T>;
+  return null;
 }
 
 // ── Settings helpers ───────────────────────────────────────────────────────
@@ -278,21 +296,42 @@ async function fetchAllPages<T>(pathWithoutPaging: string, token: string): Promi
   return all;
 }
 
+// Lookup-table caches — these change rarely (employees added occasionally,
+// shift types / absence accounts edited very occasionally) so we cache them
+// in-memory for 10 min to avoid hammering Plan Day on every report load.
+const LOOKUP_TTL_MS = 10 * 60 * 1000;
+interface CachedLookup<T> { data: T[]; expiresAt: number }
+let cachedEmployees: CachedLookup<PlandayEmployee> | null = null;
+let cachedShiftTypes: CachedLookup<PlandayShiftType> | null = null;
+
+async function getCachedLookup<T>(
+  current: CachedLookup<T> | null,
+  fetcher: () => Promise<T[]>,
+  set: (c: CachedLookup<T>) => void,
+): Promise<T[]> {
+  if (current && Date.now() < current.expiresAt) return current.data;
+  const data = await fetcher();
+  set({ data, expiresAt: Date.now() + LOOKUP_TTL_MS });
+  return data;
+}
+
 export async function getPlandayEmployees(): Promise<PlandayEmployee[]> {
-  const token = await getAccessToken();
-  if (!token) return [];
-  // /hr/v1.0/employees — fields includes email + names
-  const employees = await fetchAllPages<PlandayEmployee>(
-    `/hr/v1.0/employees?includeFields=firstName,lastName,email`,
-    token,
-  );
-  return employees;
+  return getCachedLookup(cachedEmployees, async () => {
+    const token = await getAccessToken();
+    if (!token) return [];
+    return fetchAllPages<PlandayEmployee>(
+      `/hr/v1.0/employees?includeFields=firstName,lastName,email`,
+      token,
+    );
+  }, c => { cachedEmployees = c; });
 }
 
 export async function getPlandayShiftTypes(): Promise<PlandayShiftType[]> {
-  const token = await getAccessToken();
-  if (!token) return [];
-  return fetchAllPages<PlandayShiftType>(`/scheduling/v1.0/shifttypes`, token);
+  return getCachedLookup(cachedShiftTypes, async () => {
+    const token = await getAccessToken();
+    if (!token) return [];
+    return fetchAllPages<PlandayShiftType>(`/scheduling/v1.0/shifttypes`, token);
+  }, c => { cachedShiftTypes = c; });
 }
 
 export async function getPlandayShifts(from: string, to: string): Promise<PlandayShift[]> {
@@ -355,11 +394,13 @@ export async function getPlandayAbsenceRecords(from: string, to: string): Promis
 
 /**
  * Fetches all absence account definitions so we can resolve account ids to names
- * (e.g. "Sick", "Sick Unpaid", "Vacation").
+ * (e.g. "Sick", "Sick Unpaid", "Vacation"). Cached — names change rarely.
  */
+let cachedAbsenceAccounts: CachedLookup<PlandayAbsenceAccount> | null = null;
 export async function getPlandayAbsenceAccounts(): Promise<PlandayAbsenceAccount[]> {
-  const token = await getAccessToken();
-  if (!token) return [];
-  // Endpoint: /absence/v1.0/accounts — paged like the rest.
-  return fetchAllPages<PlandayAbsenceAccount>(`/absence/v1.0/accounts`, token);
+  return getCachedLookup(cachedAbsenceAccounts, async () => {
+    const token = await getAccessToken();
+    if (!token) return [];
+    return fetchAllPages<PlandayAbsenceAccount>(`/absence/v1.0/accounts`, token);
+  }, c => { cachedAbsenceAccounts = c; });
 }

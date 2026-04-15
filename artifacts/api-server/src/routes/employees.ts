@@ -22,10 +22,11 @@ import {
 
 const router: IRouter = Router();
 
-// ── Admin auth ─────────────────────────────────────────────────────────────
+// ── Auth: manager+ ─────────────────────────────────────────────────────────
 
-async function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  if (req.session.userRole === "admin") { next(); return; }
+async function requireManager(req: Request, res: Response, next: NextFunction) {
+  const allowed = (role: string | undefined) => role === "admin" || role === "manager";
+  if (allowed(req.session.userRole)) { next(); return; }
   if (req.session.userId && !req.session.userRole) {
     const [user] = await db
       .select({ role: usersTable.role })
@@ -33,13 +34,13 @@ async function requireAdmin(req: Request, res: Response, next: NextFunction) {
       .where(eq(usersTable.id, req.session.userId));
     if (user) {
       req.session.userRole = user.role as "admin" | "manager" | "viewer";
-      if (user.role === "admin") { next(); return; }
+      if (allowed(user.role)) { next(); return; }
     }
   }
-  res.status(403).json({ error: "Admin access required" });
+  res.status(403).json({ error: "Manager access required" });
 }
 
-router.use(requireAdmin);
+router.use(requireManager);
 
 // ── Classification helpers ─────────────────────────────────────────────────
 

@@ -262,15 +262,20 @@ const REPORTS_NAV_ITEMS: ReportsNavItem[] = [
   { id: "employees", label: "Employee Records", icon: UserCog },
 ];
 
-// Tabs only visible to admins (not managers).
-const ADMIN_ONLY_TABS: TabId[] = ["employees"];
+// Tabs only visible to admins (not managers). Empty — no admin-gated tabs right now.
+const ADMIN_ONLY_TABS: TabId[] = [];
 
 export default function Reports() {
   const search = useSearch();
   const [, navigate] = useLocation();
-  const { state } = useAuth();
+  const { state, requireSensitivePin } = useAuth();
   const userRole = state.status === "authenticated" ? state.user.role : "viewer";
   const isManagerOrAdmin = userRole === "admin" || userRole === "manager";
+
+  // Require PIN re-entry on entering Analytics (5-min unlock window).
+  useEffect(() => {
+    if (state.status === "authenticated" && isManagerOrAdmin) requireSensitivePin();
+  }, [state.status, isManagerOrAdmin, requireSensitivePin]);
 
   // Viewers only see the Issue Log tab; managers see everything except admin-only tabs; admins see everything.
   const isAdmin = userRole === "admin";
@@ -411,7 +416,7 @@ export default function Reports() {
           {activeTab === "improvements" && <ImprovementsTab userRole={userRole} currentUserName={state.status === "authenticated" ? state.user.name : null} />}
           {activeTab === "issues" && <AndonLogTab userRole={userRole} initialIssueId={issueIdParam ? parseInt(issueIdParam, 10) : undefined} />}
           {activeTab === "leftover-filling" && <LeftoverFillingTab fromDate={fromDate} toDate={toDate} />}
-          {activeTab === "employees" && isAdmin && <EmployeesTab fromDate={fromDate} toDate={toDate} />}
+          {activeTab === "employees" && isManagerOrAdmin && <EmployeesTab fromDate={fromDate} toDate={toDate} />}
         </div>
       </div>
     </div>

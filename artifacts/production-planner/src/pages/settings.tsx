@@ -734,10 +734,15 @@ function TeamAccessContent({
 
 export default function Settings() {
   const { data: users, isLoading } = useListUsers();
-  const { state } = useAuth();
+  const { state, requireSensitivePin } = useAuth();
   const user = state.status === "authenticated" ? state.user : null;
   const search = useSearch();
   const [, navigate] = useLocation();
+
+  // Require PIN re-entry on entering Settings (5-min unlock window).
+  useEffect(() => {
+    if (state.status === "authenticated") requireSensitivePin();
+  }, [state.status, requireSensitivePin]);
 
   const params = new URLSearchParams(search);
   const sectionParam = params.get("section") as SettingsSection | null;

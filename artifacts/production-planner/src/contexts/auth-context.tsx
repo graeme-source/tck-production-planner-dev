@@ -27,13 +27,22 @@ type AuthContextValue = {
   lockStation: () => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
+  /** Prompt for PIN if the sensitive-unlock window has expired. Idempotent — safe to call on every mount. */
+  requireSensitivePin: () => void;
 };
+
+// How long a PIN entry grants access to sensitive pages before re-prompting.
+const SENSITIVE_UNLOCK_TTL_MS = 5 * 60 * 1000;
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ status: "loading" });
   const [pinLocked, setPinLocked] = useState(false);
+  // Timestamp of the last successful PIN entry. Used to gate sensitive pages
+  // (Analytics, Settings) so that leaving a device unattended doesn't expose
+  // HR / config data even within an authenticated session.
+  const sensitiveUnlockedAtRef = useRef<number>(0);
 
   const consecutiveFailsRef = useRef(0);
   const offlineToastedRef = useRef(false);
@@ -162,6 +171,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         addDeviceUserId(user.id);
         setState({ status: "authenticated", user });
         setPinLocked(false);
+        sensitiveUnlockedAtRef.current = Date.now();
         return { user };
       }
       const data = await res.json().catch(() => ({}));
@@ -185,6 +195,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         addDeviceUserId(user.id);
         setState({ status: "authenticated", user });
         setPinLocked(false);
+        sensitiveUnlockedAtRef.current = Date.now();
         return {};
       }
       const data = await res.json().catch(() => ({}));
@@ -213,6 +224,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       if (res.ok) {
         setPinLocked(false);
+        sensitiveUnlockedAtRef.current = Date.now();
         return {};
       }
       const data = await res.json().catch(() => ({}));
@@ -227,6 +239,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { error: "Network error — please try again" };
     }
   }, []);
+
+  // Gate for sensitive pages. If the last PIN entry was within the TTL window,
+  // no-op. Otherwise, trigger the PIN overlay — the user re-enters their PIN
+  // and `verifyPin` resets the window. No-op for users without a PIN set
+  // (shouldn't happen: PIN setup is enforced at login).
+  const requireSensitivePin = useCallback(() => {
+    if (state.status !== "authenticated") return;
+    if (pinLocked) return; // already prompting
+    const age = Date.now() - sensitiveUnlockedAtRef.current;
+    if (age < SENSITIVE_UNLOCK_TTL_MS) return;
+    setPinLocked(true);
+  }, [state, pinLocked]);
 
   // Manually lock the station — clears pinVerifiedAt server-side and locally.
   // We lock the UI regardless of the server response (security-first): if the
@@ -245,16 +269,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.warn("[Auth] Lock station: network error, locking UI anyway:", err);
     }
     setPinLocked(true);
+    // Manual lock also invalidates the sensitive unlock window.
+    sensitiveUnlockedAtRef.current = 0;
   }, []);
 
   const logout = useCallback(async () => {
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     setState({ status: "unauthenticated" });
     setPinLocked(false);
+    sensitiveUnlockedAtRef.current = 0;
   }, []);
 
   return (
-    <AuthContext.Provider value={{ state, pinLocked, login, pinLogin, verifyPin, lockStation, logout, refreshUser }}>
+    <AuthContext.Provider value={{ state, pinLocked, login, pinLogin, verifyPin, lockStation, logout, refreshUser, requireSensitivePin }}>
       {children}
     </AuthContext.Provider>
   );
