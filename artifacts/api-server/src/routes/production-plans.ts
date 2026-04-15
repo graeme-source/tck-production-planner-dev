@@ -1241,6 +1241,45 @@ router.post("/:id/add-mac-cheese", validate(AddMacCheeseBody), async (req, res) 
   res.status(201).json({ ...mapPlan(plan), items: updatedItems.map(it => mapItem(it, completionsByItem[it.id] ?? {})) });
 });
 
+// ──────────────────────────────────────────────────────────────────────────────
+// DELETE /production-plans/:id/mac-cheese-items
+// Remove all macaroni cheese items from a production plan (even locked ones).
+// ──────────────────────────────────────────────────────────────────────────────
+router.delete("/:id/mac-cheese-items", async (req, res) => {
+  const planId = Number(req.params.id);
+  const [plan] = await db.select().from(productionPlansTable).where(eq(productionPlansTable.id, planId));
+  if (!plan) { res.status(404).json({ error: "Plan not found" }); return; }
+
+  if (plan.status === "complete") {
+    res.status(409).json({ error: "Cannot modify a completed plan." });
+    return;
+  }
+
+  // Find mac cheese recipe IDs
+  const macRecipes = await db
+    .select({ id: recipesTable.id })
+    .from(recipesTable)
+    .where(eq(recipesTable.category, "Macaroni Cheese"));
+  const macRecipeIds = new Set(macRecipes.map(r => r.id));
+
+  if (macRecipeIds.size === 0) { res.json({ removed: 0 }); return; }
+
+  // Delete mac cheese items from the plan
+  const macItems = await db
+    .select({ id: productionPlanItemsTable.id, recipeId: productionPlanItemsTable.recipeId })
+    .from(productionPlanItemsTable)
+    .where(eq(productionPlanItemsTable.planId, planId));
+
+  const toDelete = macItems.filter(it => macRecipeIds.has(it.recipeId));
+  if (toDelete.length === 0) { res.json({ removed: 0 }); return; }
+
+  await db.delete(productionPlanItemsTable).where(
+    inArray(productionPlanItemsTable.id, toDelete.map(it => it.id))
+  );
+
+  res.json({ removed: toDelete.length });
+});
+
 // GET /production-plans/next-active?afterDate=YYYY-MM-DD
 // Returns the next active production plan after a given date.
 // If afterDate is provided, searches for the first active plan with plan_date > afterDate.

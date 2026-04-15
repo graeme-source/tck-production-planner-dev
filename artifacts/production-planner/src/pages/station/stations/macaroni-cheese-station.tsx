@@ -1,17 +1,16 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { useCreateBatchCompletion, getGetProductionPlanQueryKey, getListProductionPlansQueryKey } from "@workspace/api-client-react";
+import { getGetProductionPlanQueryKey, getListProductionPlansQueryKey } from "@workspace/api-client-react";
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Loader2, Plus, Minus, CheckCircle2, Check, Thermometer, Clock,
+  Loader2, Plus, Check, Thermometer, Clock,
   UtensilsCrossed, ChefHat, Package, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { useAuth } from "@/contexts/auth-context";
-import { BreakTracker } from "../shared/break-tracker";
-import { getStationCount, isMacCheese } from "../shared/constants";
+import { isMacCheese } from "../shared/constants";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Macaroni Cheese Station
@@ -342,7 +341,6 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
 export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const { state: authState } = useAuth();
   const queryClient = useQueryClient();
-  const createBatchCompletion = useCreateBatchCompletion();
   const authUser = authState.status === "authenticated" ? authState.user : null;
 
   // Filter to mac cheese items only
@@ -350,7 +348,8 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
   const { ingredients, loading: prepLoading } = useMacCheesePrep(plan.id, macItems);
 
   const [checkedIngredients, setCheckedIngredients] = useState<Set<string>>(new Set());
-  const [completing, setCompleting] = useState<number | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [removing, setRemoving] = useState(false);
 
   // Temperature recording
   const [tempRecords, setTempRecords] = useState<TempRecord[]>([]);
@@ -401,24 +400,25 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
     setTempSaving(false);
   };
 
-  const handleBatchComplete = async (itemId: number) => {
-    setCompleting(itemId);
+  const handleRemoveMacCheese = async () => {
+    setRemoving(true);
     try {
-      await createBatchCompletion.mutateAsync({
-        planId: plan.id,
-        data: {
-          planItemId: itemId,
-          stationType: "macaroni_cheese",
-          userId: authUser?.id,
-          userName: authUser?.name ?? undefined,
-        },
+      const resp = await fetch(`/api/production-plans/${plan.id}/mac-cheese-items`, {
+        method: "DELETE",
+        credentials: "include",
       });
+      if (!resp.ok) {
+        const data = await resp.json();
+        throw new Error(data.error ?? "Failed to remove");
+      }
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
-      toast({ title: "Batch complete" });
+      queryClient.invalidateQueries({ queryKey: getListProductionPlansQueryKey() });
+      toast({ title: "Mac cheese removed", description: "Items removed from plan. You can re-add them." });
+      setEditing(false);
     } catch (err) {
       toast({ title: "Error", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
     }
-    setCompleting(null);
+    setRemoving(false);
   };
 
   const pastaIngredients = ingredients.filter(i => i.section === "pasta");
@@ -433,20 +433,42 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
   const preCheeseRecords = tempRecords.filter(r => r.recordType === "mac_sauce_pre_cheese");
   const postCheeseRecords = tempRecords.filter(r => r.recordType === "mac_sauce_post_cheese");
 
-  if (macItems.length === 0) {
+  // Show the add form if no mac cheese items OR if editing
+  if (macItems.length === 0 || editing) {
     return (
       <div className="space-y-6">
         <div className="bg-card border border-yellow-200 dark:border-yellow-800 rounded-xl p-5">
-          <h2 className="font-semibold text-lg flex items-center gap-2 mb-4">
-            <UtensilsCrossed className="w-5 h-5 text-yellow-600" />
-            Add Macaroni Cheese to this Plan
-          </h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold text-lg flex items-center gap-2">
+              <UtensilsCrossed className="w-5 h-5 text-yellow-600" />
+              {macItems.length > 0 ? "Edit Macaroni Cheese" : "Add Macaroni Cheese to this Plan"}
+            </h2>
+            {macItems.length > 0 && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleRemoveMacCheese}
+                  disabled={removing}
+                  className="px-3 py-1.5 text-sm border border-destructive/30 text-destructive rounded-lg hover:bg-destructive/10 flex items-center gap-1.5"
+                >
+                  {removing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
+                  Remove All
+                </button>
+                <button
+                  onClick={() => setEditing(false)}
+                  className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
           <InlineAddMacCheese
             planId={plan.id}
             planDate={plan.planDate}
             onSuccess={() => {
               queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
               queryClient.invalidateQueries({ queryKey: getListProductionPlansQueryKey() });
+              setEditing(false);
             }}
           />
         </div>
@@ -456,50 +478,37 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
 
   return (
     <div className="space-y-6">
-      {/* Summary */}
+      {/* Summary — recipe breakdown with packs, no batch buttons */}
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-semibold text-lg flex items-center gap-2">
             <UtensilsCrossed className="w-5 h-5 text-yellow-600" />
             Macaroni Cheese
           </h2>
-          <span className="text-sm font-medium bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 px-3 py-1 rounded-full">
-            {Math.round(totalPacks)} packs total
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 px-3 py-1 rounded-full">
+              {Math.round(totalPacks)} packs total
+            </span>
+            <button
+              onClick={() => setEditing(true)}
+              className="px-3 py-1.5 text-sm border border-yellow-300 dark:border-yellow-700 text-yellow-700 dark:text-yellow-400 rounded-lg hover:bg-yellow-50 dark:hover:bg-yellow-900/20 flex items-center gap-1.5"
+            >
+              Edit
+            </button>
+          </div>
         </div>
 
-        {/* Recipe breakdown */}
+        {/* Recipe breakdown — just name and packs */}
         <div className="space-y-2">
           {macItems.map(item => {
-            const done = getStationCount(item, "macaroni_cheese");
-            const target = item.batchesTarget ?? 0;
-            const packs = target * ((item.portionsPerBatch ?? 10) / (item.packSize ?? 2));
-            const isComplete = done >= target;
+            const packs = (item.batchesTarget ?? 0) * ((item.portionsPerBatch ?? 10) / (item.packSize ?? 2));
             return (
-              <div key={item.id} className={cn("flex items-center justify-between p-3 rounded-lg border", isComplete ? "bg-emerald-50 dark:bg-emerald-900/10 border-emerald-200" : "bg-background border-border")}>
+              <div key={item.id} className="flex items-center justify-between p-3 rounded-lg border bg-background border-border">
                 <div className="flex items-center gap-3">
                   {item.recipeColor && <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: item.recipeColor ?? undefined }} />}
-                  <div>
-                    <span className="font-medium">{item.recipeName}</span>
-                    <span className="text-xs text-muted-foreground ml-2">{Math.round(packs)} packs</span>
-                  </div>
+                  <span className="font-medium">{item.recipeName}</span>
                 </div>
-                <div className="flex items-center gap-3">
-                  <span className={cn("text-sm font-mono tabular-nums", isComplete ? "text-emerald-600" : "")}>
-                    {done}/{target} batches
-                  </span>
-                  {!isComplete && (
-                    <button
-                      onClick={() => handleBatchComplete(item.id)}
-                      disabled={completing === item.id || isOnBreak}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-600 text-white rounded-lg text-sm font-medium hover:bg-yellow-700 disabled:opacity-50"
-                    >
-                      {completing === item.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-                      Batch Done
-                    </button>
-                  )}
-                  {isComplete && <CheckCircle2 className="w-5 h-5 text-emerald-500" />}
-                </div>
+                <span className="text-lg font-bold tabular-nums">{Math.round(packs)} packs</span>
               </div>
             );
           })}
