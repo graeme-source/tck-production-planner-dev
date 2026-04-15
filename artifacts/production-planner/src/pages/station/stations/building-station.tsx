@@ -323,6 +323,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   const queryClient = useQueryClient();
   const { state } = useAuth();
   const isAdmin = state.status === "authenticated" && state.user.role === "admin";
+  const userId = state.status === "authenticated" ? state.user.id : 0;
 
   const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
@@ -470,7 +471,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   const [extraPromptItemId, setExtraPromptItemId] = useState<number | null>(null);
   const [prevCurrentItemId, setPrevCurrentItemId] = useState<number | null>(null);
 
-  const checklistKey = (itemId: number) => `checklist_done_${plan.id}_${stationType}_${itemId}`;
+  const checklistKey = (itemId: number) => `checklist_done_${plan.id}_${stationType}_${itemId}_${userId}`;
 
   function getCombinedBuildCount(it: ProductionPlanItem) {
     return getStationCount(it, "building_1") + getStationCount(it, "building_2");
@@ -798,28 +799,14 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
       <Dialog open={!!extraPromptItem} onOpenChange={(open) => { if (!open) setExtraPromptItemId(null); }}>
         <DialogContent className="max-w-md mx-auto" onPointerDownOutside={e => e.preventDefault()} onEscapeKeyDown={e => e.preventDefault()}>
           {extraPromptItem && (
-            <div className="space-y-5 pt-2">
-              <div className="flex items-start gap-3">
-                <AlertCircle className="w-7 h-7 text-amber-500 flex-shrink-0 mt-0.5" />
-                <div>
-                  <h3 className="font-bold text-xl text-foreground">
-                    {extraPromptItem.recipeName ?? "Recipe"} complete
-                  </h3>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Any extra packs or shorts to record before moving on?
-                  </p>
-                </div>
-              </div>
-              <PackAdjustment planId={plan.id} item={extraPromptItem} isOnBreak={isOnBreak} />
-              <button
-                type="button"
-                onClick={() => setExtraPromptItemId(null)}
-                onTouchEnd={e => { e.preventDefault(); setExtraPromptItemId(null); }}
-                className="w-full py-4 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 font-bold text-lg transition-colors touch-manipulation"
-              >
-                Done — Move On
-              </button>
-            </div>
+            <RecipeCompleteDialogBody
+              planId={plan.id}
+              item={extraPromptItem}
+              isOnBreak={isOnBreak}
+              hasFilling={(assemblyMap[extraPromptItem.id]?.fillingWeightPerBatch ?? 0) > 0}
+              assemblyData={assemblyMap[extraPromptItem.id]}
+              onDone={() => setExtraPromptItemId(null)}
+            />
           )}
         </DialogContent>
       </Dialog>
@@ -1233,6 +1220,169 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
         minBph={minBph}
         serverKpi={serverKpi}
       />
+    </div>
+  );
+}
+
+function RecipeCompleteDialogBody({ planId, item, isOnBreak, hasFilling, assemblyData, onDone }: {
+  planId: number;
+  item: ProductionPlanItem;
+  isOnBreak: boolean;
+  hasFilling: boolean;
+  assemblyData?: AssemblyData;
+  onDone: () => void;
+}) {
+  const [noLeftover, setNoLeftover] = useState(false);
+  const [fillingGrams, setFillingGrams] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const fillingValid = !hasFilling || noLeftover || (fillingGrams.trim() !== "" && Number(fillingGrams) >= 0 && Number.isFinite(Number(fillingGrams)));
+
+  const handleDone = async () => {
+    if (!fillingValid) return;
+    if (hasFilling) {
+      const grams = noLeftover ? 0 : Math.round(Number(fillingGrams));
+      setSaving(true);
+      try {
+        await guardedFetch(`/api/production-plans/${planId}/items/${item.id}/leftover-filling`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ grams }),
+        });
+      } catch (err) {
+        console.warn("[BuildingStation] Leftover filling save failed:", err);
+      } finally {
+        setSaving(false);
+      }
+    }
+    onDone();
+  };
+
+  return (
+    <div className="space-y-5 pt-2">
+      <div className="flex items-start gap-3">
+        <AlertCircle className="w-7 h-7 text-amber-500 flex-shrink-0 mt-0.5" />
+        <div>
+          <h3 className="font-bold text-xl text-foreground">
+            {item.recipeName ?? "Recipe"} complete
+          </h3>
+          <p className="text-sm text-muted-foreground mt-1">
+            Any extra packs or shorts to record before moving on?
+          </p>
+        </div>
+      </div>
+      <PackAdjustment planId={planId} item={item} isOnBreak={isOnBreak} />
+
+      {hasFilling && (
+        <div className="border border-border rounded-xl px-4 py-3 space-y-3">
+          <p className="text-sm font-semibold text-muted-foreground">Leftover Filling</p>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={noLeftover}
+              onChange={(e) => { setNoLeftover(e.target.checked); if (e.target.checked) setFillingGrams(""); }}
+              className="w-5 h-5 rounded border-border accent-emerald-600"
+            />
+            <span className="text-base font-medium">No leftover filling</span>
+          </label>
+          {!noLeftover && (
+            <div className="flex items-center gap-3">
+              <input
+                type="number"
+                inputMode="numeric"
+                min="0"
+                placeholder="Enter weight"
+                value={fillingGrams}
+                onChange={(e) => setFillingGrams(e.target.value)}
+                className="flex-1 h-12 px-4 text-lg font-bold border border-border rounded-xl bg-background text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+              <span className="text-lg font-semibold text-muted-foreground">g</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {assemblyData && <BatchDivision assemblyData={assemblyData} portionsPerBatch={item.portionsPerBatch ?? 10} />}
+
+      <button
+        type="button"
+        onClick={handleDone}
+        onTouchEnd={e => { e.preventDefault(); handleDone(); }}
+        disabled={!fillingValid || saving}
+        className={cn(
+          "w-full py-4 rounded-xl font-bold text-lg transition-colors touch-manipulation",
+          fillingValid && !saving
+            ? "bg-emerald-600 text-white hover:bg-emerald-700"
+            : "bg-muted text-muted-foreground cursor-not-allowed"
+        )}
+      >
+        {saving ? "Saving..." : "Done — Move On"}
+      </button>
+    </div>
+  );
+}
+
+const PARTIAL_PORTIONS = [2, 4, 6, 8] as const;
+
+function BatchDivision({ assemblyData, portionsPerBatch }: { assemblyData: AssemblyData; portionsPerBatch: number }) {
+  const [selected, setSelected] = useState<number | null>(null);
+
+  const hasFilling = assemblyData.fillingWeightPerBatch > 0;
+  const hasItems = assemblyData.assemblyItems.length > 0;
+  if (!hasFilling && !hasItems) return null;
+
+  const scale = selected != null ? selected / portionsPerBatch : 0;
+
+  // Build unified list matching assembly order (same as main checklist)
+  type Entry = { key: string; isFilling: boolean; ai?: AssemblyItemData };
+  const allItems: Entry[] = [];
+  assemblyData.assemblyItems.forEach((ai, i) => allItems.push({ key: `${ai.sourceType}-${ai.sourceId}-${i}`, isFilling: false, ai }));
+  if (hasFilling) {
+    const pos = Math.min(assemblyData.fillingAssemblyOrder ?? 0, allItems.length);
+    allItems.splice(pos, 0, { key: "filling", isFilling: true });
+  }
+
+  return (
+    <div className="border border-border rounded-xl px-4 py-3 space-y-3">
+      <p className="text-sm font-semibold text-muted-foreground">Partial Batch Weights</p>
+      <div className="flex gap-2">
+        {PARTIAL_PORTIONS.map((p) => (
+          <button
+            key={p}
+            type="button"
+            onClick={() => setSelected(prev => prev === p ? null : p)}
+            className={cn(
+              "flex-1 h-11 rounded-lg text-lg font-bold transition-colors touch-manipulation",
+              selected === p
+                ? "bg-primary text-primary-foreground"
+                : "border border-border bg-background hover:bg-secondary/60"
+            )}
+          >
+            {p}
+          </button>
+        ))}
+      </div>
+      {selected != null && (
+        <div className="divide-y divide-border/50 -mx-1">
+          {allItems.map((entry) => {
+            const isTopping = !entry.isFilling && entry.ai?.isTopping;
+            const weight = entry.isFilling
+              ? assemblyData.fillingWeightPerBatch * scale
+              : (entry.ai?.weightPerBatch ?? 0) * scale;
+            return (
+              <div key={entry.key} className="flex items-center justify-between px-1 py-2">
+                <span className={cn("text-base font-bold", entry.isFilling && "text-blue-700 dark:text-blue-400")}>
+                  {entry.isFilling ? "Filling" : entry.ai!.name}
+                </span>
+                {isTopping
+                  ? <span className="text-base font-bold font-mono text-slate-500 dark:text-slate-400">Sprinkle</span>
+                  : <span className="text-base font-bold font-mono tabular-nums">{Math.round(weight)}g</span>
+                }
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
