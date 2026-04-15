@@ -562,6 +562,15 @@ router.get("/calculate", async (req, res) => {
           const key = p.productTitle.toLowerCase().trim();
           shopifySalesPerDate[date][key] = (shopifySalesPerDate[date][key] ?? 0) + twoPackVariant.quantity;
           shopifySalesCombined[key] = (shopifySalesCombined[key] ?? 0) + twoPackVariant.quantity;
+        } else if (p.variants.length === 0) {
+          // Products with no variants at all (single-variant Shopify products
+          // like mac cheese) — use totalQuantity directly
+          const key = p.productTitle.toLowerCase().trim();
+          shopifySalesPerDate[date][key] = (shopifySalesPerDate[date][key] ?? 0) + p.totalQuantity;
+          shopifySalesCombined[key] = (shopifySalesCombined[key] ?? 0) + p.totalQuantity;
+        } else {
+          // Log unmatched products with variants for debugging
+          console.log(`[calculate] Skipped product "${p.productTitle}" — variants: [${p.variants.map(v => v.title).join(", ")}] (no "2 pack" match)`);
         }
       }
     }
