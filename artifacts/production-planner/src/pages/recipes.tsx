@@ -246,8 +246,15 @@ function RecipeForm({
   const watchedIngredients = watch("ingredients");
   const watchedSubRecipes = watch("subRecipes");
 
+  const [addingCategory, setAddingCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+
   const handleCategoryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const cat = e.target.value;
+    if (cat === "__add_new__") {
+      setAddingCategory(true);
+      return;
+    }
     setValue("category", cat);
     const def = categoryDefaults.find(d => d.category.toLowerCase() === cat.toLowerCase());
     if (def) {
@@ -255,6 +262,14 @@ function RecipeForm({
       setValue("packagingCost", def.defaultPackagingCost);
       setValue("labourCost", def.defaultLabourCost);
     }
+  };
+
+  const handleAddCategory = () => {
+    const trimmed = newCategoryName.trim();
+    if (!trimmed) return;
+    setValue("category", trimmed);
+    setAddingCategory(false);
+    setNewCategoryName("");
   };
 
   const openQuickAdd = (index: number) => {
@@ -311,15 +326,36 @@ function RecipeForm({
           </div>
           <div>
             <label className="text-sm font-medium mb-1 block">Category</label>
-            <select
-              {...register("category")}
-              onChange={handleCategoryChange}
-              value={watchedCategory ?? ""}
-              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-            >
-              <option value="">Select category…</option>
-              {categoryDefaults.map(d => <option key={d.category} value={d.category}>{d.category}</option>)}
-            </select>
+            {addingCategory ? (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newCategoryName}
+                  onChange={e => setNewCategoryName(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); handleAddCategory(); } }}
+                  placeholder="New category name…"
+                  className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  autoFocus
+                />
+                <button type="button" onClick={handleAddCategory} className="px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium">Add</button>
+                <button type="button" onClick={() => setAddingCategory(false)} className="px-3 py-2 border border-border rounded-lg text-sm">Cancel</button>
+              </div>
+            ) : (
+              <select
+                {...register("category")}
+                onChange={handleCategoryChange}
+                value={watchedCategory ?? ""}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                <option value="">Select category…</option>
+                {categoryDefaults.map(d => <option key={d.category} value={d.category}>{d.category}</option>)}
+                {/* Show current value if it's not in categoryDefaults (e.g. already saved on recipe) */}
+                {watchedCategory && !categoryDefaults.find(d => d.category === watchedCategory) && (
+                  <option value={watchedCategory}>{watchedCategory}</option>
+                )}
+                <option value="__add_new__">+ Add new category…</option>
+              </select>
+            )}
             {categoryDefaults.length > 0 && watchedCategory && categoryDefaults.find(d => d.category.toLowerCase() === watchedCategory.toLowerCase()) && (
               <p className="text-xs text-primary mt-0.5">Defaults applied from category preset.</p>
             )}
