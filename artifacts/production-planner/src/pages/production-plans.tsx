@@ -2718,6 +2718,20 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
     refetchInterval: 15000,
   });
 
+  // Dispatch progress for packing station — orders fulfilled for next day (delivery day)
+  const dispatchTag = plan?.planDate ? format(addDays(parseISO(plan.planDate), 1), "yyyy-MM-dd") : null;
+  const { data: dispatchProgress } = useQuery<{ totalOrders: number; totalFulfilled: number }>({
+    queryKey: ["dispatch-progress", dispatchTag],
+    queryFn: async () => {
+      if (!dispatchTag) return { totalOrders: 0, totalFulfilled: 0 };
+      const res = await fetch(`/api/fulfilment/dispatch-progress?tag=${encodeURIComponent(dispatchTag)}`, { credentials: "include" });
+      if (!res.ok) return { totalOrders: 0, totalFulfilled: 0 };
+      return res.json();
+    },
+    refetchInterval: 30000,
+    enabled: !!dispatchTag,
+  });
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64 text-muted-foreground">
@@ -2770,11 +2784,28 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
         const done = macItems.reduce((sum, it) => sum + ((it.stationCompletions as Record<string, number> | undefined)?.["macaroni_cheese"] ?? 0), 0);
         stationProgress[s.key] = { done, target: macTarget };
       } else if (s.key === "packing") {
+        const totalOrders = dispatchProgress?.totalOrders ?? 0;
+        const totalFulfilled = dispatchProgress?.totalFulfilled ?? 0;
+        const pct = totalOrders > 0 ? Math.round((totalFulfilled / totalOrders) * 100) : 0;
+        stationProgress[s.key] = { done: pct, target: 100 };
+      } else if (s.key === "dough_sheeting") {
+        // No progress bar for sheeting
         stationProgress[s.key] = { done: 0, target: 0 };
-      } else if (s.key === "dough_prep" || s.key === "dough_sheeting") {
-        // Use next plan's completion data for dough stations (prep today for tomorrow)
+      } else if (s.key === "dough_prep") {
+        // Use next plan's completion data for dough prep (prep today for tomorrow)
         const done = nextItems.reduce((sum, it) => sum + ((it.stationCompletions as Record<string, number> | undefined)?.[s.key] ?? 0), 0);
         stationProgress[s.key] = { done, target: nextTarget };
+      } else if (s.key === "wrapping") {
+        // Show packs instead of batches
+        const wrappingTarget = items.reduce((sum, it) => sum + Math.floor(((it.batchesTarget ?? 0) * (it.portionsPerBatch ?? 10)) / 2), 0);
+        const wrappingDone = items.reduce((sum, it) => {
+          const ovenCount = (it.stationCompletions as Record<string, number> | undefined)?.["ovens"] ?? 0;
+          const gross = Math.floor((ovenCount * (it.portionsPerBatch ?? 10)) / 2);
+          const eightDeduction = (it.eightPackBagCount ?? 0) * 4;
+          const net = Math.max(0, gross - eightDeduction - (it.wonlyCount ?? 0) - (it.shortCount ?? 0)) + (it.extraPacksBuilt ?? 0);
+          return sum + net;
+        }, 0);
+        stationProgress[s.key] = { done: wrappingDone, target: wrappingTarget };
       } else {
         const done = items.reduce((sum, it) => sum + ((it.stationCompletions as Record<string, number> | undefined)?.[s.key] ?? 0), 0);
         stationProgress[s.key] = { done, target };
@@ -3058,7 +3089,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                       />
                     </div>
                     <p className={cn("text-xs text-center tabular-nums font-semibold", stationDone ? "text-emerald-600" : "text-muted-foreground")}>
-                      {s.key === "prep" ? `${pct}%` : `${sp.done} / ${sp.target}`}
+                      {s.key === "prep" || s.key === "packing" ? `${pct}%` : `${sp.done} / ${sp.target}`}
                     </p>
                   </div>
                 ) : (
