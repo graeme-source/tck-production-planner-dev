@@ -194,6 +194,7 @@ router.get("/station/:stationType/plan/:planId", async (req: Request, res: Respo
     completedAt: string | null;
     completionId: number | null;
     notes: string | null;
+    skippedReason: string | null;
   }>> = {};
 
   for (const t of filtered) {
@@ -213,6 +214,7 @@ router.get("/station/:stationType/plan/:planId", async (req: Request, res: Respo
       completedAt: completion?.completedAt?.toISOString() ?? null,
       completionId: completion?.id ?? null,
       notes: completion?.notes ?? null,
+      skippedReason: completion?.skippedReason ?? null,
     });
   }
 
@@ -232,6 +234,7 @@ router.get("/station/:stationType/plan/:planId", async (req: Request, res: Respo
       completedAt: o.completedAt?.toISOString() ?? null,
       completionId: null,
       notes: null,
+      skippedReason: o.skippedReason ?? null,
     });
   }
 
@@ -254,6 +257,7 @@ const CompleteBody = z.object({
   planId: z.number().int(),
   stationType: z.string().min(1),
   notes: z.string().optional(),
+  skippedReason: z.string().optional(),
 });
 
 router.post("/completions", async (req: Request, res: Response) => {
@@ -276,6 +280,7 @@ router.post("/completions", async (req: Request, res: Response) => {
       completedBy: req.session.userId ?? null,
       completedByName: userName,
       notes: parsed.data.notes,
+      skippedReason: parsed.data.skippedReason ?? null,
     }).returning();
     res.status(201).json(row);
   } catch (err: unknown) {
@@ -576,6 +581,7 @@ router.put("/oneoff/:id", async (req: Request, res: Response) => {
       completedBy: req.session.userId ?? null,
       completedByName: userName,
       completedAt: new Date(),
+      skippedReason: typeof body.skippedReason === "string" ? body.skippedReason : null,
     }).where(eq(checklistOneoffItemsTable.id, id)).returning();
     if (!row) { res.status(404).json({ error: "Item not found" }); return; }
     res.json(row);
@@ -588,6 +594,7 @@ router.put("/oneoff/:id", async (req: Request, res: Response) => {
       completedBy: null,
       completedByName: null,
       completedAt: null,
+      skippedReason: null,
     }).where(eq(checklistOneoffItemsTable.id, id)).returning();
     if (!row) { res.status(404).json({ error: "Item not found" }); return; }
     res.json(row);

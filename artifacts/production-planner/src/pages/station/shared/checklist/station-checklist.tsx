@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import {
-  CheckCircle2, Circle, ClipboardCheck, Plus, Undo2, Loader2,
+  CheckCircle2, Circle, ClipboardCheck, Plus, Undo2, Loader2, XCircle,
   Sun, Sparkles, Moon, ChevronDown, ChevronUp, GripVertical, Trash2, Pencil, Eye, EyeOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -41,6 +41,8 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
   const [addCategory, setAddCategory] = useState<Category>("opening");
   const [addRecurring, setAddRecurring] = useState(true);
   const [completionNotes, setCompletionNotes] = useState("");
+  const [skipMode, setSkipMode] = useState(false);
+  const [skipReason, setSkipReason] = useState("");
 
   // Refs to checklist item buttons, keyed by item key. Used for scroll-into-view
   // when the selection auto-advances after completing an item.
@@ -89,6 +91,8 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
     if (!selectedItemKey) return;
     const el = itemRefs.current[selectedItemKey];
     if (el) el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    setSkipMode(false);
+    setSkipReason("");
   }, [selectedItemKey]);
 
   // Dynamic data for selected item
@@ -196,6 +200,39 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
       }
       toast({ title: "Completion undone", description: item.title });
     });
+  };
+
+  const handleSkip = (item: ChecklistItem & { category: Category }) => {
+    if (!skipReason.trim()) return;
+    const next = findNextIncompleteItem(item);
+    runComplete(async (signal) => {
+      if (item.type === "template") {
+        await guardedFetch(`${BASE}/api/checklists/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            templateId: item.id,
+            planId,
+            stationType,
+            skippedReason: skipReason.trim(),
+          }),
+          signal,
+        });
+      } else {
+        await guardedFetch(`${BASE}/api/checklists/oneoff/${item.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ completed: true, skippedReason: skipReason.trim() }),
+          signal,
+        });
+      }
+      setSkipReason("");
+      setSkipMode(false);
+      toast({ title: "Marked uncomplete", description: item.title });
+    });
+    if (next) {
+      setSelectedItemKey(itemKey(next));
+    }
   };
 
   const handleAddItem = () => {
@@ -419,7 +456,9 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                             )}
                           >
                             <div className="flex-shrink-0">
-                              {item.completed ? (
+                              {item.completed && item.skippedReason ? (
+                                <XCircle className="w-5 h-5 text-amber-500" />
+                              ) : item.completed ? (
                                 <CheckCircle2 className="w-5 h-5 text-emerald-500" />
                               ) : (
                                 <Circle className="w-5 h-5 text-muted-foreground/40" />
@@ -429,15 +468,20 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                               <p className={cn(
                                 "text-sm font-medium truncate",
                                 isSelected && "font-semibold",
-                                item.completed && "line-through text-muted-foreground",
+                                item.completed && !item.skippedReason && "line-through text-muted-foreground",
+                                item.completed && item.skippedReason && "text-amber-600 dark:text-amber-400",
                               )}>
                                 {item.title}
                               </p>
-                              {item.completed && item.completedBy && (
+                              {item.completed && item.skippedReason ? (
+                                <p className="text-xs text-amber-600/70 dark:text-amber-400/70 truncate">
+                                  {item.skippedReason}
+                                </p>
+                              ) : item.completed && item.completedBy ? (
                                 <p className="text-xs text-muted-foreground truncate">
                                   {item.completedBy}
                                 </p>
-                              )}
+                              ) : null}
                               {item.type === "oneoff" && (
                                 <span className="text-xs text-amber-500 font-medium">one-off</span>
                               )}
@@ -469,9 +513,11 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
               <div
                 className={cn(
                   "bg-card border-2 rounded-2xl p-5 transition-colors",
-                  selectedItem.completed
-                    ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/20 dark:bg-emerald-950/10"
-                    : "border-border",
+                  selectedItem.completed && selectedItem.skippedReason
+                    ? "border-amber-300 dark:border-amber-700 bg-amber-50/20 dark:bg-amber-950/10"
+                    : selectedItem.completed
+                      ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/20 dark:bg-emerald-950/10"
+                      : "border-border",
                 )}
               >
                 {/* Header */}
@@ -496,7 +542,9 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                     )}
                   </div>
                   <div className="flex-shrink-0">
-                    {selectedItem.completed ? (
+                    {selectedItem.completed && selectedItem.skippedReason ? (
+                      <XCircle className="w-8 h-8 text-amber-500" />
+                    ) : selectedItem.completed ? (
                       <CheckCircle2 className="w-8 h-8 text-emerald-500" />
                     ) : (
                       <Circle className="w-8 h-8 text-muted-foreground/30" />
@@ -524,19 +572,33 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                 {/* Completion info or action */}
                 {selectedItem.completed ? (
                   <div className="mt-4 space-y-3">
-                    <div className="p-3 bg-emerald-50 dark:bg-emerald-950/20 rounded-lg">
-                      <p className="text-sm font-medium text-emerald-700 dark:text-emerald-300">
-                        Completed by {selectedItem.completedBy}
-                      </p>
-                      {selectedItem.completedAt && (
-                        <p className="text-xs text-emerald-600/70 dark:text-emerald-400/70 mt-0.5">
-                          {new Date(selectedItem.completedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    {selectedItem.skippedReason ? (
+                      <div className="p-3 bg-amber-50 dark:bg-amber-950/20 rounded-lg">
+                        <p className="text-sm font-medium text-amber-700 dark:text-amber-300">
+                          Marked uncomplete by {selectedItem.completedBy}
                         </p>
-                      )}
-                      {selectedItem.notes && (
-                        <p className="text-sm text-emerald-600 dark:text-emerald-400 mt-1">{selectedItem.notes}</p>
-                      )}
-                    </div>
+                        {selectedItem.completedAt && (
+                          <p className="text-xs text-amber-600/70 dark:text-amber-400/70 mt-0.5">
+                            {new Date(selectedItem.completedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </p>
+                        )}
+                        <p className="text-sm text-amber-600 dark:text-amber-400 mt-1">Reason: {selectedItem.skippedReason}</p>
+                      </div>
+                    ) : (
+                      <div className="p-3 bg-emerald-50 dark:bg-emerald-950/20 rounded-lg">
+                        <p className="text-sm font-medium text-emerald-700 dark:text-emerald-300">
+                          Completed by {selectedItem.completedBy}
+                        </p>
+                        {selectedItem.completedAt && (
+                          <p className="text-xs text-emerald-600/70 dark:text-emerald-400/70 mt-0.5">
+                            {new Date(selectedItem.completedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </p>
+                        )}
+                        {selectedItem.notes && (
+                          <p className="text-sm text-emerald-600 dark:text-emerald-400 mt-1">{selectedItem.notes}</p>
+                        )}
+                      </div>
+                    )}
                     <div className="flex items-center gap-4">
                       <button
                         onClick={() => handleUndo(selectedItem)}
@@ -560,35 +622,78 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                   </div>
                 ) : (
                   <div className="mt-4 space-y-3">
-                    <textarea
-                      placeholder="Notes (optional)..."
-                      value={completionNotes}
-                      onChange={e => setCompletionNotes(e.target.value)}
-                      rows={2}
-                      className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background resize-none"
-                    />
-                    <button
-                      onClick={() => handleComplete(selectedItem)}
-                      disabled={completeBusy}
-                      className="w-full flex items-center justify-center gap-2 px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-base font-semibold transition-colors disabled:opacity-50"
-                    >
-                      {completeBusy ? (
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                      ) : (
-                        <CheckCircle2 className="w-5 h-5" />
-                      )}
-                      Mark Complete
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (selectedItem.type === "oneoff") handleDeleteOneoff(selectedItem);
-                        else handleDeleteTemplate(selectedItem);
-                      }}
-                      className="flex items-center justify-center gap-2 text-sm text-muted-foreground hover:text-red-500 transition-colors pt-1"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                      Delete task
-                    </button>
+                    {!skipMode ? (
+                      <>
+                        <textarea
+                          placeholder="Notes (optional)..."
+                          value={completionNotes}
+                          onChange={e => setCompletionNotes(e.target.value)}
+                          rows={2}
+                          className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background resize-none"
+                        />
+                        <button
+                          onClick={() => handleComplete(selectedItem)}
+                          disabled={completeBusy}
+                          className="w-full flex items-center justify-center gap-2 px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-base font-semibold transition-colors disabled:opacity-50"
+                        >
+                          {completeBusy ? (
+                            <Loader2 className="w-5 h-5 animate-spin" />
+                          ) : (
+                            <CheckCircle2 className="w-5 h-5" />
+                          )}
+                          Mark Complete
+                        </button>
+                        <button
+                          onClick={() => setSkipMode(true)}
+                          className="w-full flex items-center justify-center gap-2 px-5 py-3 bg-slate-500 hover:bg-slate-600 text-white rounded-xl text-base font-semibold transition-colors"
+                        >
+                          <XCircle className="w-5 h-5" />
+                          Mark Uncomplete
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (selectedItem.type === "oneoff") handleDeleteOneoff(selectedItem);
+                            else handleDeleteTemplate(selectedItem);
+                          }}
+                          className="flex items-center justify-center gap-2 text-sm text-muted-foreground hover:text-red-500 transition-colors pt-1"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          Delete task
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm font-semibold text-muted-foreground">Why can't this be completed?</p>
+                        <textarea
+                          placeholder="Enter reason..."
+                          value={skipReason}
+                          onChange={e => setSkipReason(e.target.value)}
+                          rows={2}
+                          autoFocus
+                          className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background resize-none"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => { setSkipMode(false); setSkipReason(""); }}
+                            className="flex-1 flex items-center justify-center gap-2 px-5 py-3 border border-border bg-background hover:bg-secondary/60 rounded-xl text-base font-semibold transition-colors"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={() => handleSkip(selectedItem)}
+                            disabled={!skipReason.trim() || completeBusy}
+                            className={cn(
+                              "flex-1 flex items-center justify-center gap-2 px-5 py-3 rounded-xl text-base font-semibold transition-colors",
+                              skipReason.trim() && !completeBusy
+                                ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                                : "bg-muted text-muted-foreground cursor-not-allowed"
+                            )}
+                          >
+                            {completeBusy ? <Loader2 className="w-5 h-5 animate-spin" /> : "Save"}
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
