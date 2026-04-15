@@ -577,15 +577,13 @@ router.get("/calculate", async (req, res) => {
           shopifySalesPerDate[date][key] = (shopifySalesPerDate[date][key] ?? 0) + p.totalQuantity;
           shopifySalesCombined[key] = (shopifySalesCombined[key] ?? 0) + p.totalQuantity;
         } else {
-          console.log(`[calculate] Skipped product "${p.productTitle}" — variants: [${p.variants.map(v => `${v.title} (${v.variantId})`).join(", ")}] (no "2 pack"/"serves 2" match)`);
-        }
-        // Track ALL variants by ID (including non-pack variants) for variant-mapped recipes
-        for (const v of p.variants) {
-          if (v.variantId) {
-            const vid = String(v.variantId);
-            if (!variantSalesPerDate[date]) variantSalesPerDate[date] = {};
-            variantSalesPerDate[date][vid] = (variantSalesPerDate[date][vid] ?? 0) + v.quantity;
-            variantSalesCombined[vid] = (variantSalesCombined[vid] ?? 0) + v.quantity;
+          // No matching pack variant — still track by variant ID for mapped recipes
+          for (const v of p.variants) {
+            if (v.variantId) {
+              const vid = String(v.variantId);
+              variantSalesPerDate[date][vid] = (variantSalesPerDate[date][vid] ?? 0) + v.quantity;
+              variantSalesCombined[vid] = (variantSalesCombined[vid] ?? 0) + v.quantity;
+            }
           }
         }
       }
