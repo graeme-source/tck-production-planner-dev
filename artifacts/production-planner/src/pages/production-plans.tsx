@@ -2895,17 +2895,6 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
         onDeletePlan={() => setConfirmDelete(true)}
       />
 
-      {/* Add Mac Cheese button — shown on all non-complete plans */}
-      {canEditPlan && plan.status !== "complete" && (
-        <button
-          onClick={() => setShowAddMacCheese(true)}
-          className="flex items-center gap-2 px-4 py-2.5 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded-lg text-sm font-medium text-yellow-700 dark:text-yellow-400 hover:bg-yellow-100 dark:hover:bg-yellow-900/30 transition-colors"
-        >
-          <UtensilsCrossed className="w-4 h-4" />
-          Add Macaroni Cheese
-        </button>
-      )}
-
       {/* Validation results */}
       {showValidation && validationData && (
         <div className="bg-card border border-border rounded-xl overflow-hidden">
@@ -3343,17 +3332,6 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
           onClose={() => setShowManifest(false)}
         />
       )}
-
-      <AddMacCheeseDialog
-        planId={planId}
-        planDate={plan.planDate}
-        open={showAddMacCheese}
-        onOpenChange={setShowAddMacCheese}
-        onSuccess={() => {
-          refetch();
-          queryClient.invalidateQueries({ queryKey: getListProductionPlansQueryKey() });
-        }}
-      />
 
     </div>
   );
