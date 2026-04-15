@@ -15,6 +15,7 @@ export interface ChecklistItem {
   completedAt: string | null;
   completionId: number | null;
   notes: string | null;
+  skippedReason: string | null;
 }
 
 export interface ChecklistData {

@@ -25,6 +25,7 @@ export const checklistCompletionsTable = pgTable("checklist_completions", {
   completedBy: integer("completed_by").references(() => usersTable.id, { onDelete: "set null" }),
   completedByName: text("completed_by_name").notNull(),
   notes: text("notes"),
+  skippedReason: text("skipped_reason"),
   completedAt: timestamp("completed_at").notNull().defaultNow(),
 }, (t) => [
   unique("uq_checklist_completion").on(t.templateId, t.planId),
@@ -40,6 +41,7 @@ export const checklistOneoffItemsTable = pgTable("checklist_oneoff_items", {
   orderPosition: integer("order_position").notNull().default(0),
   completedBy: integer("completed_by").references(() => usersTable.id, { onDelete: "set null" }),
   completedByName: text("completed_by_name"),
+  skippedReason: text("skipped_reason"),
   completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
