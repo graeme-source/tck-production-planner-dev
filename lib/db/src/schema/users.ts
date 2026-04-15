@@ -17,6 +17,7 @@ export const usersTable = pgTable("app_users", {
   pinAttempts: integer("pin_attempts").notNull().default(0),
   pinLockedUntil: timestamp("pin_locked_until"),
   avatarUrl: text("avatar_url"),
+  plandayEmployeeId: integer("planday_employee_id"),
 });
 
 export const insertUserSchema = createInsertSchema(usersTable).omit({ id: true, createdAt: true, updatedAt: true });
