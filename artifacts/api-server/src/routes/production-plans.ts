@@ -556,7 +556,7 @@ router.get("/calculate", async (req, res) => {
       for (const p of products) {
         const twoPackVariant = p.variants.find(v => {
           const t = v.title.toLowerCase();
-          return t.includes("2 pack") || t.includes("2-pack") || t === "2pack";
+          return t.includes("2 pack") || t.includes("2-pack") || t === "2pack" || t.includes("serves 2");
         });
         if (twoPackVariant) {
           const key = p.productTitle.toLowerCase().trim();
@@ -967,7 +967,7 @@ router.get("/calculate-mac-cheese", async (req, res) => {
         // Mac cheese sold as 2-packs same as calzones
         const twoPackVariant = p.variants.find(v => {
           const t = v.title.toLowerCase();
-          return t.includes("2 pack") || t.includes("2-pack") || t === "2pack";
+          return t.includes("2 pack") || t.includes("2-pack") || t === "2pack" || t.includes("serves 2");
         });
         if (twoPackVariant) {
           const key = normalizeForMatch(p.productTitle);
