@@ -4231,13 +4231,20 @@ router.get("/:id/dough-prep", async (req, res) => {
     }
   }
 
+  // Scale ingredient totals UP to include extra balls.
+  // ingredientTotals are currently based on recipe dough only (recipeDoughKg).
+  // We need to scale by (totalDoughKg / recipeDoughKg) to include extra balls.
+  const extraScaleFactor = recipeDoughKg > 0 ? totalDoughKg / recipeDoughKg : 1;
+
   const ingredients = Array.from(ingredientTotals.values()).map(ing => {
-    const totalKg = ing.unit === "g" ? ing.totalQty / 1000 : ing.totalQty;
+    const scaledQty = ing.totalQty * extraScaleFactor;
+    const totalKg = ing.unit === "g" ? scaledQty / 1000 : scaledQty;
     const pctRaw = totalDoughKg > 0 ? (totalKg / totalDoughKg) * 100 : 0;
     return {
       ...ing,
+      totalQty: scaledQty,
       pctOfDough: Math.round(pctRaw * 10) / 10,
-      qtyPerMix: mixCount > 0 ? ing.totalQty / mixCount : 0,
+      qtyPerMix: mixCount > 0 ? scaledQty / mixCount : 0,
     };
   });
 
