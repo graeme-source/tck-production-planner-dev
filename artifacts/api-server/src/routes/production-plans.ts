@@ -145,10 +145,11 @@ function mapPlan(p: typeof productionPlansTable.$inferSelect) {
   };
 }
 
-function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?: string | null; portionsPerBatch?: number | null; packSize?: number | null; fillWeightGrams?: string | null; baseType?: string | null; baseWeightGrams?: string | null; wrappingComplete?: boolean | null; recipeColor?: string | null; targetBuildSeconds?: number | null }, stationCompletions?: Record<string, number>) {
+function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?: string | null; portionsPerBatch?: number | null; packSize?: number | null; fillWeightGrams?: string | null; baseType?: string | null; baseWeightGrams?: string | null; wrappingComplete?: boolean | null; recipeColor?: string | null; targetBuildSeconds?: number | null; recipeCategory?: string | null }, stationCompletions?: Record<string, number>) {
   return {
     ...i,
     recipeName: i.recipeName ?? "",
+    recipeCategory: i.recipeCategory ?? null,
     portionsPerBatch: i.portionsPerBatch ?? 10,
     packSize: i.packSize ?? 2,
     fillWeightGrams: i.fillWeightGrams ? Number(i.fillWeightGrams) : null,
@@ -165,6 +166,7 @@ function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?
 const STATION_DEPENDENCIES: Record<string, string[]> = {
   building_1: [],
   building_2: [],
+  macaroni_cheese: [],
   ovens: ["building_1", "building_2"],
   wrapping: ["ovens"],
 };
@@ -251,6 +253,7 @@ router.get("/", async (req, res) => {
       recipeId: productionPlanItemsTable.recipeId,
       recipeName: recipesTable.name,
       recipeColor: recipesTable.color,
+      recipeCategory: recipesTable.category,
       batchesTarget: productionPlanItemsTable.batchesTarget,
       orderPosition: productionPlanItemsTable.orderPosition,
     })
@@ -275,6 +278,7 @@ router.get("/", async (req, res) => {
       recipeId: it.recipeId,
       recipeName: it.recipeName,
       recipeColor: it.recipeColor,
+      recipeCategory: it.recipeCategory ?? null,
       batchesTarget: it.batchesTarget,
       orderPosition: it.orderPosition,
     })),
@@ -605,6 +609,7 @@ router.get("/calculate", async (req, res) => {
     .select({
       recipeId: dptSettingsTable.recipeId,
       recipeName: recipesTable.name,
+      recipeCategory: recipesTable.category,
       packsSold: dptSettingsTable.packsSold,
       isActive: dptSettingsTable.isActive,
       portionsPerBatch: recipesTable.portionsPerBatch,
@@ -624,6 +629,7 @@ router.get("/calculate", async (req, res) => {
     .select({
       id: recipesTable.id,
       name: recipesTable.name,
+      category: recipesTable.category,
       portionsPerBatch: recipesTable.portionsPerBatch,
       packSize: recipesTable.packSize,
       tinSize: recipesTable.tinSize,
@@ -640,6 +646,7 @@ router.get("/calculate", async (req, res) => {
       dptRows.push({
         recipeId: cm.id,
         recipeName: cm.name,
+        recipeCategory: cm.category,
         packsSold: 0,
         isActive: true,
         portionsPerBatch: cm.portionsPerBatch,
@@ -757,6 +764,7 @@ router.get("/calculate", async (req, res) => {
     return {
       recipeId,
       recipeName,
+      recipeCategory: r.recipeCategory ?? null,
       portionsPerBatch,
       packSize,
       packsPerBatch,
@@ -856,6 +864,323 @@ router.get("/calculate", async (req, res) => {
     unmatchedRecipes,
     recipes: result,
   });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// GET /production-plans/calculate-mac-cheese?planDate=YYYY-MM-DD
+// Returns per-mac-cheese-recipe calculation data (packs-based).
+// ──────────────────────────────────────────────────────────────────────────────
+router.get("/calculate-mac-cheese", async (req, res) => {
+  const planDate = String(req.query.planDate ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(planDate)) {
+    res.status(400).json({ error: "planDate query param required (YYYY-MM-DD)" });
+    return;
+  }
+
+  function getPreviousWorkingDay(fromDate: string): string {
+    const d = new Date(`${fromDate}T12:00:00Z`);
+    do { d.setUTCDate(d.getUTCDate() - 1); } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
+    return d.toISOString().slice(0, 10);
+  }
+  function getNextWorkingDay(fromDate: string): string {
+    const d = new Date(`${fromDate}T12:00:00Z`);
+    do { d.setUTCDate(d.getUTCDate() + 1); } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
+    return d.toISOString().slice(0, 10);
+  }
+  function getNextCalendarDay(dateStr: string): string {
+    const d = new Date(`${dateStr}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + 1);
+    return d.toISOString().slice(0, 10);
+  }
+
+  // 3 forward dispatch dates: next day, +1, +2
+  const dispatch1Date = planDate;
+  const dispatch2Date = getNextWorkingDay(planDate);
+  const dispatch3Date = getNextWorkingDay(dispatch2Date);
+  const dispatchDates = [dispatch1Date, dispatch2Date, dispatch3Date];
+  const deliveryDates = dispatchDates.map(getNextCalendarDay);
+
+  // Fetch mac cheese recipes with active DPT settings
+  const macRecipes = await db
+    .select({
+      recipeId: recipesTable.id,
+      recipeName: recipesTable.name,
+      portionsPerBatch: recipesTable.portionsPerBatch,
+      packSize: recipesTable.packSize,
+      tinSize: recipesTable.tinSize,
+      maxBatchesPerTin: recipesTable.maxBatchesPerTin,
+      sopUrl: recipesTable.sopUrl,
+      color: recipesTable.color,
+    })
+    .from(recipesTable)
+    .where(eq(recipesTable.category, "Macaroni Cheese"));
+
+  if (macRecipes.length === 0) {
+    res.json({ planDate, dispatchDates, deliveryDates, recipes: [] });
+    return;
+  }
+
+  // Fetch fridge stock for mac cheese recipes
+  const macRecipeIds = macRecipes.map(r => r.recipeId);
+  const stockRows = await db
+    .select({ recipeId: stockEntriesTable.recipeId, quantity: stockEntriesTable.quantity })
+    .from(stockEntriesTable)
+    .where(and(
+      inArray(stockEntriesTable.recipeId, macRecipeIds),
+      eq(stockEntriesTable.itemType, "recipe"),
+      notInArray(stockEntriesTable.location, ["production_freezer", "raw_freezer"]),
+    ))
+    .orderBy(asc(stockEntriesTable.checkedAt));
+  const latestStock: Record<number, number> = {};
+  for (const row of stockRows) {
+    if (row.recipeId != null) latestStock[row.recipeId] = Number(row.quantity);
+  }
+
+  // Fetch Shopify sales for 3 delivery dates
+  function normalizeForMatch(s: string): string {
+    return s.toLowerCase().trim().replace(/[''`]/g, "'").replace(/&/g, "and").replace(/\s+/g, " ");
+  }
+  const shopifySalesPerDate: Record<string, Record<string, number>> = {};
+  let shopifyError: string | null = null;
+  try {
+    const results = await Promise.allSettled(
+      deliveryDates.map(date => countProductsByTag(date).then(products => ({ date, products })))
+    );
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      if (result.status === "rejected") {
+        console.warn(`[calculate-mac-cheese] Shopify fetch for ${deliveryDates[i]} failed:`, result.reason?.message ?? result.reason);
+        continue;
+      }
+      const { date, products } = result.value;
+      shopifySalesPerDate[date] = {};
+      for (const p of products) {
+        // Mac cheese sold as 2-packs same as calzones
+        const twoPackVariant = p.variants.find(v => {
+          const t = v.title.toLowerCase();
+          return t.includes("2 pack") || t.includes("2-pack") || t === "2pack";
+        });
+        if (twoPackVariant) {
+          const key = normalizeForMatch(p.productTitle);
+          shopifySalesPerDate[date][key] = (shopifySalesPerDate[date][key] ?? 0) + twoPackVariant.quantity;
+        }
+      }
+    }
+  } catch (err: any) {
+    shopifyError = err.message ?? "Unknown error";
+  }
+
+  function matchSalesForDate(recipeName: string, date: string): number {
+    const recipeNorm = normalizeForMatch(recipeName);
+    const salesForDate = shopifySalesPerDate[date] ?? {};
+    let total = 0;
+    for (const [productTitle, qty] of Object.entries(salesForDate)) {
+      const productNorm = normalizeForMatch(productTitle);
+      if (productNorm.includes(recipeNorm) || recipeNorm.includes(productNorm)) total += qty;
+    }
+    return total;
+  }
+
+  // Fetch per-recipe extra-to-make defaults from app_settings
+  const extraSettingKeys = macRecipeIds.map(id => `mac_cheese_extra_packs_${id}`);
+  const extraSettings = extraSettingKeys.length > 0
+    ? await db.select().from(appSettingsTable).where(inArray(appSettingsTable.key, extraSettingKeys))
+    : [];
+  const extraMap: Record<number, number> = {};
+  for (const s of extraSettings) {
+    const match = s.key.match(/mac_cheese_extra_packs_(\d+)/);
+    if (match) extraMap[Number(match[1])] = Number(s.value) || 0;
+  }
+
+  // Thursday = 4 (day of week). On Thursday, default extra to 0 (last prod day before weekend)
+  const planDayOfWeek = new Date(`${planDate}T12:00:00Z`).getUTCDay();
+  const isThursday = planDayOfWeek === 4;
+
+  const recipes = macRecipes.map(r => {
+    const portionsPerBatch = Number(r.portionsPerBatch) || 10;
+    const packSize = Number(r.packSize) || 1;
+    const packsPerBatch = portionsPerBatch / packSize;
+    const leftOverStock = latestStock[r.recipeId] ?? 0;
+
+    const salesNextDay = matchSalesForDate(r.recipeName ?? "", deliveryDates[0]);
+    const salesNextDayPlus1 = matchSalesForDate(r.recipeName ?? "", deliveryDates[1]);
+    const salesNextDayPlus2 = matchSalesForDate(r.recipeName ?? "", deliveryDates[2]);
+
+    const neededForDispatch = Math.max(0, salesNextDay - leftOverStock);
+    const defaultExtra = extraMap[r.recipeId] ?? 5;
+    const extraToMake = isThursday ? 0 : defaultExtra;
+
+    const toMakePacks = neededForDispatch + salesNextDayPlus1 + salesNextDayPlus2 + extraToMake;
+    const toMakeBatches = packsPerBatch > 0 ? Math.ceil(toMakePacks / packsPerBatch) : 0;
+
+    return {
+      recipeId: r.recipeId,
+      recipeName: r.recipeName ?? "",
+      color: r.color ?? null,
+      portionsPerBatch,
+      packSize,
+      packsPerBatch,
+      tinSize: r.tinSize ?? null,
+      maxBatchesPerTin: r.maxBatchesPerTin ? Number(r.maxBatchesPerTin) : null,
+      sopUrl: r.sopUrl ?? null,
+      leftOverStock: Math.round(leftOverStock),
+      salesNextDay,
+      salesNextDayPlus1,
+      salesNextDayPlus2,
+      neededForDispatch,
+      extraToMake,
+      toMakePacks,
+      toMakeBatches,
+    };
+  });
+
+  res.json({ planDate, dispatchDates, deliveryDates, shopifyError, recipes });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// POST /production-plans/:id/add-mac-cheese
+// Add macaroni cheese items to an already-locked production plan.
+// ──────────────────────────────────────────────────────────────────────────────
+const AddMacCheeseBody = z.object({
+  items: z.array(z.object({
+    recipeId: z.number(),
+    packsToMake: z.number().int().min(0),
+  })),
+});
+
+router.post("/:id/add-mac-cheese", validate(AddMacCheeseBody), async (req, res) => {
+  const planId = Number(req.params.id);
+  const { items } = req.body;
+
+  // 1. Verify plan exists and is in a modifiable locked status
+  const [plan] = await db.select().from(productionPlansTable).where(eq(productionPlansTable.id, planId));
+  if (!plan) { res.status(404).json({ error: "Plan not found" }); return; }
+
+  const allowedStatuses = ["active", "prep", "building"];
+  if (!allowedStatuses.includes(plan.status)) {
+    res.status(409).json({ error: `Plan status '${plan.status}' does not allow adding mac cheese items. Must be active, prep, or building.` });
+    return;
+  }
+
+  // 2. Verify all recipes are Macaroni Cheese
+  const recipeIds = items.map(i => i.recipeId);
+  if (recipeIds.length === 0) { res.status(400).json({ error: "No items provided" }); return; }
+
+  const recipeRows = await db
+    .select({ id: recipesTable.id, category: recipesTable.category, portionsPerBatch: recipesTable.portionsPerBatch, packSize: recipesTable.packSize, tinSize: recipesTable.tinSize, maxBatchesPerTin: recipesTable.maxBatchesPerTin, sopUrl: recipesTable.sopUrl })
+    .from(recipesTable)
+    .where(inArray(recipesTable.id, recipeIds));
+
+  const recipeMap = new Map(recipeRows.map(r => [r.id, r]));
+  for (const item of items) {
+    const recipe = recipeMap.get(item.recipeId);
+    if (!recipe) { res.status(400).json({ error: `Recipe ${item.recipeId} not found` }); return; }
+    if (recipe.category !== "Macaroni Cheese") {
+      res.status(400).json({ error: `Recipe ${item.recipeId} is not a Macaroni Cheese recipe` });
+      return;
+    }
+  }
+
+  // 3. Check for duplicates
+  const existingItems = await db
+    .select({ recipeId: productionPlanItemsTable.recipeId })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.planId, planId), inArray(productionPlanItemsTable.recipeId, recipeIds)));
+
+  const existingRecipeIds = new Set(existingItems.map(i => i.recipeId));
+  const duplicates = recipeIds.filter(id => existingRecipeIds.has(id));
+  if (duplicates.length > 0) {
+    res.status(409).json({ error: `Recipes already in this plan: ${duplicates.join(", ")}` });
+    return;
+  }
+
+  // 4. Get max order position
+  const [maxPos] = await db
+    .select({ maxPos: sql<number>`COALESCE(MAX(${productionPlanItemsTable.orderPosition}), 0)` })
+    .from(productionPlanItemsTable)
+    .where(eq(productionPlanItemsTable.planId, planId));
+  let nextPos = (maxPos?.maxPos ?? 0) + 1;
+
+  // 5. Insert new items (convert packs to batches)
+  const newItems = items
+    .filter(i => i.packsToMake > 0)
+    .map(i => {
+      const recipe = recipeMap.get(i.recipeId)!;
+      const portionsPerBatch = Number(recipe.portionsPerBatch) || 10;
+      const packSize = Number(recipe.packSize) || 1;
+      const packsPerBatch = portionsPerBatch / packSize;
+      const batchesTarget = packsPerBatch > 0 ? Math.ceil(i.packsToMake / packsPerBatch) : 0;
+      return {
+        planId,
+        recipeId: i.recipeId,
+        batchesTarget,
+        orderPosition: nextPos++,
+        tinSize: recipe.tinSize ?? null,
+        maxBatchesPerTin: recipe.maxBatchesPerTin ?? null,
+        sopUrl: recipe.sopUrl ?? null,
+        status: "pending",
+      };
+    });
+
+  if (newItems.length > 0) {
+    await db.insert(productionPlanItemsTable).values(newItems);
+  }
+
+  // 6. Return updated plan
+  const updatedItems = await db
+    .select({
+      id: productionPlanItemsTable.id,
+      planId: productionPlanItemsTable.planId,
+      recipeId: productionPlanItemsTable.recipeId,
+      recipeName: recipesTable.name,
+      portionsPerBatch: recipesTable.portionsPerBatch,
+      packSize: recipesTable.packSize,
+      targetBuildSeconds: recipesTable.targetBuildSeconds,
+      notes: productionPlanItemsTable.notes,
+      status: productionPlanItemsTable.status,
+      orderPosition: productionPlanItemsTable.orderPosition,
+      batchesTarget: productionPlanItemsTable.batchesTarget,
+      batchesComplete: productionPlanItemsTable.batchesComplete,
+      wonlyCount: productionPlanItemsTable.wonlyCount,
+      wrappingComplete: productionPlanItemsTable.wrappingComplete,
+      fridgeQty: productionPlanItemsTable.fridgeQty,
+      freezerQty: productionPlanItemsTable.freezerQty,
+      prepFridgeQty: productionPlanItemsTable.prepFridgeQty,
+      tinSize: productionPlanItemsTable.tinSize,
+      maxBatchesPerTin: productionPlanItemsTable.maxBatchesPerTin,
+      sopUrl: productionPlanItemsTable.sopUrl,
+      extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
+      shortCount: productionPlanItemsTable.shortCount,
+      eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
+      fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
+      mixingTinOverride: productionPlanItemsTable.mixingTinOverride,
+      fillWeightGrams: recipesTable.fillWeightGrams,
+      baseType: recipesTable.baseType,
+      baseWeightGrams: recipesTable.baseWeightGrams,
+      recipeColor: recipesTable.color,
+      recipeCategory: recipesTable.category,
+    })
+    .from(productionPlanItemsTable)
+    .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(eq(productionPlanItemsTable.planId, planId))
+    .orderBy(productionPlanItemsTable.orderPosition);
+
+  const itemIds = updatedItems.map(it => it.id);
+  let completionsByItem: Record<number, Record<string, number>> = {};
+  if (itemIds.length > 0) {
+    const completionRows = await db.execute(sql`
+      SELECT plan_item_id, station_type, COUNT(*)::int as cnt
+      FROM batch_completions
+      WHERE plan_item_id IN (${sql.join(itemIds.map(id => sql`${id}`), sql`, `)})
+      GROUP BY plan_item_id, station_type
+    `);
+    for (const row of completionRows.rows as Array<{ plan_item_id: number; station_type: string; cnt: number }>) {
+      if (!completionsByItem[row.plan_item_id]) completionsByItem[row.plan_item_id] = {};
+      completionsByItem[row.plan_item_id][row.station_type] = row.cnt;
+    }
+  }
+
+  res.status(201).json({ ...mapPlan(plan), items: updatedItems.map(it => mapItem(it, completionsByItem[it.id] ?? {})) });
 });
 
 // GET /production-plans/next-active?afterDate=YYYY-MM-DD
@@ -1019,6 +1344,7 @@ router.get("/:id", async (req, res) => {
       baseType: recipesTable.baseType,
       baseWeightGrams: recipesTable.baseWeightGrams,
       recipeColor: recipesTable.color,
+      recipeCategory: recipesTable.category,
     })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))

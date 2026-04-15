@@ -592,6 +592,15 @@ export const CreateRecipeBody = zod.object({
       mixingOverage: zod.number().optional(),
     }),
   ),
+  marinades: zod
+    .array(
+      zod.object({
+        rawMeatIngredientId: zod.number(),
+        marinadeIngredientId: zod.number(),
+        gramsPerKg: zod.number(),
+      }),
+    )
+    .optional(),
 });
 
 /**
@@ -752,6 +761,15 @@ export const UpdateRecipeBody = zod.object({
       mixingOverage: zod.number().optional(),
     }),
   ),
+  marinades: zod
+    .array(
+      zod.object({
+        rawMeatIngredientId: zod.number(),
+        marinadeIngredientId: zod.number(),
+        gramsPerKg: zod.number(),
+      }),
+    )
+    .optional(),
 });
 
 export const UpdateRecipeResponse = zod.object({
@@ -888,6 +906,7 @@ export const GetProductionPlanResponse = zod
           planId: zod.number(),
           recipeId: zod.number(),
           recipeName: zod.string(),
+          recipeCategory: zod.string().nullish(),
           portionsPerBatch: zod.number(),
           targetBuildSeconds: zod
             .number()
@@ -982,6 +1001,7 @@ export const UpdateProductionPlanItemResponse = zod.object({
   planId: zod.number(),
   recipeId: zod.number(),
   recipeName: zod.string(),
+  recipeCategory: zod.string().nullish(),
   portionsPerBatch: zod.number(),
   targetBuildSeconds: zod
     .number()

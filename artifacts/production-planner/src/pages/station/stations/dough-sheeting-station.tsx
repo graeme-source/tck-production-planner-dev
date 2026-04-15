@@ -343,6 +343,29 @@ export function DoughSheetingStation({ plan, isOnBreak = false }: { plan: Produc
           })}
         </div>
       </div>
+
+      {/* Mac cheese items — display only (no sheeting required) */}
+      {(() => {
+        const macItems = (plan.items ?? []).filter(it => (it as any).recipeCategory === "Macaroni Cheese");
+        if (macItems.length === 0) return null;
+        return (
+          <div className="bg-card border border-yellow-200 dark:border-yellow-800 rounded-xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20">
+              <h3 className="font-semibold text-base text-yellow-700 dark:text-yellow-400">Also on today's plan — No sheeting required</h3>
+            </div>
+            <div className="divide-y divide-border/40">
+              {macItems.map(it => (
+                <div key={it.id} className="flex items-center justify-between px-4 py-2.5 opacity-70">
+                  <span className="text-sm font-medium">{it.recipeName}</span>
+                  <span className="text-xs text-muted-foreground bg-yellow-100 dark:bg-yellow-900/30 px-2 py-0.5 rounded">
+                    {it.batchesTarget} batches — Mac Cheese
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

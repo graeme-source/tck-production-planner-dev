@@ -246,7 +246,7 @@ function RecipeForm({
   const watchedIngredients = watch("ingredients");
   const watchedSubRecipes = watch("subRecipes");
 
-  const handleCategoryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleCategoryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const cat = e.target.value;
     setValue("category", cat);
     const def = categoryDefaults.find(d => d.category.toLowerCase() === cat.toLowerCase());
@@ -311,17 +311,15 @@ function RecipeForm({
           </div>
           <div>
             <label className="text-sm font-medium mb-1 block">Category</label>
-            <input
+            <select
               {...register("category")}
               onChange={handleCategoryChange}
               value={watchedCategory ?? ""}
               className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-              placeholder="Bread, Sauce, Pastry…"
-              list="category-list"
-            />
-            <datalist id="category-list">
-              {categoryDefaults.map(d => <option key={d.category} value={d.category} />)}
-            </datalist>
+            >
+              <option value="">Select category…</option>
+              {categoryDefaults.map(d => <option key={d.category} value={d.category}>{d.category}</option>)}
+            </select>
             {categoryDefaults.length > 0 && watchedCategory && categoryDefaults.find(d => d.category.toLowerCase() === watchedCategory.toLowerCase()) && (
               <p className="text-xs text-primary mt-0.5">Defaults applied from category preset.</p>
             )}

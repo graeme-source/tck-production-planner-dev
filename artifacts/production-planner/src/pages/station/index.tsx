@@ -18,6 +18,7 @@ import { PrepHub } from "./stations/prep-hub";
 import { MainPrepStation } from "./stations/main-prep-station";
 import { PrepBasesStation } from "./stations/prep-bases-station";
 import { PrepMeatStation } from "./stations/prep-meat-station";
+import { MacaroniCheeseStation } from "./stations/macaroni-cheese-station";
 import type { StationType } from "./shared/constants";
 
 type StationView = "production" | "checklist";
@@ -154,6 +155,8 @@ export default function StationPage() {
         return <WrappingStation plan={plan} isOnBreak={isOnBreak} />;
       case "packing":
         return <PackingStation plan={plan} />;
+      case "macaroni_cheese":
+        return <MacaroniCheeseStation plan={plan} isOnBreak={isOnBreak} />;
       case "dough_prep":
         return <DoughPrepStation plan={plan} isOnBreak={isOnBreak} />;
       case "dough_sheeting":

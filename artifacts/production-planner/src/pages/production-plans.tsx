@@ -19,7 +19,7 @@ import {
   CalendarDays, Calendar, Plus, Trash2, ChevronLeft, ChevronRight,
   BarChart2, CheckCircle2,
   Loader2, RefreshCw, Info, Package, ClipboardList, ExternalLink,
-  Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef,
+  Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef, UtensilsCrossed,
   ArrowRight, GripVertical, AlertTriangle, AlertCircle, BookmarkCheck, ShoppingCart,
   FlaskConical, Printer, X, ChevronDown, ChevronUp, PoundSterling, ShieldCheck, RotateCcw,
   Menu, MoreHorizontal,
@@ -2282,6 +2282,7 @@ function RawMaterialsManifest({ planId, planName, onClose }: RawMaterialsManifes
 // ──────────────────────────────────────────────────────────────────────────────
 const STATION_BUTTONS = [
   { key: "dough_prep", label: "Dough Prep", icon: Layers, color: "text-amber-600 bg-amber-50 dark:bg-amber-900/20" },
+  { key: "macaroni_cheese", label: "Mac Cheese", icon: UtensilsCrossed, color: "text-yellow-600 bg-yellow-50 dark:bg-yellow-900/20" },
   { key: "dough_sheeting", label: "Sheeting", icon: Layers, color: "text-amber-500 bg-amber-50 dark:bg-amber-900/20" },
   { key: "prep", label: "Prep", icon: Salad, color: "text-green-500 bg-green-50 dark:bg-green-900/20" },
   { key: "mixing", label: "Mixing & Cooking", icon: Waves, color: "text-blue-500 bg-blue-50 dark:bg-blue-900/20" },
@@ -2467,6 +2468,193 @@ function PlanDetailHeader({
   );
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Add Macaroni Cheese Dialog
+// ──────────────────────────────────────────────────────────────────────────────
+interface MacCheeseCalcRecipe {
+  recipeId: number;
+  recipeName: string;
+  color: string | null;
+  packsPerBatch: number;
+  leftOverStock: number;
+  salesNextDay: number;
+  salesNextDayPlus1: number;
+  salesNextDayPlus2: number;
+  neededForDispatch: number;
+  extraToMake: number;
+  toMakePacks: number;
+  toMakeBatches: number;
+}
+
+function AddMacCheeseDialog({ planId, planDate, open, onOpenChange, onSuccess }: {
+  planId: number;
+  planDate: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSuccess: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [recipes, setRecipes] = useState<MacCheeseCalcRecipe[]>([]);
+  const [extraOverrides, setExtraOverrides] = useState<Record<number, number>>({});
+
+  useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    fetch(`/api/production-plans/calculate-mac-cheese?planDate=${planDate}`, { credentials: "include" })
+      .then(r => r.json())
+      .then(data => {
+        setRecipes(data.recipes ?? []);
+        const overrides: Record<number, number> = {};
+        for (const r of data.recipes ?? []) overrides[r.recipeId] = r.extraToMake;
+        setExtraOverrides(overrides);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, [open, planDate]);
+
+  const getToMake = (r: MacCheeseCalcRecipe) => {
+    const extra = extraOverrides[r.recipeId] ?? r.extraToMake;
+    return r.neededForDispatch + r.salesNextDayPlus1 + r.salesNextDayPlus2 + extra;
+  };
+
+  const handleSubmit = async () => {
+    const items = recipes
+      .map(r => ({ recipeId: r.recipeId, packsToMake: getToMake(r) }))
+      .filter(i => i.packsToMake > 0);
+    if (items.length === 0) return;
+
+    setSaving(true);
+    try {
+      const resp = await fetch(`/api/production-plans/${planId}/add-mac-cheese`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ items }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error ?? "Failed to add");
+      toast({ title: "Mac cheese added", description: `Added ${items.length} recipe(s) to the plan.` });
+      onSuccess();
+      onOpenChange(false);
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => onOpenChange(false)}>
+      <div className="bg-card border border-border rounded-xl shadow-xl w-full max-w-3xl max-h-[90vh] overflow-auto" onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-border flex items-center justify-between">
+          <h2 className="font-semibold text-lg flex items-center gap-2">
+            <UtensilsCrossed className="w-5 h-5 text-yellow-600" />
+            Add Macaroni Cheese
+          </h2>
+          <button onClick={() => onOpenChange(false)} className="text-muted-foreground hover:text-foreground">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-5">
+          {loading ? (
+            <div className="flex items-center justify-center py-12 text-muted-foreground">
+              <Loader2 className="w-5 h-5 animate-spin mr-2" /> Calculating…
+            </div>
+          ) : recipes.length === 0 ? (
+            <p className="text-center text-muted-foreground py-8">No Macaroni Cheese recipes found. Add recipes with category "Macaroni Cheese" first.</p>
+          ) : (
+            <div className="space-y-4">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-left text-xs text-muted-foreground uppercase tracking-wider">
+                      <th className="pb-2 pr-3">Recipe</th>
+                      <th className="pb-2 px-2 text-right">Stock</th>
+                      <th className="pb-2 px-2 text-right">Sales D1</th>
+                      <th className="pb-2 px-2 text-right">Deficit</th>
+                      <th className="pb-2 px-2 text-right">Sales D2</th>
+                      <th className="pb-2 px-2 text-right">Sales D3</th>
+                      <th className="pb-2 px-2 text-right">Extra</th>
+                      <th className="pb-2 px-2 text-right font-semibold">To Make</th>
+                      <th className="pb-2 pl-2 text-right">Batches</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recipes.map(r => {
+                      const extra = extraOverrides[r.recipeId] ?? r.extraToMake;
+                      const toMake = getToMake(r);
+                      const batches = r.packsPerBatch > 0 ? Math.ceil(toMake / r.packsPerBatch) : 0;
+                      return (
+                        <tr key={r.recipeId} className="border-b border-border/50">
+                          <td className="py-2.5 pr-3 font-medium">
+                            <div className="flex items-center gap-2">
+                              {r.color && <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: r.color }} />}
+                              {r.recipeName}
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-2 text-right tabular-nums">{r.leftOverStock}</td>
+                          <td className="py-2.5 px-2 text-right tabular-nums">{r.salesNextDay}</td>
+                          <td className="py-2.5 px-2 text-right tabular-nums text-amber-600">{r.neededForDispatch}</td>
+                          <td className="py-2.5 px-2 text-right tabular-nums">{r.salesNextDayPlus1}</td>
+                          <td className="py-2.5 px-2 text-right tabular-nums">{r.salesNextDayPlus2}</td>
+                          <td className="py-2.5 px-2 text-right">
+                            <input
+                              type="number"
+                              min={0}
+                              value={extra}
+                              onChange={e => setExtraOverrides(prev => ({ ...prev, [r.recipeId]: Math.max(0, Number(e.target.value) || 0) }))}
+                              className="w-16 px-2 py-1 text-right bg-background border border-border rounded text-sm tabular-nums"
+                            />
+                          </td>
+                          <td className="py-2.5 px-2 text-right font-bold tabular-nums text-lg">{toMake}</td>
+                          <td className="py-2.5 pl-2 text-right tabular-nums text-muted-foreground">{batches}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="font-semibold">
+                      <td className="pt-3">Total</td>
+                      <td colSpan={6} />
+                      <td className="pt-3 px-2 text-right tabular-nums text-lg">{recipes.reduce((s, r) => s + getToMake(r), 0)} packs</td>
+                      <td className="pt-3 pl-2 text-right tabular-nums">
+                        {recipes.reduce((s, r) => {
+                          const toMake = getToMake(r);
+                          return s + (r.packsPerBatch > 0 ? Math.ceil(toMake / r.packsPerBatch) : 0);
+                        }, 0)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+
+              <p className="text-xs text-muted-foreground">
+                Stock = current fridge packs. Sales D1/D2/D3 = next 3 dispatch days from Shopify. Deficit = max(0, D1 - Stock). Extra = additional packs on top of sales. All values in packs.
+              </p>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button onClick={() => onOpenChange(false)} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted">Cancel</button>
+                <button
+                  onClick={handleSubmit}
+                  disabled={saving || recipes.every(r => getToMake(r) === 0)}
+                  className="px-5 py-2 text-sm bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50 flex items-center gap-2"
+                >
+                  {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Add to Plan
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface PlanDetailProps {
   planId: number;
   onBack: () => void;
@@ -2495,6 +2683,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const [validationData, setValidationData] = useState<ValidationResult | null>(null);
   const [validationLoading, setValidationLoading] = useState(false);
   const [regeneratingOrders, setRegeneratingOrders] = useState(false);
+  const [showAddMacCheese, setShowAddMacCheese] = useState(false);
   const [, navigate] = useLocation();
   const { data: stationActivity } = useGetStationActivity(planId, {
     query: { queryKey: getGetStationActivityQueryKey(planId), refetchInterval: 10000 },
@@ -2574,6 +2763,12 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
         stationProgress[s.key] = { done: b1 + b2, target };
       } else if (s.key === "prep") {
         stationProgress[s.key] = { done: prepProgress?.pct ?? 0, target: 100 };
+      } else if (s.key === "macaroni_cheese") {
+        // Mac cheese station only counts mac cheese items
+        const macItems = items.filter(it => (it as any).recipeCategory === "Macaroni Cheese");
+        const macTarget = macItems.reduce((sum, it) => sum + (it.batchesTarget ?? 0), 0);
+        const done = macItems.reduce((sum, it) => sum + ((it.stationCompletions as Record<string, number> | undefined)?.["macaroni_cheese"] ?? 0), 0);
+        stationProgress[s.key] = { done, target: macTarget };
       } else if (s.key === "packing") {
         stationProgress[s.key] = { done: 0, target: 0 };
       } else if (s.key === "dough_prep" || s.key === "dough_sheeting") {
@@ -2700,8 +2895,16 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
         onDeletePlan={() => setConfirmDelete(true)}
       />
 
-      {/* Progress summary */}
-      {/* Overall progress box removed — per-station progress shown on station cards below */}
+      {/* Add Mac Cheese button — shown on locked plans */}
+      {canEditPlan && ["active", "prep", "building"].includes(plan.status) && (
+        <button
+          onClick={() => setShowAddMacCheese(true)}
+          className="flex items-center gap-2 px-4 py-2.5 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded-lg text-sm font-medium text-yellow-700 dark:text-yellow-400 hover:bg-yellow-100 dark:hover:bg-yellow-900/30 transition-colors"
+        >
+          <UtensilsCrossed className="w-4 h-4" />
+          Add Macaroni Cheese
+        </button>
+      )}
 
       {/* Validation results */}
       {showValidation && validationData && (
@@ -3140,6 +3343,17 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
           onClose={() => setShowManifest(false)}
         />
       )}
+
+      <AddMacCheeseDialog
+        planId={planId}
+        planDate={plan.planDate}
+        open={showAddMacCheese}
+        onOpenChange={setShowAddMacCheese}
+        onSuccess={() => {
+          refetch();
+          queryClient.invalidateQueries({ queryKey: getListProductionPlansQueryKey() });
+        }}
+      />
 
     </div>
   );

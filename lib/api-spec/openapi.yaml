@@ -2422,6 +2422,9 @@ components:
           type: integer
         recipeName:
           type: string
+        recipeCategory:
+          type: string
+          nullable: true
         portionsPerBatch:
           type: number
         targetBuildSeconds:

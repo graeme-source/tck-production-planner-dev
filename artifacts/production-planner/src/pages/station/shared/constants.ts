@@ -1,8 +1,15 @@
-import { Construction, Waves, Flame, Gift, Box, Salad, Layers } from "lucide-react";
+import { Construction, Waves, Flame, Gift, Box, Salad, Layers, UtensilsCrossed } from "lucide-react";
 import type { ProductionPlanItem } from "@workspace/api-client-react";
+
+export const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
+
+export function isMacCheese(item: { recipeCategory?: string | null }): boolean {
+  return item.recipeCategory === MAC_CHEESE_CATEGORY;
+}
 
 export const STATIONS = [
   { key: "dough_prep", label: "Dough Prep", short: "Dough Prep", icon: Layers, color: "text-amber-600" },
+  { key: "macaroni_cheese", label: "Macaroni Cheese", short: "Mac Cheese", icon: UtensilsCrossed, color: "text-yellow-600" },
   { key: "dough_sheeting", label: "Dough Sheeting", short: "Sheeting", icon: Layers, color: "text-amber-500" },
   { key: "prep", label: "Prep", short: "Prep", icon: Salad, color: "text-green-500" },
   { key: "mixing", label: "Mixing & Cooking", short: "Mixing", icon: Waves, color: "text-blue-500" },
@@ -24,14 +31,16 @@ export function getStationCount(item: ProductionPlanItem, stationType: string): 
 export function getPrevStationCount(item: ProductionPlanItem, stationType: string): number {
   const sc = (item as any).stationCompletions;
   if (!sc || typeof sc !== "object") return item.batchesTarget ?? 0;
+  const itemIsMacCheese = isMacCheese(item as any);
   const deps: Record<string, string[]> = {
     building_1: ["mixing"],
     building_2: ["mixing"],
+    macaroni_cheese: [],
     ovens: ["building_1", "building_2"],
-    wrapping: ["ovens"],
+    wrapping: itemIsMacCheese ? ["macaroni_cheese"] : ["ovens"],
   };
   const prevStations = deps[stationType];
-  if (!prevStations) return item.batchesTarget ?? 0;
+  if (!prevStations || prevStations.length === 0) return item.batchesTarget ?? 0;
   return prevStations.reduce((sum, s) => sum + (sc[s] ?? 0), 0);
 }
 

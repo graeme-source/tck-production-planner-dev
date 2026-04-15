@@ -10,7 +10,7 @@ import {
   Plus, Trash2, Edit2, Loader2, Users, ShieldCheck, Eye, Wrench,
   CheckCircle2, XCircle, KeyRound, Package, ChevronDown, ChevronUp,
   Lock, Timer, BarChart2, Coffee, Truck, Mail, Warehouse,
-  Camera, User, CircleDot, ToggleRight, Boxes,
+  Camera, User, CircleDot, ToggleRight, Boxes, UtensilsCrossed,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
@@ -815,6 +815,7 @@ export default function Settings() {
               {user?.role === "admin" && <AdminDateOverrideSection />}
               <div ref={dptRef}>
                 {user?.role === "admin" && <DptSettingsSection />}
+                {user?.role === "admin" && <MacCheeseSettingsSection />}
               </div>
               {user?.role === "admin" && <FactoryNumberSection />}
               {(user?.role === "admin" || user?.role === "manager") && <BuildingTimerSection />}
@@ -1340,6 +1341,113 @@ function DptSettingsSection() {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+function MacCheeseSettingsSection() {
+  const { data: recipes, isLoading: recipesLoading } = useListRecipes();
+  const [extras, setExtras] = useState<Record<number, number>>({});
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  const macRecipes = (recipes ?? []).filter((r: any) => r.category === "Macaroni Cheese").sort((a: any, b: any) => a.name.localeCompare(b.name));
+
+  useEffect(() => {
+    if (macRecipes.length === 0 || loaded) return;
+    Promise.all(
+      macRecipes.map((r: any) =>
+        fetch(`/api/app-settings/mac_cheese_extra_packs_${r.id}`, { credentials: "include" })
+          .then(resp => resp.ok ? resp.json() : null)
+          .then(d => ({ id: r.id, value: d?.value ? Number(d.value) : 5 }))
+          .catch(() => ({ id: r.id, value: 5 }))
+      )
+    ).then(results => {
+      const map: Record<number, number> = {};
+      for (const r of results) map[r.id] = r.value;
+      setExtras(map);
+      setLoaded(true);
+    });
+  }, [macRecipes.length, loaded]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      for (const [id, value] of Object.entries(extras)) {
+        await fetch(`/api/app-settings/mac_cheese_extra_packs_${id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ value: String(value) }),
+        });
+      }
+      setSavedMsg("Saved");
+      setTimeout(() => setSavedMsg(null), 2500);
+    } catch (err: any) {
+      toast({ title: "Error", description: err?.message ?? "Failed to save", variant: "destructive" });
+    } finally { setSaving(false); }
+  };
+
+  if (recipesLoading || !loaded) {
+    return <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
+  }
+
+  if (macRecipes.length === 0) return null;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <UtensilsCrossed className="w-4 h-4 text-yellow-600" /> Macaroni Cheese Defaults
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Set the default "Extra to make" packs for each mac cheese recipe. This is added on top of sales data when calculating production quantities.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-4 py-2 bg-yellow-600 text-white rounded-lg text-sm font-medium hover:bg-yellow-700 disabled:opacity-50 flex items-center gap-1.5 transition-colors"
+          >
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+            Save
+          </button>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-border bg-card overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-yellow-50 dark:bg-yellow-900/20 text-muted-foreground text-xs">
+            <tr>
+              <th className="px-5 py-3 font-medium text-left">Recipe</th>
+              <th className="px-5 py-3 font-medium text-right">Extra to Make (packs)</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/50">
+            {macRecipes.map((recipe: any) => (
+              <tr key={recipe.id} className="hover:bg-secondary/10 transition-colors">
+                <td className="px-5 py-3.5 font-medium" style={recipe.color ? { color: recipe.color } : undefined}>{recipe.name}</td>
+                <td className="px-5 py-3.5 text-right">
+                  <input
+                    type="number"
+                    min={0}
+                    value={extras[recipe.id] ?? 5}
+                    onChange={e => setExtras(prev => ({ ...prev, [recipe.id]: Math.max(0, Number(e.target.value) || 0) }))}
+                    className="w-24 px-2 py-1 border border-border rounded-lg text-sm text-right font-mono focus-ring"
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        On Thursdays (last production day before weekend), extra is automatically set to 0 regardless of this default.
+      </p>
     </div>
   );
 }

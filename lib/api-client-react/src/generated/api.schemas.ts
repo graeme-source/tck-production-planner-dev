@@ -251,11 +251,29 @@ export type RecipeDetail = Recipe & {
 export type CreateRecipeIngredientsItem = {
   ingredientId: number;
   quantity: number;
+  marinadeForIngredientId?: number | null;
+  includeInFillingMix?: boolean;
+  isTopping?: boolean;
+  quid?: boolean;
+  showInPrep?: boolean;
+  mixingOverage?: number;
 };
 
 export type CreateRecipeSubRecipesItem = {
   subRecipeId: number;
   quantity: number;
+  marinadeForIngredientId?: number | null;
+  includeInFillingMix?: boolean;
+  isTopping?: boolean;
+  quid?: boolean;
+  showInPrep?: boolean;
+  mixingOverage?: number;
+};
+
+export type CreateRecipeMarinadesItem = {
+  rawMeatIngredientId: number;
+  marinadeIngredientId: number;
+  gramsPerKg: number;
 };
 
 export interface CreateRecipe {
@@ -280,8 +298,13 @@ export interface CreateRecipe {
   fillWeightGrams?: number | null;
   baseType?: string | null;
   baseWeightGrams?: number | null;
+  color?: string | null;
+  isCoreMenu?: boolean;
+  isCurrentSpecial?: boolean;
+  cookingLossPercent?: number | null;
   ingredients: CreateRecipeIngredientsItem[];
   subRecipes: CreateRecipeSubRecipesItem[];
+  marinades?: CreateRecipeMarinadesItem[];
 }
 
 export interface CategoryDefault {
@@ -312,6 +335,7 @@ export interface ProductionPlanItem {
   planId: number;
   recipeId: number;
   recipeName: string;
+  recipeCategory?: string | null;
   portionsPerBatch: number;
   /** Target seconds per batch for this recipe (joined from recipes table). Null falls back to the global default. */
   targetBuildSeconds?: number | null;
@@ -327,8 +351,6 @@ export interface ProductionPlanItem {
   fillWeightGrams?: number | null;
   baseType?: string | null;
   baseWeightGrams?: number | null;
-  mixingTinOverride?: number | null;
-  stationCompletions?: Record<string, number>;
 }
 
 export type ProductionPlanStatus =
