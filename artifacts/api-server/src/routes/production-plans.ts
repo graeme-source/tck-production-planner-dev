@@ -4531,6 +4531,21 @@ router.get("/:id/main-prep", async (req, res) => {
     }>;
   }>();
 
+  // Expanded sub-recipe ingredients: merged across all recipes sharing the sub-recipe
+  const expandedIngMap = new Map<string, {
+    ingredientId: number;
+    ingredientName: string;
+    unit: string;
+    category: string | null;
+    stockCheckEnabled: boolean;
+    stockCheckFrequency: string;
+    stockCheckDay: string | null;
+    isBottle: boolean;
+    bottleSize: number | null;
+    totalQty: number;
+    subRecipeName: string;
+  }>();
+
   for (const planItem of planItems) {
     const batchesTarget = Number(planItem.batchesTarget) || 0;
     if (!planItem.recipeId || batchesTarget === 0) continue;
@@ -4666,7 +4681,9 @@ router.get("/:id/main-prep", async (req, res) => {
           marinadeForIngredientId: recipeSubRecipesTable.marinadeForIngredientId,
           subRecipeName: subRecipesTable.name,
           yieldUnit: subRecipesTable.yieldUnit,
+          subRecipeYield: subRecipesTable.yield,
           isBase: subRecipesTable.isBase,
+          expandInPrep: subRecipesTable.expandInPrep,
           isTopping: recipeSubRecipesTable.isTopping,
           showInPrep: recipeSubRecipesTable.showInPrep,
         })
@@ -4698,6 +4715,63 @@ router.get("/:id/main-prep", async (req, res) => {
         const unit = sr.yieldUnit ?? "kg";
         const roundedQty = roundByUnit(totalQty, unit);
         if (roundedQty <= 0) continue;
+
+        // If expandInPrep is enabled, break down into individual ingredients.
+        // All recipes sharing the same expanded sub-recipe get their quantities
+        // merged into a single combined entry per ingredient (one prep task, not per-recipe).
+        if (sr.expandInPrep) {
+          const srYield = Number(sr.subRecipeYield) || 1;
+          const scaleFactor = roundedQty / srYield;
+
+          const componentRows = await db
+            .select({
+              ingredientId: subRecipeIngredientsTable.ingredientId,
+              ingredientName: ingredientsTable.name,
+              unit: ingredientsTable.unit,
+              category: ingredientsTable.category,
+              quantity: subRecipeIngredientsTable.quantity,
+              processingRatio: ingredientsTable.processingRatio,
+              stockCheckEnabled: ingredientsTable.stockCheckEnabled,
+              stockCheckFrequency: ingredientsTable.stockCheckFrequency,
+              isBottle: ingredientsTable.isBottle,
+              bottleSize: ingredientsTable.bottleSize,
+            })
+            .from(subRecipeIngredientsTable)
+            .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
+            .where(eq(subRecipeIngredientsTable.subRecipeId, sr.subRecipeId));
+
+          for (const comp of componentRows) {
+            if (comp.ingredientId == null) continue;
+            const compQty = Number(comp.quantity) || 0;
+            const compUnit = comp.unit ?? "g";
+            const scaledQty = roundByUnit(compQty * scaleFactor, compUnit);
+            if (scaledQty <= 0) continue;
+
+            // Use a special key so expanded sub-recipe ingredients merge together
+            // across recipes, but don't merge with direct recipe ingredients
+            const expandKey = `expand_${sr.subRecipeId}_${comp.ingredientId}`;
+            const existing = expandedIngMap.get(expandKey);
+            if (existing) {
+              existing.totalQty += scaledQty;
+            } else {
+              expandedIngMap.set(expandKey, {
+                ingredientId: comp.ingredientId,
+                ingredientName: comp.ingredientName ?? `Ingredient #${comp.ingredientId}`,
+                unit: compUnit,
+                category: comp.category ?? null,
+                stockCheckEnabled: comp.stockCheckEnabled ?? false,
+                stockCheckFrequency: comp.stockCheckFrequency ?? "daily",
+                stockCheckDay: null as string | null,
+                totalQty: scaledQty,
+                isBottle: comp.isBottle ?? false,
+                bottleSize: comp.bottleSize != null ? Number(comp.bottleSize) : null,
+                subRecipeName: sr.subRecipeName ?? `Sub-recipe #${sr.subRecipeId}`,
+              });
+            }
+          }
+          continue; // skip adding to subRecipeMap
+        }
+
         const qtyPerTin = srTinCount > 0 ? roundByUnit(roundedQty / srTinCount, unit) : roundedQty;
 
         const mapKey = `sr_${sr.subRecipeId}`;
@@ -4753,6 +4827,43 @@ router.get("/:id/main-prep", async (req, res) => {
     recipes: sr.recipes,
     totalTinCount: sr.recipes.reduce((s, r) => s + r.tinCount, 0),
   }));
+
+  // Merge expanded sub-recipe ingredients into ingredientMap as single combined entries
+  for (const [, exp] of expandedIngMap) {
+    const existing = ingredientMap.get(exp.ingredientId);
+    if (existing) {
+      // Ingredient already exists from a direct recipe link — add expanded qty
+      existing.totalQty += exp.totalQty;
+      existing.recipes.push({
+        recipeId: 0,
+        recipeName: exp.subRecipeName,
+        batchesTarget: 0,
+        qtyForRecipe: exp.totalQty,
+        tinSize: null,
+        maxBatchesPerTin: null,
+        tinCount: 1,
+        qtyPerTin: exp.totalQty,
+        isOverridden: false,
+        isFillingMix: false,
+      });
+    } else {
+      ingredientMap.set(exp.ingredientId, {
+        ...exp,
+        recipes: [{
+          recipeId: 0,
+          recipeName: exp.subRecipeName,
+          batchesTarget: 0,
+          qtyForRecipe: exp.totalQty,
+          tinSize: null,
+          maxBatchesPerTin: null,
+          tinCount: 1,
+          qtyPerTin: exp.totalQty,
+          isOverridden: false,
+          isFillingMix: false,
+        }],
+      });
+    }
+  }
 
   // Ingredients that always get 1 tin per recipe (no splitting within a recipe)
   const SINGLE_TIN_PER_RECIPE_IDS = new Set([18, 19, 202]); // Basil, Basil puree, Garlic Butter

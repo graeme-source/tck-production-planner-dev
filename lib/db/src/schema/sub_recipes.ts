@@ -12,6 +12,7 @@ export const subRecipesTable = pgTable("sub_recipes", {
   notes: text("notes"),
   shelfLifeDays: integer("shelf_life_days"),
   isBase: boolean("is_base").notNull().default(false),
+  expandInPrep: boolean("expand_in_prep").notNull().default(false),
   labelDeclaration: text("label_declaration"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

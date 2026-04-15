@@ -204,7 +204,8 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
   const getDeficit = (r: MacCheeseCalcRecipe) => Math.max(0, r.salesNextDay - getStock(r));
   const getToMake = (r: MacCheeseCalcRecipe) => {
     const extra = extraOverrides[r.recipeId] ?? r.extraToMake;
-    return getDeficit(r) + r.salesNextDayPlus1 + r.salesNextDayPlus2 + extra;
+    const totalNeeded = r.salesNextDay + r.salesNextDayPlus1 + r.salesNextDayPlus2 + extra;
+    return Math.max(0, totalNeeded - getStock(r));
   };
 
   const handleSubmit = async () => {
@@ -261,6 +262,7 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
               <th className="pb-2 px-2 text-right">Extra</th>
               <th className="pb-2 px-2 text-right font-semibold">To Make</th>
               <th className="pb-2 pl-2 text-right">Batches</th>
+              <th className="pb-2 pl-2 w-8" />
             </tr>
           </thead>
           <tbody>
@@ -300,6 +302,16 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
                   </td>
                   <td className="py-2.5 px-2 text-right font-bold tabular-nums text-lg">{toMake}</td>
                   <td className="py-2.5 pl-2 text-right tabular-nums text-muted-foreground">{batches}</td>
+                  <td className="py-2.5 pl-1">
+                    <button
+                      type="button"
+                      onClick={() => setRecipes(prev => prev.filter(x => x.recipeId !== r.recipeId))}
+                      className="text-muted-foreground hover:text-destructive transition-colors p-0.5"
+                      title="Remove from list"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </td>
                 </tr>
               );
             })}

@@ -711,6 +711,9 @@ async function runStartupMigrations() {
     `);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications (user_id) WHERE read = FALSE`);
 
+    // Expand sub-recipe ingredients in prep station
+    await db.execute(sql`ALTER TABLE sub_recipes ADD COLUMN IF NOT EXISTS expand_in_prep BOOLEAN NOT NULL DEFAULT FALSE`);
+
     // Ensure reports page is accessible to all users (for Issue Log)
     await db.execute(sql`
       INSERT INTO page_permissions (page_key, min_role)

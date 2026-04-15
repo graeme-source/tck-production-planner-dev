@@ -6,10 +6,12 @@ import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
 import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2, RotateCcw, FlaskConical, Info, Layers, Eye, Target, Minus, QrCode } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { useForm, useFieldArray } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 const schema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -19,6 +21,7 @@ const schema = z.object({
   notes: z.string().optional(),
   shelfLifeDays: z.coerce.number().int().nonnegative().optional(),
   isBase: z.boolean().optional(),
+  expandInPrep: z.boolean().optional(),
   labelDeclaration: z.string().optional(),
   ingredients: z.array(z.object({
     ingredientId: z.coerce.number().min(1, "Select an ingredient"),
@@ -245,6 +248,8 @@ function SubRecipeForm({
   ingredients: initialIngredients,
   subRecipes: allSubRecipes,
   cyclicIds,
+  onDirtyChange,
+  submitRef,
 }: {
   defaultValues: FormValues;
   onSubmit: (data: FormValues) => void;
@@ -253,8 +258,10 @@ function SubRecipeForm({
   ingredients: IngredientOption[];
   subRecipes: SubRecipeOption[];
   cyclicIds?: number[];
+  onDirtyChange?: (isDirty: boolean) => void;
+  submitRef?: React.MutableRefObject<(() => void) | null>;
 }) {
-  const { register, control, handleSubmit, setValue, watch, formState: { errors } } = useForm<FormValues>({
+  const { register, control, handleSubmit, setValue, watch, formState: { errors, isDirty } } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues,
   });
@@ -266,11 +273,23 @@ function SubRecipeForm({
   const [quickAddTargetIndex, setQuickAddTargetIndex] = useState<number | null>(null);
   const [isYieldAuto, setIsYieldAuto] = useState(!isEdit);
   const yieldInputRef = useRef<HTMLInputElement | null>(null);
+  const [ingDisplayUnits, setIngDisplayUnits] = useState<Record<number, "g" | "kg">>({});
+  const [srDisplayUnits, setSrDisplayUnits] = useState<Record<number, "g" | "kg">>({});
 
   const watchedIngredients = watch("ingredients");
   const watchedSubRecipeComponents = watch("subRecipeComponents");
   const watchedYield = watch("yield");
   const watchedYieldUnit = watch("yieldUnit");
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+
+  useEffect(() => {
+    if (submitRef) {
+      submitRef.current = handleSubmit(onSubmit);
+    }
+  }, [submitRef, handleSubmit, onSubmit]);
 
   const availableSubRecipes = cyclicIds
     ? allSubRecipes.filter(sr => !cyclicIds.includes(sr.id))
@@ -420,6 +439,19 @@ function SubRecipeForm({
           </div>
         </div>
 
+        <div className="flex items-center gap-3 py-1">
+          <input
+            type="checkbox"
+            id="expandInPrep"
+            {...register("expandInPrep")}
+            className="w-4 h-4 rounded border-border accent-primary"
+          />
+          <div>
+            <label htmlFor="expandInPrep" className="text-sm font-medium cursor-pointer">Show individual ingredients in prep</label>
+            <p className="text-xs text-muted-foreground">When enabled, the prep station shows each ingredient separately instead of a single sub-recipe line.</p>
+          </div>
+        </div>
+
         <div>
           <label className="text-sm font-medium">Label Declaration Name</label>
           <input
@@ -450,7 +482,7 @@ function SubRecipeForm({
           )}
 
           {ingFields.length > 0 && (
-            <div className="grid grid-cols-[1fr_80px_44px_44px] gap-2 mb-1 px-1">
+            <div className="grid grid-cols-[1fr_120px_44px_44px] gap-2 mb-1 px-1">
               <span className="text-xs text-muted-foreground font-medium">Ingredient</span>
               <span className="text-xs text-muted-foreground font-medium text-center">Quantity</span>
               <span />
@@ -466,7 +498,7 @@ function SubRecipeForm({
               const ratio = selectedIng?.processingRatio;
               return (
                 <div key={field.id}>
-                  <div className="grid grid-cols-[1fr_80px_44px_44px] gap-2 items-center">
+                  <div className="grid grid-cols-[1fr_120px_44px_44px] gap-2 items-center">
                     <select
                       {...register(`ingredients.${index}.ingredientId`)}
                       className="px-2 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 truncate"
@@ -476,20 +508,49 @@ function SubRecipeForm({
                         <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>
                       ))}
                     </select>
-                    <div className="relative">
-                      <input
-                        type="number"
-                        step="0.001"
-                        {...register(`ingredients.${index}.quantity`)}
-                        className="w-full px-2 py-2 pr-7 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                        placeholder="Qty"
-                      />
-                      {unit && (
-                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">
-                          {unit}
-                        </span>
-                      )}
-                    </div>
+                    {(() => {
+                      const isKg = unit === "kg";
+                      const displayUnit = isKg ? (ingDisplayUnits[index] ?? "g") : null;
+                      const storedKg = Number(watchedIngredients?.[index]?.quantity) || 0;
+                      if (!isKg) {
+                        return (
+                          <div className="relative">
+                            <input
+                              type="number"
+                              step="0.001"
+                              {...register(`ingredients.${index}.quantity`)}
+                              className="w-full px-2 py-2 pr-7 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                              placeholder="Qty"
+                            />
+                            {unit && (
+                              <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">
+                                {unit}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      }
+                      return (
+                        <div className="flex gap-0.5 items-stretch">
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            value={storedKg === 0 ? "" : displayUnit === "g" ? Math.round(storedKg * 1000 * 100) / 100 : storedKg}
+                            onChange={e => {
+                              const v = e.target.value === "" ? 0 : Number(e.target.value);
+                              setValue(`ingredients.${index}.quantity`, displayUnit === "g" ? v / 1000 : v, { shouldValidate: true });
+                            }}
+                            className="min-w-0 flex-1 w-0 px-2 py-2 bg-background border border-border rounded-l-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                            placeholder={displayUnit === "g" ? "e.g. 250" : "0.000"}
+                          />
+                          <div className="flex flex-col shrink-0 text-[9px] font-semibold overflow-hidden border border-l-0 border-border rounded-r-lg">
+                            <button type="button" onClick={() => setIngDisplayUnits(u => ({ ...u, [index]: "g" }))} className={cn("px-1 flex-1 transition-colors", displayUnit === "g" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary/60")}>g</button>
+                            <button type="button" onClick={() => setIngDisplayUnits(u => ({ ...u, [index]: "kg" }))} className={cn("px-1 flex-1 border-t border-border transition-colors", displayUnit === "kg" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary/60")}>kg</button>
+                          </div>
+                        </div>
+                      );
+                    })()}
                     <button
                       type="button"
                       title="Add new ingredient"
@@ -554,7 +615,7 @@ function SubRecipeForm({
           ) : null}
 
           {srFields.length > 0 && (
-            <div className="grid grid-cols-[1fr_80px_32px] gap-2 mb-1 px-1">
+            <div className="grid grid-cols-[1fr_120px_32px] gap-2 mb-1 px-1">
               <span className="text-xs text-muted-foreground font-medium">Sub-recipe</span>
               <span className="text-xs text-muted-foreground font-medium text-center">Quantity</span>
               <span />
@@ -567,7 +628,7 @@ function SubRecipeForm({
               const selectedSr = availableSubRecipes.find(sr => sr.id === selectedId);
               const unit = selectedSr?.yieldUnit ?? "";
               return (
-                <div key={field.id} className="grid grid-cols-[1fr_80px_32px] gap-2 items-center">
+                <div key={field.id} className="grid grid-cols-[1fr_120px_32px] gap-2 items-center">
                   <select
                     {...register(`subRecipeComponents.${index}.componentSubRecipeId`)}
                     className="px-2 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 truncate"
@@ -577,20 +638,49 @@ function SubRecipeForm({
                       <option key={sr.id} value={sr.id}>{sr.name} ({sr.yieldUnit})</option>
                     ))}
                   </select>
-                  <div className="relative">
-                    <input
-                      type="number"
-                      step="0.001"
-                      {...register(`subRecipeComponents.${index}.quantity`)}
-                      className="w-full px-2 py-2 pr-7 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                      placeholder="Qty"
-                    />
-                    {unit && (
-                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">
-                        {unit}
-                      </span>
-                    )}
-                  </div>
+                  {(() => {
+                    const isKg = unit === "kg";
+                    const displayUnit = isKg ? (srDisplayUnits[index] ?? "g") : null;
+                    const storedKg = Number(watchedSubRecipeComponents?.[index]?.quantity) || 0;
+                    if (!isKg) {
+                      return (
+                        <div className="relative">
+                          <input
+                            type="number"
+                            step="0.001"
+                            {...register(`subRecipeComponents.${index}.quantity`)}
+                            className="w-full px-2 py-2 pr-7 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                            placeholder="Qty"
+                          />
+                          {unit && (
+                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">
+                              {unit}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="flex gap-0.5 items-stretch">
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          value={storedKg === 0 ? "" : displayUnit === "g" ? Math.round(storedKg * 1000 * 100) / 100 : storedKg}
+                          onChange={e => {
+                            const v = e.target.value === "" ? 0 : Number(e.target.value);
+                            setValue(`subRecipeComponents.${index}.quantity`, displayUnit === "g" ? v / 1000 : v, { shouldValidate: true });
+                          }}
+                          className="min-w-0 flex-1 w-0 px-2 py-2 bg-background border border-border rounded-l-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                          placeholder={displayUnit === "g" ? "e.g. 250" : "0.000"}
+                        />
+                        <div className="flex flex-col shrink-0 text-[9px] font-semibold overflow-hidden border border-l-0 border-border rounded-r-lg">
+                          <button type="button" onClick={() => setSrDisplayUnits(u => ({ ...u, [index]: "g" }))} className={cn("px-1 flex-1 transition-colors", displayUnit === "g" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary/60")}>g</button>
+                          <button type="button" onClick={() => setSrDisplayUnits(u => ({ ...u, [index]: "kg" }))} className={cn("px-1 flex-1 border-t border-border transition-colors", displayUnit === "kg" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary/60")}>kg</button>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   <button
                     type="button"
                     onClick={() => removeSr(index)}
@@ -641,7 +731,30 @@ function EditSubRecipeDialog({
   const { data: detail, isLoading } = useGetSubRecipe(id, { query: { enabled: open } });
   const { updateSubRecipe } = useAppMutations();
 
+  const [formIsDirty, setFormIsDirty] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const submitRef = useRef<(() => void) | null>(null);
+
   if (!open) return null;
+
+  function handleOpenChange(v: boolean) {
+    if (!v && formIsDirty) {
+      setConfirmOpen(true);
+    } else {
+      onOpenChange(v);
+    }
+  }
+
+  function handleDiscard() {
+    setConfirmOpen(false);
+    setFormIsDirty(false);
+    onOpenChange(false);
+  }
+
+  function handleSaveFromConfirm() {
+    setConfirmOpen(false);
+    submitRef.current?.();
+  }
 
   const defaultValues: FormValues = detail
     ? {
@@ -652,6 +765,7 @@ function EditSubRecipeDialog({
         notes: detail.notes ?? "",
         shelfLifeDays: detail.shelfLifeDays != null ? Number(detail.shelfLifeDays) : undefined,
         isBase: detail.isBase ?? false,
+        expandInPrep: (detail as Record<string, unknown>).expandInPrep as boolean ?? false,
         labelDeclaration: (detail as Record<string, unknown>).labelDeclaration as string ?? "",
         ingredients: (detail.ingredients ?? []).map(i => ({
           ingredientId: i.ingredientId,
@@ -662,35 +776,65 @@ function EditSubRecipeDialog({
           quantity: Number(c.quantity),
         })),
       }
-    : { name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, labelDeclaration: "", ingredients: [], subRecipeComponents: [] };
+    : { name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, expandInPrep: false, labelDeclaration: "", ingredients: [], subRecipeComponents: [] };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="font-display text-xl">Edit Sub-Recipe</DialogTitle>
-        </DialogHeader>
-        {isLoading ? (
-          <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
-        ) : (
-          <>
-            {detail && (
-              <YieldComparison detail={detail as SubRecipeDetail} />
-            )}
-            <SubRecipeForm
-              key={id}
-              defaultValues={defaultValues}
-              isEdit
-              isPending={updateSubRecipe.isPending}
-              ingredients={ingredients}
-              subRecipes={subRecipes}
-              cyclicIds={detail?.cyclicIds}
-              onSubmit={(data) => updateSubRecipe.mutate({ id, data }, { onSuccess: () => onOpenChange(false) })}
-            />
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
+    <>
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent className="bg-card border-border rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unsaved changes</AlertDialogTitle>
+            <AlertDialogDescription>
+              You have unsaved changes to this sub-recipe. What would you like to do?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <AlertDialogCancel className="sm:mr-auto">Keep editing</AlertDialogCancel>
+            <button
+              onClick={handleDiscard}
+              className="inline-flex items-center justify-center rounded-md text-sm font-medium px-4 py-2 border border-destructive text-destructive hover:bg-destructive/10 transition-colors"
+            >
+              Discard changes
+            </button>
+            <AlertDialogAction
+              onClick={handleSaveFromConfirm}
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              Save changes
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={open} onOpenChange={handleOpenChange}>
+        <DialogContent className="sm:max-w-[720px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="font-display text-xl">Edit Sub-Recipe</DialogTitle>
+          </DialogHeader>
+          {isLoading ? (
+            <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+          ) : (
+            <>
+              {detail && (
+                <YieldComparison detail={detail as SubRecipeDetail} />
+              )}
+              <SubRecipeForm
+                key={id}
+                defaultValues={defaultValues}
+                isEdit
+                isPending={updateSubRecipe.isPending}
+                ingredients={ingredients}
+                subRecipes={subRecipes}
+                cyclicIds={detail?.cyclicIds}
+                onDirtyChange={setFormIsDirty}
+                submitRef={submitRef}
+                onSubmit={(data) => updateSubRecipe.mutate({ id, data }, { onSuccess: () => onOpenChange(false) })}
+              />
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -955,6 +1099,9 @@ export default function SubRecipes() {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search);
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [addFormDirty, setAddFormDirty] = useState(false);
+  const [addConfirmOpen, setAddConfirmOpen] = useState(false);
+  const addSubmitRef = useRef<(() => void) | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [viewingId, setViewingId] = useState<number | null>(null);
 
@@ -974,7 +1121,7 @@ export default function SubRecipes() {
   }));
 
   const addDefaults: FormValues = {
-    name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, labelDeclaration: "",
+    name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, expandInPrep: false, labelDeclaration: "",
     ingredients: [],
     subRecipeComponents: [],
   };
@@ -994,8 +1141,40 @@ export default function SubRecipes() {
         }
       />
 
-      <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
-        <DialogContent className="sm:max-w-[600px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
+      <AlertDialog open={addConfirmOpen} onOpenChange={setAddConfirmOpen}>
+        <AlertDialogContent className="bg-card border-border rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unsaved changes</AlertDialogTitle>
+            <AlertDialogDescription>
+              You have unsaved changes to this sub-recipe. What would you like to do?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <AlertDialogCancel className="sm:mr-auto">Keep editing</AlertDialogCancel>
+            <button
+              onClick={() => { setAddConfirmOpen(false); setAddFormDirty(false); setIsAddOpen(false); }}
+              className="inline-flex items-center justify-center rounded-md text-sm font-medium px-4 py-2 border border-destructive text-destructive hover:bg-destructive/10 transition-colors"
+            >
+              Discard changes
+            </button>
+            <AlertDialogAction
+              onClick={() => { setAddConfirmOpen(false); addSubmitRef.current?.(); }}
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              Save changes
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={isAddOpen} onOpenChange={(v) => {
+        if (!v && addFormDirty) {
+          setAddConfirmOpen(true);
+        } else {
+          setIsAddOpen(v);
+        }
+      }}>
+        <DialogContent className="sm:max-w-[720px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display text-xl">New Sub-Recipe</DialogTitle>
           </DialogHeader>
@@ -1005,6 +1184,8 @@ export default function SubRecipes() {
             isPending={createSubRecipe.isPending}
             ingredients={ingredientList}
             subRecipes={subRecipeList}
+            onDirtyChange={setAddFormDirty}
+            submitRef={addSubmitRef}
             onSubmit={(data) => createSubRecipe.mutate({ data }, { onSuccess: () => setIsAddOpen(false) })}
           />
         </DialogContent>

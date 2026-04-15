@@ -355,6 +355,7 @@ export const CreateSubRecipeBody = zod.object({
   yieldUnit: zod.string(),
   notes: zod.string().nullish(),
   shelfLifeDays: zod.number().nullish(),
+  expandInPrep: zod.boolean().optional(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -442,6 +443,7 @@ export const UpdateSubRecipeBody = zod.object({
   yieldUnit: zod.string(),
   notes: zod.string().nullish(),
   shelfLifeDays: zod.number().nullish(),
+  expandInPrep: zod.boolean().optional(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
