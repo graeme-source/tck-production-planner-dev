@@ -2499,10 +2499,30 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const { data: stationActivity } = useGetStationActivity(planId, {
     query: { queryKey: getGetStationActivityQueryKey(planId), refetchInterval: 10000 },
   });
-  const { data: prepProgress } = useQuery<{ totalWeightG: number; completedWeightG: number; pct: number }>({
-    queryKey: ["prep-progress", planId],
+  // Prep & dough stations work on TOMORROW's plan. Fetch the next active plan
+  // so progress bars show the correct day's data.
+  const { data: nextPlanData } = useQuery<{ planId: number | null; planDate: string | null; status: string | null }>({
+    queryKey: ["next-active-plan", plan?.planDate],
     queryFn: async () => {
-      const res = await fetch(`/api/production-plans/${planId}/prep-progress`, { credentials: "include" });
+      if (!plan?.planDate) return { planId: null, planDate: null, status: null };
+      const res = await fetch(`/api/production-plans/next-active?afterDate=${plan.planDate}`, { credentials: "include" });
+      if (!res.ok) return { planId: null, planDate: null, status: null };
+      return res.json();
+    },
+    refetchInterval: 30000,
+    enabled: !!plan?.planDate,
+  });
+  const nextPlanId = nextPlanData?.planId ?? planId;
+
+  // Fetch next plan's detail for dough_prep and dough_sheeting station completions
+  const { data: nextPlan } = useGetProductionPlan(nextPlanId, {
+    query: { enabled: nextPlanId !== planId, refetchInterval: 15000 },
+  }) as { data: ProductionPlanDetail | undefined };
+
+  const { data: prepProgress } = useQuery<{ totalWeightG: number; completedWeightG: number; pct: number }>({
+    queryKey: ["prep-progress", nextPlanId],
+    queryFn: async () => {
+      const res = await fetch(`/api/production-plans/${nextPlanId}/prep-progress`, { credentials: "include" });
       if (!res.ok) return { totalWeightG: 0, completedWeightG: 0, pct: 0 };
       return res.json();
     },
@@ -2537,6 +2557,12 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const progress = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
 
   // Per-station completion counts aggregated from all plan items
+  // Prep, dough_prep, and dough_sheeting work on tomorrow's plan.
+  // Use the next plan's data for those stations, current plan for everything else.
+  const prepStations = new Set(["dough_prep", "dough_sheeting", "prep"]);
+  const nextItems = (nextPlanId !== planId && nextPlan?.items) ? nextPlan.items : plan.items ?? [];
+  const nextTarget = nextItems.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
+
   const stationProgress: Record<string, { done: number; target: number }> = {};
   {
     const items = plan.items ?? [];
@@ -2550,6 +2576,10 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
         stationProgress[s.key] = { done: prepProgress?.pct ?? 0, target: 100 };
       } else if (s.key === "packing") {
         stationProgress[s.key] = { done: 0, target: 0 };
+      } else if (s.key === "dough_prep" || s.key === "dough_sheeting") {
+        // Use next plan's completion data for dough stations (prep today for tomorrow)
+        const done = nextItems.reduce((sum, it) => sum + ((it.stationCompletions as Record<string, number> | undefined)?.[s.key] ?? 0), 0);
+        stationProgress[s.key] = { done, target: nextTarget };
       } else {
         const done = items.reduce((sum, it) => sum + ((it.stationCompletions as Record<string, number> | undefined)?.[s.key] ?? 0), 0);
         stationProgress[s.key] = { done, target };
