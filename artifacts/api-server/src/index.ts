@@ -694,6 +694,30 @@ async function runStartupMigrations() {
       )
     `);
 
+    // Leftover filling weight tracking
+    await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS leftover_filling_grams INTEGER`);
+
+    // Notifications table
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+        type TEXT NOT NULL,
+        message TEXT NOT NULL,
+        andon_issue_id INTEGER REFERENCES andon_issues(id) ON DELETE CASCADE,
+        read BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications (user_id) WHERE read = FALSE`);
+
+    // Ensure reports page is accessible to all users (for Issue Log)
+    await db.execute(sql`
+      INSERT INTO page_permissions (page_key, min_role)
+      VALUES ('/reports', 'viewer')
+      ON CONFLICT (page_key) DO UPDATE SET min_role = 'viewer'
+    `);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

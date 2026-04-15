@@ -1,9 +1,46 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { db, andonIssuesTable, andonCommentsTable, usersTable } from "@workspace/db";
+import { db, andonIssuesTable, andonCommentsTable, usersTable, notificationsTable } from "@workspace/db";
 import { eq, isNull, desc, asc, and, SQL } from "drizzle-orm";
 import type { AndonIssue } from "@workspace/db";
 
 const router: IRouter = Router();
+
+// --- Notification helper ----------------------------------------------------
+
+const ANDON_CATEGORY_LABELS: Record<string, string> = {
+  equipment: "Equipment",
+  safety: "Safety",
+  production: "Production",
+  product: "Product",
+  other: "Other",
+};
+
+async function notifyReporter(
+  andonIssueId: number,
+  actorUserId: number,
+  actorName: string,
+  type: "comment" | "acknowledged" | "resolved",
+) {
+  const [issue] = await db
+    .select({ reportedBy: andonIssuesTable.reportedBy, category: andonIssuesTable.category, station: andonIssuesTable.station })
+    .from(andonIssuesTable)
+    .where(eq(andonIssuesTable.id, andonIssueId));
+  if (!issue?.reportedBy || issue.reportedBy === actorUserId) return;
+
+  const label = ANDON_CATEGORY_LABELS[issue.category] ?? issue.category;
+  const messages: Record<string, string> = {
+    comment: `${actorName} commented on your issue: ${label} - ${issue.station}`,
+    acknowledged: `${actorName} acknowledged your issue: ${label} - ${issue.station}`,
+    resolved: `${actorName} resolved your issue: ${label} - ${issue.station}`,
+  };
+
+  await db.insert(notificationsTable).values({
+    userId: issue.reportedBy,
+    type,
+    message: messages[type],
+    andonIssueId,
+  });
+}
 
 router.get("/", async (req: Request, res: Response) => {
   try {
@@ -145,6 +182,9 @@ router.patch("/:id/acknowledge", async (req: Request, res: Response) => {
     }
 
     res.json(row);
+
+    try { await notifyReporter(id, userId!, acknowledgedByName ?? "Someone", "acknowledged"); }
+    catch (e) { console.warn("[notifications] Failed:", e); }
   } catch (err) {
     console.error("Error acknowledging andon issue:", err);
     res.status(500).json({ error: "Failed to acknowledge andon issue" });
@@ -188,6 +228,9 @@ router.patch("/:id/resolve", async (req: Request, res: Response) => {
     }
 
     res.json(row);
+
+    try { await notifyReporter(id, userId!, resolvedByName ?? "Someone", "resolved"); }
+    catch (e) { console.warn("[notifications] Failed:", e); }
   } catch (err) {
     console.error("Error resolving andon issue:", err);
     res.status(500).json({ error: "Failed to resolve andon issue" });
@@ -265,6 +308,9 @@ router.post("/:id/comments", async (req: Request, res: Response) => {
       .values({ andonId: id, userId: userId ?? null, userName, comment: comment.trim() })
       .returning();
     res.status(201).json(row);
+
+    try { if (userId) await notifyReporter(id, userId, userName ?? "Someone", "comment"); }
+    catch (e) { console.warn("[notifications] Failed:", e); }
   } catch (err) {
     console.error("Error creating andon comment:", err);
     res.status(500).json({ error: "Failed to create comment" });

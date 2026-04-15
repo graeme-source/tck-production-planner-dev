@@ -6,7 +6,7 @@ import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
 
 const router: IRouter = Router();
 
-const STATION_KEY_PREFIXES = ["mozz_load_confirmed_", "checklist_done_"];
+const STATION_KEY_PREFIXES = ["mozz_load_confirmed_", "checklist_done_", "station_assignment_"];
 
 async function requireAuthForWrite(req: Request, res: Response, next: NextFunction) {
   if (req.method === "GET") { next(); return; }

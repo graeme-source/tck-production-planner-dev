@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useCallback } from "react";
-import { useParams } from "wouter";
+import { useParams, useLocation } from "wouter";
 import { useGetProductionPlan, getGetProductionPlanQueryKey } from "@workspace/api-client-react";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
-import { Loader2, AlertTriangle, RotateCw, ClipboardCheck, Factory } from "lucide-react";
+import { Loader2, AlertTriangle, RotateCw, ClipboardCheck, Factory, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFeatureFlags } from "@/hooks/use-feature-flags";
 import { StationLayout } from "./shared/station-layout";
@@ -20,6 +20,7 @@ import { PrepBasesStation } from "./stations/prep-bases-station";
 import { PrepMeatStation } from "./stations/prep-meat-station";
 import { MacaroniCheeseStation } from "./stations/macaroni-cheese-station";
 import type { StationType } from "./shared/constants";
+import { useStationAssignment } from "@/hooks/use-station-assignment";
 
 type StationView = "production" | "checklist";
 
@@ -91,6 +92,8 @@ export default function StationPage() {
 
   const [isOnBreak, setIsOnBreak] = useState(false);
   const handleBreakActiveChange = useCallback((active: boolean) => setIsOnBreak(active), []);
+  const [, navigate] = useLocation();
+  const { isBlocked, assignedUserName } = useStationAssignment(planId, stationType);
 
   // Compute default view based on time of day and plan status
   const defaults = useMemo(
@@ -206,17 +209,37 @@ export default function StationPage() {
         </div>
       )}
 
-      <StationErrorBoundary key={`${stationType}-${activeView}`}>
-        {activeView === "checklist" && checklistsEnabled ? (
-          <StationChecklist
-            stationType={stationType}
-            planId={planId}
-            defaultCategory={defaults.category}
-          />
-        ) : (
-          stationContent()
-        )}
-      </StationErrorBoundary>
+      {isBlocked ? (
+        <div className="flex flex-col items-center justify-center py-20 gap-6 text-center px-4">
+          <div className="w-16 h-16 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+            <Lock className="w-8 h-8 text-amber-600 dark:text-amber-400" />
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-xl font-bold">Station Assigned</h2>
+            <p className="text-muted-foreground max-w-sm">
+              This station is assigned to <span className="font-semibold text-foreground">{assignedUserName}</span> for today's production.
+            </p>
+          </div>
+          <button
+            onClick={() => navigate(`/plans/${planId}/station/${stationType === "building_1" ? "building_2" : "building_1"}`)}
+            className="px-6 py-3 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:bg-primary/90 transition-colors"
+          >
+            Go to {stationType === "building_1" ? "Building Table 2" : "Building Table 1"}
+          </button>
+        </div>
+      ) : (
+        <StationErrorBoundary key={`${stationType}-${activeView}`}>
+          {activeView === "checklist" && checklistsEnabled ? (
+            <StationChecklist
+              stationType={stationType}
+              planId={planId}
+              defaultCategory={defaults.category}
+            />
+          ) : (
+            stationContent()
+          )}
+        </StationErrorBoundary>
+      )}
     </StationLayout>
   );
 }

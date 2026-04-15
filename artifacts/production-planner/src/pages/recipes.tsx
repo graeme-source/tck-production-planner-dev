@@ -5,7 +5,7 @@ import { useAppMutations } from "@/hooks/use-mutations";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
-import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, QrCode } from "lucide-react";
+import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, QrCode, Filter } from "lucide-react";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -1671,6 +1671,7 @@ export default function Recipes() {
   const [duplicatingId, setDuplicatingId] = useState<number | null>(null);
   const [duplicateDefaults, setDuplicateDefaults] = useState<FormValues | null>(null);
 
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const { data: duplicateDetail } = useGetRecipe(duplicatingId!, { query: { enabled: duplicatingId !== null } });
 
   useEffect(() => {
@@ -1746,11 +1747,26 @@ export default function Recipes() {
         }
       />
 
-      {/* Margin legend */}
-      <div className="flex items-center gap-4 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-green-500 inline-block" /> ≥60% — Great</span>
-        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-400 inline-block" /> 50–59% — OK</span>
-        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-red-500 inline-block" /> &lt;50% — Review</span>
+      {/* Margin legend + category filter */}
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-green-500 inline-block" /> ≥60% — Great</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-400 inline-block" /> 50–59% — OK</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-red-500 inline-block" /> &lt;50% — Review</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Filter className="w-4 h-4 text-muted-foreground" />
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            className="text-sm border border-border rounded-lg px-3 py-1.5 bg-card text-foreground"
+          >
+            <option value="all">All Categories</option>
+            {[...new Set((recipes ?? []).map(r => r.category).filter((c): c is string => !!c))].sort().map(cat => (
+              <option key={cat} value={cat}>{cat}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* Add dialog */}
@@ -1809,7 +1825,7 @@ export default function Recipes() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {recipes?.map((recipe) => (
+        {recipes?.filter(r => categoryFilter === "all" || r.category === categoryFilter).map((recipe) => (
           <RecipeCard
             key={recipe.id}
             recipe={recipe as RecipeItem}

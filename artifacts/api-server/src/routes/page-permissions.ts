@@ -23,7 +23,7 @@ const KNOWN_PAGES = [
 
 const DEFAULT_PERMISSIONS: Record<string, string> = {
   "/sales": "manager",
-  "/reports": "manager",
+  "/reports": "viewer",
   "/fulfilment": "manager",
   "/locations": "admin",
   "/dispatch-tag": "manager",

@@ -19,6 +19,7 @@ import {
 } from "@/components/layout";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
+import { useStationAssignment } from "@/hooks/use-station-assignment";
 import { ReportButton } from "@/components/report-modal";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -78,6 +79,9 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
   const [stationNavOpen, setStationNavOpen] = useState(false);
   const { state, logout, lockStation } = useAuth();
   const { canAccess } = usePagePermissions();
+  const { assignments, enabled: stationLockEnabled } = useStationAssignment(planId, stationType);
+  const currentUserId = state.status === "authenticated" ? state.user.id : 0;
+  const isAdmin = state.status === "authenticated" && state.user.role === "admin";
   const andonBadge = useAndonBadge(stationType);
 
   const user = state.status === "authenticated" ? state.user : null;
@@ -280,21 +284,40 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
                     wrapping: "bg-purple-50 dark:bg-purple-900/20",
                     packing: "bg-indigo-50 dark:bg-indigo-900/20",
                   };
+
+                  // Station lock: check if this building station is assigned to someone else
+                  const isBuildingStation = s.key === "building_1" || s.key === "building_2";
+                  const stationAssignment = isBuildingStation ? assignments[s.key as "building_1" | "building_2"] : null;
+                  const isLockedToOther = stationLockEnabled && !isAdmin && isBuildingStation && stationAssignment !== null && stationAssignment.userId !== currentUserId;
+
                   return (
                     <button
                       key={s.key}
-                      onClick={() => { navigate(`/plans/${planId}/station/${s.key}`); setStationNavOpen(false); }}
+                      onClick={() => {
+                        if (isLockedToOther) return;
+                        navigate(`/plans/${planId}/station/${s.key}`);
+                        setStationNavOpen(false);
+                      }}
+                      disabled={isLockedToOther}
                       className={cn(
-                        "flex flex-col items-center justify-center gap-3 p-4 min-h-[120px] rounded-2xl transition-all active:scale-[0.97]",
-                        isActive
+                        "flex flex-col items-center justify-center gap-3 p-4 min-h-[120px] rounded-2xl transition-all",
+                        isLockedToOther
+                          ? "border-2 border-border opacity-40 cursor-not-allowed"
+                          : "active:scale-[0.97]",
+                        !isLockedToOther && isActive
                           ? "border-2 border-primary bg-primary/5 shadow-sm"
-                          : "border-2 border-border hover:border-primary/50 hover:bg-secondary/40"
+                          : !isLockedToOther
+                            ? "border-2 border-border hover:border-primary/50 hover:bg-secondary/40"
+                            : ""
                       )}
                     >
                       <div className={cn("w-16 h-16 rounded-xl flex items-center justify-center", bgColors[s.key] ?? "", s.color)}>
                         <Icon className="w-8 h-8" />
                       </div>
                       <span className="text-sm font-bold text-center leading-tight">{s.short}</span>
+                      {isLockedToOther && stationAssignment && (
+                        <span className="text-xs text-muted-foreground leading-tight">Assigned to {stationAssignment.userName}</span>
+                      )}
                     </button>
                   );
                 })}

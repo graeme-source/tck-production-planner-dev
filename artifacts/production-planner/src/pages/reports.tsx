@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, Fragment } from "react";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useSearch, useLocation } from "wouter";
 import { toast } from "@/hooks/use-toast";
@@ -12,6 +12,7 @@ import {
   Package, Zap, CalendarDays, Trophy, Snail, Hourglass,
   Lightbulb, AlertTriangle, CheckCircle, Filter, Play, Square,
   MessageSquare, Send, ClipboardCheck, FileText, Eye, EyeOff,
+  Droplets,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
@@ -150,7 +151,7 @@ interface PackingSpeedData {
 // Packing-speed is now a subsection inside the Production KPIs view, so it's
 // no longer a top-level tab. The URL ?tab=packing-speed redirects to ?tab=kpis
 // for backward compat.
-type TabId = "kpis" | "breaks" | "temperature" | "haccp" | "improvements" | "issues";
+type TabId = "kpis" | "breaks" | "temperature" | "haccp" | "improvements" | "issues" | "leftover-filling";
 
 interface ImprovementRecord {
   id: number;
@@ -240,7 +241,7 @@ function DateShortcutsDropdown({ onSelect }: { onSelect: (from: string, to: stri
   );
 }
 
-const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "haccp", "improvements", "issues"];
+const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "haccp", "improvements", "issues", "leftover-filling"];
 
 interface ReportsNavItem {
   id: TabId;
@@ -255,21 +256,31 @@ const REPORTS_NAV_ITEMS: ReportsNavItem[] = [
   { id: "haccp", label: "HACCP", icon: ShieldCheck },
   { id: "improvements", label: "Improvements & Struggles", icon: Lightbulb },
   { id: "issues", label: "Issue Log", icon: AlertTriangle },
+  { id: "leftover-filling", label: "Leftover Filling", icon: Droplets },
 ];
 
 export default function Reports() {
   const search = useSearch();
   const [, navigate] = useLocation();
+  const { state } = useAuth();
+  const userRole = state.status === "authenticated" ? state.user.role : "viewer";
+  const isManagerOrAdmin = userRole === "admin" || userRole === "manager";
+
+  // Viewers only see the Issue Log tab; managers/admins see everything
+  const visibleTabs = isManagerOrAdmin
+    ? REPORTS_NAV_ITEMS
+    : REPORTS_NAV_ITEMS.filter(item => item.id === "issues");
+  const allowedTabIds = visibleTabs.map(t => t.id);
+
   const rawTab = new URLSearchParams(search).get("tab");
+  const issueIdParam = new URLSearchParams(search).get("issueId");
   // Backward compat: legacy "andon" tab id redirects to "issues", and
   // "packing-speed" redirects to "kpis" since it's now a subsection there.
   const normalisedTab =
     rawTab === "andon" ? "issues" : rawTab === "packing-speed" ? "kpis" : rawTab;
   const queryTab = normalisedTab as TabId | null;
-  const initialTab: TabId = queryTab && VALID_TABS.includes(queryTab) ? queryTab : "kpis";
+  const initialTab: TabId = queryTab && allowedTabIds.includes(queryTab) ? queryTab : allowedTabIds[0];
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);
-  const { state } = useAuth();
-  const userRole = state.status === "authenticated" ? state.user.role : "viewer";
 
   function switchTab(tab: TabId) {
     setActiveTab(tab);
@@ -286,62 +297,66 @@ export default function Reports() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Analytics"
-        description="Production KPIs, break and lunch tracking analytics."
+        title={isManagerOrAdmin ? "Analytics" : "Issue Log"}
+        description={isManagerOrAdmin ? "Production KPIs, break and lunch tracking analytics." : "View and respond to reported issues."}
       />
 
       <div className="flex gap-6 items-start">
-        {/* Left nav — mirrors the settings page sidebar pattern */}
-        <nav className="w-52 flex-shrink-0 sticky top-6 hidden md:block">
-          <ul className="space-y-1">
-            {REPORTS_NAV_ITEMS.map((item) => {
-              const Icon = item.icon;
-              const active = activeTab === item.id;
-              return (
-                <li key={item.id}>
-                  <button
-                    onClick={() => switchTab(item.id)}
-                    className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors text-left",
-                      active
-                        ? "bg-primary text-primary-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
-                    )}
-                  >
-                    <Icon className="w-4 h-4 flex-shrink-0" />
-                    {item.label}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </nav>
+        {/* Left nav — only show when more than one tab */}
+        {visibleTabs.length > 1 && (
+          <nav className="w-52 flex-shrink-0 sticky top-6 hidden md:block">
+            <ul className="space-y-1">
+              {visibleTabs.map((item) => {
+                const Icon = item.icon;
+                const active = activeTab === item.id;
+                return (
+                  <li key={item.id}>
+                    <button
+                      onClick={() => switchTab(item.id)}
+                      className={cn(
+                        "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors text-left",
+                        active
+                          ? "bg-primary text-primary-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
+                      )}
+                    >
+                      <Icon className="w-4 h-4 flex-shrink-0" />
+                      {item.label}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </nav>
+        )}
 
         {/* Mobile: horizontal scroll of the same nav, shown above the content */}
-        <nav className="md:hidden w-full overflow-x-auto pb-2 -mb-2">
-          <ul className="flex gap-1 min-w-max">
-            {REPORTS_NAV_ITEMS.map((item) => {
-              const Icon = item.icon;
-              const active = activeTab === item.id;
-              return (
-                <li key={item.id}>
-                  <button
-                    onClick={() => switchTab(item.id)}
-                    className={cn(
-                      "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap",
-                      active
-                        ? "bg-primary text-primary-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
-                    )}
-                  >
-                    <Icon className="w-4 h-4 flex-shrink-0" />
-                    {item.label}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </nav>
+        {visibleTabs.length > 1 && (
+          <nav className="md:hidden w-full overflow-x-auto pb-2 -mb-2">
+            <ul className="flex gap-1 min-w-max">
+              {visibleTabs.map((item) => {
+                const Icon = item.icon;
+                const active = activeTab === item.id;
+                return (
+                  <li key={item.id}>
+                    <button
+                      onClick={() => switchTab(item.id)}
+                      className={cn(
+                        "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap",
+                        active
+                          ? "bg-primary text-primary-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
+                      )}
+                    >
+                      <Icon className="w-4 h-4 flex-shrink-0" />
+                      {item.label}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </nav>
+        )}
 
         {/* Right content panel */}
         <div className="flex-1 min-w-0 space-y-4">
@@ -374,7 +389,8 @@ export default function Reports() {
           {activeTab === "temperature" && <TemperatureRecordsTab fromDate={fromDate} toDate={toDate} />}
           {activeTab === "haccp" && <HaccpTab fromDate={fromDate} toDate={toDate} />}
           {activeTab === "improvements" && <ImprovementsTab userRole={userRole} currentUserName={state.status === "authenticated" ? state.user.name : null} />}
-          {activeTab === "issues" && <AndonLogTab userRole={userRole} />}
+          {activeTab === "issues" && <AndonLogTab userRole={userRole} initialIssueId={issueIdParam ? parseInt(issueIdParam, 10) : undefined} />}
+          {activeTab === "leftover-filling" && <LeftoverFillingTab fromDate={fromDate} toDate={toDate} />}
         </div>
       </div>
     </div>
@@ -2290,7 +2306,113 @@ interface AndonComment {
   createdAt: string;
 }
 
-function AndonLogTab({ userRole }: { userRole: string }) {
+// ─── Leftover Filling Tab ───────────────────────────────────────────────────
+
+interface LeftoverFillingRecipe {
+  recipeId: number;
+  recipeName: string;
+  count: number;
+  totalGrams: number;
+  avgGrams: number;
+  minGrams: number;
+  maxGrams: number;
+  entries: { planDate: string; grams: number }[];
+}
+
+function LeftoverFillingTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
+  const [data, setData] = useState<LeftoverFillingRecipe[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [expandedRecipe, setExpandedRecipe] = useState<number | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    const params = new URLSearchParams();
+    if (fromDate) params.set("from", fromDate);
+    if (toDate) params.set("to", toDate);
+    fetch(`${BASE}/api/reports/leftover-filling?${params.toString()}`, { credentials: "include" })
+      .then(r => { if (!r.ok) throw new Error("Failed to fetch"); return r.json(); })
+      .then(d => { setData(d); setLoading(false); })
+      .catch(err => { setError(err.message); setLoading(false); });
+  }, [fromDate, toDate]);
+
+  if (loading) return <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+  if (error) return <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4 text-red-600 dark:text-red-400">{error}</div>;
+  if (data.length === 0) return (
+    <div className="text-center py-16 text-muted-foreground">
+      <Droplets className="w-10 h-10 mx-auto mb-3 opacity-30" />
+      <p className="font-medium">No leftover filling data recorded</p>
+      <p className="text-sm mt-1">Leftover filling weights will appear here once builders record them after completing recipes.</p>
+    </div>
+  );
+
+  const sorted = [...data].sort((a, b) => b.avgGrams - a.avgGrams);
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-secondary/30 text-muted-foreground text-xs">
+            <tr>
+              <th className="px-4 py-3 font-medium text-left">Recipe</th>
+              <th className="px-4 py-3 font-medium text-right">Days Recorded</th>
+              <th className="px-4 py-3 font-medium text-right">Avg Leftover</th>
+              <th className="px-4 py-3 font-medium text-right">Min</th>
+              <th className="px-4 py-3 font-medium text-right">Max</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/50">
+            {sorted.map(recipe => (
+              <Fragment key={recipe.recipeId}>
+                <tr
+                  onClick={() => setExpandedRecipe(expandedRecipe === recipe.recipeId ? null : recipe.recipeId)}
+                  className="hover:bg-secondary/20 cursor-pointer transition-colors"
+                >
+                  <td className="px-4 py-3 font-medium">
+                    <div className="flex items-center gap-2">
+                      <ChevronRight className={cn("w-4 h-4 text-muted-foreground transition-transform", expandedRecipe === recipe.recipeId && "rotate-90")} />
+                      {recipe.recipeName}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-right text-muted-foreground">{recipe.count}</td>
+                  <td className="px-4 py-3 text-right">
+                    <span className={cn(
+                      "font-bold",
+                      recipe.avgGrams === 0 ? "text-emerald-600 dark:text-emerald-400" :
+                      recipe.avgGrams <= 200 ? "text-amber-600 dark:text-amber-400" :
+                      "text-red-600 dark:text-red-400"
+                    )}>
+                      {recipe.avgGrams}g
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-right text-muted-foreground">{recipe.minGrams}g</td>
+                  <td className="px-4 py-3 text-right text-muted-foreground">{recipe.maxGrams}g</td>
+                </tr>
+                {expandedRecipe === recipe.recipeId && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-2 bg-secondary/10">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2 py-2">
+                        {recipe.entries.map((entry, i) => (
+                          <div key={i} className="text-xs bg-card border border-border rounded-lg px-3 py-2 text-center">
+                            <p className="text-muted-foreground">{format(new Date(entry.planDate + "T00:00:00"), "d MMM")}</p>
+                            <p className={cn("font-bold", entry.grams === 0 ? "text-emerald-600 dark:text-emerald-400" : "text-foreground")}>{entry.grams}g</p>
+                          </div>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function AndonLogTab({ userRole, initialIssueId }: { userRole: string; initialIssueId?: number }) {
   const [issues, setIssues] = useState<AndonIssueRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [actioningId, setActioningId] = useState<number | null>(null);
@@ -2365,6 +2487,17 @@ function AndonLogTab({ userRole }: { userRole: string }) {
   }
 
   useEffect(() => { load(); }, [stationFilter, categoryFilter, severityFilter]);
+
+  // Deep-link: auto-open an issue if navigated with ?issueId=N
+  const didAutoOpen = useRef(false);
+  useEffect(() => {
+    if (initialIssueId && !loading && issues.length > 0 && !didAutoOpen.current) {
+      didAutoOpen.current = true;
+      if (issues.some(i => i.id === initialIssueId)) {
+        openDetail(initialIssueId);
+      }
+    }
+  }, [initialIssueId, loading, issues]);
 
   async function acknowledge(id: number) {
     setActioningId(id);
@@ -2460,6 +2593,7 @@ function AndonLogTab({ userRole }: { userRole: string }) {
             <thead className="bg-secondary/30 text-muted-foreground text-xs">
               <tr>
                 <th className="px-4 py-3 font-medium text-left">Severity</th>
+                {isManager && <th className="px-4 py-3 font-medium text-center">Actions</th>}
                 <th className="px-4 py-3 font-medium text-left">Category</th>
                 <th className="px-4 py-3 font-medium text-left">Station</th>
                 <th className="px-4 py-3 font-medium text-left">Description</th>
@@ -2467,7 +2601,6 @@ function AndonLogTab({ userRole }: { userRole: string }) {
                 <th className="px-4 py-3 font-medium text-left">Submitted</th>
                 <th className="px-4 py-3 font-medium text-left">Acknowledged</th>
                 <th className="px-4 py-3 font-medium text-left">Resolved</th>
-                {isManager && <th className="px-4 py-3 font-medium text-center">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
@@ -2485,41 +2618,6 @@ function AndonLogTab({ userRole }: { userRole: string }) {
                       <span className={cn("w-2 h-2 rounded-full", issue.severity === "red" ? "bg-red-500" : "bg-yellow-400")} />
                       {issue.severity === "red" ? "Serious" : "Minor"}
                     </span>
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground capitalize">
-                    {ANDON_CATEGORY_LABELS[issue.category] ?? issue.category}
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground">
-                    {STATION_LABELS_REPORT[issue.station] ?? issue.station}
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground max-w-[200px] truncate">
-                    {issue.description ?? "—"}
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground">{issue.reportedByName ?? "—"}</td>
-                  <td className="px-4 py-3 text-muted-foreground whitespace-nowrap text-xs">
-                    {issue.createdAt ? format(new Date(issue.createdAt), "d MMM HH:mm") : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-xs">
-                    {issue.acknowledgedAt ? (
-                      <div>
-                        <p className="text-emerald-600 dark:text-emerald-400 font-medium">Acknowledged</p>
-                        <p className="text-muted-foreground">{issue.acknowledgedByName ?? ""}</p>
-                        <p className="text-muted-foreground">{format(new Date(issue.acknowledgedAt), "d MMM HH:mm")}</p>
-                      </div>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-xs">
-                    {issue.resolvedAt ? (
-                      <div>
-                        <p className="text-emerald-600 dark:text-emerald-400 font-medium">Resolved</p>
-                        <p className="text-muted-foreground">{issue.resolvedByName ?? ""}</p>
-                        <p className="text-muted-foreground">{format(new Date(issue.resolvedAt), "d MMM HH:mm")}</p>
-                      </div>
-                    ) : (
-                      <span className="text-muted-foreground">Open</span>
-                    )}
                   </td>
                   {isManager && (
                     <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
@@ -2550,6 +2648,41 @@ function AndonLogTab({ userRole }: { userRole: string }) {
                       </div>
                     </td>
                   )}
+                  <td className="px-4 py-3 text-muted-foreground capitalize">
+                    {ANDON_CATEGORY_LABELS[issue.category] ?? issue.category}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    {STATION_LABELS_REPORT[issue.station] ?? issue.station}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground max-w-[300px]">
+                    <span className="line-clamp-3 whitespace-pre-wrap">{issue.description ?? "—"}</span>
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">{issue.reportedByName ?? "—"}</td>
+                  <td className="px-4 py-3 text-muted-foreground whitespace-nowrap text-xs">
+                    {issue.createdAt ? format(new Date(issue.createdAt), "d MMM HH:mm") : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-xs">
+                    {issue.acknowledgedAt ? (
+                      <div>
+                        <p className="text-emerald-600 dark:text-emerald-400 font-medium">Acknowledged</p>
+                        <p className="text-muted-foreground">{issue.acknowledgedByName ?? ""}</p>
+                        <p className="text-muted-foreground">{format(new Date(issue.acknowledgedAt), "d MMM HH:mm")}</p>
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-xs">
+                    {issue.resolvedAt ? (
+                      <div>
+                        <p className="text-emerald-600 dark:text-emerald-400 font-medium">Resolved</p>
+                        <p className="text-muted-foreground">{issue.resolvedByName ?? ""}</p>
+                        <p className="text-muted-foreground">{format(new Date(issue.resolvedAt), "d MMM HH:mm")}</p>
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">Open</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

@@ -33,9 +33,11 @@ import {
   User,
   LockKeyhole,
   Beaker,
+  AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/user-avatar";
+import { NotificationBell } from "@/components/notification-bell";
 
 export type NavItem = { name: string; href: string; icon: React.ComponentType<{ className?: string }> };
 
@@ -480,16 +482,25 @@ export function Layout({ children }: { children: ReactNode }) {
   const { canAccess } = usePagePermissions();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const visibleNavItems = navItems.filter(item =>
-    canAccess(user?.role ?? "viewer", item.href)
-  );
+  const userRole = user?.role ?? "viewer";
+  const isManagerOrAdmin = userRole === "admin" || userRole === "manager";
+
+  const visibleNavItems = navItems
+    .filter(item => canAccess(userRole, item.href))
+    .map(item => {
+      // Viewers only see Issue Log on the reports page, so rename the nav item
+      if (item.href === "/reports" && !isManagerOrAdmin) {
+        return { ...item, name: "Issue Log", icon: AlertTriangle };
+      }
+      return item;
+    });
 
   const visibleProductItems = productNavItems.filter(item =>
-    canAccess(user?.role ?? "viewer", item.href)
+    canAccess(userRole, item.href)
   );
 
   const visibleInventoryItems = inventorySubItems.filter(item =>
-    canAccess(user?.role ?? "viewer", item.href)
+    canAccess(userRole, item.href)
   );
 
   const allNavItems = [...navItems, ...productNavItems, ...inventorySubItems, ...bottomNavItems];
@@ -635,6 +646,7 @@ function TopBar({ onOpenMobile, fallbackTitle }: { onOpenMobile: () => void; fal
           {header.description}
         </span>
       )}
+      <NotificationBell />
       {header?.action && (
         <div className="flex-shrink-0">
           {header.action}

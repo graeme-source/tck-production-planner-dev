@@ -878,6 +878,11 @@ const FEATURE_FLAGS: { key: string; label: string; description: string }[] = [
     label: "Station Checklists",
     description: "Enable daily opening, cleaning, and closing checklists for each station. When enabled, stations auto-open to checklist view at start and end of day.",
   },
+  {
+    key: "feature_building_station_lock",
+    label: "Building Station Lock",
+    description: "Auto-assigns builders to building stations. The first builder to open a building station for the day gets locked to it. The other builder must use the remaining station.",
+  },
 ];
 
 function FeaturesSection() {

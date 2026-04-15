@@ -694,4 +694,72 @@ router.get("/packing-speed", async (req, res) => {
   }
 });
 
+// ──────────────────────────────────────────────────────────────────────────────
+// GET /leftover-filling — aggregate leftover filling data per recipe
+// ──────────────────────────────────────────────────────────────────────────────
+router.get("/leftover-filling", async (req, res) => {
+  try {
+    const { from, to } = req.query;
+
+    const conditions = [isNotNull(productionPlanItemsTable.leftoverFillingGrams)];
+    if (from) conditions.push(gte(productionPlansTable.planDate, String(from)));
+    if (to) conditions.push(lte(productionPlansTable.planDate, String(to)));
+
+    const rows = await db
+      .select({
+        recipeId: productionPlanItemsTable.recipeId,
+        recipeName: recipesTable.name,
+        planDate: productionPlansTable.planDate,
+        leftoverGrams: productionPlanItemsTable.leftoverFillingGrams,
+      })
+      .from(productionPlanItemsTable)
+      .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
+      .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+      .where(and(...conditions))
+      .orderBy(recipesTable.name, productionPlansTable.planDate);
+
+    // Aggregate per recipe
+    const byRecipe: Record<number, {
+      recipeId: number;
+      recipeName: string;
+      count: number;
+      totalGrams: number;
+      minGrams: number;
+      maxGrams: number;
+      entries: { planDate: string; grams: number }[];
+    }> = {};
+
+    for (const row of rows) {
+      const g = row.leftoverGrams ?? 0;
+      if (!byRecipe[row.recipeId]) {
+        byRecipe[row.recipeId] = {
+          recipeId: row.recipeId,
+          recipeName: row.recipeName ?? "Unknown",
+          count: 0,
+          totalGrams: 0,
+          minGrams: g,
+          maxGrams: g,
+          entries: [],
+        };
+      }
+      const rec = byRecipe[row.recipeId];
+      rec.count++;
+      rec.totalGrams += g;
+      rec.minGrams = Math.min(rec.minGrams, g);
+      rec.maxGrams = Math.max(rec.maxGrams, g);
+      rec.entries.push({ planDate: row.planDate, grams: g });
+    }
+
+    const result = Object.values(byRecipe).map(r => ({
+      ...r,
+      avgGrams: Math.round(r.totalGrams / r.count),
+    }));
+
+    res.json(result);
+  } catch (err) {
+    console.error("leftover-filling report error:", err);
+    res.status(500).json({ error: "Failed to load leftover filling data" });
+  }
+});
+
 export default router;

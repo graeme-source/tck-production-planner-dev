@@ -1209,6 +1209,7 @@ router.post("/:id/add-mac-cheese", validate(AddMacCheeseBody), async (req, res) 
       sopUrl: productionPlanItemsTable.sopUrl,
       extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
       shortCount: productionPlanItemsTable.shortCount,
+      leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
       eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
       fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
       mixingTinOverride: productionPlanItemsTable.mixingTinOverride,
@@ -1434,6 +1435,7 @@ router.get("/:id", async (req, res) => {
       sopUrl: productionPlanItemsTable.sopUrl,
       extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
       shortCount: productionPlanItemsTable.shortCount,
+      leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
       eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
       fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
       mixingTinOverride: productionPlanItemsTable.mixingTinOverride,
@@ -1642,6 +1644,7 @@ router.post("/:id/batch-completions", async (req, res) => {
     batchesTarget: productionPlanItemsTable.batchesTarget,
     extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
     shortCount: productionPlanItemsTable.shortCount,
+    leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
     portionsPerBatch: recipesTable.portionsPerBatch,
   })
     .from(productionPlanItemsTable)
@@ -1777,6 +1780,7 @@ router.post("/:id/batch-completions/bulk", async (req, res) => {
     batchesTarget: productionPlanItemsTable.batchesTarget,
     extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
     shortCount: productionPlanItemsTable.shortCount,
+    leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
     portionsPerBatch: recipesTable.portionsPerBatch,
   })
     .from(productionPlanItemsTable)
@@ -3779,6 +3783,33 @@ router.patch("/:id/items/:itemId/extra-packs-built", async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
+// PATCH /:id/items/:itemId/leftover-filling — record leftover filling weight
+// ──────────────────────────────────────────────────────────────────────────────
+router.patch("/:id/items/:itemId/leftover-filling", async (req, res) => {
+  const planId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+  const { grams } = req.body;
+  if (typeof grams !== "number" || grams < 0 || !Number.isFinite(grams)) {
+    res.status(400).json({ error: "Body must contain { grams: number } (0 or positive)" });
+    return;
+  }
+
+  const [item] = await db.select({ id: productionPlanItemsTable.id })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
+
+  if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
+
+  const [updated] = await db
+    .update(productionPlanItemsTable)
+    .set({ leftoverFillingGrams: Math.round(grams) })
+    .where(eq(productionPlanItemsTable.id, itemId))
+    .returning({ leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams });
+
+  res.json({ itemId, leftoverFillingGrams: updated.leftoverFillingGrams });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
 // PATCH /:id/items/:itemId/eight-pack-bag-count — adjust 8-pack bag allocation
 // Works on any plan status (like wonky/short). Each 8-pack bag deducts 4 two-packs.
 // ──────────────────────────────────────────────────────────────────────────────
@@ -4335,6 +4366,7 @@ router.get("/:id/packing", async (req, res) => {
       eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
       extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
       shortCount: productionPlanItemsTable.shortCount,
+      leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
       status: productionPlanItemsTable.status,
       orderPosition: productionPlanItemsTable.orderPosition,
       portionsPerBatch: recipesTable.portionsPerBatch,
@@ -6098,6 +6130,10 @@ router.post("/:id/reset", async (req, res) => {
       // Clear building station checklist lock states (keyed by plan+item ID)
       await tx.delete(appSettingsTable)
         .where(sql`${appSettingsTable.key} LIKE ${"checklist_done_" + planId + "_%"}`);
+
+      // Clear building station assignments
+      await tx.delete(appSettingsTable)
+        .where(sql`${appSettingsTable.key} LIKE ${"station_assignment_" + planId + "_%"}`);
     });
 
     res.json({ message: "Production plan has been reset to draft with all progress cleared." });

@@ -4,10 +4,12 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface FeatureFlags {
   checklists: boolean;
+  buildingStationLock: boolean;
 }
 
 const DEFAULTS: FeatureFlags = {
   checklists: false,
+  buildingStationLock: false,
 };
 
 export function useFeatureFlags(): FeatureFlags & { isLoading: boolean } {
@@ -24,6 +26,7 @@ export function useFeatureFlags(): FeatureFlags & { isLoading: boolean } {
 
   return {
     checklists: data?.feature_checklists === "true",
+    buildingStationLock: data?.feature_building_station_lock === "true",
     isLoading,
   };
 }
