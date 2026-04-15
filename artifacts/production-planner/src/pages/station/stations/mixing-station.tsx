@@ -876,8 +876,8 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
           </div>
 
           <div
-            className={cn("flex-1 min-w-0", hasFillingItems && !isComplete ? "cursor-pointer" : "")}
-            onClick={hasFillingItems && !isComplete ? onActivate : undefined}
+            className={cn("flex-1 min-w-0", hasFillingItems ? "cursor-pointer" : "")}
+            onClick={hasFillingItems ? onActivate : undefined}
           >
             <div className="flex items-center gap-2 mb-1">
               <h3 className={cn("font-semibold text-lg", isComplete ? "line-through text-muted-foreground" : "")}>
