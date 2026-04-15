@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { useCreateBatchCompletion, getGetProductionPlanQueryKey } from "@workspace/api-client-react";
+import { useCreateBatchCompletion, getGetProductionPlanQueryKey, getListProductionPlansQueryKey } from "@workspace/api-client-react";
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Loader2, Plus, Minus, CheckCircle2, Check, Thermometer, Clock,
-  UtensilsCrossed, ChefHat, Package,
+  UtensilsCrossed, ChefHat, Package, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -92,6 +92,169 @@ interface TempRecord {
   temperatureC: string;
   recordedAt: string;
   userName: string | null;
+}
+
+interface MacCheeseCalcRecipe {
+  recipeId: number;
+  recipeName: string;
+  color: string | null;
+  packsPerBatch: number;
+  leftOverStock: number;
+  salesNextDay: number;
+  salesNextDayPlus1: number;
+  salesNextDayPlus2: number;
+  neededForDispatch: number;
+  extraToMake: number;
+  toMakePacks: number;
+  toMakeBatches: number;
+}
+
+function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; planDate: string; onSuccess: () => void }) {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [recipes, setRecipes] = useState<MacCheeseCalcRecipe[]>([]);
+  const [extraOverrides, setExtraOverrides] = useState<Record<number, number>>({});
+
+  useEffect(() => {
+    setLoading(true);
+    fetch(`/api/production-plans/calculate-mac-cheese?planDate=${planDate}`, { credentials: "include" })
+      .then(r => r.json())
+      .then(data => {
+        setRecipes(data.recipes ?? []);
+        const overrides: Record<number, number> = {};
+        for (const r of data.recipes ?? []) overrides[r.recipeId] = r.extraToMake;
+        setExtraOverrides(overrides);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, [planDate]);
+
+  const getToMake = (r: MacCheeseCalcRecipe) => {
+    const extra = extraOverrides[r.recipeId] ?? r.extraToMake;
+    return r.neededForDispatch + r.salesNextDayPlus1 + r.salesNextDayPlus2 + extra;
+  };
+
+  const handleSubmit = async () => {
+    const items = recipes
+      .map(r => ({ recipeId: r.recipeId, packsToMake: getToMake(r) }))
+      .filter(i => i.packsToMake > 0);
+    if (items.length === 0) return;
+    setSaving(true);
+    try {
+      const resp = await fetch(`/api/production-plans/${planId}/add-mac-cheese`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ items }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error ?? "Failed to add");
+      toast({ title: "Mac cheese added", description: `Added ${items.length} recipe(s) to the plan.` });
+      onSuccess();
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+    } finally { setSaving(false); }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12 text-muted-foreground">
+        <Loader2 className="w-5 h-5 animate-spin mr-2" /> Calculating…
+      </div>
+    );
+  }
+
+  if (recipes.length === 0) {
+    return (
+      <div className="text-center py-12 text-muted-foreground">
+        <p className="font-medium">No Macaroni Cheese recipes found.</p>
+        <p className="text-sm mt-1">Add recipes with category "Macaroni Cheese" first.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-xs text-muted-foreground uppercase tracking-wider">
+              <th className="pb-2 pr-3">Recipe</th>
+              <th className="pb-2 px-2 text-right">Stock</th>
+              <th className="pb-2 px-2 text-right">Sales D1</th>
+              <th className="pb-2 px-2 text-right">Deficit</th>
+              <th className="pb-2 px-2 text-right">Sales D2</th>
+              <th className="pb-2 px-2 text-right">Sales D3</th>
+              <th className="pb-2 px-2 text-right">Extra</th>
+              <th className="pb-2 px-2 text-right font-semibold">To Make</th>
+              <th className="pb-2 pl-2 text-right">Batches</th>
+            </tr>
+          </thead>
+          <tbody>
+            {recipes.map(r => {
+              const extra = extraOverrides[r.recipeId] ?? r.extraToMake;
+              const toMake = getToMake(r);
+              const batches = r.packsPerBatch > 0 ? Math.ceil(toMake / r.packsPerBatch) : 0;
+              return (
+                <tr key={r.recipeId} className="border-b border-border/50">
+                  <td className="py-2.5 pr-3 font-medium">
+                    <div className="flex items-center gap-2">
+                      {r.color && <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: r.color }} />}
+                      {r.recipeName}
+                    </div>
+                  </td>
+                  <td className="py-2.5 px-2 text-right tabular-nums">{r.leftOverStock}</td>
+                  <td className="py-2.5 px-2 text-right tabular-nums">{r.salesNextDay}</td>
+                  <td className="py-2.5 px-2 text-right tabular-nums text-amber-600">{r.neededForDispatch}</td>
+                  <td className="py-2.5 px-2 text-right tabular-nums">{r.salesNextDayPlus1}</td>
+                  <td className="py-2.5 px-2 text-right tabular-nums">{r.salesNextDayPlus2}</td>
+                  <td className="py-2.5 px-2 text-right">
+                    <input
+                      type="number"
+                      min={0}
+                      value={extra}
+                      onChange={e => setExtraOverrides(prev => ({ ...prev, [r.recipeId]: Math.max(0, Number(e.target.value) || 0) }))}
+                      className="w-16 px-2 py-1 text-right bg-background border border-border rounded text-sm tabular-nums"
+                    />
+                  </td>
+                  <td className="py-2.5 px-2 text-right font-bold tabular-nums text-lg">{toMake}</td>
+                  <td className="py-2.5 pl-2 text-right tabular-nums text-muted-foreground">{batches}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr className="font-semibold">
+              <td className="pt-3">Total</td>
+              <td colSpan={6} />
+              <td className="pt-3 px-2 text-right tabular-nums text-lg">{recipes.reduce((s, r) => s + getToMake(r), 0)} packs</td>
+              <td className="pt-3 pl-2 text-right tabular-nums">
+                {recipes.reduce((s, r) => {
+                  const toMake = getToMake(r);
+                  return s + (r.packsPerBatch > 0 ? Math.ceil(toMake / r.packsPerBatch) : 0);
+                }, 0)}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Stock = current fridge packs. Sales D1/D2/D3 = next 3 dispatch days from Shopify. Deficit = max(0, D1 - Stock). Extra = additional packs. All values in packs.
+      </p>
+
+      <div className="flex justify-end">
+        <button
+          onClick={handleSubmit}
+          disabled={saving || recipes.every(r => getToMake(r) === 0)}
+          className="px-5 py-2.5 bg-yellow-600 text-white rounded-lg text-sm font-medium hover:bg-yellow-700 disabled:opacity-50 flex items-center gap-2"
+        >
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+          Add to Plan
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
@@ -190,10 +353,21 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
 
   if (macItems.length === 0) {
     return (
-      <div className="text-center py-16 text-muted-foreground">
-        <UtensilsCrossed className="w-10 h-10 mx-auto mb-3 opacity-50" />
-        <p className="font-medium">No Macaroni Cheese items in this plan.</p>
-        <p className="text-sm mt-1">Add Macaroni Cheese recipes to the plan to see them here.</p>
+      <div className="space-y-6">
+        <div className="bg-card border border-yellow-200 dark:border-yellow-800 rounded-xl p-5">
+          <h2 className="font-semibold text-lg flex items-center gap-2 mb-4">
+            <UtensilsCrossed className="w-5 h-5 text-yellow-600" />
+            Add Macaroni Cheese to this Plan
+          </h2>
+          <InlineAddMacCheese
+            planId={plan.id}
+            planDate={plan.planDate}
+            onSuccess={() => {
+              queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+              queryClient.invalidateQueries({ queryKey: getListProductionPlansQueryKey() });
+            }}
+          />
+        </div>
       </div>
     );
   }
