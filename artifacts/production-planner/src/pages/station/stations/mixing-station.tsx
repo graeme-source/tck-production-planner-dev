@@ -850,7 +850,10 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
         isDragging && "shadow-xl"
       )}
     >
-      <div className="p-4">
+      <div
+        className={cn("p-4", hasFillingItems ? "cursor-pointer" : "")}
+        onClick={hasFillingItems ? onActivate : undefined}
+      >
         <div className="flex items-start gap-3">
           <div className="flex flex-col items-center gap-0.5 flex-shrink-0 pt-1">
             <span className="text-sm font-mono text-muted-foreground w-6 text-center leading-tight">
@@ -862,6 +865,7 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
                 {...listeners}
                 className="p-1 text-muted-foreground hover:text-foreground cursor-grab active:cursor-grabbing touch-none"
                 title="Drag to reorder"
+                onClick={e => e.stopPropagation()}
               >
                 <GripVertical className="w-4 h-4" />
               </div>
@@ -875,17 +879,17 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
             )}
           </div>
 
-          <div
-            className={cn("flex-1 min-w-0", hasFillingItems ? "cursor-pointer" : "")}
-            onClick={hasFillingItems ? onActivate : undefined}
-          >
+          <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
               <h3 className={cn("font-semibold text-lg", isComplete ? "line-through text-muted-foreground" : "")}>
                 {item.recipeName ?? `Recipe #${item.recipeId}`}
               </h3>
               {isComplete && <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />}
               {item.status === "in-progress" && !isComplete && <PlayCircle className="w-5 h-5 text-blue-500 flex-shrink-0" />}
-              {isActive && <ChevronUp className="w-5 h-5 text-primary flex-shrink-0" />}
+              {hasFillingItems && (isActive
+                ? <ChevronUp className="w-5 h-5 text-primary flex-shrink-0" />
+                : <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+              )}
             </div>
 
             <div className="flex items-center gap-2 mb-2">
@@ -904,7 +908,7 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
             </div>
           </div>
 
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-2 flex-shrink-0" onClick={e => e.stopPropagation()}>
             <button
               onClick={onRemove}
               disabled={tinsComplete === 0 || isOnBreak || tinPending}
