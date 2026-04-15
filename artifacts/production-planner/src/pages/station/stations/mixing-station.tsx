@@ -934,7 +934,7 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
         </div>
       </div>
 
-      {isActive && hasFillingItems && !isComplete && filling && (
+      {isActive && hasFillingItems && filling && (
         <div className="border-t border-primary/20 bg-primary/5">
           <div className="px-4 py-2 flex items-center justify-between">
             <p className="text-sm font-medium text-primary">
