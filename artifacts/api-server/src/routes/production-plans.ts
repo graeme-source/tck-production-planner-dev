@@ -1056,7 +1056,7 @@ router.post("/:id/add-mac-cheese", validate(AddMacCheeseBody), async (req, res) 
   const [plan] = await db.select().from(productionPlansTable).where(eq(productionPlansTable.id, planId));
   if (!plan) { res.status(404).json({ error: "Plan not found" }); return; }
 
-  const allowedStatuses = ["active", "prep", "building"];
+  const allowedStatuses = ["draft", "active", "prep", "building"];
   if (!allowedStatuses.includes(plan.status)) {
     res.status(409).json({ error: `Plan status '${plan.status}' does not allow adding mac cheese items. Must be active, prep, or building.` });
     return;

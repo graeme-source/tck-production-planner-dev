@@ -2895,8 +2895,8 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
         onDeletePlan={() => setConfirmDelete(true)}
       />
 
-      {/* Add Mac Cheese button — shown on locked plans */}
-      {canEditPlan && ["active", "prep", "building"].includes(plan.status) && (
+      {/* Add Mac Cheese button — shown on all non-complete plans */}
+      {canEditPlan && plan.status !== "complete" && (
         <button
           onClick={() => setShowAddMacCheese(true)}
           className="flex items-center gap-2 px-4 py-2.5 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded-lg text-sm font-medium text-yellow-700 dark:text-yellow-400 hover:bg-yellow-100 dark:hover:bg-yellow-900/30 transition-colors"
