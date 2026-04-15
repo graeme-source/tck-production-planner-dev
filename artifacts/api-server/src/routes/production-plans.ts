@@ -679,32 +679,39 @@ router.get("/calculate", async (req, res) => {
     return s.toLowerCase().trim().replace(/[''`]/g, "'").replace(/&/g, "and").replace(/\s+/g, " ");
   }
 
+  // Match recipe to the BEST Shopify product — pick the closest-length match
+  // to avoid "Big Nanny's Macaroni Cheese" matching both the original AND the
+  // pigs-in-blankets variant (since the longer name contains the shorter).
+  function bestShopifyMatch(recipeNorm: string, salesMap: Record<string, number>): { product: string | null; qty: number } {
+    let bestProduct: string | null = null;
+    let bestQty = 0;
+    let bestLenDiff = Infinity;
+    for (const [productTitle, qty] of Object.entries(salesMap)) {
+      const productNorm = normalizeForMatch(productTitle);
+      if (productNorm.includes(recipeNorm) || recipeNorm.includes(productNorm)) {
+        const lenDiff = Math.abs(productNorm.length - recipeNorm.length);
+        if (lenDiff < bestLenDiff) {
+          bestLenDiff = lenDiff;
+          bestProduct = productTitle;
+          bestQty = qty;
+        }
+      }
+    }
+    return { product: bestProduct, qty: bestQty };
+  }
+
   function matchShopifySalesForDate(recipeName: string, date: string): number {
     const recipeNorm = normalizeForMatch(recipeName);
     const salesForDate = shopifySalesPerDate[date] ?? {};
-    let total = 0;
-    for (const [productTitle, qty] of Object.entries(salesForDate)) {
-      const productNorm = normalizeForMatch(productTitle);
-      if (productNorm.includes(recipeNorm) || recipeNorm.includes(productNorm)) {
-        total += qty;
-      }
-    }
-    return total;
+    return bestShopifyMatch(recipeNorm, salesForDate).qty;
   }
 
   function matchShopifySalesCombined(recipeName: string): { qty: number; matchedProduct: string | null } {
     const recipeNorm = normalizeForMatch(recipeName);
-    let total = 0;
-    let firstMatch: string | null = null;
-    for (const [productTitle, qty] of Object.entries(shopifySalesCombined)) {
-      const productNorm = normalizeForMatch(productTitle);
-      if (productNorm.includes(recipeNorm) || recipeNorm.includes(productNorm)) {
-        total += qty;
-        if (!firstMatch) firstMatch = productTitle;
-      }
-    }
-    return { qty: total, matchedProduct: firstMatch };
+    const { product, qty } = bestShopifyMatch(recipeNorm, shopifySalesCombined);
+    return { qty, matchedProduct: product };
   }
+
 
   const totalDptPacksSold = dptRows.reduce((s, x) => s + (x.packsSold ?? 0), 0);
 
