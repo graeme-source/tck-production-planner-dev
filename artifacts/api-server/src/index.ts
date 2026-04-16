@@ -723,6 +723,14 @@ async function runStartupMigrations() {
       ON CONFLICT (page_key) DO UPDATE SET min_role = 'viewer'
     `);
 
+    // Mark Uncomplete support on station checklists — adds the skipped_reason
+    // column read/written by the checklist routes. Without this, the GET
+    // /api/checklists/station/:stationType/plan/:planId query fails on any
+    // DB that predates the feature and the station UI hangs on "Loading
+    // checklist...".
+    await db.execute(sql`ALTER TABLE checklist_completions ADD COLUMN IF NOT EXISTS skipped_reason TEXT`);
+    await db.execute(sql`ALTER TABLE checklist_oneoff_items ADD COLUMN IF NOT EXISTS skipped_reason TEXT`);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);
