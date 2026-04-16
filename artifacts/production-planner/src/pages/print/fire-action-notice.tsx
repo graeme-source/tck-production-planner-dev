@@ -24,43 +24,45 @@ export default function FireActionNoticePrint() {
       <style>{`
         @page {
           size: A4 portrait;
-          margin: 10mm;
+          margin: 8mm;
         }
         @media print {
-          html, body { background: white !important; }
+          html, body { background: white !important; margin: 0 !important; padding: 0 !important; }
           .no-print { display: none !important; }
+          .fan-page { padding: 0 !important; max-width: none !important; }
         }
+        html, body { margin: 0; padding: 0; }
         .fan-page {
-          max-width: 190mm;
+          max-width: 194mm;
           margin: 0 auto;
-          padding: 8mm 10mm;
+          padding: 4mm 6mm;
           background: white;
           color: #111;
           font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-          line-height: 1.3;
+          line-height: 1.2;
         }
         .fan-title {
           background: #c1151c;
           color: white;
           text-align: center;
           font-weight: 900;
-          font-size: 48pt;
-          letter-spacing: 2pt;
-          padding: 8mm 0 6mm;
-          border-radius: 4mm;
+          font-size: 34pt;
+          letter-spacing: 1.5pt;
+          padding: 4mm 0 3mm;
+          border-radius: 3mm;
         }
         .fan-subtitle {
           text-align: center;
-          font-size: 12pt;
+          font-size: 10pt;
           color: #374151;
-          margin-top: 2mm;
-          margin-bottom: 4mm;
+          margin-top: 1.5mm;
+          margin-bottom: 2mm;
         }
         .fan-section {
-          margin-top: 3mm;
-          padding: 3mm 4mm 4mm;
-          border: 1.5pt solid #111;
-          border-radius: 3mm;
+          margin-top: 2mm;
+          padding: 2mm 3mm 3mm;
+          border: 1.25pt solid #111;
+          border-radius: 2.5mm;
           page-break-inside: avoid;
         }
         .fan-section.red {
@@ -77,31 +79,31 @@ export default function FireActionNoticePrint() {
           background: #111;
           color: white;
           font-weight: 800;
-          font-size: 14pt;
-          padding: 2mm 4mm;
-          margin: -3mm -4mm 3mm;
-          border-top-left-radius: 2.5mm;
-          border-top-right-radius: 2.5mm;
+          font-size: 11.5pt;
+          padding: 1.5mm 3mm;
+          margin: -2mm -3mm 2mm;
+          border-top-left-radius: 2mm;
+          border-top-right-radius: 2mm;
           letter-spacing: 0.5pt;
         }
         .fan-ol {
           margin: 0;
-          padding-left: 6mm;
-          font-size: 11pt;
+          padding-left: 5mm;
+          font-size: 9.5pt;
           font-weight: 600;
         }
         .fan-ol li {
-          margin-bottom: 1.5mm;
+          margin-bottom: 0.8mm;
         }
         .fan-dont {
           list-style: none;
           margin: 0;
           padding: 0;
-          font-size: 10.5pt;
+          font-size: 9pt;
           font-weight: 600;
         }
         .fan-dont li {
-          padding: 1.5mm 0 1.5mm 8mm;
+          padding: 0.8mm 0 0.8mm 6mm;
           position: relative;
           color: #7f1d1d;
         }
@@ -115,43 +117,44 @@ export default function FireActionNoticePrint() {
         .fan-grid {
           display: grid;
           grid-template-columns: 1fr 1fr;
-          gap: 3mm;
-          margin-top: 3mm;
+          gap: 2.5mm;
+          margin-top: 2mm;
         }
         .fan-card {
-          border: 1.5pt solid #111;
-          border-radius: 3mm;
-          padding: 3mm 4mm;
+          border: 1.25pt solid #111;
+          border-radius: 2.5mm;
+          padding: 2mm 3mm;
         }
         .fan-card .label {
-          font-size: 9pt;
+          font-size: 8pt;
           text-transform: uppercase;
-          letter-spacing: 1pt;
+          letter-spacing: 0.8pt;
           color: #6b7280;
           font-weight: 700;
         }
         .fan-card .value {
-          font-size: 13pt;
+          font-size: 11pt;
           font-weight: 800;
-          margin-top: 1mm;
+          margin-top: 0.5mm;
+          line-height: 1.2;
         }
         .fan-card.green { border-color: #166534; background: #f0fdf4; }
         .fan-card.green .value { color: #166534; }
         .fan-address {
           text-align: center;
-          font-size: 11pt;
-          margin-top: 3mm;
-          line-height: 1.4;
+          font-size: 9.5pt;
+          margin-top: 2mm;
+          line-height: 1.3;
         }
         .fan-address strong {
-          font-size: 14pt;
-          letter-spacing: 0.5pt;
+          font-size: 11.5pt;
+          letter-spacing: 0.3pt;
         }
         .fan-footer {
-          margin-top: 3mm;
-          padding-top: 2mm;
+          margin-top: 2mm;
+          padding-top: 1.5mm;
           border-top: 0.5pt solid #9ca3af;
-          font-size: 7.5pt;
+          font-size: 7pt;
           color: #6b7280;
           text-align: center;
           font-style: italic;
@@ -224,7 +227,7 @@ export default function FireActionNoticePrint() {
         <div className="fan-grid">
           <div className="fan-card green">
             <div className="label">Assembly Point</div>
-            <div className="value">[designate — front car park, clear of bins]</div>
+            <div className="value">Back of the car park,<br />opposite the factory's front door</div>
           </div>
           <div className="fan-card">
             <div className="label">Fire Warden</div>
