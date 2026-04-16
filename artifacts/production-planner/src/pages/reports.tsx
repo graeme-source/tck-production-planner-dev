@@ -1901,6 +1901,8 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
         setComments(prev => [...prev, row]);
         setNewComment("");
         setTimeout(() => commentsEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+      } else {
+        toast({ title: "Failed to post comment", description: `Server returned ${res.status}`, variant: "destructive" });
       }
     } catch {
       toast({ title: "Failed to post comment", variant: "destructive" });
@@ -2489,6 +2491,8 @@ function AndonLogTab({ userRole, initialIssueId }: { userRole: string; initialIs
         setComments(prev => [...prev, row]);
         setNewComment("");
         setTimeout(() => commentsEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+      } else {
+        toast({ title: "Failed to post comment", description: `Server returned ${res.status}`, variant: "destructive" });
       }
     } catch {
       toast({ title: "Failed to post comment", variant: "destructive" });

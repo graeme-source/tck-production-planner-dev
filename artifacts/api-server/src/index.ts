@@ -603,6 +603,17 @@ async function runStartupMigrations() {
       )
     `);
 
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS andon_comments (
+        id SERIAL PRIMARY KEY,
+        andon_id INTEGER NOT NULL REFERENCES andon_issues(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        user_name TEXT,
+        comment TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+
     await db.execute(sql`ALTER TABLE improvement_submissions ADD COLUMN IF NOT EXISTS report_context TEXT`);
     await db.execute(sql`ALTER TABLE andon_issues ADD COLUMN IF NOT EXISTS report_context TEXT`);
 
