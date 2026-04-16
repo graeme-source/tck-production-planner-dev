@@ -2641,24 +2641,14 @@ function RiskAssessmentsTab({ userRole, currentUserName }: { userRole: string; c
       <div>
         <div className="flex items-center justify-between mb-3">
           <h3 className="font-bold text-lg">Risk Assessments</h3>
-          <div className="flex gap-2">
-            <a
-              href={`${BASE}/reports/risk-assessments/print`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg text-sm bg-background hover:bg-secondary/50 transition-colors"
+          {isAdmin && (
+            <button
+              onClick={() => alert("Coming in v2 — use the existing Fire RA for now, which was seeded on first startup.")}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 transition-colors"
             >
-              <Printer className="w-4 h-4" /> Audit printout
-            </a>
-            {isAdmin && (
-              <button
-                onClick={() => alert("Coming in v2 — use the existing Fire RA for now, which was seeded on first startup.")}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 transition-colors"
-              >
-                <Plus className="w-4 h-4" /> New RA
-              </button>
-            )}
-          </div>
+              <Plus className="w-4 h-4" /> New RA
+            </button>
+          )}
         </div>
         <div className="grid md:grid-cols-2 gap-3">
           {dashboard.assessments.map((ra) => {
@@ -2702,6 +2692,9 @@ function RiskAssessmentsTab({ userRole, currentUserName }: { userRole: string; c
         </div>
       </div>
 
+      {/* Resources — printables (fire action notice, log book, etc.) */}
+      <ResourcesSection />
+
       {/* Complete dialog */}
       {completingAction && (
         <CompleteActionDialog
@@ -2711,6 +2704,52 @@ function RiskAssessmentsTab({ userRole, currentUserName }: { userRole: string; c
           onCompleted={() => { setCompletingAction(null); reloadDashboard(); }}
         />
       )}
+    </div>
+  );
+}
+
+// Library of printables / downloadables. Each is a React route rendering
+// a print-optimised page; the user opens in a new tab and uses the browser
+// print dialog to print directly or save as PDF.
+const PRINTABLES: { title: string; description: string; href: string; category: "fire" | "food_safety" | "general"; note?: string }[] = [
+  {
+    title: "Fire Action Notice",
+    description: "A4 wall poster — mount next to each Manual Call Point and at the muster point. Laminate for durability.",
+    href: "/print/fire-action-notice",
+    category: "fire",
+    note: "Print A4 portrait · laminate · mount ×5 (one per MCP + muster point)",
+  },
+];
+
+function ResourcesSection() {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="font-bold text-lg">Resources — Printables</h3>
+        <span className="text-xs text-muted-foreground">Open → print from browser → laminate</span>
+      </div>
+      <div className="bg-card border border-border rounded-xl divide-y divide-border overflow-hidden">
+        {PRINTABLES.map(p => {
+          const Icon = CATEGORY_ICON[p.category] ?? FileText;
+          return (
+            <a
+              key={p.href}
+              href={`${BASE}${p.href}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-start gap-3 px-4 py-3 hover:bg-secondary/30 transition-colors"
+            >
+              <Icon className="w-5 h-5 text-muted-foreground flex-shrink-0 mt-0.5" />
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-sm">{p.title}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{p.description}</p>
+                {p.note && <p className="text-[11px] text-muted-foreground mt-1 italic">{p.note}</p>}
+              </div>
+              <Printer className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-1" />
+            </a>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -2946,14 +2985,6 @@ function RiskAssessmentDetail({
           </p>
         </div>
         <div className="flex gap-2">
-          <a
-            href={`${BASE}/reports/risk-assessments/${id}/print`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-secondary/50 transition-colors"
-          >
-            <Printer className="w-4 h-4" /> Print
-          </a>
           {isAdmin && (
             <button
               onClick={() => setEditing(true)}

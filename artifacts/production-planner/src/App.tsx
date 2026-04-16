@@ -36,6 +36,7 @@ import FounderPnL from "@/pages/founder-pnl";
 import StockControl from "@/pages/stock-control";
 import ProductHub from "@/pages/product-hub";
 import NotFound from "@/pages/not-found";
+import FireActionNoticePrint from "@/pages/print/fire-action-notice";
 import Login from "@/pages/login";
 import AcceptInvite from "@/pages/accept-invite";
 import ForgotPassword from "@/pages/forgot-password";
@@ -99,6 +100,9 @@ function Router() {
     <Switch>
       {/* Station pages — full-screen, no sidebar layout */}
       <Route path="/plans/:planId/station/:stationType" component={StationPage} />
+
+      {/* Print / resource pages — full-screen, no sidebar, print-optimised */}
+      <Route path="/print/fire-action-notice" component={FireActionNoticePrint} />
 
       {/* All other pages with sidebar layout */}
       <Route>
