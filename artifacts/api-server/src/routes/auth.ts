@@ -27,8 +27,8 @@ const LoginBody = z.object({
 });
 
 // Returns true if the session needs PIN re-verification.
-// PIN lock resets at 4am UTC (morning shift start) and 7pm UK time (evening shift).
-// Uses Europe/London timezone for the 7pm reset to handle BST/GMT automatically.
+// PIN lock resets at 4am UTC (morning shift start) and 10pm UK time (evening shift end).
+// Uses Europe/London timezone for the 10pm reset to handle BST/GMT automatically.
 function isPinRequired(pinVerifiedAt: string | undefined): boolean {
   if (!pinVerifiedAt) return true;
 
@@ -46,15 +46,14 @@ function isPinRequired(pinVerifiedAt: string | undefined): boolean {
   }
   resets.push(morning);
 
-  // Reset 2: 7pm UK time (Europe/London — automatically handles BST/GMT)
-  // 7pm GMT = 19:00 UTC in winter, 7pm BST = 18:00 UTC in summer
-  const ukHour = Number(new Intl.DateTimeFormat("en-GB", { hour: "numeric", hour12: false, timeZone: "Europe/London" }).format(now));
+  // Reset 2: 10pm UK time (Europe/London — automatically handles BST/GMT)
+  // 10pm GMT = 22:00 UTC in winter, 10pm BST = 21:00 UTC in summer
   const evening = new Date();
-  // Work out 7pm UK in UTC: subtract the UK offset
+  // Work out 10pm UK in UTC: subtract the UK offset
   const ukOffsetMs = getUKOffsetMs(now);
   evening.setTime(now.getTime());
   evening.setUTCHours(0, 0, 0, 0);
-  evening.setTime(evening.getTime() + 19 * 60 * 60 * 1000 - ukOffsetMs); // 19:00 UK → UTC
+  evening.setTime(evening.getTime() + 22 * 60 * 60 * 1000 - ukOffsetMs); // 22:00 UK → UTC
   if (now.getTime() < evening.getTime()) {
     evening.setUTCDate(evening.getUTCDate() - 1);
   }
@@ -282,7 +281,8 @@ router.post("/pin/login", loginLimiter, async (req, res) => {
 
 // In-session PIN verification — used by the daily PIN lock overlay.
 // The user is already authenticated; this just confirms their identity and
-// stamps pinVerifiedAt so they won't be prompted again until tomorrow's 5am.
+// stamps pinVerifiedAt so they won't be prompted again until the next reset
+// (10pm UK evening lock or 4am UTC morning lock, whichever comes first).
 router.post("/pin/verify", loginLimiter, async (req, res) => {
   if (!req.session.userId) {
     res.status(401).json({ error: "Not authenticated" });

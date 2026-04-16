@@ -46,6 +46,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const consecutiveFailsRef = useRef(0);
   const offlineToastedRef = useRef(false);
+  // Tracks the previous server-reported pinRequired flag so we can detect the
+  // exact moment the 10pm / 4am cutover fires. When it flips false → true we
+  // perform a full-page navigation to /dashboard, which (a) kicks the user
+  // off yesterday's plan URL and (b) forces index.html to be re-fetched so
+  // the client picks up the latest hashed asset bundle. Both problems solved
+  // in one move.
+  const prevPinRequiredRef = useRef<boolean | null>(null);
 
   const checkSession = useCallback(async (isPeriodicRefresh = false) => {
     const BACKOFFS = [1000, 2000, 4000];
@@ -75,10 +82,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         addDeviceUserId(user.id);
         setState({ status: "authenticated", user });
         setPinLocked(!!pinRequired);
+
+        // Detect the server-side PIN cutover (10pm UK / 4am UTC). On the
+        // transition from not-locked → locked, bounce to /dashboard with a
+        // cache-buster. location.assign triggers a full navigation which
+        // refetches index.html, and since Vite hashes asset filenames the
+        // browser is guaranteed to load the latest bundle. This also kicks
+        // any tab sitting on an old /plans/:planId/station/... URL off
+        // yesterday's plan so nobody resumes stale production.
+        const wasLocked = prevPinRequiredRef.current;
+        prevPinRequiredRef.current = !!pinRequired;
+        if (pinRequired && wasLocked !== true) {
+          const path = window.location.pathname;
+          if (!path.startsWith("/dashboard") && !path.startsWith("/login")) {
+            const url = new URL("/dashboard", window.location.origin);
+            url.searchParams.set("v", Date.now().toString());
+            window.location.assign(url.toString());
+          }
+        }
       } else if (res.status === 401) {
         consecutiveFailsRef.current = 0;
         setState({ status: "unauthenticated" });
         setPinLocked(false);
+        prevPinRequiredRef.current = null;
       } else {
         console.warn(`[Auth] Session check returned ${res.status}`);
         await handleRetryOrFallback();
@@ -122,7 +148,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // ── Inactivity timeout & visibility-change lock ───────────────────────
   // Tracks last user interaction. When the tab becomes visible again (any
   // device — iPad, PC, etc.) we check: if idle for 1+ hour, force a PIN
-  // lock. We also always re-check the session so server-side resets (7pm
+  // lock. We also always re-check the session so server-side resets (10pm
   // evening lock, 4am morning lock) are picked up immediately.
   const IDLE_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour
   const lastActivityRef = useRef<number>(Date.now());
@@ -213,7 +239,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // In-session PIN verification for the daily lock overlay.
   // The user is already authenticated — this just re-confirms their identity
-  // and stamps pinVerifiedAt so they won't be prompted again until tomorrow's 5am.
+  // and stamps pinVerifiedAt so they won't be prompted again until the next
+  // reset (10pm UK evening lock or 4am UTC morning lock, whichever comes first).
   const verifyPin = useCallback(async (pin: string): Promise<PinResult> => {
     try {
       const res = await fetch("/api/auth/pin/verify", {
