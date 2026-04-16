@@ -1139,49 +1139,84 @@ router.post("/:id/add-mac-cheese", validate(AddMacCheeseBody), async (req, res) 
     }
   }
 
-  // 3. Check for duplicates
-  const existingItems = await db
-    .select({ recipeId: productionPlanItemsTable.recipeId })
+  // 3. Reconcile against existing Macaroni Cheese items in this plan.
+  // We treat the submitted list as the desired final state for mac cheese
+  // items in this plan (so the Edit flow works — user edits counts, removes
+  // recipes, and the plan ends up matching exactly what they submitted).
+  //
+  //   • Existing mac cheese item + submitted  → UPDATE batches_target
+  //   • Submitted recipe not yet in plan      → INSERT new item
+  //   • Existing mac cheese item NOT submitted → DELETE if no work in
+  //     progress (batches_complete = 0 AND status = 'pending'); otherwise
+  //     leave alone and report back to the client.
+  const existingMacItems = await db
+    .select({
+      id: productionPlanItemsTable.id,
+      recipeId: productionPlanItemsTable.recipeId,
+      batchesTarget: productionPlanItemsTable.batchesTarget,
+      batchesComplete: productionPlanItemsTable.batchesComplete,
+      status: productionPlanItemsTable.status,
+    })
     .from(productionPlanItemsTable)
-    .where(and(eq(productionPlanItemsTable.planId, planId), inArray(productionPlanItemsTable.recipeId, recipeIds)));
+    .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(and(
+      eq(productionPlanItemsTable.planId, planId),
+      eq(recipesTable.category, "Macaroni Cheese"),
+    ));
 
-  const existingRecipeIds = new Set(existingItems.map(i => i.recipeId));
-  const duplicates = recipeIds.filter(id => existingRecipeIds.has(id));
-  if (duplicates.length > 0) {
-    res.status(409).json({ error: `Recipes already in this plan: ${duplicates.join(", ")}` });
-    return;
-  }
+  const existingByRecipeId = new Map(existingMacItems.map(e => [e.recipeId, e]));
+  const submittedRecipeIds = new Set(items.map(i => i.recipeId));
 
-  // 4. Get max order position
+  // 4. Get max order position for any inserts
   const [maxPos] = await db
     .select({ maxPos: sql<number>`COALESCE(MAX(${productionPlanItemsTable.orderPosition}), 0)` })
     .from(productionPlanItemsTable)
     .where(eq(productionPlanItemsTable.planId, planId));
   let nextPos = (maxPos?.maxPos ?? 0) + 1;
 
-  // 5. Insert new items (convert packs to batches)
-  const newItems = items
-    .filter(i => i.packsToMake > 0)
-    .map(i => {
-      const recipe = recipeMap.get(i.recipeId)!;
-      const portionsPerBatch = Number(recipe.portionsPerBatch) || 10;
-      const packSize = Number(recipe.packSize) || 1;
-      const packsPerBatch = portionsPerBatch / packSize;
-      const batchesTarget = packsPerBatch > 0 ? Math.ceil(i.packsToMake / packsPerBatch) : 0;
-      return {
+  const skippedInProgress: number[] = [];
+
+  // 5a. UPDATE existing items and INSERT new ones based on submitted list
+  for (const item of items.filter(i => i.packsToMake > 0)) {
+    const recipe = recipeMap.get(item.recipeId)!;
+    const portionsPerBatch = Number(recipe.portionsPerBatch) || 10;
+    const packSize = Number(recipe.packSize) || 1;
+    const packsPerBatch = portionsPerBatch / packSize;
+    const batchesTarget = packsPerBatch > 0 ? Math.ceil(item.packsToMake / packsPerBatch) : 0;
+
+    const existing = existingByRecipeId.get(item.recipeId);
+    if (existing) {
+      // Don't lower the target below what's already been built — that would
+      // silently invalidate completed work. If user entered a lower target,
+      // clamp to batches_complete.
+      const safeTarget = Math.max(batchesTarget, existing.batchesComplete ?? 0);
+      await db
+        .update(productionPlanItemsTable)
+        .set({ batchesTarget: safeTarget })
+        .where(eq(productionPlanItemsTable.id, existing.id));
+    } else {
+      await db.insert(productionPlanItemsTable).values({
         planId,
-        recipeId: i.recipeId,
+        recipeId: item.recipeId,
         batchesTarget,
         orderPosition: nextPos++,
         tinSize: recipe.tinSize ?? null,
         maxBatchesPerTin: recipe.maxBatchesPerTin ?? null,
         sopUrl: recipe.sopUrl ?? null,
         status: "pending",
-      };
-    });
+      });
+    }
+  }
 
-  if (newItems.length > 0) {
-    await db.insert(productionPlanItemsTable).values(newItems);
+  // 5b. DELETE existing mac cheese items that were removed from the list.
+  // Only safe to delete if no batches have been built yet.
+  for (const existing of existingMacItems) {
+    if (submittedRecipeIds.has(existing.recipeId)) continue; // still present
+    if ((existing.batchesComplete ?? 0) === 0 && existing.status === "pending") {
+      await db.delete(productionPlanItemsTable).where(eq(productionPlanItemsTable.id, existing.id));
+    } else {
+      skippedInProgress.push(existing.recipeId);
+    }
   }
 
   // 6. Return updated plan
@@ -1239,7 +1274,11 @@ router.post("/:id/add-mac-cheese", validate(AddMacCheeseBody), async (req, res) 
     }
   }
 
-  res.status(201).json({ ...mapPlan(plan), items: updatedItems.map(it => mapItem(it, completionsByItem[it.id] ?? {})) });
+  res.status(201).json({
+    ...mapPlan(plan),
+    items: updatedItems.map(it => mapItem(it, completionsByItem[it.id] ?? {})),
+    skippedInProgress,
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────

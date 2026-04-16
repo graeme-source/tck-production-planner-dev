@@ -212,7 +212,12 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
     const items = recipes
       .map(r => ({ recipeId: r.recipeId, packsToMake: getToMake(r) }))
       .filter(i => i.packsToMake > 0);
-    if (items.length === 0) return;
+    // Guard: don't submit an empty list. If the user wants to clear all
+    // mac cheese, they have the dedicated "Remove All" button in edit mode.
+    if (items.length === 0) {
+      toast({ title: "Nothing to save", description: "All recipes are at 0 packs. Use 'Remove All' to clear, or adjust numbers and try again." });
+      return;
+    }
     setSaving(true);
     try {
       const resp = await fetch(`/api/production-plans/${planId}/add-mac-cheese`, {
@@ -222,8 +227,16 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
         body: JSON.stringify({ items }),
       });
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error ?? "Failed to add");
-      toast({ title: "Mac cheese added", description: `Added ${items.length} recipe(s) to the plan.` });
+      if (!resp.ok) throw new Error(data.error ?? "Failed to save");
+      const skipped: number[] = Array.isArray(data?.skippedInProgress) ? data.skippedInProgress : [];
+      if (skipped.length > 0) {
+        toast({
+          title: "Saved with warnings",
+          description: `${items.length} recipe(s) saved. ${skipped.length} item(s) couldn't be removed because work has already started — leave them alone or finish them first.`,
+        });
+      } else {
+        toast({ title: "Mac cheese saved", description: `${items.length} recipe(s) on the plan.` });
+      }
       onSuccess();
     } catch (err) {
       toast({ title: "Error", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
