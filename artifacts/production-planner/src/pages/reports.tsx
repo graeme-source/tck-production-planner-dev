@@ -2719,6 +2719,13 @@ const PRINTABLES: { title: string; description: string; href: string; category: 
     category: "fire",
     note: "Print A4 portrait · laminate · mount ×5 (one per MCP + muster point)",
   },
+  {
+    title: "Fire Safety Equipment Audit",
+    description: "Walk-round audit sheet for a team member — what extinguishers / MCPs / fire exits you should have, where, and tick-boxes for Present / Serviced / Notes. Includes marker map of the building.",
+    href: "/print/fire-safety-equipment-audit",
+    category: "fire",
+    note: "Print ~3 A4 pages · hand to Fire Warden · file completed copy in the Fire Log Book",
+  },
 ];
 
 function ResourcesSection() {

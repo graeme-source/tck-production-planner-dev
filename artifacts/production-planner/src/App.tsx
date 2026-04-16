@@ -37,6 +37,7 @@ import StockControl from "@/pages/stock-control";
 import ProductHub from "@/pages/product-hub";
 import NotFound from "@/pages/not-found";
 import FireActionNoticePrint from "@/pages/print/fire-action-notice";
+import FireSafetyEquipmentAuditPrint from "@/pages/print/fire-safety-equipment-audit";
 import Login from "@/pages/login";
 import AcceptInvite from "@/pages/accept-invite";
 import ForgotPassword from "@/pages/forgot-password";
@@ -103,6 +104,7 @@ function Router() {
 
       {/* Print / resource pages — full-screen, no sidebar, print-optimised */}
       <Route path="/print/fire-action-notice" component={FireActionNoticePrint} />
+      <Route path="/print/fire-safety-equipment-audit" component={FireSafetyEquipmentAuditPrint} />
 
       {/* All other pages with sidebar layout */}
       <Route>
