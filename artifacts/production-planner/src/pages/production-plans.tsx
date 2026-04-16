@@ -2808,15 +2808,17 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
         const done = nextItems.reduce((sum, it) => sum + ((it.stationCompletions as Record<string, number> | undefined)?.[s.key] ?? 0), 0);
         stationProgress[s.key] = { done, target: nextTarget };
       } else if (s.key === "wrapping") {
-        // Show packs instead of batches
-        const wrappingTarget = items.reduce((sum, it) => sum + Math.floor(((it.batchesTarget ?? 0) * (it.portionsPerBatch ?? 10)) / 2), 0);
-        const wrappingDone = items.reduce((sum, it) => {
+        // Progress = 2-packs wrapped and placed in production fridge ÷ net 2-packs that need wrapping.
+        // Net target matches the "in chiller" figure shown on the wrapping station (gross oven output
+        // minus 8-pack bags, wonky, and short, plus any extras built).
+        const wrappingTarget = items.reduce((sum, it) => {
           const ovenCount = (it.stationCompletions as Record<string, number> | undefined)?.["ovens"] ?? 0;
           const gross = Math.floor((ovenCount * (it.portionsPerBatch ?? 10)) / 2);
           const eightDeduction = (it.eightPackBagCount ?? 0) * 4;
           const net = Math.max(0, gross - eightDeduction - (it.wonlyCount ?? 0) - (it.shortCount ?? 0)) + (it.extraPacksBuilt ?? 0);
           return sum + net;
         }, 0);
+        const wrappingDone = items.reduce((sum, it) => sum + (it.fridgeQty ?? 0), 0);
         stationProgress[s.key] = { done: wrappingDone, target: wrappingTarget };
       } else {
         const done = items.reduce((sum, it) => sum + ((it.stationCompletions as Record<string, number> | undefined)?.[s.key] ?? 0), 0);

@@ -137,8 +137,10 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   const totalShort = items.reduce((s, it) => s + (it.shortCount ?? 0), 0);
   const totalNet = items.reduce((s, it) => s + netTwoPacks(it), 0);
   const totalEightPackBags = items.reduce((s, it) => s + (it.eightPackBagCount ?? 0), 0);
+  const totalFridge = items.reduce((s, it) => s + (it.fridgeQty ?? 0), 0);
   const wrappedCount = items.filter(it => it.wrappingComplete).length;
   const allWrapped = items.length > 0 && items.every(it => it.wrappingComplete);
+  const wrappingPct = totalNet > 0 ? Math.min(Math.round((totalFridge / totalNet) * 100), 100) : 0;
 
   // Current item = first non-wrapped recipe with stock in chiller
   const currentWrappingItem = useMemo(() =>
@@ -350,7 +352,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
               "h-full rounded-full transition-all",
               allWrapped ? "bg-emerald-500" : "bg-purple-500"
             )}
-            style={{ width: `${items.length > 0 ? Math.min(Math.round((wrappedCount / items.length) * 100), 100) : 0}%` }}
+            style={{ width: `${allWrapped ? 100 : wrappingPct}%` }}
           />
         </div>
       </div>

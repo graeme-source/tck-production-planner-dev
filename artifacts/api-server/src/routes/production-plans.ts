@@ -3342,16 +3342,22 @@ router.get("/:id/kpi", async (req, res) => {
 
     const batchesCompleted = completions.length;
 
-    // For each break type (morning/lunch), take the MAX duration across all builders
-    const maxByType = new Map<string, number>();
-    for (const b of breaksRows) {
-      const end = b.endedAt ?? new Date();
-      const mins = Math.max(0, (end.getTime() - b.startedAt.getTime()) / 60000);
-      const prev = maxByType.get(b.breakType) ?? 0;
-      if (mins > prev) maxByType.set(b.breakType, mins);
-    }
-    let breakMinutes = 0;
-    for (const mins of maxByType.values()) breakMinutes += mins;
+    // Deduct the admin-configured break durations (Settings → Break / Lunch minutes)
+    // for each break type that was recorded. Keeps BPH predictable regardless of
+    // how long breaks actually ran over.
+    const [breakSetting] = await db
+      .select({ value: appSettingsTable.value })
+      .from(appSettingsTable)
+      .where(eq(appSettingsTable.key, "default_break_minutes"));
+    const [lunchSetting] = await db
+      .select({ value: appSettingsTable.value })
+      .from(appSettingsTable)
+      .where(eq(appSettingsTable.key, "default_lunch_minutes"));
+    const configuredBreakMins = breakSetting ? Number(breakSetting.value) : 15;
+    const configuredLunchMins = lunchSetting ? Number(lunchSetting.value) : 45;
+    const hasLunch = breaksRows.some(b => b.breakType === "lunch" && b.endedAt);
+    const hasSnackBreak = breaksRows.some(b => b.breakType !== "lunch" && b.endedAt);
+    const breakMinutes = (hasLunch ? configuredLunchMins : 0) + (hasSnackBreak ? configuredBreakMins : 0);
 
     // Production time from first batch to now
     let activeMinutes = 0;

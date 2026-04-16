@@ -401,25 +401,27 @@ router.get("/production-kpis", async (req, res) => {
     productionFinishTime = latest.toISOString();
     wallClockMinutes = Math.round((latest.getTime() - earliest.getTime()) / 60000);
 
-    // For each break type (morning/lunch), calculate the average duration
-    // across all builders, then deduct a single average break per type.
-    // e.g. 3 snack breaks of 15, 20, 25 mins → deduct one 20 min break.
+    // Deduct the admin-configured break durations (Settings → Break / Lunch minutes)
+    // for each break type that was recorded, regardless of logged duration. This keeps
+    // the KPI predictable: if a lunch break was taken, we subtract the planned lunch
+    // minutes, never the actual logged minutes.
+    const [breakSetting] = await db
+      .select({ value: appSettingsTable.value })
+      .from(appSettingsTable)
+      .where(eq(appSettingsTable.key, "default_break_minutes"));
+    const [lunchSetting] = await db
+      .select({ value: appSettingsTable.value })
+      .from(appSettingsTable)
+      .where(eq(appSettingsTable.key, "default_lunch_minutes"));
+    const configuredBreakMins = breakSetting ? Number(breakSetting.value) : 15;
+    const configuredLunchMins = lunchSetting ? Number(lunchSetting.value) : 45;
+
     const buildingBreaks = breaks.filter(
       b => (b.stationType === "building_1" || b.stationType === "building_2") && b.endedAt
     );
-    const breaksByType = new Map<string, number[]>();
-    for (const b of buildingBreaks) {
-      const mins = Math.max(0, (new Date(b.endedAt!).getTime() - new Date(b.startedAt!).getTime()) / 60000);
-      if (mins <= 0) continue;
-      const type = b.breakType ?? "other";
-      if (!breaksByType.has(type)) breaksByType.set(type, []);
-      breaksByType.get(type)!.push(mins);
-    }
-    let totalBreakMins = 0;
-    for (const durations of breaksByType.values()) {
-      const avg = durations.reduce((s, d) => s + d, 0) / durations.length;
-      totalBreakMins += avg;
-    }
+    const hasLunch = buildingBreaks.some(b => b.breakType === "lunch");
+    const hasSnackBreak = buildingBreaks.some(b => b.breakType !== "lunch");
+    const totalBreakMins = (hasLunch ? configuredLunchMins : 0) + (hasSnackBreak ? configuredBreakMins : 0);
     productionActiveMinutes = Math.round(Math.max(0, wallClockMinutes - totalBreakMins));
   }
 
