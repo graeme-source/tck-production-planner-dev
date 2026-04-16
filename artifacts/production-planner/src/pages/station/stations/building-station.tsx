@@ -464,12 +464,26 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   }, []);
 
   const [checkedItems, setCheckedItems] = useState<Record<string, boolean>>({});
+  // Tracks which plan-item id the checkedItems state applies to. Prevents the
+  // auto-lock effect from firing against stale checkedItems during the render
+  // where currentItem?.id has changed but setCheckedItems({}) from the reset
+  // effect hasn't been committed yet. Without this guard, shared keys like
+  // "filling" from the previous recipe would pre-check the new recipe and
+  // auto-lock it, bypassing changeover.
+  const [checkedItemsItemId, setCheckedItemsItemId] = useState<number | null>(null);
   const [checklistLockedForItem, setChecklistLockedForItem] = useState<number | null>(null);
   const [checklistLoadedForItem, setChecklistLoadedForItem] = useState<number | null>(null);
   const prevRecipeIdRef = useRef<number | null>(null);
   // Prompt for extra packs when a recipe finishes
   const [extraPromptItemId, setExtraPromptItemId] = useState<number | null>(null);
   const [prevCurrentItemId, setPrevCurrentItemId] = useState<number | null>(null);
+  // Tracks the plan-item id whose final batch THIS builder just completed.
+  // Used to show the extra-packs prompt only to the builder who actually
+  // finished the recipe — the other builder (who was on the penultimate batch)
+  // moves straight to the next recipe.
+  const myLastBatchItemIdRef = useRef<number | null>(null);
+  // Part-batch calculator dialog — tracks which item's calculator is open.
+  const [calcOpenItemId, setCalcOpenItemId] = useState<number | null>(null);
 
   const checklistKey = (itemId: number) => `checklist_done_${plan.id}_${stationType}_${itemId}_${userId}`;
 
@@ -564,6 +578,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     if (curId !== prevRecipeIdRef.current) {
       prevRecipeIdRef.current = curId;
       setCheckedItems({});
+      setCheckedItemsItemId(curId);
       setChecklistLockedForItem(null);
       setChecklistLoadedForItem(null);
       // Start changeover timer for this recipe
@@ -584,6 +599,12 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   // Auto-lock checklist when all items checked
   useEffect(() => {
     if (!currentItem || checklistLockedForItem === currentItem.id) return;
+    // Guard: skip if checkedItems hasn't been scoped to the current recipe yet
+    // (i.e. we're in the transient render where currentItem.id has advanced
+    // but the reset effect's setCheckedItems({}) hasn't committed).
+    // Without this, shared keys like "filling" from the previous recipe would
+    // pre-satisfy the auto-lock and bypass the changeover for the new recipe.
+    if (checkedItemsItemId !== currentItem.id) return;
     const asm = assemblyMap[currentItem.id];
     if (!asm) return;
     const allKeys: string[] = [];
@@ -619,7 +640,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
         }).catch((err) => { console.warn("[BuildingStation] Changeover save failed:", err); });
       }
     }
-  }, [checkedItems, currentItem?.id, assemblyMap, checklistLockedForItem]);
+  }, [checkedItems, checkedItemsItemId, currentItem?.id, assemblyMap, checklistLockedForItem]);
 
   // Detect recipe change — prompt for extra packs + auto-expand next
   useEffect(() => {
@@ -629,8 +650,14 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
       // (not just skipped by last-batch coordination logic)
       const prevItem = items.find(it => it.id === prevCurrentItemId);
       if (prevItem && getCombinedBuildCount(prevItem) >= getEffectiveTarget(prevItem)) {
-        setExtraPromptItemId(prevCurrentItemId);
+        // Only show the prompt to the builder who actually completed the last
+        // batch. The other builder (who finished the penultimate batch) should
+        // move straight to the next recipe without being interrupted.
+        if (myLastBatchItemIdRef.current === prevCurrentItemId) {
+          setExtraPromptItemId(prevCurrentItemId);
+        }
       }
+      myLastBatchItemIdRef.current = null;
       setExpandedItemId(curId);
       userOverrideRef.current = false;
     }
@@ -667,14 +694,28 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   const handleBatchComplete = () => {
     if (!currentItem || pendingTap || available <= 0 || isOnBreak || checklistPending) return;
     setPendingTap(true);
-    createBatch.mutate({
-      id: plan.id,
-      data: {
-        planItemId: currentItem.id,
-        stationType,
-        completedAt: new Date().toISOString(),
+    const completingItemId = currentItem.id;
+    // If this tap would complete the recipe (I'm on the last batch), remember
+    // it so the recipe-change effect knows to show the extra-packs prompt to
+    // ME (and not the other builder who was on the penultimate batch).
+    const wasLastBatchTap = remaining === 1;
+    createBatch.mutate(
+      {
+        id: plan.id,
+        data: {
+          planItemId: completingItemId,
+          stationType,
+          completedAt: new Date().toISOString(),
+        },
       },
-    });
+      {
+        onSuccess: () => {
+          if (wasLastBatchTap) {
+            myLastBatchItemIdRef.current = completingItemId;
+          }
+        },
+      },
+    );
   };
 
   const [runUndo, undoPending] = useGuardedAction({
@@ -808,6 +849,39 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
               onDone={() => setExtraPromptItemId(null)}
             />
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Part-batch calculator — on-demand overlay for the current (or any) recipe */}
+      <Dialog open={calcOpenItemId !== null} onOpenChange={(open) => { if (!open) setCalcOpenItemId(null); }}>
+        <DialogContent className="max-w-md mx-auto">
+          {(() => {
+            if (calcOpenItemId === null) return null;
+            const calcItem = items.find(it => it.id === calcOpenItemId);
+            const calcAsm = calcItem ? assemblyMap[calcItem.id] : undefined;
+            if (!calcItem || !calcAsm) return null;
+            return (
+              <div className="space-y-4 pt-2">
+                <div className="flex items-start gap-3">
+                  <Scale className="w-7 h-7 text-primary flex-shrink-0 mt-0.5" />
+                  <div>
+                    <h3 className="font-bold text-xl text-foreground">Part Batch Calculator</h3>
+                    <p className="text-sm text-muted-foreground mt-1" style={{ color: calcItem.recipeColor || undefined }}>
+                      {calcItem.recipeName ?? `Recipe #${calcItem.recipeId}`}
+                    </p>
+                  </div>
+                </div>
+                <BatchDivision assemblyData={calcAsm} portionsPerBatch={calcItem.portionsPerBatch ?? 10} />
+                <button
+                  type="button"
+                  onClick={() => setCalcOpenItemId(null)}
+                  className="w-full py-3 rounded-xl font-semibold text-base border border-border bg-background hover:bg-secondary/60 transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            );
+          })()}
         </DialogContent>
       </Dialog>
 
@@ -1131,6 +1205,19 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
 
                           {/* Pack adjustment */}
                           <PackAdjustment planId={plan.id} item={item} isOnBreak={isOnBreak} />
+
+                          {/* Part-batch calculator shortcut — useful when short on packs
+                              and need to prepare a partial batch before the recipe wraps up */}
+                          {asm && (asm.fillingWeightPerBatch > 0 || asm.assemblyItems.length > 0) && (
+                            <button
+                              onClick={() => setCalcOpenItemId(item.id)}
+                              disabled={isOnBreak}
+                              className="w-full mt-2 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold border border-border rounded-lg text-foreground hover:bg-secondary/60 disabled:opacity-40 transition-colors"
+                            >
+                              <Scale className="w-4 h-4" />
+                              Part Batch Calculator
+                            </button>
+                          )}
                         </div>
                       </div>
                     ) : (
