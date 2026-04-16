@@ -196,17 +196,17 @@ export async function getOrdersByTag(tag: string): Promise<ShopifyOrder[]> {
   const limit = "250";
 
   do {
-    // Shopify cursor pagination: when page_info is present, only limit
-    // and fields may accompany it. status, tag, etc. must be omitted.
-    const params: Record<string, string> = pageInfo
-      ? { limit, page_info: pageInfo }
-      : {
-          limit,
-          status: "any",
-          tag,
-          fields:
-            "id,name,tags,created_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,total_weight,customer,shipping_address,line_items,note,fulfillments",
-        };
+    const params: Record<string, string> = {
+      limit,
+      status: "any",
+      fields:
+        "id,name,tags,created_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,total_weight,customer,shipping_address,line_items,note,fulfillments",
+    };
+    if (pageInfo) {
+      params.page_info = pageInfo;
+    } else {
+      params.tag = tag;
+    }
 
     const res = await shopifyFetchRaw("/orders.json", params);
     const data = (await res.json()) as { orders: ShopifyOrder[] };
@@ -426,20 +426,16 @@ export async function getFulfilledOrdersForDateRange(
   let pageInfo: string | null = null;
 
   do {
-    // Shopify cursor pagination: when page_info is present, only limit
-    // and fields may accompany it. status, fulfillment_status, date
-    // filters, etc. must only be sent on the first request.
-    const params: Record<string, string> = pageInfo
-      ? { limit: "250", page_info: pageInfo }
-      : {
-          limit: "250",
-          status: "any",
-          fulfillment_status: "shipped",
-          updated_at_min: min,
-          updated_at_max: max,
-          fields:
-            "id,name,tags,created_at,financial_status,fulfillment_status,total_price,customer,fulfillments",
-        };
+    const params: Record<string, string> = {
+      limit: "250",
+      status: "any",
+      fulfillment_status: "shipped",
+      updated_at_min: min,
+      updated_at_max: max,
+      fields:
+        "id,name,tags,created_at,financial_status,fulfillment_status,total_price,customer,fulfillments",
+    };
+    if (pageInfo) params.page_info = pageInfo;
 
     const res = await shopifyFetchRaw("/orders.json", params);
     const data = (await res.json()) as { orders: ShopifyOrder[] };
