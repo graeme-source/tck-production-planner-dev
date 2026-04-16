@@ -400,7 +400,9 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
       .then(r => r.json())
       .then(records => {
         const macRecords = (records ?? []).filter((r: any) =>
-          r.recordType === "mac_sauce_pre_cheese" || r.recordType === "mac_sauce_post_cheese"
+          r.recordType === "mac_sauce_pre_cheese"
+          || r.recordType === "mac_sauce_post_cheese"
+          || r.recordType === "mac_pigs_in_blankets_cook"
         );
         setTempRecords(macRecords);
       })
@@ -469,6 +471,13 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
 
   const preCheeseRecords = tempRecords.filter(r => r.recordType === "mac_sauce_pre_cheese");
   const postCheeseRecords = tempRecords.filter(r => r.recordType === "mac_sauce_post_cheese");
+  const pigsInBlanketsRecords = tempRecords.filter(r => r.recordType === "mac_pigs_in_blankets_cook");
+
+  // Show the Pigs in Blankets temperature panel only if one of the mac
+  // cheese items on this plan actually contains pigs in blankets. Detection
+  // is by recipe name (case-insensitive) — any item whose name contains
+  // "pigs" counts. This avoids hard-coding recipe IDs.
+  const hasPigsInBlankets = macItems.some(it => (it.recipeName ?? "").toLowerCase().includes("pigs"));
 
   // Show the add form if no mac cheese items OR if editing
   if (macItems.length === 0 || editing) {
@@ -642,6 +651,35 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
           />
         </div>
       </div>
+
+      {/* Pigs in Blankets cook-temperature — only shown when a mac cheese
+          recipe containing pigs in blankets is on this plan. The PIB
+          sausage is a raw meat product and must hit 75°C core before
+          being added to the sauce (CCP per HACCP). */}
+      {hasPigsInBlankets && (
+        <div className="bg-card border border-border rounded-xl p-4">
+          <h3 className="font-semibold text-sm flex items-center gap-2 mb-4">
+            <Thermometer className="w-4 h-4 text-red-500" />
+            Pigs in Blankets Cook Temperature
+          </h3>
+          <p className="text-xs text-muted-foreground mb-4">
+            Record core temperature of the cooked sausage before adding to the mac cheese. Target: <strong>≥75°C</strong>.
+          </p>
+
+          <div className="space-y-4">
+            <TempCheckRow
+              label="Sausage core temperature at cook-out"
+              targetTemp={75}
+              recordType="mac_pigs_in_blankets_cook"
+              records={pigsInBlanketsRecords}
+              inputValue={tempInputs["mac_pigs_in_blankets_cook"] ?? ""}
+              onInputChange={v => setTempInputs(prev => ({ ...prev, mac_pigs_in_blankets_cook: v }))}
+              onRecord={() => handleRecordTemp("mac_pigs_in_blankets_cook", "Pigs in Blankets cook")}
+              saving={tempSaving}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
