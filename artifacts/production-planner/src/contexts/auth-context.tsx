@@ -180,6 +180,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, [state, pinLocked, checkSession]);
 
+  // ── Scheduled hard refresh at 10pm UK wall-clock ──────────────────────
+  // The auth-triggered redirect in checkSession already handles every
+  // authenticated tab — when pinRequired flips at 10pm, we navigate to
+  // /dashboard, which fetches a fresh index.html and therefore the latest
+  // hashed bundle.
+  //
+  // This closes the gap for tabs that are NOT authenticated at 10pm
+  // (sitting on /login, or a PWA someone signed out of but never closed).
+  // Those tabs never see pinRequired because /api/auth/me returns 401, so
+  // they'd keep running whatever JS was loaded at sign-in time. A simple
+  // setTimeout scheduled for the next 10pm UK is enough — modern browsers
+  // throttle background tabs by at most ~1 minute, and a frozen tab
+  // resumes pending timers when it becomes visible again, so every active
+  // client picks up the latest bundle shortly after 10pm regardless of
+  // auth state.
+  useEffect(() => {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+      hour12: false, timeZone: "Europe/London",
+    }).formatToParts(new Date());
+    const h = Number(parts.find(p => p.type === "hour")?.value ?? "0");
+    const m = Number(parts.find(p => p.type === "minute")?.value ?? "0");
+    const s = Number(parts.find(p => p.type === "second")?.value ?? "0");
+    const currentSec = h * 3600 + m * 60 + s;
+    const targetSec = 22 * 3600; // 10pm UK local wall-clock
+    let delayMs = (targetSec - currentSec) * 1000;
+    if (delayMs <= 0) delayMs += 24 * 60 * 60 * 1000;
+
+    const id = window.setTimeout(() => {
+      const url = new URL(window.location.href);
+      url.searchParams.set("v", Date.now().toString());
+      window.location.replace(url.toString());
+    }, delayMs);
+    return () => window.clearTimeout(id);
+  }, []);
+
   const refreshUser = useCallback(async () => {
     await checkSession();
   }, [checkSession]);
