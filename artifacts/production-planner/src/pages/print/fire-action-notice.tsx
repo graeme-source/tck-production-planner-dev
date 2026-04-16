@@ -31,6 +31,20 @@ export default function FireActionNoticePrint() {
           .no-print { display: none !important; }
           .fan-page { padding: 0 !important; max-width: none !important; }
         }
+        /* Force colour preservation on print across all browsers.
+         * Without these rules, Chrome/Safari/Firefox strip background colours
+         * by default to save ink, collapsing the red banners to white. The
+         * user may still need to tick "Background graphics" in the print
+         * dialog depending on their browser/driver. */
+        html, body,
+        .fan-page, .fan-page *,
+        .fan-title, .fan-section, .fan-section.red, .fan-heading,
+        .fan-card, .fan-card.green, .fan-dont li::before,
+        .fan-section.red .fan-heading, .fan-section.red .fan-heading::before {
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+          color-adjust: exact !important;
+        }
         html, body { margin: 0; padding: 0; }
         .fan-page {
           max-width: 194mm;
@@ -182,8 +196,8 @@ export default function FireActionNoticePrint() {
       `}</style>
 
       <div className="fan-print-bar no-print">
-        <span style={{ fontSize: "13px", alignSelf: "center" }}>
-          📄 Use your browser's print dialog (<kbd>Cmd</kbd>+<kbd>P</kbd> / <kbd>Ctrl</kbd>+<kbd>P</kbd>) to print or save as PDF. Laminate A4 for mounting.
+        <span style={{ fontSize: "13px", alignSelf: "center", maxWidth: "720px" }}>
+          📄 <kbd>Cmd</kbd>+<kbd>P</kbd> / <kbd>Ctrl</kbd>+<kbd>P</kbd> to print. <strong>In the print dialog, tick "Background graphics"</strong> (Chrome / Edge) or "Print backgrounds" (Safari / Firefox) so the red banners and borders print in colour. Then laminate A4.
         </span>
         <button onClick={() => window.print()}>Print</button>
       </div>
