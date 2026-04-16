@@ -168,11 +168,10 @@ type AssemblyItemData = { name: string; unit: string; weightPerBatch: number; we
 type AssemblyData = { itemId: number; recipeId: number; fillingWeightPerBatch: number; fillingWeightHalfBatch: number; fillingAssemblyOrder: number; assemblyItems: AssemblyItemData[]; postOvenItems?: AssemblyItemData[] };
 
 function ChecklistItems({
-  asm, hasFilling, canReorder, isLocked, checkedItems, toggleCheck, dndSensors, onDragEnd,
+  asm, hasFilling, isLocked, checkedItems, toggleCheck, dndSensors, onDragEnd,
 }: {
   asm: AssemblyData;
   hasFilling: boolean;
-  canReorder: boolean;
   isLocked: boolean;
   checkedItems: Record<string, boolean>;
   toggleCheck: (key: string) => void;
@@ -188,71 +187,42 @@ function ChecklistItems({
     allItems.splice(pos, 0, { key: "filling", isFilling: true });
   }
 
-  if (canReorder && !isLocked) {
-    return (
-      <div className="divide-y divide-slate-100 dark:divide-slate-800">
-        <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-          <SortableContext items={allItems.map(a => a.key)} strategy={verticalListSortingStrategy}>
-            {allItems.map((entry) => {
-              if (entry.isFilling) {
-                return (
-                  <SortableFillingRow
-                    key="filling"
-                    id="filling"
-                    weightPerBatch={asm.fillingWeightPerBatch}
-                    weightHalfBatch={asm.fillingWeightHalfBatch}
-                    checked={!!checkedItems["filling"]}
-                    locked={false}
-                    showHandle={true}
-                    onToggle={() => toggleCheck("filling")}
-                  />
-                );
-              }
-              return (
-                <SortableAssemblyRow
-                  key={entry.key}
-                  id={entry.key}
-                  ai={entry.ai!}
-                  checked={!!checkedItems[entry.key]}
-                  locked={false}
-                  showHandle={true}
-                  onToggle={() => toggleCheck(entry.key)}
-                />
-              );
-            })}
-          </SortableContext>
-        </DndContext>
-      </div>
-    );
-  }
-
+  // Drag-and-drop reorder is always available to all builders, regardless of
+  // whether the checklist has been marked "Ready" (isLocked). Locked state still
+  // disables the checkbox toggles via the `locked` prop below.
   return (
     <div className="divide-y divide-slate-100 dark:divide-slate-800">
-      {allItems.map((entry) => (
-        <button
-          type="button"
-          key={entry.key}
-          onClick={() => toggleCheck(entry.key)}
-          disabled={isLocked}
-          className={cn(
-            "w-full flex items-center gap-3 px-3 py-3 text-left transition-colors",
-            !isLocked && "active:bg-slate-200 dark:active:bg-slate-700"
-          )}
-        >
-          {isLocked || checkedItems[entry.key]
-            ? <CheckSquare className="w-6 h-6 text-emerald-500 flex-shrink-0" />
-            : <Square className="w-6 h-6 text-slate-400 flex-shrink-0" />}
-          <span className={cn("text-2xl font-bold flex-1 leading-tight", entry.isFilling && "text-blue-700 dark:text-blue-400")}>
-            {entry.isFilling ? "Filling" : entry.ai!.name}
-          </span>
-          {!entry.isFilling && entry.ai!.isTopping
-            ? <span className="text-2xl font-bold font-mono flex-shrink-0 text-slate-500 dark:text-slate-400">Sprinkle</span>
-            : <span className="text-2xl font-bold font-mono tabular-nums flex-shrink-0">
-                {Math.round(entry.isFilling ? asm.fillingWeightPerBatch : entry.ai!.weightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(entry.isFilling ? asm.fillingWeightHalfBatch : entry.ai!.weightHalfBatch)}g</span>
-              </span>
-          }
-        </button>
-      ))}
+      <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+        <SortableContext items={allItems.map(a => a.key)} strategy={verticalListSortingStrategy}>
+          {allItems.map((entry) => {
+            if (entry.isFilling) {
+              return (
+                <SortableFillingRow
+                  key="filling"
+                  id="filling"
+                  weightPerBatch={asm.fillingWeightPerBatch}
+                  weightHalfBatch={asm.fillingWeightHalfBatch}
+                  checked={!!checkedItems["filling"]}
+                  locked={isLocked}
+                  showHandle={true}
+                  onToggle={() => toggleCheck("filling")}
+                />
+              );
+            }
+            return (
+              <SortableAssemblyRow
+                key={entry.key}
+                id={entry.key}
+                ai={entry.ai!}
+                checked={!!checkedItems[entry.key]}
+                locked={isLocked}
+                showHandle={true}
+                onToggle={() => toggleCheck(entry.key)}
+              />
+            );
+          })}
+        </SortableContext>
+      </DndContext>
     </div>
   );
 }
@@ -1037,7 +1007,6 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                                 <ChecklistItems
                                   asm={asm}
                                   hasFilling={hasFilling}
-                                  canReorder={!isLocked}
                                   isLocked={isLocked}
                                   checkedItems={checkedItems}
                                   toggleCheck={toggleCheck}
@@ -1321,6 +1290,7 @@ function RecipeCompleteDialogBody({ planId, item, isOnBreak, hasFilling, assembl
 }) {
   const [noLeftover, setNoLeftover] = useState(false);
   const [fillingGrams, setFillingGrams] = useState("");
+  const [fillingComment, setFillingComment] = useState("");
   const [saving, setSaving] = useState(false);
 
   const fillingValid = !hasFilling || noLeftover || (fillingGrams.trim() !== "" && Number(fillingGrams) >= 0 && Number.isFinite(Number(fillingGrams)));
@@ -1329,12 +1299,13 @@ function RecipeCompleteDialogBody({ planId, item, isOnBreak, hasFilling, assembl
     if (!fillingValid) return;
     if (hasFilling) {
       const grams = noLeftover ? 0 : Math.round(Number(fillingGrams));
+      const comment = fillingComment.trim();
       setSaving(true);
       try {
         await guardedFetch(`/api/production-plans/${planId}/items/${item.id}/leftover-filling`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ grams }),
+          body: JSON.stringify({ grams, comment: comment.length > 0 ? comment : null }),
         });
       } catch (err) {
         console.warn("[BuildingStation] Leftover filling save failed:", err);
@@ -1386,6 +1357,13 @@ function RecipeCompleteDialogBody({ planId, item, isOnBreak, hasFilling, assembl
               <span className="text-lg font-semibold text-muted-foreground">g</span>
             </div>
           )}
+          <textarea
+            value={fillingComment}
+            onChange={(e) => setFillingComment(e.target.value.slice(0, 500))}
+            placeholder="Comment (optional) — e.g. ran dry, under-portioned…"
+            rows={2}
+            className="w-full px-4 py-3 text-base border border-border rounded-xl bg-background text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+          />
         </div>
       )}
 

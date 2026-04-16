@@ -711,6 +711,7 @@ router.get("/leftover-filling", async (req, res) => {
         recipeName: recipesTable.name,
         planDate: productionPlansTable.planDate,
         leftoverGrams: productionPlanItemsTable.leftoverFillingGrams,
+        leftoverComment: productionPlanItemsTable.leftoverFillingComment,
       })
       .from(productionPlanItemsTable)
       .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
@@ -726,7 +727,7 @@ router.get("/leftover-filling", async (req, res) => {
       totalGrams: number;
       minGrams: number;
       maxGrams: number;
-      entries: { planDate: string; grams: number }[];
+      entries: { planDate: string; grams: number; comment: string | null }[];
     }> = {};
 
     for (const row of rows) {
@@ -747,7 +748,7 @@ router.get("/leftover-filling", async (req, res) => {
       rec.totalGrams += g;
       rec.minGrams = Math.min(rec.minGrams, g);
       rec.maxGrams = Math.max(rec.maxGrams, g);
-      rec.entries.push({ planDate: row.planDate, grams: g });
+      rec.entries.push({ planDate: row.planDate, grams: g, comment: row.leftoverComment ?? null });
     }
 
     const result = Object.values(byRecipe).map(r => ({

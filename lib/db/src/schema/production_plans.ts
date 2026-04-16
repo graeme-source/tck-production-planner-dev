@@ -39,6 +39,7 @@ export const productionPlanItemsTable = pgTable("production_plan_items", {
   fridgeEightPackQty: integer("fridge_eight_pack_qty").notNull().default(0),
   mixingTinOverride: integer("mixing_tin_override"),
   leftoverFillingGrams: integer("leftover_filling_grams"),
+  leftoverFillingComment: text("leftover_filling_comment"),
 });
 
 export const batchCompletionsTable = pgTable("batch_completions", {

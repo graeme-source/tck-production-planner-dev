@@ -3788,11 +3788,17 @@ router.patch("/:id/items/:itemId/extra-packs-built", async (req, res) => {
 router.patch("/:id/items/:itemId/leftover-filling", async (req, res) => {
   const planId = Number(req.params.id);
   const itemId = Number(req.params.itemId);
-  const { grams } = req.body;
+  const { grams, comment } = req.body;
   if (typeof grams !== "number" || grams < 0 || !Number.isFinite(grams)) {
     res.status(400).json({ error: "Body must contain { grams: number } (0 or positive)" });
     return;
   }
+  if (comment !== undefined && comment !== null && typeof comment !== "string") {
+    res.status(400).json({ error: "comment must be a string if provided" });
+    return;
+  }
+  const trimmedComment = typeof comment === "string" ? comment.trim() : "";
+  const commentToStore = trimmedComment.length > 0 ? trimmedComment.slice(0, 500) : null;
 
   const [item] = await db.select({ id: productionPlanItemsTable.id })
     .from(productionPlanItemsTable)
@@ -3802,11 +3808,18 @@ router.patch("/:id/items/:itemId/leftover-filling", async (req, res) => {
 
   const [updated] = await db
     .update(productionPlanItemsTable)
-    .set({ leftoverFillingGrams: Math.round(grams) })
+    .set({ leftoverFillingGrams: Math.round(grams), leftoverFillingComment: commentToStore })
     .where(eq(productionPlanItemsTable.id, itemId))
-    .returning({ leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams });
+    .returning({
+      leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
+      leftoverFillingComment: productionPlanItemsTable.leftoverFillingComment,
+    });
 
-  res.json({ itemId, leftoverFillingGrams: updated.leftoverFillingGrams });
+  res.json({
+    itemId,
+    leftoverFillingGrams: updated.leftoverFillingGrams,
+    leftoverFillingComment: updated.leftoverFillingComment,
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────

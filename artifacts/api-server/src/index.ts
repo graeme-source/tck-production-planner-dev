@@ -709,6 +709,7 @@ async function runStartupMigrations() {
 
     // Leftover filling weight tracking
     await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS leftover_filling_grams INTEGER`);
+    await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS leftover_filling_comment TEXT`);
 
     // Notifications table
     await db.execute(sql`

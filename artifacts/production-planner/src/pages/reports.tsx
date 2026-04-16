@@ -2344,7 +2344,7 @@ interface LeftoverFillingRecipe {
   avgGrams: number;
   minGrams: number;
   maxGrams: number;
-  entries: { planDate: string; grams: number }[];
+  entries: { planDate: string; grams: number; comment: string | null }[];
 }
 
 function LeftoverFillingTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
@@ -2420,11 +2420,16 @@ function LeftoverFillingTab({ fromDate, toDate }: { fromDate: string; toDate: st
                 {expandedRecipe === recipe.recipeId && (
                   <tr>
                     <td colSpan={5} className="px-4 py-2 bg-secondary/10">
-                      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2 py-2">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 py-2">
                         {recipe.entries.map((entry, i) => (
-                          <div key={i} className="text-xs bg-card border border-border rounded-lg px-3 py-2 text-center">
-                            <p className="text-muted-foreground">{format(new Date(entry.planDate + "T00:00:00"), "d MMM")}</p>
-                            <p className={cn("font-bold", entry.grams === 0 ? "text-emerald-600 dark:text-emerald-400" : "text-foreground")}>{entry.grams}g</p>
+                          <div key={i} className="text-xs bg-card border border-border rounded-lg px-3 py-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-muted-foreground">{format(new Date(entry.planDate + "T00:00:00"), "d MMM")}</p>
+                              <p className={cn("font-bold", entry.grams === 0 ? "text-emerald-600 dark:text-emerald-400" : "text-foreground")}>{entry.grams}g</p>
+                            </div>
+                            {entry.comment && (
+                              <p className="mt-1 text-muted-foreground italic break-words leading-snug">{entry.comment}</p>
+                            )}
                           </div>
                         ))}
                       </div>
