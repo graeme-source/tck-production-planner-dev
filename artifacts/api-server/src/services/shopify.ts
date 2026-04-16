@@ -100,42 +100,19 @@ async function shopifyFetchRaw(path: string, params?: Record<string, string>): P
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
   }
 
-  // Shopify's leaky-bucket limiter can 429 under bursts. Retry with
-  // the server-provided Retry-After (capped) up to 3 times so parallel
-  // paginated calls don't fail transiently. 5xx also gets one retry.
-  const MAX_ATTEMPTS = 4;
-  let lastRes: Response | null = null;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const res = await fetch(url.toString(), {
-      headers: {
-        "X-Shopify-Access-Token": token,
-        "Content-Type": "application/json",
-      },
-    });
+  const res = await fetch(url.toString(), {
+    headers: {
+      "X-Shopify-Access-Token": token,
+      "Content-Type": "application/json",
+    },
+  });
 
-    if (res.ok) return res;
-
-    lastRes = res;
-    const isRateLimited = res.status === 429;
-    const isServerError = res.status >= 500 && res.status < 600;
-    if ((isRateLimited || isServerError) && attempt < MAX_ATTEMPTS) {
-      // Respect Retry-After (seconds), otherwise back off exponentially.
-      const retryAfterHeader = res.headers.get("Retry-After");
-      const retryAfterSec = retryAfterHeader ? parseFloat(retryAfterHeader) : NaN;
-      const baseMs = Number.isFinite(retryAfterSec) ? retryAfterSec * 1000 : 500 * Math.pow(2, attempt - 1);
-      const waitMs = Math.min(baseMs, 5_000); // hard cap 5s per wait
-      // Drain body so the connection can be reused
-      await res.text().catch(() => undefined);
-      await new Promise(r => setTimeout(r, waitMs));
-      continue;
-    }
-
+  if (!res.ok) {
     const text = await res.text();
     throw new Error(`Shopify API error ${res.status}: ${text}`);
   }
-  // Exhausted retries
-  const text = lastRes ? await lastRes.text().catch(() => "") : "";
-  throw new Error(`Shopify API error ${lastRes?.status ?? "unknown"} after ${MAX_ATTEMPTS} attempts: ${text}`);
+
+  return res;
 }
 
 async function shopifyFetch(path: string, params?: Record<string, string>) {
@@ -213,63 +190,29 @@ export interface ShopifyProduct {
   image: { src: string } | null;
 }
 
-// Narrow a created_at window for a given tag so we don't walk the whole
-// order history. Shopify's REST `?tag=` filter is silently ignored — it
-// returns the most recent orders regardless of the tag. Instead, we
-// search by a created_at window (which IS filtered server-side) and
-// then filter by tag in memory. For YYYY-MM-DD delivery tags we use a
-// generous 60-day lookback (covers subscription cadence and wholesale
-// lead times) plus a 2-day forward buffer for timezone slack. For any
-// other tag, we fall back to the last 90 days.
-function createdAtWindowForTag(tag: string): { min: string; max: string } {
-  const dateMatch = tag.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  const MS_PER_DAY = 24 * 60 * 60 * 1000;
-  if (dateMatch) {
-    const tagDate = new Date(`${tag}T00:00:00Z`);
-    const min = new Date(tagDate.getTime() - 60 * MS_PER_DAY);
-    const max = new Date(tagDate.getTime() + 2 * MS_PER_DAY);
-    return { min: min.toISOString(), max: max.toISOString() };
-  }
-  const now = new Date();
-  const min = new Date(now.getTime() - 90 * MS_PER_DAY);
-  return { min: min.toISOString(), max: now.toISOString() };
-}
-
-// Safety cap: even with the date window, a runaway pagination would
-// starve memory. Realistically, a 60-day window at TCK's volume fits
-// in <15 pages of 250. Abort with a clear error well before OOM risk.
-const MAX_PAGES_PER_TAG_QUERY = 40;
-
 export async function getOrdersByTag(tag: string): Promise<ShopifyOrder[]> {
-  const { min, max } = createdAtWindowForTag(tag);
   const allOrders: ShopifyOrder[] = [];
   let pageInfo: string | null = null;
-  let pages = 0;
+  const limit = "250";
 
   do {
-    // Shopify cursor pagination: when page_info is present only limit
-    // and fields may accompany it; every other filter must be omitted.
-    const params: Record<string, string> = pageInfo
-      ? { limit: "250", page_info: pageInfo }
-      : {
-          limit: "250",
-          status: "any",
-          created_at_min: min,
-          created_at_max: max,
-          fields:
-            "id,name,tags,created_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,total_weight,customer,shipping_address,line_items,note,fulfillments",
-        };
+    const params: Record<string, string> = {
+      limit,
+      status: "any",
+      fields:
+        "id,name,tags,created_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,total_weight,customer,shipping_address,line_items,note,fulfillments",
+    };
+    if (pageInfo) {
+      params.page_info = pageInfo;
+    } else {
+      params.tag = tag;
+    }
 
     const res = await shopifyFetchRaw("/orders.json", params);
     const data = (await res.json()) as { orders: ShopifyOrder[] };
     allOrders.push(...data.orders);
-    pageInfo = parseNextPageInfo(res.headers.get("Link"));
 
-    pages += 1;
-    if (pages >= MAX_PAGES_PER_TAG_QUERY) {
-      console.warn(`[shopify] getOrdersByTag(${tag}) hit ${MAX_PAGES_PER_TAG_QUERY}-page cap — stopping pagination`);
-      break;
-    }
+    pageInfo = parseNextPageInfo(res.headers.get("Link"));
   } while (pageInfo);
 
   return allOrders.filter((o) => o.tags.split(",").map((t) => t.trim()).includes(tag));
