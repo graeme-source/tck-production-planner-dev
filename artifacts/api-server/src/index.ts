@@ -711,6 +711,63 @@ async function runStartupMigrations() {
     await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS leftover_filling_grams INTEGER`);
     await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS leftover_filling_comment TEXT`);
 
+    // Risk assessments feature
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS risk_assessments (
+        id                         SERIAL PRIMARY KEY,
+        assessment_type            TEXT NOT NULL,
+        title                      TEXT NOT NULL,
+        body_markdown              TEXT NOT NULL DEFAULT '',
+        status                     TEXT NOT NULL DEFAULT 'draft',
+        review_frequency_months    INTEGER NOT NULL DEFAULT 12,
+        last_reviewed_at           TIMESTAMP,
+        next_review_due            DATE,
+        last_reviewed_by_user_id   INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        last_reviewed_by_name      TEXT,
+        reviewer_qualifications    TEXT,
+        created_at                 TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at                 TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS compliance_actions (
+        id                         SERIAL PRIMARY KEY,
+        risk_assessment_id         INTEGER REFERENCES risk_assessments(id) ON DELETE SET NULL,
+        title                      TEXT NOT NULL,
+        description                TEXT,
+        category                   TEXT NOT NULL DEFAULT 'other',
+        priority                   TEXT NOT NULL DEFAULT 'medium',
+        status                     TEXT NOT NULL DEFAULT 'open',
+        assigned_to_user_id        INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        assigned_to_name           TEXT,
+        due_date                   DATE,
+        recurrence                 TEXT NOT NULL DEFAULT 'none',
+        parent_action_id           INTEGER,
+        completed_at               TIMESTAMP,
+        completed_by_user_id       INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        completed_by_name          TEXT,
+        completion_notes           TEXT,
+        created_at                 TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at                 TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS compliance_actions_status_due_idx ON compliance_actions (status, due_date)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS compliance_actions_ra_idx ON compliance_actions (risk_assessment_id)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS compliance_actions_parent_idx ON compliance_actions (parent_action_id)`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS compliance_action_completions (
+        id                         SERIAL PRIMARY KEY,
+        action_id                  INTEGER NOT NULL REFERENCES compliance_actions(id) ON DELETE CASCADE,
+        completed_at               TIMESTAMP NOT NULL DEFAULT NOW(),
+        completed_by_user_id       INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        completed_by_name          TEXT NOT NULL,
+        notes                      TEXT,
+        next_action_id             INTEGER
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS compliance_completions_action_idx ON compliance_action_completions (action_id)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS compliance_completions_at_idx ON compliance_action_completions (completed_at)`);
+
     // Notifications table
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS notifications (
@@ -787,6 +844,8 @@ async function startup() {
     await seedAdminIfNeeded();
     const { guardMarinadeSettings } = await import("./lib/seed-guard");
     await guardMarinadeSettings();
+    const { seedRiskAssessmentsIfNeeded } = await import("./lib/seed-risk-assessments");
+    await seedRiskAssessmentsIfNeeded();
     startBackupScheduler();
     // Factory-number fulfilment decrement safety net — catches orders
     // fulfilled outside the TCK fulfilment UI. Idempotent via the

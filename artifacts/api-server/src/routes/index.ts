@@ -41,6 +41,8 @@ import pnlRouter from "./pnl";
 import checklistsRouter from "./checklists";
 import notificationsRouter from "./notifications";
 import employeesRouter from "./employees";
+import riskAssessmentsRouter from "./risk-assessments";
+import complianceActionsRouter from "./compliance-actions";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -113,6 +115,8 @@ router.use("/pnl", pnlRouter);
 router.use("/checklists", checklistsRouter);
 router.use("/notifications", notificationsRouter);
 router.use("/employees", employeesRouter);
+router.use("/risk-assessments", riskAssessmentsRouter);
+router.use("/compliance-actions", complianceActionsRouter);
 
 router.post("/backup/trigger", requireAdmin, (_req: Request, res: Response) => {
   res.json({ status: "started", message: "Backup triggered" });

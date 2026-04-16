@@ -307,8 +307,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // no-op. Otherwise, trigger the PIN overlay — the user re-enters their PIN
   // and `verifyPin` resets the window. No-op for users without a PIN set
   // (shouldn't happen: PIN setup is enforced at login).
+  // Admins are exempt from the sensitive-page PIN gate entirely — they can
+  // move freely between analytics and other sensitive pages without re-entry.
   const requireSensitivePin = useCallback(() => {
     if (state.status !== "authenticated") return;
+    if (state.user.role === "admin") return;
     if (pinLocked) return; // already prompting
     const age = Date.now() - sensitiveUnlockedAtRef.current;
     if (age < SENSITIVE_UNLOCK_TTL_MS) return;

@@ -12,7 +12,7 @@ import {
   Package, Zap, CalendarDays, Trophy, Snail, Hourglass,
   Lightbulb, AlertTriangle, CheckCircle, Filter, Play, Square,
   MessageSquare, Send, ClipboardCheck, FileText, Eye, EyeOff,
-  Droplets, UserCog,
+  Droplets, UserCog, ClipboardList, Flame, HardHat, Printer, Check, Pencil, Plus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
@@ -151,7 +151,7 @@ interface PackingSpeedData {
 // Packing-speed is now a subsection inside the Production KPIs view, so it's
 // no longer a top-level tab. The URL ?tab=packing-speed redirects to ?tab=kpis
 // for backward compat.
-type TabId = "kpis" | "breaks" | "temperature" | "haccp" | "improvements" | "issues" | "leftover-filling" | "employees";
+type TabId = "kpis" | "breaks" | "temperature" | "haccp" | "risk-assessments" | "improvements" | "issues" | "leftover-filling" | "employees";
 
 interface ImprovementRecord {
   id: number;
@@ -243,7 +243,7 @@ function DateShortcutsDropdown({ onSelect }: { onSelect: (from: string, to: stri
   );
 }
 
-const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "haccp", "improvements", "issues", "leftover-filling", "employees"];
+const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "haccp", "risk-assessments", "improvements", "issues", "leftover-filling", "employees"];
 
 interface ReportsNavItem {
   id: TabId;
@@ -256,6 +256,7 @@ const REPORTS_NAV_ITEMS: ReportsNavItem[] = [
   { id: "breaks", label: "Breaks & Lunches", icon: Coffee },
   { id: "temperature", label: "Temperature Log", icon: Thermometer },
   { id: "haccp", label: "HACCP", icon: ShieldCheck },
+  { id: "risk-assessments", label: "Risk Assessments", icon: ClipboardList },
   { id: "improvements", label: "Improvements & Struggles", icon: Lightbulb },
   { id: "issues", label: "Issue Log", icon: AlertTriangle },
   { id: "leftover-filling", label: "Leftover Filling", icon: Droplets },
@@ -413,6 +414,7 @@ export default function Reports() {
           {activeTab === "breaks" && <BreaksTab fromDate={fromDate} toDate={toDate} />}
           {activeTab === "temperature" && <TemperatureRecordsTab fromDate={fromDate} toDate={toDate} />}
           {activeTab === "haccp" && <HaccpTab fromDate={fromDate} toDate={toDate} />}
+          {activeTab === "risk-assessments" && <RiskAssessmentsTab userRole={userRole} currentUserName={state.status === "authenticated" ? state.user.name : null} />}
           {activeTab === "improvements" && <ImprovementsTab userRole={userRole} currentUserName={state.status === "authenticated" ? state.user.name : null} />}
           {activeTab === "issues" && <AndonLogTab userRole={userRole} initialIssueId={issueIdParam ? parseInt(issueIdParam, 10) : undefined} />}
           {activeTab === "leftover-filling" && <LeftoverFillingTab fromDate={fromDate} toDate={toDate} />}
@@ -2442,6 +2444,672 @@ function LeftoverFillingTab({ fromDate, toDate }: { fromDate: string; toDate: st
         </table>
       </div>
     </div>
+  );
+}
+
+// ─── Risk Assessments Tab ────────────────────────────────────────────────────
+// Unified compliance to-do list + document repository. Overdue / due / upcoming
+// counts at the top, per-assessment detail drill-down, one-click complete with
+// auto-scheduled recurrence, and print-ready reports for EHO / SALSA audits.
+
+interface RiskAssessmentRecord {
+  id: number;
+  assessmentType: "fire" | "food_safety" | "general_safety" | "other" | string;
+  title: string;
+  bodyMarkdown: string;
+  status: "draft" | "active" | "archived" | string;
+  reviewFrequencyMonths: number;
+  lastReviewedAt: string | null;
+  nextReviewDue: string | null;
+  lastReviewedByName: string | null;
+  reviewerQualifications: string | null;
+  createdAt: string;
+  updatedAt: string;
+  openCount?: number;
+  overdueCount?: number;
+}
+
+interface ComplianceActionRecord {
+  id: number;
+  riskAssessmentId: number | null;
+  title: string;
+  description: string | null;
+  category: string;
+  priority: "low" | "medium" | "high" | "critical" | string;
+  status: "open" | "in_progress" | "completed" | "not_applicable" | string;
+  assignedToUserId: number | null;
+  assignedToName: string | null;
+  dueDate: string | null;
+  recurrence: string;
+  parentActionId: number | null;
+  completedAt: string | null;
+  completedByName: string | null;
+  completionNotes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ComplianceDashboard {
+  counts: { overdue: number; dueThisWeek: number; upcoming: number; unscheduled: number };
+  overdue: ComplianceActionRecord[];
+  dueThisWeek: ComplianceActionRecord[];
+  upcoming: ComplianceActionRecord[];
+  unscheduled: ComplianceActionRecord[];
+  assessments: RiskAssessmentRecord[];
+}
+
+const RECURRENCE_LABEL: Record<string, string> = {
+  none: "One-off",
+  weekly: "Weekly",
+  monthly: "Monthly",
+  quarterly: "Quarterly",
+  six_monthly: "6-monthly",
+  annually: "Annually",
+  three_yearly: "3-yearly",
+  five_yearly: "5-yearly",
+};
+
+const PRIORITY_COLOUR: Record<string, string> = {
+  critical: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border-red-300 dark:border-red-700",
+  high: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 border-orange-300 dark:border-orange-700",
+  medium: "bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 border-amber-200 dark:border-amber-800",
+  low: "bg-slate-100 text-slate-600 dark:bg-slate-900/40 dark:text-slate-400 border-slate-200 dark:border-slate-800",
+};
+
+const CATEGORY_ICON: Record<string, typeof TrendingUp> = {
+  fire: Flame,
+  food_safety: ShieldCheck,
+  general: HardHat,
+  general_safety: HardHat,
+  electrical: Zap,
+  gas: Flame,
+  training: Users,
+  other: ClipboardList,
+};
+
+function assessmentTypeLabel(t: string): string {
+  switch (t) {
+    case "fire": return "Fire";
+    case "food_safety": return "Food Safety";
+    case "general_safety": return "General Safety";
+    default: return t.charAt(0).toUpperCase() + t.slice(1);
+  }
+}
+
+function formatDueLabel(dueDate: string | null): { text: string; tone: "red" | "amber" | "slate" | "green" } {
+  if (!dueDate) return { text: "No due date", tone: "slate" };
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const due = new Date(dueDate + "T00:00:00");
+  const diffDays = Math.round((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays < 0) return { text: `Overdue by ${Math.abs(diffDays)} day${Math.abs(diffDays) === 1 ? "" : "s"}`, tone: "red" };
+  if (diffDays === 0) return { text: "Due today", tone: "amber" };
+  if (diffDays === 1) return { text: "Due tomorrow", tone: "amber" };
+  if (diffDays <= 7) return { text: `Due in ${diffDays} days`, tone: "amber" };
+  return { text: format(due, "d MMM yyyy"), tone: "slate" };
+}
+
+function RiskAssessmentsTab({ userRole, currentUserName }: { userRole: string; currentUserName: string | null }) {
+  const [dashboard, setDashboard] = useState<ComplianceDashboard | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedAssessmentId, setSelectedAssessmentId] = useState<number | null>(null);
+  const [completingAction, setCompletingAction] = useState<ComplianceActionRecord | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const isAdmin = userRole === "admin";
+
+  const reloadDashboard = useCallback(() => setRefreshKey(k => k + 1), []);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    fetch(`${BASE}/api/compliance-actions/dashboard`, { credentials: "include" })
+      .then(r => { if (!r.ok) throw new Error("Failed to load compliance dashboard"); return r.json(); })
+      .then((d: ComplianceDashboard) => { setDashboard(d); setLoading(false); })
+      .catch(err => { setError(err.message); setLoading(false); });
+  }, [refreshKey]);
+
+  if (loading) return <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+  if (error) return <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4 text-red-600 dark:text-red-400">{error}</div>;
+  if (!dashboard) return null;
+
+  // Detail view
+  if (selectedAssessmentId != null) {
+    return (
+      <RiskAssessmentDetail
+        id={selectedAssessmentId}
+        userRole={userRole}
+        currentUserName={currentUserName}
+        onBack={() => { setSelectedAssessmentId(null); reloadDashboard(); }}
+        onRequestComplete={(a) => setCompletingAction(a)}
+        externalRefreshKey={refreshKey}
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Summary pills */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <SummaryPill label="Overdue" count={dashboard.counts.overdue} tone="red" />
+        <SummaryPill label="Due this week" count={dashboard.counts.dueThisWeek} tone="amber" />
+        <SummaryPill label="Upcoming (30d)" count={dashboard.counts.upcoming} tone="slate" />
+        <SummaryPill label="No due date" count={dashboard.counts.unscheduled} tone="slate" />
+      </div>
+
+      {/* Overdue */}
+      {dashboard.overdue.length > 0 && (
+        <ActionSection
+          title="Overdue"
+          tone="red"
+          actions={dashboard.overdue}
+          onComplete={(a) => setCompletingAction(a)}
+        />
+      )}
+
+      {/* Due this week */}
+      {dashboard.dueThisWeek.length > 0 && (
+        <ActionSection
+          title="Due this week"
+          tone="amber"
+          actions={dashboard.dueThisWeek}
+          onComplete={(a) => setCompletingAction(a)}
+        />
+      )}
+
+      {/* Upcoming (30 days) */}
+      {dashboard.upcoming.length > 0 && (
+        <ActionSection
+          title="Upcoming (next 30 days)"
+          tone="slate"
+          actions={dashboard.upcoming}
+          onComplete={(a) => setCompletingAction(a)}
+          collapsed
+        />
+      )}
+
+      {dashboard.overdue.length === 0 && dashboard.dueThisWeek.length === 0 && (
+        <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-6 text-center">
+          <CheckCircle className="w-8 h-8 text-emerald-600 dark:text-emerald-400 mx-auto mb-2" />
+          <p className="font-semibold text-emerald-700 dark:text-emerald-400">All compliance tasks on track</p>
+          <p className="text-sm text-emerald-600/80 dark:text-emerald-400/80 mt-1">Nothing overdue or due this week.</p>
+        </div>
+      )}
+
+      {/* Assessments list */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-bold text-lg">Risk Assessments</h3>
+          <div className="flex gap-2">
+            <a
+              href={`${BASE}/reports/risk-assessments/print`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg text-sm bg-background hover:bg-secondary/50 transition-colors"
+            >
+              <Printer className="w-4 h-4" /> Audit printout
+            </a>
+            {isAdmin && (
+              <button
+                onClick={() => alert("Coming in v2 — use the existing Fire RA for now, which was seeded on first startup.")}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 transition-colors"
+              >
+                <Plus className="w-4 h-4" /> New RA
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="grid md:grid-cols-2 gap-3">
+          {dashboard.assessments.map((ra) => {
+            const Icon = CATEGORY_ICON[ra.assessmentType] ?? ClipboardList;
+            return (
+              <button
+                key={ra.id}
+                onClick={() => setSelectedAssessmentId(ra.id)}
+                className="text-left bg-card border border-border rounded-xl p-4 hover:border-primary/50 hover:shadow-sm transition-all"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
+                    <Icon className="w-5 h-5 text-muted-foreground flex-shrink-0 mt-0.5" />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold truncate">{ra.title}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {assessmentTypeLabel(ra.assessmentType)}
+                        {" · "}
+                        {ra.status === "draft" ? "Draft" : ra.status === "active" ? "Active" : "Archived"}
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-1" />
+                </div>
+                <div className="flex items-center gap-3 mt-3 text-xs">
+                  <span className="text-muted-foreground">{ra.openCount ?? 0} open</span>
+                  {(ra.overdueCount ?? 0) > 0 && (
+                    <span className="text-red-600 dark:text-red-400 font-semibold">
+                      {ra.overdueCount} overdue
+                    </span>
+                  )}
+                  {ra.nextReviewDue && (
+                    <span className="text-muted-foreground ml-auto">
+                      Review due {format(new Date(ra.nextReviewDue + "T00:00:00"), "d MMM yyyy")}
+                    </span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Complete dialog */}
+      {completingAction && (
+        <CompleteActionDialog
+          action={completingAction}
+          defaultCompletedBy={currentUserName ?? ""}
+          onClose={() => setCompletingAction(null)}
+          onCompleted={() => { setCompletingAction(null); reloadDashboard(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function SummaryPill({ label, count, tone }: { label: string; count: number; tone: "red" | "amber" | "slate" }) {
+  const colour = tone === "red"
+    ? "bg-red-50 border-red-200 text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400"
+    : tone === "amber"
+      ? "bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-400"
+      : "bg-card border-border text-foreground";
+  return (
+    <div className={cn("border rounded-xl px-4 py-3", colour)}>
+      <p className="text-2xl font-bold tabular-nums">{count}</p>
+      <p className="text-xs uppercase tracking-wide opacity-80">{label}</p>
+    </div>
+  );
+}
+
+function ActionSection({
+  title, tone, actions, onComplete, collapsed = false,
+}: {
+  title: string;
+  tone: "red" | "amber" | "slate";
+  actions: ComplianceActionRecord[];
+  onComplete: (a: ComplianceActionRecord) => void;
+  collapsed?: boolean;
+}) {
+  const [open, setOpen] = useState(!collapsed);
+  const ring = tone === "red" ? "border-red-200 dark:border-red-800" : tone === "amber" ? "border-amber-200 dark:border-amber-800" : "border-border";
+  return (
+    <div className={cn("bg-card border rounded-xl overflow-hidden", ring)}>
+      <button onClick={() => setOpen(v => !v)} className="w-full flex items-center justify-between px-4 py-3 hover:bg-secondary/30 transition-colors">
+        <div className="flex items-center gap-2">
+          <h3 className="font-bold">{title}</h3>
+          <span className="text-sm text-muted-foreground">({actions.length})</span>
+        </div>
+        {open ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+      </button>
+      {open && (
+        <div className="divide-y divide-border">
+          {actions.map(a => <ActionRow key={a.id} action={a} onComplete={onComplete} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ActionRow({ action, onComplete }: { action: ComplianceActionRecord; onComplete: (a: ComplianceActionRecord) => void }) {
+  const dueLabel = formatDueLabel(action.dueDate);
+  const Icon = CATEGORY_ICON[action.category] ?? ClipboardList;
+  const toneClass = dueLabel.tone === "red"
+    ? "text-red-600 dark:text-red-400"
+    : dueLabel.tone === "amber"
+      ? "text-amber-700 dark:text-amber-400"
+      : "text-muted-foreground";
+  return (
+    <div className="flex items-start gap-3 px-4 py-3">
+      <Icon className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-1" />
+      <div className="min-w-0 flex-1">
+        <p className="font-medium text-sm">{action.title}</p>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1 text-xs">
+          <span className={cn("font-semibold", toneClass)}>{dueLabel.text}</span>
+          {action.assignedToName && (
+            <span className="text-muted-foreground">· {action.assignedToName}</span>
+          )}
+          <span className={cn("px-1.5 py-0.5 rounded border text-[10px] uppercase tracking-wide", PRIORITY_COLOUR[action.priority] ?? "")}>
+            {action.priority}
+          </span>
+          {action.recurrence !== "none" && (
+            <span className="text-muted-foreground">· {RECURRENCE_LABEL[action.recurrence] ?? action.recurrence}</span>
+          )}
+        </div>
+        {action.description && (
+          <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{action.description}</p>
+        )}
+      </div>
+      <button
+        onClick={() => onComplete(action)}
+        className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold hover:bg-emerald-700 transition-colors"
+      >
+        <Check className="w-3.5 h-3.5" /> Done
+      </button>
+    </div>
+  );
+}
+
+function CompleteActionDialog({
+  action, defaultCompletedBy, onClose, onCompleted,
+}: {
+  action: ComplianceActionRecord;
+  defaultCompletedBy: string;
+  onClose: () => void;
+  onCompleted: () => void;
+}) {
+  const [notes, setNotes] = useState("");
+  const [completedBy, setCompletedBy] = useState(defaultCompletedBy);
+  const [completedAt, setCompletedAt] = useState(() => format(new Date(), "yyyy-MM-dd'T'HH:mm"));
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const handleSubmit = async () => {
+    setSaving(true); setErr(null);
+    try {
+      const res = await fetch(`${BASE}/api/compliance-actions/${action.id}/complete`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          notes: notes.trim() || null,
+          completedAt: new Date(completedAt).toISOString(),
+          completedByName: completedBy.trim() || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => null);
+        throw new Error(d?.error ?? "Failed to mark complete");
+      }
+      toast({ title: "Marked complete", description: action.recurrence !== "none" ? `Next ${RECURRENCE_LABEL[action.recurrence]?.toLowerCase()} check scheduled.` : undefined });
+      onCompleted();
+    } catch (e: any) {
+      setErr(e.message ?? "Failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Mark complete</DialogTitle>
+          <DialogDescription className="text-sm">{action.title}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-semibold text-muted-foreground mb-1">Completed by</label>
+            <input
+              type="text"
+              value={completedBy}
+              onChange={e => setCompletedBy(e.target.value)}
+              className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-muted-foreground mb-1">When</label>
+            <input
+              type="datetime-local"
+              value={completedAt}
+              onChange={e => setCompletedAt(e.target.value)}
+              className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-muted-foreground mb-1">Notes (optional)</label>
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              rows={3}
+              placeholder="e.g. All sounders tested OK; Zone 2 slightly quieter — asked installer to review."
+              className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground resize-none"
+            />
+          </div>
+          {action.recurrence !== "none" && (
+            <p className="text-xs text-muted-foreground bg-secondary/30 px-3 py-2 rounded-lg">
+              This is a <strong>{RECURRENCE_LABEL[action.recurrence]?.toLowerCase()}</strong> task. Marking it done will automatically schedule the next one.
+            </p>
+          )}
+          {err && <p className="text-xs text-red-600 dark:text-red-400">{err}</p>}
+        </div>
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} disabled={saving} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-secondary/50">Cancel</button>
+          <button
+            onClick={handleSubmit}
+            disabled={saving || !completedBy.trim()}
+            className="px-4 py-2 text-sm bg-emerald-600 text-white font-semibold rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {saving ? "Saving…" : "Mark complete"}
+          </button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function RiskAssessmentDetail({
+  id, userRole, currentUserName, onBack, onRequestComplete, externalRefreshKey,
+}: {
+  id: number;
+  userRole: string;
+  currentUserName: string | null;
+  onBack: () => void;
+  onRequestComplete: (a: ComplianceActionRecord) => void;
+  externalRefreshKey: number;
+}) {
+  const [ra, setRa] = useState<(RiskAssessmentRecord & { actions: ComplianceActionRecord[] }) | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+
+  const isAdmin = userRole === "admin";
+
+  useEffect(() => {
+    setLoading(true); setError(null);
+    fetch(`${BASE}/api/risk-assessments/${id}`, { credentials: "include" })
+      .then(r => { if (!r.ok) throw new Error("Failed to load"); return r.json(); })
+      .then((d) => { setRa(d); setLoading(false); })
+      .catch(err => { setError(err.message); setLoading(false); });
+  }, [id, refresh, externalRefreshKey]);
+
+  if (loading) return <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+  if (error || !ra) return <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4 text-red-600 dark:text-red-400">{error ?? "Not found"}</div>;
+
+  const Icon = CATEGORY_ICON[ra.assessmentType] ?? ClipboardList;
+
+  const openActions = ra.actions.filter(a => a.status === "open" || a.status === "in_progress");
+  const completedActions = ra.actions.filter(a => a.status === "completed");
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-start gap-3">
+        <button onClick={onBack} className="p-2 -ml-2 hover:bg-secondary/50 rounded-lg transition-colors">
+          <ChevronRight className="w-5 h-5 rotate-180" />
+        </button>
+        <Icon className="w-6 h-6 text-muted-foreground flex-shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <h2 className="text-xl font-bold">{ra.title}</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {assessmentTypeLabel(ra.assessmentType)} · {ra.status}
+            {ra.lastReviewedAt && <> · Last reviewed {format(new Date(ra.lastReviewedAt), "d MMM yyyy")}</>}
+            {ra.nextReviewDue && <> · Review due {format(new Date(ra.nextReviewDue + "T00:00:00"), "d MMM yyyy")}</>}
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <a
+            href={`${BASE}/reports/risk-assessments/${id}/print`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-secondary/50 transition-colors"
+          >
+            <Printer className="w-4 h-4" /> Print
+          </a>
+          {isAdmin && (
+            <button
+              onClick={() => setEditing(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 transition-colors"
+            >
+              <Pencil className="w-4 h-4" /> Edit
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Body markdown — rendered as plain-text with line wrapping; no markdown lib yet */}
+      {ra.bodyMarkdown && (
+        <div className="bg-card border border-border rounded-xl p-5">
+          <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground">{ra.bodyMarkdown}</pre>
+        </div>
+      )}
+
+      {/* Action plan */}
+      <div>
+        <h3 className="font-bold text-lg mb-3">Action plan ({openActions.length} open)</h3>
+        {openActions.length === 0 ? (
+          <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-4 text-sm text-emerald-700 dark:text-emerald-400">
+            <CheckCircle className="w-5 h-5 inline mr-2" /> No open actions for this assessment.
+          </div>
+        ) : (
+          <div className="bg-card border border-border rounded-xl divide-y divide-border overflow-hidden">
+            {openActions.map(a => (
+              <ActionRow key={a.id} action={a} onComplete={onRequestComplete} />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Completed history */}
+      {completedActions.length > 0 && (
+        <details className="bg-card border border-border rounded-xl">
+          <summary className="cursor-pointer px-4 py-3 font-semibold text-sm hover:bg-secondary/30">
+            Recently completed ({completedActions.length})
+          </summary>
+          <div className="divide-y divide-border">
+            {completedActions.slice(0, 20).map(a => (
+              <div key={a.id} className="px-4 py-3 text-sm">
+                <div className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-emerald-500 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="font-medium">{a.title}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {a.completedAt && format(new Date(a.completedAt), "d MMM yyyy, HH:mm")}
+                      {a.completedByName && ` · ${a.completedByName}`}
+                    </p>
+                    {a.completionNotes && <p className="text-xs italic text-muted-foreground mt-1">"{a.completionNotes}"</p>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {editing && isAdmin && (
+        <EditRiskAssessmentDialog
+          ra={ra}
+          onClose={() => setEditing(false)}
+          onSaved={() => { setEditing(false); setRefresh(r => r + 1); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function EditRiskAssessmentDialog({
+  ra, onClose, onSaved,
+}: {
+  ra: RiskAssessmentRecord;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [title, setTitle] = useState(ra.title);
+  const [body, setBody] = useState(ra.bodyMarkdown);
+  const [status, setStatus] = useState(ra.status);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const handleSave = async () => {
+    setSaving(true); setErr(null);
+    try {
+      const res = await fetch(`${BASE}/api/risk-assessments/${ra.id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, bodyMarkdown: body, status }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => null);
+        throw new Error(d?.error ?? "Failed to save");
+      }
+      toast({ title: "Saved" });
+      onSaved();
+    } catch (e: any) {
+      setErr(e.message ?? "Failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Edit risk assessment</DialogTitle>
+          <DialogDescription className="text-xs">
+            Paste the full content from the draft markdown file into the body. Plain text and markdown both render.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-semibold text-muted-foreground mb-1">Title</label>
+            <input
+              type="text"
+              value={title}
+              onChange={e => setTitle(e.target.value)}
+              className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-muted-foreground mb-1">Status</label>
+            <select
+              value={status}
+              onChange={e => setStatus(e.target.value)}
+              className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
+            >
+              <option value="draft">Draft</option>
+              <option value="active">Active</option>
+              <option value="archived">Archived</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-muted-foreground mb-1">Body (markdown)</label>
+            <textarea
+              value={body}
+              onChange={e => setBody(e.target.value)}
+              rows={20}
+              className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground font-mono text-xs resize-y"
+            />
+          </div>
+          {err && <p className="text-xs text-red-600 dark:text-red-400">{err}</p>}
+        </div>
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} disabled={saving} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-secondary/50">Cancel</button>
+          <button onClick={handleSave} disabled={saving || !title.trim()} className="px-4 py-2 text-sm bg-primary text-primary-foreground font-semibold rounded-lg hover:bg-primary/90 disabled:opacity-50">
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
