@@ -202,10 +202,22 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
 
   const getStock = (r: MacCheeseCalcRecipe) => stockOverrides[r.recipeId] ?? r.leftOverStock;
   const getDeficit = (r: MacCheeseCalcRecipe) => Math.max(0, r.salesNextDay - getStock(r));
-  const getToMake = (r: MacCheeseCalcRecipe) => {
+  // Raw demand (packs) — before batch rounding.
+  const getRawNeed = (r: MacCheeseCalcRecipe) => {
     const extra = extraOverrides[r.recipeId] ?? r.extraToMake;
     const totalNeeded = r.salesNextDay + r.salesNextDayPlus1 + r.salesNextDayPlus2 + extra;
     return Math.max(0, totalNeeded - getStock(r));
+  };
+  // To-make rounds UP to the nearest whole batch — the factory can only
+  // produce full batches, so this is what will actually be made. The plan
+  // view shows the same number, so users see consistent figures from edit
+  // form to plan.
+  const getToMake = (r: MacCheeseCalcRecipe) => {
+    const raw = getRawNeed(r);
+    if (raw === 0) return 0;
+    if ((r.packsPerBatch ?? 0) <= 0) return raw;
+    const batches = Math.ceil(raw / r.packsPerBatch);
+    return batches * r.packsPerBatch;
   };
 
   const handleSubmit = async () => {
@@ -346,7 +358,7 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Stock = current fridge packs. Sales D1/D2/D3 = next 3 dispatch days from Shopify. Deficit = max(0, D1 - Stock). Extra = additional packs. All values in packs.
+        Stock = current fridge packs. Sales D1/D2/D3 = next 3 dispatch days from Shopify. Deficit = max(0, D1 − Stock). Extra = additional packs. <strong>To Make is rounded up to whole batches</strong> — you can't produce partial batches, so target + rounding-up is what you'll actually make.
       </p>
 
       <div className="flex justify-end">
