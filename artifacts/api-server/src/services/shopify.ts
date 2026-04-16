@@ -120,6 +120,82 @@ async function shopifyFetch(path: string, params?: Record<string, string>) {
   return res.json();
 }
 
+/**
+ * Send a GraphQL query to Shopify Admin API.
+ *
+ * Shopify's REST `?tag=` filter is silently ignored on this store —
+ * GraphQL is the only API surface that actually applies tag filtering
+ * server-side. We use it specifically for small aggregate queries
+ * (e.g. ordersCount) where pulling the full order list via REST would
+ * waste memory. Throws on transport, HTTP, or GraphQL errors.
+ *
+ * Retries once on 429 / 5xx so a transient Shopify hiccup doesn't
+ * 502 a user-facing endpoint. Not a general solution — heavy/frequent
+ * callers should implement their own throttling.
+ */
+async function shopifyGraphQL<T>(query: string): Promise<T> {
+  const token = await getAccessToken();
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const res = await fetch(`${API_BASE}/graphql.json`, {
+      method: "POST",
+      headers: {
+        "X-Shopify-Access-Token": token,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ query }),
+    });
+
+    if (!res.ok) {
+      const retry = (res.status === 429 || (res.status >= 500 && res.status < 600)) && attempt === 1;
+      if (retry) {
+        const ra = parseFloat(res.headers.get("Retry-After") || "");
+        const waitMs = Math.min(Number.isFinite(ra) ? ra * 1000 : 500, 3_000);
+        await res.text().catch(() => undefined);
+        await new Promise(r => setTimeout(r, waitMs));
+        continue;
+      }
+      const text = await res.text();
+      throw new Error(`Shopify GraphQL error ${res.status}: ${text}`);
+    }
+
+    const body = (await res.json()) as { data?: T; errors?: Array<{ message: string }> };
+    if (body.errors && body.errors.length > 0) {
+      throw new Error(`Shopify GraphQL: ${body.errors.map(e => e.message).join("; ")}`);
+    }
+    if (!body.data) {
+      throw new Error("Shopify GraphQL: empty response");
+    }
+    return body.data;
+  }
+  throw new Error("Shopify GraphQL: retries exhausted");
+}
+
+/**
+ * Count orders matching a Shopify tag, optionally narrowed by
+ * fulfillment status. Uses GraphQL's server-side filtering, so the
+ * response is a single integer regardless of how many orders match.
+ *
+ * This is the safe way to read tag/status aggregates — it's cheap
+ * in time, memory, and throttle budget. Use it in place of
+ * `getOrdersByTag(...).length` anywhere you only need a count.
+ *
+ * Tags here aren't escaped for the search grammar beyond the string
+ * interpolation; callers must pass tag values that don't contain
+ * spaces, quotes, or boolean keywords like AND/OR.
+ */
+export async function countOrdersByTag(
+  tag: string,
+  fulfillmentStatus?: "fulfilled" | "unfulfilled" | "partial",
+): Promise<number> {
+  let searchQuery = `tag:${tag}`;
+  if (fulfillmentStatus) {
+    searchQuery += ` AND fulfillment_status:${fulfillmentStatus}`;
+  }
+  const gql = `{ ordersCount(query: "${searchQuery}") { count } }`;
+  const data = await shopifyGraphQL<{ ordersCount: { count: number } }>(gql);
+  return data.ordersCount.count;
+}
+
 export interface ShopifyLineItem {
   id: number;
   variant_id: number | null;

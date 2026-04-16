@@ -1,5 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { getOrdersByTag, getProducts, countProductsByTag, getOrdersByDateRange, type ShopifyOrder } from "../services/shopify";
+import { getOrdersByTag, getProducts, countProductsByTag, getOrdersByDateRange, countOrdersByTag, type ShopifyOrder } from "../services/shopify";
 import { db, recipesTable, usersTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 
@@ -167,6 +167,13 @@ router.get("/weekly-orders", async (req, res) => {
     }
     monday.setHours(0, 0, 0, 0);
 
+    // Use GraphQL ordersCount for per-day totals instead of fetching the
+    // whole order list. The dashboard widget only needs numbers, and the
+    // REST ?tag= filter is broken on this store — pulling 250+ heavy
+    // orders × 7 days previously OOM-crashed the Railway container.
+    // Two count queries per day (total, fulfilled); unfulfilled is the
+    // remainder so any "partial" fulfillment still shows as not-yet-done,
+    // matching the old widget semantics.
     const results = await Promise.all(
       Array.from({ length: 7 }, async (_, i) => {
         const dispatchDay = new Date(monday);
@@ -176,16 +183,18 @@ router.get("/weekly-orders", async (req, res) => {
         deliveryDay.setDate(monday.getDate() + i + 1);
 
         const tag = toDateTag(deliveryDay);
-        const orders = await getOrdersByTag(tag);
+        const [orderCount, fulfilledCount] = await Promise.all([
+          countOrdersByTag(tag),
+          countOrdersByTag(tag, "fulfilled"),
+        ]);
 
-        const fulfilledCount = orders.filter(o => o.fulfillment_status === "fulfilled").length;
         return {
           date: toDateTag(dispatchDay),
           deliveryDate: tag,
           day: DAY_NAMES[dispatchDay.getDay()],
-          orderCount: orders.length,
+          orderCount,
           fulfilledCount,
-          unfulfilledCount: orders.length - fulfilledCount,
+          unfulfilledCount: orderCount - fulfilledCount,
         };
       })
     );
