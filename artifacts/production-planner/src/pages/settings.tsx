@@ -536,22 +536,8 @@ function TeamAccessContent({
               <div className="space-y-4">
                 <div className="flex items-center gap-2 text-green-700 dark:text-green-400">
                   <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
-                  <p className="text-sm font-medium">Invite created for {inviteResult.email}</p>
+                  <p className="text-sm font-medium">Invite email sent to {inviteResult.email}</p>
                 </div>
-                {!import.meta.env.VITE_EMAIL_ENABLED && (
-                  <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground">Email not yet connected — share this link manually:</p>
-                    <div className="bg-secondary/50 rounded-lg p-3 break-all text-xs font-mono select-all border border-border">
-                      {inviteResult.url}
-                    </div>
-                    <button
-                      onClick={() => { navigator.clipboard.writeText(inviteResult.url); toast({ title: "Link copied!" }); }}
-                      className="text-xs text-primary hover:underline mt-1"
-                    >
-                      Copy link
-                    </button>
-                  </div>
-                )}
                 <p className="text-xs text-muted-foreground">The link expires in 48 hours.</p>
                 <button onClick={() => { setIsInviteOpen(false); setInviteResult(null); }}
                   className="w-full py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90">
