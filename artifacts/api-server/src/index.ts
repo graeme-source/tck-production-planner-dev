@@ -723,7 +723,7 @@ async function runStartupMigrations() {
       ON CONFLICT (page_key) DO UPDATE SET min_role = 'viewer'
     `);
 
-    // Mark Uncomplete support on station checklists — adds the skipped_reason
+    // Mark Incomplete support on station checklists — adds the skipped_reason
     // column read/written by the checklist routes. Without this, the GET
     // /api/checklists/station/:stationType/plan/:planId query fails on any
     // DB that predates the feature and the station UI hangs on "Loading
