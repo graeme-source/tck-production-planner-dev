@@ -2463,6 +2463,11 @@ components:
         baseWeightGrams:
           type: number
           nullable: true
+        builderMarkedCompleteAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: ISO timestamp set when the Building station builder explicitly marks the recipe complete before hitting batchesTarget. Null while the recipe is still in flight.
       required:
         - id
         - planId

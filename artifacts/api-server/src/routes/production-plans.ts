@@ -1683,6 +1683,7 @@ router.post("/:id/batch-completions", async (req, res) => {
     batchesTarget: productionPlanItemsTable.batchesTarget,
     extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
     shortCount: productionPlanItemsTable.shortCount,
+    builderMarkedCompleteAt: productionPlanItemsTable.builderMarkedCompleteAt,
     leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
     portionsPerBatch: recipesTable.portionsPerBatch,
   })
@@ -1694,12 +1695,16 @@ router.post("/:id/batch-completions", async (req, res) => {
     return;
   }
 
-  // Effective target accounts for extra packs and shorts (matches frontend getEffectiveTarget)
-  const rawTarget = planItem.batchesTarget ?? 0;
-  const packsPerBatch = Math.max(1, Math.floor((Number(planItem.portionsPerBatch) || 10) / 2));
-  const totalPacksTarget = rawTarget * packsPerBatch;
-  const effectivePacksNeeded = Math.max(0, totalPacksTarget - (planItem.shortCount ?? 0) + (planItem.extraPacksBuilt ?? 0));
-  const target = Math.ceil(effectivePacksNeeded / packsPerBatch);
+  // Once the builder has marked this recipe complete, no station can add more
+  // batches — the truncated output has been locked in.
+  if (planItem.builderMarkedCompleteAt) {
+    res.status(409).json({ error: "Recipe was marked complete by the builder" });
+    return;
+  }
+
+  // Effective target: raw plan target (the ceiling-math path is deprecated —
+  // builders now use the Mark Recipe Complete override for under-runs).
+  const target = planItem.batchesTarget ?? 0;
 
   // Per-station cap check: count THIS station's completions (not the shared batches_complete)
   if (stationType && target > 0) {
@@ -3646,9 +3651,54 @@ router.delete("/:id/items/:itemId/wonly", async (req, res) => {
   res.json({ itemId, wonlyCount: updated.wonlyCount });
 });
 
-router.post("/:id/items/:itemId/short", async (req, res) => {
+// ──────────────────────────────────────────────────────────────────────────────
+// POST /:id/items/:itemId/builder-complete — builder marks recipe complete
+// early (e.g. ran out of filling). Idempotent: no-op if already set.
+//
+// Once set, downstream stations (ovens, wrapping) use the builder's current
+// combined batch count as the effective target and pack output becomes
+// `batchesComplete × packsPerBatch + extraPacksBuilt`.
+// ──────────────────────────────────────────────────────────────────────────────
+router.post("/:id/items/:itemId/builder-complete", async (req, res) => {
   const planId = Number(req.params.id);
   const itemId = Number(req.params.itemId);
+
+  const [item] = await db.select({
+    id: productionPlanItemsTable.id,
+    builderMarkedCompleteAt: productionPlanItemsTable.builderMarkedCompleteAt,
+  })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
+
+  if (!item) {
+    res.status(404).json({ error: "Plan item not found" });
+    return;
+  }
+
+  if (item.builderMarkedCompleteAt) {
+    res.json({ itemId, builderMarkedCompleteAt: item.builderMarkedCompleteAt });
+    return;
+  }
+
+  const [updated] = await db
+    .update(productionPlanItemsTable)
+    .set({ builderMarkedCompleteAt: new Date() })
+    .where(eq(productionPlanItemsTable.id, itemId))
+    .returning({ builderMarkedCompleteAt: productionPlanItemsTable.builderMarkedCompleteAt });
+
+  res.json({ itemId, builderMarkedCompleteAt: updated.builderMarkedCompleteAt });
+});
+
+// DELETE /:id/items/:itemId/builder-complete — admin-only undo.
+router.delete("/:id/items/:itemId/builder-complete", async (req, res) => {
+  const planId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+
+  const admin = await isAdminUser(req);
+  if (!admin) {
+    res.status(403).json({ error: "Only admins can revert a recipe completion" });
+    return;
+  }
 
   const [exists] = await db.select({ id: productionPlanItemsTable.id })
     .from(productionPlanItemsTable)
@@ -3659,39 +3709,12 @@ router.post("/:id/items/:itemId/short", async (req, res) => {
     return;
   }
 
-  const [updated] = await db
+  await db
     .update(productionPlanItemsTable)
-    .set({ shortCount: sql`${productionPlanItemsTable.shortCount} + 1` })
-    .where(eq(productionPlanItemsTable.id, itemId))
-    .returning({ shortCount: productionPlanItemsTable.shortCount });
+    .set({ builderMarkedCompleteAt: null })
+    .where(eq(productionPlanItemsTable.id, itemId));
 
-  res.json({ itemId, shortCount: updated.shortCount });
-});
-
-router.delete("/:id/items/:itemId/short", async (req, res) => {
-  const planId = Number(req.params.id);
-  const itemId = Number(req.params.itemId);
-
-  const [item] = await db.select({ id: productionPlanItemsTable.id, shortCount: productionPlanItemsTable.shortCount })
-    .from(productionPlanItemsTable)
-    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
-
-  if (!item) {
-    res.status(404).json({ error: "Plan item not found" });
-    return;
-  }
-  if ((item.shortCount ?? 0) <= 0) {
-    res.status(409).json({ error: "Short count is already 0" });
-    return;
-  }
-
-  const [updated] = await db
-    .update(productionPlanItemsTable)
-    .set({ shortCount: sql`GREATEST(${productionPlanItemsTable.shortCount} - 1, 0)` })
-    .where(eq(productionPlanItemsTable.id, itemId))
-    .returning({ shortCount: productionPlanItemsTable.shortCount });
-
-  res.json({ itemId, shortCount: updated.shortCount });
+  res.json({ itemId, builderMarkedCompleteAt: null });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -4424,6 +4447,7 @@ router.get("/:id/packing", async (req, res) => {
       eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
       extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
       shortCount: productionPlanItemsTable.shortCount,
+      builderMarkedCompleteAt: productionPlanItemsTable.builderMarkedCompleteAt,
       leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
       status: productionPlanItemsTable.status,
       orderPosition: productionPlanItemsTable.orderPosition,
@@ -4454,9 +4478,11 @@ router.get("/:id/packing", async (req, res) => {
     const batchesComplete = Number(item.batchesComplete) || 0;
     const portionsPerBatch = Number(item.portionsPerBatch) || 10;
     const wonlyCount = Number(item.wonlyCount) || 0;
-    const shortCount = Number(item.shortCount) || 0;
     const extraPacksBuilt = Number(item.extraPacksBuilt) || 0;
     const eightPackBagCount = Number(item.eightPackBagCount) || 0;
+    // Once the builder has marked a recipe complete, the legacy shortCount is
+    // historical and no longer subtracted from the reported output.
+    const shortCount = item.builderMarkedCompleteAt ? 0 : (Number(item.shortCount) || 0);
     const grossPacks = Math.floor((batchesComplete * portionsPerBatch) / 2); // 2 portions per pack
     const netPacks = Math.max(0, grossPacks - (eightPackBagCount * 4) - wonlyCount - shortCount) + extraPacksBuilt;
     const itemDispatches = dispatches.filter(d => d.recipeId === item.recipeId);

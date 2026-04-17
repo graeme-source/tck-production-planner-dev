@@ -20,6 +20,7 @@ import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
 import { getStationCount, getAvailableFromPrev } from "../shared/constants";
+import { effectiveBatchesTarget, netTwoPacks as computeNetTwoPacks } from "../shared/recipe-completion";
 import { RECIPE_RACK_COLOURS, WonkyColour, ChillerRackItem, ChillerRackVisual } from "./dough-sheeting-station";
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -44,7 +45,11 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
   });
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
-  const currentItem = items.find(it => getStationCount(it, "ovens") < (it.batchesTarget ?? 0));
+  const combinedBuildingCount = (it: ProductionPlanItem) =>
+    getStationCount(it, "building_1") + getStationCount(it, "building_2");
+  const effTarget = (it: ProductionPlanItem) =>
+    effectiveBatchesTarget(it, combinedBuildingCount(it));
+  const currentItem = items.find(it => getStationCount(it, "ovens") < effTarget(it));
 
   // Auto-expand current recipe, and track when it changes
   useEffect(() => {
@@ -163,7 +168,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
   const addEightPackBag = async (item: ProductionPlanItem) => {
     if (isOnBreak) return;
     // Need at least 4 two-packs available to make an 8-pack bag
-    const availableTwoPacks = Math.max(0, grossPacks(item) - eightPackDeduction(item) - (item.wonlyCount ?? 0) - (item.shortCount ?? 0)) + (item.extraPacksBuilt ?? 0);
+    const availableTwoPacks = netTwoPacks(item);
     if (availableTwoPacks < 4) {
       toast({ title: "Not enough 2-packs", description: "Need at least 4 two-packs available to build an 8-pack bag.", variant: "destructive" });
       return;
@@ -191,14 +196,14 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
   const promptItem = promptItemId != null ? items.find(it => it.id === promptItemId) : null;
 
   const totalOvenComplete = items.reduce((s, it) => s + getStationCount(it, "ovens"), 0);
-  const totalTarget = items.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
+  const totalTarget = items.reduce((s, it) => s + effTarget(it), 0);
   const overallPct = totalTarget > 0 ? Math.round((totalOvenComplete / totalTarget) * 100) : 0;
 
   const grossPacks = (item: ProductionPlanItem) =>
     Math.floor((getStationCount(item, "ovens") * (item.portionsPerBatch ?? 10)) / 2);
   const eightPackDeduction = (item: ProductionPlanItem) => (item.eightPackBagCount ?? 0) * 4;
   const netTwoPacks = (item: ProductionPlanItem) =>
-    Math.max(0, grossPacks(item) - eightPackDeduction(item) - (item.wonlyCount ?? 0) - (item.shortCount ?? 0)) + (item.extraPacksBuilt ?? 0);
+    computeNetTwoPacks(item, getStationCount(item, "ovens"));
   // netPacks includes both two-packs and eight-pack bags for tray calc
   const netPacks = (item: ProductionPlanItem) =>
     netTwoPacks(item) + (item.eightPackBagCount ?? 0);
@@ -308,7 +313,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
           {items.map((item, idx) => {
             const isExpanded = expandedItemId === item.id;
             const isCurrent = item.id === currentItem?.id;
-            const isComplete = getStationCount(item, "ovens") >= (item.batchesTarget ?? 0);
+            const isComplete = getStationCount(item, "ovens") >= effTarget(item);
             const gPacks = grossPacks(item);
             const nTwoPacks = netTwoPacks(item);
             const nPacks = netPacks(item);
@@ -351,7 +356,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
 
                   {/* Batch count */}
                   <span className="text-sm tabular-nums font-medium flex-shrink-0">
-                    {getStationCount(item, "ovens")}/{item.batchesTarget ?? 0}
+                    {getStationCount(item, "ovens")}/{effTarget(item)}
                   </span>
 
                   {/* Status icon */}
@@ -410,7 +415,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                             {getStationCount(item, "ovens")}
                           </span>
                           <span className="text-xl text-muted-foreground font-light tabular-nums">
-                            / {item.batchesTarget ?? 0}
+                            / {effTarget(item)}
                           </span>
                         </div>
                         <p className="text-sm text-muted-foreground mt-1 font-medium">batches</p>
@@ -419,7 +424,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                         onClick={(e) => { e.stopPropagation(); addBatch(item); }}
                         disabled={
                           createBatch.isPending ||
-                          (getStationCount(item, "ovens") >= (item.batchesTarget ?? 0) && !isAdmin) ||
+                          (getStationCount(item, "ovens") >= effTarget(item) && !isAdmin) ||
                           getAvailableFromPrev(item, "ovens") <= 0 ||
                           isOnBreak
                         }

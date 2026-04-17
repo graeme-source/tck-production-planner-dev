@@ -2816,7 +2816,9 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
           const ovenCount = (it.stationCompletions as Record<string, number> | undefined)?.["ovens"] ?? 0;
           const gross = Math.floor((ovenCount * (it.portionsPerBatch ?? 10)) / 2);
           const eightDeduction = (it.eightPackBagCount ?? 0) * 4;
-          const net = Math.max(0, gross - eightDeduction - (it.wonlyCount ?? 0) - (it.shortCount ?? 0)) + (it.extraPacksBuilt ?? 0);
+          // Once builder marks complete, legacy shortCount is no longer subtracted.
+          const legacyShort = it.builderMarkedCompleteAt ? 0 : (it.shortCount ?? 0);
+          const net = Math.max(0, gross - eightDeduction - (it.wonlyCount ?? 0) - legacyShort) + (it.extraPacksBuilt ?? 0);
           return sum + net;
         }, 0);
         const wrappingDone = items.reduce((sum, it) => sum + (it.fridgeQty ?? 0), 0);

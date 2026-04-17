@@ -351,6 +351,8 @@ export interface ProductionPlanItem {
   fillWeightGrams?: number | null;
   baseType?: string | null;
   baseWeightGrams?: number | null;
+  /** ISO timestamp set when the Building station builder explicitly marks the recipe complete before hitting batchesTarget. Null while the recipe is still in flight. */
+  builderMarkedCompleteAt?: string | null;
 }
 
 export type ProductionPlanStatus =

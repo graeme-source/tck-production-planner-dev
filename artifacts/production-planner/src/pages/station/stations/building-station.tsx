@@ -32,6 +32,7 @@ import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
 import { EodSummary } from "../shared/eod-summary";
 import { getStationCount, getAvailableFromPrev } from "../shared/constants";
+import { effectiveBatchesTarget, packsPerBatch } from "../shared/recipe-completion";
 
 import {
   DndContext,
@@ -462,23 +463,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   }
 
   function getEffectiveTarget(it: ProductionPlanItem) {
-    const rawTarget = it.batchesTarget ?? 0;
-    const packsPerBatch = Math.max(1, Math.floor((it.portionsPerBatch ?? 10) / 2));
-    const totalPacksTarget = rawTarget * packsPerBatch;
-    const shorts = it.shortCount ?? 0;
-    const extras = it.extraPacksBuilt ?? 0;
-    const effectivePacksNeeded = Math.max(0, totalPacksTarget - shorts + extras);
-    return Math.ceil(effectivePacksNeeded / packsPerBatch);
-  }
-
-  function getLastBatchPacks(it: ProductionPlanItem) {
-    const packsPerBatch = Math.max(1, Math.floor((it.portionsPerBatch ?? 10) / 2));
-    const totalPacksTarget = (it.batchesTarget ?? 0) * packsPerBatch;
-    const shorts = it.shortCount ?? 0;
-    const extras = it.extraPacksBuilt ?? 0;
-    const effectivePacksNeeded = Math.max(0, totalPacksTarget - shorts + extras);
-    const remainder = effectivePacksNeeded % packsPerBatch;
-    return remainder;
+    return effectiveBatchesTarget(it, getCombinedBuildCount(it));
   }
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
@@ -498,8 +483,6 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   // Available = remaining batches to build (not gated by mixing).
   const available = currentItem ? Math.max(0, effectiveBatches - buildingCount) : 0;
   const remaining = currentItem ? Math.max(0, effectiveBatches - buildingCount) : 0;
-  const isLastBatchPartial = currentItem ? remaining === 1 && getLastBatchPacks(currentItem) > 0 : false;
-  const lastBatchPackCount = currentItem ? getLastBatchPacks(currentItem) : 0;
   const allDone = items.length > 0 && items.every(it =>
     getCombinedBuildCount(it) >= getEffectiveTarget(it)
   );
@@ -891,8 +874,6 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
             const itemAvailable = Math.max(0, effTarget - combinedCount);
             const itemRemaining = Math.max(0, effTarget - combinedCount);
             const itemPct = effTarget > 0 ? Math.round((combinedCount / effTarget) * 100) : 0;
-            const itemIsLastPartial = itemRemaining === 1 && getLastBatchPacks(item) > 0;
-            const itemLastPackCount = getLastBatchPacks(item);
             const asm = assemblyMap[item.id];
 
             return (
@@ -1125,9 +1106,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                                     ? "Waiting…"
                                     : pendingTap
                                       ? "Recording..."
-                                      : itemIsLastPartial
-                                        ? `PARTIAL — ${itemLastPackCount} pack${itemLastPackCount !== 1 ? "s" : ""} ✓`
-                                        : "BATCH DONE ✓"}
+                                      : "BATCH DONE ✓"}
                           </span>
                           {timerConfig.enabled && buildTimer.running && !allDone && !isOnBreak && (
                             <div
@@ -1174,6 +1153,17 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
 
                           {/* Pack adjustment */}
                           <PackAdjustment planId={plan.id} item={item} isOnBreak={isOnBreak} />
+
+                          {/* Builder override — mark recipe complete early when short on
+                              ingredients. Downstream stations pick up the truncated batch
+                              count as the new target. */}
+                          <MarkCompleteButton
+                            planId={plan.id}
+                            item={item}
+                            combinedCount={combinedCount}
+                            isOnBreak={isOnBreak}
+                            onMarked={() => setExtraPromptItemId(item.id)}
+                          />
 
                           {/* Part-batch calculator shortcut — useful when short on packs
                               and need to prepare a partial batch before the recipe wraps up */}
@@ -1325,7 +1315,7 @@ function RecipeCompleteDialogBody({ planId, item, isOnBreak, hasFilling, assembl
             {item.recipeName ?? "Recipe"} complete
           </h3>
           <p className="text-sm text-muted-foreground mt-1">
-            Any extra packs or shorts to record before moving on?
+            Any extra packs to record before moving on?
           </p>
         </div>
       </div>
@@ -1452,6 +1442,64 @@ function BatchDivision({ assemblyData, portionsPerBatch }: { assemblyData: Assem
   );
 }
 
+function MarkCompleteButton({
+  planId,
+  item,
+  combinedCount,
+  isOnBreak,
+  onMarked,
+}: {
+  planId: number;
+  item: ProductionPlanItem;
+  combinedCount: number;
+  isOnBreak: boolean;
+  onMarked: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [runAction, busy] = useGuardedAction({
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(planId) }),
+  });
+
+  // Already marked → nothing to do here.
+  if (item.builderMarkedCompleteAt) return null;
+  // Only expose the override once at least one batch is in.
+  if (combinedCount < 1) return null;
+  // If the recipe has already hit its plan target, the normal end-of-recipe
+  // prompt fires — no override needed.
+  const target = item.batchesTarget ?? 0;
+  if (combinedCount >= target) return null;
+
+  const ppb = packsPerBatch(item);
+  const extras = item.extraPacksBuilt ?? 0;
+  const projectedPacks = combinedCount * ppb + extras;
+
+  const handleClick = () => {
+    if (isOnBreak || busy) return;
+    const msg =
+      `Mark ${item.recipeName ?? "this recipe"} complete at ${combinedCount}/${target} batches?\n\n` +
+      `Net output passed to ovens: ${projectedPacks} pack${projectedPacks === 1 ? "" : "s"} ` +
+      `(${combinedCount} × ${ppb}${extras > 0 ? ` + ${extras} extra` : ""}).`;
+    if (!window.confirm(msg)) return;
+    runAction((signal) =>
+      guardedFetch(`/api/production-plans/${planId}/items/${item.id}/builder-complete`, {
+        method: "POST", signal,
+      }).then(() => onMarked())
+    );
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={busy || isOnBreak}
+      className="w-full mt-3 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold border-2 border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40 disabled:opacity-40 transition-colors"
+    >
+      <AlertTriangle className="w-4 h-4" />
+      Mark Recipe Complete ({combinedCount}/{target})
+    </button>
+  );
+}
+
 function PackAdjustment({ planId, item, isOnBreak }: { planId: number; item: ProductionPlanItem; isOnBreak: boolean }) {
   const queryClient = useQueryClient();
   const [runAction, busy] = useGuardedAction({
@@ -1459,8 +1507,6 @@ function PackAdjustment({ planId, item, isOnBreak }: { planId: number; item: Pro
   });
 
   const extraPacks = item.extraPacksBuilt ?? 0;
-  const shortCount = item.shortCount ?? 0;
-  const net = extraPacks - shortCount;
 
   const addExtra = () => {
     if (isOnBreak) return;
@@ -1484,60 +1530,28 @@ function PackAdjustment({ planId, item, isOnBreak }: { planId: number; item: Pro
     );
   };
 
-  const addShort = () => {
-    if (isOnBreak) return;
-    runAction((signal) =>
-      guardedFetch(`/api/production-plans/${planId}/items/${item.id}/short`, {
-        method: "POST", signal,
-      })
-    );
-  };
-
-  const removeShort = () => {
-    if (shortCount <= 0) return;
-    runAction((signal) =>
-      guardedFetch(`/api/production-plans/${planId}/items/${item.id}/short`, {
-        method: "DELETE", signal,
-      })
-    );
-  };
-
   return (
     <div className="border border-border rounded-xl px-3 py-2 mt-3">
       <div className="flex items-center gap-3">
         <p className="text-sm text-muted-foreground font-semibold">Pack Adjustment</p>
         <div className="flex items-center gap-2 ml-auto">
-          <button
-            onClick={addShort}
-            disabled={busy || isOnBreak}
-            className="h-9 px-3 rounded-lg text-sm font-semibold border border-border bg-background hover:bg-secondary/60 disabled:opacity-40 transition-all active:scale-95"
-          >
-            − Short
-          </button>
-          {shortCount > 0 && (
-            <button onClick={removeShort} disabled={busy} className="text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-40 underline">
-              undo {shortCount}
-            </button>
-          )}
-          <span className={cn(
-            "text-lg font-bold tabular-nums min-w-[2.5rem] text-center",
-            net > 0 ? "text-emerald-600 dark:text-emerald-400" :
-            net < 0 ? "text-red-600 dark:text-red-400" :
-            "text-muted-foreground"
-          )}>
-            {net > 0 ? `+${net}` : net}
-          </span>
           {extraPacks > 0 && (
             <button onClick={removeExtra} disabled={busy} className="text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-40 underline">
               undo {extraPacks}
             </button>
           )}
+          <span className={cn(
+            "text-lg font-bold tabular-nums min-w-[2.5rem] text-center",
+            extraPacks > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"
+          )}>
+            {extraPacks > 0 ? `+${extraPacks}` : extraPacks}
+          </span>
           <button
             onClick={addExtra}
             disabled={busy || isOnBreak}
             className="h-9 px-3 rounded-lg text-sm font-semibold border border-border bg-background hover:bg-secondary/60 disabled:opacity-40 transition-all active:scale-95"
           >
-            + Extra
+            + Extra Pack
           </button>
         </div>
       </div>

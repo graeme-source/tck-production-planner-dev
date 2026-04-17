@@ -40,6 +40,11 @@ export const productionPlanItemsTable = pgTable("production_plan_items", {
   mixingTinOverride: integer("mixing_tin_override"),
   leftoverFillingGrams: integer("leftover_filling_grams"),
   leftoverFillingComment: text("leftover_filling_comment"),
+  // Set when the builder explicitly marks a recipe complete before hitting
+  // batchesTarget (e.g. ran out of filling). Downstream stations treat the
+  // builder's current batch count as the new effective target and pack
+  // output is `batchesComplete × packsPerBatch + extraPacksBuilt`.
+  builderMarkedCompleteAt: timestamp("builder_marked_complete_at"),
 });
 
 export const batchCompletionsTable = pgTable("batch_completions", {

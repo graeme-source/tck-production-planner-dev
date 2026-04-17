@@ -17,6 +17,7 @@ import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
 import { getStationCount, getAvailableFromPrev } from "../shared/constants";
+import { netTwoPacks as computeNetTwoPacks } from "../shared/recipe-completion";
 
 interface ShopifyWrapConfirmState {
   item: ProductionPlanItem;
@@ -128,13 +129,19 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
     Math.floor((getStationCount(item, "ovens") * (item.portionsPerBatch ?? 10)) / 2);
   const eightPackDeduction = (item: ProductionPlanItem) => (item.eightPackBagCount ?? 0) * 4;
   const netTwoPacks = (item: ProductionPlanItem) =>
-    Math.max(0, grossPacks(item) - eightPackDeduction(item) - (item.wonlyCount ?? 0) - (item.shortCount ?? 0)) + (item.extraPacksBuilt ?? 0);
+    computeNetTwoPacks(item, getStationCount(item, "ovens"));
   // netPacks for backward compat (total items including 8-pack bags for storage calcs)
   const netPacks = (item: ProductionPlanItem) =>
     netTwoPacks(item) + (item.eightPackBagCount ?? 0);
 
   const totalWonly = items.reduce((s, it) => s + (it.wonlyCount ?? 0), 0);
-  const totalShort = items.reduce((s, it) => s + (it.shortCount ?? 0), 0);
+  // Only tally shorts for in-flight plans that haven't been marked complete by
+  // the builder — once marked, shortCount becomes historical and should no
+  // longer influence visible totals.
+  const totalShort = items.reduce(
+    (s, it) => s + (it.builderMarkedCompleteAt ? 0 : (it.shortCount ?? 0)),
+    0,
+  );
   const totalNet = items.reduce((s, it) => s + netTwoPacks(it), 0);
   const totalEightPackBags = items.reduce((s, it) => s + (it.eightPackBagCount ?? 0), 0);
   const totalFridge = items.reduce((s, it) => s + (it.fridgeQty ?? 0), 0);
@@ -488,7 +495,12 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                         </div>
                         <p className="text-sm text-muted-foreground mt-1">
                           {getStationCount(item, "ovens")} / {item.batchesTarget ?? 0} oven loads
-                          {(item.shortCount ?? 0) > 0 && <span className="text-red-500"> · {item.shortCount} short</span>}
+                          {item.builderMarkedCompleteAt && (
+                            <span className="text-amber-600 dark:text-amber-400"> · builder marked complete</span>
+                          )}
+                          {!item.builderMarkedCompleteAt && (item.shortCount ?? 0) > 0 && (
+                            <span className="text-red-500"> · {item.shortCount} short</span>
+                          )}
                         </p>
                       </div>
                       <button

@@ -800,6 +800,10 @@ async function runStartupMigrations() {
     await db.execute(sql`ALTER TABLE checklist_completions ADD COLUMN IF NOT EXISTS skipped_reason TEXT`);
     await db.execute(sql`ALTER TABLE checklist_oneoff_items ADD COLUMN IF NOT EXISTS skipped_reason TEXT`);
 
+    // Builder-controlled recipe completion — see
+    // lib/db/migrations/0009_add_builder_marked_complete_at.sql
+    await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS builder_marked_complete_at TIMESTAMP`);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);
