@@ -1,7 +1,7 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { db, stockEntriesTable, recipesTable, ingredientsTable, storageLocationsTable } from "@workspace/db";
 import { productionPlanItemsTable, productionPlansTable } from "@workspace/db";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte, lt } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -213,6 +213,96 @@ router.get("/", async (_req, res) => {
       LOCATION_DEFS.some(d => d.key === l.key) ||
       l.key.startsWith("sl_")
     ),
+  });
+});
+
+// ── Adjustment history ────────────────────────────────────────────────────────
+// Returns the stock_entries snapshots for a given (location, itemType, itemId)
+// tuple, limited to the last N days, with a computed delta per row. Used by
+// the Stock Control expanded-row panel so the user can reconcile factory
+// fridge deductions against fulfilment/wrap counts without needing a separate
+// audit-log schema. We fetch one extra row just before the window so the
+// first displayed entry has an accurate delta baseline.
+router.get("/history", async (req: Request, res: Response) => {
+  const location = typeof req.query.location === "string" ? req.query.location : "";
+  const itemType = typeof req.query.itemType === "string" ? req.query.itemType : "";
+  const itemIdRaw = typeof req.query.itemId === "string" ? req.query.itemId : "";
+  const daysRaw = typeof req.query.days === "string" ? req.query.days : "7";
+
+  if (!location || (itemType !== "recipe" && itemType !== "ingredient")) {
+    res.status(400).json({ error: "location and itemType (recipe|ingredient) are required" });
+    return;
+  }
+  const itemId = parseInt(itemIdRaw, 10);
+  if (!Number.isFinite(itemId) || itemId <= 0) {
+    res.status(400).json({ error: "itemId must be a positive integer" });
+    return;
+  }
+  const days = Math.min(Math.max(parseInt(daysRaw, 10) || 7, 1), 90);
+
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const itemFilter = itemType === "recipe"
+    ? eq(stockEntriesTable.recipeId, itemId)
+    : eq(stockEntriesTable.ingredientId, itemId);
+
+  // Rows inside the window (newest first for display)
+  const windowRows = await db
+    .select({
+      id: stockEntriesTable.id,
+      checkedAt: stockEntriesTable.checkedAt,
+      quantity: stockEntriesTable.quantity,
+      unit: stockEntriesTable.unit,
+      notes: stockEntriesTable.notes,
+    })
+    .from(stockEntriesTable)
+    .where(and(
+      eq(stockEntriesTable.location, location),
+      eq(stockEntriesTable.itemType, itemType),
+      itemFilter,
+      gte(stockEntriesTable.checkedAt, since),
+    ))
+    .orderBy(desc(stockEntriesTable.checkedAt));
+
+  // One row immediately before the window (for delta baseline)
+  const [baselineRow] = await db
+    .select({
+      quantity: stockEntriesTable.quantity,
+    })
+    .from(stockEntriesTable)
+    .where(and(
+      eq(stockEntriesTable.location, location),
+      eq(stockEntriesTable.itemType, itemType),
+      itemFilter,
+      lt(stockEntriesTable.checkedAt, since),
+    ))
+    .orderBy(desc(stockEntriesTable.checkedAt))
+    .limit(1);
+
+  // Walk ascending to compute deltas, then reverse back to newest-first.
+  const ascending = [...windowRows].reverse();
+  const baseline = baselineRow ? parseFloat(String(baselineRow.quantity)) : null;
+  let prev: number | null = baseline;
+  const withDeltas = ascending.map(r => {
+    const qty = parseFloat(String(r.quantity));
+    const delta = prev === null ? null : qty - prev;
+    prev = qty;
+    return {
+      id: r.id,
+      checkedAt: r.checkedAt,
+      quantity: qty,
+      delta,
+      unit: r.unit,
+      notes: r.notes,
+    };
+  });
+
+  res.json({
+    location,
+    itemType,
+    itemId,
+    days,
+    baselineQuantity: baseline,
+    entries: withDeltas.reverse(), // newest first for UI
   });
 });
 

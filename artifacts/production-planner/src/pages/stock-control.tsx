@@ -181,6 +181,37 @@ async function fetchFridgeBatches(recipeId: number): Promise<FridgeStockBatch[]>
   return res.json();
 }
 
+// ── Adjustment history ────────────────────────────────────────────────────────
+interface AdjustmentHistoryEntry {
+  id: number;
+  checkedAt: string;
+  quantity: number;
+  delta: number | null;
+  unit: string;
+  notes: string | null;
+}
+
+interface AdjustmentHistoryResponse {
+  location: string;
+  itemType: "recipe" | "ingredient";
+  itemId: number;
+  days: number;
+  baselineQuantity: number | null;
+  entries: AdjustmentHistoryEntry[];
+}
+
+async function fetchAdjustmentHistory(
+  location: string,
+  itemType: "recipe" | "ingredient",
+  itemId: number,
+  days = 7,
+): Promise<AdjustmentHistoryResponse> {
+  const q = new URLSearchParams({ location, itemType, itemId: String(itemId), days: String(days) });
+  const res = await fetch(`${BASE}/api/stock-control/history?${q}`, { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to fetch adjustment history");
+  return res.json();
+}
+
 function formatBatchNumber(bn: number): string {
   const year = 2000 + Math.floor(bn / 1000);
   const dayOfYear = bn % 1000;
@@ -243,14 +274,40 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
   const [addUnit, setAddUnit] = useState("packs");
   const [stockError, setStockError] = useState<string | null>(null);
 
-  // Batch detail expansion (production fridge recipes only)
-  const [expandedRecipeId, setExpandedRecipeId] = useState<number | null>(null);
+  // Row expansion. Keyed as "recipe:ID" or "ingredient:ID" so any item
+  // in any location can be expanded for its adjustment history. The
+  // existing production-fridge batch panel continues to show alongside
+  // the history when the expanded row is a recipe in the fridge.
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const isFridgeLocation = location.key === "production_fridge";
 
+  const expandedRecipeIdForBatches = (() => {
+    if (!expandedKey || !isFridgeLocation) return null;
+    const [kind, idStr] = expandedKey.split(":");
+    if (kind !== "recipe") return null;
+    const id = parseInt(idStr, 10);
+    return Number.isFinite(id) ? id : null;
+  })();
+
   const { data: batchData, isLoading: batchLoading } = useQuery<FridgeStockBatch[]>({
-    queryKey: ["fridge-batches", expandedRecipeId],
-    queryFn: () => fetchFridgeBatches(expandedRecipeId!),
-    enabled: isFridgeLocation && expandedRecipeId !== null,
+    queryKey: ["fridge-batches", expandedRecipeIdForBatches],
+    queryFn: () => fetchFridgeBatches(expandedRecipeIdForBatches!),
+    enabled: expandedRecipeIdForBatches !== null,
+    staleTime: 30_000,
+  });
+
+  const expandedItemParsed = (() => {
+    if (!expandedKey) return null;
+    const [kind, idStr] = expandedKey.split(":");
+    const id = parseInt(idStr, 10);
+    if (!Number.isFinite(id) || (kind !== "recipe" && kind !== "ingredient")) return null;
+    return { itemType: kind as "recipe" | "ingredient", itemId: id };
+  })();
+
+  const { data: historyData, isLoading: historyLoading } = useQuery<AdjustmentHistoryResponse>({
+    queryKey: ["adjustment-history", location.key, expandedKey],
+    queryFn: () => fetchAdjustmentHistory(location.key, expandedItemParsed!.itemType, expandedItemParsed!.itemId, 7),
+    enabled: expandedItemParsed !== null,
     staleTime: 30_000,
   });
 
@@ -700,14 +757,23 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
               }
 
               // ── Normal row ─────────────────────────────────────────────
-              const canExpand = isFridgeLocation && item.type === "recipe" && item.recipeId !== null;
-              const isExpanded = canExpand && expandedRecipeId === item.recipeId;
+              // Any item with a recipe or ingredient ID can be expanded to
+              // show its adjustment history. Production-fridge recipes
+              // additionally show their per-batch breakdown in the same
+              // panel (preserving the prior UX).
+              const itemKey =
+                item.type === "recipe" && item.recipeId !== null ? `recipe:${item.recipeId}` :
+                item.type === "ingredient" && item.ingredientId !== null ? `ingredient:${item.ingredientId}` :
+                null;
+              const canExpand = itemKey !== null;
+              const isExpanded = canExpand && expandedKey === itemKey;
+              const showBatchPanel = isExpanded && isFridgeLocation && item.type === "recipe";
 
               return (
                 <div key={primaryId}>
                   <div
                     className={cn("px-6 py-4 hover:bg-secondary/30 transition-colors group", canExpand && "cursor-pointer")}
-                    onClick={canExpand ? () => setExpandedRecipeId(isExpanded ? null : item.recipeId) : undefined}
+                    onClick={canExpand ? () => setExpandedKey(isExpanded ? null : itemKey) : undefined}
                   >
                     <div className="flex items-center gap-3 mb-2">
                       {canExpand ? (
@@ -761,8 +827,8 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
                     </div>
                   </div>
 
-                  {/* Batch breakdown sub-rows */}
-                  {isExpanded && (
+                  {/* Batch breakdown sub-rows (production-fridge recipes only) */}
+                  {showBatchPanel && (
                     <div className="bg-secondary/10 border-t border-border/30">
                       {batchLoading ? (
                         <div className="px-6 py-3 flex items-center gap-2 text-xs text-muted-foreground">
@@ -809,6 +875,74 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
                               </div>
                             );
                           })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Adjustment history (last 7 days) — shown for any expanded row */}
+                  {isExpanded && (
+                    <div className="bg-secondary/5 border-t border-border/30">
+                      <div className="px-6 py-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                        Adjustment history · last 7 days
+                      </div>
+                      {historyLoading ? (
+                        <div className="px-6 py-3 flex items-center gap-2 text-xs text-muted-foreground">
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading history…
+                        </div>
+                      ) : !historyData || historyData.entries.length === 0 ? (
+                        <div className="px-6 py-3 text-xs text-muted-foreground italic">
+                          No recorded adjustments in the last 7 days.
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-border/20">
+                          <div className="px-6 py-2 flex items-center gap-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                            <span className="w-5 shrink-0" />
+                            <span className="w-32 shrink-0">When</span>
+                            <span className="w-16 text-right">Change</span>
+                            <span className="w-16 text-right">Total</span>
+                            <span className="flex-1 text-left pl-3">Notes</span>
+                          </div>
+                          {historyData.entries.map((entry) => {
+                            const when = new Date(entry.checkedAt);
+                            const whenStr = when.toLocaleString("en-GB", {
+                              day: "numeric", month: "short",
+                              hour: "2-digit", minute: "2-digit",
+                              hour12: false,
+                            });
+                            const hasDelta = entry.delta !== null;
+                            const deltaPositive = hasDelta && (entry.delta as number) > 0;
+                            const deltaNegative = hasDelta && (entry.delta as number) < 0;
+                            const deltaAbs = hasDelta ? Math.abs(entry.delta as number) : 0;
+                            const deltaStr = hasDelta
+                              ? (deltaPositive ? `+${Math.round(deltaAbs * 100) / 100}` : deltaNegative ? `−${Math.round(deltaAbs * 100) / 100}` : "0")
+                              : "—";
+                            return (
+                              <div key={entry.id} className="px-6 py-2 flex items-center gap-3 text-xs">
+                                <span className="w-5 shrink-0" />
+                                <span className="w-32 shrink-0 text-muted-foreground tabular-nums">{whenStr}</span>
+                                <span className={cn(
+                                  "w-16 text-right font-bold tabular-nums",
+                                  deltaPositive && "text-emerald-600",
+                                  deltaNegative && "text-red-500",
+                                  !hasDelta && "text-muted-foreground",
+                                )}>
+                                  {deltaStr}
+                                </span>
+                                <span className="w-16 text-right font-medium tabular-nums">
+                                  {Math.round(entry.quantity * 100) / 100}
+                                </span>
+                                <span className="flex-1 pl-3 text-muted-foreground truncate" title={entry.notes ?? ""}>
+                                  {entry.notes ?? ""}
+                                </span>
+                              </div>
+                            );
+                          })}
+                          {historyData.baselineQuantity === null && historyData.entries.length > 0 && (
+                            <div className="px-6 py-1.5 text-[10px] text-muted-foreground italic">
+                              Oldest entry shown has no prior baseline — earlier deltas unavailable.
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
