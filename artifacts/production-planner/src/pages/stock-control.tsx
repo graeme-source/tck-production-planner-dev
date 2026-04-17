@@ -396,7 +396,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
     setBulkEdit(false);
     setBulkValues({});
     setStockError(null);
-    setExpandedRecipeId(null);
+    setExpandedKey(null);
   }, [location.key]);
 
   const { data: recipes } = useQuery<Recipe[]>({
