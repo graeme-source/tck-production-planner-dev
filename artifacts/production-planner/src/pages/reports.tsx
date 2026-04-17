@@ -54,8 +54,10 @@ interface BreakReportData {
 
 interface KpiOverview {
   totalBatches: number;
+  totalMacPacks?: number;
   totalActiveMinutes: number;
   overallBph: number;
+  macPacksPerHour?: number;
   wallClockMinutes: number;
   uniqueDays: number;
   avgBatchesPerDay: number;
@@ -120,6 +122,7 @@ const STATION_LABELS: Record<string, string> = {
   prep_veg: "Veg Prep",
   prep_bases: "Bases & Sauces",
   prep_meat: "Meat Prep",
+  mac_cheese_packs: "Mac Cheese Packs",
 };
 
 interface PackingDayRow {
@@ -489,13 +492,17 @@ function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: str
           icon={<Layers className="w-5 h-5 text-blue-600" />}
           label="Total Batches"
           value={String(data.overview.totalBatches)}
-          sub="Both builders combined"
+          sub={(data.overview.totalMacPacks ?? 0) > 0
+            ? `Calzone batches · +${data.overview.totalMacPacks} mac packs`
+            : "Both builders combined"}
         />
         <SummaryCard
           icon={<Activity className="w-5 h-5 text-violet-600" />}
           label="Batches / Hour"
           value={String(data.overview.overallBph)}
-          sub="Both building tables added"
+          sub={(data.overview.macPacksPerHour ?? 0) > 0
+            ? `Calzone · mac packs: ${data.overview.macPacksPerHour}/hr`
+            : "Both building tables added"}
         />
         <SummaryCard
           icon={<Timer className="w-5 h-5 text-amber-600" />}

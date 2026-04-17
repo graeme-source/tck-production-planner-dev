@@ -2767,8 +2767,21 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
 
   const statusConfig = STATUS_CONFIG[plan.status as keyof typeof STATUS_CONFIG] ?? STATUS_CONFIG.draft;
   const StatusIcon = statusConfig.icon;
+  // Totals: calzones are counted in batches, mac cheese in packs (1 mac
+  // batch_completion row = 1 pack because portionsPerBatch=2, packsPerBatch=1).
+  // totalBatchesTarget/Complete stays as the combined count so existing
+  // station-progress denominators (building tables build both categories)
+  // keep working. calzone* / macPacks* are exposed for display splits.
   const totalBatchesTarget = plan.items?.reduce((s, it) => s + (it.batchesTarget ?? 0), 0) ?? 0;
   const totalBatchesComplete = plan.items?.reduce((s, it) => s + (it.batchesComplete ?? 0), 0) ?? 0;
+  const calzoneBatchesTarget = plan.items?.filter(it => (it as any).recipeCategory !== "Macaroni Cheese")
+    .reduce((s, it) => s + (it.batchesTarget ?? 0), 0) ?? 0;
+  const calzoneBatchesComplete = plan.items?.filter(it => (it as any).recipeCategory !== "Macaroni Cheese")
+    .reduce((s, it) => s + (it.batchesComplete ?? 0), 0) ?? 0;
+  const macPacksTarget = plan.items?.filter(it => (it as any).recipeCategory === "Macaroni Cheese")
+    .reduce((s, it) => s + (it.batchesTarget ?? 0), 0) ?? 0;
+  const macPacksComplete = plan.items?.filter(it => (it as any).recipeCategory === "Macaroni Cheese")
+    .reduce((s, it) => s + (it.batchesComplete ?? 0), 0) ?? 0;
   const totalPacks = plan.items?.reduce((s, it) => s + (it.batchesTarget ?? 0) * (it.portionsPerBatch ?? 10) / (it.packSize ?? 2), 0) ?? 0;
   const progress = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
 
@@ -3125,7 +3138,11 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
             <Package className="w-4 h-4 text-primary" />
             Production Items
           </h2>
-          <span className="text-xs text-muted-foreground">{plan.items?.length ?? 0} recipes · {totalBatchesTarget} batches · {totalPacks.toLocaleString()} packs</span>
+          <span className="text-xs text-muted-foreground">
+            {plan.items?.length ?? 0} recipes · {calzoneBatchesTarget} batches
+            {macPacksTarget > 0 && <> + {macPacksTarget} mac packs</>}
+            {" · "}{totalPacks.toLocaleString()} packs
+          </span>
         </div>
         <table className="w-full text-sm">
           <thead>
@@ -3231,7 +3248,14 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
           {totalBatchesTarget > 0 && (
             <tfoot>
               <tr className="bg-secondary/10 border-t border-border font-medium text-sm">
-                <td colSpan={2} className="py-2.5 px-4 text-right text-muted-foreground">Totals</td>
+                <td colSpan={2} className="py-2.5 px-4 text-right text-muted-foreground">
+                  Totals
+                  {macPacksTarget > 0 && (
+                    <span className="block text-[10px] font-normal text-muted-foreground">
+                      {calzoneBatchesTarget} calzone + {macPacksTarget} mac packs
+                    </span>
+                  )}
+                </td>
                 <td className="py-2.5 px-4 text-center">{totalBatchesTarget}</td>
                 <td className="py-2.5 px-4 text-center font-mono">{totalPacks.toLocaleString()}</td>
                 <td className="py-2.5 px-4 text-center">{totalBatchesComplete}</td>

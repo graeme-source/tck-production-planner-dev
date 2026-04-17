@@ -14,6 +14,15 @@ import {
 import { eq, and, gte, lte, sql, isNotNull, inArray } from "drizzle-orm";
 import { getOrdersByTag } from "../services/shopify";
 
+// Recipe category name for macaroni cheese products. Mac cheese completions are
+// split out from calzone completions in KPI reports (1 mac batch_completion
+// row = 1 pack because portionsPerBatch=2, packsPerBatch=1).
+const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
+// Synthetic station type used in KPI reports to represent mac cheese packs
+// built at the building tables. Lets mac packs appear as their own row in
+// station summaries and daily sessions alongside building_1/building_2.
+const MAC_CHEESE_PACKS_STATION = "mac_cheese_packs";
+
 const router: IRouter = Router();
 
 router.get("/breaks", async (req, res) => {
@@ -144,6 +153,7 @@ router.get("/production-kpis", async (req, res) => {
       planId: productionPlanItemsTable.planId,
       recipeId: productionPlanItemsTable.recipeId,
       recipeName: recipesTable.name,
+      recipeCategory: recipesTable.category,
       planDate: productionPlansTable.planDate,
       planName: productionPlansTable.name,
       userName: usersTable.name,
@@ -156,12 +166,27 @@ router.get("/production-kpis", async (req, res) => {
     .where(completionConditions.length > 0 ? and(...completionConditions) : undefined)
     .orderBy(sql`${batchCompletionsTable.completedAt} DESC`);
 
+  // For a completion, the station row it contributes to in session/station
+  // summaries. Mac cheese items built at building tables get routed to a
+  // synthetic "mac_cheese_packs" pseudo-station so calzone batches and mac
+  // packs can't distort each other's BPH.
+  const effectiveStation = (c: { stationType: string; recipeCategory: string | null }) => {
+    if (c.recipeCategory === MAC_CHEESE_CATEGORY && (c.stationType === "building_1" || c.stationType === "building_2")) {
+      return MAC_CHEESE_PACKS_STATION;
+    }
+    return c.stationType;
+  };
+
   const timingStandards = await db.select().from(timingStandardsTable);
   const standardsMap = new Map(timingStandards.map(t => [t.stationType, {
     target: Number(t.targetBatchesPerHour),
     min: Number(t.minBatchesPerHour),
     label: t.stationLabel,
   }]));
+  // The synthetic mac cheese pseudo-station has no timing_standards row, so
+  // provide a default label. Thresholds stay null (no color coding) until we
+  // explicitly configure them.
+  standardsMap.set(MAC_CHEESE_PACKS_STATION, { target: 0, min: 0, label: "Mac Cheese Packs" });
 
   const breakConditions: any[] = [isNotNull(stationBreaksTable.endedAt)];
   if (from) breakConditions.push(sql`${stationBreaksTable.startedAt} >= ${new Date(String(from)).toISOString()}`);
@@ -204,11 +229,12 @@ router.get("/production-kpis", async (req, res) => {
 
   for (const c of completions) {
     const date = c.planDate ?? c.completedAt.toISOString().slice(0, 10);
-    const key = makeKey(date, c.stationType, c.userId, c.planId);
+    const station = effectiveStation(c);
+    const key = makeKey(date, station, c.userId, c.planId);
     if (!sessionMap.has(key)) {
       sessionMap.set(key, {
         date,
-        station: c.stationType,
+        station,
         userId: c.userId,
         userName: c.userName ?? "Unknown",
         batchCount: 0,
@@ -231,11 +257,15 @@ router.get("/production-kpis", async (req, res) => {
   for (const b of breaks) {
     if (!b.endedAt) continue;
     const date = b.startedAt.toISOString().slice(0, 10);
-    const key = makeKey(date, b.stationType, b.userId, b.planId);
-    const s = sessionMap.get(key);
-    if (s) {
-      const mins = Math.max(0, (b.endedAt.getTime() - b.startedAt.getTime()) / 60000);
-      s.breakMinutes += mins;
+    const mins = Math.max(0, (b.endedAt.getTime() - b.startedAt.getTime()) / 60000);
+    // Breaks taken on a building table apply to both the calzone session and
+    // the mac cheese session (same builder, same break window).
+    const candidateStations = (b.stationType === "building_1" || b.stationType === "building_2")
+      ? [b.stationType, MAC_CHEESE_PACKS_STATION]
+      : [b.stationType];
+    for (const st of candidateStations) {
+      const s = sessionMap.get(makeKey(date, st, b.userId, b.planId));
+      if (s) s.breakMinutes += mins;
     }
   }
 
@@ -352,18 +382,26 @@ router.get("/production-kpis", async (req, res) => {
   const building2Minutes = sumMinutes(building2Sessions);
   const totalActiveMinutes = building1Minutes + building2Minutes;
 
-  // Source of truth for "Total Batches": building completions per recipe,
-  // capped at batchesTarget per recipe so inflated completions can't exceed
-  // what was actually planned. Extra packs add fractional batches.
+  // Source of truth for "Total Batches": calzone building completions per
+  // recipe, capped at batchesTarget per recipe so inflated completions can't
+  // exceed what was actually planned. Mac cheese completions are tracked
+  // separately as packs (totalMacPacks) since 1 mac batch = 1 pack.
   const buildingCompletionsByItem = new Map<number, number>();
+  const macPacksCompletionsByItem = new Map<number, number>();
   for (const c of completions) {
     if (c.stationType !== "building_1" && c.stationType !== "building_2") continue;
-    buildingCompletionsByItem.set(c.planItemId, (buildingCompletionsByItem.get(c.planItemId) ?? 0) + 1);
+    if (c.recipeCategory === MAC_CHEESE_CATEGORY) {
+      macPacksCompletionsByItem.set(c.planItemId, (macPacksCompletionsByItem.get(c.planItemId) ?? 0) + 1);
+    } else {
+      buildingCompletionsByItem.set(c.planItemId, (buildingCompletionsByItem.get(c.planItemId) ?? 0) + 1);
+    }
   }
 
-  // Look up batchesTarget + extraPacksBuilt per plan item to cap and add fractional extras
+  // Look up batchesTarget + extraPacksBuilt per plan item to cap calzone
+  // completions and accumulate mac packs.
   const planIds = [...new Set(completions.map(c => c.planId))];
   let totalBatches = 0;
+  let totalMacPacks = 0;
   if (planIds.length > 0) {
     const planItemRows = await db
       .select({
@@ -371,18 +409,24 @@ router.get("/production-kpis", async (req, res) => {
         batchesTarget: productionPlanItemsTable.batchesTarget,
         extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
         portionsPerBatch: recipesTable.portionsPerBatch,
+        category: recipesTable.category,
       })
       .from(productionPlanItemsTable)
       .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
       .where(inArray(productionPlanItemsTable.planId, planIds));
 
     for (const pi of planItemRows) {
-      const target = pi.batchesTarget ?? 0;
-      const built = buildingCompletionsByItem.get(pi.id) ?? 0;
-      // Combined building_1 + building_2 for this recipe, capped at target
-      totalBatches += Math.min(built, target);
+      if (pi.category === MAC_CHEESE_CATEGORY) {
+        // Mac packs: cap at target (1 mac batch_completion row = 1 pack)
+        const target = pi.batchesTarget ?? 0;
+        const built = macPacksCompletionsByItem.get(pi.id) ?? 0;
+        totalMacPacks += Math.min(built, target);
+      } else {
+        const target = pi.batchesTarget ?? 0;
+        const built = buildingCompletionsByItem.get(pi.id) ?? 0;
+        totalBatches += Math.min(built, target);
+      }
     }
-    // Note: built is already combined (building_1 + building_2) from buildingCompletionsByItem
   }
 
   // overallBph calculated after productionActiveMinutes is computed below
@@ -426,10 +470,9 @@ router.get("/production-kpis", async (req, res) => {
   }
 
   // Cap per-builder and per-user station summaries for building stations
-  // so they match the capped totalBatches (not inflated raw completions).
-  // Compute per-station capped counts from completions, per plan item.
-  if (totalBatches > 0 && planIds.length > 0) {
-    // Get capped count per plan item (already computed above in buildingCompletionsByItem)
+  // (calzone) and the mac_cheese_packs pseudo-station so they match the
+  // capped totals above. Each category caps independently.
+  if ((totalBatches > 0 || totalMacPacks > 0) && planIds.length > 0) {
     const planItemTargets = new Map<number, number>();
     const piRows = await db
       .select({ id: productionPlanItemsTable.id, batchesTarget: productionPlanItemsTable.batchesTarget })
@@ -437,42 +480,53 @@ router.get("/production-kpis", async (req, res) => {
       .where(inArray(productionPlanItemsTable.planId, planIds));
     for (const pi of piRows) planItemTargets.set(pi.id, pi.batchesTarget ?? 0);
 
-    // Count per station per plan item
+    // Count per effective station per plan item (calzone goes to building_*,
+    // mac cheese goes to mac_cheese_packs).
     const stationItemCounts = new Map<string, Map<number, number>>();
-    const userItemCounts = new Map<number, Map<number, number>>();
+    const userItemCounts = new Map<number, Map<number, { count: number; isMac: boolean }>>();
     for (const c of completions) {
       if (c.stationType !== "building_1" && c.stationType !== "building_2") continue;
-      // Per station
-      if (!stationItemCounts.has(c.stationType)) stationItemCounts.set(c.stationType, new Map());
-      const sic = stationItemCounts.get(c.stationType)!;
+      const station = effectiveStation(c);
+      if (!stationItemCounts.has(station)) stationItemCounts.set(station, new Map());
+      const sic = stationItemCounts.get(station)!;
       sic.set(c.planItemId, (sic.get(c.planItemId) ?? 0) + 1);
-      // Per user
       if (c.userId) {
         if (!userItemCounts.has(c.userId)) userItemCounts.set(c.userId, new Map());
         const uic = userItemCounts.get(c.userId)!;
-        uic.set(c.planItemId, (uic.get(c.planItemId) ?? 0) + 1);
+        const prev = uic.get(c.planItemId);
+        uic.set(c.planItemId, {
+          count: (prev?.count ?? 0) + 1,
+          isMac: c.recipeCategory === MAC_CHEESE_CATEGORY,
+        });
       }
     }
 
-    // Cap each station's per-item count at its share of the target
+    // Cap each station's per-item count at its share of the target. For
+    // mac_cheese_packs, the "totalForItem" source is macPacksCompletionsByItem
+    // (not buildingCompletionsByItem).
     for (const [station, itemCounts] of stationItemCounts) {
+      const totalByItem = station === MAC_CHEESE_PACKS_STATION
+        ? macPacksCompletionsByItem
+        : buildingCompletionsByItem;
       let cappedTotal = 0;
       for (const [itemId, count] of itemCounts) {
-        const totalForItem = buildingCompletionsByItem.get(itemId) ?? count;
+        const totalForItem = totalByItem.get(itemId) ?? count;
         const target = planItemTargets.get(itemId) ?? count;
         const cappedTarget = Math.min(totalForItem, target);
-        // This station's share = its count / total building count for this item * capped target
         cappedTotal += totalForItem > 0 ? Math.round((count / totalForItem) * cappedTarget) : 0;
       }
       const ss = stationSummary.get(station);
       if (ss) ss.totalBatches = cappedTotal;
     }
 
-    // Cap each user's building counts the same way
+    // Cap each user's building counts. Calzone and mac contributions are
+    // both summed into totalBatches since the userSummary doesn't split —
+    // the stationSummary is where the split is surfaced.
     for (const [userId, itemCounts] of userItemCounts) {
       let cappedTotal = 0;
-      for (const [itemId, count] of itemCounts) {
-        const totalForItem = buildingCompletionsByItem.get(itemId) ?? count;
+      for (const [itemId, { count, isMac }] of itemCounts) {
+        const totalByItem = isMac ? macPacksCompletionsByItem : buildingCompletionsByItem;
+        const totalForItem = totalByItem.get(itemId) ?? count;
         const target = planItemTargets.get(itemId) ?? count;
         const cappedTarget = Math.min(totalForItem, target);
         cappedTotal += totalForItem > 0 ? Math.round((count / totalForItem) * cappedTarget) : 0;
@@ -507,17 +561,24 @@ router.get("/production-kpis", async (req, res) => {
     stations: Array.from(us.stations),
   }));
 
-  // BPH = total batches ÷ production active hours (wall clock minus breaks)
+  // BPH = total batches ÷ production active hours (wall clock minus breaks).
+  // Calzones and mac packs share the same denominator — same team worked
+  // both during the production window.
   const overallBph = productionActiveMinutes > 0
     ? Math.round((totalBatches / (productionActiveMinutes / 60)) * 10) / 10
+    : 0;
+  const macPacksPerHour = productionActiveMinutes > 0
+    ? Math.round((totalMacPacks / (productionActiveMinutes / 60)) * 10) / 10
     : 0;
 
   res.json({
     overview: {
       totalBatches,
+      totalMacPacks,
       totalActiveMinutes: productionActiveMinutes,
       wallClockMinutes,
       overallBph,
+      macPacksPerHour,
       productionStartTime,
       productionFinishTime,
     },

@@ -171,18 +171,25 @@ function TodayPlanRecipes({ planId }: { planId: number }) {
   );
 }
 
-async function fetchTodayBatchCount(planIds: number[]): Promise<number> {
-  if (planIds.length === 0) return 0;
-  let total = 0;
+const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
+
+/** Returns separate totals so calzone batches (10-portion batches) aren't
+ *  conflated with mac cheese packs (1 mac batch = 1 pack). */
+async function fetchTodayBatchCount(planIds: number[]): Promise<{ calzoneBatches: number; macPacks: number }> {
+  if (planIds.length === 0) return { calzoneBatches: 0, macPacks: 0 };
+  let calzoneBatches = 0;
+  let macPacks = 0;
   for (const id of planIds) {
     const res = await fetch(`${BASE}/api/production-plans/${id}`, { credentials: "include" });
     if (!res.ok) continue;
     const plan = await res.json();
     for (const it of plan.items ?? []) {
-      total += it.batchesTarget ?? 0;
+      const target = it.batchesTarget ?? 0;
+      if (it.recipeCategory === MAC_CHEESE_CATEGORY) macPacks += target;
+      else calzoneBatches += target;
     }
   }
-  return total;
+  return { calzoneBatches, macPacks };
 }
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -318,7 +325,10 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="Total Batches Today"
-          value={batchesLoading ? "…" : (totalBatches ?? 0).toString()}
+          value={batchesLoading ? "…" : (totalBatches?.calzoneBatches ?? 0).toString()}
+          subtitle={!batchesLoading && (totalBatches?.macPacks ?? 0) > 0
+            ? `+ ${totalBatches!.macPacks} mac packs`
+            : undefined}
           icon={ChefHat}
           color="text-primary"
           bg="bg-primary/10"
@@ -507,7 +517,7 @@ export default function Dashboard() {
   );
 }
 
-function StatCard({ title, value, icon: Icon, color, bg, href }: any) {
+function StatCard({ title, value, subtitle, icon: Icon, color, bg, href }: any) {
   return (
     <Link href={href} className="h-full">
       <div className="glass-panel p-6 rounded-2xl hover-lift cursor-pointer group h-full flex flex-col justify-between min-h-[110px]">
@@ -518,6 +528,9 @@ function StatCard({ title, value, icon: Icon, color, bg, href }: any) {
           <div className="min-w-0">
             <p className="text-sm font-medium text-muted-foreground leading-snug mb-2">{title}</p>
             <h3 className="text-3xl font-display font-bold">{value}</h3>
+            {subtitle && (
+              <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>
+            )}
           </div>
         </div>
       </div>

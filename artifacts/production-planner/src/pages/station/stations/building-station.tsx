@@ -17,7 +17,7 @@ import { useAuth } from "@/contexts/auth-context";
 import {
   Plus, Minus, CheckCircle2, Loader2, ChevronRight, RotateCcw,
   BarChart2, BookOpen, Target, Scale, GripVertical, Check, ExternalLink,
-  ClipboardList, CheckSquare, Square, AlertCircle, Trophy, Eye, X, AlertTriangle,
+  ClipboardList, CheckSquare, Square, AlertCircle, Eye, X, AlertTriangle,
   ChevronDown,
 } from "lucide-react";
 import { format, parseISO, differenceInMinutes } from "date-fns";
@@ -30,8 +30,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 // ExtraPackControl removed — replaced by inline PackAdjustment
 import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
-import { EodSummary } from "../shared/eod-summary";
-import { getStationCount, getAvailableFromPrev } from "../shared/constants";
+import { getStationCount, getAvailableFromPrev, isMacCheese } from "../shared/constants";
 import { effectiveBatchesTarget, packsPerBatch } from "../shared/recipe-completion";
 
 import {
@@ -303,7 +302,6 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   const [sessionBatches, setSessionBatches] = useState(0);
   const [totalBreakMinutes, setTotalBreakMinutes] = useState(0);
   const [activeBreakMinutes, setActiveBreakMinutes] = useState(0);
-  const [showEod, setShowEod] = useState(false);
   const [pendingTap, setPendingTap] = useState(false);
   const isOnBreak = isOnBreakProp;
 
@@ -702,9 +700,18 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     ? Math.round((buildingCount / effectiveBatches) * 100)
     : 0;
 
-  const totalBatchesTarget = items.reduce((s, it) => s + getEffectiveTarget(it), 0);
-  const totalBatchesDone = items.reduce((s, it) => s + getCombinedBuildCount(it), 0);
-  const overallProgress = totalBatchesTarget > 0 ? Math.round((totalBatchesDone / totalBatchesTarget) * 100) : 0;
+  // Split totals by product category. Calzone items are tracked as "batches";
+  // mac cheese items as "packs" (1 mac batch_completion row = 1 pack because
+  // portionsPerBatch=2, packsPerBatch=1).
+  const calzoneItems = items.filter(it => !isMacCheese(it as any));
+  const macItems = items.filter(it => isMacCheese(it as any));
+  const totalBatchesTarget = calzoneItems.reduce((s, it) => s + getEffectiveTarget(it), 0);
+  const totalBatchesDone = calzoneItems.reduce((s, it) => s + getCombinedBuildCount(it), 0);
+  const totalMacPacksTarget = macItems.reduce((s, it) => s + getEffectiveTarget(it), 0);
+  const totalMacPacksDone = macItems.reduce((s, it) => s + getCombinedBuildCount(it), 0);
+  const combinedTarget = totalBatchesTarget + totalMacPacksTarget;
+  const combinedDone = totalBatchesDone + totalMacPacksDone;
+  const overallProgress = combinedTarget > 0 ? Math.round((combinedDone / combinedTarget) * 100) : 0;
 
   // KPI calculations for daily progress card
   const now = new Date();
@@ -713,7 +720,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     : 0;
   const localBph = localActiveMinutes > 0 ? sessionBatches / (localActiveMinutes / 60) : 0;
   const teamBph = serverKpi?.batchesPerHour ?? 0;
-  const youBph = serverKpi?.batchesPerHour != null ? serverKpi.batchesPerHour : localBph;
+  const teamMacPph = serverKpi?.macPacksPerHour ?? 0;
   // Use local for "you" since serverKpi is per-user already
   const yourBph = localActiveMinutes > 0 ? localBph : 0;
 
@@ -726,25 +733,17 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
 
   return (
     <div className="space-y-4">
-      {showEod && (
-        <EodSummary
-          planId={plan.id}
-          items={items}
-          stationType={stationType}
-          sessionBatches={sessionBatches}
-          totalBreakMinutes={totalBreakMinutes + activeBreakMinutes}
-          sessionStartedAt={sessionStartedAt}
-          onClose={() => setShowEod(false)}
-        />
-      )}
-
       {/* Daily progress + KPI + break buttons */}
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
           <div>
             <h2 className="font-semibold text-lg">Today's Production</h2>
             <p className="text-base text-muted-foreground">
-              {totalBatchesDone} / {totalBatchesTarget} batches complete · Line {lineNumber}
+              {totalBatchesDone} / {totalBatchesTarget} batches
+              {totalMacPacksTarget > 0 && (
+                <> · {totalMacPacksDone} / {totalMacPacksTarget} mac packs</>
+              )}
+              {" · Line "}{lineNumber}
             </p>
           </div>
           <span className="text-3xl font-bold font-display">{overallProgress}%</span>
@@ -759,15 +758,26 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
           />
         </div>
 
-        {/* KPI: Team + You batches/hour */}
-        {(teamBph > 0 || yourBph > 0) && (
-          <div className="flex items-center gap-4 mt-3 pt-3 border-t border-border/50">
+        {/* KPI: Team batches/hr + Team mac packs/hr + You batches/hr */}
+        {(teamBph > 0 || teamMacPph > 0 || yourBph > 0) && (
+          <div className="flex items-center gap-4 mt-3 pt-3 border-t border-border/50 flex-wrap">
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground font-medium">Team:</span>
               <span className={cn("text-lg font-bold tabular-nums", bphColor(teamBph))}>
                 {teamBph.toFixed(1)}/hr
               </span>
             </div>
+            {teamMacPph > 0 && (
+              <>
+                <div className="w-px h-5 bg-border/60" />
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground font-medium">Mac packs:</span>
+                  <span className="text-lg font-bold tabular-nums text-foreground">
+                    {teamMacPph.toFixed(1)}/hr
+                  </span>
+                </div>
+              </>
+            )}
             <div className="w-px h-5 bg-border/60" />
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground font-medium">You:</span>
@@ -852,13 +862,6 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                 <CheckCircle2 className="w-4 h-4" /> All done
               </span>
             )}
-            <button
-              onClick={() => setShowEod(true)}
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg px-2 py-1 transition-colors"
-            >
-              <Trophy className="w-3 h-3" />
-              Summary
-            </button>
           </div>
         </div>
 

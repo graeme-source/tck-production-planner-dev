@@ -3191,12 +3191,20 @@ components:
       properties:
         batchesCompleted:
           type: integer
+          description: Calzone batches completed today (excludes mac cheese on building stations)
         activeMinutes:
           type: integer
         breakMinutes:
           type: integer
         batchesPerHour:
           type: number
+          description: Calzone batches per hour (excludes mac cheese on building stations)
+        macPacksCompleted:
+          type: integer
+          description: Mac cheese packs completed today. Only populated for building stations.
+        macPacksPerHour:
+          type: number
+          description: Mac cheese packs per hour. Only populated for building stations.
       required:
         - batchesCompleted
         - activeMinutes

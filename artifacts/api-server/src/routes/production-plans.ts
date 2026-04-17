@@ -8,6 +8,10 @@ import { resolveRecipeIngredients, resolveSubRecipeIngredients, aggregateIngredi
 import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag } from "../services/shopify";
 import { getFactoryNumberCoreMenuOnly } from "../lib/inventory-sync";
 
+/** Recipe category name for macaroni cheese products. Used to split calzone
+ *  vs mac cheese metrics (mac cheese is tracked in packs, calzones in batches). */
+const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
+
 /** Calculate tin count with minimum-2-tins rule for prep/mixing stations.
  *  When batches > 5, always at least 2 tins. ≤5 batches uses normal calc. */
 function calcTinCount(batchesTarget: number, maxBatchesPerTin: number | null): number | null {
@@ -3209,128 +3213,11 @@ router.get("/:id/ingredient-requirements", async (req, res) => {
   });
 });
 
-// GET /:id/eod-summary?stationType=...
-// Returns server-derived EOD stats for the current user at a given station:
-// totalBatches, activeMinutes, breakMinutes, bph, minsPerBatch, planCompletionRate, perRecipe avg
-router.get("/:id/eod-summary", async (req, res) => {
-  const planId = Number(req.params.id);
-  const stationType = String(req.query.stationType ?? "");
-  const sessionUserId = (req.session as { userId?: number }).userId ?? null;
-
-  if (!stationType) {
-    res.status(400).json({ error: "stationType is required" });
-    return;
-  }
-
-  // Get all plan items joined with recipe name (for plan completion rate + per-recipe breakdown)
-  const planItems = await db.select({
-    id: productionPlanItemsTable.id,
-    recipeId: productionPlanItemsTable.recipeId,
-    batchesComplete: productionPlanItemsTable.batchesComplete,
-    batchesTarget: productionPlanItemsTable.batchesTarget,
-    recipeName: recipesTable.name,
-  })
-    .from(productionPlanItemsTable)
-    .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
-    .where(eq(productionPlanItemsTable.planId, planId));
-
-  const itemIds = planItems.map(i => i.id);
-  const totalBatchesTarget = planItems.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
-  const totalBatchesComplete = planItems.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
-  const planCompletionRate = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
-
-  if (itemIds.length === 0) {
-    res.json({ totalBatches: 0, activeMinutes: 0, breakMinutes: 0, bph: 0, minsPerBatch: null, planCompletionRate: 0, perRecipe: [] });
-    return;
-  }
-
-  // Fetch this user's completions for this station
-  const allCompletions = await db.select().from(batchCompletionsTable)
-    .where(inArray(batchCompletionsTable.planItemId, itemIds));
-
-  const myCompletions = sessionUserId
-    ? allCompletions.filter(c => c.stationType === stationType && c.userId === sessionUserId)
-    : allCompletions.filter(c => c.stationType === stationType);
-
-  const totalBatches = myCompletions.length;
-
-  // Compute total break minutes for this user+station
-  const breaks = await db.select().from(stationBreaksTable)
-    .where(and(
-      eq(stationBreaksTable.planId, planId),
-      sql`station_type = ${stationType}`,
-      ...(sessionUserId ? [eq(stationBreaksTable.userId, sessionUserId)] : [])
-    ));
-
-  const breakMinutes = breaks.reduce((sum, b) => {
-    if (!b.endedAt) return sum;
-    return sum + Math.round((b.endedAt.getTime() - b.startedAt.getTime()) / 60000);
-  }, 0);
-
-  // Compute active minutes from first completion to last
-  const sortedCompletions = [...myCompletions].sort((a, b) => a.completedAt.getTime() - b.completedAt.getTime());
-  let activeMinutes = 0;
-  if (sortedCompletions.length > 0) {
-    const firstAt = sortedCompletions[0].completedAt;
-    const lastAt = sortedCompletions[sortedCompletions.length - 1].completedAt;
-    const spanMinutes = Math.round((lastAt.getTime() - firstAt.getTime()) / 60000);
-    activeMinutes = Math.max(0, spanMinutes - breakMinutes);
-  }
-
-  const activeHours = activeMinutes / 60;
-  const bph = activeHours > 0 ? totalBatches / activeHours : 0;
-  const minsPerBatch = totalBatches > 0 && activeMinutes > 0 ? activeMinutes / totalBatches : null;
-
-  // Per-recipe avg mins/batch:
-  // Building station completions do not record startedAt, so we compute avg from consecutive
-  // inter-completion intervals (sorted completedAt) for each recipe+user.
-  // When startedAt IS present (e.g. timing-standard-based stations), prefer that.
-  const perRecipeMap: Record<number, { name: string; count: number; avgMins: number | null }> = {};
-  for (const it of planItems) {
-    perRecipeMap[it.id] = { name: it.recipeName ?? `Recipe #${it.id}`, count: 0, avgMins: null };
-  }
-
-  // Group completions by planItemId (sorted ascending by completedAt)
-  const byItemSorted: Record<number, typeof myCompletions> = {};
-  for (const c of [...myCompletions].sort((a, b) => a.completedAt.getTime() - b.completedAt.getTime())) {
-    if (!perRecipeMap[c.planItemId]) continue;
-    perRecipeMap[c.planItemId].count++;
-    if (!byItemSorted[c.planItemId]) byItemSorted[c.planItemId] = [];
-    byItemSorted[c.planItemId].push(c);
-  }
-
-  for (const [itemIdStr, comps] of Object.entries(byItemSorted)) {
-    const itemId = Number(itemIdStr);
-    const intervals: number[] = [];
-
-    for (let i = 0; i < comps.length; i++) {
-      const c = comps[i];
-      // Prefer explicit startedAt if available
-      if (c.startedAt && c.completedAt) {
-        const mins = (c.completedAt.getTime() - c.startedAt.getTime()) / 60000;
-        if (mins > 0 && mins < 240) intervals.push(mins);
-      } else if (i > 0) {
-        // Inter-completion interval (proxy for time per batch)
-        const prev = comps[i - 1];
-        const mins = (c.completedAt.getTime() - prev.completedAt.getTime()) / 60000;
-        if (mins > 0 && mins < 240) intervals.push(mins);
-      }
-    }
-
-    if (intervals.length > 0) {
-      const avg = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-      perRecipeMap[itemId].avgMins = avg;
-    }
-  }
-
-  const perRecipe = Object.values(perRecipeMap).filter(r => r.count > 0);
-
-  res.json({ totalBatches, activeMinutes, breakMinutes, bph, minsPerBatch, planCompletionRate, perRecipe });
-});
-
 // GET /:id/kpi?stationType=...&date=YYYY-MM-DD
 // Returns server-side KPI computed from batch_completions minus station_breaks for today
 // Building stations use team-level BPH: all batches from both lines, longest break per break type
+// Mac cheese items are split out: calzone items contribute to batchesPerHour, mac cheese
+// items contribute to macPacksPerHour (1 mac batch_completion = 1 pack).
 router.get("/:id/kpi", async (req, res) => {
   const planId = Number(req.params.id);
   const stationType = String(req.query.stationType ?? "");
@@ -3342,13 +3229,19 @@ router.get("/:id/kpi", async (req, res) => {
     return;
   }
 
-  // Get plan items for this plan
-  const planItems = await db.select({ id: productionPlanItemsTable.id })
+  // Get plan items for this plan, joined with recipe category so we can split
+  // calzone vs mac cheese completions.
+  const planItems = await db.select({
+    id: productionPlanItemsTable.id,
+    category: recipesTable.category,
+  })
     .from(productionPlanItemsTable)
+    .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
     .where(eq(productionPlanItemsTable.planId, planId));
   const itemIds = planItems.map(i => i.id);
+  const macItemIds = new Set(planItems.filter(i => i.category === MAC_CHEESE_CATEGORY).map(i => i.id));
   if (itemIds.length === 0) {
-    res.json({ batchesCompleted: 0, activeMinutes: 0, breakMinutes: 0, batchesPerHour: 0 });
+    res.json({ batchesCompleted: 0, activeMinutes: 0, breakMinutes: 0, batchesPerHour: 0, macPacksCompleted: 0, macPacksPerHour: 0 });
     return;
   }
 
@@ -3358,8 +3251,13 @@ router.get("/:id/kpi", async (req, res) => {
   tomorrow.setDate(tomorrow.getDate() + 1);
 
   if (isBuilding) {
-    // Team-level BPH for building: all batches from both lines, all users
-    const completions = await db.select({ completedAt: batchCompletionsTable.completedAt, startedAt: batchCompletionsTable.startedAt })
+    // Team-level for building: all batches from both lines, all users.
+    // planItemId is included so we can bucket calzone vs mac cheese.
+    const completions = await db.select({
+      planItemId: batchCompletionsTable.planItemId,
+      completedAt: batchCompletionsTable.completedAt,
+      startedAt: batchCompletionsTable.startedAt,
+    })
       .from(batchCompletionsTable)
       .where(
         and(
@@ -3384,7 +3282,14 @@ router.get("/:id/kpi", async (req, res) => {
         )
       );
 
-    const batchesCompleted = completions.length;
+    // Split by category. 1 mac cheese batch_completion row = 1 pack
+    // (mac items have portionsPerBatch=2, packsPerBatch=1).
+    let batchesCompleted = 0; // calzone only
+    let macPacksCompleted = 0;
+    for (const c of completions) {
+      if (macItemIds.has(c.planItemId)) macPacksCompleted++;
+      else batchesCompleted++;
+    }
 
     // Deduct the admin-configured break durations (Settings → Break / Lunch minutes)
     // for each break type that was recorded. Keeps BPH predictable regardless of
@@ -3403,7 +3308,8 @@ router.get("/:id/kpi", async (req, res) => {
     const hasSnackBreak = breaksRows.some(b => b.breakType !== "lunch" && b.endedAt);
     const breakMinutes = (hasLunch ? configuredLunchMins : 0) + (hasSnackBreak ? configuredBreakMins : 0);
 
-    // Production time from first batch to now
+    // Shared denominator: earliest completion across both categories — same team
+    // is working the line regardless of what's being built.
     let activeMinutes = 0;
     if (completions.length > 0) {
       const earliest = completions.reduce((min, c) => {
@@ -3415,12 +3321,15 @@ router.get("/:id/kpi", async (req, res) => {
     }
 
     const batchesPerHour = activeMinutes > 0 ? (batchesCompleted / (activeMinutes / 60)) : 0;
+    const macPacksPerHour = activeMinutes > 0 ? (macPacksCompleted / (activeMinutes / 60)) : 0;
 
     res.json({
       batchesCompleted,
       activeMinutes: Math.round(activeMinutes),
       breakMinutes: Math.round(breakMinutes),
       batchesPerHour: Math.round(batchesPerHour * 10) / 10,
+      macPacksCompleted,
+      macPacksPerHour: Math.round(macPacksPerHour * 10) / 10,
     });
     return;
   }

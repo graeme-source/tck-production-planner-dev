@@ -1174,6 +1174,8 @@ export const GetStationKpiResponse = zod.object({
   activeMinutes: zod.number(),
   breakMinutes: zod.number(),
   batchesPerHour: zod.number(),
+  macPacksCompleted: zod.number().optional(),
+  macPacksPerHour: zod.number().optional(),
 });
 
 /**

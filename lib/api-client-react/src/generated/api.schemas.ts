@@ -735,10 +735,16 @@ export interface CreateUser {
 }
 
 export interface StationKpi {
+  /** Calzone batches completed today (excludes mac cheese on building stations) */
   batchesCompleted: number;
   activeMinutes: number;
   breakMinutes: number;
+  /** Calzone batches per hour (excludes mac cheese on building stations) */
   batchesPerHour: number;
+  /** Mac cheese packs completed today. Only populated for building stations. */
+  macPacksCompleted?: number;
+  /** Mac cheese packs per hour. Only populated for building stations. */
+  macPacksPerHour?: number;
 }
 
 export type UpdateUserRole =
