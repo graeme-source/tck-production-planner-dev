@@ -1248,6 +1248,7 @@ router.post("/:id/add-mac-cheese", validate(AddMacCheeseBody), async (req, res) 
       sopUrl: productionPlanItemsTable.sopUrl,
       extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
       shortCount: productionPlanItemsTable.shortCount,
+      builderMarkedCompleteAt: productionPlanItemsTable.builderMarkedCompleteAt,
       leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
       eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
       fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
@@ -1478,6 +1479,7 @@ router.get("/:id", async (req, res) => {
       sopUrl: productionPlanItemsTable.sopUrl,
       extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
       shortCount: productionPlanItemsTable.shortCount,
+      builderMarkedCompleteAt: productionPlanItemsTable.builderMarkedCompleteAt,
       leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
       eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
       fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
@@ -1828,6 +1830,7 @@ router.post("/:id/batch-completions/bulk", async (req, res) => {
     batchesTarget: productionPlanItemsTable.batchesTarget,
     extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
     shortCount: productionPlanItemsTable.shortCount,
+    builderMarkedCompleteAt: productionPlanItemsTable.builderMarkedCompleteAt,
     leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
     portionsPerBatch: recipesTable.portionsPerBatch,
   })
@@ -1836,6 +1839,12 @@ router.post("/:id/batch-completions/bulk", async (req, res) => {
     .where(and(eq(productionPlanItemsTable.id, Number(planItemId)), eq(productionPlanItemsTable.planId, planId)));
   if (!planItem) {
     res.status(400).json({ error: "planItemId does not belong to this plan" });
+    return;
+  }
+
+  // Builder has locked in a truncated output — no further batches allowed.
+  if (planItem.builderMarkedCompleteAt) {
+    res.status(409).json({ error: "Recipe was marked complete by the builder" });
     return;
   }
 
