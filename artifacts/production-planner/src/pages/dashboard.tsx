@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 interface AndonIssueSummary {
   id: number;
   category: string;
-  severity: "yellow" | "red";
+  severity: "green" | "yellow" | "red";
   description: string | null;
   station: string;
   reportedByName: string | null;
@@ -38,6 +38,32 @@ const STATION_LABELS: Record<string, string> = {
   general: "General",
 };
 
+// Default: only admins see the dashboard issue banner. Managers/etc can be
+// enabled later from Settings → Features → "Dashboard Issue Banner".
+const DEFAULT_BANNER_ROLES: Record<string, boolean> = {
+  admin: true,
+  manager: false,
+  employee: false,
+  viewer: false,
+};
+
+function useBannerRoles() {
+  const [roles, setRoles] = useState<Record<string, boolean>>(DEFAULT_BANNER_ROLES);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    fetch(`${BASE}/api/app-settings/dashboard_issue_banner_roles`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.value) {
+          try { setRoles({ ...DEFAULT_BANNER_ROLES, ...JSON.parse(d.value) }); } catch {}
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoaded(true));
+  }, []);
+  return { roles, loaded };
+}
+
 function AndonBanner({ userRole }: { userRole?: string }) {
   const [issues, setIssues] = useState<AndonIssueSummary[]>([]);
   const [acknowledging, setAcknowledging] = useState<number | null>(null);
@@ -50,9 +76,10 @@ function AndonBanner({ userRole }: { userRole?: string }) {
       const all: AndonIssueSummary[] = await res.json();
       hasToastedRef.current = false;
       const unacked = all.filter((i) => !i.acknowledgedAt);
+      const rank = (s: AndonIssueSummary["severity"]) => s === "red" ? 0 : s === "yellow" ? 1 : 2;
       unacked.sort((a, b) => {
-        if (a.severity === "red" && b.severity !== "red") return -1;
-        if (b.severity === "red" && a.severity !== "red") return 1;
+        const r = rank(a.severity) - rank(b.severity);
+        if (r !== 0) return r;
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       });
       setIssues(unacked);
@@ -106,11 +133,15 @@ function AndonBanner({ userRole }: { userRole?: string }) {
           {issues.map(issue => (
             <div key={issue.id} className={cn(
               "flex items-center gap-3 px-4 py-2.5",
-              issue.severity === "red" ? "bg-red-50/50 dark:bg-red-950/20" : "bg-yellow-50/50 dark:bg-yellow-950/20"
+              issue.severity === "red"
+                ? "bg-red-50/50 dark:bg-red-950/20"
+                : issue.severity === "green"
+                  ? "bg-emerald-50/50 dark:bg-emerald-950/20"
+                  : "bg-yellow-50/50 dark:bg-yellow-950/20"
             )}>
               <span className={cn(
                 "w-2.5 h-2.5 rounded-full flex-shrink-0",
-                issue.severity === "red" ? "bg-red-500" : "bg-yellow-400"
+                issue.severity === "red" ? "bg-red-500" : issue.severity === "green" ? "bg-emerald-500" : "bg-yellow-400"
               )} />
               <div className="flex-1 min-w-0">
                 <span className="text-sm font-medium capitalize">{issue.category}</span>
@@ -126,9 +157,11 @@ function AndonBanner({ userRole }: { userRole?: string }) {
                 "text-xs font-bold px-2 py-0.5 rounded-full flex-shrink-0",
                 issue.severity === "red"
                   ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300"
-                  : "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300"
+                  : issue.severity === "green"
+                    ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+                    : "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300"
               )}>
-                {issue.severity === "red" ? "Serious" : "Minor"}
+                {issue.severity === "red" ? "Serious" : issue.severity === "green" ? "Wish List" : "Minor"}
               </span>
               {isManager && (
                 <button
@@ -231,6 +264,9 @@ export default function Dashboard() {
   const isFounder = state.status === "authenticated" && state.user.email === FOUNDER_EMAIL;
   const { data: plans } = useListProductionPlans();
   const { data: dispatches } = useListDispatchOrders();
+  const { roles: bannerRoles, loaded: bannerRolesLoaded } = useBannerRoles();
+  const userRole = state.status === "authenticated" ? state.user.role : undefined;
+  const showIssueBanner = bannerRolesLoaded && !!userRole && bannerRoles[userRole] === true;
 
   const [weekOffset, setWeekOffset] = useState<number>(getDefaultWeekOffset);
   const today = new Date();
@@ -320,7 +356,7 @@ export default function Dashboard() {
         }
       />
 
-      <AndonBanner userRole={state.status === "authenticated" ? state.user.role : undefined} />
+      {showIssueBanner && <AndonBanner userRole={userRole} />}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard

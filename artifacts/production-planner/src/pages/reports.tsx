@@ -183,7 +183,7 @@ interface ImprovementComment {
 interface AndonIssueRecord {
   id: number;
   category: "equipment" | "safety" | "production" | "product" | "other";
-  severity: "yellow" | "red";
+  severity: "green" | "yellow" | "red";
   description: string | null;
   station: string;
   reportedByName: string | null;
@@ -3271,6 +3271,26 @@ function AndonLogTab({ userRole, initialIssueId }: { userRole: string; initialIs
     setActioningId(null);
   }
 
+  async function changePriority(id: number, severity: "green" | "yellow" | "red") {
+    try {
+      const res = await fetch(`${BASE}/api/andon/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ severity }),
+      });
+      if (!res.ok) {
+        toast({ title: "Failed to update priority", variant: "destructive" });
+        return;
+      }
+      const updated: AndonIssueRecord = await res.json();
+      setIssues(prev => prev.map(i => i.id === id ? { ...i, severity: updated.severity } : i));
+    } catch (err) {
+      console.warn("[Reports] Failed to update priority:", err);
+      toast({ title: "Failed to update priority", variant: "destructive" });
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-3 items-center">
@@ -3299,9 +3319,10 @@ function AndonLogTab({ userRole, initialIssueId }: { userRole: string; initialIs
           onChange={e => setSeverityFilter(e.target.value)}
           className="px-3 py-1.5 border border-border rounded-lg text-sm bg-background"
         >
-          <option value="">All Severities</option>
-          <option value="yellow">Yellow (Minor)</option>
+          <option value="">All Priorities</option>
           <option value="red">Red (Serious)</option>
+          <option value="yellow">Yellow (Minor)</option>
+          <option value="green">Green (Wish List)</option>
         </select>
         <button
           type="button"
@@ -3340,7 +3361,7 @@ function AndonLogTab({ userRole, initialIssueId }: { userRole: string; initialIs
           <table className="w-full text-sm">
             <thead className="bg-secondary/30 text-muted-foreground text-xs">
               <tr>
-                <th className="px-4 py-3 font-medium text-left">Severity</th>
+                <th className="px-4 py-3 font-medium text-left">Priority</th>
                 {isManager && <th className="px-4 py-3 font-medium text-center">Actions</th>}
                 <th className="px-4 py-3 font-medium text-left">Category</th>
                 <th className="px-4 py-3 font-medium text-left">Station</th>
@@ -3361,10 +3382,17 @@ function AndonLogTab({ userRole, initialIssueId }: { userRole: string; initialIs
                   <td className="px-4 py-3">
                     <span className={cn(
                       "flex items-center gap-1.5 text-xs font-bold",
-                      issue.severity === "red" ? "text-red-600 dark:text-red-400" : "text-yellow-600 dark:text-yellow-400"
+                      issue.severity === "red"
+                        ? "text-red-600 dark:text-red-400"
+                        : issue.severity === "green"
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-yellow-600 dark:text-yellow-400"
                     )}>
-                      <span className={cn("w-2 h-2 rounded-full", issue.severity === "red" ? "bg-red-500" : "bg-yellow-400")} />
-                      {issue.severity === "red" ? "Serious" : "Minor"}
+                      <span className={cn(
+                        "w-2 h-2 rounded-full",
+                        issue.severity === "red" ? "bg-red-500" : issue.severity === "green" ? "bg-emerald-500" : "bg-yellow-400"
+                      )} />
+                      {issue.severity === "red" ? "Serious" : issue.severity === "green" ? "Wish List" : "Minor"}
                     </span>
                   </td>
                   {isManager && (
@@ -3449,10 +3477,15 @@ function AndonLogTab({ userRole, initialIssueId }: { userRole: string; initialIs
                     "flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold",
                     selectedIssue.severity === "red"
                       ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                      : "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+                      : selectedIssue.severity === "green"
+                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                        : "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
                   )}>
-                    <span className={cn("w-2 h-2 rounded-full", selectedIssue.severity === "red" ? "bg-red-500" : "bg-yellow-400")} />
-                    {selectedIssue.severity === "red" ? "Serious" : "Minor"}
+                    <span className={cn(
+                      "w-2 h-2 rounded-full",
+                      selectedIssue.severity === "red" ? "bg-red-500" : selectedIssue.severity === "green" ? "bg-emerald-500" : "bg-yellow-400"
+                    )} />
+                    {selectedIssue.severity === "red" ? "Serious" : selectedIssue.severity === "green" ? "Wish List" : "Minor"}
                   </span>
                   <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary text-muted-foreground capitalize">
                     {ANDON_CATEGORY_LABELS[selectedIssue.category] ?? selectedIssue.category}
@@ -3505,6 +3538,41 @@ function AndonLogTab({ userRole, initialIssueId }: { userRole: string; initialIs
                         <p className="text-muted-foreground">{format(new Date(selectedIssue.resolvedAt), "d MMM yyyy, HH:mm")}</p>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {/* Manager: change priority */}
+                {isManager && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-medium text-muted-foreground">Change priority:</span>
+                    {(["red", "yellow", "green"] as const).map(s => {
+                      const active = selectedIssue.severity === s;
+                      const styles = s === "red"
+                        ? (active
+                            ? "border-red-500 bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300"
+                            : "border-border text-muted-foreground hover:border-red-300")
+                        : s === "green"
+                          ? (active
+                              ? "border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"
+                              : "border-border text-muted-foreground hover:border-emerald-300")
+                          : (active
+                              ? "border-yellow-400 bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300"
+                              : "border-border text-muted-foreground hover:border-yellow-300");
+                      const label = s === "red" ? "Serious" : s === "green" ? "Wish List" : "Minor";
+                      const dotClass = s === "red" ? "bg-red-500" : s === "green" ? "bg-emerald-500" : "bg-yellow-400";
+                      return (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => !active && changePriority(selectedIssue.id, s)}
+                          disabled={active}
+                          className={cn("flex items-center gap-1.5 text-xs px-2.5 py-1 border-2 rounded-lg transition-all", styles, active && "cursor-default")}
+                        >
+                          <span className={cn("w-2 h-2 rounded-full", dotClass)} />
+                          {label}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
 

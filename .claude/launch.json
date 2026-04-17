@@ -12,9 +12,10 @@
     {
       "name": "frontend",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5173 --strictPort"],
+      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5273 --strictPort"],
       "cwd": "artifacts/production-planner",
-      "port": 5173
+      "port": 5273,
+      "autoPort": true
     }
   ]
 }

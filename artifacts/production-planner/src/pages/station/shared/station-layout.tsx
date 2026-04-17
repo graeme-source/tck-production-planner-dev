@@ -25,7 +25,7 @@ import { ReportButton } from "@/components/report-modal";
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface AndonIssueBadge {
-  severity: "yellow" | "red";
+  severity: "green" | "yellow" | "red";
 }
 
 function useAndonBadge(stationKey: string) {
@@ -40,12 +40,13 @@ function useAndonBadge(stationKey: string) {
         if (!res.ok || cancelled) return;
         hasToastedRef.current = false;
         const issues: AndonIssueBadge[] = await res.json();
-        if (issues.length === 0) {
-          setSeverity("green");
-        } else if (issues.some((i) => i.severity === "red")) {
+        // Wish-list (green) issues don't escalate the station badge.
+        if (issues.some((i) => i.severity === "red")) {
           setSeverity("red");
-        } else {
+        } else if (issues.some((i) => i.severity === "yellow")) {
           setSeverity("yellow");
+        } else {
+          setSeverity("green");
         }
       } catch (err) {
         console.warn("[AndonBadge] Failed to fetch andon status:", err);

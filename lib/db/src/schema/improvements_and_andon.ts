@@ -30,7 +30,7 @@ export const improvementSubmissionsTable = pgTable("improvement_submissions", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-export const andonSeverityEnum = pgEnum("andon_severity", ["yellow", "red"]);
+export const andonSeverityEnum = pgEnum("andon_severity", ["yellow", "red", "green"]);
 export const andonCategoryEnum = pgEnum("andon_category", ["equipment", "safety", "production", "product", "other"]);
 
 export const andonIssuesTable = pgTable("andon_issues", {

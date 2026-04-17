@@ -11,6 +11,7 @@ import {
   CheckCircle2, XCircle, KeyRound, Package, ChevronDown, ChevronUp,
   Lock, Timer, BarChart2, Coffee, Truck, Mail, Warehouse,
   Camera, User, CircleDot, ToggleRight, Boxes, UtensilsCrossed,
+  AlertTriangle,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
@@ -823,6 +824,7 @@ export default function Settings() {
             <div className="space-y-8">
               <FeaturesSection />
               <QuickIdeaTabsSection />
+              <DashboardBannerRolesSection />
             </div>
           )}
 
@@ -2307,6 +2309,84 @@ function QuickIdeaTabsSection() {
             <span className="text-sm font-semibold">{label}</span>
             <Switch
               checked={tabs[key]}
+              onCheckedChange={() => handleToggle(key)}
+              disabled={!loaded || saving}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DashboardBannerRolesSection() {
+  const DEFAULT_ROLES: Record<string, boolean> = {
+    admin: true,
+    manager: false,
+    employee: false,
+    viewer: false,
+  };
+  const [roles, setRoles] = useState<Record<string, boolean>>(DEFAULT_ROLES);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/app-settings/dashboard_issue_banner_roles", { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.value) { try { setRoles(prev => ({ ...prev, ...JSON.parse(d.value) })); } catch {} } })
+      .catch(() => {})
+      .finally(() => setLoaded(true));
+  }, []);
+
+  const handleToggle = async (key: string) => {
+    const updated = { ...roles, [key]: !roles[key] };
+    const prev = roles;
+    setRoles(updated);
+    setSaving(true);
+    try {
+      const r = await fetch("/api/app-settings/dashboard_issue_banner_roles", {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: JSON.stringify(updated) }),
+      });
+      if (!r.ok) throw new Error("Failed to save");
+      setSavedMsg("Saved");
+      setTimeout(() => setSavedMsg(null), 2000);
+    } catch {
+      setRoles(prev);
+      setSavedMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const items: { key: string; label: string }[] = [
+    { key: "admin", label: "Admin" },
+    { key: "manager", label: "Manager" },
+    { key: "employee", label: "Employee" },
+    { key: "viewer", label: "Viewer" },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-500" /> Dashboard Issue Banner
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Choose which roles see the unacknowledged-issues banner at the top of the dashboard.
+          </p>
+        </div>
+        {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
+      </div>
+      <div className="space-y-3">
+        {items.map(({ key, label }) => (
+          <div key={key} className="flex items-center justify-between gap-4 p-4 bg-card border border-border rounded-xl">
+            <span className="text-sm font-semibold capitalize">{label}</span>
+            <Switch
+              checked={!!roles[key]}
               onCheckedChange={() => handleToggle(key)}
               disabled={!loaded || saving}
             />

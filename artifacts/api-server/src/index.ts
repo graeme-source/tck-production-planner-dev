@@ -439,10 +439,11 @@ async function runStartupMigrations() {
     `);
     await db.execute(sql`
       DO $$ BEGIN
-        CREATE TYPE andon_severity AS ENUM ('yellow', 'red');
+        CREATE TYPE andon_severity AS ENUM ('yellow', 'red', 'green');
       EXCEPTION WHEN duplicate_object THEN NULL;
       END $$
     `);
+    await db.execute(sql`ALTER TYPE andon_severity ADD VALUE IF NOT EXISTS 'green'`);
     await db.execute(sql`
       DO $$ BEGIN
         CREATE TYPE andon_category AS ENUM ('equipment', 'safety', 'production', 'product', 'other');

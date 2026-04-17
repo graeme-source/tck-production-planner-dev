@@ -135,7 +135,7 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
   const [struggleError, setStruggleError] = useState<string | null>(null);
 
   const [andonCategory, setAndonCategory] = useState("equipment");
-  const [andonSeverity, setAndonSeverity] = useState<"yellow" | "red">("yellow");
+  const [andonSeverity, setAndonSeverity] = useState<"green" | "yellow" | "red">("yellow");
   const [andonDescription, setAndonDescription] = useState("");
   const [andonStation, setAndonStation] = useState(defaultStation || "general");
   const [andonSubmitting, setAndonSubmitting] = useState(false);
@@ -799,8 +799,21 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
                 <div className="p-5">
                   <form onSubmit={handleAndonSubmit} className="space-y-4">
                     <div>
-                      <label className="block text-sm font-medium mb-1.5">Severity <span className="text-destructive">*</span></label>
-                      <div className="flex gap-3">
+                      <label className="block text-sm font-medium mb-1.5">Priority <span className="text-destructive">*</span></label>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setAndonSeverity("green")}
+                          className={cn(
+                            "flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border-2 text-sm font-medium transition-all",
+                            andonSeverity === "green"
+                              ? "border-emerald-500 bg-emerald-50 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-300"
+                              : "border-border text-muted-foreground hover:border-emerald-300"
+                          )}
+                        >
+                          <span className="w-3 h-3 rounded-full bg-emerald-500 shrink-0" />
+                          Green — Wish List
+                        </button>
                         <button
                           type="button"
                           onClick={() => setAndonSeverity("yellow")}
@@ -892,11 +905,15 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
                         "w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50",
                         andonSeverity === "red"
                           ? "bg-red-600 text-white hover:bg-red-700"
-                          : "bg-yellow-500 text-white hover:bg-yellow-600"
+                          : andonSeverity === "green"
+                            ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                            : "bg-yellow-500 text-white hover:bg-yellow-600"
                       )}
                     >
                       {andonSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <AlertTriangle className="w-4 h-4" />}
-                      Report {andonSeverity === "red" ? "Serious" : "Minor"} Issue
+                      {andonSeverity === "green"
+                        ? "Add to Wish List"
+                        : `Report ${andonSeverity === "red" ? "Serious" : "Minor"} Issue`}
                     </button>
                   </form>
                 </div>
