@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/page-header";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { Thermometer, Snowflake, Package, RefreshCw, ChevronRight, ChevronDown, Settings2, Plus, Pencil, Trash2, X, Save, Loader2, Lock, LockOpen, Check, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ProcessFulfilledTodayButton } from "@/components/process-fulfilled-today-button";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -472,6 +473,9 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
             </div>
           ) : (
             <div className="flex items-center gap-2">
+              {isFridgeLocation && (
+                <ProcessFulfilledTodayButton size="sm" />
+              )}
               {location.items.length > 0 && (
                 <button
                   onClick={enterBulkEdit}

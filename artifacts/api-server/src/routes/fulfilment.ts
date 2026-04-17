@@ -2,7 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { db, skuLocationsTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
-import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, type ShopifyOrder } from "../services/shopify";
+import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, shopifyGraphQL, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
 import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService } from "../services/apc";
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
 import { sql } from "drizzle-orm";
@@ -682,6 +682,187 @@ router.post("/orders/:id/complete", requireManagerOrAdmin, async (req: Request, 
   } catch (err: any) {
     console.error("[Fulfilment] completeOrder error:", err.message);
     res.status(502).json({ error: err.message });
+  }
+});
+
+// ── Manual "Process Fulfilled Today" button ────────────────────────────────
+// Replaces the old 5-minute fulfilment-poller (see index.ts note dated
+// 2026-04-17). The user clicks this from the Production Plans page or
+// the Stock Control → production_fridge panel, and we:
+//   1. Query Shopify GraphQL for orders fulfilled today AND not yet
+//      carrying the FACTORY_NUMBER_TAG.
+//   2. Decrement production_fridge stock for each (same helper the
+//      /orders/:id/complete path uses).
+//   3. Tag each processed order with FACTORY_NUMBER_TAG so a second
+//      click in the same day won't double-decrement.
+//
+// Dedup lives on the Shopify order itself (the tag), NOT in our local
+// shopify_fulfilment_tracking table — Shopify is the source of truth,
+// so a DB wipe or staging restore can't cause double-decrements.
+
+const FACTORY_NUMBER_TAG = "factory-number-adjusted";
+
+/**
+ * Compute midnight of the current London calendar day as a UTC ISO
+ * timestamp. Works correctly in both BST and GMT: we ask for the
+ * current London date (en-CA gives YYYY-MM-DD), then measure London's
+ * UTC offset using a noon probe (safely inside the day, away from the
+ * DST-transition hour).
+ */
+function londonMidnightTodayUtc(): string {
+  const londonDateStr = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+  const probe = new Date(`${londonDateStr}T12:00:00Z`);
+  const londonNoon = probe.toLocaleString("sv-SE", { timeZone: "Europe/London" });
+  const offsetHours = 12 - parseInt(londonNoon.slice(11, 13), 10);
+  const midnight = new Date(`${londonDateStr}T00:00:00Z`);
+  midnight.setUTCHours(midnight.getUTCHours() + offsetHours);
+  return midnight.toISOString();
+}
+
+interface GqlOrderNode {
+  id: string;            // "gid://shopify/Order/12345"
+  name: string;
+  updatedAt: string;
+  tags: string[];
+  lineItems: {
+    edges: Array<{
+      node: {
+        quantity: number;
+        title: string;
+        sku: string | null;
+        variant: { id: string } | null;
+      };
+    }>;
+  };
+}
+
+router.post("/process-fulfilled-today", requireManagerOrAdmin, async (_req: Request, res: Response) => {
+  try {
+    const midnightIso = londonMidnightTodayUtc();
+
+    // Fetch today's fulfilled + untagged orders WITH line items in a
+    // single GraphQL round trip. -tag: is the Shopify search negation
+    // operator (verified against live API).
+    const gqlQuery = `{
+      orders(
+        first: 250,
+        query: "fulfillment_status:fulfilled AND updated_at:>='${midnightIso}' AND -tag:${FACTORY_NUMBER_TAG}"
+      ) {
+        edges { node {
+          id name updatedAt tags
+          lineItems(first: 100) {
+            edges { node { quantity title sku variant { id } } }
+          }
+        } }
+        pageInfo { hasNextPage }
+      }
+    }`;
+
+    const data = await shopifyGraphQL<{
+      orders: { edges: Array<{ node: GqlOrderNode }>; pageInfo: { hasNextPage: boolean } };
+    }>(gqlQuery);
+
+    const edges = data.orders.edges;
+
+    if (data.orders.pageInfo.hasNextPage) {
+      // TCK's daily fulfilled-order volume doesn't approach 250 —
+      // hitting this means either a backlog from a long outage or an
+      // unexpected volume spike. Log and process the first 250 anyway;
+      // the user can click again for the remainder.
+      console.warn(
+        "[process-fulfilled-today] Shopify reports >250 untagged fulfilled orders today; processing first 250 only",
+      );
+    }
+
+    const perRecipeMap = new Map<number, number>();
+    const unmappedSet = new Set<string>();
+    let processedCount = 0;
+    let decrementedPacks = 0;
+    let skippedNonCore = 0;
+    const errors: Array<{ orderId: number; orderName: string; stage: "decrement" | "tag"; message: string }> = [];
+
+    // Chunked parallel processing. At 5 concurrent calls we stay well
+    // under Shopify's 4 req/s REST leaky-bucket (the tag-write uses
+    // REST PUT); bursts are absorbed by the bucket.
+    const CHUNK = 5;
+    for (let i = 0; i < edges.length; i += CHUNK) {
+      const chunk = edges.slice(i, i + CHUNK);
+      await Promise.all(chunk.map(async (edge) => {
+        const node = edge.node;
+        const orderIdNum = Number(node.id.split("/").pop());
+        if (!Number.isFinite(orderIdNum) || orderIdNum <= 0) {
+          errors.push({ orderId: 0, orderName: node.name, stage: "decrement", message: `could not parse order id from ${node.id}` });
+          return;
+        }
+
+        // Translate GraphQL line items to the REST shape
+        // decrementFridgeForShopifyOrder expects.
+        const lineItems: ShopifyLineItem[] = node.lineItems.edges.map(li => ({
+          id: 0, // unused downstream
+          variant_id: li.node.variant?.id ? (Number(li.node.variant.id.split("/").pop()) || null) : null,
+          title: li.node.title,
+          variant_title: null,
+          quantity: li.node.quantity,
+          sku: li.node.sku ?? "",
+          price: "0", // unused
+        }));
+
+        // 1. Decrement production_fridge stock
+        try {
+          const dec = await decrementFridgeForShopifyOrder(orderIdNum, lineItems);
+          for (const r of dec.decremented) {
+            perRecipeMap.set(r.recipeId, (perRecipeMap.get(r.recipeId) ?? 0) + r.packs);
+            decrementedPacks += r.packs;
+          }
+          for (const u of dec.unmapped) unmappedSet.add(u);
+          skippedNonCore += dec.skippedNonCore;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          errors.push({ orderId: orderIdNum, orderName: node.name, stage: "decrement", message: msg });
+          console.error(`[process-fulfilled-today] decrement failed for ${node.name}:`, msg);
+          return; // skip tagging — order will be retried next click
+        }
+
+        // 2. Tag the order so the next click excludes it. If this
+        // fails after a successful decrement, the order may be
+        // re-decremented on the next click — rare, logged, accepted.
+        try {
+          const currentTagsCsv = node.tags.join(", ");
+          await addTagToOrder(orderIdNum, currentTagsCsv, FACTORY_NUMBER_TAG);
+          processedCount += 1;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          errors.push({ orderId: orderIdNum, orderName: node.name, stage: "tag", message: msg });
+          console.warn(
+            `[process-fulfilled-today] TAG WRITE FAILED for ${node.name} AFTER successful decrement — this order may be reprocessed on next click:`,
+            msg,
+          );
+        }
+      }));
+    }
+
+    const perRecipe = [...perRecipeMap.entries()]
+      .map(([recipeId, packs]) => ({ recipeId, packs }))
+      .sort((a, b) => b.packs - a.packs);
+
+    const response = {
+      processedCount,
+      alreadyTaggedCount: 0, // GraphQL -tag filter means we never fetch already-tagged orders; kept in the response shape for future symmetry
+      decrementedPacks,
+      perRecipe,
+      unmappedVariants: [...unmappedSet],
+      skippedNonCore,
+      errors,
+    };
+
+    console.log(
+      `[process-fulfilled-today] processed ${processedCount}/${edges.length} orders, decremented ${decrementedPacks} packs across ${perRecipe.length} recipes, ${unmappedSet.size} unmapped variants, ${errors.length} errors`,
+    );
+    res.json(response);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[process-fulfilled-today] top-level error:", msg);
+    res.status(502).json({ error: msg });
   }
 });
 

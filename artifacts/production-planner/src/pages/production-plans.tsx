@@ -15,6 +15,7 @@ type PlanStatus = "draft" | "active" | "prep" | "building" | "complete";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
+import { ProcessFulfilledTodayButton } from "@/components/process-fulfilled-today-button";
 import {
   CalendarDays, Calendar, Plus, Trash2, ChevronLeft, ChevronRight,
   BarChart2, CheckCircle2,
@@ -3709,6 +3710,7 @@ export default function ProductionPlans() {
             description="Schedule daily production runs with DPT-calculated batch targets."
             action={
               <div className="flex items-center gap-2">
+                <ProcessFulfilledTodayButton size="md" className="rounded-xl" />
                 <button
                   onClick={handleGoToday}
                   className="px-4 py-2.5 border border-border rounded-xl font-medium flex items-center gap-2 hover:bg-secondary/50 transition-colors text-sm"

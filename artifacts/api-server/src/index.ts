@@ -847,12 +847,15 @@ async function startup() {
     const { seedRiskAssessmentsIfNeeded } = await import("./lib/seed-risk-assessments");
     await seedRiskAssessmentsIfNeeded();
     startBackupScheduler();
-    // Factory-number fulfilment decrement safety net — catches orders
-    // fulfilled outside the TCK fulfilment UI. Idempotent via the
-    // shopify_fulfilment_tracking table. Lazily imported so the
-    // startup path can complete even if Shopify is unreachable.
-    const { startFulfilmentPoller } = await import("./lib/fulfilment-poller");
-    startFulfilmentPoller().catch(err => console.error("[fulfilment-poller] start failed:", err));
+    // DISABLED 2026-04-17 — the 5-minute fulfilment poller was not
+    // reliably decrementing fridge stock and contributed to Railway
+    // OOMs when stacked with dashboard traffic. Replaced by the
+    // manual "Process Fulfilled Today" button (see
+    // routes/fulfilment.ts > POST /api/fulfilment/process-fulfilled-today).
+    // The poller module is left on disk in case we want to revive it
+    // later; just un-comment the two lines below.
+    // const { startFulfilmentPoller } = await import("./lib/fulfilment-poller");
+    // startFulfilmentPoller().catch(err => console.error("[fulfilment-poller] start failed:", err));
   } catch (err) {
     console.error(
       "Background startup tasks failed:",
