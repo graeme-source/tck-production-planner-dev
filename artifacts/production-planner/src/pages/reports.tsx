@@ -13,6 +13,7 @@ import {
   Lightbulb, AlertTriangle, CheckCircle, Filter, Play, Square,
   MessageSquare, Send, ClipboardCheck, FileText, Eye, EyeOff,
   Droplets, UserCog, ClipboardList, Flame, HardHat, Printer, Check, Pencil, Plus,
+  PoundSterling,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
@@ -2532,6 +2533,7 @@ const CATEGORY_ICON: Record<string, typeof TrendingUp> = {
   gas: Flame,
   training: Users,
   other: ClipboardList,
+  finance: PoundSterling,
 };
 
 function assessmentTypeLabel(t: string): string {
@@ -2718,7 +2720,14 @@ function RiskAssessmentsTab({ userRole, currentUserName }: { userRole: string; c
 // Library of printables / downloadables. Each is a React route rendering
 // a print-optimised page; the user opens in a new tab and uses the browser
 // print dialog to print directly or save as PDF.
-const PRINTABLES: { title: string; description: string; href: string; category: "fire" | "food_safety" | "general"; note?: string }[] = [
+const PRINTABLES: { title: string; description: string; href: string; category: "fire" | "food_safety" | "general" | "finance"; note?: string }[] = [
+  {
+    title: "Recipe Profit & Loss Report",
+    description: "Per-recipe cost breakdown: ingredient + packaging + labour costs, RRP, and gross margin. Filter by category, core-menu, or priced-only. Landscape A4, colour-coded rows.",
+    href: "/print/recipe-pnl",
+    category: "finance",
+    note: "Open → pick filters → Print / Save as PDF",
+  },
   {
     title: "Fire Action Notice",
     description: "A4 wall poster — mount next to each Manual Call Point and at the muster point. Laminate for durability.",
