@@ -676,32 +676,40 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     },
   });
 
-  // Blast chiller tray is up to 10 packs. Used by everyone on mac cheese recipes.
-  // Clamps to whatever's actually left so partial trays still advance in one tap.
+  // A blast chiller tray is always 10 packs. Mac cheese only. Partial trays
+  // (fewer than 10 packs of work left) use the +1/-1 buttons instead.
+  const BLAST_TRAY_SIZE = 10;
   const [runBulkBatch, bulkBatchPending] = useGuardedAction({
     onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
   });
-  const blastChillerCount = (item: ProductionPlanItem): number => {
-    const target = getEffectiveTarget(item);
-    const done = getCombinedBuildCount(item);
-    const remaining = Math.max(0, target - done);
-    return isAdmin ? 10 : Math.min(10, remaining);
+  const canAdvanceBlastTray = (item: ProductionPlanItem): boolean => {
+    const remaining = Math.max(0, getEffectiveTarget(item) - getCombinedBuildCount(item));
+    return isAdmin || remaining >= BLAST_TRAY_SIZE;
   };
+  const canUndoBlastTray = (item: ProductionPlanItem): boolean =>
+    getStationCount(item, stationType) >= BLAST_TRAY_SIZE;
   const addBlastChillerTray = async (item: ProductionPlanItem) => {
-    if (isOnBreak) return;
-    const count = blastChillerCount(item);
-    if (count <= 0) {
-      toast({ title: "All packs built", description: "No packs remaining to advance." });
-      return;
-    }
+    if (isOnBreak || !canAdvanceBlastTray(item)) return;
     await runBulkBatch(async (signal) => {
       await guardedFetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
         method: "POST", signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planItemId: item.id, stationType, count }),
+        body: JSON.stringify({ planItemId: item.id, stationType, count: BLAST_TRAY_SIZE }),
       });
-      setSessionBatches(prev => prev + count);
-      toast({ title: `${count} pack${count === 1 ? "" : "s"} added to the oven queue` });
+      setSessionBatches(prev => prev + BLAST_TRAY_SIZE);
+      toast({ title: `Blast chiller tray — ${BLAST_TRAY_SIZE} packs added to the oven queue` });
+    });
+  };
+  const undoBlastChillerTray = async (item: ProductionPlanItem) => {
+    if (isOnBreak || !canUndoBlastTray(item)) return;
+    await runBulkBatch(async (signal) => {
+      await guardedFetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
+        method: "DELETE", signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planItemId: item.id, stationType, count: BLAST_TRAY_SIZE }),
+      });
+      setSessionBatches(prev => Math.max(0, prev - BLAST_TRAY_SIZE));
+      toast({ title: `Blast chiller tray undone — ${BLAST_TRAY_SIZE} packs returned to the build queue` });
     });
   };
   const handleUndo = () => {
@@ -1174,31 +1182,41 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                           </button>
                         )}
 
-                        {/* Blast chiller tray — mac cheese only, advances up to 10 packs at once.
-                            Clamps to remaining for partial trays so any user can still advance
-                            whatever packs are left with one tap. */}
+                        {/* Blast chiller tray — mac cheese only. Always advances exactly 10
+                            packs at once; partial trays are handled via the main tap button. */}
                         {isMacCheese(item as any) && !isOnBreak && (() => {
-                          const count = blastChillerCount(item);
-                          const canBlast = count > 0 && !bulkBatchPending && !pendingTap;
-                          const label = count === 10
-                            ? "Blast Chiller Tray (+10 packs)"
-                            : count > 0
-                              ? `Blast Chiller Tray (+${count} pack${count === 1 ? "" : "s"})`
-                              : "All packs built";
+                          const canBlast = canAdvanceBlastTray(item) && !bulkBatchPending && !pendingTap;
+                          const canUndoBlast = canUndoBlastTray(item) && !bulkBatchPending && !pendingTap;
                           return (
-                            <button
-                              onClick={() => addBlastChillerTray(item)}
-                              disabled={!canBlast}
-                              className={cn(
-                                "w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold transition-colors",
-                                canBlast
-                                  ? "bg-cyan-600 text-white hover:bg-cyan-700"
-                                  : "bg-cyan-100 text-cyan-500 dark:bg-cyan-900/20 dark:text-cyan-300 opacity-60 cursor-not-allowed",
-                              )}
-                            >
-                              <Snowflake className="w-5 h-5" />
-                              {label}
-                            </button>
+                            <div className="flex items-stretch gap-2">
+                              <button
+                                onClick={() => undoBlastChillerTray(item)}
+                                disabled={!canUndoBlast}
+                                title={canUndoBlast ? "Remove the last blast chiller tray (−10 packs)" : "Need at least 10 packs recorded at this station to undo a tray"}
+                                className={cn(
+                                  "flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-semibold transition-colors",
+                                  canUndoBlast
+                                    ? "bg-cyan-50 text-cyan-700 hover:bg-cyan-100 border border-cyan-200 dark:bg-cyan-900/20 dark:text-cyan-200 dark:border-cyan-800"
+                                    : "bg-cyan-50/40 text-cyan-400 border border-cyan-100 dark:bg-cyan-900/10 dark:text-cyan-500 dark:border-cyan-900 opacity-70 cursor-not-allowed",
+                                )}
+                              >
+                                <Minus className="w-5 h-5" />
+                                −10
+                              </button>
+                              <button
+                                onClick={() => addBlastChillerTray(item)}
+                                disabled={!canBlast}
+                                className={cn(
+                                  "flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-semibold transition-colors",
+                                  canBlast
+                                    ? "bg-cyan-600 text-white hover:bg-cyan-700"
+                                    : "bg-cyan-100 text-cyan-500 dark:bg-cyan-900/20 dark:text-cyan-300 opacity-60 cursor-not-allowed",
+                                )}
+                              >
+                                <Snowflake className="w-5 h-5" />
+                                Blast Chiller Tray (+10 packs)
+                              </button>
+                            </div>
                           );
                         })()}
 

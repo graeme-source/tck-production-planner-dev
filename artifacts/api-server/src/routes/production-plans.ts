@@ -1183,12 +1183,22 @@ router.post("/:id/add-mac-cheese", validate(AddMacCheeseBody), async (req, res) 
   const existingByRecipeId = new Map(existingMacItems.map(e => [e.recipeId, e]));
   const submittedRecipeIds = new Set(items.map(i => i.recipeId));
 
-  // 4. Get max order position for any inserts
-  const [maxPos] = await db
-    .select({ maxPos: sql<number>`COALESCE(MAX(${productionPlanItemsTable.orderPosition}), 0)` })
-    .from(productionPlanItemsTable)
-    .where(eq(productionPlanItemsTable.planId, planId));
-  let nextPos = (maxPos?.maxPos ?? 0) + 1;
+  // 4. Newly inserted mac cheese rows default to the top of the production
+  //    queue because the kitchen makes mac cheese before calzones. Shift
+  //    every existing row down by the number of new inserts so positions
+  //    1..N are free for the new mac cheese rows. Existing rows (including
+  //    existing mac cheese) keep their relative order and can still be
+  //    reordered by hand afterwards.
+  const newInsertCount = items.filter(
+    i => i.packsToMake > 0 && !existingByRecipeId.has(i.recipeId),
+  ).length;
+  if (newInsertCount > 0) {
+    await db
+      .update(productionPlanItemsTable)
+      .set({ orderPosition: sql`${productionPlanItemsTable.orderPosition} + ${newInsertCount}` })
+      .where(eq(productionPlanItemsTable.planId, planId));
+  }
+  let nextPos = 1;
 
   const skippedInProgress: number[] = [];
 
