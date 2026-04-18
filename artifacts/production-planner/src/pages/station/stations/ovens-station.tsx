@@ -95,36 +95,44 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
     onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
   });
 
-  // A blast chiller tray is always 10 packs. Mac cheese only. Partial trays
-  // (fewer than 10 packs of work left) use the +1/-1 buttons instead.
+  // A blast chiller tray is 10 packs. Mac cheese only. If fewer than 10 packs
+  // of work are left, the button shows "Add Final N Packs" and advances the
+  // remainder in one tap (same pattern the wrapping station uses for its
+  // partial last stack). Disabled when the prior station hasn't sent enough
+  // packs through yet.
   const BLAST_TRAY_SIZE = 10;
-  const canAdvanceBlastTray = (item: ProductionPlanItem): boolean => {
+  const blastAddCount = (item: ProductionPlanItem): number => {
     const avail = getAvailableFromPrev(item, "ovens");
     const remaining = Math.max(0, effTarget(item) - getStationCount(item, "ovens"));
-    return avail >= BLAST_TRAY_SIZE && (isAdmin || remaining >= BLAST_TRAY_SIZE);
+    const cap = isAdmin ? avail : Math.min(avail, remaining);
+    return Math.min(BLAST_TRAY_SIZE, cap);
   };
-  const canUndoBlastTray = (item: ProductionPlanItem): boolean =>
-    getStationCount(item, "ovens") >= BLAST_TRAY_SIZE;
+  const blastUndoCount = (item: ProductionPlanItem): number =>
+    Math.min(BLAST_TRAY_SIZE, getStationCount(item, "ovens"));
   const addBlastChillerTray = async (item: ProductionPlanItem) => {
-    if (isOnBreak || !canAdvanceBlastTray(item)) return;
+    if (isOnBreak) return;
+    const count = blastAddCount(item);
+    if (count <= 0) return;
     await runBulkBatch(async (signal) => {
       await guardedFetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
         method: "POST", signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planItemId: item.id, stationType: "ovens", count: BLAST_TRAY_SIZE }),
+        body: JSON.stringify({ planItemId: item.id, stationType: "ovens", count }),
       });
-      toast({ title: `Blast chiller tray — ${BLAST_TRAY_SIZE} packs advanced to wrapping` });
+      toast({ title: `${count} pack${count === 1 ? "" : "s"} advanced to wrapping` });
     });
   };
   const undoBlastChillerTray = async (item: ProductionPlanItem) => {
-    if (isOnBreak || !canUndoBlastTray(item)) return;
+    if (isOnBreak) return;
+    const count = blastUndoCount(item);
+    if (count <= 0) return;
     await runBulkBatch(async (signal) => {
       await guardedFetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
         method: "DELETE", signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planItemId: item.id, stationType: "ovens", count: BLAST_TRAY_SIZE }),
+        body: JSON.stringify({ planItemId: item.id, stationType: "ovens", count }),
       });
-      toast({ title: `Blast chiller tray — ${BLAST_TRAY_SIZE} packs returned to oven queue` });
+      toast({ title: `${count} pack${count === 1 ? "" : "s"} returned to the oven queue` });
     });
   };
 
@@ -453,8 +461,16 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                     {(() => {
                       const itemIsMac = isMacCheese(item as any);
                       const unitLabel = itemIsMac ? "packs" : "batches";
-                      const canBlast = itemIsMac && !isOnBreak && !bulkBatchPending && !createBatch.isPending && canAdvanceBlastTray(item);
-                      const canUndoBlast = itemIsMac && !isOnBreak && !bulkBatchPending && !createBatch.isPending && canUndoBlastTray(item);
+                      const blastAdd = itemIsMac ? blastAddCount(item) : 0;
+                      const blastUndo = itemIsMac ? blastUndoCount(item) : 0;
+                      const canBlast = itemIsMac && !isOnBreak && !bulkBatchPending && !createBatch.isPending && blastAdd > 0;
+                      const canUndoBlast = itemIsMac && !isOnBreak && !bulkBatchPending && !createBatch.isPending && blastUndo > 0;
+                      const addLabel = blastAdd >= BLAST_TRAY_SIZE
+                        ? "Blast Chiller Tray (+10 packs)"
+                        : blastAdd > 0
+                          ? `Add Final ${blastAdd} Pack${blastAdd === 1 ? "" : "s"}`
+                          : "Waiting for building";
+                      const undoLabel = blastUndo >= BLAST_TRAY_SIZE ? "−10" : blastUndo > 0 ? `−${blastUndo}` : "−10";
                       return (
                         <>
                           <div className="flex items-center justify-center gap-6">
@@ -498,7 +514,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                               <button
                                 onClick={(e) => { e.stopPropagation(); undoBlastChillerTray(item); }}
                                 disabled={!canUndoBlast}
-                                title={canUndoBlast ? "Remove the last blast chiller tray (−10 packs)" : "Need at least 10 packs recorded at this station to undo a tray"}
+                                title={canUndoBlast ? `Remove the last ${blastUndo} pack${blastUndo === 1 ? "" : "s"} advanced at this station` : "Nothing to undo at this station"}
                                 className={cn(
                                   "flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-semibold transition-colors",
                                   canUndoBlast
@@ -507,7 +523,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                                 )}
                               >
                                 <Minus className="w-5 h-5" />
-                                −10
+                                {undoLabel}
                               </button>
                               <button
                                 onClick={(e) => { e.stopPropagation(); addBlastChillerTray(item); }}
@@ -520,7 +536,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                                 )}
                               >
                                 <Snowflake className="w-5 h-5" />
-                                Blast Chiller Tray (+10 packs)
+                                {addLabel}
                               </button>
                             </div>
                           )}
