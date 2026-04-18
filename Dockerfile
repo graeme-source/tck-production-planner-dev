@@ -2,6 +2,11 @@ FROM node:22-slim AS base
 RUN corepack enable && corepack prepare pnpm@10 --activate
 WORKDIR /app
 
+# Run the Node process in UTC so `new Date()` / `.toISOString()` always emit
+# UTC instants. The Postgres session is also pinned to UTC in lib/db/src/index.ts.
+# Frontend code auto-localises to the iPad's timezone, which handles BST <-> GMT.
+ENV TZ=UTC
+
 # Copy workspace config and lockfile first for better caching
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json tsconfig.json ./
 COPY lib/ lib/
