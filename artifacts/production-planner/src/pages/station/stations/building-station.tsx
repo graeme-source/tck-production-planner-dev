@@ -18,7 +18,7 @@ import {
   Plus, Minus, CheckCircle2, Loader2, ChevronRight, RotateCcw,
   BarChart2, BookOpen, Target, Scale, GripVertical, Check, ExternalLink,
   ClipboardList, CheckSquare, Square, AlertCircle, Eye, X, AlertTriangle,
-  ChevronDown,
+  ChevronDown, Snowflake,
 } from "lucide-react";
 import { format, parseISO, differenceInMinutes } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -675,6 +675,36 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
       setSessionBatches(prev => Math.max(0, prev - 1));
     },
   });
+
+  // Blast chiller tray = 10 packs. Only used for mac cheese recipes.
+  const [runBulkBatch, bulkBatchPending] = useGuardedAction({
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+      setSessionBatches(prev => prev + 10);
+    },
+  });
+  const addBlastChillerTray = async (item: ProductionPlanItem) => {
+    if (isOnBreak) return;
+    const target = getEffectiveTarget(item);
+    const done = getCombinedBuildCount(item);
+    const remaining = Math.max(0, target - done);
+    if (!isAdmin && remaining < 10) {
+      toast({
+        title: "Not enough packs left",
+        description: "A blast chiller tray is 10 packs — this recipe has fewer remaining.",
+        variant: "destructive",
+      });
+      return;
+    }
+    await runBulkBatch(async (signal) => {
+      await guardedFetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
+        method: "POST", signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planItemId: item.id, stationType, count: 10 }),
+      });
+      toast({ title: "Blast chiller tray — 10 packs added to the oven queue" });
+    });
+  };
   const handleUndo = () => {
     if (!currentItem || myCount === 0 || isOnBreak) return;
     runUndo((signal) =>
@@ -1056,7 +1086,9 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                           {itemAvailable <= 0 && (
                             <div className="w-full flex items-center justify-center gap-1 px-2 py-1.5 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 rounded-lg mb-2">
                               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                              <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300">All batches built</p>
+                              <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                                {isMacCheese(item as any) ? "All packs built" : "All batches built"}
+                              </p>
                             </div>
                           )}
 
@@ -1109,7 +1141,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                                     ? "Waiting…"
                                     : pendingTap
                                       ? "Recording..."
-                                      : "BATCH DONE ✓"}
+                                      : isMacCheese(item as any) ? "PACK DONE ✓" : "BATCH DONE ✓"}
                           </span>
                           {timerConfig.enabled && buildTimer.running && !allDone && !isOnBreak && (
                             <div
@@ -1142,6 +1174,27 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                             +1 min snooze
                           </button>
                         )}
+
+                        {/* Blast chiller tray — mac cheese only, advances 10 packs at once */}
+                        {isMacCheese(item as any) && !isOnBreak && (() => {
+                          const remaining = Math.max(0, getEffectiveTarget(item) - getCombinedBuildCount(item));
+                          const canBlast = (isAdmin || remaining >= 10) && !bulkBatchPending && !pendingTap;
+                          return (
+                            <button
+                              onClick={() => addBlastChillerTray(item)}
+                              disabled={!canBlast}
+                              className={cn(
+                                "w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold transition-colors",
+                                canBlast
+                                  ? "bg-cyan-600 text-white hover:bg-cyan-700"
+                                  : "bg-cyan-100 text-cyan-500 dark:bg-cyan-900/20 dark:text-cyan-300 opacity-60 cursor-not-allowed",
+                              )}
+                            >
+                              <Snowflake className="w-5 h-5" />
+                              Blast Chiller Tray (+10 packs)
+                            </button>
+                          );
+                        })()}
 
                         {/* Undo */}
                         {combinedCount > 0 && !isOnBreak && (
@@ -1211,7 +1264,9 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                       <div className="space-y-3">
                         <div className="border border-border rounded-xl px-3 py-2">
                           <div className="flex items-center gap-3">
-                            <p className="text-sm text-muted-foreground font-semibold">Batches</p>
+                            <p className="text-sm text-muted-foreground font-semibold">
+                              {isMacCheese(item as any) ? "Packs" : "Batches"}
+                            </p>
                             <div className="flex items-center gap-3 ml-auto">
                               <button
                                 onClick={(e) => {

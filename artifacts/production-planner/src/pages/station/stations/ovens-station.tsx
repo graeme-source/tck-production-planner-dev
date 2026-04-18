@@ -19,7 +19,7 @@ import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
-import { getStationCount, getAvailableFromPrev } from "../shared/constants";
+import { getStationCount, getAvailableFromPrev, isMacCheese } from "../shared/constants";
 import { effectiveBatchesTarget, netTwoPacks as computeNetTwoPacks } from "../shared/recipe-completion";
 import { RECIPE_RACK_COLOURS, WonkyColour, ChillerRackItem, ChillerRackVisual } from "./dough-sheeting-station";
 
@@ -89,6 +89,34 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
       return;
     }
     createBatch.mutate({ id: plan.id, data: { planItemId: item.id, stationType: "ovens", completedAt: new Date().toISOString() } });
+  };
+
+  const [runBulkBatch, bulkBatchPending] = useGuardedAction({
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
+  });
+
+  // Blast chiller tray = 10 packs. Only used for mac cheese recipes.
+  const addBlastChillerTray = async (item: ProductionPlanItem) => {
+    if (isOnBreak) return;
+    const avail = getAvailableFromPrev(item, "ovens");
+    const remaining = Math.max(0, effTarget(item) - getStationCount(item, "ovens"));
+    const count = Math.min(10, avail, isAdmin ? Infinity : remaining);
+    if (count < 10) {
+      toast({
+        title: "Not enough packs",
+        description: "A blast chiller tray needs 10 packs ready. Use + to advance one at a time.",
+        variant: "destructive",
+      });
+      return;
+    }
+    await runBulkBatch(async (signal) => {
+      await guardedFetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
+        method: "POST", signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planItemId: item.id, stationType: "ovens", count: 10 }),
+      });
+      toast({ title: "Blast chiller tray — 10 packs advanced to wrapping" });
+    });
   };
 
   const [runRemoveBatch, removePending] = useGuardedAction({
@@ -198,6 +226,13 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
   const totalOvenComplete = items.reduce((s, it) => s + getStationCount(it, "ovens"), 0);
   const totalTarget = items.reduce((s, it) => s + effTarget(it), 0);
   const overallPct = totalTarget > 0 ? Math.round((totalOvenComplete / totalTarget) * 100) : 0;
+  // Split totals so mac cheese items are reported as "packs", calzones as "batches".
+  const calzoneItems = items.filter(it => !isMacCheese(it as any));
+  const macItems = items.filter(it => isMacCheese(it as any));
+  const calzoneDone = calzoneItems.reduce((s, it) => s + getStationCount(it, "ovens"), 0);
+  const calzoneTarget = calzoneItems.reduce((s, it) => s + effTarget(it), 0);
+  const macDone = macItems.reduce((s, it) => s + getStationCount(it, "ovens"), 0);
+  const macTarget = macItems.reduce((s, it) => s + effTarget(it), 0);
 
   const grossPacks = (item: ProductionPlanItem) =>
     Math.floor((getStationCount(item, "ovens") * (item.portionsPerBatch ?? 10)) / 2);
@@ -242,7 +277,12 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
       {/* Overall progress + breaks */}
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
-          <p className="text-base font-medium">Daily Progress — {totalOvenComplete} / {totalTarget} batches</p>
+          <p className="text-base font-medium">
+            Daily Progress —{" "}
+            {calzoneTarget > 0 && <>{calzoneDone} / {calzoneTarget} batches</>}
+            {calzoneTarget > 0 && macTarget > 0 && " · "}
+            {macTarget > 0 && <>{macDone} / {macTarget} mac packs</>}
+          </p>
           <span className="text-2xl font-bold">{overallPct}%</span>
         </div>
         <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
@@ -401,41 +441,68 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                     )}
 
                     {/* Batch counter */}
-                    <div className="flex items-center justify-center gap-6">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); removeBatch(item); }}
-                        disabled={getStationCount(item, "ovens") === 0 || isOnBreak || createBatch.isPending || removePending}
-                        className="w-14 h-14 flex items-center justify-center rounded-full border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
-                      >
-                        <Minus className="w-5 h-5" />
-                      </button>
-                      <div className="text-center">
-                        <div className="flex items-baseline gap-2 justify-center">
-                          <span className="font-display text-5xl font-bold tabular-nums text-foreground leading-none">
-                            {getStationCount(item, "ovens")}
-                          </span>
-                          <span className="text-xl text-muted-foreground font-light tabular-nums">
-                            / {effTarget(item)}
-                          </span>
-                        </div>
-                        <p className="text-sm text-muted-foreground mt-1 font-medium">batches</p>
-                      </div>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); addBatch(item); }}
-                        disabled={
-                          createBatch.isPending ||
-                          (getStationCount(item, "ovens") >= effTarget(item) && !isAdmin) ||
-                          getAvailableFromPrev(item, "ovens") <= 0 ||
-                          isOnBreak
-                        }
-                        className={cn(
-                          "w-14 h-14 flex items-center justify-center rounded-full transition-colors disabled:opacity-50",
-                          isOnBreak ? "bg-amber-300 text-amber-700" : "bg-red-500 text-white hover:bg-red-600"
-                        )}
-                      >
-                        <Plus className="w-5 h-5" />
-                      </button>
-                    </div>
+                    {(() => {
+                      const itemIsMac = isMacCheese(item as any);
+                      const unitLabel = itemIsMac ? "packs" : "batches";
+                      const remaining = Math.max(0, effTarget(item) - getStationCount(item, "ovens"));
+                      const avail = getAvailableFromPrev(item, "ovens");
+                      const canBlast = itemIsMac && !isOnBreak && avail >= 10 && (isAdmin || remaining >= 10) && !bulkBatchPending && !createBatch.isPending;
+                      return (
+                        <>
+                          <div className="flex items-center justify-center gap-6">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); removeBatch(item); }}
+                              disabled={getStationCount(item, "ovens") === 0 || isOnBreak || createBatch.isPending || removePending}
+                              className="w-14 h-14 flex items-center justify-center rounded-full border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
+                            >
+                              <Minus className="w-5 h-5" />
+                            </button>
+                            <div className="text-center">
+                              <div className="flex items-baseline gap-2 justify-center">
+                                <span className="font-display text-5xl font-bold tabular-nums text-foreground leading-none">
+                                  {getStationCount(item, "ovens")}
+                                </span>
+                                <span className="text-xl text-muted-foreground font-light tabular-nums">
+                                  / {effTarget(item)}
+                                </span>
+                              </div>
+                              <p className="text-sm text-muted-foreground mt-1 font-medium">{unitLabel}</p>
+                            </div>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); addBatch(item); }}
+                              disabled={
+                                createBatch.isPending ||
+                                (getStationCount(item, "ovens") >= effTarget(item) && !isAdmin) ||
+                                getAvailableFromPrev(item, "ovens") <= 0 ||
+                                isOnBreak
+                              }
+                              className={cn(
+                                "w-14 h-14 flex items-center justify-center rounded-full transition-colors disabled:opacity-50",
+                                isOnBreak ? "bg-amber-300 text-amber-700" : "bg-red-500 text-white hover:bg-red-600"
+                              )}
+                            >
+                              <Plus className="w-5 h-5" />
+                            </button>
+                          </div>
+
+                          {itemIsMac && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); addBlastChillerTray(item); }}
+                              disabled={!canBlast}
+                              className={cn(
+                                "mt-3 w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold transition-colors",
+                                canBlast
+                                  ? "bg-cyan-600 text-white hover:bg-cyan-700"
+                                  : "bg-cyan-100 text-cyan-500 dark:bg-cyan-900/20 dark:text-cyan-300 opacity-60 cursor-not-allowed",
+                              )}
+                            >
+                              <Snowflake className="w-5 h-5" />
+                              Blast Chiller Tray (+10 packs)
+                            </button>
+                          )}
+                        </>
+                      );
+                    })()}
 
                     {/* Stats: net 2-packs + 8-packs + chiller trays + wonky */}
                     <div className="flex items-center justify-center gap-6 pb-3 border-b border-border/50">
