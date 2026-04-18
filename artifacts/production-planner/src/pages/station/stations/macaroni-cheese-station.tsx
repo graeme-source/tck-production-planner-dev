@@ -117,85 +117,33 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
 
   useEffect(() => {
     setLoading(true);
-    // Reuse the existing /calculate endpoint (proven Shopify matching) and filter to mac cheese
-    Promise.all([
-      fetch(`/api/production-plans/calculate?planDate=${planDate}`, { credentials: "include" }).then(r => r.json()),
-      // Fetch per-recipe extra-to-make defaults
-      fetch(`/api/recipes`, { credentials: "include" }).then(r => r.json()),
-    ])
-      .then(([calcData, allRecipes]) => {
-        const macRecipeIds = new Set(
-          (allRecipes ?? []).filter((r: any) => r.category === "Macaroni Cheese").map((r: any) => r.id)
-        );
-        // Filter calculate results to only mac cheese recipes
-        const macCalcRecipes = (calcData.recipes ?? []).filter((r: any) => macRecipeIds.has(r.recipeId));
-
-        // Also include mac cheese recipes that aren't in the calculate response (no DPT settings)
-        const calcRecipeIds = new Set(macCalcRecipes.map((r: any) => r.recipeId));
-        const missingRecipes = (allRecipes ?? [])
-          .filter((r: any) => r.category === "Macaroni Cheese" && !calcRecipeIds.has(r.id))
-          .map((r: any) => ({
-            recipeId: r.id,
-            recipeName: r.name,
-            color: r.color ?? null,
-            packsPerBatch: (r.portionsPerBatch ?? 10) / (Number(r.packSize) || 2),
-            leftOverStock: 0,
-            salesNextDay: 0,
-            salesNextDayPlus1: 0,
-            salesNextDayPlus2: 0,
-            neededForDispatch: 0,
-            extraToMake: 5,
-            toMakePacks: 5,
-            toMakeBatches: 1,
-          }));
-
-        // Thursday = no extra (last prod day before weekend)
-        const planDow = new Date(`${planDate}T12:00:00Z`).getUTCDay();
-        const isThursday = planDow === 4;
-        const defaultExtra = isThursday ? 0 : 5;
-
-        // Map calculate response to our format
-        // Use fridgeStock (production fridge) as the stock value — this is what's
-        // physically in the fridge right now, not the predicted end-of-day number.
-        const mapped: MacCheeseCalcRecipe[] = macCalcRecipes.map((r: any) => {
-          const stock = Math.round(r.fridgeStock ?? 0);
-          const d1 = r.dispatch2Qty ?? 0; // dispatch2 = today's dispatch (next day sales)
-          const d2 = r.dispatch3Qty ?? 0; // dispatch3 = tomorrow's dispatch
-          const d3 = r.dispatch4Qty ?? 0; // dispatch4 = day-after-tomorrow's dispatch
-          const deficit = Math.max(0, d1 - stock);
-          return {
-            recipeId: r.recipeId,
-            recipeName: r.recipeName,
-            color: r.color ?? null,
-            packsPerBatch: r.packsPerBatch ?? 5,
-            leftOverStock: stock,
-            salesNextDay: d1,
-            salesNextDayPlus1: d2,
-            salesNextDayPlus2: d3,
-            neededForDispatch: deficit,
-            extraToMake: defaultExtra,
-            toMakePacks: deficit + d2 + d3 + defaultExtra,
-            toMakeBatches: 0,
-          };
-        });
-
-        const allMacRecipes = [...mapped, ...missingRecipes];
-
-        // Fetch extra-to-make defaults from settings
-        Promise.all(
-          allMacRecipes.map(r =>
-            fetch(`/api/app-settings/mac_cheese_extra_packs_${r.recipeId}`, { credentials: "include" })
-              .then(resp => resp.ok ? resp.json() : null)
-              .then(d => ({ id: r.recipeId, value: d?.value ? Number(d.value) : (isThursday ? 0 : 5) }))
-              .catch(() => ({ id: r.recipeId, value: isThursday ? 0 : 5 }))
-          )
-        ).then(extraResults => {
-          const overrides: Record<number, number> = {};
-          for (const e of extraResults) overrides[e.id] = e.value;
-          setExtraOverrides(overrides);
-          setRecipes(allMacRecipes);
-          setLoading(false);
-        });
+    // Use the dedicated mac-cheese calc endpoint — same working-day dispatch
+    // logic the Add-to-Plan dialog on the production plans page uses, so D1/D2/D3
+    // here match the rest of the app.
+    fetch(`/api/production-plans/calculate-mac-cheese?planDate=${planDate}`, { credentials: "include" })
+      .then(r => r.json())
+      .then((calcData) => {
+        const mapped: MacCheeseCalcRecipe[] = (calcData.recipes ?? []).map((r: any) => ({
+          recipeId: r.recipeId,
+          recipeName: r.recipeName,
+          color: r.color ?? null,
+          packsPerBatch: r.packsPerBatch ?? 5,
+          leftOverStock: Math.round(r.leftOverStock ?? 0),
+          salesNextDay: r.salesNextDay ?? 0,
+          salesNextDayPlus1: r.salesNextDayPlus1 ?? 0,
+          salesNextDayPlus2: r.salesNextDayPlus2 ?? 0,
+          neededForDispatch: r.neededForDispatch ?? 0,
+          extraToMake: r.extraToMake ?? 0,
+          toMakePacks: r.toMakePacks ?? 0,
+          toMakeBatches: r.toMakeBatches ?? 0,
+        }));
+        // Seed the extraToMake input with whatever the endpoint already resolved
+        // (it applies the per-recipe app-setting override and Thursday rules).
+        const overrides: Record<number, number> = {};
+        for (const r of mapped) overrides[r.recipeId] = r.extraToMake;
+        setExtraOverrides(overrides);
+        setRecipes(mapped);
+        setLoading(false);
       })
       .catch(() => setLoading(false));
   }, [planDate]);
