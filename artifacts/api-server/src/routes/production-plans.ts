@@ -1032,15 +1032,27 @@ router.get("/calculate-mac-cheese", async (req, res) => {
     shopifyError = err.message ?? "Unknown error";
   }
 
+  // Pick the single Shopify product whose title is closest in length to the
+  // recipe name (matches the calzone /calculate endpoint's `bestShopifyMatch`).
+  // This prevents recipes with overlapping substrings (e.g. "Big Nanny's
+  // Macaroni Cheese" is inside "Pigs in Blankets Big Nanny's Macaroni Cheese")
+  // from all summing the same set of products and returning identical totals.
   function matchSalesForDate(recipeName: string, date: string): number {
     const recipeNorm = normalizeForMatch(recipeName);
     const salesForDate = shopifySalesPerDate[date] ?? {};
-    let total = 0;
+    let bestQty = 0;
+    let bestLenDiff = Infinity;
     for (const [productTitle, qty] of Object.entries(salesForDate)) {
       const productNorm = normalizeForMatch(productTitle);
-      if (productNorm.includes(recipeNorm) || recipeNorm.includes(productNorm)) total += qty;
+      if (productNorm.includes(recipeNorm) || recipeNorm.includes(productNorm)) {
+        const lenDiff = Math.abs(productNorm.length - recipeNorm.length);
+        if (lenDiff < bestLenDiff) {
+          bestLenDiff = lenDiff;
+          bestQty = qty;
+        }
+      }
     }
-    return total;
+    return bestQty;
   }
 
   // Fetch per-recipe extra-to-make defaults from app_settings
