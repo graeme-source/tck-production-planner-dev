@@ -95,16 +95,21 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
     onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
   });
 
-  // Blast chiller tray = 10 packs. Only used for mac cheese recipes.
-  const addBlastChillerTray = async (item: ProductionPlanItem) => {
-    if (isOnBreak) return;
+  // Blast chiller tray is up to 10 packs. Used by everyone on mac cheese recipes.
+  // Clamps to `avail` (packs ready from the prior station) and to remaining so
+  // a partial tray can still be advanced with one tap.
+  const blastChillerCount = (item: ProductionPlanItem): number => {
     const avail = getAvailableFromPrev(item, "ovens");
     const remaining = Math.max(0, effTarget(item) - getStationCount(item, "ovens"));
-    const count = Math.min(10, avail, isAdmin ? Infinity : remaining);
-    if (count < 10) {
+    return Math.min(10, avail, isAdmin ? Infinity : remaining);
+  };
+  const addBlastChillerTray = async (item: ProductionPlanItem) => {
+    if (isOnBreak) return;
+    const count = blastChillerCount(item);
+    if (count <= 0) {
       toast({
-        title: "Not enough packs",
-        description: "A blast chiller tray needs 10 packs ready. Use + to advance one at a time.",
+        title: "No packs ready",
+        description: "Building hasn't sent any more packs yet.",
         variant: "destructive",
       });
       return;
@@ -113,9 +118,9 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
       await guardedFetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
         method: "POST", signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planItemId: item.id, stationType: "ovens", count: 10 }),
+        body: JSON.stringify({ planItemId: item.id, stationType: "ovens", count }),
       });
-      toast({ title: "Blast chiller tray — 10 packs advanced to wrapping" });
+      toast({ title: `${count} pack${count === 1 ? "" : "s"} advanced to wrapping` });
     });
   };
 
@@ -444,9 +449,13 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                     {(() => {
                       const itemIsMac = isMacCheese(item as any);
                       const unitLabel = itemIsMac ? "packs" : "batches";
-                      const remaining = Math.max(0, effTarget(item) - getStationCount(item, "ovens"));
-                      const avail = getAvailableFromPrev(item, "ovens");
-                      const canBlast = itemIsMac && !isOnBreak && avail >= 10 && (isAdmin || remaining >= 10) && !bulkBatchPending && !createBatch.isPending;
+                      const blastCount = itemIsMac ? blastChillerCount(item) : 0;
+                      const canBlast = itemIsMac && !isOnBreak && blastCount > 0 && !bulkBatchPending && !createBatch.isPending;
+                      const blastLabel = blastCount === 10
+                        ? "Blast Chiller Tray (+10 packs)"
+                        : blastCount > 0
+                          ? `Blast Chiller Tray (+${blastCount} pack${blastCount === 1 ? "" : "s"})`
+                          : "Waiting for building";
                       return (
                         <>
                           <div className="flex items-center justify-center gap-6">
@@ -497,7 +506,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                               )}
                             >
                               <Snowflake className="w-5 h-5" />
-                              Blast Chiller Tray (+10 packs)
+                              {blastLabel}
                             </button>
                           )}
                         </>

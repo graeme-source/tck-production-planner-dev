@@ -676,33 +676,32 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     },
   });
 
-  // Blast chiller tray = 10 packs. Only used for mac cheese recipes.
+  // Blast chiller tray is up to 10 packs. Used by everyone on mac cheese recipes.
+  // Clamps to whatever's actually left so partial trays still advance in one tap.
   const [runBulkBatch, bulkBatchPending] = useGuardedAction({
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
-      setSessionBatches(prev => prev + 10);
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
   });
-  const addBlastChillerTray = async (item: ProductionPlanItem) => {
-    if (isOnBreak) return;
+  const blastChillerCount = (item: ProductionPlanItem): number => {
     const target = getEffectiveTarget(item);
     const done = getCombinedBuildCount(item);
     const remaining = Math.max(0, target - done);
-    if (!isAdmin && remaining < 10) {
-      toast({
-        title: "Not enough packs left",
-        description: "A blast chiller tray is 10 packs — this recipe has fewer remaining.",
-        variant: "destructive",
-      });
+    return isAdmin ? 10 : Math.min(10, remaining);
+  };
+  const addBlastChillerTray = async (item: ProductionPlanItem) => {
+    if (isOnBreak) return;
+    const count = blastChillerCount(item);
+    if (count <= 0) {
+      toast({ title: "All packs built", description: "No packs remaining to advance." });
       return;
     }
     await runBulkBatch(async (signal) => {
       await guardedFetch(`/api/production-plans/${plan.id}/batch-completions/bulk`, {
         method: "POST", signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planItemId: item.id, stationType, count: 10 }),
+        body: JSON.stringify({ planItemId: item.id, stationType, count }),
       });
-      toast({ title: "Blast chiller tray — 10 packs added to the oven queue" });
+      setSessionBatches(prev => prev + count);
+      toast({ title: `${count} pack${count === 1 ? "" : "s"} added to the oven queue` });
     });
   };
   const handleUndo = () => {
@@ -1175,10 +1174,17 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                           </button>
                         )}
 
-                        {/* Blast chiller tray — mac cheese only, advances 10 packs at once */}
+                        {/* Blast chiller tray — mac cheese only, advances up to 10 packs at once.
+                            Clamps to remaining for partial trays so any user can still advance
+                            whatever packs are left with one tap. */}
                         {isMacCheese(item as any) && !isOnBreak && (() => {
-                          const remaining = Math.max(0, getEffectiveTarget(item) - getCombinedBuildCount(item));
-                          const canBlast = (isAdmin || remaining >= 10) && !bulkBatchPending && !pendingTap;
+                          const count = blastChillerCount(item);
+                          const canBlast = count > 0 && !bulkBatchPending && !pendingTap;
+                          const label = count === 10
+                            ? "Blast Chiller Tray (+10 packs)"
+                            : count > 0
+                              ? `Blast Chiller Tray (+${count} pack${count === 1 ? "" : "s"})`
+                              : "All packs built";
                           return (
                             <button
                               onClick={() => addBlastChillerTray(item)}
@@ -1191,7 +1197,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                               )}
                             >
                               <Snowflake className="w-5 h-5" />
-                              Blast Chiller Tray (+10 packs)
+                              {label}
                             </button>
                           );
                         })()}
