@@ -155,7 +155,7 @@ interface PackingSpeedData {
 // Packing-speed is now a subsection inside the Production KPIs view, so it's
 // no longer a top-level tab. The URL ?tab=packing-speed redirects to ?tab=kpis
 // for backward compat.
-type TabId = "kpis" | "breaks" | "temperature" | "haccp" | "risk-assessments" | "improvements" | "issues" | "leftover-filling" | "employees";
+type TabId = "kpis" | "breaks" | "temperature" | "haccp" | "risk-assessments" | "improvements" | "issues" | "leftover-filling" | "employees" | "printables";
 
 interface ImprovementRecord {
   id: number;
@@ -247,7 +247,7 @@ function DateShortcutsDropdown({ onSelect }: { onSelect: (from: string, to: stri
   );
 }
 
-const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "haccp", "risk-assessments", "improvements", "issues", "leftover-filling", "employees"];
+const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "haccp", "risk-assessments", "improvements", "issues", "leftover-filling", "employees", "printables"];
 
 interface ReportsNavItem {
   id: TabId;
@@ -265,6 +265,7 @@ const REPORTS_NAV_ITEMS: ReportsNavItem[] = [
   { id: "issues", label: "Issue Log", icon: AlertTriangle },
   { id: "leftover-filling", label: "Leftover Filling", icon: Droplets },
   { id: "employees", label: "Employee Records", icon: UserCog },
+  { id: "printables", label: "Printables", icon: Printer },
 ];
 
 // Tabs only visible to admins (not managers). Empty — no admin-gated tabs right now.
@@ -423,6 +424,7 @@ export default function Reports() {
           {activeTab === "issues" && <AndonLogTab userRole={userRole} initialIssueId={issueIdParam ? parseInt(issueIdParam, 10) : undefined} />}
           {activeTab === "leftover-filling" && <LeftoverFillingTab fromDate={fromDate} toDate={toDate} />}
           {activeTab === "employees" && isManagerOrAdmin && <EmployeesTab fromDate={fromDate} toDate={toDate} />}
+          {activeTab === "printables" && <PrintablesTab />}
         </div>
       </div>
     </div>
@@ -2701,9 +2703,6 @@ function RiskAssessmentsTab({ userRole, currentUserName }: { userRole: string; c
         </div>
       </div>
 
-      {/* Resources — printables (fire action notice, log book, etc.) */}
-      <ResourcesSection />
-
       {/* Complete dialog */}
       {completingAction && (
         <CompleteActionDialog
@@ -2743,6 +2742,21 @@ const PRINTABLES: { title: string; description: string; href: string; category: 
     note: "Print ~3 A4 pages · hand to Fire Warden · file completed copy in the Fire Log Book",
   },
 ];
+
+function PrintablesTab() {
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-xl font-bold mb-1">Printables & Reports</h2>
+        <p className="text-sm text-muted-foreground">
+          Open any item in a new tab, then use the browser print dialog (Cmd/Ctrl + P)
+          to print directly or save as PDF.
+        </p>
+      </div>
+      <ResourcesSection />
+    </div>
+  );
+}
 
 function ResourcesSection() {
   return (
