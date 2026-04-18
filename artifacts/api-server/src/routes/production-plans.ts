@@ -4758,7 +4758,14 @@ router.get("/:id/main-prep", async (req, res) => {
             if (comp.ingredientId == null) continue;
             const compQty = Number(comp.quantity) || 0;
             const compUnit = comp.unit ?? "g";
-            const scaledQty = roundByUnit(compQty * scaleFactor, compUnit);
+            const rawScaled = compQty * scaleFactor;
+            if (rawScaled <= 0) continue;
+            // Use higher-precision rounding for kg/l so small amounts (e.g. a
+            // pinch of dried parsley scaled through a sub-recipe) don't round
+            // to zero and vanish. Grams/ml already stay as whole numbers.
+            const scaledQty = (compUnit === "kg" || compUnit === "l")
+              ? Math.round(rawScaled * 1000) / 1000
+              : roundByUnit(rawScaled, compUnit);
             if (scaledQty <= 0) continue;
 
             // Use a special key so expanded sub-recipe ingredients merge together
