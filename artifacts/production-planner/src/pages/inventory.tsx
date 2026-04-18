@@ -25,6 +25,7 @@ type TabType = "ingredients" | "supplies";
 const INGREDIENT_CATEGORIES = [
   { value: "", label: "— No category —" },
   { value: "raw_meat", label: "Raw Meat" },
+  { value: "cooked_meat", label: "Cooked Meat" },
   { value: "vegetable", label: "Vegetable" },
   { value: "base", label: "Base (Sauce/Mozzarella)" },
   { value: "sauce", label: "Sauce" },
