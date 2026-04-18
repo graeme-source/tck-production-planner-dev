@@ -2959,11 +2959,11 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
     query: { enabled: nextPlanId !== planId, refetchInterval: 15000 },
   }) as { data: ProductionPlanDetail | undefined };
 
-  const { data: prepProgress } = useQuery<{ totalWeightG: number; completedWeightG: number; pct: number }>({
+  const { data: prepProgress } = useQuery<{ totalTins: number; completedTins: number; pct: number }>({
     queryKey: ["prep-progress", nextPlanId],
     queryFn: async () => {
       const res = await fetch(`/api/production-plans/${nextPlanId}/prep-progress`, { credentials: "include" });
-      if (!res.ok) return { totalWeightG: 0, completedWeightG: 0, pct: 0 };
+      if (!res.ok) return { totalTins: 0, completedTins: 0, pct: 0 };
       return res.json();
     },
     refetchInterval: 15000,

@@ -5209,50 +5209,42 @@ function cleanPresence() {
   }
 }
 
-// GET /:id/prep-progress — weight-based prep completion summary for plan overview
+// GET /:id/prep-progress — tin-based prep completion summary for plan overview.
+// Counts how many tins across all main-prep ingredients have been ticked off
+// vs the total number of tins required.
 router.get("/:id/prep-progress", async (req, res) => {
   const planId = Number(req.params.id);
   try {
-    // Fetch the full main-prep data internally (reuse existing endpoint logic)
-    // This is a lightweight internal call — we parse the main-prep response to compute weight totals
-    const mainPrepUrl = `/api/production-plans/${planId}/main-prep?station=main_prep`;
-
-    // Instead of HTTP call, compute directly from DB
     const planItems = await db
       .select({
         recipeId: productionPlanItemsTable.recipeId,
         batchesTarget: productionPlanItemsTable.batchesTarget,
         maxBatchesPerTin: productionPlanItemsTable.maxBatchesPerTin,
         mixingTinOverride: productionPlanItemsTable.mixingTinOverride,
-        portionsPerBatch: recipesTable.portionsPerBatch,
       })
       .from(productionPlanItemsTable)
-      .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
       .where(eq(productionPlanItemsTable.planId, planId));
 
-    // Load prep tin overrides
     const overrides = await db.select().from(prepTinOverridesTable).where(eq(prepTinOverridesTable.planId, planId));
     const overrideMap = new Map<string, number>();
     for (const ov of overrides) {
       if (ov.ingredientId != null) overrideMap.set(`${ov.recipeId}_${ov.ingredientId}`, ov.tinCount);
     }
 
-    // For each plan item, get ingredient quantities and compute weight per tin
-    let totalWeightG = 0;
-    let completedWeightG = 0;
-    // Track per-ingredient per-recipe: { key -> { tinCount, qtyPerTin } }
-    const tinMap = new Map<string, { tinCount: number; qtyPerTin: number }>();
+    // Build the set of (recipeId, ingredientId) pairs that appear on main prep,
+    // applying the same filters main-prep uses so the progress bar matches the
+    // tins the kitchen actually sees on the station page.
+    const tinMap = new Map<string, number>(); // key -> tinCount
+    let totalTins = 0;
 
     for (const item of planItems) {
       const bt = Number(item.batchesTarget) || 0;
       if (!item.recipeId || bt === 0) continue;
       const defaultTinCount = calcTinCount(bt, item.maxBatchesPerTin ?? null) ?? 1;
-      const ppb = Number(item.portionsPerBatch) || 10;
 
-      // Get ingredients for this recipe (excluding toppings, marinades, and excluded categories)
       const rows = await db.execute(sql`
-        SELECT ri.ingredient_id, ri.quantity, ri.include_in_filling_mix, ri.is_topping, i.category, i.unit,
-               i.processing_ratio, i.prep_weight_mode
+        SELECT ri.ingredient_id, ri.include_in_filling_mix, ri.is_topping,
+               i.name AS ingredient_name, i.category
         FROM recipe_ingredients ri
         LEFT JOIN ingredients i ON ri.ingredient_id = i.id
         WHERE ri.recipe_id = ${item.recipeId}
@@ -5275,37 +5267,34 @@ router.get("/:id/prep-progress", async (req, res) => {
           const ov = overrideMap.get(`${item.recipeId}_${row.ingredient_id}`);
           if (ov != null) tinCount = ov;
         }
-
-        const qtyPerPortion = Number(row.quantity) || 0;
-        const cookedQty = qtyPerPortion * ppb * bt;
-        const ratio = row.processing_ratio ? Number(row.processing_ratio) : null;
-        const rawQty = ratio ? cookedQty / ratio : cookedQty;
-        const mode = row.prep_weight_mode ?? "raw";
-        const effectiveQty = mode === "processed" ? cookedQty : rawQty;
-        if (effectiveQty <= 0) continue;
-
-        const qtyPerTin = tinCount > 0 ? effectiveQty / tinCount : effectiveQty;
-        totalWeightG += effectiveQty;
+        if (tinCount <= 0) continue;
 
         const key = `${row.ingredient_id}_${item.recipeId}`;
-        tinMap.set(key, { tinCount, qtyPerTin });
+        // Same (recipe, ingredient) pair can appear in multiple filling-mix lookups;
+        // take the first tinCount we compute and move on.
+        if (!tinMap.has(key)) {
+          tinMap.set(key, tinCount);
+          totalTins += tinCount;
+        }
       }
     }
 
-    // Get completions and sum up completed weight
+    // Count ticked-off tins, ignoring stale completions that point at a tin
+    // number beyond the current tinCount (e.g. after an override shrank it).
     const completionRows = await db.execute(sql`
       SELECT ingredient_id, recipe_id, tin_number FROM prep_completions WHERE plan_id = ${planId}
     `);
+    let completedTins = 0;
     for (const c of completionRows.rows as any[]) {
       const key = `${c.ingredient_id}_${c.recipe_id}`;
-      const entry = tinMap.get(key);
-      if (entry && c.tin_number <= entry.tinCount) {
-        completedWeightG += entry.qtyPerTin;
+      const tinCount = tinMap.get(key);
+      if (tinCount != null && c.tin_number >= 1 && c.tin_number <= tinCount) {
+        completedTins += 1;
       }
     }
 
-    const pct = totalWeightG > 0 ? Math.round((Math.min(completedWeightG, totalWeightG) / totalWeightG) * 100) : 0;
-    res.json({ totalWeightG: Math.round(totalWeightG), completedWeightG: Math.round(completedWeightG), pct });
+    const pct = totalTins > 0 ? Math.round((Math.min(completedTins, totalTins) / totalTins) * 100) : 0;
+    res.json({ totalTins, completedTins, pct });
   } catch (err) {
     console.error("prep-progress error:", err);
     res.status(500).json({ error: "Failed to calculate prep progress" });

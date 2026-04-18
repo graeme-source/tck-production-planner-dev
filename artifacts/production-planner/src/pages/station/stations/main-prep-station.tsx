@@ -397,21 +397,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
     const status = ingredientDoneStatus(ing);
     return s + status.completedTinCount;
   }, 0);
-
-  // Weight-based progress: sum completed tin weights vs total ingredient weight
-  const totalWeight = ingredients.reduce((s, ing) => s + ing.totalQty, 0);
-  const completedWeight = ingredients.reduce((s, ing) => {
-    let w = 0;
-    for (const r of ing.recipes) {
-      for (let tn = 1; tn <= r.tinCount; tn++) {
-        if (isCompleted(ing.ingredientId, r.recipeId, tn, ing.isSubRecipe)) {
-          w += r.qtyPerTin;
-        }
-      }
-    }
-    return s + w;
-  }, 0);
-  const overallPct = totalWeight > 0 ? Math.round((Math.min(completedWeight, totalWeight) / totalWeight) * 100) : 0;
+  const overallPct = totalTins > 0 ? Math.round((Math.min(completedTins, totalTins) / totalTins) * 100) : 0;
 
   if (loading || isNextPlanLoading) {
     return <div className="flex items-center justify-center py-20 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin mr-2" />Loading…</div>;
