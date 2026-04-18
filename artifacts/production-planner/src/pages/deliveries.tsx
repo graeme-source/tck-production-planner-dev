@@ -4,7 +4,7 @@ import { PageHeader } from "@/components/page-header";
 import {
   Truck, ChevronLeft, ChevronRight, Calendar, Package, Thermometer,
   Check, AlertTriangle, Loader2, ClipboardCheck, X,
-  CheckCircle2, AlertCircle, PackageCheck, ArrowRightLeft,
+  CheckCircle2, AlertCircle, PackageCheck, ArrowRightLeft, Plus, Minus,
 } from "lucide-react";
 import { format, startOfWeek, addDays, isSameDay, parseISO, isToday } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -226,13 +226,33 @@ function ReceivingDialog({
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
       <DialogContent className="sm:max-w-[700px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="font-display text-xl flex items-center gap-2">
-            <Truck className="w-5 h-5 text-primary" />
-            Receive Delivery — {order.supplierName}
+          <DialogTitle className="font-display text-3xl font-bold flex items-center gap-3">
+            <Truck className="w-7 h-7 text-primary shrink-0" />
+            <span>{order.supplierName}</span>
           </DialogTitle>
-          <p className="text-sm text-muted-foreground mt-1">
-            PO #{order.id} · Expected {order.expectedDeliveryDate ? format(parseISO(order.expectedDeliveryDate), "EEE d MMM") : "—"}
-          </p>
+          {(() => {
+            const expectedIsToday = order.expectedDeliveryDate
+              ? isToday(parseISO(order.expectedDeliveryDate))
+              : false;
+            const expectedLabel = order.expectedDeliveryDate
+              ? format(parseISO(order.expectedDeliveryDate), "EEE d MMM")
+              : "—";
+            return (
+              <div className="mt-2 flex items-center gap-2 flex-wrap">
+                <span className="text-sm text-muted-foreground">PO #{order.id}</span>
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-semibold text-white",
+                    expectedIsToday ? "bg-[#919b5f]" : "bg-red-600"
+                  )}
+                >
+                  <Calendar className="w-4 h-4" />
+                  Expected {expectedLabel}
+                  {!expectedIsToday && order.expectedDeliveryDate && " (not today)"}
+                </span>
+              </div>
+            );
+          })()}
         </DialogHeader>
 
         <div className="space-y-6 mt-4">
@@ -258,7 +278,7 @@ function ReceivingDialog({
                     )}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium">{line.ingredientName}</span>
+                      <span className="text-xl font-bold">{line.ingredientName}</span>
                       <div className="flex items-center gap-1.5 shrink-0">
                         {locationLabel && (
                           <span className="text-xs text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">
@@ -279,31 +299,59 @@ function ReceivingDialog({
                     </div>
                     <div className="grid grid-cols-3 gap-3">
                       <div>
-                        <label className="text-xs text-muted-foreground block mb-1">Ordered</label>
-                        <span className="text-sm font-medium tabular-nums">
+                        <label className="text-base font-semibold text-muted-foreground block mb-1">Ordered</label>
+                        <span className="text-xl font-bold tabular-nums">
                           {line.quantityOrdered} {line.unit}
                         </span>
                       </div>
                       <div>
-                        <label className="text-xs text-muted-foreground block mb-1">Received</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={line.quantityReceived}
-                          onChange={(e) => {
-                            const next = [...lines];
-                            next[idx] = { ...next[idx], quantityReceived: Number(e.target.value) };
-                            setLines(next);
-                          }}
-                          className={cn(
-                            "w-full px-2 py-1 bg-background border rounded-lg text-sm font-medium tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30",
-                            discrepancy ? "border-amber-400" : "border-border"
-                          )}
-                        />
+                        <label className="text-base font-semibold text-muted-foreground block mb-1">Received</label>
+                        <div className={cn(
+                          "flex items-stretch rounded-lg border bg-background overflow-hidden focus-within:ring-2 focus-within:ring-primary/30",
+                          discrepancy ? "border-amber-400" : "border-border"
+                        )}>
+                          <button
+                            type="button"
+                            aria-label="Decrease received by 0.5"
+                            onClick={() => {
+                              const next = [...lines];
+                              const current = Number(next[idx].quantityReceived) || 0;
+                              next[idx] = { ...next[idx], quantityReceived: Math.max(0, Number((current - 0.5).toFixed(2))) };
+                              setLines(next);
+                            }}
+                            className="px-3 bg-secondary/40 hover:bg-secondary/70 active:bg-secondary text-foreground transition-colors flex items-center justify-center shrink-0"
+                          >
+                            <Minus className="w-5 h-5" />
+                          </button>
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            value={line.quantityReceived}
+                            onChange={(e) => {
+                              const next = [...lines];
+                              next[idx] = { ...next[idx], quantityReceived: Number(e.target.value) };
+                              setLines(next);
+                            }}
+                            className="flex-1 min-w-0 px-2 py-2 bg-background text-center text-xl font-bold tabular-nums text-[#919b5f] focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          />
+                          <button
+                            type="button"
+                            aria-label="Increase received by 0.5"
+                            onClick={() => {
+                              const next = [...lines];
+                              const current = Number(next[idx].quantityReceived) || 0;
+                              next[idx] = { ...next[idx], quantityReceived: Number((current + 0.5).toFixed(2)) };
+                              setLines(next);
+                            }}
+                            className="px-3 bg-secondary/40 hover:bg-secondary/70 active:bg-secondary text-foreground transition-colors flex items-center justify-center shrink-0"
+                          >
+                            <Plus className="w-5 h-5" />
+                          </button>
+                        </div>
                       </div>
                       <div>
-                        <label className="text-xs text-muted-foreground block mb-1">
+                        <label className="text-base font-semibold text-muted-foreground block mb-1">
                           Use-by Date
                           {needsManualUseBy && <span className="text-amber-500 ml-1">*</span>}
                         </label>
@@ -316,7 +364,7 @@ function ReceivingDialog({
                             setLines(next);
                           }}
                           className={cn(
-                            "w-full px-2 py-1 bg-background border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30",
+                            "w-full px-3 py-2 bg-background border rounded-lg text-xl font-bold focus:outline-none focus:ring-2 focus:ring-primary/30",
                             needsManualUseBy ? "border-amber-400" : "border-border"
                           )}
                         />
@@ -336,17 +384,17 @@ function ReceivingDialog({
 
           {(hasChilled || hasFrozen) && (
             <div>
-              <h3 className="text-sm font-semibold mb-1 flex items-center gap-2">
-                <Thermometer className="w-4 h-4" /> Temperature Checks
-                <span className="text-xs font-normal text-destructive ml-1">Required</span>
+              <h3 className="text-xl font-bold mb-1 flex items-center gap-2">
+                <Thermometer className="w-6 h-6" /> Temperature Checks
+                <span className="text-sm font-semibold text-destructive ml-1">Required</span>
               </h3>
-              <p className="text-xs text-muted-foreground mb-3">
+              <p className="text-sm text-muted-foreground mb-3">
                 Temperature must be recorded for all chilled and frozen items before the delivery can be marked as received.
               </p>
               <div className="grid grid-cols-2 gap-4">
                 {hasChilled && (
                   <div>
-                    <label className="text-xs font-medium block mb-1">
+                    <label className="text-base font-semibold block mb-1">
                       Chilled Temp (°C) <span className="text-destructive">*</span>
                     </label>
                     <input
@@ -356,22 +404,22 @@ function ReceivingDialog({
                       onChange={(e) => setChilledTemp(e.target.value)}
                       placeholder="e.g. 3.5"
                       className={cn(
-                        "w-full px-3 py-2 bg-background border rounded-lg text-sm focus:outline-none focus:ring-2",
+                        "w-full px-3 py-2 bg-background border rounded-lg text-xl font-bold tabular-nums focus:outline-none focus:ring-2",
                         chilledTempMissing
                           ? "border-destructive focus:ring-destructive/30"
                           : "border-border focus:ring-primary/30"
                       )}
                     />
                     {chilledTempMissing && (
-                      <p className="text-xs text-destructive mt-1 flex items-center gap-1">
-                        <AlertCircle className="w-3 h-3" /> Chilled temperature is required
+                      <p className="text-sm text-destructive mt-1 flex items-center gap-1">
+                        <AlertCircle className="w-4 h-4" /> Chilled temperature is required
                       </p>
                     )}
                   </div>
                 )}
                 {hasFrozen && (
                   <div>
-                    <label className="text-xs font-medium block mb-1">
+                    <label className="text-base font-semibold block mb-1">
                       Frozen Temp (°C) <span className="text-destructive">*</span>
                     </label>
                     <input
@@ -381,15 +429,15 @@ function ReceivingDialog({
                       onChange={(e) => setFrozenTemp(e.target.value)}
                       placeholder="e.g. -18.0"
                       className={cn(
-                        "w-full px-3 py-2 bg-background border rounded-lg text-sm focus:outline-none focus:ring-2",
+                        "w-full px-3 py-2 bg-background border rounded-lg text-xl font-bold tabular-nums focus:outline-none focus:ring-2",
                         frozenTempMissing
                           ? "border-destructive focus:ring-destructive/30"
                           : "border-border focus:ring-primary/30"
                       )}
                     />
                     {frozenTempMissing && (
-                      <p className="text-xs text-destructive mt-1 flex items-center gap-1">
-                        <AlertCircle className="w-3 h-3" /> Frozen temperature is required
+                      <p className="text-sm text-destructive mt-1 flex items-center gap-1">
+                        <AlertCircle className="w-4 h-4" /> Frozen temperature is required
                       </p>
                     )}
                   </div>
@@ -671,14 +719,25 @@ export default function Deliveries() {
           <div className="space-y-3">
             {selectedDayOrders.map((order) => {
               const isReceived = order.status === "received";
+              const cardIsClickable = canEdit && !isReceived;
               return (
                 <div
                   key={order.id}
+                  onClick={cardIsClickable ? () => openReceiving(order.id) : undefined}
+                  role={cardIsClickable ? "button" : undefined}
+                  tabIndex={cardIsClickable ? 0 : undefined}
+                  onKeyDown={cardIsClickable ? (e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      openReceiving(order.id);
+                    }
+                  } : undefined}
                   className={cn(
                     "rounded-2xl border bg-card overflow-hidden transition-all",
                     isReceived
                       ? "border-green-200 dark:border-green-800 opacity-75"
-                      : "border-border hover:border-primary/30 hover:shadow-sm"
+                      : "border-border hover:border-primary/50 hover:shadow-md",
+                    cardIsClickable && "cursor-pointer"
                   )}
                 >
                   <div className="p-4 flex items-center gap-4">
@@ -694,22 +753,16 @@ export default function Deliveries() {
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="font-semibold text-base truncate">{order.supplierName}</h3>
+                        <h3 className="font-bold text-2xl truncate">{order.supplierName}</h3>
                         <StatusBadge status={order.status} />
                       </div>
-                      <p className="text-sm text-muted-foreground mt-0.5">
+                      <p className="text-sm text-muted-foreground mt-1">
                         PO #{order.id} &middot; {order.lines.length} {order.lines.length === 1 ? "item" : "items"}
-                        {order.lines.length > 0 && (
-                          <span className="ml-1">
-                            ({order.lines.map(l => l.ingredientName).slice(0, 3).join(", ")}
-                            {order.lines.length > 3 ? ` +${order.lines.length - 3} more` : ""})
-                          </span>
-                        )}
                       </p>
                     </div>
 
                     {canEdit && !isReceived && (
-                      <div className="shrink-0 flex items-center gap-2">
+                      <div className="shrink-0 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                         {movingOrderId === order.id ? (
                           <div className="flex items-center gap-2">
                             <input
@@ -740,10 +793,10 @@ export default function Deliveries() {
                           </button>
                         )}
                         <button
-                          onClick={() => openReceiving(order.id)}
-                          className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors flex items-center gap-2"
+                          onClick={(e) => { e.stopPropagation(); openReceiving(order.id); }}
+                          className="px-5 py-3 rounded-xl bg-primary text-primary-foreground text-lg font-bold hover:bg-primary/90 transition-colors flex items-center gap-2"
                         >
-                          <PackageCheck className="w-4 h-4" />
+                          <PackageCheck className="w-5 h-5" />
                           Receive Goods
                         </button>
                       </div>
@@ -762,14 +815,14 @@ export default function Deliveries() {
                         {order.lines.map((line) => (
                           <span
                             key={line.id}
-                            className="text-xs bg-background border border-border rounded-full px-3 py-1 flex items-center gap-1.5"
+                            className="text-base bg-background border border-border rounded-full px-4 py-1.5 flex items-center gap-2"
                           >
-                            <span className="font-medium">{line.ingredientName}</span>
-                            <span className="text-muted-foreground">
+                            <span className="font-bold">{line.ingredientName}</span>
+                            <span className="font-bold tabular-nums">
                               {line.quantityOrdered} {line.unit}
                             </span>
                             {line.quantityReceived > 0 && (
-                              <span className="text-green-600 dark:text-green-400">
+                              <span className="text-green-600 dark:text-green-400 font-semibold">
                                 ✓ {line.quantityReceived} received
                               </span>
                             )}

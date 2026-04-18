@@ -390,10 +390,13 @@ router.get("/calculate", async (req, res) => {
   // dispatch1 = yesterday's dispatch (reduces fridge stock)
   // dispatch2 = today's dispatch (main production target)
   // dispatch3 = tomorrow's dispatch
+  // dispatch4 = the working day after tomorrow (surfaces the mac-cheese D3 sales column)
+  const dispatch3Date = getNextWorkingDay(planDate);
   const dispatchDates = [
     getPreviousWorkingDay(planDate),
     planDate,
-    getNextWorkingDay(planDate),
+    dispatch3Date,
+    getNextWorkingDay(dispatch3Date),
   ];
 
   // Shopify order tags are DELIVERY dates = dispatch date + 1 calendar day.
@@ -785,6 +788,9 @@ router.get("/calculate", async (req, res) => {
     const dispatch1Qty = resolveDispatchQty(deliveryDates[0]);
     const dispatch2Qty = resolveDispatchQty(deliveryDates[1]);
     const dispatch3Qty = resolveDispatchQty(deliveryDates[2]);
+    // dispatch4Qty powers the mac-cheese D3 sales column; calzone deficit math
+    // deliberately stays on the dispatch1+2+3 window to preserve existing behaviour.
+    const dispatch4Qty = resolveDispatchQty(deliveryDates[3]);
     const totalDispatchQty = dispatch1Qty + dispatch2Qty + dispatch3Qty;
 
     const prevProduction = Math.round(prevProductionPacks[recipeId] ?? 0);
@@ -844,6 +850,7 @@ router.get("/calculate", async (req, res) => {
       dispatch1Qty,
       dispatch2Qty,
       dispatch3Qty,
+      dispatch4Qty,
       totalDispatchQty,
       deficit,
       deficitBatches,

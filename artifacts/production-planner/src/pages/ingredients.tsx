@@ -484,11 +484,13 @@ export default function Ingredients() {
   const [search, setSearch] = useState("");
   const [filterCategory, setFilterCategory] = useState("all");
   const [filterStockCheck, setFilterStockCheck] = useState("all");
+  const [filterKanban, setFilterKanban] = useState("all");
   const [filterSupplier, setFilterSupplier] = useState("all");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [nutritionalsOpen, setNutritionalsOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const filtered = ingredients?.filter(i => {
     const matchesSearch =
@@ -500,10 +502,14 @@ export default function Ingredients() {
     const matchesStockCheck =
       filterStockCheck === "all" ||
       (filterStockCheck === "enabled" ? i.stockCheckEnabled : !i.stockCheckEnabled);
+    const kanbanEnabled = (i as Record<string, unknown>).kanbanEnabled as boolean ?? false;
+    const matchesKanban =
+      filterKanban === "all" ||
+      (filterKanban === "enabled" ? kanbanEnabled : !kanbanEnabled);
     const matchesSupplier =
       filterSupplier === "all" ||
       (filterSupplier === "none" ? !i.supplierId : String(i.supplierId) === filterSupplier);
-    return matchesSearch && matchesCategory && matchesStockCheck && matchesSupplier;
+    return matchesSearch && matchesCategory && matchesStockCheck && matchesKanban && matchesSupplier;
   });
 
   const supplierMap = Object.fromEntries((suppliers ?? []).map(s => [s.id, s.name]));
@@ -529,11 +535,13 @@ export default function Ingredients() {
   const openAdd = () => {
     setEditingId(null);
     reset(emptyDefaults);
+    setConfirmDelete(false);
     setIsDialogOpen(true);
   };
 
   const openEdit = (item: Ingredient) => {
     setEditingId(item.id);
+    setConfirmDelete(false);
     reset({
       name: item.name,
       unit: item.unit,
@@ -1298,6 +1306,61 @@ export default function Ingredients() {
               {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
               {isPending ? "Saving..." : editingId !== null ? "Save Changes" : "Add Ingredient"}
             </button>
+
+            {editingId !== null && (
+              <div className="pt-4 mt-2 border-t border-border">
+                <label className="text-sm font-medium mb-2 block text-destructive">Danger zone</label>
+                {!confirmDelete ? (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDelete(true)}
+                    className="w-full py-2.5 bg-destructive/10 text-destructive rounded-xl font-medium hover:bg-destructive/20 transition-colors flex items-center justify-center gap-2"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete Ingredient
+                  </button>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      This will permanently remove the ingredient. This cannot be undone.
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDelete(false)}
+                        disabled={deleteIngredient.isPending}
+                        className="flex-1 py-2.5 bg-secondary/30 text-foreground rounded-xl font-medium hover:bg-secondary/60 transition-colors disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        disabled={deleteIngredient.isPending}
+                        onClick={() => {
+                          if (editingId === null) return;
+                          deleteIngredient.mutate(
+                            { id: editingId },
+                            {
+                              onSuccess: () => {
+                                setIsDialogOpen(false);
+                                setConfirmDelete(false);
+                                setEditingId(null);
+                                reset();
+                                invalidateCostTouchpoints();
+                              },
+                            }
+                          );
+                        }}
+                        className="flex-1 py-2.5 bg-destructive text-destructive-foreground rounded-xl font-medium hover:bg-destructive/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        {deleteIngredient.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+                        {deleteIngredient.isPending ? "Deleting..." : "Confirm Delete"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </form>
         </DialogContent>
       </Dialog>
@@ -1347,6 +1410,16 @@ export default function Ingredients() {
           </select>
 
           <select
+            value={filterKanban}
+            onChange={e => setFilterKanban(e.target.value)}
+            className="px-3 py-2 bg-background border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 appearance-none pr-8 cursor-pointer"
+          >
+            <option value="all">All Kanban</option>
+            <option value="enabled">Kanban Enabled ✓</option>
+            <option value="disabled">Not Kanban</option>
+          </select>
+
+          <select
             value={filterSupplier}
             onChange={e => setFilterSupplier(e.target.value)}
             className="px-3 py-2 bg-background border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 appearance-none pr-8 cursor-pointer"
@@ -1358,9 +1431,9 @@ export default function Ingredients() {
             <option value="none">No Supplier</option>
           </select>
 
-          {(filterCategory !== "all" || filterStockCheck !== "all" || filterSupplier !== "all" || search) && (
+          {(filterCategory !== "all" || filterStockCheck !== "all" || filterKanban !== "all" || filterSupplier !== "all" || search) && (
             <button
-              onClick={() => { setFilterCategory("all"); setFilterStockCheck("all"); setFilterSupplier("all"); setSearch(""); }}
+              onClick={() => { setFilterCategory("all"); setFilterStockCheck("all"); setFilterKanban("all"); setFilterSupplier("all"); setSearch(""); }}
               className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 whitespace-nowrap"
             >
               Clear filters
@@ -1394,6 +1467,8 @@ export default function Ingredients() {
                   <th className="px-5 py-3 font-medium">Proc. Ratio</th>
                   <th className="px-5 py-3 font-medium">Supplier</th>
                   <th className="px-5 py-3 font-medium">2nd Supplier</th>
+                  <th className="px-5 py-3 font-medium">Stock Check</th>
+                  <th className="px-5 py-3 font-medium">Kanban</th>
                   <th className="px-5 py-3 font-medium">Order</th>
                   <th className="px-5 py-3 font-medium text-right sticky right-0 bg-secondary/30 z-10">Actions</th>
                 </tr>
@@ -1435,6 +1510,24 @@ export default function Ingredients() {
                         {item.secondarySupplierId ? supplierMap[item.secondarySupplierId] ?? <span className="text-border">—</span> : <span className="text-border">—</span>}
                       </td>
                       <td className="px-5 py-3">
+                        {item.stockCheckEnabled ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
+                            <CheckCircle2 className="w-3 h-3" /> On
+                          </span>
+                        ) : (
+                          <span className="text-border">—</span>
+                        )}
+                      </td>
+                      <td className="px-5 py-3">
+                        {((item as Record<string, unknown>).kanbanEnabled as boolean) ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
+                            <CheckCircle2 className="w-3 h-3" /> On
+                          </span>
+                        ) : (
+                          <span className="text-border">—</span>
+                        )}
+                      </td>
+                      <td className="px-5 py-3">
                         {item.orderingUrl ? (
                           <a
                             href={item.orderingUrl}
@@ -1456,13 +1549,6 @@ export default function Ingredients() {
                             title="Edit"
                           >
                             <Edit2 className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => { if (confirm(`Delete "${item.name}"?`)) deleteIngredient.mutate({ id: item.id }, { onSuccess: invalidateCostTouchpoints }); }}
-                            className="p-2 text-destructive bg-destructive/10 hover:bg-destructive/20 rounded-lg transition-colors"
-                            title="Delete"
-                          >
-                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </td>

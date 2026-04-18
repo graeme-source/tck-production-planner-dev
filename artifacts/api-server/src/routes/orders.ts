@@ -222,6 +222,12 @@ router.get("/calculate", async (req, res) => {
       packsToOrder: number;
       isKanban: boolean;
       orderingUrl: string | null;
+      lastStockCheckAt: string | null;
+      // True when the item is daily-stock-checked for this supplier but has
+      // enough stock to not need ordering this round. The front-end shows
+      // these greyed out behind a toggle so operators can verify the check
+      // happened and stock levels look sane.
+      belowRequirement: boolean;
     }>;
   }> = {};
 
@@ -266,7 +272,10 @@ router.get("/calculate", async (req, res) => {
     const packsToOrder = packWeight > 0 ? Math.ceil(rawOrderQty / packWeight) : 0;
     const orderQty = packsToOrder * packWeight;
 
-    if (orderQty <= 0 && !isKanban) continue;
+    // Issue 5: keep non-required stock-checked items in the payload so the
+    // front-end can optionally render them behind a toggle. They're flagged
+    // with belowRequirement=true and packsToOrder=0.
+    const belowRequirement = orderQty <= 0 && !isKanban;
 
     if (!supplierOrderMap[suppId]) {
       let supplier = supplierLookup[suppId];
@@ -304,6 +313,7 @@ router.get("/calculate", async (req, res) => {
       isKanban,
       orderingUrl: detail.orderingUrl ?? null,
       lastStockCheckAt: stockCheckTimestamps[iid] ?? null,
+      belowRequirement,
     });
   }
 
@@ -375,6 +385,8 @@ router.get("/calculate", async (req, res) => {
         packsToOrder,
         isKanban: true,
         orderingUrl: d.orderingUrl ?? null,
+        lastStockCheckAt: stockCheckTimestamps[d.id] ?? null,
+        belowRequirement: false,
       });
     }
   }
@@ -393,6 +405,45 @@ router.get("/calculate", async (req, res) => {
   } catch (err) {
     console.error("[Orders] Calculate failed:", err);
     res.status(500).json({ error: "Failed to calculate orders", detail: String(err) });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// List every ingredient that belongs to a given supplier. Powers the
+// "+ Add item" picker on the orders page so operators can manually include
+// an ingredient that the auto-calc didn't pick up (e.g. a one-off need).
+// ─────────────────────────────────────────────────────────────────────────────
+router.get("/suppliers/:id/ingredients", async (req, res) => {
+  const supplierId = Number(req.params.id);
+  if (!supplierId || isNaN(supplierId)) {
+    res.status(400).json({ error: "Invalid supplier id" });
+    return;
+  }
+
+  try {
+    // Match on either primary OR secondary supplier — operators might pull
+    // from this supplier even if it's listed as the backup for the
+    // ingredient. Broadens the "+ Add item" picker to cover everything an
+    // operator could reasonably order from this supplier.
+    const rows = await db
+      .select({
+        id: ingredientsTable.id,
+        name: ingredientsTable.name,
+        unit: ingredientsTable.unit,
+        packWeight: ingredientsTable.packWeight,
+        costPerPack: ingredientsTable.costPerPack,
+        supplierPartNumber: ingredientsTable.supplierPartNumber,
+        orderingUrl: ingredientsTable.orderingUrl,
+      })
+      .from(ingredientsTable)
+      .where(sql`${ingredientsTable.supplierId} = ${supplierId} OR ${ingredientsTable.secondarySupplierId} = ${supplierId}`)
+      .orderBy(ingredientsTable.name);
+
+    console.log(`[Orders] /suppliers/${supplierId}/ingredients returned ${rows.length} ingredients`);
+    res.json({ supplierId, ingredients: rows });
+  } catch (err) {
+    console.error(`[Orders] Failed to fetch ingredients for supplier ${supplierId}:`, err);
+    res.status(500).json({ error: "Failed to fetch supplier ingredients", detail: String(err) });
   }
 });
 
@@ -622,6 +673,77 @@ router.patch("/purchase-orders/:id/place", async (req, res) => {
     createdAt: updated.createdAt.toISOString(),
     placedAt: updated.placedAt?.toISOString() ?? null,
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Re-submit an already-placed order with an updated set of lines. Used when
+// an operator needs to add a kanban (or other item) to a supplier whose
+// order was already placed today — the old lines are replaced with the new
+// full set, placedAt is bumped, and the status stays "placed".
+// ─────────────────────────────────────────────────────────────────────────────
+router.patch("/purchase-orders/:id/resubmit", async (req, res) => {
+  const orderId = Number(req.params.id);
+  const userId = req.session.userId ?? null;
+  const { lines, expectedDeliveryDate } = req.body ?? {};
+
+  if (!Array.isArray(lines) || lines.length === 0) {
+    res.status(400).json({ error: "At least one line is required" });
+    return;
+  }
+
+  const [existing] = await db
+    .select()
+    .from(purchaseOrdersTable)
+    .where(eq(purchaseOrdersTable.id, orderId))
+    .limit(1);
+
+  if (!existing) {
+    res.status(404).json({ error: "Purchase order not found" });
+    return;
+  }
+
+  try {
+    // Replace the line set wholesale — simpler and more predictable than a
+    // field-by-field merge, especially when quantities have been edited.
+    await db.delete(purchaseOrderLinesTable).where(eq(purchaseOrderLinesTable.purchaseOrderId, orderId));
+
+    const cleanedLines = lines.map((l: any) => ({
+      purchaseOrderId: orderId,
+      ingredientId: Number(l.ingredientId),
+      quantityRequired: String(l.quantityRequired ?? 0),
+      quantityOrdered: String(l.quantityOrdered ?? l.quantityRequired ?? 0),
+      unit: String(l.unit ?? "kg"),
+      unitPrice: l.unitPrice != null ? String(l.unitPrice) : null,
+      checkedOff: Boolean(l.checkedOff),
+    }));
+
+    await db.insert(purchaseOrderLinesTable).values(cleanedLines);
+
+    const patch: Record<string, unknown> = {
+      placedAt: new Date(),
+      placedByUserId: userId,
+      status: "placed",
+    };
+    if (expectedDeliveryDate && typeof expectedDeliveryDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(expectedDeliveryDate)) {
+      patch.expectedDeliveryDate = expectedDeliveryDate;
+    }
+
+    const [updated] = await db
+      .update(purchaseOrdersTable)
+      .set(patch)
+      .where(eq(purchaseOrdersTable.id, orderId))
+      .returning();
+
+    console.log(`[Orders] Resubmitted PO ${orderId} with ${cleanedLines.length} lines`);
+    res.json({
+      ...updated,
+      createdAt: updated.createdAt.toISOString(),
+      placedAt: updated.placedAt?.toISOString() ?? null,
+    });
+  } catch (err) {
+    console.error(`[Orders] Failed to resubmit PO ${orderId}:`, err);
+    res.status(500).json({ error: "Failed to resubmit order", detail: String(err) });
+  }
 });
 
 router.get("/summary", async (req, res) => {

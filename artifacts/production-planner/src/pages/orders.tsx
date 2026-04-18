@@ -51,6 +51,11 @@ type OrderLine = {
   isKanban: boolean;
   orderingUrl: string | null;
   lastStockCheckAt: string | null;
+  // True when this item is daily-stock-checked but has enough stock to not
+  // need ordering this round. Hidden by default; surfaced via the "Show
+  // non-required stock-checked items" toggle so operators can verify their
+  // stock checks went through.
+  belowRequirement?: boolean;
 };
 
 type SupplierOrder = {
@@ -108,6 +113,19 @@ type EditableLine = OrderLine & {
   editedPacks: number;
   editedStock: number;
   stockDirty: boolean;
+  // Manual additions from the per-supplier "+ Add item" picker. These are
+  // always orderable regardless of belowRequirement state.
+  isManual?: boolean;
+};
+
+type SupplierIngredient = {
+  id: number;
+  name: string;
+  unit: string;
+  packWeight: number | string | null;
+  costPerPack: number | string | null;
+  supplierPartNumber: string | null;
+  orderingUrl: string | null;
 };
 
 type KanbanIngredient = {
@@ -154,6 +172,29 @@ export default function Orders() {
   const [selectedKanbanIds, setSelectedKanbanIds] = useState<Set<number>>(new Set());
   const [addedKanbanIngredientIds, setAddedKanbanIngredientIds] = useState<Set<number>>(new Set());
   const [kanbanOnlySupplierInfo, setKanbanOnlySupplierInfo] = useState<Record<number, { id: number; name: string }>>({});
+
+  // When the operator adds a kanban/manual item to a supplier whose order
+  // was already placed today, we "reopen" that PO into the pending view so
+  // they can edit + resubmit. Maps supplierId → existing PO id so the place
+  // mutation can route to the resubmit endpoint instead of creating a new PO.
+  const [reopenedPlacedOrders, setReopenedPlacedOrders] = useState<Record<number, number>>({});
+
+  // Issue 5: global toggle to show items that are daily stock-checked but
+  // aren't required because we have enough stock. Default hidden.
+  const [showNonRequired, setShowNonRequired] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return sessionStorage.getItem("orders_showNonRequired") === "true";
+  });
+  useEffect(() => {
+    sessionStorage.setItem("orders_showNonRequired", String(showNonRequired));
+  }, [showNonRequired]);
+
+  // Issue 4: per-supplier "Add item" picker. Opens a dialog listing every
+  // ingredient assigned to that supplier so operators can add one-off
+  // manual lines without waiting for an auto-calc.
+  const [addItemDialog, setAddItemDialog] = useState<{ supplierId: number; supplierName: string } | null>(null);
+  const [addItemSearch, setAddItemSearch] = useState("");
+  const debouncedAddItemSearch = useDebouncedValue(addItemSearch);
 
   const { data: plans } = useQuery<Plan[]>({
     queryKey: ["production-plans-list"],
@@ -237,6 +278,87 @@ export default function Orders() {
     });
   };
 
+  // Core reopen routine — given a placed PO, hydrate its lines into
+  // editableLines, register it as reopened so the place mutation routes to
+  // resubmit, and make the supplier visible in the pending view.
+  const reopenPlacedOrder = useCallback((placedPO: PurchaseOrder) => {
+    const supplierId = placedPO.supplierId;
+    if (reopenedPlacedOrders[supplierId]) return; // already reopened — no-op
+
+    setEditableLines(prev => {
+      const existing = prev[supplierId] ?? [];
+      const existingIngredientIds = new Set(existing.map(l => l.ingredientId));
+      const hydratedFromPO: EditableLine[] = placedPO.lines
+        .filter(l => !existingIngredientIds.has(l.ingredientId))
+        .map(l => {
+          const qtyOrdered = Number(l.quantityOrdered) || 0;
+          const unit = l.unit ?? "kg";
+          const isPackUnit = unit === "packs" || unit === "bottles";
+          const packs = isPackUnit ? qtyOrdered : Math.max(1, Math.round(qtyOrdered));
+          return {
+            ingredientId: l.ingredientId,
+            ingredientName: l.ingredientName ?? `Ingredient #${l.ingredientId}`,
+            unit,
+            totalRequired: Number(l.quantityRequired) || 0,
+            stockOnHand: 0,
+            surplusTarget: 0,
+            packWeight: 1,
+            costPerPack: Number(l.unitPrice) || 0,
+            supplierPartNumber: null,
+            orderQty: qtyOrdered,
+            packsToOrder: packs,
+            isKanban: false,
+            orderingUrl: l.orderingUrl ?? null,
+            lastStockCheckAt: null,
+            belowRequirement: false,
+            checked: true, // it was already placed; pre-check so resend works
+            editedPacks: packs,
+            editedStock: 0,
+            stockDirty: false,
+          };
+        });
+      return { ...prev, [supplierId]: [...hydratedFromPO, ...existing] };
+    });
+
+    // Make the supplier appear in the pending view even though it's placed
+    const dptSupplierIds = new Set((calculated?.suppliers ?? []).map(s => s.supplier.id));
+    if (!dptSupplierIds.has(supplierId)) {
+      setKanbanOnlySupplierInfo(prev => ({
+        ...prev,
+        [supplierId]: { id: supplierId, name: placedPO.supplierName ?? `Supplier #${supplierId}` },
+      }));
+    }
+
+    setReopenedPlacedOrders(prev => ({ ...prev, [supplierId]: placedPO.id }));
+    setExpandedSuppliers(prev => new Set([...prev, supplierId]));
+  }, [reopenedPlacedOrders, calculated?.suppliers]);
+
+  // Used by kanban/manual add flows: looks up the placed PO for a supplier
+  // in the currently-selected plan and reopens it if found.
+  const reopenPlacedOrderIfAny = useCallback((supplierId: number) => {
+    if (reopenedPlacedOrders[supplierId]) return;
+    const placedPO = placedOrders.find(o =>
+      o.status === "placed" &&
+      o.planId === selectedPlanId &&
+      o.supplierId === supplierId,
+    );
+    if (!placedPO) return;
+    reopenPlacedOrder(placedPO);
+  }, [placedOrders, selectedPlanId, reopenedPlacedOrders, reopenPlacedOrder]);
+
+  // Used by the "Edit" button on a placed order card — switches the plan
+  // selector (if needed) and view filter, then reopens the PO for editing.
+  const handleEditPlacedOrder = useCallback((order: PurchaseOrder) => {
+    // If the placed order belongs to a different plan than the currently
+    // selected one, switch the plan selector so the reopened card appears
+    // in the pending view for that plan.
+    if (order.planId && order.planId !== selectedPlanId) {
+      setSelectedPlanId(order.planId);
+    }
+    reopenPlacedOrder(order);
+    setViewFilter("pending");
+  }, [selectedPlanId, setSelectedPlanId, reopenPlacedOrder]);
+
   const handleAddSelectedKanbans = () => {
     const toAdd = kanbanIngredients.filter(
       k => selectedKanbanIds.has(k.ingredientId) && !addedKanbanIngredientIds.has(k.ingredientId) && k.supplierId
@@ -268,6 +390,10 @@ export default function Orders() {
         stockDirty: false,
       };
       const supplierId = kanban.supplierId!;
+      // If this supplier already has a placed PO for the current plan, pull
+      // that PO's lines into view so the operator can resubmit with the new
+      // kanban item included, rather than losing the addition.
+      reopenPlacedOrderIfAny(supplierId);
       setEditableLines(prev => {
         const existing = prev[supplierId] ?? [];
         const alreadyHas = existing.some(l => l.ingredientId === kanban.ingredientId);
@@ -289,8 +415,110 @@ export default function Orders() {
     setSelectedKanbanIds(new Set());
   };
 
+  // Issue 4: fetch every ingredient belonging to the supplier whose "Add
+  // item" picker is open. Keyed by supplierId so switching suppliers
+  // re-fetches fresh data.
+  const { data: addItemIngredients = [], isLoading: addItemLoading, error: addItemError } = useQuery<SupplierIngredient[]>({
+    queryKey: ["supplier-ingredients", addItemDialog?.supplierId],
+    queryFn: async () => {
+      if (!addItemDialog) return [];
+      const res = await fetch(`${BASE}/api/orders/suppliers/${addItemDialog.supplierId}/ingredients`, { credentials: "include" });
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`HTTP ${res.status} — ${body.slice(0, 200)}`);
+      }
+      const data = await res.json();
+      return data.ingredients ?? [];
+    },
+    enabled: !!addItemDialog,
+    retry: false,
+  });
+
+  const filteredAddItemIngredients = debouncedAddItemSearch.trim()
+    ? addItemIngredients.filter(i => i.name.toLowerCase().includes(debouncedAddItemSearch.toLowerCase()))
+    : addItemIngredients;
+
+  const handleAddManualItem = (ingredient: SupplierIngredient) => {
+    if (!addItemDialog) return;
+    const supplierId = addItemDialog.supplierId;
+    // Same reopen-if-placed logic as kanban adds — an operator adding an
+    // item to a supplier whose order already went through should see the
+    // previous lines and be able to resubmit with the addition.
+    reopenPlacedOrderIfAny(supplierId);
+    const packWeight = Number(ingredient.packWeight) || 1;
+    const costPerPack = Number(ingredient.costPerPack) || 0;
+    const newLine: EditableLine = {
+      ingredientId: ingredient.id,
+      ingredientName: ingredient.name,
+      unit: ingredient.unit ?? "kg",
+      totalRequired: 0,
+      stockOnHand: 0,
+      surplusTarget: 0,
+      packWeight,
+      costPerPack,
+      supplierPartNumber: ingredient.supplierPartNumber,
+      orderQty: packWeight,
+      packsToOrder: 1,
+      isKanban: false,
+      orderingUrl: ingredient.orderingUrl,
+      lastStockCheckAt: null,
+      belowRequirement: false,
+      checked: false,
+      editedPacks: 1,
+      editedStock: 0,
+      stockDirty: false,
+      isManual: true,
+    };
+    setEditableLines(prev => {
+      const existing = prev[supplierId] ?? [];
+      // If the line already exists (e.g. auto-calc added it but non-required
+      // and toggle was off), just bump it to orderable rather than duplicate.
+      const dupIdx = existing.findIndex(l => l.ingredientId === ingredient.id);
+      if (dupIdx >= 0) {
+        const updated = [...existing];
+        updated[dupIdx] = { ...updated[dupIdx], isManual: true, belowRequirement: false, editedPacks: Math.max(1, updated[dupIdx].editedPacks) };
+        return { ...prev, [supplierId]: updated };
+      }
+      return { ...prev, [supplierId]: [...existing, newLine] };
+    });
+    setExpandedSuppliers(prev => new Set([...prev, supplierId]));
+    setAddItemDialog(null);
+    setAddItemSearch("");
+  };
+
   const placeMutation = useMutation({
     mutationFn: async ({ supplierId, lines, deliveryDate }: { supplierId: number; lines: EditableLine[]; deliveryDate?: string }) => {
+      // Never send non-required informational lines to the PO endpoint —
+      // they're display-only. Manual-added and kanban lines always go through.
+      const orderableLines = lines.filter(l => l.isKanban || l.isManual || !l.belowRequirement);
+      const payloadLines = orderableLines.map(l => ({
+        ingredientId: l.ingredientId,
+        quantityRequired: l.orderQty,
+        quantityOrdered: (l.unit === "packs" || l.unit === "bottles")
+          ? l.editedPacks
+          : l.editedPacks * l.packWeight,
+        unit: l.unit,
+        unitPrice: l.costPerPack > 0 ? l.costPerPack : null,
+        checkedOff: l.checked,
+      }));
+
+      // Reopened placed order → hit the resubmit endpoint instead of create+place.
+      // This REPLACES the old lines with the new full set and bumps placedAt.
+      const reopenedPOId = reopenedPlacedOrders[supplierId];
+      if (reopenedPOId) {
+        const resubmitRes = await fetch(`${BASE}/api/orders/purchase-orders/${reopenedPOId}/resubmit`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ lines: payloadLines, expectedDeliveryDate: deliveryDate }),
+        });
+        if (!resubmitRes.ok) {
+          const body = await resubmitRes.text();
+          throw new Error(`Failed to resubmit order: ${body.slice(0, 200)}`);
+        }
+        return resubmitRes.json();
+      }
+
       const createRes = await fetch(`${BASE}/api/orders/purchase-orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -298,16 +526,7 @@ export default function Orders() {
         body: JSON.stringify({
           supplierId,
           planId: selectedPlanId,
-          lines: lines.map(l => ({
-            ingredientId: l.ingredientId,
-            quantityRequired: l.orderQty,
-            quantityOrdered: (l.unit === "packs" || l.unit === "bottles")
-              ? l.editedPacks
-              : l.editedPacks * l.packWeight,
-            unit: l.unit,
-            unitPrice: l.costPerPack > 0 ? l.costPerPack : null,
-            checkedOff: l.checked,
-          })),
+          lines: payloadLines,
         }),
       });
       if (!createRes.ok) throw new Error("Failed to create order");
@@ -322,9 +541,19 @@ export default function Orders() {
       if (!placeRes.ok) throw new Error("Failed to place order");
       return placeRes.json();
     },
-    onSuccess: () => {
+    onSuccess: (_result, variables) => {
       queryClient.invalidateQueries({ queryKey: ["purchase-orders-today"] });
       queryClient.invalidateQueries({ queryKey: ["order-calculate"] });
+      // After a successful resubmit, drop the supplier from the reopened set
+      // so the card moves back to the Placed tab on the next render.
+      if (variables?.supplierId) {
+        setReopenedPlacedOrders(prev => {
+          if (!prev[variables.supplierId]) return prev;
+          const next = { ...prev };
+          delete next[variables.supplierId];
+          return next;
+        });
+      }
       setConfirmDialog(null);
     },
   });
@@ -426,9 +655,12 @@ export default function Orders() {
   };
   const placedForPlan = placedOrders.filter(o => o.status === "placed" && o.planId === selectedPlanId);
   const placedSupplierIds = new Set(placedForPlan.map(o => o.supplierId));
-  const dptPendingSuppliers = suppliers.filter(s => !placedSupplierIds.has(s.supplier.id));
+  // Suppliers whose placed order has been "reopened" via a kanban/manual add
+  // are shown in the pending view so the operator can resubmit.
+  const reopenedSupplierIds = new Set(Object.keys(reopenedPlacedOrders).map(Number));
+  const dptPendingSuppliers = suppliers.filter(s => !placedSupplierIds.has(s.supplier.id) || reopenedSupplierIds.has(s.supplier.id));
   const kanbanOnlyPending = Object.values(kanbanOnlySupplierInfo)
-    .filter(s => !placedSupplierIds.has(s.id) && !suppliers.some(ds => ds.supplier.id === s.id))
+    .filter(s => (!placedSupplierIds.has(s.id) || reopenedSupplierIds.has(s.id)) && !suppliers.some(ds => ds.supplier.id === s.id))
     .map(s => ({ supplier: { id: s.id, name: s.name, contactName: null, email: null, phone: null, website: null }, lines: [] as OrderLine[] }));
   const pendingSuppliers = [...dptPendingSuppliers, ...kanbanOnlyPending];
   const totalPendingItems = pendingSuppliers.reduce((sum, s) => sum + (editableLines[s.supplier.id]?.length ?? 0), 0);
@@ -536,10 +768,22 @@ export default function Orders() {
           <CheckCircle2 className="w-4 h-4 inline mr-1.5" />
           Placed Today ({totalPlacedToday})
         </button>
+        <label
+          className="ml-auto flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-secondary/40 hover:bg-secondary/60 cursor-pointer transition-colors"
+          title="Show items that are daily stock-checked but have enough stock this round. Useful for verifying stock checks were taken."
+        >
+          <input
+            type="checkbox"
+            checked={showNonRequired}
+            onChange={e => setShowNonRequired(e.target.checked)}
+            className="rounded border-border"
+          />
+          <span>Show stocked items</span>
+        </label>
         <button
           onClick={handleRecalculate}
           disabled={calcLoading}
-          className="ml-auto px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-secondary text-secondary-foreground hover:bg-secondary/80 flex items-center gap-1.5 disabled:opacity-50"
+          className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-secondary text-secondary-foreground hover:bg-secondary/80 flex items-center gap-1.5 disabled:opacity-50"
           title="Recalculate orders using latest stock check values"
         >
           <RefreshCw className={cn("w-4 h-4", calcLoading && "animate-spin")} />
@@ -596,14 +840,27 @@ export default function Orders() {
       )}
 
       {viewFilter === "pending" && pendingSuppliers.map(so => {
-        const lines = editableLines[so.supplier.id] || [];
-        const allChecked = lines.length > 0 && lines.every(l => l.checked);
-        const checkedCount = lines.filter(l => l.checked).length;
+        const allLines = editableLines[so.supplier.id] || [];
+        // Orderable = things that actually go onto a PO. Non-required lines
+        // are hidden by default; when shown they're informational only.
+        const orderableLines = allLines.filter(l => l.isKanban || l.isManual || !l.belowRequirement);
+        const lines = showNonRequired ? allLines : orderableLines;
+        // If the toggle is off and every line for this supplier is non-required,
+        // skip the supplier card entirely — otherwise you'd see empty cards.
+        if (!showNonRequired && orderableLines.length === 0) return null;
+        const allChecked = orderableLines.length > 0 && orderableLines.every(l => l.checked);
+        const checkedCount = orderableLines.filter(l => l.checked).length;
+        const nonRequiredCount = allLines.length - orderableLines.length;
         const expanded = expandedSuppliers.has(so.supplier.id);
-        const cost = estimatedCost(lines);
+        const cost = estimatedCost(orderableLines);
+        const reopenedPOId = reopenedPlacedOrders[so.supplier.id];
+        const isReopened = !!reopenedPOId;
 
         return (
-          <div key={so.supplier.id} className="rounded-xl border border-border bg-card overflow-hidden">
+          <div key={so.supplier.id} className={cn(
+            "rounded-xl border bg-card overflow-hidden",
+            isReopened ? "border-amber-500/40 ring-1 ring-amber-500/20" : "border-border"
+          )}>
             <button
               onClick={() => toggleSupplier(so.supplier.id)}
               className="w-full flex items-center justify-between p-4 hover:bg-secondary/30 transition-colors"
@@ -613,10 +870,21 @@ export default function Orders() {
                   <Building2 className="w-5 h-5 text-primary" />
                 </div>
                 <div className="text-left">
-                  <h3 className="font-semibold">{so.supplier.name}</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-semibold">{so.supplier.name}</h3>
+                    {isReopened && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30">
+                        <RefreshCw className="w-2.5 h-2.5" />
+                        Editing placed order #{reopenedPOId}
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-muted-foreground">
-                    {lines.length} item{lines.length !== 1 ? "s" : ""} &middot;
-                    {checkedCount}/{lines.length} checked
+                    {orderableLines.length} item{orderableLines.length !== 1 ? "s" : ""} &middot;
+                    {checkedCount}/{orderableLines.length} checked
+                    {showNonRequired && nonRequiredCount > 0 && (
+                      <> &middot; {nonRequiredCount} stocked</>
+                    )}
                     {cost > 0 && <> &middot; &pound;{cost.toFixed(2)} est.</>}
                   </p>
                   <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
@@ -650,23 +918,30 @@ export default function Orders() {
                       <tr className="border-b border-border bg-secondary/30">
                         <th className="p-3 text-left w-10"></th>
                         <th className="p-3 text-left font-medium text-muted-foreground">Ingredient</th>
-                        <th className="p-3 text-right font-semibold text-green-600 dark:text-green-400">Order Qty</th>
-                        <th className="p-3 text-right font-medium text-muted-foreground">Required</th>
                         <th className="p-3 text-right font-medium text-muted-foreground">In Stock</th>
-                        <th className="p-3 text-right font-medium text-muted-foreground">Surplus</th>
-                        <th className="p-3 text-right font-medium text-muted-foreground">Pack Size</th>
+                        <th className="p-3 text-right font-semibold text-green-600 dark:text-green-400">Order Quantity</th>
                         <th className="p-3 text-center font-medium text-muted-foreground">Packs</th>
+                        <th className="p-3 text-right font-medium text-muted-foreground">Pack Size</th>
+                        <th className="p-3 text-right font-medium text-muted-foreground">Surplus</th>
+                        <th className="p-3 text-right font-medium text-muted-foreground">Required</th>
                         {lines.some(l => l.costPerPack > 0) && (
                           <th className="p-3 text-right font-medium text-muted-foreground">Line Total</th>
                         )}
                       </tr>
                     </thead>
                     <tbody>
-                      {lines.map((line, idx) => (
+                      {lines.map((line) => {
+                        // Find the real index in the full allLines array so
+                        // toggleLineCheck/updatePacks/updateStock continue to
+                        // mutate the correct row when the view is filtered.
+                        const idx = allLines.findIndex(l => l.ingredientId === line.ingredientId);
+                        const isNonOrderable = !!line.belowRequirement && !line.isKanban && !line.isManual;
+                        return (
                         <tr
                           key={line.ingredientId}
                           className={cn(
                             "border-b border-border/50 transition-colors",
+                            isNonOrderable ? "opacity-60 bg-secondary/10" :
                             line.checked ? "bg-green-500/5" : "hover:bg-secondary/20"
                           )}
                         >
@@ -674,6 +949,7 @@ export default function Orders() {
                             <Checkbox
                               checked={line.checked}
                               onCheckedChange={() => toggleLineCheck(so.supplier.id, idx)}
+                              disabled={isNonOrderable}
                             />
                           </td>
                           <td className="p-3">
@@ -693,14 +969,6 @@ export default function Orders() {
                                 Kanban
                               </span>
                             )}
-                          </td>
-                          <td className="p-3 text-right tabular-nums font-bold text-lg text-green-600 dark:text-green-400">
-                            {(line.unit === "packs" || line.unit === "bottles")
-                              ? `${line.editedPacks} ${line.unit}`
-                              : `${(line.editedPacks * line.packWeight).toLocaleString()} ${line.unit}`}
-                          </td>
-                          <td className="p-3 text-right tabular-nums">
-                            {line.totalRequired.toLocaleString()} {line.unit}
                           </td>
                           <td className="p-3 text-right">
                             <div className="flex flex-col items-end gap-0.5">
@@ -741,11 +1009,10 @@ export default function Orders() {
                               )}
                             </div>
                           </td>
-                          <td className="p-3 text-right tabular-nums">
-                            {line.surplusTarget.toLocaleString()} {line.unit}
-                          </td>
-                          <td className="p-3 text-right tabular-nums">
-                            {line.packWeight} kg
+                          <td className="p-3 text-right tabular-nums font-bold text-lg text-green-600 dark:text-green-400">
+                            {(line.unit === "packs" || line.unit === "bottles")
+                              ? `${line.editedPacks} ${line.unit}`
+                              : `${(line.editedPacks * line.packWeight).toLocaleString()} ${line.unit}`}
                           </td>
                           <td className="p-3 text-center">
                             <input
@@ -753,8 +1020,18 @@ export default function Orders() {
                               min={0}
                               value={line.editedPacks}
                               onChange={e => updatePacks(so.supplier.id, idx, parseInt(e.target.value) || 0)}
-                              className="w-16 h-8 rounded border border-border bg-background text-center text-sm tabular-nums"
+                              disabled={isNonOrderable}
+                              className="w-16 h-8 rounded border border-border bg-background text-center text-sm tabular-nums disabled:opacity-40"
                             />
+                          </td>
+                          <td className="p-3 text-right tabular-nums">
+                            {line.packWeight} kg
+                          </td>
+                          <td className="p-3 text-right tabular-nums">
+                            {line.surplusTarget.toLocaleString()} {line.unit}
+                          </td>
+                          <td className="p-3 text-right tabular-nums">
+                            {line.totalRequired.toLocaleString()} {line.unit}
                           </td>
                           {lines.some(l => l.costPerPack > 0) && (
                             <td className="p-3 text-right tabular-nums">
@@ -762,7 +1039,20 @@ export default function Orders() {
                             </td>
                           )}
                         </tr>
-                      ))}
+                        );
+                      })}
+                      <tr className="bg-secondary/5">
+                        <td colSpan={lines.some(l => l.costPerPack > 0) ? 9 : 8} className="p-2">
+                          <button
+                            type="button"
+                            onClick={() => { setAddItemDialog({ supplierId: so.supplier.id, supplierName: so.supplier.name }); setAddItemSearch(""); }}
+                            className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/60 border border-dashed border-border hover:border-primary/40 transition-colors"
+                          >
+                            <Plus className="w-4 h-4" />
+                            Add item to this order
+                          </button>
+                        </td>
+                      </tr>
                     </tbody>
                   </table>
                 </div>
@@ -827,12 +1117,12 @@ export default function Orders() {
 
                 <div className="p-4 flex items-center justify-between border-t border-border bg-secondary/10">
                   <div className="text-sm text-muted-foreground">
-                    {checkedCount === lines.length ? (
+                    {checkedCount === orderableLines.length && orderableLines.length > 0 ? (
                       <span className="text-green-600 font-medium flex items-center gap-1">
                         <Check className="w-4 h-4" /> All items checked
                       </span>
                     ) : (
-                      <span>{checkedCount} of {lines.length} items checked</span>
+                      <span>{checkedCount} of {orderableLines.length} items checked</span>
                     )}
                   </div>
                   <button
@@ -850,7 +1140,7 @@ export default function Orders() {
                     ) : (
                       <Truck className="w-4 h-4" />
                     )}
-                    Mark as Placed
+                    {isReopened ? "Update & Resend Order" : "Mark as Placed"}
                   </button>
                 </div>
               </div>
@@ -866,7 +1156,9 @@ export default function Orders() {
               No orders placed today yet.
             </div>
           )}
-          {placedOrders.filter(o => o.status === "placed").map(order => (
+          {placedOrders.filter(o => o.status === "placed").map(order => {
+            const isReopened = !!reopenedPlacedOrders[order.supplierId];
+            return (
             <div key={order.id} className="rounded-xl border border-green-500/30 bg-green-500/5 overflow-hidden">
               <div className="p-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -882,9 +1174,21 @@ export default function Orders() {
                     </p>
                   </div>
                 </div>
-                <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-700">
-                  Placed
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-700">
+                    Placed
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleEditPlacedOrder(order)}
+                    disabled={isReopened}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                    title={isReopened ? "Already being edited in the To Order tab" : "Reopen this order so you can add or change items, then resubmit"}
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    {isReopened ? "Being edited…" : "Edit order"}
+                  </button>
+                </div>
               </div>
 
               <div className="border-t border-green-500/20">
@@ -915,7 +1219,8 @@ export default function Orders() {
                 </table>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -1037,6 +1342,98 @@ export default function Orders() {
         </DialogContent>
       </Dialog>
 
+      {/* Issue 4: per-supplier Add Item picker */}
+      <Dialog
+        open={!!addItemDialog}
+        onOpenChange={open => { if (!open) { setAddItemDialog(null); setAddItemSearch(""); } }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus className="w-5 h-5 text-primary" />
+              Add item{addItemDialog ? ` to ${addItemDialog.supplierName}` : ""}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <input
+                type="text"
+                value={addItemSearch}
+                onChange={e => setAddItemSearch(e.target.value)}
+                placeholder="Search ingredient…"
+                autoFocus
+                className="w-full pl-9 pr-4 py-2.5 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+              {addItemSearch && (
+                <button onClick={() => setAddItemSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            <div className="max-h-80 overflow-y-auto space-y-1 -mx-1 px-1">
+              {addItemLoading && (
+                <p className="text-center py-8 text-sm text-muted-foreground flex items-center justify-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Loading ingredients…
+                </p>
+              )}
+              {!addItemLoading && addItemError && (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-3 text-sm text-destructive flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium">Couldn't load ingredients</p>
+                    <p className="text-xs mt-0.5 font-mono">{addItemError instanceof Error ? addItemError.message : String(addItemError)}</p>
+                    <p className="text-xs mt-1">If the API server was just updated, it may need to be restarted.</p>
+                  </div>
+                </div>
+              )}
+              {!addItemLoading && !addItemError && filteredAddItemIngredients.length === 0 && (
+                <p className="text-center py-8 text-sm text-muted-foreground">
+                  {addItemIngredients.length === 0 ? "This supplier has no ingredients assigned." : "No ingredients match your search."}
+                </p>
+              )}
+              {!addItemLoading && filteredAddItemIngredients.map(ing => {
+                const existingLine = addItemDialog
+                  ? (editableLines[addItemDialog.supplierId] ?? []).find(l => l.ingredientId === ing.id)
+                  : undefined;
+                const alreadyOrderable = !!existingLine && (existingLine.isKanban || existingLine.isManual || !existingLine.belowRequirement);
+                return (
+                  <button
+                    key={ing.id}
+                    type="button"
+                    onClick={() => !alreadyOrderable && handleAddManualItem(ing)}
+                    disabled={alreadyOrderable}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-left transition-colors",
+                      alreadyOrderable
+                        ? "bg-emerald-500/10 border border-emerald-500/30 cursor-default"
+                        : "hover:bg-secondary/60 border border-transparent hover:border-border"
+                    )}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate">{ing.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {Number(ing.packWeight) || 1} {ing.unit ?? "kg"} per pack
+                        {Number(ing.costPerPack) > 0 && <> &middot; &pound;{Number(ing.costPerPack).toFixed(2)}/pack</>}
+                        {ing.supplierPartNumber && <> &middot; #{ing.supplierPartNumber}</>}
+                      </p>
+                    </div>
+                    {alreadyOrderable && (
+                      <span className="shrink-0 text-xs text-emerald-600 dark:text-emerald-400 font-medium">Already on order</span>
+                    )}
+                    {!alreadyOrderable && (
+                      <Plus className="w-4 h-4 text-muted-foreground shrink-0" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!confirmDialog} onOpenChange={() => setConfirmDialog(null)}>
         <DialogContent>
           <DialogHeader>
@@ -1054,7 +1451,9 @@ export default function Orders() {
               </div>
               {editableLines[confirmDialog.supplierId] && (
                 <div className="rounded-lg border border-border p-3 space-y-1 text-sm max-h-60 overflow-y-auto">
-                  {editableLines[confirmDialog.supplierId].map(l => (
+                  {editableLines[confirmDialog.supplierId]
+                    .filter(l => l.isKanban || l.isManual || !l.belowRequirement)
+                    .map(l => (
                     <div key={l.ingredientId} className="flex justify-between">
                       <span>
                         {l.orderingUrl ? (

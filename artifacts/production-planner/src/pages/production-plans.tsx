@@ -120,6 +120,15 @@ interface PlanItem {
   maxBatchesPerTin: number | null;
   tinSize: string | null;
   salesPercent: number;
+  // Packs sold for this recipe across the dispatch window (from backend for
+  // DPT recipes, 0 for manual recipes). Used as the raw weight for the
+  // Recalculate Batches distribution; normalising by total weight gives the
+  // fair per-recipe share across the mixed set of DPT + manual recipes.
+  packsSold: number;
+  // User-entered expected packs for a manually-added recipe. Drives how many
+  // batches it gets allocated during Recalculate — otherwise manual recipes
+  // would have zero weight and get zeroed on recalc.
+  manualSalesPacks?: number;
   portionsPerBatch: number;
   packsPerBatch: number;
   sopUrl: string | null;
@@ -579,11 +588,25 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   useEffect(() => {
     if (!calcData?.recipes) return;
     setTotalBatchesOverride(null);
+    // Only render core menu recipes by default. Non-core recipes remain
+    // available through the "Add Recipe" dropdown below the table for
+    // manual inclusion — but the initial table is focused on the core
+    // menu so operators aren't distracted by one-off items.
+    const coreRecipes = calcData.recipes.filter((r: CalcRecipe) => r.isCoreMenu);
     const capacity = calcData.totalDailyBatches;
-    const alloc = allocateBatches(calcData.recipes, capacity);
+    // `salesPercent` was computed by the backend against the full recipe set,
+    // so after filtering to core-only the percentages no longer sum to 100 —
+    // allocateBatches would leave capacity on the table (e.g. 69 of 75).
+    // Normalise across the filtered set so they sum to 100%, which lets the
+    // fractional-remainder logic distribute the full daily capacity.
+    const sumCoreSales = coreRecipes.reduce((s: number, r: CalcRecipe) => s + (r.salesPercent || 0), 0);
+    const normCoreRecipes = sumCoreSales > 0
+      ? coreRecipes.map((r: CalcRecipe) => ({ ...r, salesPercent: (r.salesPercent / sumCoreSales) * 100 }))
+      : coreRecipes.map((r: CalcRecipe) => ({ ...r, salesPercent: 100 / Math.max(1, coreRecipes.length) }));
+    const alloc = allocateBatches(normCoreRecipes, capacity);
     // Capture any manual batch edits the user has already made so we can preserve them
     const prevItems = itemsRef.current;
-    const newItems: PlanItem[] = calcData.recipes.map((r: CalcRecipe, idx: number) => {
+    const newItems: PlanItem[] = coreRecipes.map((r: CalcRecipe, idx: number) => {
       const suggested = alloc[idx].suggestedBatches;
       const prev = prevItems.find(p => p.recipeId === r.recipeId);
       // If the user has manually changed the batch count away from the previously suggested value,
@@ -595,7 +618,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
         recipeId: r.recipeId,
         recipeName: r.recipeName,
         recipeColor: r.color ?? null,
-        included: prev ? prev.included : (suggested > 0 || r.deficit > 0 || r.isCoreMenu),
+        included: prev ? prev.included : true,
         suggestedBatches: suggested,
         batchesTarget,
         tinCount: r.tinCount,
@@ -646,21 +669,35 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     isDirty.current = true;
     setTotalBatchesOverride(newTotal);
     if (!calcData?.recipes) return;
-    const alloc = allocateBatches(calcData.recipes, newTotal);
-    setItems(prev => prev.map((item, idx) => {
-      const calcRecipe = calcData.recipes.find((r: CalcRecipe) => r.recipeId === item.recipeId);
-      if (!calcRecipe || !item.isFromDpt) return item;
-      const allocIdx = calcData.recipes.indexOf(calcRecipe);
-      if (allocIdx < 0) return item;
-      const suggested = alloc[allocIdx].suggestedBatches;
-      return {
-        ...item,
-        suggestedBatches: suggested,
-        batchesTarget: suggested,
-        surplusBatches: alloc[allocIdx].surplusBatches,
-        tinCount: (() => { if (!item.maxBatchesPerTin || suggested <= 0) return null; const raw = Math.ceil(suggested / item.maxBatchesPerTin); return suggested > 5 ? Math.max(2, raw) : raw; })(),
-      };
-    }));
+    // Redistribute across the recipes currently in the dialog (the core menu
+    // set plus any manually-added ones), not the raw backend list — otherwise
+    // batches get allocated to recipes that aren't even shown. Normalise
+    // salesPercent across the present items so the full newTotal is used.
+    setItems(prev => {
+      const dptItems = prev.filter(it => it.isFromDpt);
+      if (dptItems.length === 0) return prev;
+      const sumSales = dptItems.reduce((s, it) => s + (it.salesPercent || 0), 0);
+      const fallback = 100 / dptItems.length;
+      const recipesForAlloc = dptItems.map(it => ({
+        deficitBatches: it.deficitBatches,
+        salesPercent: sumSales > 0 ? (it.salesPercent / sumSales) * 100 : fallback,
+        packsSold: 1,
+      })) as unknown as CalcRecipe[];
+      const alloc = allocateBatches(recipesForAlloc, newTotal);
+      return prev.map(item => {
+        if (!item.isFromDpt) return item;
+        const idx = dptItems.findIndex(d => d.id === item.id);
+        if (idx < 0) return item;
+        const suggested = alloc[idx].suggestedBatches;
+        return {
+          ...item,
+          suggestedBatches: suggested,
+          batchesTarget: suggested,
+          surplusBatches: alloc[idx].surplusBatches,
+          tinCount: (() => { if (!item.maxBatchesPerTin || suggested <= 0) return null; const raw = Math.ceil(suggested / item.maxBatchesPerTin); return suggested > 5 ? Math.max(2, raw) : raw; })(),
+        };
+      });
+    });
   }, [calcData, allocateBatches]);
 
   const recalcTins = (batchesTarget: number, maxBatchesPerTin: number | null): number | null => {
@@ -682,6 +719,51 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       })
     );
   };
+
+  // ── Recalculate Batches ──────────────────────────────────────────────────────
+  // Full redistribute of the daily capacity across the recipes the user has
+  // left in the dialog (included=true). Excluded recipes are untouched.
+  // Any manual batch edits are overwritten — this is intentional per product
+  // decision: the whole point of the button is to re-balance after edits/deletes.
+  const [recalcFlash, setRecalcFlash] = useState(false);
+  const handleRecalculateBatches = useCallback(() => {
+    const includedItems = items.filter(it => it.included);
+    if (includedItems.length === 0) return;
+    // `salesPercent` is computed by the backend against the ORIGINAL set of
+    // recipes, so once you delete a few the remaining percentages no longer
+    // sum to 100 — allocateBatches would then leave a chunk of the daily
+    // capacity unallocated (e.g. 58 of 75 when ~77% remains). Re-normalise
+    // across the still-included recipes so they sum to 100%. Fall back to
+    // equal weights if none of the recipes have any sales signal.
+    const sumSalesPercent = includedItems.reduce((s, it) => s + (it.salesPercent || 0), 0);
+    const fallbackPercent = 100 / includedItems.length;
+    const recipesForAlloc = includedItems.map(it => ({
+      deficitBatches: it.deficitBatches,
+      salesPercent: sumSalesPercent > 0
+        ? (it.salesPercent / sumSalesPercent) * 100
+        : fallbackPercent,
+      // allocateBatches only checks `totalPacksSold > 0` to decide whether to
+      // distribute surplus at all — any positive value does the job here.
+      packsSold: 1,
+    })) as unknown as CalcRecipe[];
+    const alloc = allocateBatches(recipesForAlloc, effectiveTotalBatches);
+    isDirty.current = true;
+    setItems(prev => prev.map(it => {
+      if (!it.included) return it;
+      const idx = includedItems.findIndex(inc => inc.id === it.id);
+      if (idx < 0) return it;
+      const suggested = alloc[idx].suggestedBatches;
+      return {
+        ...it,
+        suggestedBatches: suggested,
+        batchesTarget: suggested,
+        surplusBatches: alloc[idx].surplusBatches,
+        tinCount: recalcTins(suggested, it.maxBatchesPerTin),
+      };
+    }));
+    setRecalcFlash(true);
+    setTimeout(() => setRecalcFlash(false), 1500);
+  }, [items, allocateBatches, effectiveTotalBatches]);
 
   const fridgeStockTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
@@ -927,12 +1009,27 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                   <BookmarkCheck className="w-3 h-3" /> Order auto-saved
                 </span>
               )}
+              {recalcFlash && (
+                <span className="text-xs flex items-center gap-1 text-emerald-600 dark:text-emerald-400 animate-in fade-in duration-200">
+                  <BookmarkCheck className="w-3 h-3" /> Batches redistributed
+                </span>
+              )}
+              <button
+                onClick={handleRecalculateBatches}
+                disabled={items.filter(it => it.included).length === 0 || effectiveTotalBatches <= 0}
+                className="text-xs px-2.5 py-1 rounded-md border border-border bg-background hover:bg-secondary/60 disabled:opacity-40 flex items-center gap-1 transition-colors"
+                title="Redistribute the daily batch capacity across the recipes currently included in this plan. Overwrites any manual batch edits."
+              >
+                <RefreshCw className="w-3 h-3" />
+                Recalculate Batches
+              </button>
               <button
                 onClick={() => refetchCalc()}
                 className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
+                title="Re-fetch fresh calculation from the server (resets the recipe list)."
               >
                 <RefreshCw className="w-3 h-3" />
-                Recalculate
+                Refetch
               </button>
             </div>
           </div>
@@ -1078,12 +1175,21 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                   {calcData.shopifyError}
                 </div>
               )}
-              {calcData?.unmatchedRecipes && calcData.unmatchedRecipes.length > 0 && (
-                <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 rounded-xl mb-3 text-sm text-amber-700 dark:text-amber-300">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  No Shopify match found for: {calcData.unmatchedRecipes.join(", ")}. Dispatch quantities for these use DPT estimates.
-                </div>
-              )}
+              {(() => {
+                // Only warn about unmatched recipes that are actually in the
+                // plan. The backend reports every recipe without a Shopify
+                // match, including non-core items the operator has explicitly
+                // filtered out — those aren't useful to flag here.
+                const visibleNames = new Set(items.map(it => it.recipeName));
+                const relevantUnmatched = (calcData?.unmatchedRecipes ?? []).filter(n => visibleNames.has(n));
+                if (relevantUnmatched.length === 0) return null;
+                return (
+                  <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 rounded-xl mb-3 text-sm text-amber-700 dark:text-amber-300">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                    No Shopify match found for: {relevantUnmatched.join(", ")}. Dispatch quantities for these use DPT estimates.
+                  </div>
+                );
+              })()}
 
               {items.some(i => computeStockWarning(i) === "short") && (
                 <div className="flex items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/40 rounded-xl mb-3 text-sm text-red-700 dark:text-red-300">
@@ -1239,6 +1345,116 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const { updatePlan } = useAppMutations();
   const queryClient = useQueryClient();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  // ── Live /calculate overlay ──────────────────────────────────────────────────
+  // Fetch the same calculation data the Create dialog uses, keyed on the
+  // plan's date. When it arrives, overlay Factory Number, dispatches,
+  // production-in, deficit, etc. onto the saved items so the edit view has
+  // full parity with the create view. Saved `batchesTarget` values are
+  // preserved — the user's explicit choices aren't clobbered.
+  const { data: editCalcData, isLoading: editCalcLoading } = useQuery({
+    queryKey: ["production-plan-calculate", planDate],
+    queryFn: () => fetchCalculation(planDate),
+    enabled: open && !!planDate,
+  });
+
+  useEffect(() => {
+    if (!editCalcData?.recipes) return;
+    setItems(prev => prev.map(it => {
+      const calc = editCalcData.recipes.find((r: CalcRecipe) => r.recipeId === it.recipeId);
+      if (!calc) return it; // recipe no longer appears in calc (e.g. removed from core menu) — leave zeros
+      return {
+        ...it,
+        recipeColor: calc.color ?? it.recipeColor,
+        salesPercent: calc.salesPercent,
+        portionsPerBatch: calc.portionsPerBatch,
+        packsPerBatch: calc.packsPerBatch,
+        maxBatchesPerTin: calc.maxBatchesPerTin ?? it.maxBatchesPerTin,
+        tinSize: calc.tinSize ?? it.tinSize,
+        sopUrl: calc.sopUrl ?? it.sopUrl,
+        isFromDpt: true,
+        fridgeStock: calc.predictedFridgeStock ?? calc.fridgeStock,
+        prevProduction: calc.prevProduction,
+        estimatedFactoryNumber: calc.estimatedFactoryNumber,
+        dispatch1Qty: calc.dispatch1Qty,
+        dispatch2Qty: calc.dispatch2Qty,
+        dispatch3Qty: calc.dispatch3Qty,
+        totalDispatchQty: calc.totalDispatchQty,
+        deficit: calc.deficit,
+        deficitBatches: calc.deficitBatches,
+        special1Count: calc.special1Count ?? 0,
+        special2Count: calc.special2Count ?? 0,
+        special3Count: calc.special3Count ?? 0,
+        totalSpecialCount: calc.totalSpecialCount ?? 0,
+      };
+    }));
+  }, [editCalcData]);
+
+  const editEffectiveTotalBatches = editCalcData?.totalDailyBatches ?? 0;
+  const editAllocateBatches = useCallback((recipes: CalcRecipe[], capacity: number): { suggestedBatches: number; surplusBatches: number }[] => {
+    if (capacity <= 0) return recipes.map(() => ({ suggestedBatches: 0, surplusBatches: 0 }));
+    const totalDeficitBatches = recipes.reduce((s, r) => s + r.deficitBatches, 0);
+    if (totalDeficitBatches <= capacity) {
+      const remaining = capacity - totalDeficitBatches;
+      const totalPacksSold = recipes.reduce((s, r) => s + r.packsSold, 0);
+      const rawSurplus = recipes.map(r => {
+        const exact = totalPacksSold > 0 ? (r.salesPercent / 100) * remaining : 0;
+        return { exact, floor: Math.floor(exact) };
+      });
+      let leftover = remaining - rawSurplus.reduce((s, r) => s + r.floor, 0);
+      const sorted = rawSurplus.map((r, idx) => ({ idx, remainder: r.exact - r.floor })).sort((a, b) => b.remainder - a.remainder);
+      const bonusSet = new Set<number>();
+      for (const { idx } of sorted) { if (leftover <= 0) break; bonusSet.add(idx); leftover--; }
+      return recipes.map((r, idx) => {
+        const surplusBatches = rawSurplus[idx].floor + (bonusSet.has(idx) ? 1 : 0);
+        return { suggestedBatches: r.deficitBatches + surplusBatches, surplusBatches };
+      });
+    } else {
+      const rawAlloc = recipes.map(r => {
+        const exact = (r.deficitBatches / totalDeficitBatches) * capacity;
+        return { exact, floor: Math.floor(exact) };
+      });
+      let leftover = capacity - rawAlloc.reduce((s, r) => s + r.floor, 0);
+      const sorted = rawAlloc.map((r, idx) => ({ idx, remainder: r.exact - r.floor })).sort((a, b) => b.remainder - a.remainder);
+      const bonusSet = new Set<number>();
+      for (const { idx } of sorted) { if (leftover <= 0) break; bonusSet.add(idx); leftover--; }
+      return recipes.map((r, idx) => {
+        const suggestedBatches = rawAlloc[idx].floor + (bonusSet.has(idx) ? 1 : 0);
+        return { suggestedBatches, surplusBatches: 0 };
+      });
+    }
+  }, []);
+
+  const [editRecalcFlash, setEditRecalcFlash] = useState(false);
+  const handleEditRecalculateBatches = useCallback(() => {
+    const includedItems = items.filter(it => it.included);
+    if (includedItems.length === 0 || editEffectiveTotalBatches <= 0) return;
+    const sumSalesPercent = includedItems.reduce((s, it) => s + (it.salesPercent || 0), 0);
+    const fallbackPercent = 100 / includedItems.length;
+    const recipesForAlloc = includedItems.map(it => ({
+      deficitBatches: it.deficitBatches,
+      salesPercent: sumSalesPercent > 0 ? (it.salesPercent / sumSalesPercent) * 100 : fallbackPercent,
+      packsSold: 1,
+    })) as unknown as CalcRecipe[];
+    const alloc = editAllocateBatches(recipesForAlloc, editEffectiveTotalBatches);
+    isDirty.current = true;
+    setItems(prev => prev.map(it => {
+      if (!it.included) return it;
+      const idx = includedItems.findIndex(inc => inc.id === it.id);
+      if (idx < 0) return it;
+      const suggested = alloc[idx].suggestedBatches;
+      const tinCount = (() => { if (!it.maxBatchesPerTin || suggested <= 0) return null; const raw = Math.ceil(suggested / it.maxBatchesPerTin); return suggested > 5 ? Math.max(2, raw) : raw; })();
+      return {
+        ...it,
+        suggestedBatches: suggested,
+        batchesTarget: suggested,
+        surplusBatches: alloc[idx].surplusBatches,
+        tinCount,
+      };
+    }));
+    setEditRecalcFlash(true);
+    setTimeout(() => setEditRecalcFlash(false), 1500);
+  }, [items, editAllocateBatches, editEffectiveTotalBatches]);
 
   // ── Update Factory Number (re-run DPT) state ────────────────────────────────
   // Clicking the Update button runs /calculate for this plan's date and
@@ -1582,17 +1798,39 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
               <span className="text-muted-foreground font-normal text-xs">
                 ({includedCount} of {items.length} included · drag to reorder)
               </span>
+              {editCalcLoading && (
+                <span className="text-muted-foreground font-normal text-xs flex items-center gap-1">
+                  <Loader2 className="w-3 h-3 animate-spin" /> loading live data…
+                </span>
+              )}
             </h3>
-            <button
-              type="button"
-              onClick={handleUpdateFactoryNumber}
-              disabled={updateLoading || items.length === 0}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 border border-border rounded-lg bg-background hover:bg-secondary/60 transition-colors disabled:opacity-40"
-              title="Refresh factory numbers from live stock and recompute DPT suggestions — old values stay until you accept the new ones."
-            >
-              {updateLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
-              Update Factory Number
-            </button>
+            <div className="flex items-center gap-2">
+              {editRecalcFlash && (
+                <span className="text-xs flex items-center gap-1 text-emerald-600 dark:text-emerald-400 animate-in fade-in duration-200">
+                  <BookmarkCheck className="w-3 h-3" /> Batches redistributed
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={handleEditRecalculateBatches}
+                disabled={items.filter(it => it.included).length === 0 || editEffectiveTotalBatches <= 0}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 border border-border rounded-lg bg-background hover:bg-secondary/60 transition-colors disabled:opacity-40"
+                title="Redistribute the daily batch capacity across the recipes currently included in this plan. Overwrites any manual batch edits."
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Recalculate Batches
+              </button>
+              <button
+                type="button"
+                onClick={handleUpdateFactoryNumber}
+                disabled={updateLoading || items.length === 0}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 border border-border rounded-lg bg-background hover:bg-secondary/60 transition-colors disabled:opacity-40"
+                title="Refresh factory numbers from live stock and recompute DPT suggestions — old values stay until you accept the new ones."
+              >
+                {updateLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+                Update Factory Number
+              </button>
+            </div>
           </div>
           {updateError && (
             <div className="mb-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 px-3 py-2 text-xs text-red-700 dark:text-red-300">

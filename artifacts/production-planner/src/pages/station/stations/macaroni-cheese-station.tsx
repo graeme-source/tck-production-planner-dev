@@ -161,7 +161,7 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
           const stock = Math.round(r.fridgeStock ?? 0);
           const d1 = r.dispatch2Qty ?? 0; // dispatch2 = today's dispatch (next day sales)
           const d2 = r.dispatch3Qty ?? 0; // dispatch3 = tomorrow's dispatch
-          const d3 = 0; // 3rd dispatch day not in current calculate response
+          const d3 = r.dispatch4Qty ?? 0; // dispatch4 = day-after-tomorrow's dispatch
           const deficit = Math.max(0, d1 - stock);
           return {
             recipeId: r.recipeId,
