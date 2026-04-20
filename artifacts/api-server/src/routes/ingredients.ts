@@ -19,6 +19,10 @@ function mapRow(r: typeof ingredientsTable.$inferSelect) {
     ovenTempC: r.ovenTempC ?? null,
     steamPct: r.steamPct ?? null,
     surplusPercent: Number(r.surplusPercent),
+    surplusMode: ((r as unknown as { surplusMode?: string }).surplusMode ?? "percent"),
+    surplusAbsoluteQty: (r as unknown as { surplusAbsoluteQty?: string | null }).surplusAbsoluteQty != null
+      ? Number((r as unknown as { surplusAbsoluteQty?: string | null }).surplusAbsoluteQty)
+      : null,
     shelfLifeDays: r.shelfLifeDays ?? null,
     kanbanEnabled: r.kanbanEnabled ?? false,
     kanbanQuantity: Number(r.kanbanQuantity ?? 0),
@@ -87,7 +91,7 @@ function validateProcessingRatio(value: unknown): string | null {
 }
 
 router.post("/", validate(CreateIngredientBody), async (req, res) => {
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const [row] = await db.insert(ingredientsTable).values({
@@ -115,6 +119,8 @@ router.post("/", validate(CreateIngredientBody), async (req, res) => {
     stockCheckFrequency: stockCheckFrequency ?? "daily",
     stockCheckDay: stockCheckDay || null,
     surplusPercent: surplusPercent != null ? String(surplusPercent) : "10",
+    surplusMode: surplusMode === "absolute" ? "absolute" : "percent",
+    surplusAbsoluteQty: surplusAbsoluteQty != null ? String(surplusAbsoluteQty) : null,
     shelfLifeDays: shelfLifeDays != null ? Number(shelfLifeDays) : null,
     kanbanEnabled: kanbanEnabled ?? false,
     kanbanQuantity: kanbanQuantity != null ? String(kanbanQuantity) : "0",
@@ -205,7 +211,7 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const [row] = await db.update(ingredientsTable).set({
@@ -233,6 +239,8 @@ router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
     ...(stockCheckFrequency !== undefined ? { stockCheckFrequency } : {}),
     stockCheckDay: stockCheckDay || null,
     ...(surplusPercent !== undefined ? { surplusPercent: String(surplusPercent) } : {}),
+    ...(surplusMode !== undefined ? { surplusMode: surplusMode === "absolute" ? "absolute" : "percent" } : {}),
+    ...(surplusAbsoluteQty !== undefined ? { surplusAbsoluteQty: surplusAbsoluteQty != null ? String(surplusAbsoluteQty) : null } : {}),
     ...(shelfLifeDays !== undefined ? { shelfLifeDays: shelfLifeDays != null ? Number(shelfLifeDays) : null } : {}),
     ...(kanbanEnabled !== undefined ? { kanbanEnabled } : {}),
     ...(kanbanQuantity !== undefined ? { kanbanQuantity: kanbanQuantity != null ? String(kanbanQuantity) : "0" } : {}),

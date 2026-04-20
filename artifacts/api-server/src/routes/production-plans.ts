@@ -612,25 +612,9 @@ router.get("/calculate", async (req, res) => {
   const specialRecipe = specialRecipeRows[0] ?? null;
 
   const specialCountPerDate: Record<string, number> = {};
-
-  if (specialRecipe && hasShopifyData) {
-    const specialQtyCombined = shopifySalesCombined[CALZONE_CLUB_SPECIAL_KEY] ?? 0;
-    if (specialQtyCombined > 0) {
-      const specialNorm = normalizeForMatch(specialRecipe.name);
-      shopifySalesCombined[specialNorm] = (shopifySalesCombined[specialNorm] ?? 0) + specialQtyCombined;
-    }
-
-    for (const date of deliveryDates) {
-      const salesForDate = shopifySalesPerDate[date];
-      if (!salesForDate) continue;
-      const specialQty = salesForDate[CALZONE_CLUB_SPECIAL_KEY] ?? 0;
-      if (specialQty > 0) {
-        const specialNorm = normalizeForMatch(specialRecipe.name);
-        salesForDate[specialNorm] = (salesForDate[specialNorm] ?? 0) + specialQty;
-        specialCountPerDate[date] = specialQty;
-      }
-    }
-  }
+  // Merge of Club Special sales into the target recipe is deferred until the
+  // variant-ID mapping has loaded, so we can also credit the variant path (not
+  // just the name-match fallback).
 
   const dptRows = await db
     .select({
@@ -703,6 +687,45 @@ router.get("/calculate", async (req, res) => {
     if (m.shopify_variant_id) ids.push(String(m.shopify_variant_id));
     if (m.wonky_variant_id) ids.push(String(m.wonky_variant_id));
     if (ids.length > 0) recipeToVariantIds.set(m.recipe_id, ids);
+  }
+
+  // Merge Club Special sales into the target ("is_current_special") recipe.
+  // We write to BOTH the name-based map (shopifySalesPerDate / Combined) and
+  // the variant-ID-based map (variantSalesPerDate / Combined) so whichever
+  // matching path resolves the target recipe gets the combined total. Writing
+  // only to the name map previously caused the special to vanish whenever the
+  // target recipe had a Shopify variant mapping (which is the norm for core
+  // calzones), so the dispatch column showed only the base sales despite the
+  // "incl. N club special" note.
+  if (specialRecipe && hasShopifyData) {
+    const specialVariantIds = recipeToVariantIds.get(specialRecipe.id) ?? [];
+    const primarySpecialVariant = specialVariantIds[0];
+    const specialNorm = specialRecipe.name
+      .toLowerCase().trim().replace(/[''`]/g, "'").replace(/&/g, "and").replace(/\s+/g, " ");
+
+    const specialQtyCombined = shopifySalesCombined[CALZONE_CLUB_SPECIAL_KEY] ?? 0;
+    if (specialQtyCombined > 0) {
+      shopifySalesCombined[specialNorm] = (shopifySalesCombined[specialNorm] ?? 0) + specialQtyCombined;
+      if (primarySpecialVariant) {
+        variantSalesCombined[primarySpecialVariant] =
+          (variantSalesCombined[primarySpecialVariant] ?? 0) + specialQtyCombined;
+      }
+    }
+
+    for (const date of deliveryDates) {
+      const salesForDate = shopifySalesPerDate[date];
+      if (!salesForDate) continue;
+      const specialQty = salesForDate[CALZONE_CLUB_SPECIAL_KEY] ?? 0;
+      if (specialQty > 0) {
+        salesForDate[specialNorm] = (salesForDate[specialNorm] ?? 0) + specialQty;
+        if (primarySpecialVariant) {
+          if (!variantSalesPerDate[date]) variantSalesPerDate[date] = {};
+          variantSalesPerDate[date][primarySpecialVariant] =
+            (variantSalesPerDate[date][primarySpecialVariant] ?? 0) + specialQty;
+        }
+        specialCountPerDate[date] = specialQty;
+      }
+    }
   }
 
   function normalizeForMatch(s: string): string {

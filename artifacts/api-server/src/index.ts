@@ -168,6 +168,12 @@ async function runStartupMigrations() {
       ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS surplus_percent NUMERIC(5,2) NOT NULL DEFAULT 10
     `);
     await db.execute(sql`
+      ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS surplus_mode TEXT NOT NULL DEFAULT 'percent'
+    `);
+    await db.execute(sql`
+      ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS surplus_absolute_qty NUMERIC(12,4)
+    `);
+    await db.execute(sql`
       ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS shelf_life_days INTEGER
     `);
     await db.execute(sql`

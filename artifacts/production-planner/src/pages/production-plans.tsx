@@ -224,15 +224,36 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
         </div>
       </td>
       <td className="py-2 px-2 text-center">
-        <input
-          type="number"
-          min={0}
-          value={item.fridgeStock === 0 ? "" : item.fridgeStock}
-          onChange={e => onFridgeStockChange(item.id, e.target.value === "" ? 0 : Math.max(0, parseInt(e.target.value, 10) || 0))}
-          disabled={saving}
-          className="w-20 px-1.5 py-1 bg-background border border-border rounded-lg text-xs text-center focus-ring disabled:opacity-40 tabular-nums"
-          placeholder="0"
-        />
+        {(() => {
+          // Margin = how many packs we have in the fridge over what tomorrow's
+          // dispatch needs. Colour signals whether the fridge alone can cover
+          // the next dispatch (and by how much). Independent of downstream
+          // dispatches / deficit math.
+          const margin = item.fridgeStock - item.dispatch1Qty;
+          const tone = margin >= 10
+            ? "bg-emerald-50 border-emerald-400 text-emerald-800 dark:bg-emerald-950/40 dark:border-emerald-600 dark:text-emerald-200"
+            : margin > 0
+              ? "bg-amber-50 border-amber-400 text-amber-900 dark:bg-amber-950/40 dark:border-amber-600 dark:text-amber-200"
+              : "bg-red-50 border-red-400 text-red-800 dark:bg-red-950/40 dark:border-red-600 dark:text-red-200";
+          const title = item.dispatch1Qty > 0
+            ? `Fridge ${item.fridgeStock} − next dispatch ${item.dispatch1Qty} = ${margin >= 0 ? "+" : ""}${margin}`
+            : `Fridge ${item.fridgeStock} (no dispatch tomorrow)`;
+          return (
+            <input
+              type="number"
+              min={0}
+              value={item.fridgeStock === 0 ? "" : item.fridgeStock}
+              onChange={e => onFridgeStockChange(item.id, e.target.value === "" ? 0 : Math.max(0, parseInt(e.target.value, 10) || 0))}
+              disabled={saving}
+              title={title}
+              className={cn(
+                "w-20 px-1.5 py-1 border rounded-lg text-xs text-center focus-ring disabled:opacity-40 tabular-nums font-medium",
+                tone,
+              )}
+              placeholder="0"
+            />
+          );
+        })()}
       </td>
       <td className="py-2 px-2 text-center tabular-nums text-xs text-red-500">
         <div>{item.dispatch1Qty || "—"}</div>

@@ -444,6 +444,11 @@ const schema = z.object({
   stockCheckFrequency: z.enum(["daily", "weekly"]).optional(),
   stockCheckDay: z.string().optional(),
   surplusPercent: z.coerce.number().min(0).optional(),
+  surplusMode: z.enum(["percent", "absolute"]).optional(),
+  surplusAbsoluteQty: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().min(0).nullable().optional()
+  ),
   shelfLifeDays: z.preprocess(
     (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
     z.number().int().positive().nullable().optional()
@@ -473,7 +478,7 @@ type FormValues = z.infer<typeof schema>;
 const emptyDefaults: FormValues = {
   name: "", unit: "kg", packWeight: 0, costPerPack: 0,
   brand: "", supplierPartNumber: "", supplierId: 0, secondarySupplierId: 0,
-  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null, estimatedCookTimeMin: null, ovenTempC: null, steamPct: null, isBottle: false, bottleSize: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "", surplusPercent: 10, shelfLifeDays: null, kanbanEnabled: false, kanbanQuantity: 0, kanbanUnit: "weight" as const, kanbanOrderAmount: null,
+  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null, estimatedCookTimeMin: null, ovenTempC: null, steamPct: null, isBottle: false, bottleSize: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "", surplusPercent: 10, surplusMode: "percent" as const, surplusAbsoluteQty: null, shelfLifeDays: null, kanbanEnabled: false, kanbanQuantity: 0, kanbanUnit: "weight" as const, kanbanOrderAmount: null,
   energyKj: null, energyKcal: null, fat: null, saturates: null, carbohydrate: null, sugars: null, protein: null, fibre: null, salt: null, labelDeclaration: "", allergens: [],
 };
 
@@ -527,6 +532,7 @@ export default function Ingredients() {
   const watchedIsBottle = watch("isBottle");
   const watchedStockCheckEnabled = watch("stockCheckEnabled");
   const watchedStockCheckFrequency = watch("stockCheckFrequency");
+  const watchedSurplusMode = watch("surplusMode");
   const watchedCategory = watch("category");
   const watchedKanbanEnabled = watch("kanbanEnabled");
   const watchedKanbanUnit = watch("kanbanUnit");
@@ -569,6 +575,8 @@ export default function Ingredients() {
       stockCheckFrequency: (item.stockCheckFrequency as "daily" | "weekly") ?? "daily",
       stockCheckDay: item.stockCheckDay ?? "",
       surplusPercent: (item as Record<string, unknown>).surplusPercent != null ? Number((item as Record<string, unknown>).surplusPercent) : 10,
+      surplusMode: (((item as Record<string, unknown>).surplusMode as "percent" | "absolute" | undefined) ?? "percent"),
+      surplusAbsoluteQty: (item as Record<string, unknown>).surplusAbsoluteQty != null ? Number((item as Record<string, unknown>).surplusAbsoluteQty) : null,
       shelfLifeDays: (item as Record<string, unknown>).shelfLifeDays != null ? Number((item as Record<string, unknown>).shelfLifeDays) : null,
       kanbanEnabled: (item as Record<string, unknown>).kanbanEnabled as boolean ?? false,
       kanbanQuantity: (item as Record<string, unknown>).kanbanQuantity != null ? Number((item as Record<string, unknown>).kanbanQuantity) : 0,
@@ -613,6 +621,8 @@ export default function Ingredients() {
     stockCheckFrequency: data.stockCheckFrequency ?? "daily",
     stockCheckDay: data.stockCheckFrequency === "weekly" ? (data.stockCheckDay || null) : null,
     surplusPercent: data.surplusPercent ?? 10,
+    surplusMode: data.surplusMode ?? "percent",
+    surplusAbsoluteQty: data.surplusMode === "absolute" ? (data.surplusAbsoluteQty ?? null) : null,
     shelfLifeDays: data.shelfLifeDays ?? null,
     kanbanEnabled: data.kanbanEnabled ?? false,
     kanbanQuantity: data.kanbanQuantity ?? 0,
@@ -993,23 +1003,65 @@ export default function Ingredients() {
                 )}
 
                 <div>
-                  <label className="text-sm font-medium mb-1 block">
-                    Surplus %
-                    <span className="ml-2 text-xs font-normal text-muted-foreground">(ordering buffer)</span>
-                  </label>
-                  <div className="relative max-w-[160px]">
-                    <input
-                      type="number"
-                      step="1"
-                      min="0"
-                      {...register("surplusPercent")}
-                      className="w-full px-3 pr-10 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                      placeholder="10"
-                    />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">%</span>
+                  <div className="flex items-center justify-between gap-3 mb-1">
+                    <label className="text-sm font-medium">
+                      Surplus Buffer
+                      <span className="ml-2 text-xs font-normal text-muted-foreground">(ordering buffer)</span>
+                    </label>
+                    <div className="inline-flex rounded-lg border border-border overflow-hidden text-xs">
+                      <label className={cn(
+                        "px-2.5 py-1 cursor-pointer transition-colors",
+                        (watchedSurplusMode ?? "percent") === "percent"
+                          ? "bg-primary text-primary-foreground font-medium"
+                          : "hover:bg-secondary/60",
+                      )}>
+                        <input type="radio" value="percent" {...register("surplusMode")} className="sr-only" />
+                        %
+                      </label>
+                      <label className={cn(
+                        "px-2.5 py-1 cursor-pointer transition-colors border-l border-border",
+                        watchedSurplusMode === "absolute"
+                          ? "bg-primary text-primary-foreground font-medium"
+                          : "hover:bg-secondary/60",
+                      )}>
+                        <input type="radio" value="absolute" {...register("surplusMode")} className="sr-only" />
+                        {watchedUnit || "qty"}
+                      </label>
+                    </div>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1">Extra % added when calculating order quantities.</p>
-                  {errors.surplusPercent && <span className="text-destructive text-xs">{String(errors.surplusPercent.message)}</span>}
+                  {(watchedSurplusMode ?? "percent") === "percent" ? (
+                    <>
+                      <div className="relative max-w-[160px]">
+                        <input
+                          type="number"
+                          step="1"
+                          min="0"
+                          {...register("surplusPercent")}
+                          className="w-full px-3 pr-10 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                          placeholder="10"
+                        />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">%</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">Extra % of daily DPT usage added to order quantities.</p>
+                      {errors.surplusPercent && <span className="text-destructive text-xs">{String(errors.surplusPercent.message)}</span>}
+                    </>
+                  ) : (
+                    <>
+                      <div className="relative max-w-[160px]">
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          {...register("surplusAbsoluteQty")}
+                          className="w-full px-3 pr-12 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                          placeholder="0"
+                        />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">{watchedUnit || ""}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">Fixed buffer in {watchedUnit || "this ingredient's unit"}, independent of daily usage.</p>
+                      {errors.surplusAbsoluteQty && <span className="text-destructive text-xs">{String(errors.surplusAbsoluteQty.message)}</span>}
+                    </>
+                  )}
                 </div>
               </div>
             )}

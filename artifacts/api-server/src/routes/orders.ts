@@ -118,6 +118,8 @@ router.get("/calculate", async (req, res) => {
       supplierPartNumber: ingredientsTable.supplierPartNumber,
       stockCheckEnabled: ingredientsTable.stockCheckEnabled,
       surplusPercent: ingredientsTable.surplusPercent,
+      surplusMode: ingredientsTable.surplusMode,
+      surplusAbsoluteQty: ingredientsTable.surplusAbsoluteQty,
       kanbanQuantity: ingredientsTable.kanbanQuantity,
       kanbanUnit: ingredientsTable.kanbanUnit,
       orderingUrl: ingredientsTable.orderingUrl,
@@ -263,10 +265,16 @@ router.get("/calculate", async (req, res) => {
     const costPerPack = Number(detail.costPerPack) || 0;
     const stockOnHand = latestStockByIngredient[iid] ?? 0;
     const surplusPercent = Number(detail.surplusPercent) || 10;
+    const surplusMode = (detail.surplusMode === "absolute" ? "absolute" : "percent");
+    const surplusAbsoluteQty = detail.surplusAbsoluteQty != null ? Number(detail.surplusAbsoluteQty) : null;
     // Use DPT daily requirement if available, otherwise fall back to
     // the current plan's totalRequired for this ingredient.
     const dailyRequirement = dptLookup[iid] ?? ing.totalRequired;
-    const surplusTarget = dailyRequirement * (surplusPercent / 100);
+    // Absolute mode: fixed buffer (in the ingredient's native unit), ignores
+    // daily usage. Percent mode: % of daily requirement (legacy behaviour).
+    const surplusTarget = surplusMode === "absolute"
+      ? Math.max(0, surplusAbsoluteQty ?? 0)
+      : dailyRequirement * (surplusPercent / 100);
 
     const rawOrderQty = Math.max(0, ing.totalRequired + surplusTarget - stockOnHand);
     const packsToOrder = packWeight > 0 ? Math.ceil(rawOrderQty / packWeight) : 0;

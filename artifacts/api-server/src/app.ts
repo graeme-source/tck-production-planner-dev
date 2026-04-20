@@ -95,6 +95,23 @@ app.use(
   }),
 );
 
+// Desktop machines get a short-lived rolling session so shared PCs don't
+// carry one user's login into the next shift. Mobile/tablet keeps the 30-day
+// cookie (iPads are per-station, not shared between staff). The client sets
+// `tck_device=desktop|mobile` at boot based on touch capability; if the
+// header is missing (first request of a brand-new session), we fall back to
+// the 30-day default, and the next request self-corrects once the client has
+// set the cookie.
+const DESKTOP_SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+app.use((req, _res, next) => {
+  const cookieHeader = req.headers.cookie ?? "";
+  const isDesktop = /(?:^|;\s*)tck_device=desktop(?:;|$)/.test(cookieHeader);
+  if (isDesktop && req.session?.cookie) {
+    req.session.cookie.maxAge = DESKTOP_SESSION_MAX_AGE_MS;
+  }
+  next();
+});
+
 app.use("/api", router);
 
 // In production, serve the built frontend
