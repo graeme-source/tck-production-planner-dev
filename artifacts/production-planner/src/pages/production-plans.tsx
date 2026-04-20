@@ -3023,30 +3023,44 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const totalPacks = plan.items?.reduce((s, it) => s + (it.batchesTarget ?? 0) * (it.portionsPerBatch ?? 10) / (it.packSize ?? 2), 0) ?? 0;
   const progress = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
 
-  // Per-station completion counts aggregated from all plan items
+  // Per-station completion counts aggregated from all plan items.
+  // Progress bars are expressed in packs (the common unit across calzones and
+  // mac cheese). For each item: 1 batch row = portionsPerBatch / packSize packs
+  // (calzone: 10/2 = 5; mac: 2/2 = 1, so 1 mac completion row = 1 pack).
   // Prep, dough_prep, and dough_sheeting work on tomorrow's plan.
-  // Use the next plan's data for those stations, current plan for everything else.
   const prepStations = new Set(["dough_prep", "dough_sheeting", "prep"]);
   const nextItems = (nextPlanId !== planId && nextPlan?.items) ? nextPlan.items : plan.items ?? [];
-  const nextTarget = nextItems.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
+  const batchToPacks = (it: any, count: number) => {
+    const portionsPerBatch = it.portionsPerBatch ?? 10;
+    const packSize = it.packSize ?? 2;
+    if (packSize <= 0) return 0;
+    return Math.round((count * portionsPerBatch) / packSize);
+  };
+  const packsTargetFor = (list: any[]) =>
+    list.reduce((s, it) => s + batchToPacks(it, it.batchesTarget ?? 0), 0);
+  const packsDoneAt = (list: any[], stationKey: string) =>
+    list.reduce((s, it) => s + batchToPacks(it, (it.stationCompletions as Record<string, number> | undefined)?.[stationKey] ?? 0), 0);
+  const totalPacksTarget = packsTargetFor(plan.items ?? []);
+  const nextPacksTarget = packsTargetFor(nextItems);
 
   const stationProgress: Record<string, { done: number; target: number }> = {};
   {
     const items = plan.items ?? [];
-    const target = totalBatchesTarget;
+    const target = totalPacksTarget;
     for (const s of STATION_BUTTONS) {
       if (s.key === "building_1" || s.key === "building_2") {
-        const b1 = items.reduce((sum, it) => sum + ((it.stationCompletions as Record<string, number> | undefined)?.["building_1"] ?? 0), 0);
-        const b2 = items.reduce((sum, it) => sum + ((it.stationCompletions as Record<string, number> | undefined)?.["building_2"] ?? 0), 0);
+        const b1 = packsDoneAt(items, "building_1");
+        const b2 = packsDoneAt(items, "building_2");
         stationProgress[s.key] = { done: b1 + b2, target };
       } else if (s.key === "prep") {
         stationProgress[s.key] = { done: prepProgress?.pct ?? 0, target: 100 };
       } else if (s.key === "macaroni_cheese") {
         // Mac cheese station only counts mac cheese items
         const macItems = items.filter(it => (it as any).recipeCategory === "Macaroni Cheese");
-        const macTarget = macItems.reduce((sum, it) => sum + (it.batchesTarget ?? 0), 0);
-        const done = macItems.reduce((sum, it) => sum + ((it.stationCompletions as Record<string, number> | undefined)?.["macaroni_cheese"] ?? 0), 0);
-        stationProgress[s.key] = { done, target: macTarget };
+        stationProgress[s.key] = {
+          done: packsDoneAt(macItems, "macaroni_cheese"),
+          target: packsTargetFor(macItems),
+        };
       } else if (s.key === "packing") {
         const totalOrders = dispatchProgress?.totalOrders ?? 0;
         const totalFulfilled = dispatchProgress?.totalFulfilled ?? 0;
@@ -3057,8 +3071,10 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
         stationProgress[s.key] = { done: 0, target: 0 };
       } else if (s.key === "dough_prep") {
         // Use next plan's completion data for dough prep (prep today for tomorrow)
-        const done = nextItems.reduce((sum, it) => sum + ((it.stationCompletions as Record<string, number> | undefined)?.[s.key] ?? 0), 0);
-        stationProgress[s.key] = { done, target: nextTarget };
+        stationProgress[s.key] = {
+          done: packsDoneAt(nextItems, s.key),
+          target: nextPacksTarget,
+        };
       } else if (s.key === "wrapping") {
         // Progress = 2-packs wrapped and placed in production fridge ÷ net 2-packs that need wrapping.
         // Net target matches the "in chiller" figure shown on the wrapping station (gross oven output
@@ -3075,8 +3091,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
         const wrappingDone = items.reduce((sum, it) => sum + (it.fridgeQty ?? 0), 0);
         stationProgress[s.key] = { done: wrappingDone, target: wrappingTarget };
       } else {
-        const done = items.reduce((sum, it) => sum + ((it.stationCompletions as Record<string, number> | undefined)?.[s.key] ?? 0), 0);
-        stationProgress[s.key] = { done, target };
+        stationProgress[s.key] = { done: packsDoneAt(items, s.key), target };
       }
     }
   }

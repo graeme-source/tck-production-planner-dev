@@ -17,7 +17,7 @@ import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
 import { getStationCount, getAvailableFromPrev } from "../shared/constants";
-import { netTwoPacks as computeNetTwoPacks } from "../shared/recipe-completion";
+import { netTwoPacks as computeNetTwoPacks, effectiveBatchesTarget } from "../shared/recipe-completion";
 
 interface ShopifyWrapConfirmState {
   item: ProductionPlanItem;
@@ -128,8 +128,12 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   const grossPacks = (item: ProductionPlanItem) =>
     Math.floor((getStationCount(item, "ovens") * (item.portionsPerBatch ?? 10)) / 2);
   const eightPackDeduction = (item: ProductionPlanItem) => (item.eightPackBagCount ?? 0) * 4;
+  const combinedBuildingCount = (item: ProductionPlanItem) =>
+    getStationCount(item, "building_1") + getStationCount(item, "building_2");
+  const effBatches = (item: ProductionPlanItem) =>
+    effectiveBatchesTarget(item, combinedBuildingCount(item));
   const netTwoPacks = (item: ProductionPlanItem) =>
-    computeNetTwoPacks(item, getStationCount(item, "ovens"));
+    computeNetTwoPacks(item, getStationCount(item, "ovens"), effBatches(item));
   // netPacks for backward compat (total items including 8-pack bags for storage calcs)
   const netPacks = (item: ProductionPlanItem) =>
     netTwoPacks(item) + (item.eightPackBagCount ?? 0);
@@ -463,12 +467,12 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                         </div>
                         <div className="flex items-center gap-3 text-base">
                           <div className="text-center">
-                            <span className="text-sm text-muted-foreground block">Planned</span>
-                            <span className="text-lg font-bold tabular-nums">{planned}</span>
+                            <span className="text-sm text-muted-foreground block">Produced</span>
+                            <span className="text-lg font-bold tabular-nums">{net}</span>
                           </div>
                           <div className="text-center">
                             <span className="text-sm text-purple-600 dark:text-purple-400 block">In Chiller</span>
-                            <span className="text-2xl font-bold tabular-nums text-purple-700 dark:text-purple-300">{net}</span>
+                            <span className="text-2xl font-bold tabular-nums text-purple-700 dark:text-purple-300">{Math.max(0, remaining)}</span>
                           </div>
                           <div className="text-center border-l border-border/50 pl-3">
                             <span className="text-sm text-primary block">Wrapped</span>
@@ -484,12 +488,6 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                             <div className="text-center border-l border-border/50 pl-3">
                               <span className="text-sm text-indigo-600 dark:text-indigo-400 block">8-Packs</span>
                               <span className="text-lg font-bold tabular-nums text-indigo-600 dark:text-indigo-400">{eightPkFridge}/{eightPkCount}</span>
-                            </div>
-                          )}
-                          {remaining > 0 && (
-                            <div className="text-center">
-                              <span className="text-sm text-amber-600 dark:text-amber-400 block">Left</span>
-                              <span className="text-lg font-bold tabular-nums text-amber-600 dark:text-amber-400">{remaining}</span>
                             </div>
                           )}
                         </div>

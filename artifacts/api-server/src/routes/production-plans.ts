@@ -998,11 +998,31 @@ router.get("/calculate-mac-cheese", async (req, res) => {
     if (row.recipeId != null) latestStock[row.recipeId] = Number(row.quantity);
   }
 
+  // Load recipe → Shopify variant mappings (same source the calzone endpoint
+  // uses) so mac cheese recipes can match by variant ID instead of fuzzy names.
+  // Name matching alone fails when two recipes have overlapping titles (e.g.
+  // "Big Nanny's Macaroni Cheese" is a substring of "Pigs & Blankets - Big
+  // Nanny's Macaroni Cheese"), causing both to resolve to the same Shopify
+  // product and return identical sales numbers.
+  const macRecipeMappings = await db.execute<{ recipe_id: number; shopify_variant_id: string | null; wonky_variant_id: string | null }>(sql`
+    SELECT recipe_id, shopify_variant_id, wonky_variant_id
+    FROM recipe_shopify_mappings
+    WHERE recipe_id = ANY(${macRecipeIds})
+  `);
+  const recipeToVariantIds = new Map<number, string[]>();
+  for (const m of macRecipeMappings.rows ?? macRecipeMappings) {
+    const ids: string[] = [];
+    if (m.shopify_variant_id) ids.push(String(m.shopify_variant_id));
+    if (m.wonky_variant_id) ids.push(String(m.wonky_variant_id));
+    if (ids.length > 0) recipeToVariantIds.set(m.recipe_id, ids);
+  }
+
   // Fetch Shopify sales for 3 delivery dates
   function normalizeForMatch(s: string): string {
     return s.toLowerCase().trim().replace(/[''`]/g, "'").replace(/&/g, "and").replace(/\s+/g, " ");
   }
   const shopifySalesPerDate: Record<string, Record<string, number>> = {};
+  const variantSalesPerDate: Record<string, Record<string, number>> = {};
   let shopifyError: string | null = null;
   try {
     const results = await Promise.allSettled(
@@ -1016,6 +1036,7 @@ router.get("/calculate-mac-cheese", async (req, res) => {
       }
       const { date, products } = result.value;
       shopifySalesPerDate[date] = {};
+      variantSalesPerDate[date] = {};
       for (const p of products) {
         // Mac cheese sold as 2-packs same as calzones
         const twoPackVariant = p.variants.find(v => {
@@ -1025,6 +1046,18 @@ router.get("/calculate-mac-cheese", async (req, res) => {
         if (twoPackVariant) {
           const key = normalizeForMatch(p.productTitle);
           shopifySalesPerDate[date][key] = (shopifySalesPerDate[date][key] ?? 0) + twoPackVariant.quantity;
+          if (twoPackVariant.variantId) {
+            const vid = String(twoPackVariant.variantId);
+            variantSalesPerDate[date][vid] = (variantSalesPerDate[date][vid] ?? 0) + twoPackVariant.quantity;
+          }
+        }
+        // Also record non-2-pack variants by ID so mapped recipes can still
+        // resolve sales if the mapping points at a different variant shape.
+        for (const v of p.variants) {
+          if (v !== twoPackVariant && v.variantId) {
+            const vid = String(v.variantId);
+            variantSalesPerDate[date][vid] = (variantSalesPerDate[date][vid] ?? 0) + v.quantity;
+          }
         }
       }
     }
@@ -1032,12 +1065,17 @@ router.get("/calculate-mac-cheese", async (req, res) => {
     shopifyError = err.message ?? "Unknown error";
   }
 
-  // Pick the single Shopify product whose title is closest in length to the
-  // recipe name (matches the calzone /calculate endpoint's `bestShopifyMatch`).
-  // This prevents recipes with overlapping substrings (e.g. "Big Nanny's
-  // Macaroni Cheese" is inside "Pigs in Blankets Big Nanny's Macaroni Cheese")
-  // from all summing the same set of products and returning identical totals.
-  function matchSalesForDate(recipeName: string, date: string): number {
+  // Variant ID match is authoritative when available; otherwise fall back to
+  // closest-length name matching (preserves prior behaviour for unmapped mac
+  // recipes).
+  function matchSalesForDate(recipeId: number, recipeName: string, date: string): number {
+    const variantIds = recipeToVariantIds.get(recipeId);
+    if (variantIds && variantIds.length > 0) {
+      const dateSales = variantSalesPerDate[date] ?? {};
+      let total = 0;
+      for (const vid of variantIds) total += dateSales[vid] ?? 0;
+      if (total > 0) return total;
+    }
     const recipeNorm = normalizeForMatch(recipeName);
     const salesForDate = shopifySalesPerDate[date] ?? {};
     let bestQty = 0;
@@ -1076,9 +1114,9 @@ router.get("/calculate-mac-cheese", async (req, res) => {
     const packsPerBatch = portionsPerBatch / packSize;
     const leftOverStock = latestStock[r.recipeId] ?? 0;
 
-    const salesNextDay = matchSalesForDate(r.recipeName ?? "", deliveryDates[0]);
-    const salesNextDayPlus1 = matchSalesForDate(r.recipeName ?? "", deliveryDates[1]);
-    const salesNextDayPlus2 = matchSalesForDate(r.recipeName ?? "", deliveryDates[2]);
+    const salesNextDay = matchSalesForDate(r.recipeId, r.recipeName ?? "", deliveryDates[0]);
+    const salesNextDayPlus1 = matchSalesForDate(r.recipeId, r.recipeName ?? "", deliveryDates[1]);
+    const salesNextDayPlus2 = matchSalesForDate(r.recipeId, r.recipeName ?? "", deliveryDates[2]);
 
     const neededForDispatch = Math.max(0, salesNextDay - leftOverStock);
     const defaultExtra = extraMap[r.recipeId] ?? 5;
@@ -1723,9 +1761,11 @@ router.post("/:id/batch-completions", async (req, res) => {
     return;
   }
 
-  // Once the builder has marked this recipe complete, no station can add more
-  // batches — the truncated output has been locked in.
-  if (planItem.builderMarkedCompleteAt) {
+  // Once the builder has marked this recipe complete, the building pipeline
+  // is locked. Downstream stations (ovens, wrapping) must still be allowed to
+  // catch up to the truncated output — their effective cap is enforced by the
+  // cascade check below (prevCount from building stations).
+  if (planItem.builderMarkedCompleteAt && stationType !== "ovens" && stationType !== "wrapping") {
     res.status(409).json({ error: "Recipe was marked complete by the builder" });
     return;
   }
@@ -1864,8 +1904,10 @@ router.post("/:id/batch-completions/bulk", async (req, res) => {
     return;
   }
 
-  // Builder has locked in a truncated output — no further batches allowed.
-  if (planItem.builderMarkedCompleteAt) {
+  // Builder has locked in a truncated output. Downstream stations (ovens,
+  // wrapping) may still catch up to the truncated count; earlier stations are
+  // blocked. The cascade check below enforces the ovens/wrapping cap.
+  if (planItem.builderMarkedCompleteAt && stationType !== "ovens" && stationType !== "wrapping") {
     res.status(409).json({ error: "Recipe was marked complete by the builder" });
     return;
   }

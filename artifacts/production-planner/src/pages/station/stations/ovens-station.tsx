@@ -20,7 +20,7 @@ import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
 import { getStationCount, getAvailableFromPrev, isMacCheese } from "../shared/constants";
-import { effectiveBatchesTarget, netTwoPacks as computeNetTwoPacks } from "../shared/recipe-completion";
+import { effectiveBatchesTarget, netTwoPacks as computeNetTwoPacks, packsTargetForItem, packsDoneForItem, packsPerBatch } from "../shared/recipe-completion";
 import { RECIPE_RACK_COLOURS, WonkyColour, ChillerRackItem, ChillerRackVisual } from "./dough-sheeting-station";
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -49,6 +49,13 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
     getStationCount(it, "building_1") + getStationCount(it, "building_2");
   const effTarget = (it: ProductionPlanItem) =>
     effectiveBatchesTarget(it, combinedBuildingCount(it));
+  // Pack-unit view derived from the batch cap. Extras from builders ride
+  // along in the same trays, so they credit in when all batches on this
+  // station are done.
+  const ovenPacksTarget = (it: ProductionPlanItem) =>
+    packsTargetForItem(it, effTarget(it));
+  const ovenPacksDone = (it: ProductionPlanItem) =>
+    packsDoneForItem(it, getStationCount(it, "ovens"), effTarget(it));
   const currentItem = items.find(it => getStationCount(it, "ovens") < effTarget(it));
 
   // Auto-expand current recipe, and track when it changes
@@ -255,7 +262,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
     Math.floor((getStationCount(item, "ovens") * (item.portionsPerBatch ?? 10)) / 2);
   const eightPackDeduction = (item: ProductionPlanItem) => (item.eightPackBagCount ?? 0) * 4;
   const netTwoPacks = (item: ProductionPlanItem) =>
-    computeNetTwoPacks(item, getStationCount(item, "ovens"));
+    computeNetTwoPacks(item, getStationCount(item, "ovens"), effTarget(item));
   // netPacks includes both two-packs and eight-pack bags for tray calc
   const netPacks = (item: ProductionPlanItem) =>
     netTwoPacks(item) + (item.eightPackBagCount ?? 0);
@@ -411,9 +418,18 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                     {item.recipeName ?? `Recipe #${item.recipeId}`}
                   </span>
 
-                  {/* Batch count */}
-                  <span className="text-sm tabular-nums font-medium flex-shrink-0">
-                    {getStationCount(item, "ovens")}/{effTarget(item)}
+                  {/* Batch + pack count */}
+                  <span className="text-sm tabular-nums font-medium flex-shrink-0 text-right">
+                    {isMacCheese(item as any) ? (
+                      <>{getStationCount(item, "ovens")}/{effTarget(item)}</>
+                    ) : (
+                      <>
+                        {getStationCount(item, "ovens")}/{effTarget(item)}
+                        <span className="text-muted-foreground ml-1.5">
+                          ({ovenPacksDone(item)}/{ovenPacksTarget(item)} pk)
+                        </span>
+                      </>
+                    )}
                   </span>
 
                   {/* Status icon */}
@@ -491,6 +507,14 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                                 </span>
                               </div>
                               <p className="text-sm text-muted-foreground mt-1 font-medium">{unitLabel}</p>
+                              {!itemIsMac && (item.extraPacksBuilt ?? 0) > 0 && (
+                                <p className="text-xs text-muted-foreground mt-1 tabular-nums">
+                                  {ovenPacksDone(item)} / {ovenPacksTarget(item)} packs
+                                  <span className="ml-1 text-amber-600 dark:text-amber-400">
+                                    (incl. {item.extraPacksBuilt} extra)
+                                  </span>
+                                </p>
+                              )}
                             </div>
                             <button
                               onClick={(e) => { e.stopPropagation(); addBatch(item); }}
