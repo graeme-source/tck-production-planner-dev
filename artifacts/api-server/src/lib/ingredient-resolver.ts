@@ -175,9 +175,15 @@ export async function resolveRecipeIngredients(
 
   for (const rsr of filteredSubRecipes) {
     const visited = new Set<number>();
+    // recipe_sub_recipes.quantity is stored per-portion (same convention as
+    // recipe_ingredients.quantity — see dough-prep endpoint comment at
+    // production-plans.ts:4566 and sub-recipe-requirements at :3124). Scale
+    // up to per-batch here so quantityPerBatch is comparable to the direct
+    // ingredient calculation above.
+    const scalePerBatch = Number(rsr.quantity) * portionsPerBatch;
     const subResults = await resolveSubRecipeIngredients(
       rsr.subRecipeId,
-      Number(rsr.quantity),
+      scalePerBatch,
       visited,
     );
     results.push(...subResults);
