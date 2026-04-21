@@ -811,6 +811,50 @@ async function runStartupMigrations() {
     // lib/db/migrations/0009_add_builder_marked_complete_at.sql
     await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS builder_marked_complete_at TIMESTAMP`);
 
+    // Oven-station batch weight records (HACCP cooling log + variance tracking).
+    // Every oven batch gets a row with the actual pack weight, the computed
+    // target (tray + pack_size × portion), and the variance. The final batch
+    // for a recipe flips is_last_batch_of_recipe and its recorded_at is the
+    // chill-start timestamp. chill_end_at is stamped by the Mark as Chilled
+    // button on the oven or wrapping station.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS batch_weight_records (
+        id SERIAL PRIMARY KEY,
+        plan_id INTEGER NOT NULL REFERENCES production_plans(id) ON DELETE CASCADE,
+        plan_item_id INTEGER NOT NULL REFERENCES production_plan_items(id) ON DELETE CASCADE,
+        recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+        batch_sequence INTEGER NOT NULL,
+        tray_weight_g NUMERIC(7,2) NOT NULL,
+        portion_weight_g NUMERIC(7,2) NOT NULL,
+        pack_size INTEGER NOT NULL,
+        target_weight_g NUMERIC(7,2) NOT NULL,
+        actual_weight_g NUMERIC(7,2) NOT NULL,
+        variance_g NUMERIC(7,2) NOT NULL,
+        tolerance_under_g NUMERIC(7,2) NOT NULL DEFAULT 0,
+        tolerance_over_g NUMERIC(7,2) NOT NULL DEFAULT 0,
+        within_tolerance BOOLEAN NOT NULL,
+        is_last_batch_of_recipe BOOLEAN NOT NULL DEFAULT FALSE,
+        chill_end_at TIMESTAMP,
+        chilled_by_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        chilled_via TEXT,
+        user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        recorded_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_bwr_plan_recipe ON batch_weight_records (plan_id, recipe_id)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_bwr_last_batch ON batch_weight_records (plan_id, recipe_id) WHERE is_last_batch_of_recipe = TRUE`);
+
+    // Seed defaults for the new weight/chill app_settings keys.
+    await db.execute(sql`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES
+        ('tray_weight_g', '36', NOW()),
+        ('chill_target_temp_c', '4', NOW()),
+        ('weight_tolerance_under_g', '0', NOW()),
+        ('weight_tolerance_over_g', '0', NOW())
+      ON CONFLICT (key) DO NOTHING
+    `);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

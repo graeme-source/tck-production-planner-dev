@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, stationChangeoversTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, prepTinOverridesTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, fridgeStockBatchesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable } from "@workspace/db";
+import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, stationChangeoversTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, prepTinOverridesTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, fridgeStockBatchesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable, batchWeightRecordsTable } from "@workspace/db";
 import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as drizzleSum, ne, isNotNull, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
@@ -1027,13 +1027,17 @@ router.get("/calculate-mac-cheese", async (req, res) => {
   // "Big Nanny's Macaroni Cheese" is a substring of "Pigs & Blankets - Big
   // Nanny's Macaroni Cheese"), causing both to resolve to the same Shopify
   // product and return identical sales numbers.
+  // Drizzle expands `ANY(${array})` as a row constructor `($1,$2,$3)` rather
+  // than an int[], so Postgres rejects it. Fetching all mappings and filtering
+  // in JS mirrors what the /calculate endpoint does and avoids the param-cast
+  // footgun — the table only holds one row per recipe.
   const macRecipeMappings = await db.execute<{ recipe_id: number; shopify_variant_id: string | null; wonky_variant_id: string | null }>(sql`
-    SELECT recipe_id, shopify_variant_id, wonky_variant_id
-    FROM recipe_shopify_mappings
-    WHERE recipe_id = ANY(${macRecipeIds})
+    SELECT recipe_id, shopify_variant_id, wonky_variant_id FROM recipe_shopify_mappings
   `);
+  const macRecipeIdSet = new Set(macRecipeIds);
   const recipeToVariantIds = new Map<number, string[]>();
   for (const m of macRecipeMappings.rows ?? macRecipeMappings) {
+    if (!macRecipeIdSet.has(m.recipe_id)) continue;
     const ids: string[] = [];
     if (m.shopify_variant_id) ids.push(String(m.shopify_variant_id));
     if (m.wonky_variant_id) ids.push(String(m.wonky_variant_id));
@@ -1760,14 +1764,25 @@ router.delete("/:id", async (req, res) => {
 // Batch completions sub-routes
 router.post("/:id/batch-completions", async (req, res) => {
   const planId = Number(req.params.id);
-  const { planItemId, stationType, startedAt, completedAt } = req.body;
+  const { planItemId, stationType, startedAt, completedAt, actualWeightG } = req.body;
   const sessionUserId = (req.session as { userId?: number }).userId ?? null;
 
   if (await planDraftStatus(planId)) { res.status(409).json({ error: DRAFT_COMPLETION_ERROR }); return; }
 
+  // Oven-station batches require an actual pack weight (g) so HACCP cooling
+  // data and weight variance can be tracked per batch.
+  if (stationType === "ovens") {
+    const w = Number(actualWeightG);
+    if (!Number.isFinite(w) || w < 100 || w > 2000) {
+      res.status(400).json({ error: "actualWeightG is required for oven batches and must be between 100–2000g" });
+      return;
+    }
+  }
+
   // Verify that the planItemId belongs to this plan (prevent cross-plan contamination)
   const [planItem] = await db.select({
     id: productionPlanItemsTable.id,
+    recipeId: productionPlanItemsTable.recipeId,
     batchesComplete: productionPlanItemsTable.batchesComplete,
     batchesTarget: productionPlanItemsTable.batchesTarget,
     extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
@@ -1775,6 +1790,7 @@ router.post("/:id/batch-completions", async (req, res) => {
     builderMarkedCompleteAt: productionPlanItemsTable.builderMarkedCompleteAt,
     leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
     portionsPerBatch: recipesTable.portionsPerBatch,
+    packSize: recipesTable.packSize,
   })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
@@ -1888,6 +1904,64 @@ router.post("/:id/batch-completions", async (req, res) => {
   }
 
   const row = rows[0];
+
+  // Oven-station weight record — written after the batch_completions row lands
+  // so failed caps don't create orphan weight rows. Target = pack_size × portion
+  // cooked weight + tray weight. `is_last_batch_of_recipe` flips on the batch
+  // whose new oven count equals the effective target (post-builder-complete
+  // the target is the combined building count).
+  if (stationType === "ovens" && planItem.recipeId) {
+    try {
+      const settings = await getWeightAppSettings();
+      const { portionWeightG } = await computePortionWeightG(planItem.recipeId);
+      const packSize = Math.max(1, Math.round(Number(planItem.packSize ?? 2)));
+      const targetWeightG = Math.round(packSize * portionWeightG + settings.trayWeightG);
+      const actualW = Math.round(Number(actualWeightG) * 100) / 100;
+      const varianceG = Math.round((actualW - targetWeightG) * 100) / 100;
+      const withinTolerance = varianceG >= -settings.toleranceUnderG && varianceG <= settings.toleranceOverG;
+
+      // Count ovens completions for this plan item (just inserted above).
+      const ovenCountRes = await db.execute(sql`
+        SELECT COUNT(*)::int AS cnt FROM batch_completions
+        WHERE plan_item_id = ${Number(planItemId)} AND station_type = 'ovens'
+      `);
+      const ovenCount = (ovenCountRes.rows[0] as { cnt: number })?.cnt ?? 0;
+
+      // Effective target mirrors effectiveBatchesTarget() on the client:
+      // if the builder marked complete, the ceiling is the combined building count.
+      let effectiveTarget = planItem.batchesTarget ?? 0;
+      if (planItem.builderMarkedCompleteAt) {
+        const buildRes = await db.execute(sql`
+          SELECT COUNT(*)::int AS cnt FROM batch_completions
+          WHERE plan_item_id = ${Number(planItemId)}
+            AND station_type IN ('building_1', 'building_2')
+        `);
+        effectiveTarget = (buildRes.rows[0] as { cnt: number })?.cnt ?? effectiveTarget;
+      }
+      const isLastBatchOfRecipe = effectiveTarget > 0 && ovenCount >= effectiveTarget;
+
+      await db.insert(batchWeightRecordsTable).values({
+        planId,
+        planItemId: Number(planItemId),
+        recipeId: planItem.recipeId,
+        batchSequence: ovenCount,
+        trayWeightG: String(settings.trayWeightG),
+        portionWeightG: String(portionWeightG),
+        packSize,
+        targetWeightG: String(targetWeightG),
+        actualWeightG: String(actualW),
+        varianceG: String(varianceG),
+        toleranceUnderG: String(settings.toleranceUnderG),
+        toleranceOverG: String(settings.toleranceOverG),
+        withinTolerance,
+        isLastBatchOfRecipe,
+        userId: sessionUserId,
+      });
+    } catch (err) {
+      console.error("[batch-completions] weight record insert failed:", err);
+    }
+  }
+
   res.status(201).json({
     ...row,
     completedAt: row.completed_at instanceof Date ? (row.completed_at as Date).toISOString() : row.completed_at,
@@ -2165,6 +2239,23 @@ router.delete("/:id/batch-completions/last", async (req, res) => {
     return;
   }
 
+  // Oven undo — drop the matching weight record too so the HACCP log stays
+  // aligned. The highest batch_sequence for this plan item is the one we
+  // just rolled back. Also clear is_last_batch_of_recipe (the previous batch
+  // may now be the final one, but we don't re-promote retrospectively —
+  // the client will re-submit when the operator adds a replacement batch).
+  if (stationType === "ovens") {
+    await db.execute(sql`
+      DELETE FROM batch_weight_records
+      WHERE id = (
+        SELECT id FROM batch_weight_records
+        WHERE plan_item_id = ${Number(planItemId)}
+        ORDER BY batch_sequence DESC, recorded_at DESC
+        LIMIT 1
+      )
+    `);
+  }
+
   res.status(204).send();
 });
 
@@ -2224,6 +2315,225 @@ router.get("/:id/batch-completions/summary", async (req, res) => {
   }
 
   res.json(items.map(i => ({ planItemId: i.id, batchesComplete: countByItem[i.id] ?? 0 })));
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Batch weight records — HACCP cooling log + oven-pack weight variance
+// ──────────────────────────────────────────────────────────────────────────────
+
+async function getWeightAppSettings(): Promise<{
+  trayWeightG: number;
+  chillTargetTempC: number;
+  toleranceUnderG: number;
+  toleranceOverG: number;
+}> {
+  const rows = await db.select().from(appSettingsTable).where(inArray(appSettingsTable.key, [
+    "tray_weight_g",
+    "chill_target_temp_c",
+    "weight_tolerance_under_g",
+    "weight_tolerance_over_g",
+  ]));
+  const map: Record<string, string> = {};
+  for (const r of rows) map[r.key] = r.value;
+  return {
+    trayWeightG: Number(map["tray_weight_g"] ?? 36),
+    chillTargetTempC: Number(map["chill_target_temp_c"] ?? 4),
+    toleranceUnderG: Number(map["weight_tolerance_under_g"] ?? 0),
+    toleranceOverG: Number(map["weight_tolerance_over_g"] ?? 0),
+  };
+}
+
+/** Convert a quantity to grams based on the ingredient's storage unit.
+ *  Weight/volume units normalize to grams; countable units are ignored for
+ *  weight-sum purposes since we don't have item-weight data to expand them. */
+function quantityToGrams(quantity: number, unit: string | null | undefined): number {
+  if (!Number.isFinite(quantity)) return 0;
+  const u = (unit ?? "").toLowerCase().trim();
+  if (u === "kg" || u === "l" || u === "litre" || u === "liter") return quantity * 1000;
+  if (u === "g" || u === "ml") return quantity;
+  return 0; // each / unit / unknown
+}
+
+/** Compute per-portion cooked weight (g) by summing the recipe's direct
+ *  ingredients and sub-recipe links. Recipe ingredient quantities and
+ *  sub-recipe link quantities are stored per-portion (matching the "INGREDIENTS
+ *  (cooked qty)" view in the recipe editor); each is normalized to grams via
+ *  its ingredient.unit / sub_recipe.yield_unit. No further cooking-loss
+ *  reduction — the stored values are already cooked quantities. */
+async function computePortionWeightG(recipeId: number): Promise<{ portionWeightG: number; portionsPerBatch: number; }> {
+  const [recipe] = await db.select({
+    portionsPerBatch: recipesTable.portionsPerBatch,
+  }).from(recipesTable).where(eq(recipesTable.id, recipeId));
+  const portionsPerBatch = recipe?.portionsPerBatch ?? 10;
+
+  let perPortionG = 0;
+
+  const directs = await db.select({
+    quantity: recipeIngredientsTable.quantity,
+    unit: ingredientsTable.unit,
+  })
+    .from(recipeIngredientsTable)
+    .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
+    .where(eq(recipeIngredientsTable.recipeId, recipeId));
+
+  for (const d of directs) {
+    perPortionG += quantityToGrams(Number(d.quantity), d.unit);
+  }
+
+  const subs = await db.select({
+    quantity: recipeSubRecipesTable.quantity,
+    yieldUnit: subRecipesTable.yieldUnit,
+  })
+    .from(recipeSubRecipesTable)
+    .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
+    .where(eq(recipeSubRecipesTable.recipeId, recipeId));
+
+  for (const s of subs) {
+    perPortionG += quantityToGrams(Number(s.quantity), s.yieldUnit);
+  }
+
+  return { portionWeightG: Math.round(perPortionG), portionsPerBatch };
+}
+
+// GET /:id/weight-targets — per-recipe target weight for oven-station batch
+// weighing, plus all existing batch_weight_records for the plan and current
+// app-settings (tray weight + tolerances + chill target temp).
+router.get("/:id/weight-targets", async (req, res) => {
+  const planId = Number(req.params.id);
+  if (!Number.isFinite(planId)) { res.status(400).json({ error: "Invalid plan id" }); return; }
+
+  const settings = await getWeightAppSettings();
+
+  const items = await db.select({
+    itemId: productionPlanItemsTable.id,
+    recipeId: productionPlanItemsTable.recipeId,
+    recipeName: recipesTable.name,
+    packSize: recipesTable.packSize,
+  })
+    .from(productionPlanItemsTable)
+    .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(eq(productionPlanItemsTable.planId, planId));
+
+  const targets: Array<{
+    planItemId: number;
+    recipeId: number;
+    recipeName: string | null;
+    packSize: number;
+    portionWeightG: number;
+    trayWeightG: number;
+    targetWeightG: number;
+  }> = [];
+
+  for (const it of items) {
+    if (!it.recipeId) continue;
+    try {
+      const { portionWeightG } = await computePortionWeightG(it.recipeId);
+      const packSize = Math.max(1, Math.round(Number(it.packSize ?? 2)));
+      const targetWeightG = Math.round(packSize * portionWeightG + settings.trayWeightG);
+      targets.push({
+        planItemId: it.itemId,
+        recipeId: it.recipeId,
+        recipeName: it.recipeName,
+        packSize,
+        portionWeightG,
+        trayWeightG: settings.trayWeightG,
+        targetWeightG,
+      });
+    } catch (err) {
+      console.warn(`[weight-targets] failed for recipe ${it.recipeId}:`, err);
+    }
+  }
+
+  const records = await db.select().from(batchWeightRecordsTable)
+    .where(eq(batchWeightRecordsTable.planId, planId))
+    .orderBy(asc(batchWeightRecordsTable.recordedAt));
+
+  res.json({
+    settings,
+    targets,
+    records: records.map(r => ({
+      id: r.id,
+      planItemId: r.planItemId,
+      recipeId: r.recipeId,
+      batchSequence: r.batchSequence,
+      trayWeightG: Number(r.trayWeightG),
+      portionWeightG: Number(r.portionWeightG),
+      packSize: r.packSize,
+      targetWeightG: Number(r.targetWeightG),
+      actualWeightG: Number(r.actualWeightG),
+      varianceG: Number(r.varianceG),
+      toleranceUnderG: Number(r.toleranceUnderG),
+      toleranceOverG: Number(r.toleranceOverG),
+      withinTolerance: r.withinTolerance,
+      isLastBatchOfRecipe: r.isLastBatchOfRecipe,
+      chillEndAt: r.chillEndAt?.toISOString() ?? null,
+      chilledByUserId: r.chilledByUserId,
+      chilledVia: r.chilledVia,
+      userId: r.userId,
+      recordedAt: r.recordedAt.toISOString(),
+    })),
+  });
+});
+
+// POST /:id/items/:itemId/mark-chilled — stamp chill_end_at on the last-batch
+// record for this recipe/plan. Idempotent: no-op if already chilled. Returns
+// { chilled: true, alreadyChilled: boolean, chillEndAt }.
+router.post("/:id/items/:itemId/mark-chilled", async (req, res) => {
+  const planId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+  const { source } = req.body ?? {};
+  const chilledVia = source === "wrapping_station" ? "wrapping_station"
+    : source === "wrapping_complete_auto" ? "wrapping_complete_auto"
+    : "oven_station";
+  const sessionUserId = (req.session as { userId?: number }).userId ?? null;
+
+  const [item] = await db.select({
+    id: productionPlanItemsTable.id,
+    recipeId: productionPlanItemsTable.recipeId,
+  })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
+  if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
+
+  const [lastBatchRow] = await db.select().from(batchWeightRecordsTable)
+    .where(and(
+      eq(batchWeightRecordsTable.planId, planId),
+      eq(batchWeightRecordsTable.recipeId, item.recipeId),
+      eq(batchWeightRecordsTable.isLastBatchOfRecipe, true),
+    ))
+    .limit(1);
+
+  if (!lastBatchRow) {
+    res.status(409).json({ error: "Last batch for this recipe has not been logged yet" });
+    return;
+  }
+
+  if (lastBatchRow.chillEndAt) {
+    res.json({
+      chilled: true,
+      alreadyChilled: true,
+      chillEndAt: lastBatchRow.chillEndAt.toISOString(),
+      chilledVia: lastBatchRow.chilledVia,
+    });
+    return;
+  }
+
+  const now = new Date();
+  const [updated] = await db.update(batchWeightRecordsTable)
+    .set({
+      chillEndAt: now,
+      chilledByUserId: sessionUserId,
+      chilledVia,
+    })
+    .where(eq(batchWeightRecordsTable.id, lastBatchRow.id))
+    .returning();
+
+  res.json({
+    chilled: true,
+    alreadyChilled: false,
+    chillEndAt: updated.chillEndAt?.toISOString() ?? null,
+    chilledVia: updated.chilledVia,
+  });
 });
 
 // Station breaks sub-routes
@@ -3767,6 +4077,21 @@ router.patch("/:id/items/:itemId/wrapping-complete", async (req, res) => {
   let shopifyError: string | null = null;
 
   if (complete && item.recipeId) {
+    // HACCP fallback: if the last oven batch for this recipe is still not
+    // marked chilled, stamp chill_end_at now. The wrappers have just finished
+    // processing this recipe so at worst it's chilled by now. Oven/wrapping
+    // operators can mark earlier for a tighter reading.
+    await db.execute(sql`
+      UPDATE batch_weight_records
+      SET chill_end_at = NOW(),
+          chilled_by_user_id = ${(req.session as { userId?: number }).userId ?? null},
+          chilled_via = 'wrapping_complete_auto'
+      WHERE plan_id = ${planId}
+        AND recipe_id = ${item.recipeId}
+        AND is_last_batch_of_recipe = TRUE
+        AND chill_end_at IS NULL
+    `);
+
     // Auto-freeze wonky packs into production_freezer stock.
     // Also zeroes wonlyCount and updates freezerQty so the Wonky Rack card
     // cannot double-transfer the same packs via /wonky-to-freezer.

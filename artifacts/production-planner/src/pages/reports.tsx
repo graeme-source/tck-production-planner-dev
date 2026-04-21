@@ -155,7 +155,7 @@ interface PackingSpeedData {
 // Packing-speed is now a subsection inside the Production KPIs view, so it's
 // no longer a top-level tab. The URL ?tab=packing-speed redirects to ?tab=kpis
 // for backward compat.
-type TabId = "kpis" | "breaks" | "temperature" | "haccp" | "risk-assessments" | "improvements" | "issues" | "leftover-filling" | "employees" | "printables";
+type TabId = "kpis" | "breaks" | "temperature" | "haccp" | "batch-weights" | "risk-assessments" | "improvements" | "issues" | "leftover-filling" | "employees" | "printables";
 
 interface ImprovementRecord {
   id: number;
@@ -247,7 +247,7 @@ function DateShortcutsDropdown({ onSelect }: { onSelect: (from: string, to: stri
   );
 }
 
-const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "haccp", "risk-assessments", "improvements", "issues", "leftover-filling", "employees", "printables"];
+const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "haccp", "batch-weights", "risk-assessments", "improvements", "issues", "leftover-filling", "employees", "printables"];
 
 interface ReportsNavItem {
   id: TabId;
@@ -260,6 +260,7 @@ const REPORTS_NAV_ITEMS: ReportsNavItem[] = [
   { id: "breaks", label: "Breaks & Lunches", icon: Coffee },
   { id: "temperature", label: "Temperature Log", icon: Thermometer },
   { id: "haccp", label: "HACCP", icon: ShieldCheck },
+  { id: "batch-weights", label: "Cooling & Weights", icon: Hourglass },
   { id: "risk-assessments", label: "Risk Assessments", icon: ClipboardList },
   { id: "improvements", label: "Improvements & Struggles", icon: Lightbulb },
   { id: "issues", label: "Issue Log", icon: AlertTriangle },
@@ -419,6 +420,7 @@ export default function Reports() {
           {activeTab === "breaks" && <BreaksTab fromDate={fromDate} toDate={toDate} />}
           {activeTab === "temperature" && <TemperatureRecordsTab fromDate={fromDate} toDate={toDate} />}
           {activeTab === "haccp" && <HaccpTab fromDate={fromDate} toDate={toDate} />}
+          {activeTab === "batch-weights" && <BatchWeightsTab fromDate={fromDate} toDate={toDate} />}
           {activeTab === "risk-assessments" && <RiskAssessmentsTab userRole={userRole} currentUserName={state.status === "authenticated" ? state.user.name : null} />}
           {activeTab === "improvements" && <ImprovementsTab userRole={userRole} currentUserName={state.status === "authenticated" ? state.user.name : null} />}
           {activeTab === "issues" && <AndonLogTab userRole={userRole} initialIssueId={issueIdParam ? parseInt(issueIdParam, 10) : undefined} />}
@@ -1101,6 +1103,279 @@ const HACCP_CATEGORY_META: Record<HaccpChecklistRow["category"], { label: string
   cleaning: { label: "Cleaning", color: "text-blue-700 dark:text-blue-300", bg: "bg-blue-100 dark:bg-blue-900/30" },
   closing: { label: "Closing", color: "text-indigo-700 dark:text-indigo-300", bg: "bg-indigo-100 dark:bg-indigo-900/30" },
 };
+
+type BatchWeightRow = {
+  id: number;
+  planId: number;
+  planItemId: number;
+  recipeId: number;
+  recipeName: string | null;
+  recipeColor: string | null;
+  recipeCategory: string | null;
+  planName: string | null;
+  planDate: string | null;
+  batchSequence: number;
+  trayWeightG: number;
+  portionWeightG: number;
+  packSize: number;
+  targetWeightG: number;
+  actualWeightG: number;
+  varianceG: number;
+  toleranceUnderG: number;
+  toleranceOverG: number;
+  withinTolerance: boolean;
+  isLastBatchOfRecipe: boolean;
+  chillEndAt: string | null;
+  chilledVia: string | null;
+  weighedByName: string | null;
+  chilledByName: string | null;
+  recordedAt: string;
+};
+
+type CoolingRow = {
+  planId: number;
+  planDate: string | null;
+  planName: string | null;
+  recipeId: number;
+  recipeName: string | null;
+  recipeColor: string | null;
+  chillStartAt: string;
+  chillEndAt: string;
+  chilledVia: string | null;
+  chilledByName: string | null;
+  durationMinutes: number;
+};
+
+type VarianceStat = {
+  recipeId: number;
+  recipeName: string | null;
+  recipeColor: string | null;
+  count: number;
+  mean: number;
+  min: number;
+  max: number;
+  stdev: number;
+  withinToleranceCount: number;
+};
+
+type BatchWeightsResponse = {
+  settings: { trayWeightG: number; chillTargetTempC: number; toleranceUnderG: number; toleranceOverG: number };
+  records: BatchWeightRow[];
+  cooling: CoolingRow[];
+  variance: VarianceStat[];
+};
+
+function BatchWeightsTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
+  const [data, setData] = useState<BatchWeightsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    const url = `${BASE}/api/reports/batch-weights?from=${fromDate}&to=${toDate}`;
+    fetch(url, { credentials: "include" })
+      .then(r => r.ok ? r.json() as Promise<BatchWeightsResponse> : Promise.reject(new Error(`HTTP ${r.status}`)))
+      .then(d => { setData(d); setLoading(false); })
+      .catch((err: Error) => { setError(err.message); setLoading(false); });
+  }, [fromDate, toDate]);
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-16 text-muted-foreground gap-2">
+      <Loader2 className="w-5 h-5 animate-spin" /> Loading batch weights…
+    </div>
+  );
+  if (error) return (
+    <div className="rounded-xl border border-red-200 bg-red-50 dark:bg-red-900/20 p-4 text-red-700 dark:text-red-400 text-sm">{error}</div>
+  );
+  if (!data) return null;
+
+  const recordCount = data.records.length;
+  const coolingCount = data.cooling.length;
+  const avgChillMinutes = coolingCount > 0
+    ? Math.round(data.cooling.reduce((s, c) => s + c.durationMinutes, 0) / coolingCount)
+    : 0;
+  const outOfToleranceCount = data.records.filter(r => !r.withinTolerance).length;
+  const tolActive = data.settings.toleranceUnderG > 0 || data.settings.toleranceOverG > 0;
+
+  return (
+    <div className="space-y-4">
+      {/* Info banner */}
+      <div className="rounded-xl border border-cyan-200 dark:border-cyan-800 bg-cyan-50/50 dark:bg-cyan-950/20 px-4 py-3 flex items-start gap-3">
+        <ShieldCheck className="w-5 h-5 text-cyan-600 dark:text-cyan-400 flex-shrink-0 mt-0.5" />
+        <div className="text-sm text-cyan-900 dark:text-cyan-200">
+          <p className="font-semibold">HACCP Cooling & Pack Weights</p>
+          <p className="text-xs mt-0.5">
+            Target chill temp <strong>{data.settings.chillTargetTempC}°C</strong> ·
+            tray weight <strong>{data.settings.trayWeightG}g</strong> ·
+            tolerance <strong>−{data.settings.toleranceUnderG}g / +{data.settings.toleranceOverG}g</strong>
+          </p>
+        </div>
+      </div>
+
+      {/* Summary tiles */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="bg-card border border-border rounded-xl p-4">
+          <p className="text-xs text-muted-foreground uppercase tracking-wide">Batches weighed</p>
+          <p className="text-2xl font-bold tabular-nums">{recordCount}</p>
+        </div>
+        <div className="bg-card border border-border rounded-xl p-4">
+          <p className="text-xs text-muted-foreground uppercase tracking-wide">Chill cycles logged</p>
+          <p className="text-2xl font-bold tabular-nums">{coolingCount}</p>
+        </div>
+        <div className="bg-card border border-border rounded-xl p-4">
+          <p className="text-xs text-muted-foreground uppercase tracking-wide">Avg chill time</p>
+          <p className="text-2xl font-bold tabular-nums">{avgChillMinutes} <span className="text-sm font-normal text-muted-foreground">min</span></p>
+        </div>
+        <div className="bg-card border border-border rounded-xl p-4">
+          <p className="text-xs text-muted-foreground uppercase tracking-wide">Out of tolerance</p>
+          <p className={cn("text-2xl font-bold tabular-nums", outOfToleranceCount > 0 && tolActive ? "text-amber-600 dark:text-amber-400" : "")}>
+            {tolActive ? outOfToleranceCount : "—"}
+          </p>
+        </div>
+      </div>
+
+      {/* Cooling durations */}
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+          <Hourglass className="w-4 h-4 text-cyan-500" />
+          <h3 className="font-semibold text-base">Cooling Durations</h3>
+          <span className="text-xs text-muted-foreground">({coolingCount} cycle{coolingCount === 1 ? "" : "s"})</span>
+        </div>
+        {coolingCount === 0 ? (
+          <div className="px-4 py-6 text-center text-sm text-muted-foreground">No completed chill cycles in this range.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-secondary/30 text-muted-foreground text-xs">
+                <tr>
+                  <th className="px-4 py-2 text-left font-medium">Date</th>
+                  <th className="px-4 py-2 text-left font-medium">Recipe</th>
+                  <th className="px-4 py-2 text-left font-medium">Chill start</th>
+                  <th className="px-4 py-2 text-left font-medium">Chill end</th>
+                  <th className="px-4 py-2 text-right font-medium">Duration</th>
+                  <th className="px-4 py-2 text-left font-medium">Marked by</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/50">
+                {data.cooling.map((c, idx) => (
+                  <tr key={idx}>
+                    <td className="px-4 py-2 tabular-nums text-muted-foreground">{c.planDate ?? "—"}</td>
+                    <td className="px-4 py-2 font-medium" style={c.recipeColor ? { color: c.recipeColor } : undefined}>{c.recipeName ?? `Recipe #${c.recipeId}`}</td>
+                    <td className="px-4 py-2 tabular-nums">{new Date(c.chillStartAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</td>
+                    <td className="px-4 py-2 tabular-nums">{new Date(c.chillEndAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</td>
+                    <td className="px-4 py-2 text-right tabular-nums font-semibold">{c.durationMinutes} min</td>
+                    <td className="px-4 py-2 text-muted-foreground text-xs">
+                      {c.chilledByName ?? "—"}
+                      {c.chilledVia && <span className="ml-1 opacity-70">({c.chilledVia.replace(/_/g, " ")})</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Variance per recipe */}
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+          <Target className="w-4 h-4 text-primary" />
+          <h3 className="font-semibold text-base">Weight Variance by Recipe</h3>
+        </div>
+        {data.variance.length === 0 ? (
+          <div className="px-4 py-6 text-center text-sm text-muted-foreground">No weight records in this range.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-secondary/30 text-muted-foreground text-xs">
+                <tr>
+                  <th className="px-4 py-2 text-left font-medium">Recipe</th>
+                  <th className="px-4 py-2 text-right font-medium">Batches</th>
+                  <th className="px-4 py-2 text-right font-medium">Mean var (g)</th>
+                  <th className="px-4 py-2 text-right font-medium">Min (g)</th>
+                  <th className="px-4 py-2 text-right font-medium">Max (g)</th>
+                  <th className="px-4 py-2 text-right font-medium">σ (g)</th>
+                  {tolActive && <th className="px-4 py-2 text-right font-medium">In tol.</th>}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/50">
+                {data.variance.map((v) => (
+                  <tr key={v.recipeId}>
+                    <td className="px-4 py-2 font-medium" style={v.recipeColor ? { color: v.recipeColor } : undefined}>{v.recipeName ?? `Recipe #${v.recipeId}`}</td>
+                    <td className="px-4 py-2 text-right tabular-nums">{v.count}</td>
+                    <td className={cn("px-4 py-2 text-right tabular-nums font-semibold", v.mean > 0 ? "text-emerald-600 dark:text-emerald-400" : v.mean < 0 ? "text-amber-600 dark:text-amber-400" : "")}>
+                      {v.mean > 0 ? "+" : ""}{v.mean.toFixed(1)}
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums">{v.min.toFixed(0)}</td>
+                    <td className="px-4 py-2 text-right tabular-nums">{v.max.toFixed(0)}</td>
+                    <td className="px-4 py-2 text-right tabular-nums">{v.stdev.toFixed(1)}</td>
+                    {tolActive && (
+                      <td className="px-4 py-2 text-right tabular-nums text-xs">
+                        {v.withinToleranceCount}/{v.count}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Raw record list */}
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+          <FileText className="w-4 h-4 text-primary" />
+          <h3 className="font-semibold text-base">Batch Weight Log</h3>
+          <span className="text-xs text-muted-foreground">({recordCount} batches)</span>
+        </div>
+        {recordCount === 0 ? (
+          <div className="px-4 py-6 text-center text-sm text-muted-foreground">No batch weight records in this range.</div>
+        ) : (
+          <div className="overflow-x-auto max-h-[480px] overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-secondary/30 text-muted-foreground text-xs sticky top-0">
+                <tr>
+                  <th className="px-4 py-2 text-left font-medium">Date</th>
+                  <th className="px-4 py-2 text-left font-medium">Time</th>
+                  <th className="px-4 py-2 text-left font-medium">Recipe</th>
+                  <th className="px-4 py-2 text-right font-medium">Batch</th>
+                  <th className="px-4 py-2 text-right font-medium">Target (g)</th>
+                  <th className="px-4 py-2 text-right font-medium">Actual (g)</th>
+                  <th className="px-4 py-2 text-right font-medium">Variance</th>
+                  <th className="px-4 py-2 text-left font-medium">Weighed by</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/50">
+                {data.records.map((r) => (
+                  <tr key={r.id} className={r.isLastBatchOfRecipe ? "bg-cyan-50/30 dark:bg-cyan-950/10" : ""}>
+                    <td className="px-4 py-1.5 tabular-nums text-muted-foreground">{r.planDate ?? "—"}</td>
+                    <td className="px-4 py-1.5 tabular-nums">{new Date(r.recordedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</td>
+                    <td className="px-4 py-1.5 font-medium" style={r.recipeColor ? { color: r.recipeColor } : undefined}>
+                      {r.recipeName ?? `Recipe #${r.recipeId}`}
+                      {r.isLastBatchOfRecipe && <span className="ml-1.5 text-[10px] uppercase text-cyan-600 dark:text-cyan-400 font-bold">final</span>}
+                    </td>
+                    <td className="px-4 py-1.5 text-right tabular-nums">{r.batchSequence}</td>
+                    <td className="px-4 py-1.5 text-right tabular-nums">{r.targetWeightG}</td>
+                    <td className="px-4 py-1.5 text-right tabular-nums font-semibold">{r.actualWeightG}</td>
+                    <td className={cn(
+                      "px-4 py-1.5 text-right tabular-nums",
+                      tolActive && !r.withinTolerance ? "text-amber-600 dark:text-amber-400 font-semibold" : ""
+                    )}>
+                      {r.varianceG > 0 ? "+" : ""}{r.varianceG}
+                    </td>
+                    <td className="px-4 py-1.5 text-xs text-muted-foreground">{r.weighedByName ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
   const [checklists, setChecklists] = useState<HaccpChecklistRow[]>([]);

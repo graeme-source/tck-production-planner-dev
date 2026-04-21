@@ -826,4 +826,163 @@ router.get("/leftover-filling", async (req, res) => {
   }
 });
 
+// ──────────────────────────────────────────────────────────────────────────────
+// GET /batch-weights — oven batch weight log + HACCP cooling durations
+//
+// Returns every batch_weight_records row in [from, to] joined with recipe and
+// plan name, plus per-recipe-per-day aggregates for cooling time and weight
+// variance. Powers the HACCP Cooling & Weights report tab.
+// ──────────────────────────────────────────────────────────────────────────────
+router.get("/batch-weights", async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) { res.status(400).json({ error: "from and to dates required (YYYY-MM-DD)" }); return; }
+
+  const rows = await db.execute(sql`
+    SELECT
+      bwr.id,
+      bwr.plan_id,
+      bwr.plan_item_id,
+      bwr.recipe_id,
+      bwr.batch_sequence,
+      bwr.tray_weight_g,
+      bwr.portion_weight_g,
+      bwr.pack_size,
+      bwr.target_weight_g,
+      bwr.actual_weight_g,
+      bwr.variance_g,
+      bwr.tolerance_under_g,
+      bwr.tolerance_over_g,
+      bwr.within_tolerance,
+      bwr.is_last_batch_of_recipe,
+      bwr.chill_end_at,
+      bwr.chilled_via,
+      bwr.recorded_at,
+      r.name       AS recipe_name,
+      r.color      AS recipe_color,
+      r.category   AS recipe_category,
+      p.name       AS plan_name,
+      p.plan_date  AS plan_date,
+      u_weigh.name AS weighed_by_name,
+      u_chill.name AS chilled_by_name
+    FROM batch_weight_records bwr
+    JOIN production_plans p   ON p.id = bwr.plan_id
+    JOIN recipes r            ON r.id = bwr.recipe_id
+    LEFT JOIN app_users u_weigh ON u_weigh.id = bwr.user_id
+    LEFT JOIN app_users u_chill ON u_chill.id = bwr.chilled_by_user_id
+    WHERE p.plan_date >= ${from}::date
+      AND p.plan_date <= ${to}::date
+    ORDER BY p.plan_date DESC, bwr.recorded_at DESC
+  `);
+
+  const records = (rows.rows as Array<Record<string, unknown>>).map(r => ({
+    id: Number(r["id"]),
+    planId: Number(r["plan_id"]),
+    planItemId: Number(r["plan_item_id"]),
+    recipeId: Number(r["recipe_id"]),
+    recipeName: (r["recipe_name"] as string) ?? null,
+    recipeColor: (r["recipe_color"] as string) ?? null,
+    recipeCategory: (r["recipe_category"] as string) ?? null,
+    planName: (r["plan_name"] as string) ?? null,
+    planDate: r["plan_date"] ? String(r["plan_date"]).slice(0, 10) : null,
+    batchSequence: Number(r["batch_sequence"]),
+    trayWeightG: Number(r["tray_weight_g"]),
+    portionWeightG: Number(r["portion_weight_g"]),
+    packSize: Number(r["pack_size"]),
+    targetWeightG: Number(r["target_weight_g"]),
+    actualWeightG: Number(r["actual_weight_g"]),
+    varianceG: Number(r["variance_g"]),
+    toleranceUnderG: Number(r["tolerance_under_g"]),
+    toleranceOverG: Number(r["tolerance_over_g"]),
+    withinTolerance: Boolean(r["within_tolerance"]),
+    isLastBatchOfRecipe: Boolean(r["is_last_batch_of_recipe"]),
+    chillEndAt: r["chill_end_at"] ? new Date(r["chill_end_at"] as string).toISOString() : null,
+    chilledVia: (r["chilled_via"] as string) ?? null,
+    weighedByName: (r["weighed_by_name"] as string) ?? null,
+    chilledByName: (r["chilled_by_name"] as string) ?? null,
+    recordedAt: new Date(r["recorded_at"] as string).toISOString(),
+  }));
+
+  // Cooling summary: one row per (plan, recipe) for last-batch records that
+  // have a chill-end time. Duration is chill_end − chill_start minutes.
+  type CoolingRow = {
+    planId: number; planDate: string | null; planName: string | null;
+    recipeId: number; recipeName: string | null; recipeColor: string | null;
+    chillStartAt: string; chillEndAt: string; chilledVia: string | null;
+    chilledByName: string | null; durationMinutes: number;
+  };
+  const cooling: CoolingRow[] = [];
+  for (const r of records) {
+    if (!r.isLastBatchOfRecipe || !r.chillEndAt) continue;
+    const start = new Date(r.recordedAt).getTime();
+    const end = new Date(r.chillEndAt).getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+    cooling.push({
+      planId: r.planId,
+      planDate: r.planDate,
+      planName: r.planName,
+      recipeId: r.recipeId,
+      recipeName: r.recipeName,
+      recipeColor: r.recipeColor,
+      chillStartAt: r.recordedAt,
+      chillEndAt: r.chillEndAt,
+      chilledVia: r.chilledVia,
+      chilledByName: r.chilledByName,
+      durationMinutes: Math.round((end - start) / 60000),
+    });
+  }
+
+  // Variance summary per recipe across the range.
+  type VarianceStat = {
+    recipeId: number; recipeName: string | null; recipeColor: string | null;
+    count: number; mean: number; min: number; max: number; stdev: number;
+    withinToleranceCount: number;
+  };
+  const byRecipe = new Map<number, { name: string | null; color: string | null; vs: number[]; withinCount: number }>();
+  for (const r of records) {
+    const cur = byRecipe.get(r.recipeId) ?? { name: r.recipeName, color: r.recipeColor, vs: [], withinCount: 0 };
+    cur.vs.push(r.varianceG);
+    if (r.withinTolerance) cur.withinCount += 1;
+    byRecipe.set(r.recipeId, cur);
+  }
+  const variance: VarianceStat[] = [];
+  for (const [recipeId, v] of byRecipe.entries()) {
+    const n = v.vs.length;
+    if (n === 0) continue;
+    const mean = v.vs.reduce((a, b) => a + b, 0) / n;
+    const sq = v.vs.reduce((a, b) => a + (b - mean) ** 2, 0);
+    const stdev = n > 1 ? Math.sqrt(sq / (n - 1)) : 0;
+    variance.push({
+      recipeId,
+      recipeName: v.name,
+      recipeColor: v.color,
+      count: n,
+      mean: Math.round(mean * 10) / 10,
+      min: Math.min(...v.vs),
+      max: Math.max(...v.vs),
+      stdev: Math.round(stdev * 10) / 10,
+      withinToleranceCount: v.withinCount,
+    });
+  }
+
+  // Settings snapshot (chill target temp is a fixed HACCP target the report
+  // shows alongside cooling rows).
+  const settingsRows = await db.select().from(appSettingsTable).where(inArray(appSettingsTable.key, [
+    "tray_weight_g", "chill_target_temp_c", "weight_tolerance_under_g", "weight_tolerance_over_g",
+  ]));
+  const settingsMap: Record<string, string> = {};
+  for (const sr of settingsRows) settingsMap[sr.key] = sr.value;
+
+  res.json({
+    settings: {
+      trayWeightG: Number(settingsMap["tray_weight_g"] ?? 36),
+      chillTargetTempC: Number(settingsMap["chill_target_temp_c"] ?? 4),
+      toleranceUnderG: Number(settingsMap["weight_tolerance_under_g"] ?? 0),
+      toleranceOverG: Number(settingsMap["weight_tolerance_over_g"] ?? 0),
+    },
+    records,
+    cooling,
+    variance,
+  });
+});
+
 export default router;

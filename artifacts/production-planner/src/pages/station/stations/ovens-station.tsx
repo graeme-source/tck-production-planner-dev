@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   useListTimingStandards,
   useGetStationKpi,
   getGetStationKpiQueryKey,
-  useCreateBatchCompletion,
   getGetProductionPlanQueryKey,
 } from "@workspace/api-client-react";
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
@@ -11,7 +10,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import {
   Loader2, CheckCircle2, Flame, RefreshCw, AlertCircle, BarChart2,
-  Minus, Plus, Snowflake, X, Eye, ChevronDown,
+  Minus, Plus, Snowflake, X, Eye, ChevronDown, Scale, ThermometerSnowflake,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -26,6 +25,39 @@ import { RECIPE_RACK_COLOURS, WonkyColour, ChillerRackItem, ChillerRackVisual } 
 // ──────────────────────────────────────────────────────────────────────────────
 // Ovens Station
 // ──────────────────────────────────────────────────────────────────────────────
+type WeightTargetEntry = {
+  planItemId: number;
+  recipeId: number;
+  recipeName: string | null;
+  packSize: number;
+  portionWeightG: number;
+  trayWeightG: number;
+  targetWeightG: number;
+};
+
+type WeightRecord = {
+  id: number;
+  planItemId: number;
+  recipeId: number;
+  batchSequence: number;
+  targetWeightG: number;
+  actualWeightG: number;
+  varianceG: number;
+  toleranceUnderG: number;
+  toleranceOverG: number;
+  withinTolerance: boolean;
+  isLastBatchOfRecipe: boolean;
+  chillEndAt: string | null;
+  chilledVia: string | null;
+  recordedAt: string;
+};
+
+type WeightTargetsResponse = {
+  settings: { trayWeightG: number; chillTargetTempC: number; toleranceUnderG: number; toleranceOverG: number };
+  targets: WeightTargetEntry[];
+  records: WeightRecord[];
+};
+
 export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const queryClient = useQueryClient();
   const { state } = useAuth();
@@ -38,11 +70,36 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
   // Track whether user manually selected a recipe (don't auto-switch until currentItem changes)
   const userOverrideRef = useRef(false);
 
-  const createBatch = useCreateBatchCompletion({
-    mutation: {
-      onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
-    },
-  });
+  // Weight-tracking state (target per recipe, existing weight records, app settings).
+  const [weightData, setWeightData] = useState<WeightTargetsResponse | null>(null);
+  const [weighingItem, setWeighingItem] = useState<ProductionPlanItem | null>(null);
+  const [weightInput, setWeightInput] = useState("");
+  const [submittingWeight, setSubmittingWeight] = useState(false);
+  const [chillingRecipeId, setChillingRecipeId] = useState<number | null>(null);
+
+  const refetchWeightData = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/production-plans/${plan.id}/weight-targets`, { credentials: "include" });
+      if (!res.ok) return;
+      const json = (await res.json()) as WeightTargetsResponse;
+      setWeightData(json);
+    } catch (err) {
+      console.warn("[OvensStation] weight-targets fetch failed:", err);
+    }
+  }, [plan.id]);
+
+  useEffect(() => { refetchWeightData(); }, [refetchWeightData]);
+
+  const targetFor = (recipeId: number | null | undefined): WeightTargetEntry | null => {
+    if (!recipeId || !weightData) return null;
+    return weightData.targets.find(t => t.recipeId === recipeId) ?? null;
+  };
+  const lastBatchRecord = (recipeId: number | null | undefined): WeightRecord | null => {
+    if (!recipeId || !weightData) return null;
+    return weightData.records
+      .filter(r => r.recipeId === recipeId && r.isLastBatchOfRecipe)
+      .sort((a, b) => b.recordedAt.localeCompare(a.recordedAt))[0] ?? null;
+  };
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
   const combinedBuildingCount = (it: ProductionPlanItem) =>
@@ -88,6 +145,10 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
     }
   };
 
+  // Oven batch completion goes through a weight-input modal: the operator
+  // must enter the actual pack weight (grams) before the batch can be logged.
+  // The record is written to batch_weight_records on the server so the HACCP
+  // cooling timer can start from the final batch's timestamp.
   const addBatch = (item: ProductionPlanItem) => {
     if (isOnBreak) return;
     const avail = getAvailableFromPrev(item, "ovens");
@@ -95,7 +156,69 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
       toast({ title: "Waiting for Building", description: "Building station must complete more batches first.", variant: "destructive" });
       return;
     }
-    createBatch.mutate({ id: plan.id, data: { planItemId: item.id, stationType: "ovens", completedAt: new Date().toISOString() } });
+    setWeightInput("");
+    setWeighingItem(item);
+  };
+
+  const submitWeighedBatch = async () => {
+    if (!weighingItem) return;
+    const w = Number(weightInput);
+    if (!Number.isFinite(w) || w < 100 || w > 2000) {
+      toast({ title: "Enter a valid weight", description: "Weight must be between 100 and 2000g.", variant: "destructive" });
+      return;
+    }
+    setSubmittingWeight(true);
+    try {
+      const res = await fetch(`/api/production-plans/${plan.id}/batch-completions`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          planItemId: weighingItem.id,
+          stationType: "ovens",
+          completedAt: new Date().toISOString(),
+          actualWeightG: w,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Failed to record batch" }));
+        toast({ title: "Could not log batch", description: err.error ?? "Failed", variant: "destructive" });
+        return;
+      }
+      setWeighingItem(null);
+      setWeightInput("");
+      await queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+      await refetchWeightData();
+    } finally {
+      setSubmittingWeight(false);
+    }
+  };
+
+  const markChilled = async (item: ProductionPlanItem) => {
+    if (!item.recipeId) return;
+    setChillingRecipeId(item.recipeId);
+    try {
+      const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/mark-chilled`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: "oven_station" }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Failed" }));
+        toast({ title: "Could not mark chilled", description: err.error ?? "Failed", variant: "destructive" });
+        return;
+      }
+      const data = await res.json() as { alreadyChilled: boolean };
+      if (data.alreadyChilled) {
+        toast({ title: "Already chilled", description: `${item.recipeName ?? "Recipe"} was already marked chilled.` });
+      } else {
+        toast({ title: "Chilled", description: `${item.recipeName ?? "Recipe"} cooling time logged.` });
+      }
+      await refetchWeightData();
+    } finally {
+      setChillingRecipeId(null);
+    }
   };
 
   const [runBulkBatch, bulkBatchPending] = useGuardedAction({
@@ -296,8 +419,102 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
       };
     });
 
+  // Weight modal state derivations
+  const weighingTarget = targetFor(weighingItem?.recipeId);
+  const weighingNum = Number(weightInput);
+  const weighingValid = Number.isFinite(weighingNum) && weighingNum >= 100 && weighingNum <= 2000;
+  const weighingVariance = weighingTarget && weighingValid ? weighingNum - weighingTarget.targetWeightG : 0;
+  const tolUnder = weightData?.settings.toleranceUnderG ?? 0;
+  const tolOver = weightData?.settings.toleranceOverG ?? 0;
+  const weighingWithinTolerance = weighingValid && weighingVariance >= -tolUnder && weighingVariance <= tolOver;
+
   return (
     <div className="space-y-4">
+      {/* Weight-input modal: blocks batch completion until the oven operator
+          enters the actual pack weight (grams). Target = pack_size × portion
+          cooked weight + tray weight. Mandatory per HACCP. */}
+      {weighingItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-background border-2 border-border rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <Scale className="w-6 h-6 text-primary flex-shrink-0 mt-1" />
+              <div className="flex-1">
+                <h3 className="font-bold text-lg">Weigh pack — {weighingItem.recipeName ?? `Recipe #${weighingItem.recipeId}`}</h3>
+                <p className="text-sm text-muted-foreground">Enter the actual weight of one finished pack (with tray).</p>
+              </div>
+              <button
+                onClick={() => { if (!submittingWeight) { setWeighingItem(null); setWeightInput(""); } }}
+                className="p-1 rounded-lg hover:bg-secondary/60 text-muted-foreground"
+                aria-label="Cancel"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {weighingTarget && (
+              <div className="bg-secondary/40 border border-border rounded-xl px-4 py-3 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Target weight</span>
+                  <span className="font-bold text-foreground tabular-nums">{weighingTarget.targetWeightG} g</span>
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  {weighingTarget.packSize} × {weighingTarget.portionWeightG}g portion + {weighingTarget.trayWeightG}g tray
+                  {(tolUnder > 0 || tolOver > 0) && (
+                    <> · tolerance −{tolUnder}g/+{tolOver}g</>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-semibold mb-1.5">Actual weight (g)</label>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={100}
+                max={2000}
+                step={1}
+                autoFocus
+                value={weightInput}
+                onChange={(e) => setWeightInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && weighingValid && !submittingWeight) submitWeighedBatch(); }}
+                className="w-full px-4 py-3 text-3xl font-bold tabular-nums text-center border-2 border-border rounded-xl focus:outline-none focus:border-primary"
+                placeholder="e.g. 636"
+              />
+              {weighingValid && weighingTarget && (
+                <div className={cn(
+                  "mt-2 text-sm text-center font-medium",
+                  weighingWithinTolerance ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400",
+                )}>
+                  Variance: {weighingVariance > 0 ? "+" : ""}{weighingVariance.toFixed(0)} g
+                  {(tolUnder > 0 || tolOver > 0) && (
+                    <> · {weighingWithinTolerance ? "within tolerance" : "out of tolerance"}</>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setWeighingItem(null); setWeightInput(""); }}
+                disabled={submittingWeight}
+                className="flex-1 py-3 rounded-xl border border-border bg-background hover:bg-secondary/60 font-semibold text-sm transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitWeighedBatch}
+                disabled={!weighingValid || submittingWeight}
+                className="flex-1 py-3 rounded-xl bg-red-500 text-white hover:bg-red-600 font-semibold text-sm transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
+              >
+                {submittingWeight ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                Log batch
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Overall progress + breaks */}
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
@@ -479,8 +696,8 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                       const unitLabel = itemIsMac ? "packs" : "batches";
                       const blastAdd = itemIsMac ? blastAddCount(item) : 0;
                       const blastUndo = itemIsMac ? blastUndoCount(item) : 0;
-                      const canBlast = itemIsMac && !isOnBreak && !bulkBatchPending && !createBatch.isPending && blastAdd > 0;
-                      const canUndoBlast = itemIsMac && !isOnBreak && !bulkBatchPending && !createBatch.isPending && blastUndo > 0;
+                      const canBlast = itemIsMac && !isOnBreak && !bulkBatchPending && !submittingWeight && blastAdd > 0;
+                      const canUndoBlast = itemIsMac && !isOnBreak && !bulkBatchPending && !submittingWeight && blastUndo > 0;
                       const addLabel = blastAdd >= BLAST_TRAY_SIZE
                         ? "Blast Chiller Tray (+10 packs)"
                         : blastAdd > 0
@@ -492,7 +709,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                           <div className="flex items-center justify-center gap-6">
                             <button
                               onClick={(e) => { e.stopPropagation(); removeBatch(item); }}
-                              disabled={getStationCount(item, "ovens") === 0 || isOnBreak || createBatch.isPending || removePending}
+                              disabled={getStationCount(item, "ovens") === 0 || isOnBreak || submittingWeight || removePending}
                               className="w-14 h-14 flex items-center justify-center rounded-full border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
                             >
                               <Minus className="w-5 h-5" />
@@ -519,7 +736,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                             <button
                               onClick={(e) => { e.stopPropagation(); addBatch(item); }}
                               disabled={
-                                createBatch.isPending ||
+                                submittingWeight ||
                                 (getStationCount(item, "ovens") >= effTarget(item) && !isAdmin) ||
                                 getAvailableFromPrev(item, "ovens") <= 0 ||
                                 isOnBreak
@@ -655,6 +872,61 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                         </button>
                       </div>
                     </div>
+
+                    {/* Batch weight target + Mark as Chilled */}
+                    {(() => {
+                      const tgt = targetFor(item.recipeId);
+                      const last = lastBatchRecord(item.recipeId);
+                      const canMarkChilled = !!last && !last.chillEndAt;
+                      const alreadyChilled = !!last?.chillEndAt;
+                      return (
+                        <div className="border-t border-border pt-3 space-y-3">
+                          {tgt && (
+                            <div className="flex items-center gap-3 rounded-lg bg-secondary/40 border border-border px-3 py-2">
+                              <Scale className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                              <div className="text-xs text-muted-foreground leading-tight">
+                                <div>Target pack weight: <span className="font-semibold text-foreground">{tgt.targetWeightG}g</span></div>
+                                <div className="opacity-80">
+                                  {tgt.packSize} × {tgt.portionWeightG}g portion + {tgt.trayWeightG}g tray
+                                  {weightData && (weightData.settings.toleranceUnderG > 0 || weightData.settings.toleranceOverG > 0) && (
+                                    <> · tolerance −{weightData.settings.toleranceUnderG}g/+{weightData.settings.toleranceOverG}g</>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
+                                <ThermometerSnowflake className="w-4 h-4 text-cyan-500" /> Chill Timer (HACCP)
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {last
+                                  ? alreadyChilled
+                                    ? `Chilled ${new Date(last.chillEndAt!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${last.chilledVia?.replace(/_/g, " ") ?? "logged"}`
+                                    : `Started ${new Date(last.recordedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} — waiting to chill to ${weightData?.settings.chillTargetTempC ?? 4}°C`
+                                  : "Starts when the final batch for this recipe is logged"}
+                              </p>
+                            </div>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); markChilled(item); }}
+                              disabled={!canMarkChilled || chillingRecipeId === item.recipeId}
+                              className={cn(
+                                "px-3 py-2 rounded-lg font-semibold text-sm transition-colors flex items-center gap-1.5",
+                                alreadyChilled
+                                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-default dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800"
+                                  : canMarkChilled
+                                    ? "bg-cyan-600 text-white hover:bg-cyan-700"
+                                    : "bg-secondary text-muted-foreground cursor-not-allowed opacity-60",
+                              )}
+                            >
+                              {chillingRecipeId === item.recipeId ? <Loader2 className="w-4 h-4 animate-spin" /> : alreadyChilled ? <CheckCircle2 className="w-4 h-4" /> : <ThermometerSnowflake className="w-4 h-4" />}
+                              {alreadyChilled ? "Chilled" : "Mark as Chilled"}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* 8-Pack Bags */}
                     <div className="flex items-center justify-between border-t border-border pt-3">

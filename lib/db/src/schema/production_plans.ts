@@ -166,6 +166,37 @@ export const ovenEventsTable = pgTable("oven_events", {
   userName: text("user_name"),
 });
 
+// Oven-station batch weight log — used for HACCP (chill start/end for the
+// last batch of each recipe) and for weight-variance analysis. Written every
+// time the oven operator logs a pack weight. The final batch for a recipe
+// is flagged with `is_last_batch_of_recipe = true`; its `recorded_at` is the
+// chill-start timestamp. `chill_end_at` is set by the Mark as Chilled button
+// (oven or wrapping station) or as a fallback by the wrapping-complete action.
+export const batchWeightRecordsTable = pgTable("batch_weight_records", {
+  id: serial("id").primaryKey(),
+  planId: integer("plan_id").notNull().references(() => productionPlansTable.id, { onDelete: "cascade" }),
+  planItemId: integer("plan_item_id").notNull().references(() => productionPlanItemsTable.id, { onDelete: "cascade" }),
+  recipeId: integer("recipe_id").notNull().references(() => recipesTable.id, { onDelete: "cascade" }),
+  batchSequence: integer("batch_sequence").notNull(),
+  trayWeightG: numeric("tray_weight_g", { precision: 7, scale: 2 }).notNull(),
+  portionWeightG: numeric("portion_weight_g", { precision: 7, scale: 2 }).notNull(),
+  packSize: integer("pack_size").notNull(),
+  targetWeightG: numeric("target_weight_g", { precision: 7, scale: 2 }).notNull(),
+  actualWeightG: numeric("actual_weight_g", { precision: 7, scale: 2 }).notNull(),
+  varianceG: numeric("variance_g", { precision: 7, scale: 2 }).notNull(),
+  toleranceUnderG: numeric("tolerance_under_g", { precision: 7, scale: 2 }).notNull().default("0"),
+  toleranceOverG: numeric("tolerance_over_g", { precision: 7, scale: 2 }).notNull().default("0"),
+  withinTolerance: boolean("within_tolerance").notNull(),
+  isLastBatchOfRecipe: boolean("is_last_batch_of_recipe").notNull().default(false),
+  chillEndAt: timestamp("chill_end_at"),
+  chilledByUserId: integer("chilled_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  chilledVia: text("chilled_via"), // 'oven_station' | 'wrapping_station' | 'wrapping_complete_auto'
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  recordedAt: timestamp("recorded_at").notNull().defaultNow(),
+});
+
+export type BatchWeightRecord = typeof batchWeightRecordsTable.$inferSelect;
+
 export const packingBatchRecordsTable = pgTable("packing_batch_records", {
   id: serial("id").primaryKey(),
   planId: integer("plan_id").notNull().references(() => productionPlansTable.id, { onDelete: "cascade" }),

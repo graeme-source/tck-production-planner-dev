@@ -716,7 +716,7 @@ interface IngredientNutrientRow {
   nutrients: Record<NutrientKey, number | null>;
 }
 
-async function gatherRecipeIngredients(recipeId: number): Promise<{
+export async function gatherRecipeIngredients(recipeId: number): Promise<{
   items: IngredientNutrientRow[];
   totalWeightG: number;
   cookingLossPercent: number;

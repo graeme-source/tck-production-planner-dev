@@ -8,7 +8,7 @@ import {
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Loader2, Plus, Minus, CheckCircle2, Snowflake, AlertCircle, Gift, Flame, ChevronDown,
+  Loader2, Plus, Minus, CheckCircle2, Snowflake, AlertCircle, Gift, Flame, ChevronDown, ThermometerSnowflake,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -181,6 +181,63 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
     } else {
       setExpandedItemId(itemId);
       userOverrideRef.current = itemId !== currentWrappingItem?.id;
+    }
+  };
+
+  // HACCP chill state for the Mark as Chilled button. One entry per recipe:
+  // tracks whether the last-batch weight record exists (enables the button)
+  // and whether chill_end_at has already been stamped (disables once done).
+  const [chillByRecipe, setChillByRecipe] = useState<Record<number, { chillStartAt: string | null; chillEndAt: string | null; chilledVia: string | null }>>({});
+  const [chillTargetTempC, setChillTargetTempC] = useState<number>(4);
+  const [chillingRecipeId, setChillingRecipeId] = useState<number | null>(null);
+
+  const refetchChillState = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/production-plans/${plan.id}/weight-targets`, { credentials: "include" });
+      if (!res.ok) return;
+      const data = await res.json() as {
+        settings: { chillTargetTempC: number };
+        records: Array<{ recipeId: number; isLastBatchOfRecipe: boolean; recordedAt: string; chillEndAt: string | null; chilledVia: string | null }>;
+      };
+      setChillTargetTempC(data.settings.chillTargetTempC);
+      const map: Record<number, { chillStartAt: string | null; chillEndAt: string | null; chilledVia: string | null }> = {};
+      for (const r of data.records) {
+        if (!r.isLastBatchOfRecipe) continue;
+        map[r.recipeId] = { chillStartAt: r.recordedAt, chillEndAt: r.chillEndAt, chilledVia: r.chilledVia };
+      }
+      setChillByRecipe(map);
+    } catch (err) {
+      console.warn("[WrappingStation] chill state fetch failed:", err);
+    }
+  }, [plan.id]);
+
+  useEffect(() => { refetchChillState(); }, [refetchChillState]);
+
+  const markChilled = async (item: ProductionPlanItem) => {
+    if (!item.recipeId) return;
+    setChillingRecipeId(item.recipeId);
+    try {
+      const res = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/mark-chilled`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: "wrapping_station" }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Failed" }));
+        toast({ title: "Could not mark chilled", description: err.error ?? "Failed", variant: "destructive" });
+        return;
+      }
+      const data = await res.json() as { alreadyChilled: boolean };
+      toast({
+        title: data.alreadyChilled ? "Already chilled" : "Chilled",
+        description: data.alreadyChilled
+          ? `${item.recipeName ?? "Recipe"} was already marked chilled.`
+          : `${item.recipeName ?? "Recipe"} cooling time logged.`,
+      });
+      await refetchChillState();
+    } finally {
+      setChillingRecipeId(null);
     }
   };
 
@@ -515,6 +572,49 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                         {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
                       </button>
                     </div>
+
+                    {/* Mark as Chilled (HACCP cooling timer) — available to
+                        wrappers as a redundant stamp. Oven operators can also
+                        mark it earlier; either way, it's one stamp per recipe.
+                        The wrapping-complete action auto-stamps as fallback if
+                        nobody pressed it. */}
+                    {(() => {
+                      const chill = item.recipeId ? chillByRecipe[item.recipeId] : undefined;
+                      const hasLastBatch = !!chill;
+                      const alreadyChilled = !!chill?.chillEndAt;
+                      const canMark = hasLastBatch && !alreadyChilled;
+                      return (
+                        <div className="flex items-center justify-between pt-3 border-t border-border/40">
+                          <div>
+                            <p className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
+                              <ThermometerSnowflake className="w-4 h-4 text-cyan-500" /> Chill Timer (HACCP)
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {alreadyChilled
+                                ? `Chilled ${chill ? new Date(chill.chillEndAt!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""} · ${chill?.chilledVia?.replace(/_/g, " ") ?? ""}`
+                                : hasLastBatch
+                                  ? `Started ${new Date(chill!.chillStartAt!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} — chill to ${chillTargetTempC}°C`
+                                  : "Waiting for final oven batch"}
+                            </p>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); markChilled(item); }}
+                            disabled={!canMark || chillingRecipeId === item.recipeId}
+                            className={cn(
+                              "px-3 py-2 rounded-lg font-semibold text-sm transition-colors flex items-center gap-1.5",
+                              alreadyChilled
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-default dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800"
+                                : canMark
+                                  ? "bg-cyan-600 text-white hover:bg-cyan-700"
+                                  : "bg-secondary text-muted-foreground cursor-not-allowed opacity-60",
+                            )}
+                          >
+                            {chillingRecipeId === item.recipeId ? <Loader2 className="w-4 h-4 animate-spin" /> : alreadyChilled ? <CheckCircle2 className="w-4 h-4" /> : <ThermometerSnowflake className="w-4 h-4" />}
+                            {alreadyChilled ? "Chilled" : "Mark as Chilled"}
+                          </button>
+                        </div>
+                      );
+                    })()}
 
                     {/* Post-oven items (garlic butter) */}
                     {postOvenItems.length > 0 && (

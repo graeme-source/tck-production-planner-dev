@@ -11,7 +11,7 @@ import {
   CheckCircle2, XCircle, KeyRound, Package, ChevronDown, ChevronUp,
   Lock, Timer, BarChart2, Coffee, Truck, Mail, Warehouse,
   Camera, User, CircleDot, ToggleRight, Boxes, UtensilsCrossed,
-  AlertTriangle,
+  AlertTriangle, Scale, ThermometerSnowflake,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
@@ -814,6 +814,7 @@ export default function Settings() {
               {user?.role === "admin" && <TimingStandardsSection />}
               {user?.role === "admin" && <MixerCapacitySection />}
               {user?.role === "admin" && <ProductionExtrasSection />}
+              {user?.role === "admin" && <WeightChillSettingsSection />}
               {user?.role === "admin" && <ExtraTomatoBaseSection />}
               {user?.role === "admin" && <BreakDefaultsSection />}
               {user?.role === "admin" && <ApcServiceCodesSection />}
@@ -1893,6 +1894,153 @@ function ProductionExtrasSection() {
           <p className="text-sm text-muted-foreground">
             Total extra dough: <span className="font-semibold text-foreground">{totalExtraG}g ({(totalExtraG / 1000).toFixed(3)} kg)</span> per day
           </p>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Oven batch weight + HACCP chill settings. Backed by four app_settings keys:
+ *   tray_weight_g, chill_target_temp_c, weight_tolerance_under_g, weight_tolerance_over_g
+ *
+ * These drive the oven-station weight-entry modal (target = pack_size ×
+ * portion cooked weight + tray weight) and the HACCP cooling report.
+ */
+function WeightChillSettingsSection() {
+  const KEYS = [
+    { key: "tray_weight_g",              defaultVal: "36" },
+    { key: "chill_target_temp_c",        defaultVal: "4" },
+    { key: "weight_tolerance_under_g",   defaultVal: "0" },
+    { key: "weight_tolerance_over_g",    defaultVal: "0" },
+  ] as const;
+  const [vals, setVals] = useState<Record<string, string>>({});
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    Promise.all(
+      KEYS.map(({ key, defaultVal }) =>
+        fetch(`/api/app-settings/${key}`, { credentials: "include" })
+          .then(r => r.ok ? r.json() : null)
+          .then(d => ({ key, value: d?.value ?? defaultVal }))
+          .catch(() => ({ key, value: defaultVal }))
+      )
+    ).then(results => {
+      const v: Record<string, string> = {};
+      for (const r of results) v[r.key] = r.value;
+      setVals(v);
+      setLoaded(true);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await Promise.all(
+        KEYS.map(({ key, defaultVal }) =>
+          fetch(`/api/app-settings/${key}`, {
+            method: "PUT",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ value: String(Number(vals[key] ?? defaultVal)) }),
+          })
+        )
+      );
+      setSavedMsg("Saved"); setTimeout(() => setSavedMsg(null), 2000);
+    } catch {
+      setSavedMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!loaded) return null;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <Scale className="w-4 h-4 text-primary" /> Pack Weights & HACCP Chill
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Tray weight and tolerances drive the oven-station pack weighing check. Chill target temperature is the HACCP cool-down threshold.
+          </p>
+        </div>
+        {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
+      </div>
+      <div className="rounded-2xl border border-border bg-card p-5 space-y-5">
+        <div>
+          <p className="text-sm font-semibold mb-2">Tray weight</p>
+          <p className="text-xs text-muted-foreground mb-3">Empty packaging weight added to every target (2 portions + tray = target pack weight).</p>
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-medium w-24">Weight</label>
+            <input
+              type="number" min="0" step="1"
+              value={vals["tray_weight_g"] ?? "36"}
+              onChange={e => setVals(v => ({ ...v, tray_weight_g: e.target.value }))}
+              className="w-24 px-3 py-2 border border-border rounded-lg text-sm text-right"
+            />
+            <span className="text-xs text-muted-foreground">g</span>
+          </div>
+        </div>
+
+        <div className="border-t border-border/60 pt-4">
+          <p className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+            <ThermometerSnowflake className="w-4 h-4 text-cyan-500" /> Chill target temperature
+          </p>
+          <p className="text-xs text-muted-foreground mb-3">HACCP cool-down threshold — product is only removed from the blast chiller once it reaches this temperature.</p>
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-medium w-24">Temperature</label>
+            <input
+              type="number" min="0" max="30" step="0.5"
+              value={vals["chill_target_temp_c"] ?? "4"}
+              onChange={e => setVals(v => ({ ...v, chill_target_temp_c: e.target.value }))}
+              className="w-24 px-3 py-2 border border-border rounded-lg text-sm text-right"
+            />
+            <span className="text-xs text-muted-foreground">°C</span>
+          </div>
+        </div>
+
+        <div className="border-t border-border/60 pt-4">
+          <p className="text-sm font-semibold mb-2">Weight tolerance</p>
+          <p className="text-xs text-muted-foreground mb-3">How far an actual pack weight can stray from target before it's flagged out of tolerance (0 disables the check).</p>
+          <div className="flex items-center gap-6 flex-wrap">
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-medium w-20">Under</label>
+              <input
+                type="number" min="0" step="1"
+                value={vals["weight_tolerance_under_g"] ?? "0"}
+                onChange={e => setVals(v => ({ ...v, weight_tolerance_under_g: e.target.value }))}
+                className="w-24 px-3 py-2 border border-border rounded-lg text-sm text-right"
+              />
+              <span className="text-xs text-muted-foreground">g</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-medium w-20">Over</label>
+              <input
+                type="number" min="0" step="1"
+                value={vals["weight_tolerance_over_g"] ?? "0"}
+                onChange={e => setVals(v => ({ ...v, weight_tolerance_over_g: e.target.value }))}
+                className="w-24 px-3 py-2 border border-border rounded-lg text-sm text-right"
+              />
+              <span className="text-xs text-muted-foreground">g</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="border-t border-border/60 pt-4 flex justify-end">
           <button
             onClick={handleSave}
             disabled={saving}
