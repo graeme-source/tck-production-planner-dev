@@ -5,8 +5,11 @@ import { CreateStockEntryBody, UpdateStockEntryBody } from "@workspace/api-zod";
 import { validate } from "../middleware/validate";
 import {
   FACTORY_NUMBER_CORE_MENU_ONLY_KEY,
+  SHOPIFY_FREEZER_SYNC_ENABLED_KEY,
   getFactoryNumberCoreMenuOnly,
+  getShopifyFreezerSyncEnabled,
   invalidateFactoryNumberFlagCache,
+  invalidateShopifyFreezerSyncFlagCache,
 } from "../lib/inventory-sync";
 
 const FREEZER_LOCATIONS = ["production_freezer", "raw_freezer"];
@@ -161,6 +164,32 @@ router.put("/factory-number-config", requireAdmin, async (req, res) => {
     });
   invalidateFactoryNumberFlagCache();
   res.json({ coreMenuOnly: raw });
+});
+
+/**
+ * Kill switch for the wrapping-complete → Shopify freezer stock upload.
+ * Defaults to false: the sync is paused until an admin explicitly opts in.
+ */
+router.get("/shopify-freezer-sync-config", async (_req, res) => {
+  const enabled = await getShopifyFreezerSyncEnabled();
+  res.json({ enabled });
+});
+
+router.put("/shopify-freezer-sync-config", requireAdmin, async (req, res) => {
+  const raw = (req.body as { enabled?: unknown } | undefined)?.enabled;
+  if (typeof raw !== "boolean") {
+    res.status(400).json({ error: "enabled (boolean) is required" });
+    return;
+  }
+  await db
+    .insert(appSettingsTable)
+    .values({ key: SHOPIFY_FREEZER_SYNC_ENABLED_KEY, value: String(raw) })
+    .onConflictDoUpdate({
+      target: appSettingsTable.key,
+      set: { value: String(raw), updatedAt: new Date() },
+    });
+  invalidateShopifyFreezerSyncFlagCache();
+  res.json({ enabled: raw });
 });
 
 /**

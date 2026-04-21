@@ -6,7 +6,7 @@ import { validate } from "../middleware/validate";
 import * as z from "zod";
 import { resolveRecipeIngredients, resolveSubRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
 import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag } from "../services/shopify";
-import { getFactoryNumberCoreMenuOnly } from "../lib/inventory-sync";
+import { getFactoryNumberCoreMenuOnly, getShopifyFreezerSyncEnabled } from "../lib/inventory-sync";
 
 /** Recipe category name for macaroni cheese products. Used to split calzone
  *  vs mac cheese metrics (mac cheese is tracked in packs, calzones in batches). */
@@ -1509,16 +1509,28 @@ router.post("/stock-checks", async (req, res) => {
       .limit(1);
 
     if (ingredient) {
+      // Raw materials never go in production_fridge (finished product only) —
+      // chilled ingredients route to prep_fridge, raw meat to raw_meat_fridge,
+      // dry goods to dry_store. Kept in sync with deliveries.ts and
+      // orders.ts /stock-check (see commit 30810ce).
       const locationMap: Record<string, string> = {
+        vegetable: "prep_fridge",
+        herb: "prep_fridge",
+        base: "prep_fridge",
+        dairy: "prep_fridge",
+        cheese: "prep_fridge",
+        cooked_meat: "prep_fridge",
         raw_meat: "raw_meat_fridge",
         meat: "raw_meat_fridge",
-        dairy: "production_fridge",
-        vegetable: "production_fridge",
-        cheese: "production_fridge",
+        sauce: "dry_store",
+        spice: "dry_store",
+        seasoning: "dry_store",
+        other: "dry_store",
+        dough: "dry_store",
         frozen: "production_freezer",
         dry: "dry_store",
       };
-      const location = locationMap[ingredient.category ?? ""] ?? "production_fridge";
+      const location = locationMap[ingredient.category ?? ""] ?? "prep_fridge";
 
       await db.insert(stockEntriesTable).values({
         ingredientId,
@@ -4110,8 +4122,12 @@ router.patch("/:id/items/:itemId/wrapping-complete", async (req, res) => {
     // Shopify inventory sync — delta computed server-side as:
     //   (packs already committed to Product Freezer) + (wonky packs just frozen)
     // This avoids relying on any client-supplied value.
+    //
+    // Kill switch: getShopifyFreezerSyncEnabled() defaults to false so the
+    // upload is paused until an admin explicitly enables it from Settings.
     const shopifyDelta = Number(item.freezerQty) + wonkyFrozen;
-    if (shopifyDelta > 0) {
+    const shopifySyncEnabled = await getShopifyFreezerSyncEnabled();
+    if (shopifyDelta > 0 && shopifySyncEnabled) {
       const mappingRows = await db.execute(sql`
         SELECT shopify_variant_id, shopify_product_title, shopify_variant_title
         FROM recipe_shopify_mappings WHERE recipe_id = ${item.recipeId}

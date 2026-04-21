@@ -139,6 +139,14 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
     netTwoPacks(item) + (item.eightPackBagCount ?? 0);
 
   const totalWonly = items.reduce((s, it) => s + (it.wonlyCount ?? 0), 0);
+  // After a transfer, the success banner replaces the transfer button and
+  // disables every +/− wonky button. If the oven operator adds fresh wonky
+  // afterwards, those new packs would be stuck — visible but unactionable.
+  // Clear the banner whenever the total goes back above zero so the controls
+  // re-enable and a second transfer becomes possible.
+  useEffect(() => {
+    if (wonkyTransferResult && totalWonly > 0) setWonkyTransferResult(null);
+  }, [totalWonly, wonkyTransferResult]);
   // Only tally shorts for in-flight plans that haven't been marked complete by
   // the builder — once marked, shortCount becomes historical and should no
   // longer influence visible totals.

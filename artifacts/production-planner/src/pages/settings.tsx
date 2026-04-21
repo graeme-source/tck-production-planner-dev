@@ -810,6 +810,7 @@ export default function Settings() {
                 {user?.role === "admin" && <MacCheeseSettingsSection />}
               </div>
               {user?.role === "admin" && <FactoryNumberSection />}
+              {user?.role === "admin" && <ShopifyFreezerSyncSection />}
               {(user?.role === "admin" || user?.role === "manager") && <BuildingTimerSection />}
               {user?.role === "admin" && <TimingStandardsSection />}
               {user?.role === "admin" && <MixerCapacitySection />}
@@ -2145,6 +2146,102 @@ function FactoryNumberSection() {
           onCheckedChange={handleToggle}
           disabled={saving}
           aria-label="Toggle core menu only scope"
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Kill switch for the wrapping-complete → Shopify inventory upload.
+ *
+ * Reads and writes GET/PUT /api/stock-entries/shopify-freezer-sync-config,
+ * which is backed by the `shopify_freezer_sync_enabled` row in app_settings.
+ * When disabled, wrapping-complete still freezes wonky packs and updates
+ * production_freezer locally, it just skips the Shopify inventory push.
+ * Defaults to off — enable only once the sync behaviour has been verified.
+ */
+function ShopifyFreezerSyncSection() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/stock-entries/shopify-freezer-sync-config", { credentials: "include" })
+      .then(r => r.ok ? r.json() : { enabled: false })
+      .then((d: { enabled: boolean }) => setEnabled(d.enabled))
+      .catch(() => setEnabled(false));
+  }, []);
+
+  async function handleToggle(next: boolean) {
+    setSaving(true);
+    setSavedMsg(null);
+    try {
+      const res = await fetch("/api/stock-entries/shopify-freezer-sync-config", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      const data = (await res.json()) as { enabled: boolean };
+      setEnabled(data.enabled);
+      setSavedMsg("Saved");
+      setTimeout(() => setSavedMsg(null), 2000);
+    } catch {
+      setSavedMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (enabled === null) return null;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-base font-semibold flex items-center gap-2">
+          <Boxes className="w-4 h-4 text-primary" /> Shopify Freezer Stock Sync
+        </h2>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          When a wrapper marks a recipe complete, the app can push the
+          product-freezer packs (plus any wonky packs just frozen) to the
+          matching Shopify variant's inventory. Disable this kill switch
+          to pause the upload without affecting anything else in the app.
+        </p>
+      </div>
+
+      <div className="bg-card border border-border rounded-xl p-4 flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <p className="text-sm font-medium">Upload freezer stock to Shopify</p>
+            {saving && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+            {savedMsg && <span className="text-xs text-emerald-600 font-medium">{savedMsg}</span>}
+          </div>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            {enabled ? (
+              <>
+                <span className="font-medium text-foreground">Enabled.</span>{" "}
+                Wrapping-complete will adjust Shopify inventory by the number
+                of packs committed to the product freezer (including any
+                wonky packs auto-frozen at the same moment).
+              </>
+            ) : (
+              <>
+                <span className="font-medium text-foreground">Disabled.</span>{" "}
+                Wrapping-complete freezes wonky packs and updates the
+                production-freezer counter locally, but does not touch
+                Shopify inventory. Enable this once the sync behaviour has
+                been verified.
+              </>
+            )}
+          </p>
+        </div>
+        <Switch
+          checked={enabled}
+          onCheckedChange={handleToggle}
+          disabled={saving}
+          aria-label="Toggle Shopify freezer stock sync"
         />
       </div>
     </div>

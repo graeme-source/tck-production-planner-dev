@@ -101,6 +101,33 @@ router.get("/calculate", async (req, res) => {
     }
   }
 
+  // Stock-checked ingredients that no recipe on today's plan uses (e.g. Duck
+  // on a week with no duck recipes) would otherwise vanish from the orders
+  // page, defeating the point of monitoring their levels. Pull them in with
+  // totalRequired = 0 so they still flow through the stockOnHand / surplus
+  // logic below and surface under the "show non-required" toggle, or as a
+  // real order line if surplus exceeds stock.
+  const stockCheckedIngredients = await db
+    .select({
+      id: ingredientsTable.id,
+      name: ingredientsTable.name,
+      unit: ingredientsTable.unit,
+      stockCheckEnabled: ingredientsTable.stockCheckEnabled,
+    })
+    .from(ingredientsTable)
+    .where(eq(ingredientsTable.stockCheckEnabled, true));
+
+  for (const ing of stockCheckedIngredients) {
+    if (ingredientMap[ing.id]) continue;
+    ingredientMap[ing.id] = {
+      ingredientId: ing.id,
+      ingredientName: ing.name,
+      unit: ing.unit ?? "kg",
+      totalRequired: 0,
+      stockCheckEnabled: true,
+    };
+  }
+
   const ingredientIds = Object.keys(ingredientMap).map(Number);
   if (ingredientIds.length === 0) {
     res.json({ planId, planName: plan[0].name, planDate: plan[0].planDate, suppliers: [] });
@@ -163,7 +190,14 @@ router.get("/calculate", async (req, res) => {
     }
   }
 
+  // daily_stock_checks is written by two paths that disagree on check_date:
+  //   • /api/orders/stock-check (orders page "save" button) uses today's date
+  //   • /api/production-plans/stock-checks (prep station end-of-prep count)
+  //     uses the plan's planDate (typically tomorrow)
+  // Read both so prep-station counts actually reach the orders view, then
+  // take the latest by checkedAt per ingredient.
   const today = new Date().toISOString().split("T")[0];
+  const checkDates = Array.from(new Set([today, plan[0].planDate]));
   const stockChecks = await db
     .select({
       ingredientId: dailyStockChecksTable.ingredientId,
@@ -171,9 +205,13 @@ router.get("/calculate", async (req, res) => {
       checkedAt: dailyStockChecksTable.checkedAt,
     })
     .from(dailyStockChecksTable)
-    .where(eq(dailyStockChecksTable.checkDate, today));
+    .where(inArray(dailyStockChecksTable.checkDate, checkDates))
+    .orderBy(desc(dailyStockChecksTable.checkedAt));
 
+  const seenStockCheck = new Set<number>();
   for (const sc of stockChecks) {
+    if (seenStockCheck.has(sc.ingredientId)) continue;
+    seenStockCheck.add(sc.ingredientId);
     if (sc.quantity !== null) {
       latestStockByIngredient[sc.ingredientId] = Number(sc.quantity);
     }

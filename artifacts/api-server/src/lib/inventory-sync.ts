@@ -43,7 +43,20 @@ import type { ShopifyLineItem } from "../services/shopify";
 export const FACTORY_NUMBER_CORE_MENU_ONLY_KEY = "factory_number_core_menu_only";
 export const FACTORY_NUMBER_CORE_MENU_ONLY_DEFAULT = true;
 
+/**
+ * Kill switch for the wrapping-complete → Shopify inventory upload. When
+ * disabled, wrapping-complete still freezes wonky packs and updates
+ * production_freezer stock locally, it just skips the Shopify push so
+ * the online storefront is untouched.
+ *
+ * Defaults to `false` — the operator has to opt in from the Settings
+ * page once they're satisfied the inventory sync is behaving correctly.
+ */
+export const SHOPIFY_FREEZER_SYNC_ENABLED_KEY = "shopify_freezer_sync_enabled";
+export const SHOPIFY_FREEZER_SYNC_ENABLED_DEFAULT = false;
+
 let cachedFlag: { value: boolean; loadedAt: number } | null = null;
+let cachedShopifySyncFlag: { value: boolean; loadedAt: number } | null = null;
 const FLAG_CACHE_TTL_MS = 30_000;
 
 export async function getFactoryNumberCoreMenuOnly(): Promise<boolean> {
@@ -64,10 +77,33 @@ export async function getFactoryNumberCoreMenuOnly(): Promise<boolean> {
   }
 }
 
+export async function getShopifyFreezerSyncEnabled(): Promise<boolean> {
+  if (cachedShopifySyncFlag && Date.now() - cachedShopifySyncFlag.loadedAt < FLAG_CACHE_TTL_MS) {
+    return cachedShopifySyncFlag.value;
+  }
+  try {
+    const [row] = await db
+      .select({ value: appSettingsTable.value })
+      .from(appSettingsTable)
+      .where(eq(appSettingsTable.key, SHOPIFY_FREEZER_SYNC_ENABLED_KEY));
+    const value = row ? row.value === "true" : SHOPIFY_FREEZER_SYNC_ENABLED_DEFAULT;
+    cachedShopifySyncFlag = { value, loadedAt: Date.now() };
+    return value;
+  } catch (err) {
+    console.error("[inventory-sync] failed to read shopify-freezer-sync flag, using default:", err);
+    return SHOPIFY_FREEZER_SYNC_ENABLED_DEFAULT;
+  }
+}
+
 /** Force-clear the cached flag so the next read hits the DB immediately.
  *  Called by the /factory-number-config endpoint after a PUT. */
 export function invalidateFactoryNumberFlagCache() {
   cachedFlag = null;
+}
+
+/** Called by the /shopify-freezer-sync-config endpoint after a PUT. */
+export function invalidateShopifyFreezerSyncFlagCache() {
+  cachedShopifySyncFlag = null;
 }
 
 interface VariantMapping {
