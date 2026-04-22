@@ -3665,16 +3665,25 @@ router.get("/:id/kpi", async (req, res) => {
   }
 
   // Get plan items for this plan, joined with recipe category so we can split
-  // calzone vs mac cheese completions.
+  // calzone vs mac cheese completions. batchesTarget is included so we can
+  // detect "all done" and freeze the KPI clock — otherwise activeMinutes
+  // keeps growing after production finishes and BPH decays all evening.
   const planItems = await db.select({
     id: productionPlanItemsTable.id,
     category: recipesTable.category,
+    batchesTarget: productionPlanItemsTable.batchesTarget,
   })
     .from(productionPlanItemsTable)
     .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
     .where(eq(productionPlanItemsTable.planId, planId));
   const itemIds = planItems.map(i => i.id);
   const macItemIds = new Set(planItems.filter(i => i.category === MAC_CHEESE_CATEGORY).map(i => i.id));
+  const calzoneBatchesTarget = planItems
+    .filter(i => i.category !== MAC_CHEESE_CATEGORY)
+    .reduce((s, i) => s + (Number(i.batchesTarget) || 0), 0);
+  const macPacksTarget = planItems
+    .filter(i => i.category === MAC_CHEESE_CATEGORY)
+    .reduce((s, i) => s + (Number(i.batchesTarget) || 0), 0);
   if (itemIds.length === 0) {
     res.json({ batchesCompleted: 0, activeMinutes: 0, breakMinutes: 0, batchesPerHour: 0, macPacksCompleted: 0, macPacksPerHour: 0 });
     return;
@@ -3744,14 +3753,23 @@ router.get("/:id/kpi", async (req, res) => {
     const breakMinutes = (hasLunch ? configuredLunchMins : 0) + (hasSnackBreak ? configuredBreakMins : 0);
 
     // Shared denominator: earliest completion across both categories — same team
-    // is working the line regardless of what's being built.
+    // is working the line regardless of what's being built. When every planned
+    // batch is done, freeze the clock at the last completion so the KPI locks
+    // in and doesn't keep decaying while staff tidy up or move on.
     let activeMinutes = 0;
     if (completions.length > 0) {
       const earliest = completions.reduce((min, c) => {
         const ts = c.startedAt ?? c.completedAt;
         return ts < min ? ts : min;
       }, completions[0].startedAt ?? completions[0].completedAt);
-      const totalElapsedMinutes = (new Date().getTime() - earliest.getTime()) / 60000;
+      const latest = completions.reduce((max, c) => (
+        c.completedAt > max ? c.completedAt : max
+      ), completions[0].completedAt);
+      const allDone = calzoneBatchesTarget + macPacksTarget > 0
+        && batchesCompleted >= calzoneBatchesTarget
+        && macPacksCompleted >= macPacksTarget;
+      const clockCeiling = allDone ? latest.getTime() : new Date().getTime();
+      const totalElapsedMinutes = (clockCeiling - earliest.getTime()) / 60000;
       activeMinutes = Math.max(0, totalElapsedMinutes - breakMinutes);
     }
 
@@ -3804,13 +3822,25 @@ router.get("/:id/kpi", async (req, res) => {
     breakMinutes += mins;
   }
 
+  // Per-user "all done" target = sum of batchesTarget across the plan items
+  // this station owns. When the user finishes their share, freeze the clock
+  // at their last completion so BPH stops decaying.
+  const userStationTarget = planItems
+    .filter(i => i.category !== MAC_CHEESE_CATEGORY)
+    .reduce((s, i) => s + (Number(i.batchesTarget) || 0), 0);
+
   let activeMinutes = 0;
   if (completions.length > 0) {
     const earliest = completions.reduce((min, c) => {
       const ts = c.startedAt ?? c.completedAt;
       return ts < min ? ts : min;
     }, completions[0].startedAt ?? completions[0].completedAt);
-    const totalElapsedMinutes = (new Date().getTime() - earliest.getTime()) / 60000;
+    const latest = completions.reduce((max, c) => (
+      c.completedAt > max ? c.completedAt : max
+    ), completions[0].completedAt);
+    const allDone = userStationTarget > 0 && batchesCompleted >= userStationTarget;
+    const clockCeiling = allDone ? latest.getTime() : new Date().getTime();
+    const totalElapsedMinutes = (clockCeiling - earliest.getTime()) / 60000;
     activeMinutes = Math.max(0, totalElapsedMinutes - breakMinutes);
   }
 

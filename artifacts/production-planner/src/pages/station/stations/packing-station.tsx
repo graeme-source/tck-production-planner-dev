@@ -181,7 +181,7 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
 
   // Today's packing-rate KPI — Shopify fulfilment timestamps drive it, so it
   // refreshes every 30s with the rest of the packing station data. Idle gaps
-  // over 5 minutes are excluded from "active" time (matches reports page).
+  // over 10 minutes are excluded from "active" time (matches reports page).
   const today = speed?.dailyRows?.[0] ?? null;
   const kpiOrdersPerHour = today?.ordersPerHour ?? null;
   const kpiCount = today?.count ?? 0;

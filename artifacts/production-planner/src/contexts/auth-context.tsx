@@ -84,18 +84,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setPinLocked(!!pinRequired);
 
         // Detect the server-side PIN cutover (10pm UK / 4am UTC). On the
-        // transition from not-locked → locked, bounce to /dashboard with a
-        // cache-buster. location.assign triggers a full navigation which
-        // refetches index.html, and since Vite hashes asset filenames the
-        // browser is guaranteed to load the latest bundle. This also kicks
-        // any tab sitting on an old /plans/:planId/station/... URL off
-        // yesterday's plan so nobody resumes stale production.
+        // transition from not-locked → locked, bounce to the dashboard
+        // with a cache-buster. location.assign triggers a full navigation
+        // which refetches index.html, and since Vite hashes asset filenames
+        // the browser is guaranteed to load the latest bundle. This also
+        // kicks any tab sitting on an old /plans/:planId/station/... URL
+        // off yesterday's plan so nobody resumes stale production. The
+        // dashboard route is "/" — earlier versions redirected to
+        // "/dashboard", which doesn't exist in the router and rendered
+        // the 404 page until the operator clicked the sidebar link.
         const wasLocked = prevPinRequiredRef.current;
         prevPinRequiredRef.current = !!pinRequired;
         if (pinRequired && wasLocked !== true) {
           const path = window.location.pathname;
-          if (!path.startsWith("/dashboard") && !path.startsWith("/login")) {
-            const url = new URL("/dashboard", window.location.origin);
+          if (path !== "/" && !path.startsWith("/login")) {
+            const url = new URL("/", window.location.origin);
             url.searchParams.set("v", Date.now().toString());
             window.location.assign(url.toString());
           }

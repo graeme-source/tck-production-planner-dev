@@ -668,7 +668,7 @@ router.get("/packing-speed", async (req, res) => {
       }
     }
 
-    const IDLE_THRESHOLD_MS = 5 * 60 * 1000;
+    const IDLE_THRESHOLD_MS = 10 * 60 * 1000;
 
     const dailyRows = Object.values(byDay)
       .sort((a, b) => a.date.localeCompare(b.date))
