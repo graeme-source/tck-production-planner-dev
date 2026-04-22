@@ -676,6 +676,19 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     },
   });
 
+  const [runPartialComplete, partialCompletePending] = useGuardedAction({
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
+  });
+
+  const handlePartialBatchComplete = () => {
+    if (!currentItem || pendingTap || isOnBreak || checklistPending || partialCompletePending) return;
+    runPartialComplete((signal) =>
+      guardedFetch(`/api/production-plans/${plan.id}/items/${currentItem.id}/builder-complete`, {
+        method: "POST", signal,
+      })
+    );
+  };
+
   // A blast chiller tray is 10 packs. Mac cheese only. If fewer than 10 packs
   // of work are left, the button shows "Add Final N Packs" and advances the
   // remainder in one tap (same pattern the wrapping station uses for its
@@ -922,6 +935,8 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
             const itemRemaining = Math.max(0, effTarget - combinedCount);
             const itemPct = effTarget > 0 ? Math.round((combinedCount / effTarget) * 100) : 0;
             const asm = assemblyMap[item.id];
+            const isPartialMode = (item.extraPacksBuilt ?? 0) > 0 && itemAvailable > 0;
+            const busyWithTap = pendingTap || (isPartialMode && partialCompletePending);
 
             return (
               <div key={item.id}>
@@ -1106,10 +1121,10 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                             </div>
                           )}
 
-                          {/* BATCH COMPLETE button */}
+                          {/* BATCH COMPLETE button (swaps to PARTIAL BATCH COMPLETE when extras added) */}
                         <button
-                          onClick={handleBatchComplete}
-                          disabled={pendingTap || isOnBreak || itemAvailable <= 0 || checklistPending}
+                          onClick={isPartialMode ? handlePartialBatchComplete : handleBatchComplete}
+                          disabled={busyWithTap || isOnBreak || itemAvailable <= 0 || checklistPending}
                           className={cn(
                             "relative overflow-hidden w-full h-[200px] rounded-2xl text-xl sm:text-2xl font-bold transition-all select-none active:scale-95 flex flex-col items-center justify-center gap-1",
                             itemRemaining === 0
@@ -1122,11 +1137,13 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                                     : "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 border-2 border-slate-300 dark:border-slate-600 cursor-not-allowed opacity-70"
                                   : itemAvailable <= 0
                                     ? "bg-amber-100 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 border-2 border-amber-300 cursor-not-allowed opacity-70"
-                                    : pendingTap
+                                    : busyWithTap
                                       ? "bg-primary/60 text-primary-foreground cursor-wait"
-                                      : buildTimer.alerted
-                                        ? "bg-amber-500 text-white border-2 border-amber-600 shadow-lg animate-pulse"
-                                        : "bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg hover:shadow-xl"
+                                      : isPartialMode
+                                        ? "bg-amber-500 text-white border-2 border-amber-600 shadow-lg hover:bg-amber-600 hover:shadow-xl"
+                                        : buildTimer.alerted
+                                          ? "bg-amber-500 text-white border-2 border-amber-600 shadow-lg animate-pulse"
+                                          : "bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg hover:shadow-xl"
                           )}
                         >
                           {/* Changeover count-up timer */}
@@ -1153,9 +1170,11 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                                   ? (changeoverActive ? "Changeover" : "Tick items ←")
                                   : itemAvailable <= 0
                                     ? "Waiting…"
-                                    : pendingTap
+                                    : busyWithTap
                                       ? "Recording..."
-                                      : isMacCheese(item as any) ? "PACK DONE ✓" : "BATCH DONE ✓"}
+                                      : isPartialMode
+                                        ? "PARTIAL BATCH DONE ✓"
+                                        : isMacCheese(item as any) ? "PACK DONE ✓" : "BATCH DONE ✓"}
                           </span>
                           {timerConfig.enabled && buildTimer.running && !allDone && !isOnBreak && (
                             <div
@@ -1567,6 +1586,9 @@ function MarkCompleteButton({
   // prompt fires — no override needed.
   const target = item.batchesTarget ?? 0;
   if (combinedCount >= target) return null;
+  // Extras present → the primary button becomes PARTIAL BATCH COMPLETE and
+  // already drives recipe completion; skip this redundant amber override.
+  if ((item.extraPacksBuilt ?? 0) > 0) return null;
 
   const ppb = packsPerBatch(item);
   const extras = item.extraPacksBuilt ?? 0;

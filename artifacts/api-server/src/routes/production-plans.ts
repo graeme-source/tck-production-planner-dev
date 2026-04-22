@@ -2963,22 +2963,27 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
     }> = [];
 
     if (station === "prep_meat" || station === "all") {
+      const marinadeTargetAlias = alias(ingredientsTable, "marinadeTarget");
       const marinadeIngRows = await db
         .select({
           ingredientId: recipeIngredientsTable.ingredientId,
           ingredientName: ingredientsTable.name,
           quantity: recipeIngredientsTable.quantity,
+          unit: ingredientsTable.unit,
           marinadeForIngredientId: recipeIngredientsTable.marinadeForIngredientId,
+          targetCategory: marinadeTargetAlias.category,
         })
         .from(recipeIngredientsTable)
         .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
+        .leftJoin(marinadeTargetAlias, eq(recipeIngredientsTable.marinadeForIngredientId, marinadeTargetAlias.id))
         .where(eq(recipeIngredientsTable.recipeId, planItem.recipeId));
 
       for (const mr of marinadeIngRows) {
         if (!mr.marinadeForIngredientId) continue;
+        if (mr.targetCategory !== "raw_meat") continue;
         hasRelevantIngredients = true;
         const totalQty = Number(mr.quantity) * portionsPerBatch * batchesTarget;
-        const totalGrams = Math.round(totalQty * 1000);
+        const totalGrams = mr.unit === "kg" ? Math.round(totalQty * 1000) : Math.round(totalQty);
         marinades.push({
           rawMeatIngredientId: mr.marinadeForIngredientId,
           marinadeIngredientId: mr.ingredientId,
@@ -2989,19 +2994,23 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
         });
       }
 
+      const marinadeSubTargetAlias = alias(ingredientsTable, "marinadeSubTarget");
       const marinadeSubRows = await db
         .select({
           subRecipeId: recipeSubRecipesTable.subRecipeId,
           subRecipeName: subRecipesTable.name,
           quantity: recipeSubRecipesTable.quantity,
           marinadeForIngredientId: recipeSubRecipesTable.marinadeForIngredientId,
+          targetCategory: marinadeSubTargetAlias.category,
         })
         .from(recipeSubRecipesTable)
         .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
+        .leftJoin(marinadeSubTargetAlias, eq(recipeSubRecipesTable.marinadeForIngredientId, marinadeSubTargetAlias.id))
         .where(eq(recipeSubRecipesTable.recipeId, planItem.recipeId));
 
       for (const sr of marinadeSubRows) {
         if (!sr.marinadeForIngredientId) continue;
+        if (sr.targetCategory !== "raw_meat") continue;
         hasRelevantIngredients = true;
         const totalQty = Number(sr.quantity) * portionsPerBatch * batchesTarget;
         const totalGrams = Math.round(totalQty * 1000);
@@ -3018,6 +3027,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       if (marinades.length === 0) {
         const oldMarinadeIngAlias = alias(ingredientsTable, "marinadeIng");
         const oldMarinadeSubAlias = alias(subRecipesTable, "marinadeSub");
+        const oldRawMeatAlias = alias(ingredientsTable, "oldRawMeat");
         const oldMarinadeRows = await db
           .select({
             rawMeatIngredientId: recipeMeatMarinadesTable.rawMeatIngredientId,
@@ -3026,13 +3036,16 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
             marinadeSubRecipeId: recipeMeatMarinadesTable.marinadeSubRecipeId,
             marinadeSubRecipeName: oldMarinadeSubAlias.name,
             gramsPerKg: recipeMeatMarinadesTable.gramsPerKg,
+            rawMeatCategory: oldRawMeatAlias.category,
           })
           .from(recipeMeatMarinadesTable)
           .leftJoin(oldMarinadeIngAlias, eq(recipeMeatMarinadesTable.marinadeIngredientId, oldMarinadeIngAlias.id))
           .leftJoin(oldMarinadeSubAlias, eq(recipeMeatMarinadesTable.marinadeSubRecipeId, oldMarinadeSubAlias.id))
+          .leftJoin(oldRawMeatAlias, eq(recipeMeatMarinadesTable.rawMeatIngredientId, oldRawMeatAlias.id))
           .where(eq(recipeMeatMarinadesTable.recipeId, planItem.recipeId));
 
         for (const mr of oldMarinadeRows) {
+          if (mr.rawMeatCategory !== "raw_meat") continue;
           hasRelevantIngredients = true;
           const rawMeatIng = ingredients.find(i => i.ingredientId === mr.rawMeatIngredientId);
           const rawMeatKg = rawMeatIng ? rawMeatIng.rawQty / 1000 : 0;
