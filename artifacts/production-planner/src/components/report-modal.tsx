@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { X, Lightbulb, AlertTriangle, CheckCircle, Loader2, ChevronDown, CircleDot, HandHelping, ScanLine, ArrowDownCircle, Package } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -142,6 +142,14 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
   const [andonSuccess, setAndonSuccess] = useState(false);
   const [andonError, setAndonError] = useState<string | null>(null);
 
+  // Synchronous submit guards. React state updates don't propagate before a
+  // second rapid tap on an iPad can re-fire the submit handler — the stale
+  // `disabled` prop on the button isn't enough. These refs short-circuit
+  // duplicate invocations before they reach the network.
+  const andonSubmittingRef = useRef(false);
+  const impSubmittingRef = useRef(false);
+  const struggleSubmittingRef = useRef(false);
+
   const [recentImprovements, setRecentImprovements] = useState<ImprovementSummary[]>([]);
   const [impListLoading, setImpListLoading] = useState(false);
 
@@ -283,6 +291,8 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
   async function handleImprovementSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!impTitle.trim() || !impDescription.trim()) return;
+    if (impSubmittingRef.current) return;
+    impSubmittingRef.current = true;
     setImpSubmitting(true);
     setImpError(null);
     try {
@@ -306,12 +316,15 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
       console.warn("[ReportModal] Improvement submit failed:", err);
       setImpError("Network error, please try again");
     }
+    impSubmittingRef.current = false;
     setImpSubmitting(false);
   }
 
   async function handleStruggleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!struggleTitle.trim() || !struggleDescription.trim()) return;
+    if (struggleSubmittingRef.current) return;
+    struggleSubmittingRef.current = true;
     setStruggleSubmitting(true);
     setStruggleError(null);
     try {
@@ -335,13 +348,17 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
       console.warn("[ReportModal] Struggle submit failed:", err);
       setStruggleError("Network error, please try again");
     }
+    struggleSubmittingRef.current = false;
     setStruggleSubmitting(false);
   }
 
   async function handleAndonSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (andonSubmittingRef.current) return;
+    andonSubmittingRef.current = true;
     setAndonSubmitting(true);
     setAndonError(null);
+    let succeeded = false;
     try {
       const res = await fetch(`${BASE}/api/andon`, {
         method: "POST",
@@ -359,6 +376,7 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
         const data = await res.json().catch(() => ({}));
         setAndonError(data.error ?? "Failed to report issue");
       } else {
+        succeeded = true;
         setAndonSuccess(true);
         setAndonDescription("");
         setTimeout(() => { setAndonSuccess(false); onClose(); }, 2000);
@@ -367,7 +385,13 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
       console.warn("[ReportModal] Andon submit failed:", err);
       setAndonError("Network error, please try again");
     }
-    setAndonSubmitting(false);
+    // On success, keep the button disabled until the modal closes so a tap
+    // during the 2s success banner can't submit a blank follow-up issue.
+    // On error, re-enable so the user can retry.
+    if (!succeeded) {
+      andonSubmittingRef.current = false;
+      setAndonSubmitting(false);
+    }
   }
 
   return (

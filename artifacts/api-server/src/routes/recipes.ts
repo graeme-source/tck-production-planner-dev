@@ -1263,7 +1263,10 @@ const LegacyAssemblyOrderBody = z.array(z.object({
   order: z.number().int().min(0),
 }));
 
-router.put("/:id/assembly-order", requireAdmin, async (req, res) => {
+// Builders on the floor reorder assembly items live — whoever finishes last
+// wins as the recipe's master order. Any authenticated user can save; the
+// global auth guard in routes/index.ts already keeps this behind a login.
+router.put("/:id/assembly-order", async (req, res) => {
   try {
     const recipeId = Number(req.params.id);
     if (isNaN(recipeId)) {
