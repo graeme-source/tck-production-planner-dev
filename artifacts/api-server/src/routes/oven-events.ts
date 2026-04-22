@@ -79,6 +79,52 @@ router.post("/oven-out", async (req, res) => {
   res.json(updated);
 });
 
+// Edit an existing oven event — used by the summary table at the bottom of
+// the mix-prep cooking tab so operators can correct a misrecorded in/out
+// time. Accepts ISO timestamps for ovenInAt and ovenOutAt; either may be
+// null to clear. The oven-out cannot be earlier than the oven-in.
+const editSchema = z.object({
+  ovenInAt: z.string().datetime().optional(),
+  ovenOutAt: z.string().datetime().nullable().optional(),
+});
+
+router.patch("/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const parsed = editSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid data", issues: parsed.error.issues });
+    return;
+  }
+  const updates: { ovenInAt?: Date; ovenOutAt?: Date | null } = {};
+  if (parsed.data.ovenInAt) updates.ovenInAt = new Date(parsed.data.ovenInAt);
+  if (parsed.data.ovenOutAt !== undefined) {
+    updates.ovenOutAt = parsed.data.ovenOutAt ? new Date(parsed.data.ovenOutAt) : null;
+  }
+  if (Object.keys(updates).length === 0) {
+    res.status(400).json({ error: "No changes supplied" });
+    return;
+  }
+  if (updates.ovenInAt && updates.ovenOutAt && updates.ovenOutAt < updates.ovenInAt) {
+    res.status(400).json({ error: "ovenOutAt cannot be earlier than ovenInAt" });
+    return;
+  }
+
+  const [updated] = await db.update(ovenEventsTable)
+    .set(updates)
+    .where(eq(ovenEventsTable.id, id))
+    .returning();
+
+  if (!updated) {
+    res.status(404).json({ error: "Oven event not found" });
+    return;
+  }
+  res.json(updated);
+});
+
 router.delete("/", async (req, res) => {
   const { planId, recipeId, ingredientId, trayIndex } = req.query;
   if (!planId || trayIndex === undefined) {

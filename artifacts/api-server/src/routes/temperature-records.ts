@@ -49,6 +49,42 @@ router.post("/", async (req, res) => {
   res.json(record);
 });
 
+// Edit an existing temperature record (operators correcting a wrong reading
+// or a wrong timestamp from the cooking summary table in mix-prep).
+const editSchema = z.object({
+  temperatureC: z.number().min(-50).max(500).optional(),
+  recordedAt: z.string().datetime().optional(),
+});
+
+router.patch("/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const parsed = editSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid data", issues: parsed.error.issues });
+    return;
+  }
+  const updates: { temperatureC?: string; recordedAt?: Date } = {};
+  if (parsed.data.temperatureC !== undefined) updates.temperatureC = String(parsed.data.temperatureC);
+  if (parsed.data.recordedAt) updates.recordedAt = new Date(parsed.data.recordedAt);
+  if (Object.keys(updates).length === 0) {
+    res.status(400).json({ error: "No changes supplied" });
+    return;
+  }
+  const [updated] = await db.update(temperatureRecordsTable)
+    .set(updates)
+    .where(eq(temperatureRecordsTable.id, id))
+    .returning();
+  if (!updated) {
+    res.status(404).json({ error: "Temperature record not found" });
+    return;
+  }
+  res.json(updated);
+});
+
 router.get("/", async (req, res) => {
   const { from, to, planId } = req.query;
 

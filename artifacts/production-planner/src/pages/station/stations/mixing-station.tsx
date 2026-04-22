@@ -81,6 +81,11 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
     ovenInAt: string; ovenOutAt: string | null; userId: number | null; userName: string | null;
   }
   const [ovenEvents, setOvenEvents] = useState<OvenEventRow[]>([]);
+  interface TempRecordRow {
+    id: number; planId: number; recipeId: number | null; ingredientId: number | null;
+    trayIndex: number; temperatureC: string; recordedAt: string; recordType: string;
+  }
+  const [tempRecords, setTempRecords] = useState<TempRecordRow[]>([]);
   // Pending temperature entry: which tray just moved to "done" and needs a temp recorded
   const [tempPrompt, setTempPrompt] = useState<{
     recipeId: number; recipeName: string;
@@ -89,6 +94,20 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
   } | null>(null);
   const [tempValue, setTempValue] = useState("");
   const [tempSaving, setTempSaving] = useState(false);
+  // Edit state for the summary table at the bottom of the cooking tab —
+  // operators correcting a wrong time or temperature after the fact.
+  const [editRow, setEditRow] = useState<{
+    ovenEventId: number;
+    tempRecordId: number | null;
+    recipeName: string;
+    ingredientName: string;
+    trayIndex: number;
+    ovenInAt: string;      // datetime-local format (YYYY-MM-DDTHH:mm)
+    ovenOutAt: string;
+    temperatureC: string;
+    tempRecordedAt: string;
+  } | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
 
   useEffect(() => {
     const base = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
@@ -111,6 +130,10 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
         });
       })
       .catch((err) => { console.warn("[MixingStation] Oven events fetch failed:", err); });
+    fetch(`${base}/api/temperature-records?planId=${plan.id}`, { credentials: "include" })
+      .then(r => r.json())
+      .then((rows: TempRecordRow[]) => setTempRecords(rows))
+      .catch((err) => { console.warn("[MixingStation] Temperature records fetch failed:", err); });
   }, [plan.id]);
 
   const [runTrayAction, trayBusy] = useGuardedAction();
@@ -183,7 +206,7 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
     setTempSaving(true);
     const base = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
     await runTempAction(async (signal) => {
-      await guardedFetch(`${base}/api/temperature-records`, {
+      const res = await guardedFetch(`${base}/api/temperature-records`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -199,11 +222,101 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
         }),
         signal,
       });
+      const saved: TempRecordRow = await res.json();
+      setTempRecords(prev => [saved, ...prev]);
       toast({ title: "Temperature recorded", description: `${c}°C saved for tray ${tempPrompt.trayIdx + 1}` });
     });
     setTempSaving(false);
     setTempPrompt(null);
     setTempValue("");
+  };
+
+  // Helper: format an ISO/date for datetime-local <input> (YYYY-MM-DDTHH:mm)
+  const toLocalInput = (iso: string | Date): string => {
+    const d = typeof iso === "string" ? new Date(iso) : iso;
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  // Find the temperature record that matches an oven event (same recipe +
+  // ingredient + tray). The temperature-records route stores a record with
+  // recordType='cooked_core' when the operator enters the out-of-oven temp,
+  // so looking it up by those three keys is unambiguous.
+  const matchingTempRecord = useCallback((ev: OvenEventRow): TempRecordRow | null => {
+    const match = tempRecords.find(
+      t =>
+        t.recipeId === ev.recipeId &&
+        t.ingredientId === ev.ingredientId &&
+        t.trayIndex === ev.trayIndex &&
+        t.recordType === "cooked_core",
+    );
+    return match ?? null;
+  }, [tempRecords]);
+
+  const openEditRow = (ev: OvenEventRow) => {
+    const temp = matchingTempRecord(ev);
+    setEditRow({
+      ovenEventId: ev.id,
+      tempRecordId: temp?.id ?? null,
+      recipeName: ev.recipeName ?? "Recipe",
+      ingredientName: ev.ingredientName ?? "Ingredient",
+      trayIndex: ev.trayIndex,
+      ovenInAt: toLocalInput(ev.ovenInAt),
+      ovenOutAt: ev.ovenOutAt ? toLocalInput(ev.ovenOutAt) : "",
+      temperatureC: temp ? String(Number(temp.temperatureC)) : "",
+      tempRecordedAt: temp ? toLocalInput(temp.recordedAt) : "",
+    });
+  };
+
+  const saveEditRow = async () => {
+    if (!editRow) return;
+    setEditSaving(true);
+    const base = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
+    try {
+      // Oven event times
+      const ovenInISO = new Date(editRow.ovenInAt).toISOString();
+      const ovenOutISO = editRow.ovenOutAt ? new Date(editRow.ovenOutAt).toISOString() : null;
+      const ovenRes = await fetch(`${base}/api/oven-events/${editRow.ovenEventId}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ovenInAt: ovenInISO, ovenOutAt: ovenOutISO }),
+      });
+      if (!ovenRes.ok) {
+        const err = await ovenRes.json().catch(() => ({}));
+        throw new Error(err.error ?? "Failed to update oven event");
+      }
+      const updatedEvent: OvenEventRow = await ovenRes.json();
+      setOvenEvents(prev => prev.map(e => e.id === updatedEvent.id ? updatedEvent : e));
+
+      // Temperature record
+      const tempC = parseFloat(editRow.temperatureC);
+      if (editRow.tempRecordId && !isNaN(tempC)) {
+        const tempISO = editRow.tempRecordedAt ? new Date(editRow.tempRecordedAt).toISOString() : undefined;
+        const tempRes = await fetch(`${base}/api/temperature-records/${editRow.tempRecordId}`, {
+          method: "PATCH",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ temperatureC: tempC, ...(tempISO ? { recordedAt: tempISO } : {}) }),
+        });
+        if (!tempRes.ok) {
+          const err = await tempRes.json().catch(() => ({}));
+          throw new Error(err.error ?? "Failed to update temperature");
+        }
+        const updatedTemp: TempRecordRow = await tempRes.json();
+        setTempRecords(prev => prev.map(t => t.id === updatedTemp.id ? updatedTemp : t));
+      }
+      toast({ title: "Record updated" });
+      setEditRow(null);
+    } catch (err) {
+      toast({
+        title: "Update failed",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    } finally {
+      setEditSaving(false);
+    }
   };
   const [cookingRecipes, setCookingRecipes] = useState<PrepRecipeDetail[]>([]);
   useEffect(() => {
@@ -435,6 +548,80 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
 
   return (
     <>
+    {/* Edit row dialog — correct oven times and temperature after the fact */}
+    {editRow && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+        <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+          <div>
+            <h3 className="font-bold text-lg">Edit Cooking Record</h3>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              {editRow.recipeName} — {editRow.ingredientName}, Tray {editRow.trayIndex + 1}
+            </p>
+          </div>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Into oven</label>
+              <input
+                type="datetime-local"
+                value={editRow.ovenInAt}
+                onChange={e => setEditRow(er => er ? { ...er, ovenInAt: e.target.value } : er)}
+                className="w-full border border-border rounded-lg px-3 py-2 text-base bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Out of oven</label>
+              <input
+                type="datetime-local"
+                value={editRow.ovenOutAt}
+                onChange={e => setEditRow(er => er ? { ...er, ovenOutAt: e.target.value } : er)}
+                className="w-full border border-border rounded-lg px-3 py-2 text-base bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+            {editRow.tempRecordId ? (
+              <>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Core temperature (°C)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={editRow.temperatureC}
+                    onChange={e => setEditRow(er => er ? { ...er, temperatureC: e.target.value } : er)}
+                    className="w-full border border-border rounded-lg px-3 py-2 text-base font-semibold tabular-nums bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Temperature taken at</label>
+                  <input
+                    type="datetime-local"
+                    value={editRow.tempRecordedAt}
+                    onChange={e => setEditRow(er => er ? { ...er, tempRecordedAt: e.target.value } : er)}
+                    className="w-full border border-border rounded-lg px-3 py-2 text-base bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground italic">No temperature was recorded for this tray — only the oven times can be corrected here.</p>
+            )}
+          </div>
+          <div className="flex gap-3">
+            <button
+              onClick={() => setEditRow(null)}
+              disabled={editSaving}
+              className="flex-1 py-2.5 rounded-xl border border-border font-medium text-sm hover:bg-secondary disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={saveEditRow}
+              disabled={editSaving || !editRow.ovenInAt}
+              className="flex-1 py-2.5 rounded-xl bg-primary text-primary-foreground font-semibold text-sm hover:bg-primary/90 disabled:opacity-50"
+            >
+              {editSaving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     {/* Temperature entry dialog */}
     {tempPrompt && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
@@ -686,7 +873,7 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
               <div className="bg-card border border-border rounded-xl overflow-hidden">
                 <div className="px-4 py-3 border-b border-border bg-secondary/30">
                   <p className="font-semibold text-lg">Cooking Times</p>
-                  <p className="text-sm text-muted-foreground">Actual oven times recorded today</p>
+                  <p className="text-sm text-muted-foreground">Actual oven times and temperatures — tap Edit to correct a mistake</p>
                 </div>
                 <div className="divide-y divide-border/50">
                   {completed.map(ev => {
@@ -697,6 +884,9 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                     const mins = durationMin % 60;
                     const durationStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
                     const formatTime = (d: Date) => d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+                    const temp = matchingTempRecord(ev);
+                    const tempC = temp ? Number(temp.temperatureC) : null;
+                    const tempTime = temp ? new Date(temp.recordedAt) : null;
                     return (
                       <div key={ev.id} className="px-4 py-3 flex items-center justify-between gap-3">
                         <div className="flex-1 min-w-0">
@@ -704,12 +894,26 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                           <p className="text-sm text-muted-foreground truncate">
                             {ev.ingredientName} — Tray {ev.trayIndex + 1}
                           </p>
+                          {tempC !== null && (
+                            <p className={cn(
+                              "text-sm font-semibold tabular-nums mt-0.5",
+                              tempC >= 75 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400",
+                            )}>
+                              {tempC.toFixed(1)}°C {tempTime && <span className="text-muted-foreground font-normal">@ {formatTime(tempTime)}</span>}
+                            </p>
+                          )}
                         </div>
-                        <div className="text-right flex-shrink-0">
+                        <div className="text-right flex-shrink-0 flex flex-col items-end gap-1">
                           <p className="font-bold text-base tabular-nums">{durationStr}</p>
                           <p className="text-sm text-muted-foreground tabular-nums">
                             {formatTime(inTime)} → {formatTime(outTime)}
                           </p>
+                          <button
+                            onClick={() => openEditRow(ev)}
+                            className="text-xs font-semibold text-primary hover:text-primary/80 underline-offset-2 hover:underline"
+                          >
+                            Edit
+                          </button>
                         </div>
                       </div>
                     );
