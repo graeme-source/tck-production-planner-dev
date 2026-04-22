@@ -3975,8 +3975,9 @@ interface EmployeeAttendanceRow {
   linked: boolean;
   totalShifts: number;
   lateShifts: number;
-  sickShifts: number;
-  sickUnpaidShifts: number;
+  totalAbsent: number;
+  shiftTypeCounts: Record<string, number>;
+  absenceAccountCounts: Record<string, number>;
 }
 
 interface AttendanceResponse {
@@ -3987,6 +3988,75 @@ interface AttendanceResponse {
   unmatchedAppUsers: Array<{ userId: number; name: string; email: string }>;
   shiftTypeNames: string[];
   absenceAccountNames: string[];
+  activeShiftTypeNames: string[];
+  activeAbsenceAccountNames: string[];
+}
+
+function UnmatchedPlandayRow({ employee }: { employee: { plandayEmployeeId: number; name: string; email: string | null } }) {
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [role, setRole] = useState<"viewer" | "manager" | "admin">("viewer");
+
+  const invite = async () => {
+    if (!employee.email) {
+      toast({ title: "No email on Plan Day", description: "Add an email in Plan Day first, or create the user manually in Settings.", variant: "destructive" });
+      return;
+    }
+    setSending(true);
+    try {
+      const resp = await fetch(`${BASE}/api/auth/invites`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email: employee.email, role }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.error ?? `HTTP ${resp.status}`);
+      }
+      setSent(true);
+      toast({ title: "Invite sent", description: `${employee.name} will get an email with a sign-up link. Their Plan Day record auto-links when they accept.` });
+    } catch (err) {
+      toast({ title: "Failed to send invite", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-between gap-3 bg-background rounded-lg px-3 py-2">
+      <div className="min-w-0 flex-1">
+        <div className="font-medium truncate">{employee.name}</div>
+        <div className="text-xs text-muted-foreground truncate">
+          {employee.email ?? <span className="text-amber-600">no email on Plan Day</span>}
+        </div>
+      </div>
+      {!sent && (
+        <select
+          value={role}
+          onChange={e => setRole(e.target.value as "viewer" | "manager" | "admin")}
+          disabled={sending}
+          className="text-xs px-2 py-1 rounded-md bg-background border border-border"
+        >
+          <option value="viewer">Viewer</option>
+          <option value="manager">Manager</option>
+          <option value="admin">Admin</option>
+        </select>
+      )}
+      <button
+        onClick={invite}
+        disabled={sending || sent || !employee.email}
+        className={cn(
+          "text-xs px-3 py-1.5 rounded-md border transition-colors whitespace-nowrap",
+          sent
+            ? "bg-emerald-50 border-emerald-300 text-emerald-700"
+            : "bg-primary text-primary-foreground border-primary hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed",
+        )}
+      >
+        {sent ? "Invite sent" : sending ? "Sending…" : "Invite to planner"}
+      </button>
+    </div>
+  );
 }
 
 function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
@@ -4041,15 +4111,17 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
     (acc, r) => ({
       total: acc.total + r.totalShifts,
       late: acc.late + r.lateShifts,
-      sick: acc.sick + r.sickShifts,
-      sickUnpaid: acc.sickUnpaid + r.sickUnpaidShifts,
+      absent: acc.absent + r.totalAbsent,
     }),
-    { total: 0, late: 0, sick: 0, sickUnpaid: 0 },
+    { total: 0, late: 0, absent: 0 },
   );
+
+  const activeShiftTypes = data.activeShiftTypeNames ?? [];
+  const activeAbsenceAccounts = data.activeAbsenceAccountNames ?? [];
 
   return (
     <>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <SummaryCard
           icon={<Users className="w-5 h-5 text-blue-600" />}
           label="Total Shifts"
@@ -4063,16 +4135,10 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
           sub={totals.total > 0 ? `${Math.round((totals.late / totals.total) * 100)}% of shifts` : "—"}
         />
         <SummaryCard
-          icon={<Thermometer className="w-5 h-5 text-rose-600" />}
-          label="Sick"
-          value={String(totals.sick)}
-          sub={totals.total > 0 ? `${Math.round((totals.sick / totals.total) * 100)}% of shifts` : "—"}
-        />
-        <SummaryCard
-          icon={<AlertTriangle className="w-5 h-5 text-red-700" />}
-          label="Sick Unpaid"
-          value={String(totals.sickUnpaid)}
-          sub={totals.total > 0 ? `${Math.round((totals.sickUnpaid / totals.total) * 100)}% of shifts` : "—"}
+          icon={<AlertTriangle className="w-5 h-5 text-rose-600" />}
+          label="Total Absent"
+          value={String(totals.absent)}
+          sub={`Across ${activeAbsenceAccounts.length} absence type${activeAbsenceAccounts.length === 1 ? "" : "s"}`}
         />
       </div>
 
@@ -4081,7 +4147,7 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
           <div className="flex items-center justify-between gap-2">
             <div>
               <span className="font-medium">{data.unmatchedAppUsers.length}</span>{" "}
-              app user{data.unmatchedAppUsers.length === 1 ? "" : "s"} could not be matched to a Plan Day employee by email.
+              app user{data.unmatchedAppUsers.length === 1 ? "" : "s"} could not be matched to a Plan Day employee by email or name.
             </div>
             <button
               onClick={() => setShowUnlinked(v => !v)}
@@ -4093,67 +4159,80 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
         </div>
       )}
 
+      {data.unmatchedPlandayEmployees && data.unmatchedPlandayEmployees.length > 0 && (
+        <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-xl p-4 text-sm">
+          <div className="font-medium text-blue-900 dark:text-blue-200 mb-2">
+            {data.unmatchedPlandayEmployees.length} Plan Day employee{data.unmatchedPlandayEmployees.length === 1 ? "" : "s"} without a planner login
+          </div>
+          <div className="space-y-2">
+            {data.unmatchedPlandayEmployees.map(emp => (
+              <UnmatchedPlandayRow key={emp.plandayEmployeeId} employee={emp} />
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-secondary/50 border-b border-border">
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Employee</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground sticky left-0 bg-secondary/50">Employee</th>
                 <th className="text-right px-3 py-3 font-medium text-muted-foreground">Total shifts</th>
-                <th className="text-right px-3 py-3 font-medium text-muted-foreground">Arrived late</th>
-                <th className="text-right px-3 py-3 font-medium text-muted-foreground">Late %</th>
-                <th className="text-right px-3 py-3 font-medium text-muted-foreground">Sick</th>
-                <th className="text-right px-3 py-3 font-medium text-muted-foreground">Sick unpaid</th>
-                <th className="text-right px-3 py-3 font-medium text-muted-foreground">Sick %</th>
+                <th className="text-right px-3 py-3 font-medium text-muted-foreground">Total absent</th>
+                {activeShiftTypes.map(name => (
+                  <th key={`sh:${name}`} className="text-right px-3 py-3 font-medium text-muted-foreground whitespace-nowrap">{name}</th>
+                ))}
+                {activeAbsenceAccounts.map(name => (
+                  <th key={`ab:${name}`} className="text-right px-3 py-3 font-medium text-muted-foreground whitespace-nowrap">{name}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {rowsToShow.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="text-center text-muted-foreground py-8">
+                  <td colSpan={3 + activeShiftTypes.length + activeAbsenceAccounts.length} className="text-center text-muted-foreground py-8">
                     No employees to show.
                   </td>
                 </tr>
               )}
-              {rowsToShow.map(r => {
-                const latePct = r.totalShifts > 0 ? (r.lateShifts / r.totalShifts) * 100 : 0;
-                const sickTotal = r.sickShifts + r.sickUnpaidShifts;
-                const sickPct = r.totalShifts > 0 ? (sickTotal / r.totalShifts) * 100 : 0;
-                const fmtPct = (n: number) => n === 0 ? "—" : `${n.toFixed(1)}%`;
-                return (
-                  <tr
-                    key={r.userId}
-                    className={cn(
-                      "border-b border-border last:border-b-0",
-                      !r.linked && "opacity-60",
-                    )}
-                  >
-                    <td className="px-4 py-3">
-                      <div className="font-medium">{r.userName}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {r.userEmail}
-                        {!r.linked && <span className="ml-2 text-amber-600">• not linked</span>}
-                      </div>
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums">{r.totalShifts}</td>
-                    <td className="px-3 py-3 text-right tabular-nums">
-                      {r.lateShifts > 0 ? <span className="text-amber-700 font-medium">{r.lateShifts}</span> : r.lateShifts}
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">
-                      {r.lateShifts > 0 ? <span className="text-amber-700">{fmtPct(latePct)}</span> : fmtPct(latePct)}
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums">
-                      {r.sickShifts > 0 ? <span className="text-rose-700 font-medium">{r.sickShifts}</span> : r.sickShifts}
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums">
-                      {r.sickUnpaidShifts > 0 ? <span className="text-red-800 font-medium">{r.sickUnpaidShifts}</span> : r.sickUnpaidShifts}
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">
-                      {sickTotal > 0 ? <span className="text-rose-700">{fmtPct(sickPct)}</span> : fmtPct(sickPct)}
-                    </td>
-                  </tr>
-                );
-              })}
+              {rowsToShow.map(r => (
+                <tr
+                  key={r.userId}
+                  className={cn(
+                    "border-b border-border last:border-b-0",
+                    !r.linked && "opacity-60",
+                  )}
+                >
+                  <td className="px-4 py-3 sticky left-0 bg-card">
+                    <div className="font-medium">{r.userName}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {r.userEmail}
+                      {!r.linked && <span className="ml-2 text-amber-600">• not linked</span>}
+                    </div>
+                  </td>
+                  <td className="px-3 py-3 text-right tabular-nums">{r.totalShifts}</td>
+                  <td className="px-3 py-3 text-right tabular-nums">
+                    {r.totalAbsent > 0 ? <span className="text-rose-700 font-medium">{r.totalAbsent}</span> : r.totalAbsent}
+                  </td>
+                  {activeShiftTypes.map(name => {
+                    const n = r.shiftTypeCounts?.[name] ?? 0;
+                    return (
+                      <td key={`sh:${name}`} className="px-3 py-3 text-right tabular-nums">
+                        {n > 0 ? <span className="text-amber-700 font-medium">{n}</span> : n}
+                      </td>
+                    );
+                  })}
+                  {activeAbsenceAccounts.map(name => {
+                    const n = r.absenceAccountCounts?.[name] ?? 0;
+                    return (
+                      <td key={`ab:${name}`} className="px-3 py-3 text-right tabular-nums">
+                        {n > 0 ? <span className="text-rose-700 font-medium">{n}</span> : n}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -4183,7 +4262,7 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
             </div>
           )}
           <p className="mt-2">
-            Shift types containing “late” count as Arrived Late. Absence records are classified by their account name: “sick unpaid” → Sick Unpaid, other “sick” → Sick.
+            Each column above corresponds to a Plan Day shift type or absence account that had at least one entry in the selected range. Shift types whose name contains “late” also roll up into the Arrived Late summary card. “Total Absent” sums every approved absence day across all accounts.
           </p>
         </details>
       )}
