@@ -108,12 +108,31 @@ interface MacCheeseCalcRecipe {
   toMakeBatches: number;
 }
 
+function ZeroDayButton({ active, onClick }: { active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={active ? "Restore sales numbers" : "Set this day's sales to 0"}
+      className={cn(
+        "px-2 py-0.5 text-[10px] font-medium rounded border transition-colors",
+        active
+          ? "bg-yellow-600 border-yellow-600 text-white hover:bg-yellow-700"
+          : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60",
+      )}
+    >
+      {active ? "Restore" : "Zero"}
+    </button>
+  );
+}
+
 function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; planDate: string; onSuccess: () => void }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [recipes, setRecipes] = useState<MacCheeseCalcRecipe[]>([]);
   const [extraOverrides, setExtraOverrides] = useState<Record<number, number>>({});
   const [stockOverrides, setStockOverrides] = useState<Record<number, number>>({});
+  const [zeroedDays, setZeroedDays] = useState<{ d1: boolean; d2: boolean; d3: boolean }>({ d1: false, d2: false, d3: false });
 
   useEffect(() => {
     setLoading(true);
@@ -149,11 +168,14 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
   }, [planDate]);
 
   const getStock = (r: MacCheeseCalcRecipe) => stockOverrides[r.recipeId] ?? r.leftOverStock;
-  const getDeficit = (r: MacCheeseCalcRecipe) => Math.max(0, r.salesNextDay - getStock(r));
+  const getSalesD1 = (r: MacCheeseCalcRecipe) => zeroedDays.d1 ? 0 : r.salesNextDay;
+  const getSalesD2 = (r: MacCheeseCalcRecipe) => zeroedDays.d2 ? 0 : r.salesNextDayPlus1;
+  const getSalesD3 = (r: MacCheeseCalcRecipe) => zeroedDays.d3 ? 0 : r.salesNextDayPlus2;
+  const getDeficit = (r: MacCheeseCalcRecipe) => Math.max(0, getSalesD1(r) - getStock(r));
   // Raw demand (packs) — before batch rounding.
   const getRawNeed = (r: MacCheeseCalcRecipe) => {
     const extra = extraOverrides[r.recipeId] ?? r.extraToMake;
-    const totalNeeded = r.salesNextDay + r.salesNextDayPlus1 + r.salesNextDayPlus2 + extra;
+    const totalNeeded = getSalesD1(r) + getSalesD2(r) + getSalesD3(r) + extra;
     return Math.max(0, totalNeeded - getStock(r));
   };
   // To-make rounds UP to the nearest whole batch — the factory can only
@@ -225,7 +247,7 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-border text-left text-xs text-muted-foreground uppercase tracking-wider">
+            <tr className="text-left text-xs text-muted-foreground uppercase tracking-wider">
               <th className="pb-2 pr-3">Recipe</th>
               <th className="pb-2 px-2 text-right">Stock</th>
               <th className="pb-2 px-2 text-right">Sales D1</th>
@@ -236,6 +258,18 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
               <th className="pb-2 px-2 text-right font-semibold">To Make</th>
               <th className="pb-2 pl-2 text-right">Batches</th>
               <th className="pb-2 pl-2 w-8" />
+            </tr>
+            <tr className="border-b border-border">
+              <th />
+              <th />
+              <th className="pb-2 px-2 text-right"><ZeroDayButton active={zeroedDays.d1} onClick={() => setZeroedDays(p => ({ ...p, d1: !p.d1 }))} /></th>
+              <th />
+              <th className="pb-2 px-2 text-right"><ZeroDayButton active={zeroedDays.d2} onClick={() => setZeroedDays(p => ({ ...p, d2: !p.d2 }))} /></th>
+              <th className="pb-2 px-2 text-right"><ZeroDayButton active={zeroedDays.d3} onClick={() => setZeroedDays(p => ({ ...p, d3: !p.d3 }))} /></th>
+              <th />
+              <th />
+              <th />
+              <th />
             </tr>
           </thead>
           <tbody>
@@ -260,10 +294,10 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
                       className="w-16 px-2 py-1 text-right bg-background border border-border rounded text-sm tabular-nums"
                     />
                   </td>
-                  <td className="py-2.5 px-2 text-right tabular-nums">{r.salesNextDay}</td>
+                  <td className={cn("py-2.5 px-2 text-right tabular-nums", zeroedDays.d1 && "text-muted-foreground line-through")}>{getSalesD1(r)}</td>
                   <td className="py-2.5 px-2 text-right tabular-nums text-amber-600">{getDeficit(r)}</td>
-                  <td className="py-2.5 px-2 text-right tabular-nums">{r.salesNextDayPlus1}</td>
-                  <td className="py-2.5 px-2 text-right tabular-nums">{r.salesNextDayPlus2}</td>
+                  <td className={cn("py-2.5 px-2 text-right tabular-nums", zeroedDays.d2 && "text-muted-foreground line-through")}>{getSalesD2(r)}</td>
+                  <td className={cn("py-2.5 px-2 text-right tabular-nums", zeroedDays.d3 && "text-muted-foreground line-through")}>{getSalesD3(r)}</td>
                   <td className="py-2.5 px-2 text-right">
                     <input
                       type="number"

@@ -2,7 +2,7 @@ import React from "react";
 import { useState, useEffect, useCallback } from "react";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import {
-  Loader2, RefreshCw, AlertCircle, Box, Truck, Scan, CheckCircle2,
+  Loader2, RefreshCw, AlertCircle, Box, Truck, Scan, CheckCircle2, Gauge,
 } from "lucide-react";
 import { format, parseISO, addDays } from "date-fns";
 import { useLocation } from "wouter";
@@ -58,6 +58,24 @@ interface DessertsReport {
   dessertProductCount: number;
 }
 
+interface PackingSpeedDay {
+  date: string;
+  count: number;
+  firstFulfilledAt: string | null;
+  lastFulfilledAt: string | null;
+  windowMinutes: number | null;
+  activeMinutes: number | null;
+  idleMinutes: number | null;
+  idleBreaks: number;
+  ordersPerHour: number | null;
+}
+
+interface PackingSpeed {
+  totalOrders: number;
+  ordersPerHour: number;
+  dailyRows: PackingSpeedDay[];
+}
+
 interface PackingShortfallItem {
   recipeId: number | null;
   recipeName: string;
@@ -94,15 +112,21 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
     fridgeQty: number;
     totalDispatch: number;
   }>>([]);
+  const [speed, setSpeed] = useState<PackingSpeed | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
-      const [progressRes, dessertsRes, packingRes] = await Promise.all([
+      // packing-speed wants dispatch dates (from/to are dispatch days, not
+      // delivery). plan.planDate is the day the team is packing = the
+      // dispatch day for tomorrow's delivery tag.
+      const packingDateStr = plan.planDate;
+      const [progressRes, dessertsRes, packingRes, speedRes] = await Promise.all([
         fetch(`${BASE}/api/fulfilment/dispatch-progress?tag=${dispatchTag}`, { credentials: "include" }),
         fetch(`${BASE}/api/fulfilment/desserts-report?tag=${dispatchTag}`, { credentials: "include" }),
         fetch(`${BASE}/api/production-plans/${plan.id}/packing`, { credentials: "include" }),
+        fetch(`${BASE}/api/reports/packing-speed?from=${packingDateStr}&to=${packingDateStr}`, { credentials: "include" }),
       ]);
       if (!progressRes.ok && !dessertsRes.ok) {
         setError("Failed to load dispatch data");
@@ -115,6 +139,7 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
         const data = await packingRes.json();
         setPackingItems(data.items ?? []);
       }
+      if (speedRes.ok) setSpeed(await speedRes.json());
       if (progressRes.ok && dessertsRes.ok) setError(null);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load dispatch data");
@@ -153,6 +178,14 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
 
   const redShortfalls = shortfalls.filter(s => s.level === "red");
   const yellowShortfalls = shortfalls.filter(s => s.level === "yellow");
+
+  // Today's packing-rate KPI — Shopify fulfilment timestamps drive it, so it
+  // refreshes every 30s with the rest of the packing station data. Idle gaps
+  // over 5 minutes are excluded from "active" time (matches reports page).
+  const today = speed?.dailyRows?.[0] ?? null;
+  const kpiOrdersPerHour = today?.ordersPerHour ?? null;
+  const kpiCount = today?.count ?? 0;
+  const kpiActiveMinutes = today?.activeMinutes ?? null;
 
   const cats = progress?.categories;
 
@@ -221,6 +254,32 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
             )}
             style={{ width: `${progress && progress.totalOrders > 0 ? Math.min(Math.round((progress.totalFulfilled / progress.totalOrders) * 100), 100) : 0}%` }}
           />
+        </div>
+
+        <div className="grid grid-cols-3 gap-3 pt-3 border-t border-border">
+          <div>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground uppercase tracking-wider mb-1">
+              <Gauge className="w-3.5 h-3.5" />
+              Orders / hour
+            </div>
+            <div className="text-3xl font-bold tabular-nums font-display">
+              {kpiOrdersPerHour != null ? kpiOrdersPerHour.toFixed(1) : "—"}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Packed today</div>
+            <div className="text-3xl font-bold tabular-nums font-display">{kpiCount}</div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Active time</div>
+            <div className="text-3xl font-bold tabular-nums font-display">
+              {kpiActiveMinutes != null
+                ? kpiActiveMinutes >= 60
+                  ? `${Math.floor(kpiActiveMinutes / 60)}h ${kpiActiveMinutes % 60}m`
+                  : `${kpiActiveMinutes}m`
+                : "—"}
+            </div>
+          </div>
         </div>
       </div>
 

@@ -570,11 +570,13 @@ router.get("/calculate", async (req, res) => {
           const key = p.productTitle.toLowerCase().trim();
           shopifySalesPerDate[date][key] = (shopifySalesPerDate[date][key] ?? 0) + packVariant.quantity;
           shopifySalesCombined[key] = (shopifySalesCombined[key] ?? 0) + packVariant.quantity;
-          // Also track by variant ID for precise recipe matching
-          if (packVariant.variantId) {
-            const vid = String(packVariant.variantId);
-            variantSalesPerDate[date][vid] = (variantSalesPerDate[date][vid] ?? 0) + packVariant.quantity;
-            variantSalesCombined[vid] = (variantSalesCombined[vid] ?? 0) + packVariant.quantity;
+          // Track every variant by ID so a recipe linked to a non-2-pack
+          // variant of a product that also has a 2-pack still picks up sales.
+          for (const v of p.variants) {
+            if (!v.variantId) continue;
+            const vid = String(v.variantId);
+            variantSalesPerDate[date][vid] = (variantSalesPerDate[date][vid] ?? 0) + v.quantity;
+            variantSalesCombined[vid] = (variantSalesCombined[vid] ?? 0) + v.quantity;
           }
         } else if (p.variants.length === 0) {
           const key = p.productTitle.toLowerCase().trim();
@@ -683,10 +685,10 @@ router.get("/calculate", async (req, res) => {
   `);
   const recipeToVariantIds = new Map<number, string[]>();
   for (const m of recipeVariantMappings.rows ?? recipeVariantMappings) {
-    const ids: string[] = [];
-    if (m.shopify_variant_id) ids.push(String(m.shopify_variant_id));
-    if (m.wonky_variant_id) ids.push(String(m.wonky_variant_id));
-    if (ids.length > 0) recipeToVariantIds.set(m.recipe_id, ids);
+    const existing = recipeToVariantIds.get(m.recipe_id) ?? [];
+    if (m.shopify_variant_id) existing.push(String(m.shopify_variant_id));
+    if (m.wonky_variant_id) existing.push(String(m.wonky_variant_id));
+    if (existing.length > 0) recipeToVariantIds.set(m.recipe_id, existing);
   }
 
   // Merge Club Special sales into the target ("is_current_special") recipe.
@@ -1030,7 +1032,9 @@ router.get("/calculate-mac-cheese", async (req, res) => {
   // Drizzle expands `ANY(${array})` as a row constructor `($1,$2,$3)` rather
   // than an int[], so Postgres rejects it. Fetching all mappings and filtering
   // in JS mirrors what the /calculate endpoint does and avoids the param-cast
-  // footgun — the table only holds one row per recipe.
+  // footgun. A recipe can have multiple rows — the "Shopify Inventory Link"
+  // panel lets users attach several variants (e.g. regular, FREE, single-pack),
+  // and all of their sales should roll up into the recipe's demand.
   const macRecipeMappings = await db.execute<{ recipe_id: number; shopify_variant_id: string | null; wonky_variant_id: string | null }>(sql`
     SELECT recipe_id, shopify_variant_id, wonky_variant_id FROM recipe_shopify_mappings
   `);
@@ -1038,10 +1042,10 @@ router.get("/calculate-mac-cheese", async (req, res) => {
   const recipeToVariantIds = new Map<number, string[]>();
   for (const m of macRecipeMappings.rows ?? macRecipeMappings) {
     if (!macRecipeIdSet.has(m.recipe_id)) continue;
-    const ids: string[] = [];
-    if (m.shopify_variant_id) ids.push(String(m.shopify_variant_id));
-    if (m.wonky_variant_id) ids.push(String(m.wonky_variant_id));
-    if (ids.length > 0) recipeToVariantIds.set(m.recipe_id, ids);
+    const existing = recipeToVariantIds.get(m.recipe_id) ?? [];
+    if (m.shopify_variant_id) existing.push(String(m.shopify_variant_id));
+    if (m.wonky_variant_id) existing.push(String(m.wonky_variant_id));
+    if (existing.length > 0) recipeToVariantIds.set(m.recipe_id, existing);
   }
 
   // Fetch Shopify sales for 3 delivery dates

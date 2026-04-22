@@ -329,7 +329,7 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
       </AnimatePresence>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 py-6">
+      <div className="max-w-7xl mx-auto px-4 pt-6 pb-[200px]">
         {children}
       </div>
 

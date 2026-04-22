@@ -86,6 +86,13 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
     trayIndex: number; temperatureC: string; recordedAt: string; recordType: string;
   }
   const [tempRecords, setTempRecords] = useState<TempRecordRow[]>([]);
+  // Per-ingredient minimum safe cooking temperature (°C), sourced from the
+  // ingredient's own `minCookingTempC` setting on the Ingredients page. We
+  // fall back to 75°C when an ingredient has no value configured — that's the
+  // UK FSA default for cooked-through meat.
+  const [ingredientMinTemps, setIngredientMinTemps] = useState<Record<number, number>>({});
+  const minTempFor = (ingredientId: number | null | undefined) =>
+    (ingredientId != null && ingredientMinTemps[ingredientId]) || 75;
   // Pending temperature entry: which tray just moved to "done" and needs a temp recorded
   const [tempPrompt, setTempPrompt] = useState<{
     recipeId: number; recipeName: string;
@@ -134,6 +141,16 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
       .then(r => r.json())
       .then((rows: TempRecordRow[]) => setTempRecords(rows))
       .catch((err) => { console.warn("[MixingStation] Temperature records fetch failed:", err); });
+    fetch(`${base}/api/ingredients`, { credentials: "include" })
+      .then(r => r.json())
+      .then((rows: Array<{ id: number; minCookingTempC: number | null }>) => {
+        const map: Record<number, number> = {};
+        for (const r of rows) {
+          if (r.minCookingTempC != null) map[r.id] = Number(r.minCookingTempC);
+        }
+        setIngredientMinTemps(map);
+      })
+      .catch((err) => { console.warn("[MixingStation] Ingredient min-temp fetch failed:", err); });
   }, [plan.id]);
 
   const [runTrayAction, trayBusy] = useGuardedAction();
@@ -650,11 +667,15 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
               />
               <span className="text-xl font-bold text-muted-foreground">°C</span>
             </div>
-            {tempValue && !isNaN(parseFloat(tempValue)) && (
-              <p className={cn("text-sm font-semibold", parseFloat(tempValue) >= 75 ? "text-green-600" : "text-red-600")}>
-                {parseFloat(tempValue) >= 75 ? "✓ Above 75°C — safe" : "⚠️ Below 75°C minimum — check again"}
-              </p>
-            )}
+            {tempValue && !isNaN(parseFloat(tempValue)) && (() => {
+              const minTemp = minTempFor(tempPrompt.ingredientId);
+              const isSafe = parseFloat(tempValue) >= minTemp;
+              return (
+                <p className={cn("text-sm font-semibold", isSafe ? "text-green-600" : "text-red-600")}>
+                  {isSafe ? `✓ Above ${minTemp}°C — safe` : `⚠️ Below ${minTemp}°C minimum — check again`}
+                </p>
+              );
+            })()}
           </div>
           <div className="flex gap-3">
             <button
@@ -894,14 +915,17 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                           <p className="text-sm text-muted-foreground truncate">
                             {ev.ingredientName} — Tray {ev.trayIndex + 1}
                           </p>
-                          {tempC !== null && (
-                            <p className={cn(
-                              "text-sm font-semibold tabular-nums mt-0.5",
-                              tempC >= 75 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400",
-                            )}>
-                              {tempC.toFixed(1)}°C {tempTime && <span className="text-muted-foreground font-normal">@ {formatTime(tempTime)}</span>}
-                            </p>
-                          )}
+                          {tempC !== null && (() => {
+                            const minTemp = minTempFor(ev.ingredientId);
+                            return (
+                              <p className={cn(
+                                "text-sm font-semibold tabular-nums mt-0.5",
+                                tempC >= minTemp ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400",
+                              )}>
+                                {tempC.toFixed(1)}°C {tempTime && <span className="text-muted-foreground font-normal">@ {formatTime(tempTime)}</span>}
+                              </p>
+                            );
+                          })()}
                         </div>
                         <div className="text-right flex-shrink-0 flex flex-col items-end gap-1">
                           <p className="font-bold text-base tabular-nums">{durationStr}</p>

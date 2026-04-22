@@ -208,16 +208,24 @@ router.get("/calculate", async (req, res) => {
     .where(inArray(dailyStockChecksTable.checkDate, checkDates))
     .orderBy(desc(dailyStockChecksTable.checkedAt));
 
+  // Pick whichever source (stock_entries vs daily_stock_checks) has the newer
+  // checkedAt per ingredient. Previously daily_stock_checks blindly overrode
+  // the storage-location row, which meant a fresh stock_control.ts update to
+  // stock_entries was shadowed by an older prep-station daily check — orders
+  // then showed stale stock and the operator couldn't see their own fix.
   const seenStockCheck = new Set<number>();
   for (const sc of stockChecks) {
     if (seenStockCheck.has(sc.ingredientId)) continue;
     seenStockCheck.add(sc.ingredientId);
-    if (sc.quantity !== null) {
-      latestStockByIngredient[sc.ingredientId] = Number(sc.quantity);
-    }
-    if (sc.checkedAt) {
-      stockCheckTimestamps[sc.ingredientId] = new Date(sc.checkedAt).toISOString();
-    }
+    if (sc.quantity === null) continue;
+
+    const existingTs = stockCheckTimestamps[sc.ingredientId];
+    const dailyTs = sc.checkedAt ? new Date(sc.checkedAt).toISOString() : null;
+    const dailyIsNewer = !existingTs || (dailyTs !== null && dailyTs > existingTs);
+    if (!dailyIsNewer) continue;
+
+    latestStockByIngredient[sc.ingredientId] = Number(sc.quantity);
+    if (dailyTs) stockCheckTimestamps[sc.ingredientId] = dailyTs;
   }
 
   const dptReqs = await db

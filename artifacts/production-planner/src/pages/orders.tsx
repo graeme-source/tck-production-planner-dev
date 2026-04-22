@@ -977,12 +977,14 @@ export default function Orders() {
                                   type="number"
                                   min={0}
                                   step="any"
-                                  value={line.editedStock}
-                                  onChange={e => updateStock(so.supplier.id, idx, parseFloat(e.target.value) || 0)}
+                                  value={line.editedStock === 0 ? "" : line.editedStock}
+                                  onChange={e => updateStock(so.supplier.id, idx, e.target.value === "" ? 0 : parseFloat(e.target.value) || 0)}
+                                  onFocus={e => e.currentTarget.select()}
                                   onBlur={e => {
                                     const val = parseFloat(e.target.value) || 0;
                                     saveStockCheck(line.ingredientId, val);
                                   }}
+                                  placeholder="0"
                                   className="w-20 h-7 rounded border border-border bg-background text-right text-sm tabular-nums px-1.5"
                                 />
                                 <span className="text-xs text-muted-foreground">{line.unit}</span>
@@ -1018,9 +1020,11 @@ export default function Orders() {
                             <input
                               type="number"
                               min={0}
-                              value={line.editedPacks}
-                              onChange={e => updatePacks(so.supplier.id, idx, parseInt(e.target.value) || 0)}
+                              value={line.editedPacks === 0 ? "" : line.editedPacks}
+                              onChange={e => updatePacks(so.supplier.id, idx, e.target.value === "" ? 0 : parseInt(e.target.value) || 0)}
+                              onFocus={e => e.currentTarget.select()}
                               disabled={isNonOrderable}
+                              placeholder="0"
                               className="w-16 h-8 rounded border border-border bg-background text-center text-sm tabular-nums disabled:opacity-40"
                             />
                           </td>

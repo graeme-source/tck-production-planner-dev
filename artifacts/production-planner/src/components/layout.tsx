@@ -608,7 +608,7 @@ export function Layout({ children }: { children: ReactNode }) {
       {/* ── Main content ────────────────────────────────────────────────── */}
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">
         <TopBar onOpenMobile={() => setMobileOpen(true)} fallbackTitle={currentPageName} />
-        <div className="flex-1 overflow-y-auto p-4 md:p-8 pb-24 relative">
+        <div className="flex-1 overflow-y-auto p-4 md:p-8 pb-[200px] relative">
           <motion.div
             key={location}
             initial={{ opacity: 0, y: 10 }}

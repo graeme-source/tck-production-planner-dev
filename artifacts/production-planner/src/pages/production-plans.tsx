@@ -244,6 +244,7 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
               min={0}
               value={item.fridgeStock === 0 ? "" : item.fridgeStock}
               onChange={e => onFridgeStockChange(item.id, e.target.value === "" ? 0 : Math.max(0, parseInt(e.target.value, 10) || 0))}
+              onFocus={e => e.currentTarget.select()}
               disabled={saving}
               title={title}
               className={cn(
@@ -282,9 +283,11 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
         <input
           type="number"
           min={0}
-          value={item.batchesTarget}
-          onChange={e => onBatchChange(item.id, Number(e.target.value))}
+          value={item.batchesTarget === 0 ? "" : item.batchesTarget}
+          onChange={e => onBatchChange(item.id, e.target.value === "" ? 0 : Math.max(0, Number(e.target.value) || 0))}
+          onFocus={e => e.currentTarget.select()}
           disabled={!item.included || saving}
+          placeholder="0"
           className="w-16 px-1.5 py-1 bg-background border border-border rounded-lg text-xs text-center focus-ring disabled:opacity-40 tabular-nums"
         />
       </td>
@@ -1239,8 +1242,10 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                 <input
                   type="number"
                   min={0}
-                  value={effectiveTotalBatches}
-                  onChange={e => handleTotalBatchesChange(Math.max(0, Number(e.target.value)))}
+                  value={effectiveTotalBatches === 0 ? "" : effectiveTotalBatches}
+                  onChange={e => handleTotalBatchesChange(e.target.value === "" ? 0 : Math.max(0, Number(e.target.value) || 0))}
+                  onFocus={e => e.currentTarget.select()}
+                  placeholder="0"
                   className="w-16 px-1.5 py-0.5 bg-background border border-border rounded-lg text-sm text-center font-semibold text-foreground focus-ring tabular-nums"
                 />
                 {totalBatchesOverride !== null && totalBatchesOverride !== calcData.totalDailyBatches && (
@@ -2867,8 +2872,10 @@ function AddMacCheeseDialog({ planId, planDate, open, onOpenChange, onSuccess }:
                             <input
                               type="number"
                               min={0}
-                              value={extra}
-                              onChange={e => setExtraOverrides(prev => ({ ...prev, [r.recipeId]: Math.max(0, Number(e.target.value) || 0) }))}
+                              value={extra === 0 ? "" : extra}
+                              onChange={e => setExtraOverrides(prev => ({ ...prev, [r.recipeId]: e.target.value === "" ? 0 : Math.max(0, Number(e.target.value) || 0) }))}
+                              onFocus={e => e.currentTarget.select()}
+                              placeholder="0"
                               className="w-16 px-2 py-1 text-right bg-background border border-border rounded text-sm tabular-nums"
                             />
                           </td>
