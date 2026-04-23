@@ -1483,7 +1483,13 @@ router.get("/stock-checks", async (req, res) => {
     .where(eq(dailyStockChecksTable.checkDate, checkDate));
 
   const stockIngredients = await db
-    .select({ id: ingredientsTable.id, name: ingredientsTable.name, unit: ingredientsTable.unit })
+    .select({
+      id: ingredientsTable.id,
+      name: ingredientsTable.name,
+      unit: ingredientsTable.unit,
+      stockCheckFrequency: ingredientsTable.stockCheckFrequency,
+      stockCheckDay: ingredientsTable.stockCheckDay,
+    })
     .from(ingredientsTable)
     .where(eq(ingredientsTable.stockCheckEnabled, true))
     .orderBy(ingredientsTable.name);
@@ -2679,6 +2685,9 @@ router.get("/:id/prep-requirements", async (req, res) => {
     processingRatio: number | null;
     prepWeightMode: "raw" | "processed";
     rawMeatTrayCapacityKg: number | null;
+    stockCheckEnabled: boolean;
+    stockCheckFrequency: string;
+    stockCheckDay: string | null;
     totalCookedQty: number;
     totalRawQty: number;
     prepQty: number;
@@ -2707,6 +2716,9 @@ router.get("/:id/prep-requirements", async (req, res) => {
           processingRatio: ing.processingRatio,
           prepWeightMode: ing.prepWeightMode,
           rawMeatTrayCapacityKg: ing.rawMeatTrayCapacityKg,
+          stockCheckEnabled: ing.stockCheckEnabled ?? false,
+          stockCheckFrequency: ing.stockCheckFrequency ?? "daily",
+          stockCheckDay: ing.stockCheckDay ?? null,
           totalCookedQty: 0,
           totalRawQty: 0,
           prepQty: 0,
@@ -2741,6 +2753,9 @@ router.get("/:id/prep-requirements", async (req, res) => {
           processingRatio: ing.processingRatio,
           prepWeightMode: ing.prepWeightMode,
           rawMeatTrayCapacityKg: ing.rawMeatTrayCapacityKg,
+          stockCheckEnabled: ing.stockCheckEnabled ?? false,
+          stockCheckFrequency: ing.stockCheckFrequency ?? "daily",
+          stockCheckDay: ing.stockCheckDay ?? null,
           totalCookedQty: 0,
           totalRawQty: 0,
           prepQty: 0,
@@ -5008,6 +5023,19 @@ router.get("/:id/main-prep", async (req, res) => {
     }>;
   }>();
 
+  // Pasta cooking ratios — synthetic rows appended at the end of the prep
+  // sheet showing the cooking water + salt needed, scaled to the total kg
+  // of pasta-flagged ingredients used by the plan. Defaults are sensible
+  // starting points if the admin hasn't tuned them.
+  const pastaSettingsRows = await db
+    .select({ key: appSettingsTable.key, value: appSettingsTable.value })
+    .from(appSettingsTable)
+    .where(inArray(appSettingsTable.key, ["pasta_cooking_water_l_per_kg", "pasta_cooking_salt_g_per_kg"]));
+  const pastaSettingsMap = new Map(pastaSettingsRows.map(r => [r.key, r.value]));
+  const pastaWaterLPerKg = Number(pastaSettingsMap.get("pasta_cooking_water_l_per_kg") ?? 6);
+  const pastaSaltGPerKg = Number(pastaSettingsMap.get("pasta_cooking_salt_g_per_kg") ?? 60);
+  let pastaTotalKg = 0;
+
   // Expanded sub-recipe ingredients: merged across all recipes sharing the sub-recipe
   const expandedIngMap = new Map<string, {
     ingredientId: number;
@@ -5045,6 +5073,8 @@ router.get("/:id/main-prep", async (req, res) => {
         packWeight: ingredientsTable.packWeight,
         isTopping: recipeIngredientsTable.isTopping,
         showInPrep: recipeIngredientsTable.showInPrep,
+        prepCountPerPortion: ingredientsTable.prepCountPerPortion,
+        isPasta: ingredientsTable.isPasta,
       })
       .from(recipeIngredientsTable)
       .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -5097,12 +5127,31 @@ router.get("/:id/main-prep", async (req, res) => {
       const cookedQty = qtyPerPortion * portionsPerBatch * batchesTarget;
       const ratio = row.processingRatio ? Number(row.processingRatio) : null;
       const rawQty = ratio ? cookedQty / ratio : cookedQty;
-      const unit = row.unit ?? "g";
+      const originalUnit = row.unit ?? "g";
       const mode = row.prepWeightMode ?? "raw";
-      const effectiveQty = mode === "processed" ? cookedQty : rawQty;
-      const roundedQty = roundByUnit(effectiveQty, unit);
+      const baseEffectiveQty = mode === "processed" ? cookedQty : rawQty;
+
+      // Pasta accumulator — sum this ingredient's kg contribution whenever
+      // its category is "pasta". Uses the RAW quantity (matches what
+      // actually gets boiled) rather than the processed one.
+      if ((row.category ?? "") === "pasta") {
+        const rawKg = originalUnit === "kg" ? rawQty : originalUnit === "g" ? rawQty / 1000 : 0;
+        pastaTotalKg += rawKg;
+      }
+
+      // Prep-display override — when the ingredient has a count-per-portion,
+      // render on the prep sheet as a piece count (e.g. 48 pigs & blankets)
+      // with unit "pieces". The underlying quantity used for ordering,
+      // stock, and cost lives elsewhere and is unaffected.
+      const portionsTotal = portionsPerBatch * batchesTarget;
+      const useCount = row.prepCountPerPortion != null && row.prepCountPerPortion > 0;
+      const unit = useCount ? "pieces" : originalUnit;
+      const effectiveQty = useCount ? portionsTotal * Number(row.prepCountPerPortion) : baseEffectiveQty;
+      const roundedQty = useCount ? effectiveQty : roundByUnit(effectiveQty, unit);
       if (roundedQty <= 0) continue;
-      const qtyPerTin = tinCount > 0 ? roundByUnit(roundedQty / tinCount, unit) : roundedQty;
+      const qtyPerTin = tinCount > 0
+        ? (useCount ? Math.ceil(roundedQty / tinCount) : roundByUnit(roundedQty / tinCount, unit))
+        : roundedQty;
 
       const existing = ingredientMap.get(row.ingredientId);
       if (existing) {
@@ -5212,6 +5261,9 @@ router.get("/:id/main-prep", async (req, res) => {
               stockCheckFrequency: ingredientsTable.stockCheckFrequency,
               isBottle: ingredientsTable.isBottle,
               bottleSize: ingredientsTable.bottleSize,
+              hideFromPrep: subRecipeIngredientsTable.hideFromPrep,
+              prepCountPerPortion: ingredientsTable.prepCountPerPortion,
+              isPasta: ingredientsTable.isPasta,
             })
             .from(subRecipeIngredientsTable)
             .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -5219,10 +5271,20 @@ router.get("/:id/main-prep", async (req, res) => {
 
           for (const comp of componentRows) {
             if (comp.ingredientId == null) continue;
+            // Hidden components stay in the sub-recipe data (so ratio maths
+            // still scale correctly) but don't appear on the prep sheet.
+            if (comp.hideFromPrep) continue;
             const compQty = Number(comp.quantity) || 0;
             const compUnit = comp.unit ?? "g";
             const rawScaled = compQty * scaleFactor;
             if (rawScaled <= 0) continue;
+            // Pasta coming in via a sub-recipe expansion (e.g. macaroni
+            // inside a cheese-sauce sub-recipe) counts toward the synthetic
+            // cooking-water / salt rows too.
+            if ((comp.category ?? "") === "pasta") {
+              const kg = compUnit === "kg" ? rawScaled : compUnit === "g" ? rawScaled / 1000 : 0;
+              pastaTotalKg += kg;
+            }
             // Use higher-precision rounding for kg/l so small amounts (e.g. a
             // pinch of dried parsley scaled through a sub-recipe) don't round
             // to zero and vanish. Grams/ml already stay as whole numbers.
@@ -5253,6 +5315,74 @@ router.get("/:id/main-prep", async (req, res) => {
               });
             }
           }
+
+          // When the parent sub-recipe is expandInPrep, its NESTED sub-recipe
+          // components (e.g. mac cheese seasoning inside the macaroni cheese
+          // sub-recipe) still need to appear as prep tasks. We add them as
+          // sub-recipe prep items — the team prepares them as their own
+          // batch-of-seasoning, not ingredient-by-ingredient.
+          const nestedRows = await db
+            .select({
+              componentSubRecipeId: subRecipeSubRecipesTable.componentSubRecipeId,
+              quantity: subRecipeSubRecipesTable.quantity,
+              componentName: subRecipesTable.name,
+              componentYieldUnit: subRecipesTable.yieldUnit,
+            })
+            .from(subRecipeSubRecipesTable)
+            .leftJoin(subRecipesTable, eq(subRecipeSubRecipesTable.componentSubRecipeId, subRecipesTable.id))
+            .where(eq(subRecipeSubRecipesTable.subRecipeId, sr.subRecipeId));
+
+          for (const nested of nestedRows) {
+            if (nested.componentSubRecipeId == null) continue;
+            const nestedQtyPerParent = Number(nested.quantity) || 0;
+            const nestedTotalQty = nestedQtyPerParent * scaleFactor;
+            const nestedUnit = nested.componentYieldUnit ?? "kg";
+            const nestedRounded = (nestedUnit === "kg" || nestedUnit === "l")
+              ? Math.round(nestedTotalQty * 1000) / 1000
+              : roundByUnit(nestedTotalQty, nestedUnit);
+            if (nestedRounded <= 0) continue;
+            const nestedTinCount = srTinCount;
+            const nestedQtyPerTin = nestedTinCount > 0
+              ? roundByUnit(nestedRounded / nestedTinCount, nestedUnit)
+              : nestedRounded;
+            const nestedKey = `sr_${nested.componentSubRecipeId}`;
+            const existing = subRecipeMap.get(nestedKey);
+            if (existing) {
+              existing.totalQty += nestedRounded;
+              existing.recipes.push({
+                recipeId: planItem.recipeId!,
+                recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
+                batchesTarget,
+                qtyForRecipe: nestedRounded,
+                tinSize: planItem.tinSize ?? null,
+                maxBatchesPerTin: planItem.maxBatchesPerTin ?? null,
+                tinCount: nestedTinCount,
+                qtyPerTin: nestedQtyPerTin,
+                isOverridden: srIsOverridden,
+                isFillingMix: srIsFillingMix,
+              });
+            } else {
+              subRecipeMap.set(nestedKey, {
+                subRecipeId: nested.componentSubRecipeId,
+                ingredientName: nested.componentName ?? `Sub-recipe #${nested.componentSubRecipeId}`,
+                unit: nestedUnit,
+                totalQty: nestedRounded,
+                recipes: [{
+                  recipeId: planItem.recipeId!,
+                  recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
+                  batchesTarget,
+                  qtyForRecipe: nestedRounded,
+                  tinSize: planItem.tinSize ?? null,
+                  maxBatchesPerTin: planItem.maxBatchesPerTin ?? null,
+                  tinCount: nestedTinCount,
+                  qtyPerTin: nestedQtyPerTin,
+                  isOverridden: srIsOverridden,
+                  isFillingMix: srIsFillingMix,
+                }],
+              });
+            }
+          }
+
           continue; // skip adding to subRecipeMap
         }
 
@@ -5495,8 +5625,64 @@ router.get("/:id/main-prep", async (req, res) => {
     }
   }
 
-  const allItems = [...ingredients, ...subRecipeIngredients]
-    .sort((a, b) => a.ingredientName.localeCompare(b.ingredientName));
+  // Synthetic pasta cooking rows — appended at the end of the prep list.
+  // Virtual entries (negative ingredientIds) so they don't collide with
+  // real ingredients, no stock / ordering / label impact; purely prep
+  // display. Shown on the main_prep station only (cooking the pasta is a
+  // main-prep task, not a prep-bases or prep-meat task).
+  const pastaSyntheticItems: Array<typeof ingredients[number]> = [];
+  if (station === "main_prep" && pastaTotalKg > 0) {
+    const kgRounded = Math.round(pastaTotalKg * 1000) / 1000;
+    const totalWaterL = Math.round(pastaTotalKg * pastaWaterLPerKg * 100) / 100;
+    const totalSaltG = Math.round(pastaTotalKg * pastaSaltGPerKg);
+    const baseEntry = {
+      stockCheckEnabled: false,
+      stockCheckFrequency: "daily",
+      stockCheckDay: null,
+      category: "pasta_cooking" as string | null,
+      isBottle: false,
+      bottleSize: null,
+      isSubRecipe: false,
+      totalTinCount: 0,
+      recipes: [] as Array<{
+        recipeId: number;
+        recipeName: string;
+        batchesTarget: number;
+        qtyForRecipe: number;
+        tinSize: string | null;
+        maxBatchesPerTin: number | null;
+        tinCount: number;
+        qtyPerTin: number;
+        isOverridden?: boolean;
+        isFillingMix?: boolean;
+      }>,
+    };
+    pastaSyntheticItems.push({
+      ...baseEntry,
+      ingredientId: -1,
+      ingredientName: `Pasta cooking water (for ${kgRounded} kg pasta)`,
+      unit: "L",
+      totalQty: totalWaterL,
+    } as unknown as typeof ingredients[number]);
+    pastaSyntheticItems.push({
+      ...baseEntry,
+      ingredientId: -2,
+      ingredientName: `Salt for pasta water (for ${kgRounded} kg pasta)`,
+      unit: "g",
+      totalQty: totalSaltG,
+    } as unknown as typeof ingredients[number]);
+  }
+
+  const allItems = [...ingredients, ...subRecipeIngredients, ...pastaSyntheticItems]
+    .sort((a, b) => {
+      // Keep the synthetic pasta-cooking rows at the bottom; they're not
+      // "weigh out" items, they're a helper note.
+      const aPasta = a.ingredientId < 0;
+      const bPasta = b.ingredientId < 0;
+      if (aPasta && !bPasta) return 1;
+      if (!aPasta && bPasta) return -1;
+      return a.ingredientName.localeCompare(b.ingredientName);
+    });
 
   const completionRows = await db.execute(sql`
     SELECT id, ingredient_id AS "ingredientId", sub_recipe_id AS "subRecipeId",

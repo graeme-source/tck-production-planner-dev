@@ -39,10 +39,11 @@ router.post("/", validate(CreateSubRecipeBody), async (req, res) => {
 
   if (ingredients?.length) {
     await db.insert(subRecipeIngredientsTable).values(
-      ingredients.map((i: { ingredientId: number; quantity: number }) => ({
+      ingredients.map((i: { ingredientId: number; quantity: number; hideFromPrep?: boolean }) => ({
         subRecipeId: subRecipe.id,
         ingredientId: i.ingredientId,
         quantity: String(i.quantity),
+        hideFromPrep: i.hideFromPrep ?? false,
       }))
     );
   }
@@ -75,6 +76,7 @@ router.get("/:id", async (req, res) => {
       quantity: subRecipeIngredientsTable.quantity,
       costPerPack: ingredientsTable.costPerPack,
       packWeight: ingredientsTable.packWeight,
+      hideFromPrep: subRecipeIngredientsTable.hideFromPrep,
     })
     .from(subRecipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -166,10 +168,11 @@ router.put("/:id", validate(UpdateSubRecipeBody), async (req, res) => {
 
   if (ingredients?.length) {
     await db.insert(subRecipeIngredientsTable).values(
-      ingredients.map((i: { ingredientId: number; quantity: number }) => ({
+      ingredients.map((i: { ingredientId: number; quantity: number; hideFromPrep?: boolean }) => ({
         subRecipeId: id,
         ingredientId: i.ingredientId,
         quantity: String(i.quantity),
+        hideFromPrep: i.hideFromPrep ?? false,
       }))
     );
   }

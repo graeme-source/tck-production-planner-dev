@@ -13,6 +13,7 @@ interface SopSummary {
   id: number;
   title: string;
   stations: string[];
+  tags: string[];
   authorName: string | null;
   stepCount: number;
   coverImageStepId: number | null;
@@ -185,12 +186,18 @@ function Library({
   const { state } = useAuth();
   const canEdit = state.status === "authenticated" && (state.user.role === "admin" || state.user.role === "manager");
 
-  const [filter, setFilter] = useState<"current" | "all">(currentStationType ? "current" : "all");
+  // Station filter model — null means "all stations", any real key filters
+  // server-side. When the dialog opens from a station view we default to
+  // that station so the operator sees their relevant SOPs first; otherwise
+  // we default to "all". The user can switch freely regardless of entry
+  // point.
+  const [stationFilter, setStationFilter] = useState<string | null>(currentStationType ?? null);
+  const [tagFilter, setTagFilter] = useState<Set<string>>(new Set());
   const [items, setItems] = useState<SopSummary[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
 
-  const effectiveStationFilter = filter === "current" ? currentStationType ?? null : null;
+  const effectiveStationFilter = stationFilter;
 
   const fetchList = useCallback(async () => {
     setLoading(true);
@@ -276,64 +283,154 @@ function Library({
           </div>
         </div>
 
-        {currentStationType && (
-          <div className="flex items-center gap-1.5 px-5 py-3 border-b border-border flex-shrink-0 text-sm">
-            <Filter className="w-3.5 h-3.5 text-muted-foreground" />
-            <span className="text-muted-foreground mr-1">Show:</span>
-            <div className="inline-flex rounded-lg border border-border bg-background overflow-hidden">
-              <button
-                onClick={() => setFilter("current")}
-                className={cn(
-                  "px-3 py-1.5 text-sm font-medium transition-colors",
-                  filter === "current" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50",
-                )}
-              >
-                {stationLabel(currentStationType)}
-              </button>
-              <button
-                onClick={() => setFilter("all")}
-                className={cn(
-                  "px-3 py-1.5 text-sm font-medium transition-colors border-l border-border",
-                  filter === "all" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50",
-                )}
-              >
-                All stations
-              </button>
+        {(() => {
+          // Station filter options — if we're on a station, that station is
+          // offered as a quick pick alongside "All stations" at the front
+          // of the list. Whichever mode the user is in, they can flip to
+          // any other station via the same row.
+          const seen = new Set<string>();
+          const stationOptions: Array<{ key: string | null; label: string }> = [];
+          stationOptions.push({ key: null, label: "All stations" });
+          if (currentStationType) {
+            stationOptions.push({ key: currentStationType, label: stationLabel(currentStationType) });
+            seen.add(currentStationType);
+          }
+          for (const s of STATIONS) {
+            if (seen.has(s.key)) continue;
+            seen.add(s.key);
+            stationOptions.push({ key: s.key, label: s.label });
+          }
+          for (const k of ["main_prep", "prep_bases", "prep_meat"]) {
+            if (seen.has(k)) continue;
+            seen.add(k);
+            stationOptions.push({ key: k, label: stationLabel(k) });
+          }
+
+          // Tags we've actually seen across the loaded SOPs — the filter
+          // row populates from real usage, so there's nothing to choose
+          // from until the user has created tags via the editor.
+          const allTags = new Set<string>();
+          for (const it of items ?? []) for (const t of it.tags ?? []) allTags.add(t);
+          const tagOptions = Array.from(allTags).sort((a, b) => a.localeCompare(b));
+
+          return (
+            <div className="border-b border-border flex-shrink-0 px-5 py-3 space-y-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <Filter className="w-3.5 h-3.5" />
+                  Station
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {stationOptions.map(opt => {
+                    const active = stationFilter === opt.key;
+                    return (
+                      <button
+                        key={opt.key ?? "__all"}
+                        onClick={() => setStationFilter(opt.key)}
+                        className={cn(
+                          "text-xs px-2.5 py-1 rounded-full border transition-colors",
+                          active
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-background text-muted-foreground border-border hover:text-foreground",
+                        )}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              {tagOptions.length > 0 && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    <Filter className="w-3.5 h-3.5" />
+                    Tags
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {tagOptions.map(t => {
+                      const active = tagFilter.has(t);
+                      return (
+                        <button
+                          key={t}
+                          onClick={() => setTagFilter(prev => {
+                            const next = new Set(prev);
+                            if (next.has(t)) next.delete(t); else next.add(t);
+                            return next;
+                          })}
+                          className={cn(
+                            "text-xs px-2.5 py-1 rounded-full border transition-colors",
+                            active
+                              ? "bg-primary text-primary-foreground border-primary"
+                              : "bg-background text-muted-foreground border-border hover:text-foreground",
+                          )}
+                        >
+                          #{t}
+                        </button>
+                      );
+                    })}
+                    {tagFilter.size > 0 && (
+                      <button
+                        onClick={() => setTagFilter(new Set())}
+                        className="text-xs px-2.5 py-1 rounded-full border border-transparent text-muted-foreground hover:text-foreground"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         <div className="flex-1 overflow-y-auto p-5">
-          {loading && (
-            <div className="flex items-center justify-center py-16 text-muted-foreground">
-              <Loader2 className="w-6 h-6 animate-spin" />
-            </div>
-          )}
-          {!loading && items && items.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-16 text-center">
-              <BookOpen className="w-12 h-12 text-muted-foreground/40 mb-3" />
-              <p className="font-semibold">No SOPs yet</p>
-              <p className="text-sm text-muted-foreground mt-1">
-                {filter === "current" && currentStationType
-                  ? `Nothing is filed against ${stationLabel(currentStationType)} yet.`
-                  : "Tap \u201cNew SOP\u201d to create your first one."}
-              </p>
-            </div>
-          )}
-          {!loading && items && items.length > 0 && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {items.map(item => (
-                <SopCard
-                  key={item.id}
-                  item={item}
-                  canEdit={canEdit}
-                  onOpen={() => onOpenSop(item.id)}
-                  onEdit={() => onEditSop(item.id)}
-                  onDelete={() => handleDelete(item.id)}
-                />
-              ))}
-            </div>
-          )}
+          {(() => {
+            // Tag filter applied client-side (station filter is server-side).
+            // Match mode is AND: SOP must carry every selected tag.
+            const filtered = (items ?? []).filter(it => {
+              if (tagFilter.size === 0) return true;
+              const tset = new Set(it.tags ?? []);
+              for (const t of tagFilter) if (!tset.has(t)) return false;
+              return true;
+            });
+            if (loading) {
+              return (
+                <div className="flex items-center justify-center py-16 text-muted-foreground">
+                  <Loader2 className="w-6 h-6 animate-spin" />
+                </div>
+              );
+            }
+            if (items && filtered.length === 0) {
+              const tagsActive = tagFilter.size > 0;
+              return (
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <BookOpen className="w-12 h-12 text-muted-foreground/40 mb-3" />
+                  <p className="font-semibold">No SOPs yet</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {tagsActive
+                      ? "No SOPs match the selected tags."
+                      : stationFilter
+                        ? `Nothing is filed against ${stationLabel(stationFilter)} yet.`
+                        : "Tap \u201cNew SOP\u201d to create your first one."}
+                  </p>
+                </div>
+              );
+            }
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filtered.map(item => (
+                  <SopCard
+                    key={item.id}
+                    item={item}
+                    canEdit={canEdit}
+                    onOpen={() => onOpenSop(item.id)}
+                    onEdit={() => onEditSop(item.id)}
+                    onDelete={() => handleDelete(item.id)}
+                  />
+                ))}
+              </div>
+            );
+          })()}
         </div>
       </div>
     </motion.div>
@@ -375,16 +472,16 @@ function SopCard({
             by {item.authorName ?? "Unknown"}
           </p>
           {item.stations.length > 0 ? (() => {
-            const tags = displayStationTags(item.stations);
+            const stationChips = displayStationTags(item.stations);
             return (
               <div className="flex flex-wrap gap-1 mt-1.5">
-                {tags.slice(0, 3).map(t => (
+                {stationChips.slice(0, 3).map(t => (
                   <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground">
                     {t}
                   </span>
                 ))}
-                {tags.length > 3 && (
-                  <span className="text-[10px] text-muted-foreground">+{tags.length - 3}</span>
+                {stationChips.length > 3 && (
+                  <span className="text-[10px] text-muted-foreground">+{stationChips.length - 3}</span>
                 )}
               </div>
             );
@@ -392,6 +489,18 @@ function SopCard({
             <span className="text-[10px] px-1.5 py-0.5 mt-1.5 inline-block rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
               All stations
             </span>
+          )}
+          {item.tags && item.tags.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1">
+              {item.tags.slice(0, 4).map(t => (
+                <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                  #{t}
+                </span>
+              ))}
+              {item.tags.length > 4 && (
+                <span className="text-[10px] text-muted-foreground">+{item.tags.length - 4}</span>
+              )}
+            </div>
           )}
         </div>
         {canEdit && (
@@ -603,6 +712,8 @@ function Editor({
   // maps to two real station keys). Saved to the server as the flat list
   // of real keys via pickerIdsToRealKeys.
   const [pickerIds, setPickerIds] = useState<Set<string>>(new Set());
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagDraft, setTagDraft] = useState("");
 
   const fetchDetail = useCallback(async () => {
     try {
@@ -612,6 +723,7 @@ function Editor({
       setSop(data);
       setTitle(data.title);
       setPickerIds(realKeysToPickerIds(data.stations));
+      setTags(data.tags ?? []);
     } catch (err) {
       toast({ title: "Failed to load", description: String(err), variant: "destructive" });
     }
@@ -622,7 +734,7 @@ function Editor({
     fetchDetail().finally(() => setLoading(false));
   }, [fetchDetail]);
 
-  const saveMeta = async (next: { title?: string; stations?: string[] }) => {
+  const saveMeta = async (next: { title?: string; stations?: string[]; tags?: string[] }) => {
     try {
       await fetch(`/api/standards/${sopId}`, {
         method: "PUT",
@@ -640,6 +752,26 @@ function Editor({
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       saveMeta({ stations: pickerIdsToRealKeys(next) });
+      return next;
+    });
+  };
+
+  const addTag = (raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    setTags(prev => {
+      if (prev.some(t => t.toLowerCase() === trimmed.toLowerCase())) return prev;
+      const next = [...prev, trimmed];
+      saveMeta({ tags: next });
+      return next;
+    });
+    setTagDraft("");
+  };
+
+  const removeTag = (tag: string) => {
+    setTags(prev => {
+      const next = prev.filter(t => t !== tag);
+      saveMeta({ tags: next });
       return next;
     });
   };
@@ -752,6 +884,47 @@ function Editor({
                         </button>
                       );
                     })}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium block mb-1.5">Tags</label>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Free-form labels for grouping. Type a tag and press Enter to add it.
+                    Use them for things like <em>rotation</em>, <em>safety</em>, or <em>changeover</em>.
+                  </p>
+                  <div className="flex flex-wrap gap-1.5 items-center">
+                    {tags.map(t => (
+                      <span
+                        key={t}
+                        className="text-xs px-2.5 py-1 rounded-full border border-amber-300 bg-amber-50 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-800 flex items-center gap-1"
+                      >
+                        #{t}
+                        <button
+                          type="button"
+                          onClick={() => removeTag(t)}
+                          className="text-amber-700 hover:text-amber-900 dark:text-amber-300"
+                          title="Remove tag"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                    <input
+                      type="text"
+                      value={tagDraft}
+                      onChange={e => setTagDraft(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter" || e.key === ",") {
+                          e.preventDefault();
+                          addTag(tagDraft);
+                        } else if (e.key === "Backspace" && tagDraft === "" && tags.length > 0) {
+                          removeTag(tags[tags.length - 1]);
+                        }
+                      }}
+                      onBlur={() => { if (tagDraft.trim()) addTag(tagDraft); }}
+                      placeholder={tags.length === 0 ? "Add a tag…" : ""}
+                      className="flex-1 min-w-[120px] text-xs px-2.5 py-1 bg-background border border-border rounded-full focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
                   </div>
                 </div>
               </div>

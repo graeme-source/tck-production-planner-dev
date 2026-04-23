@@ -12,7 +12,7 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { BreakTracker } from "../shared/break-tracker";
-import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtQty, toastDraftBlocked } from "../shared/prep-helpers";
+import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtQty, toastDraftBlocked, StockCheckStatusPanel } from "../shared/prep-helpers";
 import type { NextActivePlan } from "../shared/prep-helpers";
 import { PrepSubNav } from "./prep-hub";
 import { useMainPrepData } from "./main-prep-station";
@@ -789,6 +789,8 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
       <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
 
       <PrepSubNav planId={plan.id} current="prep_bases" />
+
+      <StockCheckStatusPanel checkDate={nextPlan?.planDate ?? plan.planDate} />
 
       {/* Sauce progress bar (excludes Tomato Base which tracks via sub-recipe) */}
       <div className="bg-card border border-border rounded-xl p-4">

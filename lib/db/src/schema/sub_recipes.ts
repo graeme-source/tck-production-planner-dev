@@ -22,6 +22,12 @@ export const subRecipeIngredientsTable = pgTable("sub_recipe_ingredients", {
   subRecipeId: integer("sub_recipe_id").notNull().references(() => subRecipesTable.id, { onDelete: "cascade" }),
   ingredientId: integer("ingredient_id").notNull().references(() => ingredientsTable.id, { onDelete: "restrict" }),
   quantity: numeric("quantity", { precision: 10, scale: 4 }).notNull(),
+  // When true, this component is kept in the sub-recipe for ratio math
+  // but hidden from the prep-station expansion. Used for things like the
+  // "absorbed" water in a pasta sub-recipe: we need the quantity to scale
+  // the other ingredients correctly, but the prep team shouldn't see it
+  // as an item to weigh out.
+  hideFromPrep: boolean("hide_from_prep").notNull().default(false),
 });
 
 export const subRecipeSubRecipesTable = pgTable("sub_recipe_sub_recipes", {

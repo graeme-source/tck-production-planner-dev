@@ -36,6 +36,7 @@ interface SopRow {
   id: number;
   title: string;
   stations: string[] | null;
+  tags: string[] | null;
   author_id: number | null;
   created_at: Date;
   updated_at: Date;
@@ -49,6 +50,7 @@ function shapeSop(row: SopRow) {
     id: row.id,
     title: row.title,
     stations: row.stations ?? [],
+    tags: row.tags ?? [],
     authorId: row.author_id,
     authorName: row.author_name,
     createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
@@ -64,7 +66,7 @@ router.get("/", requireAuth, async (req, res) => {
     const station = typeof req.query.station === "string" ? req.query.station : null;
     const rows = station
       ? await db.execute<SopRow>(sql`
-          SELECT s.id, s.title, s.stations, s.author_id, s.created_at, s.updated_at,
+          SELECT s.id, s.title, s.stations, s.tags, s.author_id, s.created_at, s.updated_at,
                  u.name AS author_name,
                  (SELECT COUNT(*)::int FROM sop_steps st WHERE st.sop_id = s.id) AS step_count,
                  (SELECT st.id FROM sop_steps st WHERE st.sop_id = s.id AND st.image_mime IS NOT NULL ORDER BY st.position ASC LIMIT 1) AS first_image_step_id
@@ -74,7 +76,7 @@ router.get("/", requireAuth, async (req, res) => {
           ORDER BY s.updated_at DESC
         `)
       : await db.execute<SopRow>(sql`
-          SELECT s.id, s.title, s.stations, s.author_id, s.created_at, s.updated_at,
+          SELECT s.id, s.title, s.stations, s.tags, s.author_id, s.created_at, s.updated_at,
                  u.name AS author_name,
                  (SELECT COUNT(*)::int FROM sop_steps st WHERE st.sop_id = s.id) AS step_count,
                  (SELECT st.id FROM sop_steps st WHERE st.sop_id = s.id AND st.image_mime IS NOT NULL ORDER BY st.position ASC LIMIT 1) AS first_image_step_id
@@ -106,7 +108,7 @@ router.get("/:id", requireAuth, async (req, res) => {
     return;
   }
   const sopRows = await db.execute<SopRow>(sql`
-    SELECT s.id, s.title, s.stations, s.author_id, s.created_at, s.updated_at,
+    SELECT s.id, s.title, s.stations, s.tags, s.author_id, s.created_at, s.updated_at,
            u.name AS author_name,
            (SELECT COUNT(*)::int FROM sop_steps st WHERE st.sop_id = s.id) AS step_count,
            (SELECT st.id FROM sop_steps st WHERE st.sop_id = s.id AND st.image_mime IS NOT NULL ORDER BY st.position ASC LIMIT 1) AS first_image_step_id
@@ -135,21 +137,48 @@ router.get("/:id", requireAuth, async (req, res) => {
   res.json({ ...shapeSop(sop), steps });
 });
 
+// Build a PostgreSQL array literal for a list of free-form strings.
+// Values that contain whitespace, commas, or quotes are double-quoted
+// with inner quotes/backslashes escaped. Tags can legitimately contain
+// spaces ("Stop rotation") so we can't rely on the no-quoting-needed
+// shortcut used for station keys.
+function arrayLiteral(values: string[]): string {
+  if (values.length === 0) return "{}";
+  const quoted = values.map(v => {
+    if (/^[A-Za-z0-9_]+$/.test(v)) return v;
+    const esc = v.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    return `"${esc}"`;
+  });
+  return `{${quoted.join(",")}}`;
+}
+
+function parseTagList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const cleaned: string[] = [];
+  const seen = new Set<string>();
+  for (const value of raw) {
+    const trimmed = String(value).trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    cleaned.push(trimmed);
+  }
+  return cleaned;
+}
+
 // Create empty SOP.
 router.post("/", requireAuth, requireEditor, async (req, res) => {
   try {
     const title = String(req.body?.title ?? "").trim();
     const stationsRaw = req.body?.stations;
     const stations: string[] = Array.isArray(stationsRaw) ? stationsRaw.map(s => String(s)).filter(Boolean) : [];
-    // Build an explicit PostgreSQL array literal — passing a JS array
-    // through drizzle's parameter binding coerces to a string, which then
-    // fails the ::text[] cast. Construct the literal ourselves (values
-    // are station keys which are alphanumeric + underscore, no quoting
-    // needed).
-    const stationLiteral = `{${stations.join(",")}}`;
+    const tags = parseTagList(req.body?.tags);
+    const stationLiteral = arrayLiteral(stations);
+    const tagsLiteral = arrayLiteral(tags);
     const result = await db.execute<{ id: number }>(sql`
-      INSERT INTO standards_sops (title, stations, author_id)
-      VALUES (${title}, ${stationLiteral}::text[], ${req.session.userId ?? null})
+      INSERT INTO standards_sops (title, stations, tags, author_id)
+      VALUES (${title}, ${stationLiteral}::text[], ${tagsLiteral}::text[], ${req.session.userId ?? null})
       RETURNING id
     `);
     const inserted = ((result.rows ?? result) as { id: number }[])[0];
@@ -170,12 +199,17 @@ router.put("/:id", requireAuth, requireEditor, async (req, res) => {
   const title = typeof req.body?.title === "string" ? req.body.title : null;
   const stationsRaw = req.body?.stations;
   const stations: string[] | null = Array.isArray(stationsRaw) ? stationsRaw.map(s => String(s)).filter(Boolean) : null;
+  const tags: string[] | null = Array.isArray(req.body?.tags) ? parseTagList(req.body.tags) : null;
   if (title !== null) {
     await db.execute(sql`UPDATE standards_sops SET title = ${title}, updated_at = NOW() WHERE id = ${id}`);
   }
   if (stations !== null) {
-    const stationLiteral = `{${stations.join(",")}}`;
+    const stationLiteral = arrayLiteral(stations);
     await db.execute(sql`UPDATE standards_sops SET stations = ${stationLiteral}::text[], updated_at = NOW() WHERE id = ${id}`);
+  }
+  if (tags !== null) {
+    const tagsLiteral = arrayLiteral(tags);
+    await db.execute(sql`UPDATE standards_sops SET tags = ${tagsLiteral}::text[], updated_at = NOW() WHERE id = ${id}`);
   }
   res.json({ ok: true });
 });

@@ -394,6 +394,7 @@ const INGREDIENT_CATEGORIES = [
   { value: "sauce", label: "Sauce" },
   { value: "cheese", label: "Cheese" },
   { value: "seasoning", label: "Seasoning/Spice" },
+  { value: "pasta", label: "Pasta" },
   { value: "dough", label: "Dough" },
   { value: "packaging", label: "Packaging" },
   { value: "other", label: "Other" },
@@ -440,6 +441,11 @@ const schema = z.object({
     (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
     z.number().min(0).nullable().optional()
   ),
+  prepCountPerPortion: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().int().positive().nullable().optional()
+  ),
+  isPasta: z.boolean().optional(),
   stockCheckEnabled: z.boolean().optional(),
   stockCheckFrequency: z.enum(["daily", "weekly"]).optional(),
   stockCheckDay: z.string().optional(),
@@ -478,7 +484,7 @@ type FormValues = z.infer<typeof schema>;
 const emptyDefaults: FormValues = {
   name: "", unit: "kg", packWeight: 0, costPerPack: 0,
   brand: "", supplierPartNumber: "", supplierId: 0, secondarySupplierId: 0,
-  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null, estimatedCookTimeMin: null, ovenTempC: null, steamPct: null, isBottle: false, bottleSize: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "", surplusPercent: 10, surplusMode: "percent" as const, surplusAbsoluteQty: null, shelfLifeDays: null, kanbanEnabled: false, kanbanQuantity: 0, kanbanUnit: "weight" as const, kanbanOrderAmount: null,
+  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null, estimatedCookTimeMin: null, ovenTempC: null, steamPct: null, isBottle: false, bottleSize: null, prepCountPerPortion: null, isPasta: false, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "", surplusPercent: 10, surplusMode: "percent" as const, surplusAbsoluteQty: null, shelfLifeDays: null, kanbanEnabled: false, kanbanQuantity: 0, kanbanUnit: "weight" as const, kanbanOrderAmount: null,
   energyKj: null, energyKcal: null, fat: null, saturates: null, carbohydrate: null, sugars: null, protein: null, fibre: null, salt: null, labelDeclaration: "", allergens: [],
 };
 
@@ -571,6 +577,8 @@ export default function Ingredients() {
       category: item.category ?? "",
       isBottle: (item as Record<string, unknown>).isBottle as boolean ?? false,
       bottleSize: (item as Record<string, unknown>).bottleSize != null ? Number((item as Record<string, unknown>).bottleSize) : null,
+      prepCountPerPortion: (item as Record<string, unknown>).prepCountPerPortion != null ? Number((item as Record<string, unknown>).prepCountPerPortion) : null,
+      isPasta: (item as Record<string, unknown>).isPasta as boolean ?? false,
       stockCheckEnabled: item.stockCheckEnabled ?? false,
       stockCheckFrequency: (item.stockCheckFrequency as "daily" | "weekly") ?? "daily",
       stockCheckDay: item.stockCheckDay ?? "",
@@ -617,6 +625,8 @@ export default function Ingredients() {
     steamPct: data.steamPct ?? null,
     isBottle: data.isBottle ?? false,
     bottleSize: data.isBottle ? (data.bottleSize ?? null) : null,
+    prepCountPerPortion: data.prepCountPerPortion ?? null,
+    isPasta: data.isPasta ?? false,
     stockCheckEnabled: data.stockCheckEnabled ?? false,
     stockCheckFrequency: data.stockCheckFrequency ?? "daily",
     stockCheckDay: data.stockCheckFrequency === "weekly" ? (data.stockCheckDay || null) : null,
@@ -820,6 +830,30 @@ export default function Ingredients() {
               <p className="text-xs text-muted-foreground mt-1">
                 Used to filter ingredients by prep station (Raw Meat, Vegetables, Bases).
               </p>
+            </div>
+
+            <div className="bg-secondary/30 rounded-lg px-4 py-3">
+              <label className="text-sm font-medium mb-1 block">
+                Prep count per portion
+                <span className="ml-2 text-xs font-normal text-muted-foreground">(optional)</span>
+              </label>
+              <div className="relative max-w-[160px]">
+                <input
+                  type="number"
+                  step="1"
+                  min="1"
+                  {...register("prepCountPerPortion")}
+                  className="w-full px-3 pr-14 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  placeholder="e.g. 1"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-xs pointer-events-none">pieces</span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                When set, the prep station shows this ingredient as a count of pieces
+                (portions × this number) instead of kg. The recipe quantity stays in
+                kg for ordering, stock, and labelling. Leave blank for normal weight-based prep.
+              </p>
+              {errors.prepCountPerPortion && <span className="text-destructive text-xs">{String(errors.prepCountPerPortion.message)}</span>}
             </div>
 
             {showRawMeatTray && (

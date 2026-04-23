@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { BreakTracker } from "../shared/break-tracker";
-import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtQty, toastDraftBlocked } from "../shared/prep-helpers";
+import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtQty, toastDraftBlocked, StockCheckStatusPanel } from "../shared/prep-helpers";
 import type { NextActivePlan } from "../shared/prep-helpers";
 import { PrepSubNav } from "./prep-hub";
 
@@ -419,6 +419,15 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
     );
   }
 
+  // Stock-check items that have all tins done but no value saved yet. The
+  // forced modal (below) appears whenever this list is non-empty so the
+  // operator can't walk away from prep without lodging a record.
+  const pendingStockChecks = ingredients.filter(ing => {
+    const s = ingredientDoneStatus(ing);
+    return stockCheckActiveToday(ing) && s.allTinsDone && !s.stockSaved;
+  });
+  const activeStockCheckModalIng = pendingStockChecks[0] ?? null;
+
   return (
     <div className="space-y-4">
       {isDraft && nextPlan?.planId != null && nextPlan?.planDate && (
@@ -436,6 +445,22 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
       />
 
       <PrepSubNav planId={plan.id} current="main_prep" />
+
+      <StockCheckStatusPanel checkDate={checkDate} />
+
+      {activeStockCheckModalIng && (
+        <ForceStockCheckModal
+          ingredient={activeStockCheckModalIng}
+          value={stockValues[activeStockCheckModalIng.ingredientId] ?? ""}
+          saving={!!savingStock[activeStockCheckModalIng.ingredientId]}
+          onChange={v => {
+            dirtyStockIds.current.add(activeStockCheckModalIng.ingredientId);
+            setStockValues(prev => ({ ...prev, [activeStockCheckModalIng.ingredientId]: v }));
+          }}
+          onSave={() => saveStockCheck(activeStockCheckModalIng.ingredientId)}
+          remainingCount={pendingStockChecks.length}
+        />
+      )}
 
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
@@ -959,3 +984,82 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
     </div>
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// ForceStockCheckModal — blocking modal shown when any ingredient has all
+// its tins done but no stock value recorded. No backdrop click, no escape,
+// no close button. Operator must enter a value before anything else happens.
+// ─────────────────────────────────────────────────────────────────────────
+function ForceStockCheckModal({
+  ingredient,
+  value,
+  saving,
+  onChange,
+  onSave,
+  remainingCount,
+}: {
+  ingredient: MainPrepIngredient;
+  value: string;
+  saving: boolean;
+  onChange: (v: string) => void;
+  onSave: () => void;
+  remainingCount: number;
+}) {
+  const canSave = value !== "" && !isNaN(Number(value)) && !saving;
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4">
+      <div className="bg-card border-2 border-blue-500 rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center flex-shrink-0">
+            <Package className="w-5 h-5 text-blue-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="font-display font-bold text-xl">Stock check required</h2>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Prep of <span className="font-semibold text-foreground">{ingredient.ingredientName}</span> is done.
+              Record what&rsquo;s left in stock before moving on.
+            </p>
+            {remainingCount > 1 && (
+              <p className="text-xs text-amber-600 mt-1.5 font-medium">
+                +{remainingCount - 1} more stock check{remainingCount - 1 === 1 ? "" : "s"} waiting after this one.
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Remaining {ingredient.ingredientName.toLowerCase()}</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              autoFocus
+              value={value}
+              onChange={e => onChange(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter" && canSave) onSave(); }}
+              placeholder="0"
+              className="flex-1 px-4 py-3 bg-background border-2 border-blue-300 dark:border-blue-700 rounded-lg text-lg font-semibold text-right focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+            <span className="text-base font-semibold text-muted-foreground min-w-[3rem]">{ingredient.unit}</span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Enter <span className="font-semibold">0</span> if there&rsquo;s nothing left — this is still a valid record.
+          </p>
+        </div>
+        <button
+          onClick={onSave}
+          disabled={!canSave}
+          className={cn(
+            "w-full py-3 rounded-xl text-base font-bold transition-colors",
+            canSave
+              ? "bg-blue-600 text-white hover:bg-blue-700 active:scale-95"
+              : "bg-blue-200 text-blue-400 cursor-not-allowed dark:bg-blue-900/30 dark:text-blue-600",
+          )}
+        >
+          {saving ? <span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Saving…</span> : "Save stock check"}
+        </button>
+      </div>
+    </div>
+  );
+}
+

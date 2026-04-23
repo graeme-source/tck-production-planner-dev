@@ -202,6 +202,8 @@ export const ListIngredientsResponseItem = zod.object({
     ),
   kanbanEnabled: zod.boolean().optional(),
   kanbanQuantity: zod.number().optional(),
+  prepCountPerPortion: zod.number().int().nullish(),
+  isPasta: zod.boolean().optional(),
   createdAt: zod.string(),
 });
 export const ListIngredientsResponse = zod.array(ListIngredientsResponseItem);
@@ -261,6 +263,8 @@ export const GetIngredientResponse = zod.object({
     ),
   kanbanEnabled: zod.boolean().optional(),
   kanbanQuantity: zod.number().optional(),
+  prepCountPerPortion: zod.number().int().nullish(),
+  isPasta: zod.boolean().optional(),
   createdAt: zod.string(),
 });
 
@@ -316,6 +320,8 @@ export const UpdateIngredientResponse = zod.object({
     ),
   kanbanEnabled: zod.boolean().optional(),
   kanbanQuantity: zod.number().optional(),
+  prepCountPerPortion: zod.number().int().nullish(),
+  isPasta: zod.boolean().optional(),
   createdAt: zod.string(),
 });
 
@@ -360,6 +366,7 @@ export const CreateSubRecipeBody = zod.object({
     zod.object({
       ingredientId: zod.number(),
       quantity: zod.number(),
+      hideFromPrep: zod.boolean().optional(),
     }),
   ),
   subRecipeComponents: zod
@@ -406,6 +413,7 @@ export const GetSubRecipeResponse = zod
           processingRatio: zod.number().nullish(),
           costPerPack: zod.number().nullish(),
           packWeight: zod.number().nullish(),
+          hideFromPrep: zod.boolean().optional(),
         }),
       ),
       subRecipeComponents: zod.array(
@@ -448,6 +456,7 @@ export const UpdateSubRecipeBody = zod.object({
     zod.object({
       ingredientId: zod.number(),
       quantity: zod.number(),
+      hideFromPrep: zod.boolean().optional(),
     }),
   ),
   subRecipeComponents: zod

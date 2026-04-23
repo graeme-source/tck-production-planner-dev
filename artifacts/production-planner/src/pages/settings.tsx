@@ -819,6 +819,7 @@ export default function Settings() {
               {user?.role === "admin" && <ProductionExtrasSection />}
               {user?.role === "admin" && <WeightChillSettingsSection />}
               {user?.role === "admin" && <ExtraTomatoBaseSection />}
+              {user?.role === "admin" && <PastaCookingSection />}
               {user?.role === "admin" && <BreakDefaultsSection />}
               {user?.role === "admin" && <ApcServiceCodesSection />}
             </div>
@@ -2394,6 +2395,105 @@ function BuildingTimerSection() {
             className="w-32 px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 tabular-nums"
           />
           <span className="text-sm text-muted-foreground">minutes</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PastaCookingSection() {
+  const [waterLPerKg, setWaterLPerKg] = useState<string>("6");
+  const [saltGPerKg, setSaltGPerKg] = useState<string>("60");
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/app-settings/pasta_cooking_water_l_per_kg", { credentials: "include" })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d?.value) setWaterLPerKg(d.value); }),
+      fetch("/api/app-settings/pasta_cooking_salt_g_per_kg", { credentials: "include" })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d?.value) setSaltGPerKg(d.value); }),
+    ]);
+  }, []);
+
+  const handleSave = async () => {
+    const w = Number(waterLPerKg);
+    const s = Number(saltGPerKg);
+    if (!(w >= 0) || !(s >= 0)) return;
+    setSaving(true);
+    try {
+      const [r1, r2] = await Promise.all([
+        fetch("/api/app-settings/pasta_cooking_water_l_per_kg", {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ value: String(w) }),
+        }),
+        fetch("/api/app-settings/pasta_cooking_salt_g_per_kg", {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ value: String(s) }),
+        }),
+      ]);
+      if (!r1.ok || !r2.ok) throw new Error("Failed to save");
+      setSavedMsg("Saved");
+      setTimeout(() => setSavedMsg(null), 2000);
+    } catch {
+      setSavedMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <UtensilsCrossed className="w-4 h-4 text-primary" /> Pasta Cooking
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Water and salt ratios per kg of pasta. Whenever a recipe uses an ingredient marked
+            as &ldquo;Pasta type&rdquo;, the prep sheet appends a synthetic cooking water + salt row
+            scaled by the plan&rsquo;s total pasta weight. Doesn&rsquo;t affect ordering, stock, or label weight.
+          </p>
+        </div>
+        {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
+      </div>
+      <div className="rounded-2xl border border-border bg-card p-5">
+        <div className="flex flex-wrap items-center gap-6">
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-medium w-36">Water per kg</label>
+            <input
+              type="number"
+              min="0"
+              step="0.1"
+              value={waterLPerKg}
+              onChange={e => setWaterLPerKg(e.target.value)}
+              className="w-24 px-3 py-2 border border-border rounded-lg text-sm text-right"
+            />
+            <span className="text-sm text-muted-foreground">L / kg pasta</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-medium w-36">Salt per kg</label>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={saltGPerKg}
+              onChange={e => setSaltGPerKg(e.target.value)}
+              className="w-24 px-3 py-2 border border-border rounded-lg text-sm text-right"
+            />
+            <span className="text-sm text-muted-foreground">g / kg pasta</span>
+          </div>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="ml-auto px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 disabled:opacity-60"
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
         </div>
       </div>
     </div>

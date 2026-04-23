@@ -26,6 +26,7 @@ const schema = z.object({
   ingredients: z.array(z.object({
     ingredientId: z.coerce.number().min(1, "Select an ingredient"),
     quantity: z.coerce.number().min(0.001, "Must be > 0"),
+    hideFromPrep: z.boolean().optional(),
   })).min(0),
   subRecipeComponents: z.array(z.object({
     componentSubRecipeId: z.coerce.number().min(1, "Select a sub-recipe"),
@@ -573,6 +574,17 @@ function SubRecipeForm({
                       Processing ratio: {(ratio * 100).toFixed(2)}% — yield adjusted from raw input
                     </div>
                   )}
+                  <label className="ml-1 mt-1 inline-flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      {...register(`ingredients.${index}.hideFromPrep`)}
+                      className="rounded border-border"
+                    />
+                    <span>Hide from prep sheet</span>
+                    <span className="text-[10px] text-muted-foreground/80">
+                      (keeps the quantity for ratio maths; doesn&rsquo;t show for prep)
+                    </span>
+                  </label>
                 </div>
               );
             })}
@@ -770,6 +782,7 @@ function EditSubRecipeDialog({
         ingredients: (detail.ingredients ?? []).map(i => ({
           ingredientId: i.ingredientId,
           quantity: Number(i.quantity),
+          hideFromPrep: (i as Record<string, unknown>).hideFromPrep === true,
         })),
         subRecipeComponents: (detail.subRecipeComponents ?? []).map(c => ({
           componentSubRecipeId: c.componentSubRecipeId,

@@ -15,42 +15,12 @@ interface MarinadeRef {
   }>;
 }
 
-const PROTECTED_MARINADES: MarinadeRef[] = [
-  {
-    recipeName: "Carnizone",
-    ingredientMarinades: [
-      {
-        ingredientName: "Chicken Seasoning Mix",
-        marinatesIngredientName: "Diced Chicken fillet",
-        quantity: 0.002,
-      },
-    ],
-    subRecipeMarinades: [
-      {
-        subRecipeName: "Beef Seasoning",
-        marinatesIngredientName: "Minced Beef",
-        quantity: 0.003,
-      },
-    ],
-  },
-  {
-    recipeName: "BBQ Pulled Pork",
-    ingredientMarinades: [
-      {
-        ingredientName: "BBQ Sauce (lion sticky)",
-        marinatesIngredientName: "Pork",
-        quantity: 0.006,
-      },
-    ],
-    subRecipeMarinades: [
-      {
-        subRecipeName: "Pork Rub",
-        marinatesIngredientName: "Pork",
-        quantity: 0.001,
-      },
-    ],
-  },
-];
+// Marinade protection retired — it was silently overriding admin edits on
+// every server restart, which caused the Carnizone chicken-seasoning link
+// to keep reverting. Recipe ingredient links are now managed entirely
+// through the recipe editor; if seed data is needed for a fresh DB, do
+// it in a one-shot migration, not a recurring startup guard.
+const PROTECTED_MARINADES: MarinadeRef[] = [];
 
 export async function guardMarinadeSettings(): Promise<void> {
   for (const ref of PROTECTED_MARINADES) {

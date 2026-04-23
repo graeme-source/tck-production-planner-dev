@@ -552,6 +552,10 @@ async function runStartupMigrations() {
       )
     `);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS standards_sops_updated_at_idx ON standards_sops (updated_at DESC)`);
+    // Free-form tags column alongside station tags, so SOPs can be
+    // categorised by things like "rotation", "safety", "changeover"
+    // without polluting the workstation list.
+    await db.execute(sql`ALTER TABLE standards_sops ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}'`);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS sop_steps (
         id SERIAL PRIMARY KEY,
@@ -608,6 +612,33 @@ async function runStartupMigrations() {
     `);
     await db.execute(sql`
       ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS bottle_size NUMERIC(10,4)
+    `);
+    // Prep-only display override for count-style ingredients (e.g. pigs &
+    // blankets shown as individual sausages rather than kg). See the
+    // column comment in lib/db/src/schema/ingredients.ts.
+    await db.execute(sql`
+      ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS prep_count_per_portion INTEGER
+    `);
+    // Pasta-type flag — drives the synthetic pasta-cooking prep rows.
+    await db.execute(sql`
+      ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS is_pasta BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+    // Hide a sub-recipe component from the prep-station expansion while
+    // keeping it in the data for ratio/cost maths.
+    await db.execute(sql`
+      ALTER TABLE sub_recipe_ingredients ADD COLUMN IF NOT EXISTS hide_from_prep BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+    // Seed the pasta-cooking admin settings (water L per kg, salt g per kg).
+    // Defaults are sensible starting points — admins adjust in Settings.
+    await db.execute(sql`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES ('pasta_cooking_water_l_per_kg', '6', NOW())
+      ON CONFLICT (key) DO NOTHING
+    `);
+    await db.execute(sql`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES ('pasta_cooking_salt_g_per_kg', '60', NOW())
+      ON CONFLICT (key) DO NOTHING
     `);
 
     // P&L estimation dashboard tables

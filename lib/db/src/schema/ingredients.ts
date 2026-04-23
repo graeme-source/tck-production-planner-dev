@@ -50,6 +50,18 @@ export const ingredientsTable = pgTable("ingredients", {
   qrCodeUrl: text("qr_code_url"),
   isBottle: boolean("is_bottle").notNull().default(false),
   bottleSize: numeric("bottle_size", { precision: 10, scale: 4 }),
+  // Display override for the prep station — when set, the quantity shown on
+  // the prep sheet becomes portions × count with unit "pieces", instead of
+  // the normal kg/g. Used for things like pigs & blankets (1 per portion).
+  // The recipe's underlying kg quantity is unchanged — orders, stock,
+  // labelling, raw-material maths all still use the original weight.
+  prepCountPerPortion: integer("prep_count_per_portion"),
+  // Marks the ingredient as a pasta-type product. When true, its weight
+  // contributes to the plan-level pasta-cooking synthetic rows (cooking
+  // water + salt) driven by the admin settings pasta_cooking_water_l_per_kg
+  // and pasta_cooking_salt_g_per_kg. Purely a prep-display mechanism; no
+  // impact on ordering, stock, or label weight.
+  isPasta: boolean("is_pasta").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

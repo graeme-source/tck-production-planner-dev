@@ -42,6 +42,8 @@ function mapRow(r: typeof ingredientsTable.$inferSelect) {
     labelDeclaration: r.labelDeclaration ?? null,
     isBottle: r.isBottle ?? false,
     bottleSize: r.bottleSize != null ? Number(r.bottleSize) : null,
+    prepCountPerPortion: (r as unknown as { prepCountPerPortion?: number | null }).prepCountPerPortion ?? null,
+    isPasta: (r as unknown as { isPasta?: boolean }).isPasta ?? false,
     allergens: (r.allergens as string[] | null) ?? [],
     createdAt: r.createdAt.toISOString(),
   };
@@ -91,7 +93,7 @@ function validateProcessingRatio(value: unknown): string | null {
 }
 
 router.post("/", validate(CreateIngredientBody), async (req, res) => {
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, prepCountPerPortion, isPasta, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const [row] = await db.insert(ingredientsTable).values({
@@ -115,6 +117,8 @@ router.post("/", validate(CreateIngredientBody), async (req, res) => {
     steamPct: steamPct != null ? Number(steamPct) : null,
     isBottle: isBottle ?? false,
     bottleSize: bottleSize != null ? String(bottleSize) : null,
+    prepCountPerPortion: prepCountPerPortion != null ? Number(prepCountPerPortion) : null,
+    isPasta: isPasta ?? false,
     stockCheckEnabled: stockCheckEnabled ?? false,
     stockCheckFrequency: stockCheckFrequency ?? "daily",
     stockCheckDay: stockCheckDay || null,
@@ -211,7 +215,7 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, prepCountPerPortion, isPasta, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const [row] = await db.update(ingredientsTable).set({
@@ -235,6 +239,8 @@ router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
     steamPct: steamPct != null ? Number(steamPct) : null,
     ...(isBottle !== undefined ? { isBottle } : {}),
     ...(bottleSize !== undefined ? { bottleSize: bottleSize != null ? String(bottleSize) : null } : {}),
+    ...(prepCountPerPortion !== undefined ? { prepCountPerPortion: prepCountPerPortion != null ? Number(prepCountPerPortion) : null } : {}),
+    ...(isPasta !== undefined ? { isPasta } : {}),
     ...(stockCheckEnabled !== undefined ? { stockCheckEnabled } : {}),
     ...(stockCheckFrequency !== undefined ? { stockCheckFrequency } : {}),
     stockCheckDay: stockCheckDay || null,

@@ -1,6 +1,6 @@
 import React from "react";
 import { useState, useEffect, useCallback, useRef } from "react";
-import { CalendarCheck, AlertTriangle } from "lucide-react";
+import { CalendarCheck, AlertTriangle, Package, CheckCircle2, Loader2, Pencil } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -11,6 +11,10 @@ export function fmtQty(q: number, unit: string): string {
   if (unit === "ml" && q >= 1000) return `${(q / 1000).toFixed(3)} l`;
   if (unit === "kg") return `${q.toFixed(3)} kg`;
   if (unit === "l" || unit === "L") return `${q.toFixed(3)} l`;
+  if (unit === "pieces") {
+    const n = Math.round(q);
+    return `${n} ${n === 1 ? "piece" : "pieces"}`;
+  }
   return `${q % 1 === 0 ? q : q.toFixed(2)} ${unit}`;
 }
 
@@ -247,4 +251,222 @@ export function toastDraftBlocked() {
     description: "Activate the plan before recording completions.",
     variant: "destructive",
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// StockCheckStatusPanel — shared across all three prep sub-stations
+// (main prep, bases, raw meat). Lists every stock-check-enabled ingredient
+// that's due today and highlights which haven't been recorded yet.
+// Outstanding items are shown by default so the operator's eye goes
+// straight to what still needs doing. "Show completed" reveals the ones
+// already recorded so they can be overwritten if a reading needs fixing.
+// Polls every 10s so writes from any device / station update in near
+// real time.
+// ─────────────────────────────────────────────────────────────────────────
+interface StockCheckStatusItem {
+  id: number;
+  name: string;
+  unit: string;
+  stockCheckFrequency: string;
+  stockCheckDay: string | null;
+}
+
+interface StockCheckRecord {
+  id: number;
+  ingredientId: number;
+  ingredientName: string;
+  unit: string;
+  quantity: string;
+  checkedAt: string;
+  userId: number | null;
+}
+
+export function StockCheckStatusPanel({ checkDate }: { checkDate: string }) {
+  const [open, setOpen] = useState(false);
+  const [showCompleted, setShowCompleted] = useState(false);
+  const [items, setItems] = useState<StockCheckStatusItem[]>([]);
+  const [checks, setChecks] = useState<StockCheckRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [inputValues, setInputValues] = useState<Record<number, string>>({});
+  const [savingIds, setSavingIds] = useState<Set<number>>(new Set());
+  const [editingIds, setEditingIds] = useState<Set<number>>(new Set());
+
+  const todayDayName = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date().getDay()];
+  const isDueToday = (it: StockCheckStatusItem) =>
+    it.stockCheckFrequency !== "weekly" || it.stockCheckDay === todayDayName;
+
+  const refresh = useCallback(() => {
+    if (!checkDate) return;
+    fetch(`/api/production-plans/stock-checks?date=${checkDate}`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { checks: StockCheckRecord[]; stockIngredients: StockCheckStatusItem[] } | null) => {
+        if (!d) return;
+        setItems(d.stockIngredients ?? []);
+        setChecks(d.checks ?? []);
+      })
+      .finally(() => setLoading(false));
+  }, [checkDate]);
+
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 10_000);
+    return () => clearInterval(id);
+  }, [refresh]);
+
+  const dueItems = items.filter(isDueToday);
+  const checkByIngredient = new Map<number, StockCheckRecord>();
+  for (const c of checks) {
+    const existing = checkByIngredient.get(c.ingredientId);
+    if (!existing || new Date(c.checkedAt).getTime() > new Date(existing.checkedAt).getTime()) {
+      checkByIngredient.set(c.ingredientId, c);
+    }
+  }
+  const outstanding = dueItems.filter(it => !checkByIngredient.has(it.id));
+  const completed = dueItems.filter(it => checkByIngredient.has(it.id));
+  const allDone = dueItems.length > 0 && outstanding.length === 0;
+
+  const visibleItems = showCompleted
+    ? [...outstanding, ...completed]
+    : outstanding;
+
+  const saveOne = async (ingredientId: number) => {
+    const v = inputValues[ingredientId];
+    if (v === undefined || v === "") return;
+    setSavingIds(s => new Set(s).add(ingredientId));
+    try {
+      await fetch("/api/production-plans/stock-checks", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ingredientId, checkDate, quantity: Number(v) }),
+      });
+      setInputValues(prev => { const copy = { ...prev }; delete copy[ingredientId]; return copy; });
+      setEditingIds(prev => { const n = new Set(prev); n.delete(ingredientId); return n; });
+      refresh();
+    } catch (err) {
+      toast({ title: "Save failed", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+    } finally {
+      setSavingIds(s => { const n = new Set(s); n.delete(ingredientId); return n; });
+    }
+  };
+
+  if (loading || dueItems.length === 0) return null;
+
+  const summary = allDone
+    ? { text: `All ${dueItems.length} stock checks recorded for today`, tone: "text-emerald-700 dark:text-emerald-300", bg: "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-300 dark:border-emerald-800" }
+    : { text: `${outstanding.length} of ${dueItems.length} stock check${dueItems.length === 1 ? "" : "s"} outstanding for today`, tone: "text-amber-700 dark:text-amber-300", bg: "bg-amber-50 dark:bg-amber-900/20 border-amber-300 dark:border-amber-800" };
+
+  return (
+    <div className={cn("border rounded-xl", summary.bg)}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-4 py-3 text-left"
+      >
+        <span className={cn("w-2.5 h-2.5 rounded-full flex-shrink-0", allDone ? "bg-emerald-500" : "bg-amber-500")} />
+        <Package className={cn("w-4 h-4 flex-shrink-0", summary.tone)} />
+        <span className={cn("text-sm font-semibold flex-1", summary.tone)}>{summary.text}</span>
+        <span className="text-xs text-muted-foreground">{open ? "Hide" : "Show"}</span>
+      </button>
+      {open && (
+        <div className="border-t border-border/60">
+          {completed.length > 0 && (
+            <div className="px-4 py-2 flex items-center justify-between text-xs border-b border-border/60">
+              <span className="text-muted-foreground">
+                {outstanding.length === 0
+                  ? "Everything for today is in."
+                  : `${completed.length} already recorded`}
+              </span>
+              <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={showCompleted}
+                  onChange={e => setShowCompleted(e.target.checked)}
+                  className="rounded border-border"
+                />
+                <span>Show completed</span>
+              </label>
+            </div>
+          )}
+          <div className="divide-y divide-border/60">
+            {visibleItems.length === 0 && (
+              <div className="px-4 py-3 text-sm text-muted-foreground">
+                Nothing outstanding — tick &ldquo;Show completed&rdquo; to review today&rsquo;s records.
+              </div>
+            )}
+            {visibleItems.map(it => {
+              const record = checkByIngredient.get(it.id);
+              const saving = savingIds.has(it.id);
+              const inputVal = inputValues[it.id] ?? "";
+              const isEditing = editingIds.has(it.id);
+              if (record && !isEditing) {
+                const checkedAt = new Date(record.checkedAt);
+                const timeLabel = checkedAt.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+                return (
+                  <div key={it.id} className="px-4 py-2.5 flex items-center gap-3 text-sm">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                    <span className="font-medium flex-1 min-w-0 truncate">{it.name}</span>
+                    <span className="text-sm tabular-nums text-foreground font-semibold">
+                      {Number(record.quantity)} {it.unit}
+                    </span>
+                    <span className="text-xs text-muted-foreground ml-2">{timeLabel}</span>
+                    <button
+                      onClick={() => {
+                        setEditingIds(prev => { const n = new Set(prev); n.add(it.id); return n; });
+                        setInputValues(prev => ({ ...prev, [it.id]: String(Number(record.quantity)) }));
+                      }}
+                      title="Overwrite this record"
+                      className="text-muted-foreground hover:text-foreground p-1 -m-1"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                );
+              }
+              return (
+                <div key={it.id} className="px-4 py-2.5 flex items-center gap-3 text-sm">
+                  {record
+                    ? <Pencil className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                    : <span className="w-4 h-4 rounded-full border-2 border-amber-500 flex-shrink-0" />}
+                  <span className="font-medium flex-1 min-w-0 truncate">{it.name}</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={inputVal}
+                    onChange={e => setInputValues(prev => ({ ...prev, [it.id]: e.target.value }))}
+                    onKeyDown={e => { if (e.key === "Enter" && inputVal !== "") saveOne(it.id); }}
+                    placeholder="qty"
+                    autoFocus={isEditing}
+                    className="w-20 px-2 py-1 text-sm text-right bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-amber-400/30"
+                  />
+                  <span className="text-xs text-muted-foreground min-w-[1.5rem]">{it.unit}</span>
+                  <button
+                    onClick={() => saveOne(it.id)}
+                    disabled={saving || inputVal === ""}
+                    className={cn(
+                      "text-xs px-3 py-1 rounded-md text-white transition-colors disabled:opacity-40",
+                      record ? "bg-blue-600 hover:bg-blue-700" : "bg-amber-600 hover:bg-amber-700",
+                    )}
+                  >
+                    {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : record ? "Overwrite" : "Save"}
+                  </button>
+                  {record && (
+                    <button
+                      onClick={() => {
+                        setEditingIds(prev => { const n = new Set(prev); n.delete(it.id); return n; });
+                        setInputValues(prev => { const c = { ...prev }; delete c[it.id]; return c; });
+                      }}
+                      className="text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
