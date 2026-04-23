@@ -155,7 +155,12 @@ interface PackingSpeedData {
 // Packing-speed is now a subsection inside the Production KPIs view, so it's
 // no longer a top-level tab. The URL ?tab=packing-speed redirects to ?tab=kpis
 // for backward compat.
-type TabId = "kpis" | "breaks" | "temperature" | "haccp" | "batch-weights" | "risk-assessments" | "improvements" | "issues" | "leftover-filling" | "employees" | "printables";
+type TabId = "kpis" | "breaks" | "temperature" | "haccp" | "risk-assessments" | "improvements" | "issues" | "leftover-filling" | "employees" | "printables";
+
+// HACCP is being built out into a full food-safety system, so it gets its
+// own sub-navigation. Start with the existing Evidence Log and the moved-in
+// Cooling & Weights tab; new HACCP areas slot in alongside them.
+type HaccpSubTabId = "evidence" | "cooling-weights";
 
 interface ImprovementRecord {
   id: number;
@@ -247,7 +252,8 @@ function DateShortcutsDropdown({ onSelect }: { onSelect: (from: string, to: stri
   );
 }
 
-const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "haccp", "batch-weights", "risk-assessments", "improvements", "issues", "leftover-filling", "employees", "printables"];
+const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "haccp", "risk-assessments", "improvements", "issues", "leftover-filling", "employees", "printables"];
+const VALID_HACCP_SUBTABS: HaccpSubTabId[] = ["evidence", "cooling-weights"];
 
 interface ReportsNavItem {
   id: TabId;
@@ -260,13 +266,23 @@ const REPORTS_NAV_ITEMS: ReportsNavItem[] = [
   { id: "breaks", label: "Breaks & Lunches", icon: Coffee },
   { id: "temperature", label: "Temperature Log", icon: Thermometer },
   { id: "haccp", label: "HACCP", icon: ShieldCheck },
-  { id: "batch-weights", label: "Cooling & Weights", icon: Hourglass },
   { id: "risk-assessments", label: "Risk Assessments", icon: ClipboardList },
   { id: "improvements", label: "Improvements & Struggles", icon: Lightbulb },
   { id: "issues", label: "Issue Log", icon: AlertTriangle },
   { id: "leftover-filling", label: "Leftover Filling", icon: Droplets },
   { id: "employees", label: "Employee Records", icon: UserCog },
   { id: "printables", label: "Printables", icon: Printer },
+];
+
+interface HaccpSubNavItem {
+  id: HaccpSubTabId;
+  label: string;
+  icon: typeof TrendingUp;
+}
+
+const HACCP_SUB_NAV_ITEMS: HaccpSubNavItem[] = [
+  { id: "evidence", label: "Evidence Log", icon: ShieldCheck },
+  { id: "cooling-weights", label: "Cooling & Weights", icon: Hourglass },
 ];
 
 // Tabs only visible to admins (not managers). Empty — no admin-gated tabs right now.
@@ -292,19 +308,44 @@ export default function Reports() {
   const allowedTabIds = visibleTabs.map(t => t.id);
 
   const rawTab = new URLSearchParams(search).get("tab");
+  const rawHaccpSub = new URLSearchParams(search).get("haccp");
   const issueIdParam = new URLSearchParams(search).get("issueId");
-  // Backward compat: legacy "andon" tab id redirects to "issues", and
-  // "packing-speed" redirects to "kpis" since it's now a subsection there.
+  // Backward compat: legacy "andon" redirects to "issues", "packing-speed"
+  // redirects to "kpis" (now a subsection there), and the old top-level
+  // "batch-weights" tab now lives under HACCP → Cooling & Weights.
   const normalisedTab =
-    rawTab === "andon" ? "issues" : rawTab === "packing-speed" ? "kpis" : rawTab;
+    rawTab === "andon" ? "issues"
+      : rawTab === "packing-speed" ? "kpis"
+      : rawTab === "batch-weights" ? "haccp"
+      : rawTab;
+  const normalisedHaccpSub = rawTab === "batch-weights" ? "cooling-weights" : rawHaccpSub;
   const queryTab = normalisedTab as TabId | null;
   const initialTab: TabId = queryTab && allowedTabIds.includes(queryTab) ? queryTab : allowedTabIds[0];
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);
 
+  const initialHaccpSub: HaccpSubTabId =
+    normalisedHaccpSub && (VALID_HACCP_SUBTABS as string[]).includes(normalisedHaccpSub)
+      ? (normalisedHaccpSub as HaccpSubTabId)
+      : "evidence";
+  const [haccpSubTab, setHaccpSubTab] = useState<HaccpSubTabId>(initialHaccpSub);
+
   function switchTab(tab: TabId) {
     setActiveTab(tab);
-    const newSearch = tab === "kpis" ? "" : `?tab=${tab}`;
-    navigate(`/reports${newSearch}`, { replace: true });
+    const params = new URLSearchParams();
+    if (tab !== "kpis") params.set("tab", tab);
+    // Preserve the HACCP sub-tab when switching into HACCP so deep links
+    // stay intact; other tabs drop the sub-tab param.
+    if (tab === "haccp" && haccpSubTab !== "evidence") params.set("haccp", haccpSubTab);
+    const qs = params.toString();
+    navigate(`/reports${qs ? `?${qs}` : ""}`, { replace: true });
+  }
+
+  function switchHaccpSubTab(sub: HaccpSubTabId) {
+    setHaccpSubTab(sub);
+    const params = new URLSearchParams();
+    params.set("tab", "haccp");
+    if (sub !== "evidence") params.set("haccp", sub);
+    navigate(`/reports?${params.toString()}`, { replace: true });
   }
 
   const todayStr = format(new Date(), "yyyy-MM-dd");
@@ -355,6 +396,30 @@ export default function Reports() {
                       <Icon className="w-4 h-4 flex-shrink-0" />
                       {item.label}
                     </button>
+                    {item.id === "haccp" && active && (
+                      <ul className="mt-1 ml-4 pl-3 border-l border-border space-y-0.5">
+                        {HACCP_SUB_NAV_ITEMS.map(sub => {
+                          const SubIcon = sub.icon;
+                          const subActive = haccpSubTab === sub.id;
+                          return (
+                            <li key={sub.id}>
+                              <button
+                                onClick={() => switchHaccpSubTab(sub.id)}
+                                className={cn(
+                                  "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors text-left",
+                                  subActive
+                                    ? "bg-secondary text-foreground font-medium"
+                                    : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
+                                )}
+                              >
+                                <SubIcon className="w-3.5 h-3.5 flex-shrink-0" />
+                                {sub.label}
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
                   </li>
                 );
               })}
@@ -419,8 +484,37 @@ export default function Reports() {
           {activeTab === "kpis" && <ProductionKpisTab fromDate={fromDate} toDate={toDate} />}
           {activeTab === "breaks" && <BreaksTab fromDate={fromDate} toDate={toDate} />}
           {activeTab === "temperature" && <TemperatureRecordsTab fromDate={fromDate} toDate={toDate} />}
-          {activeTab === "haccp" && <HaccpTab fromDate={fromDate} toDate={toDate} />}
-          {activeTab === "batch-weights" && <BatchWeightsTab fromDate={fromDate} toDate={toDate} />}
+          {activeTab === "haccp" && (
+            <>
+              {/* Mobile HACCP sub-nav — desktop sub-nav lives in the sidebar. */}
+              <nav className="md:hidden w-full overflow-x-auto pb-2 -mb-2">
+                <ul className="flex gap-1 min-w-max">
+                  {HACCP_SUB_NAV_ITEMS.map(sub => {
+                    const SubIcon = sub.icon;
+                    const subActive = haccpSubTab === sub.id;
+                    return (
+                      <li key={sub.id}>
+                        <button
+                          onClick={() => switchHaccpSubTab(sub.id)}
+                          className={cn(
+                            "flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors whitespace-nowrap",
+                            subActive
+                              ? "bg-secondary text-foreground font-medium"
+                              : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
+                          )}
+                        >
+                          <SubIcon className="w-3.5 h-3.5 flex-shrink-0" />
+                          {sub.label}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </nav>
+              {haccpSubTab === "evidence" && <HaccpTab fromDate={fromDate} toDate={toDate} />}
+              {haccpSubTab === "cooling-weights" && <BatchWeightsTab fromDate={fromDate} toDate={toDate} />}
+            </>
+          )}
           {activeTab === "risk-assessments" && <RiskAssessmentsTab userRole={userRole} currentUserName={state.status === "authenticated" ? state.user.name : null} />}
           {activeTab === "improvements" && <ImprovementsTab userRole={userRole} currentUserName={state.status === "authenticated" ? state.user.name : null} />}
           {activeTab === "issues" && <AndonLogTab userRole={userRole} initialIssueId={issueIdParam ? parseInt(issueIdParam, 10) : undefined} />}
@@ -3986,10 +4080,12 @@ interface AttendanceResponse {
   to: string;
   rows: EmployeeAttendanceRow[];
   unmatchedAppUsers: Array<{ userId: number; name: string; email: string }>;
+  unmatchedPlandayEmployees?: Array<{ plandayEmployeeId: number; name: string; email: string | null }>;
   shiftTypeNames: string[];
   absenceAccountNames: string[];
   activeShiftTypeNames: string[];
   activeAbsenceAccountNames: string[];
+  shiftTypeIsUnpaid?: Record<string, boolean>;
 }
 
 function UnmatchedPlandayRow({ employee }: { employee: { plandayEmployeeId: number; name: string; email: string | null } }) {
@@ -4118,6 +4214,18 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
 
   const activeShiftTypes = data.activeShiftTypeNames ?? [];
   const activeAbsenceAccounts = data.activeAbsenceAccountNames ?? [];
+  const unpaidMap = data.shiftTypeIsUnpaid ?? {};
+
+  // Plan Day's default paid holiday account is labelled "Standard Hourly
+  // Accrual" which isn't what anyone calls it in practice. Rename at the
+  // display layer only so the underlying Plan Day data stays untouched.
+  const displayAbsenceAccountName = (name: string) =>
+    name.toLowerCase().includes("hourly accrual") ? "Annual Leave" : name;
+
+  const fmtPct = (n: number, total: number) => {
+    if (!total || n === 0) return <span className="text-muted-foreground">—</span>;
+    return <span className="text-xs">{((n / total) * 100).toFixed(1)}%</span>;
+  };
 
   return (
     <>
@@ -4179,19 +4287,42 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
               <tr className="bg-secondary/50 border-b border-border">
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground sticky left-0 bg-secondary/50">Employee</th>
                 <th className="text-right px-3 py-3 font-medium text-muted-foreground">Total shifts</th>
-                <th className="text-right px-3 py-3 font-medium text-muted-foreground">Total absent</th>
+                <th className="text-right px-3 py-3 font-medium text-rose-700">Total absent</th>
+                <th className="text-right px-2 py-3 font-medium text-rose-700/70 text-xs">%</th>
                 {activeShiftTypes.map(name => (
-                  <th key={`sh:${name}`} className="text-right px-3 py-3 font-medium text-muted-foreground whitespace-nowrap">{name}</th>
+                  <React.Fragment key={`sh:${name}`}>
+                    <th
+                      className={cn(
+                        "text-right px-3 py-3 font-medium whitespace-nowrap",
+                        unpaidMap[name] ? "text-rose-700" : "text-muted-foreground",
+                      )}
+                    >
+                      {name}
+                    </th>
+                    <th
+                      className={cn(
+                        "text-right px-2 py-3 font-medium text-xs whitespace-nowrap",
+                        unpaidMap[name] ? "text-rose-700/70" : "text-muted-foreground/70",
+                      )}
+                    >
+                      %
+                    </th>
+                  </React.Fragment>
                 ))}
                 {activeAbsenceAccounts.map(name => (
-                  <th key={`ab:${name}`} className="text-right px-3 py-3 font-medium text-muted-foreground whitespace-nowrap">{name}</th>
+                  <React.Fragment key={`ab:${name}`}>
+                    <th className="text-right px-3 py-3 font-medium text-rose-700 whitespace-nowrap">
+                      {displayAbsenceAccountName(name)}
+                    </th>
+                    <th className="text-right px-2 py-3 font-medium text-rose-700/70 text-xs">%</th>
+                  </React.Fragment>
                 ))}
               </tr>
             </thead>
             <tbody>
               {rowsToShow.length === 0 && (
                 <tr>
-                  <td colSpan={3 + activeShiftTypes.length + activeAbsenceAccounts.length} className="text-center text-muted-foreground py-8">
+                  <td colSpan={4 + activeShiftTypes.length * 2 + activeAbsenceAccounts.length * 2} className="text-center text-muted-foreground py-8">
                     No employees to show.
                   </td>
                 </tr>
@@ -4212,23 +4343,44 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
                     </div>
                   </td>
                   <td className="px-3 py-3 text-right tabular-nums">{r.totalShifts}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">
-                    {r.totalAbsent > 0 ? <span className="text-rose-700 font-medium">{r.totalAbsent}</span> : r.totalAbsent}
+                  <td className={cn("px-3 py-3 text-right tabular-nums", r.totalAbsent > 0 ? "text-rose-700 font-medium" : "text-muted-foreground")}>
+                    {r.totalAbsent}
+                  </td>
+                  <td className="px-2 py-3 text-right tabular-nums">
+                    {fmtPct(r.totalAbsent, r.totalShifts)}
                   </td>
                   {activeShiftTypes.map(name => {
                     const n = r.shiftTypeCounts?.[name] ?? 0;
+                    const isUnpaid = unpaidMap[name];
                     return (
-                      <td key={`sh:${name}`} className="px-3 py-3 text-right tabular-nums">
-                        {n > 0 ? <span className="text-amber-700 font-medium">{n}</span> : n}
-                      </td>
+                      <React.Fragment key={`sh:${name}`}>
+                        <td
+                          className={cn(
+                            "px-3 py-3 text-right tabular-nums",
+                            n > 0 && isUnpaid && "text-rose-700 font-medium",
+                            n > 0 && !isUnpaid && "text-amber-700 font-medium",
+                            n === 0 && "text-muted-foreground",
+                          )}
+                        >
+                          {n}
+                        </td>
+                        <td className="px-2 py-3 text-right tabular-nums">
+                          {fmtPct(n, r.totalShifts)}
+                        </td>
+                      </React.Fragment>
                     );
                   })}
                   {activeAbsenceAccounts.map(name => {
                     const n = r.absenceAccountCounts?.[name] ?? 0;
                     return (
-                      <td key={`ab:${name}`} className="px-3 py-3 text-right tabular-nums">
-                        {n > 0 ? <span className="text-rose-700 font-medium">{n}</span> : n}
-                      </td>
+                      <React.Fragment key={`ab:${name}`}>
+                        <td className={cn("px-3 py-3 text-right tabular-nums", n > 0 ? "text-rose-700 font-medium" : "text-muted-foreground")}>
+                          {n}
+                        </td>
+                        <td className="px-2 py-3 text-right tabular-nums">
+                          {fmtPct(n, r.totalShifts)}
+                        </td>
+                      </React.Fragment>
                     );
                   })}
                 </tr>
