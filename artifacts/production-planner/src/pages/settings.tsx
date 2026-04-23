@@ -11,8 +11,9 @@ import {
   CheckCircle2, XCircle, KeyRound, Package, ChevronDown, ChevronUp,
   Lock, Timer, BarChart2, Coffee, Truck, Mail, Warehouse,
   Camera, User, CircleDot, ToggleRight, Boxes, UtensilsCrossed,
-  AlertTriangle, Scale, ThermometerSnowflake,
+  AlertTriangle, Scale, ThermometerSnowflake, BookOpen,
 } from "lucide-react";
+import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { Switch } from "@/components/ui/switch";
 import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { upsertDptSettingByRecipe, updateTimingStandard, getListDptSettingsQueryKey, getListTimingStandardsQueryKey } from "@workspace/api-client-react";
@@ -424,13 +425,14 @@ function PinSection() {
   );
 }
 
-type SettingsSection = "profile" | "team" | "production" | "storage" | "features";
+type SettingsSection = "profile" | "team" | "production" | "storage" | "sops" | "features";
 
 const NAV_ITEMS: { id: SettingsSection; label: string; icon: typeof User }[] = [
   { id: "profile", label: "My Profile", icon: User },
   { id: "team", label: "Team & Access", icon: Users },
   { id: "production", label: "Production", icon: BarChart2 },
   { id: "storage", label: "Storage & Inventory", icon: Warehouse },
+  { id: "sops", label: "Standards & SOPs", icon: BookOpen },
   { id: "features", label: "Features", icon: ToggleRight },
 ];
 
@@ -733,7 +735,7 @@ export default function Settings() {
 
   const params = new URLSearchParams(search);
   const sectionParam = params.get("section") as SettingsSection | null;
-  const validSections: SettingsSection[] = ["profile", "team", "production", "storage", "features"];
+  const validSections: SettingsSection[] = ["profile", "team", "production", "storage", "sops", "features"];
   const activeSection: SettingsSection = sectionParam && validSections.includes(sectionParam) ? sectionParam : "profile";
 
   const setSection = (s: SettingsSection) => {
@@ -843,6 +845,12 @@ export default function Settings() {
               <CategoryDefaultsSection />
               {user?.role === "admin" && <StorageLocationsSection />}
               {user?.role === "admin" && <IngredientStorageAssignmentsSection />}
+            </div>
+          )}
+
+          {activeSection === "sops" && (
+            <div className="space-y-8">
+              <StandardsSopsSection />
             </div>
           )}
 
@@ -2489,6 +2497,29 @@ function BreakDefaultsSection() {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function StandardsSopsSection() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="bg-card border border-border rounded-xl p-6">
+      <h2 className="text-xl font-semibold mb-1 flex items-center gap-2">
+        <BookOpen className="w-5 h-5 text-primary" />
+        Standards &amp; SOPs
+      </h2>
+      <p className="text-sm text-muted-foreground mb-4">
+        Manage the multi-step standards and SOPs that show up on each station. Create new SOPs,
+        edit existing ones, tag them to multiple stations, or delete old ones.
+      </p>
+      <button
+        onClick={() => setOpen(true)}
+        className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90"
+      >
+        <BookOpen className="w-4 h-4" /> Open SOP library
+      </button>
+      <StandardsSopsDialog open={open} onClose={() => setOpen(false)} currentStationType={null} />
     </div>
   );
 }

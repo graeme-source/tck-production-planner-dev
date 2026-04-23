@@ -1,18 +1,17 @@
 /**
- * Standards & SOPs — uploadable images with a title and a set of station
- * tags. Shown in the station header bar; operators filter by the station
- * they're currently on but can switch to "All" to browse everything.
+ * Standards & SOPs — multi-step SOPs, each step has a description + an
+ * optional image. Images are stored directly in Postgres as BYTEA so the
+ * feature works identically on local dev and production without needing
+ * object storage configuration. Served via a dedicated streaming route.
  *
- * Uploads follow the same Google Cloud Storage pattern as /auth/avatar, so
- * Railway deployments with PRIVATE_OBJECT_DIR set just work. Local dev
- * without GCS will return a 500 on upload (same behaviour as avatars).
+ * Keep the main list/get queries light — never SELECT image_data on rows
+ * that go into a list payload. Only the /image endpoint reads the bytes.
  */
 
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import multer from "multer";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
-import { objectStorageClient } from "../lib/objectStorage";
 
 const router: IRouter = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -25,7 +24,7 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-function requireAdmin(req: Request, res: Response, next: NextFunction) {
+function requireEditor(req: Request, res: Response, next: NextFunction) {
   if (req.session.userRole === "admin" || req.session.userRole === "manager") {
     next();
     return;
@@ -33,117 +32,296 @@ function requireAdmin(req: Request, res: Response, next: NextFunction) {
   res.status(403).json({ error: "Manager access required" });
 }
 
-interface StandardRow {
+interface SopRow {
   id: number;
   title: string;
   stations: string[] | null;
-  image_url: string;
+  author_id: number | null;
   created_at: Date;
-  created_by_id: number | null;
-  creator_name: string | null;
+  updated_at: Date;
+  author_name: string | null;
+  step_count: number;
+  first_image_step_id: number | null;
 }
 
-// GET /api/standards?station=building_1 — list all; filter by station when
-// provided. Stations with an empty tag array match every filter (global SOP).
+function shapeSop(row: SopRow) {
+  return {
+    id: row.id,
+    title: row.title,
+    stations: row.stations ?? [],
+    authorId: row.author_id,
+    authorName: row.author_name,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+    updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
+    stepCount: Number(row.step_count) || 0,
+    coverImageStepId: row.first_image_step_id,
+  };
+}
+
+// List SOPs — optional ?station=<key> filter. No image bytes included.
 router.get("/", requireAuth, async (req, res) => {
-  const station = typeof req.query.station === "string" ? req.query.station : null;
-  const rows = await db.execute<StandardRow>(sql`
-    SELECT s.id, s.title, s.stations, s.image_url, s.created_at, s.created_by_id,
-           u.name AS creator_name
-    FROM standards_sops s
-    LEFT JOIN app_users u ON u.id = s.created_by_id
-    ${station ? sql`WHERE COALESCE(array_length(s.stations, 1), 0) = 0 OR ${station} = ANY(s.stations)` : sql``}
-    ORDER BY s.created_at DESC
-  `);
-  const list = (rows.rows ?? rows) as StandardRow[];
-  res.json(list.map(r => ({
-    id: r.id,
-    title: r.title,
-    stations: r.stations ?? [],
-    imageUrl: r.image_url,
-    createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : r.created_at,
-    createdById: r.created_by_id,
-    creatorName: r.creator_name,
-  })));
+  try {
+    const station = typeof req.query.station === "string" ? req.query.station : null;
+    const rows = station
+      ? await db.execute<SopRow>(sql`
+          SELECT s.id, s.title, s.stations, s.author_id, s.created_at, s.updated_at,
+                 u.name AS author_name,
+                 (SELECT COUNT(*)::int FROM sop_steps st WHERE st.sop_id = s.id) AS step_count,
+                 (SELECT st.id FROM sop_steps st WHERE st.sop_id = s.id AND st.image_mime IS NOT NULL ORDER BY st.position ASC LIMIT 1) AS first_image_step_id
+          FROM standards_sops s
+          LEFT JOIN app_users u ON u.id = s.author_id
+          WHERE COALESCE(array_length(s.stations, 1), 0) = 0 OR ${station} = ANY(s.stations)
+          ORDER BY s.updated_at DESC
+        `)
+      : await db.execute<SopRow>(sql`
+          SELECT s.id, s.title, s.stations, s.author_id, s.created_at, s.updated_at,
+                 u.name AS author_name,
+                 (SELECT COUNT(*)::int FROM sop_steps st WHERE st.sop_id = s.id) AS step_count,
+                 (SELECT st.id FROM sop_steps st WHERE st.sop_id = s.id AND st.image_mime IS NOT NULL ORDER BY st.position ASC LIMIT 1) AS first_image_step_id
+          FROM standards_sops s
+          LEFT JOIN app_users u ON u.id = s.author_id
+          ORDER BY s.updated_at DESC
+        `);
+    const list = ((rows.rows ?? rows) as SopRow[]).map(shapeSop);
+    res.json(list);
+  } catch (err) {
+    console.error("[standards] list failed:", err);
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to load SOPs" });
+  }
 });
 
-router.post("/", requireAuth, requireAdmin, upload.single("image"), async (req, res) => {
-  if (!req.file) {
-    res.status(400).json({ error: "No image uploaded" });
-    return;
-  }
-  const title = String(req.body.title ?? "").trim();
-  if (!title) {
-    res.status(400).json({ error: "Title is required" });
-    return;
-  }
-  const stationsRaw = req.body.stations;
-  let stations: string[] = [];
-  if (Array.isArray(stationsRaw)) {
-    stations = stationsRaw.map(s => String(s)).filter(Boolean);
-  } else if (typeof stationsRaw === "string" && stationsRaw.length > 0) {
-    // multipart form-data may arrive as a JSON string or comma-separated
-    try {
-      const parsed = JSON.parse(stationsRaw);
-      if (Array.isArray(parsed)) stations = parsed.map(s => String(s)).filter(Boolean);
-    } catch {
-      stations = stationsRaw.split(",").map(s => s.trim()).filter(Boolean);
-    }
-  }
+interface StepRow {
+  id: number;
+  sop_id: number;
+  position: number;
+  description: string;
+  has_image: boolean;
+}
 
-  const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-  if (!allowedTypes.includes(req.file.mimetype)) {
-    res.status(400).json({ error: "Invalid file type. Use JPEG, PNG, WebP, or GIF." });
+// Get one SOP with its steps.
+router.get("/:id", requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "Invalid id" });
     return;
   }
-
-  const privateDir = process.env.PRIVATE_OBJECT_DIR;
-  if (!privateDir) {
-    res.status(500).json({ error: "Object storage not configured on this server." });
+  const sopRows = await db.execute<SopRow>(sql`
+    SELECT s.id, s.title, s.stations, s.author_id, s.created_at, s.updated_at,
+           u.name AS author_name,
+           (SELECT COUNT(*)::int FROM sop_steps st WHERE st.sop_id = s.id) AS step_count,
+           (SELECT st.id FROM sop_steps st WHERE st.sop_id = s.id AND st.image_mime IS NOT NULL ORDER BY st.position ASC LIMIT 1) AS first_image_step_id
+    FROM standards_sops s
+    LEFT JOIN app_users u ON u.id = s.author_id
+    WHERE s.id = ${id}
+  `);
+  const sop = ((sopRows.rows ?? sopRows) as SopRow[])[0];
+  if (!sop) {
+    res.status(404).json({ error: "Not found" });
     return;
   }
+  const stepsRows = await db.execute<StepRow>(sql`
+    SELECT id, sop_id, position, description,
+           (image_mime IS NOT NULL) AS has_image
+    FROM sop_steps
+    WHERE sop_id = ${id}
+    ORDER BY position ASC, id ASC
+  `);
+  const steps = ((stepsRows.rows ?? stepsRows) as StepRow[]).map(s => ({
+    id: s.id,
+    position: s.position,
+    description: s.description,
+    hasImage: s.has_image,
+  }));
+  res.json({ ...shapeSop(sop), steps });
+});
 
+// Create empty SOP.
+router.post("/", requireAuth, requireEditor, async (req, res) => {
   try {
-    const ext = req.file.mimetype.split("/")[1]?.replace("jpeg", "jpg") ?? "jpg";
-    const entityId = `standards/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-    const privateDirNorm = privateDir.endsWith("/") ? privateDir : `${privateDir}/`;
-    const fullGcsPath = `${privateDirNorm}${entityId}`;
-    const pathParts = fullGcsPath.startsWith("/") ? fullGcsPath.slice(1).split("/") : fullGcsPath.split("/");
-    const bucketName = pathParts[0];
-    const objectName = pathParts.slice(1).join("/");
-    const bucket = objectStorageClient.bucket(bucketName);
-    const gcsFile = bucket.file(objectName);
-    await gcsFile.save(req.file.buffer, {
-      metadata: { contentType: req.file.mimetype },
-      resumable: false,
-    });
-    const imageUrl = `/objects/${entityId}`;
-
+    const title = String(req.body?.title ?? "").trim();
+    const stationsRaw = req.body?.stations;
+    const stations: string[] = Array.isArray(stationsRaw) ? stationsRaw.map(s => String(s)).filter(Boolean) : [];
+    // Build an explicit PostgreSQL array literal — passing a JS array
+    // through drizzle's parameter binding coerces to a string, which then
+    // fails the ::text[] cast. Construct the literal ourselves (values
+    // are station keys which are alphanumeric + underscore, no quoting
+    // needed).
+    const stationLiteral = `{${stations.join(",")}}`;
     const result = await db.execute<{ id: number }>(sql`
-      INSERT INTO standards_sops (title, stations, image_url, created_by_id)
-      VALUES (${title}, ${stations as unknown as string}::text[], ${imageUrl}, ${req.session.userId ?? null})
+      INSERT INTO standards_sops (title, stations, author_id)
+      VALUES (${title}, ${stationLiteral}::text[], ${req.session.userId ?? null})
       RETURNING id
     `);
     const inserted = ((result.rows ?? result) as { id: number }[])[0];
-    res.status(201).json({
-      id: inserted.id,
-      title,
-      stations,
-      imageUrl,
-    });
+    res.status(201).json({ id: inserted.id });
   } catch (err) {
-    console.error("Standards upload error:", err);
-    res.status(500).json({ error: "Failed to upload standard" });
+    console.error("[standards] create failed:", err);
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to create SOP" });
   }
 });
 
-router.delete("/:id", requireAuth, requireAdmin, async (req, res) => {
+// Update SOP metadata (title, stations).
+router.put("/:id", requireAuth, requireEditor, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const title = typeof req.body?.title === "string" ? req.body.title : null;
+  const stationsRaw = req.body?.stations;
+  const stations: string[] | null = Array.isArray(stationsRaw) ? stationsRaw.map(s => String(s)).filter(Boolean) : null;
+  if (title !== null) {
+    await db.execute(sql`UPDATE standards_sops SET title = ${title}, updated_at = NOW() WHERE id = ${id}`);
+  }
+  if (stations !== null) {
+    const stationLiteral = `{${stations.join(",")}}`;
+    await db.execute(sql`UPDATE standards_sops SET stations = ${stationLiteral}::text[], updated_at = NOW() WHERE id = ${id}`);
+  }
+  res.json({ ok: true });
+});
+
+router.delete("/:id", requireAuth, requireEditor, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) {
     res.status(400).json({ error: "Invalid id" });
     return;
   }
   await db.execute(sql`DELETE FROM standards_sops WHERE id = ${id}`);
+  res.json({ ok: true });
+});
+
+// Add a step to an SOP. Returns the new step id; position is appended.
+router.post("/:id/steps", requireAuth, requireEditor, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const description = String(req.body?.description ?? "");
+  const posRows = await db.execute<{ max_pos: number | null }>(sql`
+    SELECT MAX(position) AS max_pos FROM sop_steps WHERE sop_id = ${id}
+  `);
+  const maxPos = ((posRows.rows ?? posRows) as { max_pos: number | null }[])[0]?.max_pos;
+  const nextPos = (maxPos ?? -1) + 1;
+  const inserted = await db.execute<{ id: number }>(sql`
+    INSERT INTO sop_steps (sop_id, position, description)
+    VALUES (${id}, ${nextPos}, ${description})
+    RETURNING id
+  `);
+  await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = ${id}`);
+  const newStep = ((inserted.rows ?? inserted) as { id: number }[])[0];
+  res.status(201).json({ id: newStep.id, position: nextPos, description, hasImage: false });
+});
+
+// Update a step's description.
+router.put("/steps/:stepId", requireAuth, requireEditor, async (req, res) => {
+  const stepId = Number(req.params.stepId);
+  if (!Number.isFinite(stepId)) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const description = typeof req.body?.description === "string" ? req.body.description : null;
+  if (description === null) {
+    res.status(400).json({ error: "description required" });
+    return;
+  }
+  await db.execute(sql`UPDATE sop_steps SET description = ${description}, updated_at = NOW() WHERE id = ${stepId}`);
+  await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = (SELECT sop_id FROM sop_steps WHERE id = ${stepId})`);
+  res.json({ ok: true });
+});
+
+router.delete("/steps/:stepId", requireAuth, requireEditor, async (req, res) => {
+  const stepId = Number(req.params.stepId);
+  if (!Number.isFinite(stepId)) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const sopRows = await db.execute<{ sop_id: number }>(sql`SELECT sop_id FROM sop_steps WHERE id = ${stepId}`);
+  const sopId = ((sopRows.rows ?? sopRows) as { sop_id: number }[])[0]?.sop_id;
+  await db.execute(sql`DELETE FROM sop_steps WHERE id = ${stepId}`);
+  if (sopId) await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = ${sopId}`);
+  res.json({ ok: true });
+});
+
+// Upload / replace the image on a step.
+router.post("/steps/:stepId/image", requireAuth, requireEditor, upload.single("image"), async (req, res) => {
+  const stepId = Number(req.params.stepId);
+  if (!Number.isFinite(stepId)) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  if (!req.file) {
+    res.status(400).json({ error: "No image uploaded" });
+    return;
+  }
+  const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+  if (!allowedTypes.includes(req.file.mimetype)) {
+    res.status(400).json({ error: "Invalid file type. Use JPEG, PNG, WebP, or GIF." });
+    return;
+  }
+  await db.execute(sql`
+    UPDATE sop_steps
+    SET image_mime = ${req.file.mimetype}, image_data = ${req.file.buffer}, updated_at = NOW()
+    WHERE id = ${stepId}
+  `);
+  await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = (SELECT sop_id FROM sop_steps WHERE id = ${stepId})`);
+  res.json({ ok: true, hasImage: true });
+});
+
+// Remove a step's image (but keep the step itself).
+router.delete("/steps/:stepId/image", requireAuth, requireEditor, async (req, res) => {
+  const stepId = Number(req.params.stepId);
+  if (!Number.isFinite(stepId)) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  await db.execute(sql`
+    UPDATE sop_steps
+    SET image_mime = NULL, image_data = NULL, updated_at = NOW()
+    WHERE id = ${stepId}
+  `);
+  res.json({ ok: true });
+});
+
+// Stream the image bytes for a step. Served as raw bytes with the stored
+// MIME type so an <img src="/api/standards/steps/123/image" /> works directly.
+router.get("/steps/:stepId/image", requireAuth, async (req, res) => {
+  const stepId = Number(req.params.stepId);
+  if (!Number.isFinite(stepId)) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const rows = await db.execute<{ image_mime: string | null; image_data: Buffer | null }>(sql`
+    SELECT image_mime, image_data FROM sop_steps WHERE id = ${stepId}
+  `);
+  const row = ((rows.rows ?? rows) as { image_mime: string | null; image_data: Buffer | null }[])[0];
+  if (!row || !row.image_data || !row.image_mime) {
+    res.status(404).json({ error: "No image" });
+    return;
+  }
+  res.setHeader("Content-Type", row.image_mime);
+  res.setHeader("Cache-Control", "private, max-age=300");
+  res.send(row.image_data);
+});
+
+// Reorder steps. Body: { stepIds: [id1, id2, ...] } — positions assigned
+// in the given order. Rows not in the list are left alone (shouldn't happen
+// in practice, but harmless).
+router.patch("/:id/reorder", requireAuth, requireEditor, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const stepIds = Array.isArray(req.body?.stepIds) ? req.body.stepIds.map((n: unknown) => Number(n)).filter(Number.isFinite) : null;
+  if (!stepIds || stepIds.length === 0) {
+    res.status(400).json({ error: "stepIds array required" });
+    return;
+  }
+  for (let i = 0; i < stepIds.length; i++) {
+    await db.execute(sql`UPDATE sop_steps SET position = ${i}, updated_at = NOW() WHERE id = ${stepIds[i]} AND sop_id = ${id}`);
+  }
+  await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = ${id}`);
   res.json({ ok: true });
 });
 

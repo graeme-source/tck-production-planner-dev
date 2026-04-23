@@ -232,7 +232,7 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
                 title="Standards & SOPs"
               >
                 <BookOpen className="w-4 h-4" />
-                <span className="hidden sm:inline">Standards</span>
+                <span className="hidden sm:inline">SOPs</span>
               </button>
               <button
                 onClick={() => setStationNavOpen(v => !v)}

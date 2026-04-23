@@ -38,6 +38,8 @@ import {
 import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/user-avatar";
 import { NotificationBell } from "@/components/notification-bell";
+import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
+import { BookOpen } from "lucide-react";
 
 export type NavItem = { name: string; href: string; icon: React.ComponentType<{ className?: string }> };
 
@@ -628,6 +630,7 @@ export function Layout({ children }: { children: ReactNode }) {
 function TopBar({ onOpenMobile, fallbackTitle }: { onOpenMobile: () => void; fallbackTitle: string }) {
   const header = usePageHeaderValue();
   const title = header?.title ?? fallbackTitle;
+  const [sopsOpen, setSopsOpen] = useState(false);
 
   return (
     <header className="min-h-[56px] border-b border-border bg-background/80 backdrop-blur-md flex items-center px-4 md:px-5 xl:px-8 gap-3 z-10 min-w-0">
@@ -645,12 +648,21 @@ function TopBar({ onOpenMobile, fallbackTitle }: { onOpenMobile: () => void; fal
           {header.description}
         </span>
       )}
+      <button
+        onClick={() => setSopsOpen(true)}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors flex-shrink-0"
+        title="Standards & SOPs"
+      >
+        <BookOpen className="w-4 h-4" />
+        <span className="hidden sm:inline">SOPs</span>
+      </button>
       <NotificationBell />
       {header?.action && (
         <div className="flex-shrink-0">
           {header.action}
         </div>
       )}
+      <StandardsSopsDialog open={sopsOpen} onClose={() => setSopsOpen(false)} currentStationType={null} />
     </header>
   );
 }

@@ -381,6 +381,15 @@ async function runStartupMigrations() {
     await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS pin_attempts INTEGER NOT NULL DEFAULT 0`);
     await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS pin_locked_until TIMESTAMP`);
     await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS avatar_url TEXT`);
+    // Avatars now live in Postgres too (same rationale as SOP images — no
+    // object storage dependency). avatar_url remains the canonical pointer
+    // the frontend uses for <img>; we just repoint it at a bytes endpoint.
+    await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS avatar_mime TEXT`);
+    await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS avatar_data BYTEA`);
+    // Clear stale /objects/avatars/* URLs from the old GCS attempt (none of
+    // those uploads succeeded, so the pointers all 404). Fresh uploads
+    // overwrite with the new /api/auth/avatar/:id path.
+    await db.execute(sql`UPDATE app_users SET avatar_url = NULL WHERE avatar_url LIKE '/objects/%' AND avatar_data IS NULL`);
     // Plan Day integration — employee record mapping for attendance reports
     await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS planday_employee_id INTEGER`);
     // Shopify inventory sync — recipe→variant mapping (Task #37)
@@ -526,17 +535,36 @@ async function runStartupMigrations() {
     await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS kanban_items_recipe_unique ON kanban_items (recipe_id) WHERE source_type = 'recipe' AND recipe_id IS NOT NULL`);
     await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS kanban_items_sub_recipe_unique ON kanban_items (sub_recipe_id) WHERE source_type = 'sub_recipe' AND sub_recipe_id IS NOT NULL`);
     await db.execute(sql`DO $$ BEGIN ALTER TABLE kanban_items ADD CONSTRAINT kanban_items_source_type_check CHECK (source_type IN ('ingredient', 'recipe', 'sub_recipe')); EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
+    // Standards & SOPs — multi-step SOPs with optional per-step image.
+    // The old single-image `standards_sops` table (image_url column) is
+    // dropped on first run after this deploy since no records survived the
+    // object-storage misconfiguration. From here on, images live as BYTEA
+    // on sop_steps so everything works local + prod with no external deps.
+    await db.execute(sql`DROP TABLE IF EXISTS standards_sops CASCADE`);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS standards_sops (
         id SERIAL PRIMARY KEY,
-        title TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
         stations TEXT[] NOT NULL DEFAULT '{}',
-        image_url TEXT NOT NULL,
+        author_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-        created_by_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `);
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS standards_sops_created_at_idx ON standards_sops (created_at DESC)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS standards_sops_updated_at_idx ON standards_sops (updated_at DESC)`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS sop_steps (
+        id SERIAL PRIMARY KEY,
+        sop_id INTEGER NOT NULL REFERENCES standards_sops(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL DEFAULT 0,
+        description TEXT NOT NULL DEFAULT '',
+        image_mime TEXT,
+        image_data BYTEA,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS sop_steps_sop_position_idx ON sop_steps (sop_id, position)`);
 
     await seedStorageLocations();
 

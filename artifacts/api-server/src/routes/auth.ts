@@ -1,12 +1,11 @@
 import { Router, type IRouter } from "express";
 import { db, usersTable } from "@workspace/db";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { validate } from "../middleware/validate";
 import multer from "multer";
-import { objectStorageClient } from "../lib/objectStorage";
 
 const router: IRouter = Router();
 
@@ -446,42 +445,51 @@ router.post("/avatar", async (req, res, next) => {
   }
 
   try {
-    const privateDir = process.env.PRIVATE_OBJECT_DIR;
-    if (!privateDir) {
-      res.status(500).json({ error: "Object storage not configured" });
-      return;
-    }
+    const userId = req.session.userId!;
+    // Store the image bytes inline on the user row — no object storage
+    // dependency. avatar_url points at the streaming endpoint with a
+    // cache-bust query param so <img> refreshes immediately on upload.
+    await db.execute(sql`
+      UPDATE app_users
+      SET avatar_mime = ${file.mimetype},
+          avatar_data = ${file.buffer},
+          avatar_url = ${`/api/auth/avatar/${userId}?v=${Date.now()}`},
+          updated_at = NOW()
+      WHERE id = ${userId}
+    `);
 
-    const ext = file.mimetype.split("/")[1]?.replace("jpeg", "jpg") ?? "jpg";
-    const avatarEntityId = `avatars/${req.session.userId}-${Date.now()}.${ext}`;
+    const [row] = await db
+      .select({ avatarUrl: usersTable.avatarUrl })
+      .from(usersTable)
+      .where(eq(usersTable.id, userId));
 
-    const privateDirNorm = privateDir.endsWith("/") ? privateDir : `${privateDir}/`;
-    const fullGcsPath = `${privateDirNorm}${avatarEntityId}`;
-
-    const pathParts = fullGcsPath.startsWith("/") ? fullGcsPath.slice(1).split("/") : fullGcsPath.split("/");
-    const bucketName = pathParts[0];
-    const objectName = pathParts.slice(1).join("/");
-
-    const bucket = objectStorageClient.bucket(bucketName);
-    const gcsFile = bucket.file(objectName);
-
-    await gcsFile.save(file.buffer, {
-      metadata: { contentType: file.mimetype },
-      resumable: false,
-    });
-
-    const objectPath = `/objects/${avatarEntityId}`;
-
-    await db
-      .update(usersTable)
-      .set({ avatarUrl: objectPath })
-      .where(eq(usersTable.id, req.session.userId!));
-
-    res.json({ avatarUrl: objectPath });
+    res.json({ avatarUrl: row?.avatarUrl ?? null });
   } catch (err) {
     console.error("Avatar upload error:", err);
     res.status(500).json({ error: "Failed to upload avatar" });
   }
+});
+
+// Stream the avatar bytes for a user — referenced by the avatar_url column
+// (/api/auth/avatar/:id?v=<ts>). Publicly readable to keep <img> loads on
+// login-adjacent pages simple; the content is non-sensitive.
+router.get("/avatar/:userId", async (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!Number.isFinite(userId)) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const rows = await db.execute<{ avatar_mime: string | null; avatar_data: Buffer | null }>(sql`
+    SELECT avatar_mime, avatar_data FROM app_users WHERE id = ${userId}
+  `);
+  const row = ((rows.rows ?? rows) as { avatar_mime: string | null; avatar_data: Buffer | null }[])[0];
+  if (!row || !row.avatar_data || !row.avatar_mime) {
+    res.status(404).json({ error: "No avatar" });
+    return;
+  }
+  res.setHeader("Content-Type", row.avatar_mime);
+  res.setHeader("Cache-Control", "public, max-age=3600");
+  res.send(row.avatar_data);
 });
 
 export default router;
