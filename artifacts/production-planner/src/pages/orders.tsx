@@ -139,6 +139,7 @@ type KanbanIngredient = {
   costPerPack: number | null;
   supplierId: number | null;
   supplierName: string | null;
+  secondarySupplierId: number | null;
 };
 
 export default function Orders() {
@@ -172,6 +173,10 @@ export default function Orders() {
   const [selectedKanbanIds, setSelectedKanbanIds] = useState<Set<number>>(new Set());
   const [addedKanbanIngredientIds, setAddedKanbanIngredientIds] = useState<Set<number>>(new Set());
   const [kanbanOnlySupplierInfo, setKanbanOnlySupplierInfo] = useState<Record<number, { id: number; name: string }>>({});
+  // Per-row supplier override for the Add Kanbans dialog. Keyed by ingredientId.
+  // Defaults to the ingredient's primary supplier; operators can route to any
+  // supplier (secondary or otherwise) via the dropdown.
+  const [kanbanSupplierOverrides, setKanbanSupplierOverrides] = useState<Record<number, number>>({});
 
   // When the operator adds a kanban/manual item to a supplier whose order
   // was already placed today, we "reopen" that PO into the pending view so
@@ -261,6 +266,40 @@ export default function Orders() {
     },
     enabled: kanbanSearchOpen,
   });
+
+  const { data: allSuppliers = [] } = useQuery<{ id: number; name: string }[]>({
+    queryKey: ["suppliers-for-kanban-dialog"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/suppliers`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load suppliers");
+      return res.json();
+    },
+    enabled: kanbanSearchOpen,
+  });
+
+  // For a given kanban row, produce the supplier options in priority order:
+  // primary first, then secondary, then the rest alphabetically.
+  const supplierOptionsFor = useCallback((k: KanbanIngredient) => {
+    const list = allSuppliers ?? [];
+    const primary = k.supplierId != null ? list.find(s => s.id === k.supplierId) : undefined;
+    const secondary = k.secondarySupplierId != null && k.secondarySupplierId !== k.supplierId
+      ? list.find(s => s.id === k.secondarySupplierId)
+      : undefined;
+    const primaryId = primary?.id;
+    const secondaryId = secondary?.id;
+    const rest = list
+      .filter(s => s.id !== primaryId && s.id !== secondaryId)
+      .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+    return [
+      ...(primary ? [{ ...primary, label: `${primary.name} (primary)` }] : []),
+      ...(secondary ? [{ ...secondary, label: `${secondary.name} (secondary)` }] : []),
+      ...rest.map(s => ({ ...s, label: s.name })),
+    ];
+  }, [allSuppliers]);
+
+  const effectiveSupplierIdFor = useCallback((k: KanbanIngredient) => {
+    return kanbanSupplierOverrides[k.ingredientId] ?? k.supplierId ?? null;
+  }, [kanbanSupplierOverrides]);
 
   const filteredKanbanIngredients = debouncedKanbanSearch.trim()
     ? kanbanIngredients.filter(k =>
@@ -361,7 +400,10 @@ export default function Orders() {
 
   const handleAddSelectedKanbans = () => {
     const toAdd = kanbanIngredients.filter(
-      k => selectedKanbanIds.has(k.ingredientId) && !addedKanbanIngredientIds.has(k.ingredientId) && k.supplierId
+      k =>
+        selectedKanbanIds.has(k.ingredientId) &&
+        !addedKanbanIngredientIds.has(k.ingredientId) &&
+        effectiveSupplierIdFor(k) != null
     );
     for (const kanban of toAdd) {
       const qty = kanban.kanbanOrderAmount ?? kanban.kanbanQuantity ?? 1;
@@ -389,7 +431,11 @@ export default function Orders() {
         editedStock: 0,
         stockDirty: false,
       };
-      const supplierId = kanban.supplierId!;
+      const supplierId = effectiveSupplierIdFor(kanban)!;
+      const supplierName =
+        allSuppliers.find(s => s.id === supplierId)?.name
+        ?? (supplierId === kanban.supplierId ? kanban.supplierName : null)
+        ?? `Supplier #${supplierId}`;
       // If this supplier already has a placed PO for the current plan, pull
       // that PO's lines into view so the operator can resubmit with the new
       // kanban item included, rather than losing the addition.
@@ -404,7 +450,7 @@ export default function Orders() {
       if (!dptSupplierIds.has(supplierId)) {
         setKanbanOnlySupplierInfo(prev => ({
           ...prev,
-          [supplierId]: { id: supplierId, name: kanban.supplierName ?? `Supplier #${supplierId}` },
+          [supplierId]: { id: supplierId, name: supplierName },
         }));
       }
       setExpandedSuppliers(prev => new Set([...prev, supplierId]));
@@ -413,6 +459,7 @@ export default function Orders() {
     setKanbanSearchOpen(false);
     setKanbanSearch("");
     setSelectedKanbanIds(new Set());
+    setKanbanSupplierOverrides({});
   };
 
   // Issue 4: fetch every ingredient belonging to the supplier whose "Add
@@ -790,7 +837,7 @@ export default function Orders() {
           Recalculate
         </button>
         <button
-          onClick={() => { setKanbanSearchOpen(true); setKanbanSearch(""); setSelectedKanbanIds(new Set()); }}
+          onClick={() => { setKanbanSearchOpen(true); setKanbanSearch(""); setSelectedKanbanIds(new Set()); setKanbanSupplierOverrides({}); }}
           className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 border border-amber-500/30 flex items-center gap-1.5"
         >
           <LayoutGrid className="w-4 h-4" />
@@ -1228,7 +1275,7 @@ export default function Orders() {
         </div>
       )}
 
-      <Dialog open={kanbanSearchOpen} onOpenChange={open => { setKanbanSearchOpen(open); if (!open) { setKanbanSearch(""); setSelectedKanbanIds(new Set()); } }}>
+      <Dialog open={kanbanSearchOpen} onOpenChange={open => { setKanbanSearchOpen(open); if (!open) { setKanbanSearch(""); setSelectedKanbanIds(new Set()); setKanbanSupplierOverrides({}); } }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -1270,57 +1317,81 @@ export default function Orders() {
               {filteredKanbanIngredients.map(k => {
                 const alreadyAdded = addedKanbanIngredientIds.has(k.ingredientId);
                 const isSelected = selectedKanbanIds.has(k.ingredientId);
-                const noSupplier = !k.supplierId;
+                const effectiveSupplierId = effectiveSupplierIdFor(k);
+                const noSupplier = effectiveSupplierId == null;
                 const orderAmt = k.kanbanOrderAmount ?? k.kanbanQuantity ?? null;
                 const unitLabel =
                   k.kanbanUnit === "pack" ? "packs"
                   : k.kanbanUnit === "bottle" ? "bottles"
                   : (k.ingredientUnit ?? "");
+                const supplierOptions = supplierOptionsFor(k);
                 return (
-                  <button
+                  <div
                     key={k.ingredientId}
-                    type="button"
-                    onClick={() => !alreadyAdded && !noSupplier && toggleKanbanSelection(k.ingredientId)}
-                    disabled={alreadyAdded || noSupplier}
                     className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-left transition-colors",
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors border",
                       alreadyAdded
-                        ? "bg-emerald-500/10 border border-emerald-500/30 cursor-default"
-                        : noSupplier
-                        ? "opacity-50 cursor-not-allowed bg-secondary/30 border border-transparent"
+                        ? "bg-emerald-500/10 border-emerald-500/30"
                         : isSelected
-                        ? "bg-amber-500/10 border border-amber-500/40"
-                        : "hover:bg-secondary/60 border border-transparent hover:border-border"
+                        ? "bg-amber-500/10 border-amber-500/40"
+                        : "hover:bg-secondary/60 border-transparent hover:border-border"
                     )}
                   >
-                    <div className="shrink-0">
-                      {alreadyAdded ? (
-                        <div className="w-4 h-4 rounded bg-emerald-500 flex items-center justify-center">
-                          <Check className="w-2.5 h-2.5 text-white" />
-                        </div>
-                      ) : (
-                        <div className={cn(
-                          "w-4 h-4 rounded border-2 flex items-center justify-center transition-colors",
-                          isSelected ? "bg-amber-500 border-amber-500" : "border-border"
-                        )}>
-                          {isSelected && <Check className="w-2.5 h-2.5 text-white" />}
-                        </div>
+                    <button
+                      type="button"
+                      onClick={() => !alreadyAdded && !noSupplier && toggleKanbanSelection(k.ingredientId)}
+                      disabled={alreadyAdded || noSupplier}
+                      className={cn(
+                        "flex-1 min-w-0 flex items-center gap-3 text-left",
+                        (alreadyAdded || noSupplier) && "cursor-not-allowed"
                       )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium truncate">{k.ingredientName ?? "Unknown"}</p>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {noSupplier ? "No supplier" : k.supplierName}
-                        {orderAmt != null && <> &middot; <span className="font-medium text-foreground">{orderAmt} {unitLabel}</span> to order</>}
-                      </p>
-                    </div>
+                    >
+                      <div className="shrink-0">
+                        {alreadyAdded ? (
+                          <div className="w-4 h-4 rounded bg-emerald-500 flex items-center justify-center">
+                            <Check className="w-2.5 h-2.5 text-white" />
+                          </div>
+                        ) : (
+                          <div className={cn(
+                            "w-4 h-4 rounded border-2 flex items-center justify-center transition-colors",
+                            isSelected ? "bg-amber-500 border-amber-500" : "border-border"
+                          )}>
+                            {isSelected && <Check className="w-2.5 h-2.5 text-white" />}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium truncate">{k.ingredientName ?? "Unknown"}</p>
+                        {orderAmt != null && (
+                          <p className="text-xs text-muted-foreground truncate">
+                            <span className="font-medium text-foreground">{orderAmt} {unitLabel}</span> to order
+                          </p>
+                        )}
+                      </div>
+                    </button>
+                    <select
+                      value={effectiveSupplierId ?? ""}
+                      onChange={e => {
+                        const v = Number(e.target.value);
+                        setKanbanSupplierOverrides(prev => ({ ...prev, [k.ingredientId]: v }));
+                      }}
+                      disabled={alreadyAdded}
+                      className={cn(
+                        "shrink-0 max-w-[10rem] text-xs rounded-md border border-border bg-background px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/30",
+                        alreadyAdded && "opacity-60 cursor-not-allowed"
+                      )}
+                    >
+                      {effectiveSupplierId == null && (
+                        <option value="" disabled>Choose supplier…</option>
+                      )}
+                      {supplierOptions.map(opt => (
+                        <option key={opt.id} value={opt.id}>{opt.label}</option>
+                      ))}
+                    </select>
                     {alreadyAdded && (
                       <span className="shrink-0 text-xs text-emerald-600 dark:text-emerald-400 font-medium">Added</span>
                     )}
-                    {noSupplier && !alreadyAdded && (
-                      <span className="shrink-0 text-xs text-muted-foreground">No supplier</span>
-                    )}
-                  </button>
+                  </div>
                 );
               })}
             </div>
