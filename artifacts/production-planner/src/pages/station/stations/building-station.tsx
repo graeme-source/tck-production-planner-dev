@@ -451,6 +451,12 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   // finished the recipe — the other builder (who was on the penultimate batch)
   // moves straight to the next recipe.
   const myLastBatchItemIdRef = useRef<number | null>(null);
+  // Items this builder has implicitly handed off — when they tap + leaving
+  // exactly one batch and the other builder has already been recording on
+  // this recipe, the other builder is presumed to be mid-batch on the last
+  // slot. This builder skips straight to the next recipe instead of claiming
+  // the final batch themselves. Local state only, per-builder view.
+  const [mySkippedItemIds, setMySkippedItemIds] = useState<Set<number>>(new Set());
   // Part-batch calculator dialog — tracks which item's calculator is open.
   const [calcOpenItemId, setCalcOpenItemId] = useState<number | null>(null);
 
@@ -471,7 +477,11 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   const currentItem = items.find(it => {
     const combined = getCombinedBuildCount(it);
     const effectiveTarget = getEffectiveTarget(it);
-    return combined < effectiveTarget;
+    if (combined >= effectiveTarget) return false;
+    // This builder has handed off the final batch to the other station (see
+    // handleBatchComplete). Skip the item until combined catches up.
+    if (mySkippedItemIds.has(it.id)) return false;
+    return true;
   });
 
   const buildingCount = currentItem ? getCombinedBuildCount(currentItem) : 0;
@@ -650,6 +660,13 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     // it so the recipe-change effect knows to show the extra-packs prompt to
     // ME (and not the other builder who was on the penultimate batch).
     const wasLastBatchTap = remaining === 1;
+    // Co-ordinated hand-off: when this tap will leave exactly one batch left
+    // AND the other builder has already recorded completions on this recipe,
+    // they're presumed to be mid-build on that final slot. This builder moves
+    // straight to the next recipe instead of claiming the final batch too.
+    const otherStation = stationType === "building_1" ? "building_2" : "building_1";
+    const otherStationCount = getStationCount(currentItem, otherStation);
+    const handOffFinalBatch = remaining === 2 && otherStationCount >= 1;
     createBatch.mutate(
       {
         id: plan.id,
@@ -663,6 +680,14 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
         onSuccess: () => {
           if (wasLastBatchTap) {
             myLastBatchItemIdRef.current = completingItemId;
+          }
+          if (handOffFinalBatch) {
+            setMySkippedItemIds(prev => {
+              if (prev.has(completingItemId)) return prev;
+              const next = new Set(prev);
+              next.add(completingItemId);
+              return next;
+            });
           }
         },
       },

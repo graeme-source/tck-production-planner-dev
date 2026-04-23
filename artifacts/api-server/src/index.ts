@@ -526,6 +526,18 @@ async function runStartupMigrations() {
     await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS kanban_items_recipe_unique ON kanban_items (recipe_id) WHERE source_type = 'recipe' AND recipe_id IS NOT NULL`);
     await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS kanban_items_sub_recipe_unique ON kanban_items (sub_recipe_id) WHERE source_type = 'sub_recipe' AND sub_recipe_id IS NOT NULL`);
     await db.execute(sql`DO $$ BEGIN ALTER TABLE kanban_items ADD CONSTRAINT kanban_items_source_type_check CHECK (source_type IN ('ingredient', 'recipe', 'sub_recipe')); EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS standards_sops (
+        id SERIAL PRIMARY KEY,
+        title TEXT NOT NULL,
+        stations TEXT[] NOT NULL DEFAULT '{}',
+        image_url TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        created_by_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS standards_sops_created_at_idx ON standards_sops (created_at DESC)`);
+
     await seedStorageLocations();
 
     const kanbanBackfillResult = await db.execute(sql`

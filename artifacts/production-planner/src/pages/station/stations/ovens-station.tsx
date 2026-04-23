@@ -11,6 +11,7 @@ import { useAuth } from "@/contexts/auth-context";
 import {
   Loader2, CheckCircle2, Flame, RefreshCw, AlertCircle, BarChart2,
   Minus, Plus, Snowflake, X, Eye, ChevronDown, Scale, ThermometerSnowflake,
+  Hammer, ArrowDown,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -690,7 +691,8 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                       </div>
                     )}
 
-                    {/* Batch counter */}
+                    {/* Batch counter — wrapped in the "From Building" card
+                        so the flow from builders → ovens is visually obvious. */}
                     {(() => {
                       const itemIsMac = isMacCheese(item as any);
                       const unitLabel = itemIsMac ? "packs" : "batches";
@@ -705,7 +707,10 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                           : "Waiting for building";
                       const undoLabel = blastUndo >= BLAST_TRAY_SIZE ? "−10" : blastUndo > 0 ? `−${blastUndo}` : "−10";
                       return (
-                        <>
+                        <div className="rounded-xl border border-border bg-secondary/20 p-4">
+                          <div className="flex items-center gap-2 text-base font-bold text-muted-foreground uppercase tracking-wider mb-3">
+                            <Hammer className="w-5 h-5" /> From Building
+                          </div>
                           <div className="flex items-center justify-center gap-6">
                             <button
                               onClick={(e) => { e.stopPropagation(); removeBatch(item); }}
@@ -715,21 +720,49 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                               <Minus className="w-5 h-5" />
                             </button>
                             <div className="text-center">
-                              <div className="flex items-baseline gap-2 justify-center">
-                                <span className="font-display text-5xl font-bold tabular-nums text-foreground leading-none">
-                                  {getStationCount(item, "ovens")}
-                                </span>
-                                <span className="text-xl text-muted-foreground font-light tabular-nums">
-                                  / {effTarget(item)}
-                                </span>
-                              </div>
+                              {(() => {
+                                // For calzones, when the builder topped a
+                                // partial final batch up with extra packs,
+                                // render the batch count as a decimal that
+                                // reflects those extras (e.g. 7 batches + 4
+                                // extras with 5 packs/batch = 7.8 batches).
+                                // The underlying logic that drives ovens /
+                                // wrapping is unchanged — this is display only.
+                                const rawCount = getStationCount(item, "ovens");
+                                const target = effTarget(item);
+                                const extras = item.extraPacksBuilt ?? 0;
+                                const showDecimal = !itemIsMac && extras > 0;
+                                if (showDecimal) {
+                                  const ppb = packsPerBatch(item);
+                                  const numerator = ovenPacksDone(item) / ppb;
+                                  const denominator = ovenPacksTarget(item) / ppb;
+                                  return (
+                                    <div className="flex items-baseline gap-2 justify-center">
+                                      <span className="font-display text-5xl font-bold tabular-nums text-foreground leading-none">
+                                        {numerator.toFixed(1)}
+                                      </span>
+                                      <span className="text-xl text-muted-foreground font-light tabular-nums">
+                                        / {denominator.toFixed(1)}
+                                      </span>
+                                    </div>
+                                  );
+                                }
+                                return (
+                                  <div className="flex items-baseline gap-2 justify-center">
+                                    <span className="font-display text-5xl font-bold tabular-nums text-foreground leading-none">
+                                      {rawCount}
+                                    </span>
+                                    <span className="text-xl text-muted-foreground font-light tabular-nums">
+                                      / {target}
+                                    </span>
+                                  </div>
+                                );
+                              })()}
                               <p className="text-sm text-muted-foreground mt-1 font-medium">{unitLabel}</p>
-                              {!itemIsMac && (item.extraPacksBuilt ?? 0) > 0 && (
-                                <p className="text-xs text-muted-foreground mt-1 tabular-nums">
-                                  {ovenPacksDone(item)} / {ovenPacksTarget(item)} packs
-                                  <span className="ml-1 text-amber-600 dark:text-amber-400">
-                                    (incl. {item.extraPacksBuilt} extra)
-                                  </span>
+                              {!itemIsMac && (
+                                <p className="text-lg text-foreground mt-1 tabular-nums font-semibold">
+                                  {ovenPacksDone(item)}
+                                  <span className="text-muted-foreground font-normal"> / {ovenPacksTarget(item)} packs</span>
                                 </p>
                               )}
                             </div>
@@ -781,42 +814,66 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                               </button>
                             </div>
                           )}
-                        </>
+                        </div>
                       );
                     })()}
 
-                    {/* Stats: net 2-packs + 8-packs + chiller trays + wonky */}
-                    <div className="flex items-center justify-center gap-6 pb-3 border-b border-border/50">
-                      <div className="text-center">
-                        <p className="text-xs text-muted-foreground font-medium mb-0.5">Net 2-Pk</p>
-                        <p className="text-2xl font-bold tabular-nums text-indigo-600 dark:text-indigo-400">
-                          {nTwoPacks}
-                        </p>
+                    {/* Flow arrow — From Building → Blast Chiller */}
+                    <div className="flex justify-center -my-2">
+                      <ArrowDown className="w-5 h-5 text-muted-foreground/50" />
+                    </div>
+
+                    {/* Blast Chiller — Net + Wonky = what's sitting in the
+                        chiller. Equals display only shown in the common case
+                        where there are no 8-pack bags changing the arithmetic. */}
+                    <div className="rounded-xl border border-cyan-300 dark:border-cyan-800 bg-cyan-50/40 dark:bg-cyan-950/20 p-4">
+                      <div className="flex items-center gap-2 text-base font-bold text-cyan-700 dark:text-cyan-300 uppercase tracking-wider mb-3">
+                        <Snowflake className="w-5 h-5" /> Blast Chiller
                       </div>
-                      {eightPacks > 0 && (
-                        <>
-                          <div className="w-px h-7 bg-border/60" />
-                          <div className="text-center">
-                            <p className="text-xs text-muted-foreground font-medium mb-0.5">8-Packs</p>
-                            <p className="text-2xl font-bold tabular-nums text-indigo-600 dark:text-indigo-400">{eightPacks}</p>
-                          </div>
-                        </>
-                      )}
-                      <div className="w-px h-7 bg-border/60" />
-                      <div className="text-center">
-                        <p className="text-xs text-muted-foreground font-medium mb-0.5">Chiller Trays</p>
-                        <p className="text-2xl font-bold tabular-nums text-cyan-600 dark:text-cyan-400">
-                          {trays}
-                        </p>
+                      <div className="flex items-stretch justify-center gap-3">
+                        <div className="flex-1 text-center bg-background rounded-lg border border-border py-2">
+                          <p className="text-xs text-muted-foreground font-medium mb-0.5">Net packs</p>
+                          <p className="text-3xl font-bold tabular-nums text-indigo-600 dark:text-indigo-400 leading-tight">
+                            {nTwoPacks}
+                          </p>
+                        </div>
+                        <div className="flex items-center text-2xl text-muted-foreground font-light">+</div>
+                        <div className="flex-1 text-center bg-background rounded-lg border border-border py-2">
+                          <p className="text-xs text-muted-foreground font-medium mb-0.5">Wonky</p>
+                          <p className={cn(
+                            "text-3xl font-bold tabular-nums leading-tight",
+                            wonlys > 0 ? "text-red-500" : "text-muted-foreground/60",
+                          )}>
+                            {wonlys}
+                          </p>
+                        </div>
+                        {eightPacks === 0 && (
+                          <>
+                            <div className="flex items-center text-2xl text-muted-foreground font-light">=</div>
+                            <div className="flex-1 text-center bg-cyan-100/60 dark:bg-cyan-900/30 rounded-lg border border-cyan-300 dark:border-cyan-700 py-2">
+                              <p className="text-xs text-cyan-700 dark:text-cyan-300 font-medium mb-0.5">Total in chiller</p>
+                              <p className="text-3xl font-bold tabular-nums text-cyan-700 dark:text-cyan-200 leading-tight">
+                                {nTwoPacks + wonlys}
+                              </p>
+                            </div>
+                          </>
+                        )}
                       </div>
-                      {wonlys > 0 && (
-                        <>
-                          <div className="w-px h-7 bg-border/60" />
-                          <div className="text-center">
-                            <p className="text-xs text-muted-foreground font-medium mb-0.5">Wonky</p>
-                            <p className="text-2xl font-bold tabular-nums text-red-500">{wonlys}</p>
-                          </div>
-                        </>
+                      {(eightPacks > 0 || trays > 0) && (
+                        <div className="mt-3 pt-3 border-t border-cyan-200 dark:border-cyan-800/60 flex items-center justify-center gap-6 text-sm">
+                          {eightPacks > 0 && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-muted-foreground font-medium">8-packs</span>
+                              <span className="text-lg font-bold tabular-nums text-indigo-600 dark:text-indigo-400">{eightPacks}</span>
+                            </div>
+                          )}
+                          {trays > 0 && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-muted-foreground font-medium">Chiller trays</span>
+                              <span className="text-lg font-bold tabular-nums text-cyan-600 dark:text-cyan-400">{trays}</span>
+                            </div>
+                          )}
+                        </div>
                       )}
                     </div>
 

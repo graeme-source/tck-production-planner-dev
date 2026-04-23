@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useLocation, useSearch } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ChevronLeft, ChevronDown, ChevronUp, BarChart2, ClipboardList, Layers, Beef, Menu, X, LayoutGrid,
+  ChevronLeft, ChevronDown, ChevronUp, BarChart2, ClipboardList, Layers, Beef, Menu, X, LayoutGrid, BookOpen,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -21,6 +21,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
 import { ReportButton } from "@/components/report-modal";
+import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -78,6 +79,7 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
   const search = useSearch();
   const [navOpen, setNavOpen] = useState(false);
   const [stationNavOpen, setStationNavOpen] = useState(false);
+  const [standardsOpen, setStandardsOpen] = useState(false);
   const { state, logout, lockStation } = useAuth();
   const { canAccess } = usePagePermissions();
   const { assignments, enabled: stationLockEnabled } = useStationAssignment(planId, stationType);
@@ -225,6 +227,14 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
               {headerSlot}
               <BreakTracker planId={planId} stationType={stationType} onBreakActiveChange={onBreakActiveChange} />
               <button
+                onClick={() => setStandardsOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg font-medium text-sm border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors"
+                title="Standards & SOPs"
+              >
+                <BookOpen className="w-4 h-4" />
+                <span className="hidden sm:inline">Standards</span>
+              </button>
+              <button
                 onClick={() => setStationNavOpen(v => !v)}
                 className={cn(
                   "flex items-center gap-1.5 px-3 py-2 rounded-lg font-medium text-sm transition-colors",
@@ -340,6 +350,12 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
             ? `${meta.label} station · Plan: ${format(parseISO(plan.planDate), "EEEE d MMM yyyy")}${plan.batchNumber ? ` · Batch #${plan.batchNumber}` : ""}`
             : `${meta.label} station`
         }
+      />
+
+      <StandardsSopsDialog
+        open={standardsOpen}
+        onClose={() => setStandardsOpen(false)}
+        currentStationType={stationType}
       />
     </div>
   );

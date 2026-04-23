@@ -614,7 +614,6 @@ export function Layout({ children }: { children: ReactNode }) {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3 }}
-            className="max-w-6xl mx-auto"
           >
             {children}
           </motion.div>
