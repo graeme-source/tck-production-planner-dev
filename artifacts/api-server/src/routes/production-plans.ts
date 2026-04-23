@@ -5059,6 +5059,10 @@ router.get("/:id/main-prep", async (req, res) => {
   const pastaWaterLPerKg = Number(pastaSettingsMap.get("pasta_cooking_water_l_per_kg") ?? 6);
   const pastaSaltGPerKg = Number(pastaSettingsMap.get("pasta_cooking_salt_g_per_kg") ?? 60);
   let pastaTotalKg = 0;
+  // Per-ingredient pasta kg so we can attach the synthetic water + salt
+  // rows as linked sub-items under the relevant pasta ingredient (e.g.
+  // Macaroni) rather than as detached rows at the bottom.
+  const pastaKgByIngredient = new Map<number, number>();
 
   // Expanded sub-recipe ingredients: merged across all recipes sharing the sub-recipe
   const expandedIngMap = new Map<string, {
@@ -5166,6 +5170,7 @@ router.get("/:id/main-prep", async (req, res) => {
       if ((row.category ?? "") === "pasta") {
         const rawKg = originalUnit === "kg" ? rawQty : originalUnit === "g" ? rawQty / 1000 : 0;
         pastaTotalKg += rawKg;
+        pastaKgByIngredient.set(row.ingredientId, (pastaKgByIngredient.get(row.ingredientId) ?? 0) + rawKg);
       }
 
       // Prep-display override — when the ingredient has a count-per-portion,
@@ -5313,6 +5318,7 @@ router.get("/:id/main-prep", async (req, res) => {
             if ((comp.category ?? "") === "pasta") {
               const kg = compUnit === "kg" ? rawScaled : compUnit === "g" ? rawScaled / 1000 : 0;
               pastaTotalKg += kg;
+              pastaKgByIngredient.set(comp.ingredientId, (pastaKgByIngredient.get(comp.ingredientId) ?? 0) + kg);
             }
             // Use higher-precision rounding for kg/l so small amounts (e.g. a
             // pinch of dried parsley scaled through a sub-recipe) don't round
@@ -5659,64 +5665,35 @@ router.get("/:id/main-prep", async (req, res) => {
     }
   }
 
-  // Synthetic pasta cooking rows — appended at the end of the prep list.
-  // Virtual entries (negative ingredientIds) so they don't collide with
-  // real ingredients, no stock / ordering / label impact; purely prep
-  // display. Shown on the main_prep station only (cooking the pasta is a
-  // main-prep task, not a prep-bases or prep-meat task).
-  const pastaSyntheticItems: Array<typeof ingredients[number]> = [];
-  if (station === "main_prep" && pastaTotalKg > 0) {
-    const kgRounded = Math.round(pastaTotalKg * 1000) / 1000;
-    const totalWaterL = Math.round(pastaTotalKg * pastaWaterLPerKg * 100) / 100;
-    const totalSaltG = Math.round(pastaTotalKg * pastaSaltGPerKg);
-    const baseEntry = {
-      stockCheckEnabled: false,
-      stockCheckFrequency: "daily",
-      stockCheckDay: null,
-      category: "pasta_cooking" as string | null,
-      isBottle: false,
-      bottleSize: null,
-      isSubRecipe: false,
-      totalTinCount: 0,
-      recipes: [] as Array<{
-        recipeId: number;
-        recipeName: string;
-        batchesTarget: number;
-        qtyForRecipe: number;
-        tinSize: string | null;
-        maxBatchesPerTin: number | null;
-        tinCount: number;
-        qtyPerTin: number;
-        isOverridden?: boolean;
-        isFillingMix?: boolean;
-      }>,
-    };
-    pastaSyntheticItems.push({
-      ...baseEntry,
-      ingredientId: -1,
-      ingredientName: `Pasta cooking water (for ${kgRounded} kg pasta)`,
-      unit: "L",
-      totalQty: totalWaterL,
-    } as unknown as typeof ingredients[number]);
-    pastaSyntheticItems.push({
-      ...baseEntry,
-      ingredientId: -2,
-      ingredientName: `Salt for pasta water (for ${kgRounded} kg pasta)`,
-      unit: "g",
-      totalQty: totalSaltG,
-    } as unknown as typeof ingredients[number]);
+  // Pasta cooking water + salt — attached as linked sub-rows under each
+  // pasta-category ingredient (e.g. Macaroni) on the main-prep station so
+  // the prep team sees the cooking requirements grouped with the pasta
+  // they're going to boil. Rates come from app settings.
+  if (station === "main_prep") {
+    for (const [ingId, kg] of pastaKgByIngredient) {
+      if (kg <= 0) continue;
+      if (!ingredientMap.has(ingId)) continue;
+      const kgRounded = Math.round(kg * 1000) / 1000;
+      const waterL = Math.round(kg * pastaWaterLPerKg * 100) / 100;
+      const saltG = Math.round(kg * pastaSaltGPerKg);
+      if (!linkedItemsMap[ingId]) linkedItemsMap[ingId] = [];
+      linkedItemsMap[ingId].push({
+        ingredientName: `Cooking water (for ${kgRounded} kg)`,
+        unit: "L",
+        totalQty: waterL,
+        recipes: [],
+      });
+      linkedItemsMap[ingId].push({
+        ingredientName: `Salt for pasta water (for ${kgRounded} kg)`,
+        unit: "g",
+        totalQty: saltG,
+        recipes: [],
+      });
+    }
   }
 
-  const allItems = [...ingredients, ...subRecipeIngredients, ...pastaSyntheticItems]
-    .sort((a, b) => {
-      // Keep the synthetic pasta-cooking rows at the bottom; they're not
-      // "weigh out" items, they're a helper note.
-      const aPasta = a.ingredientId < 0;
-      const bPasta = b.ingredientId < 0;
-      if (aPasta && !bPasta) return 1;
-      if (!aPasta && bPasta) return -1;
-      return a.ingredientName.localeCompare(b.ingredientName);
-    });
+  const allItems = [...ingredients, ...subRecipeIngredients]
+    .sort((a, b) => a.ingredientName.localeCompare(b.ingredientName));
 
   const completionRows = await db.execute(sql`
     SELECT id, ingredient_id AS "ingredientId", sub_recipe_id AS "subRecipeId",
