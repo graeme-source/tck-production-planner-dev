@@ -31,6 +31,7 @@ const INGREDIENT_CATEGORIES = [
   { value: "sauce", label: "Sauce" },
   { value: "cheese", label: "Cheese" },
   { value: "seasoning", label: "Seasoning/Spice" },
+  { value: "pasta", label: "Pasta" },
   { value: "dough", label: "Dough" },
   { value: "packaging", label: "Packaging" },
   { value: "other", label: "Other" },

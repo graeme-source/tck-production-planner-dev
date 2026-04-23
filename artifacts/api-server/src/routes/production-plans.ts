@@ -5049,6 +5049,11 @@ router.get("/:id/main-prep", async (req, res) => {
     bottleSize: number | null;
     totalQty: number;
     subRecipeName: string;
+    // The first real recipe that drags this expanded sub-recipe component
+    // into the prep sheet. Used so prep-tin completions can resolve a valid
+    // (plan_item_id, recipe_id) pair — previously we sent recipeId=0 which
+    // the server rejects with 400.
+    parentRecipeId: number;
   }>();
 
   for (const planItem of planItems) {
@@ -5312,6 +5317,7 @@ router.get("/:id/main-prep", async (req, res) => {
                 isBottle: comp.isBottle ?? false,
                 bottleSize: comp.bottleSize != null ? Number(comp.bottleSize) : null,
                 subRecipeName: sr.subRecipeName ?? `Sub-recipe #${sr.subRecipeId}`,
+                parentRecipeId: planItem.recipeId!,
               });
             }
           }
@@ -5449,7 +5455,7 @@ router.get("/:id/main-prep", async (req, res) => {
       // Ingredient already exists from a direct recipe link — add expanded qty
       existing.totalQty += exp.totalQty;
       existing.recipes.push({
-        recipeId: 0,
+        recipeId: exp.parentRecipeId,
         recipeName: exp.subRecipeName,
         batchesTarget: 0,
         qtyForRecipe: exp.totalQty,
@@ -5461,10 +5467,13 @@ router.get("/:id/main-prep", async (req, res) => {
         isFillingMix: false,
       });
     } else {
+      // Strip parentRecipeId from the spread — private marker, not response.
+      const { parentRecipeId: _pRid, ...expRest } = exp;
+      void _pRid;
       ingredientMap.set(exp.ingredientId, {
-        ...exp,
+        ...expRest,
         recipes: [{
-          recipeId: 0,
+          recipeId: exp.parentRecipeId,
           recipeName: exp.subRecipeName,
           batchesTarget: 0,
           qtyForRecipe: exp.totalQty,
