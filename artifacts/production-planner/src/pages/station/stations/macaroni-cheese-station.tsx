@@ -30,25 +30,23 @@ function useMacCheesePrep(planId: number, macItems: ProductionPlanItem[]) {
 
   useEffect(() => {
     if (macItems.length === 0) { setIngredients([]); setLoading(false); return; }
-    fetch(`/api/production-plans/${planId}/prep-requirements?station=all`, { credentials: "include" })
+    fetch(`/api/production-plans/${planId}/prep-requirements-by-recipe?station=all`, { credentials: "include" })
       .then(r => r.json())
       .then(data => {
-        // Filter to only ingredients from mac cheese recipes
         const macRecipeIds = new Set(macItems.map(it => it.recipeId));
         const allIngredients: PrepIngredient[] = [];
-        for (const item of (data ?? [])) {
-          if (!macRecipeIds.has(item.recipeId)) continue;
-          for (const ing of item.ingredients ?? []) {
+        for (const recipe of (data?.recipes ?? [])) {
+          if (!macRecipeIds.has(recipe.recipeId)) continue;
+          for (const ing of recipe.ingredients ?? []) {
             allIngredients.push({
               ingredientId: ing.ingredientId,
               ingredientName: ing.ingredientName,
               unit: ing.unit ?? "kg",
-              totalQty: ing.totalQty ?? 0,
+              totalQty: ing.prepQty ?? ing.cookedQty ?? 0,
               section: classifyIngredient(ing.ingredientName),
             });
           }
         }
-        // Aggregate by ingredient across recipes
         const agg = new Map<number, PrepIngredient>();
         for (const ing of allIngredients) {
           const existing = agg.get(ing.ingredientId);

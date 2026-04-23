@@ -125,6 +125,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
   const [editingTinKey, setEditingTinKey] = useState<string | null>(null); // "ingredientId_recipeId"
   const [editTinValue, setEditTinValue] = useState("");
   const [savingTinOverride, setSavingTinOverride] = useState(false);
+  const [hideCompleted, setHideCompleted] = useState(false);
 
   const setTinOverride = async (recipeId: number, ingredientId: number, isFillingMix: boolean, tinCount: number | null) => {
     setSavingTinOverride(true);
@@ -490,11 +491,32 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
           {/* LEFT — Ingredients grouped by recipe (menu + sub-items layout) */}
           <div className="lg:w-80 xl:w-96 flex-shrink-0">
             <div className="bg-card border border-border rounded-xl overflow-hidden">
-              <div className="px-4 py-2.5 bg-secondary/30 border-b border-border">
+              <div className="px-4 py-2.5 bg-secondary/30 border-b border-border flex items-center justify-between gap-2">
                 <p className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Ingredients by Recipe</p>
+                <button
+                  type="button"
+                  onClick={() => setHideCompleted(v => !v)}
+                  className={cn(
+                    "text-xs font-medium px-2 py-1 rounded-md border transition-colors",
+                    hideCompleted
+                      ? "bg-emerald-500 border-emerald-500 text-white hover:bg-emerald-600"
+                      : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60"
+                  )}
+                >
+                  {hideCompleted ? "Show all" : "Hide completed"}
+                </button>
               </div>
               <div className="max-h-[calc(100vh-280px)] overflow-y-auto">
-                {leftGroups.map((group, gi) => (
+                {leftGroups.map((group, gi) => {
+                  const visibleItems = hideCompleted
+                    ? group.items.filter(({ ing, qtyForRecipe: _q }) => {
+                        void _q;
+                        const rStatus = recipeIngredientStatus(ing, group.recipeId);
+                        return !rStatus.allDone;
+                      })
+                    : group.items;
+                  if (visibleItems.length === 0) return null;
+                  return (
                   <div key={group.recipeId} className={cn(gi > 0 && "border-t border-border")}>
                     {/* Recipe section header */}
                     <div className="px-4 py-2 bg-emerald-50/60 dark:bg-emerald-950/20 flex items-center justify-between">
@@ -505,7 +527,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                         {group.batchesTarget} batch{group.batchesTarget !== 1 ? "es" : ""}
                       </span>
                     </div>
-                    {group.items.map(({ ing, qtyForRecipe }) => {
+                    {visibleItems.map(({ ing, qtyForRecipe }) => {
                       const rStatus = recipeIngredientStatus(ing, group.recipeId);
                       const ingStatus = ingredientDoneStatus(ing);
                       const ik = itemKey(ing);
@@ -613,7 +635,8 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                       );
                     })}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -645,7 +668,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                               <Package className="w-5 h-5 text-blue-500 flex-shrink-0 animate-pulse" />
                             ) : null}
                             <h3 className={cn(
-                              "font-bold text-lg leading-tight",
+                              "font-bold text-2xl leading-tight",
                               status.isFullyDone && "line-through text-muted-foreground"
                             )}>
                               {ing.ingredientName}
@@ -717,8 +740,8 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                               <div className="flex items-center gap-2 min-w-0">
                                 {done && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />}
                                 <p className={cn(
-                                  "text-lg font-bold uppercase tracking-wider truncate",
-                                  done ? "text-emerald-700 dark:text-emerald-300" : "text-emerald-800 dark:text-emerald-300"
+                                  "text-sm font-semibold truncate",
+                                  done ? "text-emerald-700 dark:text-emerald-300" : "text-muted-foreground"
                                 )}>
                                   {recipe.recipeName}
                                 </p>
@@ -790,8 +813,8 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                               <div className="flex items-center gap-2 min-w-0">
                                 {allRecipeDone && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />}
                                 <p className={cn(
-                                  "text-lg font-bold uppercase tracking-wider truncate",
-                                  allRecipeDone ? "text-emerald-700 dark:text-emerald-300" : "text-emerald-800 dark:text-emerald-300"
+                                  "text-sm font-semibold truncate",
+                                  allRecipeDone ? "text-emerald-700 dark:text-emerald-300" : "text-muted-foreground"
                                 )}>
                                   {recipe.recipeName}
                                 </p>

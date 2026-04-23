@@ -66,12 +66,12 @@ function fmt(n: number | undefined | null) { return (Number(n) || 0).toFixed(2);
 function MarginBadge({ margin }: { margin: number | null | undefined }) {
   if (margin == null) return <span className="text-xs text-muted-foreground italic">No RRP set</span>;
   const label = `${margin.toFixed(1)}%`;
-  if (margin >= 60) return (
+  if (margin >= 80) return (
     <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700">
       <TrendingUp className="w-3 h-3" /> {label}
     </span>
   );
-  if (margin >= 50) return (
+  if (margin >= 75) return (
     <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-700">
       <TrendingUp className="w-3 h-3" /> {label}
     </span>
@@ -86,7 +86,7 @@ function MarginBadge({ margin }: { margin: number | null | undefined }) {
 function MarginBar({ margin }: { margin: number | null | undefined }) {
   if (margin == null) return null;
   const pct = Math.max(0, Math.min(100, margin));
-  const color = margin >= 60 ? "bg-green-500" : margin >= 50 ? "bg-amber-400" : "bg-red-500";
+  const color = margin >= 80 ? "bg-green-500" : margin >= 75 ? "bg-amber-400" : "bg-red-500";
   return (
     <div className="w-full bg-secondary/40 rounded-full h-1.5 overflow-hidden">
       <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
@@ -1638,7 +1638,7 @@ function RecipeCard({ recipe, onEdit, onDelete, onBreakdown, onDuplicate }: { re
               <div className="text-muted-foreground">RRP</div>
               <div className="text-right font-medium">£{fmt(recipe.rrp)}</div>
               <div className="text-muted-foreground">Gross profit</div>
-              <div className={`text-right font-semibold ${margin != null && margin >= 60 ? "text-green-600" : margin != null && margin >= 50 ? "text-amber-600" : "text-red-600"}`}>
+              <div className={`text-right font-semibold ${margin != null && margin >= 80 ? "text-green-600" : margin != null && margin >= 75 ? "text-amber-600" : "text-red-600"}`}>
                 £{fmt(recipe.rrp - recipe.totalPackCost)}
               </div>
             </>
@@ -1750,9 +1750,9 @@ export default function Recipes() {
       {/* Margin legend + category filter */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-green-500 inline-block" /> ≥60% — Great</span>
-          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-400 inline-block" /> 50–59% — OK</span>
-          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-red-500 inline-block" /> &lt;50% — Review</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-green-500 inline-block" /> ≥80% — Great</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-400 inline-block" /> 75–79% — OK</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-red-500 inline-block" /> &lt;75% — Review</span>
         </div>
         <div className="flex items-center gap-2">
           <Filter className="w-4 h-4 text-muted-foreground" />

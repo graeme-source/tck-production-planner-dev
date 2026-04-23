@@ -55,6 +55,7 @@ function usePrepMeatCompletions(planId: number) {
 export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const { toast } = useToast();
   const [selectedRecipeId, setSelectedRecipeId] = useState<number | null>(null);
+  const [hideCompleted, setHideCompleted] = useState(false);
   const { recipes, isLoading, nextPlan, targetPlanId, noFuturePlan } = usePrepByRecipe("prep_meat", plan.id, plan.planDate);
   const isDraft = nextPlan?.status === "draft";
   const { completions, refetch } = usePrepMeatCompletions(targetPlanId ?? plan.id);
@@ -293,8 +294,20 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
         {/* Left: recipe list */}
         <div className="lg:w-72 xl:w-80 flex-shrink-0">
           <div className="bg-card border border-border rounded-xl overflow-hidden">
-            <div className="px-4 py-2.5 bg-secondary/30 border-b border-border">
+            <div className="px-4 py-2.5 bg-secondary/30 border-b border-border flex items-center justify-between gap-2">
               <p className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Recipes</p>
+              <button
+                type="button"
+                onClick={() => setHideCompleted(v => !v)}
+                className={cn(
+                  "text-xs font-medium px-2 py-1 rounded-md border transition-colors",
+                  hideCompleted
+                    ? "bg-rose-500 border-rose-500 text-white hover:bg-rose-600"
+                    : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60"
+                )}
+              >
+                {hideCompleted ? "Show all" : "Hide completed"}
+              </button>
             </div>
             <div className="divide-y divide-border/50 max-h-[calc(100vh-320px)] overflow-y-auto">
               {recipes.map(recipe => {
@@ -302,6 +315,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                 const rDone = recipeCompletedTrays(recipe);
                 const rAllDone = rTotal > 0 && rDone >= rTotal;
                 const isSelected = recipe.recipeId === selected.recipeId;
+                if (hideCompleted && rAllDone && !isSelected) return null;
                 return (
                   <button
                     key={recipe.recipeId}
@@ -374,7 +388,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-2">
                   {selAllDone && <CheckCircle2 className="w-6 h-6 text-rose-500 flex-shrink-0" />}
-                  <h2 className={cn("font-display text-3xl font-bold leading-tight", selAllDone && "line-through text-muted-foreground")}>
+                  <h2 className={cn("font-display text-xl font-semibold leading-tight text-muted-foreground", selAllDone && "line-through")}>
                     {selected.recipeName}
                   </h2>
                 </div>
@@ -469,8 +483,8 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                           </div>
                           <div className="flex-1">
                             <div className="flex items-center gap-2">
-                              {ingAllDone && <CheckCircle2 className="w-4 h-4 text-rose-500" />}
-                              <p className={cn("font-semibold", ingAllDone && "line-through text-muted-foreground")}>{ing.ingredientName}</p>
+                              {ingAllDone && <CheckCircle2 className="w-5 h-5 text-rose-500" />}
+                              <p className={cn("font-bold text-2xl leading-tight", ingAllDone && "line-through text-muted-foreground")}>{ing.ingredientName}</p>
                             </div>
                             <p className="text-sm text-muted-foreground tabular-nums">
                               {ingKgTotal.toFixed(3)} kg total
@@ -484,7 +498,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                         </>
                       ) : (
                         <div className="flex-1 flex items-center justify-between">
-                          <p className="font-semibold">{ing.ingredientName}</p>
+                          <p className="font-bold text-2xl leading-tight">{ing.ingredientName}</p>
                           <p className="tabular-nums font-bold text-base text-rose-600 dark:text-rose-400">{ingKgTotal.toFixed(3)} kg</p>
                         </div>
                       )}

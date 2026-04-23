@@ -2828,9 +2828,20 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
     .where(eq(productionPlanItemsTable.planId, planId));
 
   if (planItems.length === 0) {
-    res.json({ recipes: [] });
+    res.json({ recipes: [], pastaCooking: { waterLPerKg: 0, saltGPerKg: 0 } });
     return;
   }
+
+  // Pasta cooking rates — same settings Main Prep reads for its synthetic
+  // water+salt rows. Per-recipe pasta kg is emitted below; the client
+  // multiplies by the rates to show water/salt requirements.
+  const pastaSettingsRows = await db
+    .select({ key: appSettingsTable.key, value: appSettingsTable.value })
+    .from(appSettingsTable)
+    .where(inArray(appSettingsTable.key, ["pasta_cooking_water_l_per_kg", "pasta_cooking_salt_g_per_kg"]));
+  const pastaSettingsMap = new Map(pastaSettingsRows.map(r => [r.key, r.value]));
+  const pastaWaterLPerKg = Number(pastaSettingsMap.get("pasta_cooking_water_l_per_kg") ?? 6);
+  const pastaSaltGPerKg = Number(pastaSettingsMap.get("pasta_cooking_salt_g_per_kg") ?? 60);
 
   const categoryMatchesStation = (category: string | null): boolean => {
     if (station === "prep_meat") return category === "raw_meat";
@@ -2911,6 +2922,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       }
     }
 
+    let pastaKg = 0;
     for (const [, ing] of agg) {
       // Work out how much of this ingredient is marinade-only vs. base usage
       const marinadeOnlyPerBatch = (marinadeQtyPerPortion.get(ing.ingredientId) ?? 0) * portionsPerBatch;
@@ -2948,6 +2960,14 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
 
       const roundedCooked = roundByUnit(cookedQty, ing.unit);
       const roundedRaw = roundByUnit(rawQty, ing.unit);
+
+      // Pasta accumulator — raw kg of pasta-category ingredients, per recipe.
+      // Used by the client to compute cooking water + salt from the rates.
+      if (category === "pasta") {
+        const rawKg = ing.unit === "kg" ? roundedRaw : ing.unit === "g" ? roundedRaw / 1000 : 0;
+        pastaKg += rawKg;
+      }
+
       ingredients.push({
         ingredientId: ing.ingredientId,
         ingredientName: ing.ingredientName,
@@ -3115,10 +3135,14 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       trayCount,
       ingredients,
       marinades,
+      pastaKg: Math.round(pastaKg * 1000) / 1000,
     });
   }
 
-  res.json({ recipes: result });
+  res.json({
+    recipes: result,
+    pastaCooking: { waterLPerKg: pastaWaterLPerKg, saltGPerKg: pastaSaltGPerKg },
+  });
 });
 
 // GET /:id/sub-recipe-requirements — total quantity of each sub-recipe needed for the plan
@@ -5351,39 +5375,40 @@ router.get("/:id/main-prep", async (req, res) => {
             const nestedQtyPerTin = nestedTinCount > 0
               ? roundByUnit(nestedRounded / nestedTinCount, nestedUnit)
               : nestedRounded;
+            // Nested sub-recipes inside an expand-in-prep parent are one
+            // shared batch — collapse across parent recipes into a single
+            // combined entry labelled with the sub-recipe's own name. Tin
+            // count defaults to 1 (one big batch); the operator can bump it
+            // via the per-tin edit control if they want to split.
             const nestedKey = `sr_${nested.componentSubRecipeId}`;
+            const nestedName = nested.componentName ?? `Sub-recipe #${nested.componentSubRecipeId}`;
             const existing = subRecipeMap.get(nestedKey);
-            if (existing) {
+            if (existing && existing.recipes.length > 0) {
               existing.totalQty += nestedRounded;
-              existing.recipes.push({
-                recipeId: planItem.recipeId!,
-                recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
-                batchesTarget,
-                qtyForRecipe: nestedRounded,
-                tinSize: planItem.tinSize ?? null,
-                maxBatchesPerTin: planItem.maxBatchesPerTin ?? null,
-                tinCount: nestedTinCount,
-                qtyPerTin: nestedQtyPerTin,
-                isOverridden: srIsOverridden,
-                isFillingMix: srIsFillingMix,
-              });
+              const combined = existing.recipes[0];
+              combined.qtyForRecipe += nestedRounded;
+              combined.qtyPerTin = combined.tinCount > 0
+                ? ((nestedUnit === "kg" || nestedUnit === "l")
+                    ? Math.round((combined.qtyForRecipe / combined.tinCount) * 1000) / 1000
+                    : roundByUnit(combined.qtyForRecipe / combined.tinCount, nestedUnit))
+                : combined.qtyForRecipe;
             } else {
               subRecipeMap.set(nestedKey, {
                 subRecipeId: nested.componentSubRecipeId,
-                ingredientName: nested.componentName ?? `Sub-recipe #${nested.componentSubRecipeId}`,
+                ingredientName: nestedName,
                 unit: nestedUnit,
                 totalQty: nestedRounded,
                 recipes: [{
                   recipeId: planItem.recipeId!,
-                  recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
-                  batchesTarget,
+                  recipeName: nestedName,
+                  batchesTarget: 0,
                   qtyForRecipe: nestedRounded,
-                  tinSize: planItem.tinSize ?? null,
-                  maxBatchesPerTin: planItem.maxBatchesPerTin ?? null,
-                  tinCount: nestedTinCount,
-                  qtyPerTin: nestedQtyPerTin,
-                  isOverridden: srIsOverridden,
-                  isFillingMix: srIsFillingMix,
+                  tinSize: null,
+                  maxBatchesPerTin: null,
+                  tinCount: 1,
+                  qtyPerTin: nestedRounded,
+                  isOverridden: false,
+                  isFillingMix: false,
                 }],
               });
             }
@@ -5394,35 +5419,35 @@ router.get("/:id/main-prep", async (req, res) => {
 
         const qtyPerTin = srTinCount > 0 ? roundByUnit(roundedQty / srTinCount, unit) : roundedQty;
 
+        // Regular sub-recipes shared across recipes are still one batch of
+        // the sub-recipe — collapse into a single combined entry the same
+        // way expand-in-prep ingredients already do, so e.g. Breadcrumb
+        // Topping used by three mac cheese recipes shows as one weighing.
+        const srName = sr.subRecipeName ?? `Sub-recipe #${sr.subRecipeId}`;
         const mapKey = `sr_${sr.subRecipeId}`;
         const existing = subRecipeMap.get(mapKey);
-        if (existing) {
+        if (existing && existing.recipes.length > 0) {
           existing.totalQty += roundedQty;
-          existing.recipes.push({
-            recipeId: planItem.recipeId!,
-            recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
-            batchesTarget,
-            qtyForRecipe: roundedQty,
-            tinSize: planItem.tinSize ?? null,
-            maxBatchesPerTin: planItem.maxBatchesPerTin ?? null,
-            tinCount: srTinCount,
-            qtyPerTin,
-            isOverridden: srIsOverridden,
-            isFillingMix: srIsFillingMix,
-          });
+          const combined = existing.recipes[0];
+          combined.qtyForRecipe += roundedQty;
+          combined.qtyPerTin = combined.tinCount > 0
+            ? roundByUnit(combined.qtyForRecipe / combined.tinCount, unit)
+            : combined.qtyForRecipe;
+        } else if (existing) {
+          existing.totalQty += roundedQty;
         } else {
           subRecipeMap.set(mapKey, {
             subRecipeId: sr.subRecipeId,
-            ingredientName: sr.subRecipeName ?? `Sub-recipe #${sr.subRecipeId}`,
+            ingredientName: srName,
             unit,
             totalQty: roundedQty,
             recipes: [{
               recipeId: planItem.recipeId!,
-              recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
-              batchesTarget,
+              recipeName: srName,
+              batchesTarget: 0,
               qtyForRecipe: roundedQty,
-              tinSize: planItem.tinSize ?? null,
-              maxBatchesPerTin: planItem.maxBatchesPerTin ?? null,
+              tinSize: null,
+              maxBatchesPerTin: null,
               tinCount: srTinCount,
               qtyPerTin,
               isOverridden: srIsOverridden,
