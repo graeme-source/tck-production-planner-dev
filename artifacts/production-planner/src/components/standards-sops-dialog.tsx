@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { motion, AnimatePresence } from "framer-motion";
 import {
   BookOpen, X, Loader2, Plus, Upload, Trash2, Filter, ChevronLeft, ChevronRight,
-  Edit2, ArrowUp, ArrowDown, FileText, Image as ImageIcon,
+  Edit2, ArrowUp, ArrowDown, FileText, Image as ImageIcon, Camera,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -906,6 +906,25 @@ function StepRow({
             </div>
           )}
           <div className="flex-1 flex flex-wrap items-center gap-2">
+            {/* Take photo — capture="environment" opens the back camera
+                directly on mobile/iPad. Desktop browsers with no camera
+                fall through to the normal file picker, so this is always
+                safe to show. */}
+            <label className="text-xs px-3 py-1.5 rounded-lg border border-border bg-background hover:bg-secondary cursor-pointer flex items-center gap-1.5">
+              {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
+              Take photo
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={e => {
+                  const f = e.target.files?.[0];
+                  if (f) uploadImage(f);
+                  e.target.value = "";
+                }}
+              />
+            </label>
             <label className="text-xs px-3 py-1.5 rounded-lg border border-border bg-background hover:bg-secondary cursor-pointer flex items-center gap-1.5">
               {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
               {step.hasImage ? "Replace image" : "Upload image"}

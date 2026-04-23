@@ -483,6 +483,11 @@ export function Layout({ children }: { children: ReactNode }) {
   const user = state.status === "authenticated" ? state.user : null;
   const { canAccess } = usePagePermissions();
   const [mobileOpen, setMobileOpen] = useState(false);
+  // SOPs dialog state lives at the Layout root (rather than inside TopBar)
+  // because the header has backdrop-blur, which creates a stacking context
+  // that traps any fixed-position child's z-index inside it. Rendering the
+  // dialog as a sibling of <main> keeps it above everything.
+  const [sopsOpen, setSopsOpen] = useState(false);
 
   const userRole = user?.role ?? "viewer";
   const isManagerOrAdmin = userRole === "admin" || userRole === "manager";
@@ -609,7 +614,7 @@ export function Layout({ children }: { children: ReactNode }) {
 
       {/* ── Main content ────────────────────────────────────────────────── */}
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">
-        <TopBar onOpenMobile={() => setMobileOpen(true)} fallbackTitle={currentPageName} />
+        <TopBar onOpenMobile={() => setMobileOpen(true)} fallbackTitle={currentPageName} onOpenSops={() => setSopsOpen(true)} />
         <div className="flex-1 overflow-y-auto p-4 md:p-8 pb-[200px] relative">
           <motion.div
             key={location}
@@ -623,14 +628,14 @@ export function Layout({ children }: { children: ReactNode }) {
       </main>
 
       <ReportButton />
+      <StandardsSopsDialog open={sopsOpen} onClose={() => setSopsOpen(false)} currentStationType={null} />
     </div>
   );
 }
 
-function TopBar({ onOpenMobile, fallbackTitle }: { onOpenMobile: () => void; fallbackTitle: string }) {
+function TopBar({ onOpenMobile, fallbackTitle, onOpenSops }: { onOpenMobile: () => void; fallbackTitle: string; onOpenSops: () => void }) {
   const header = usePageHeaderValue();
   const title = header?.title ?? fallbackTitle;
-  const [sopsOpen, setSopsOpen] = useState(false);
 
   return (
     <header className="min-h-[56px] border-b border-border bg-background/80 backdrop-blur-md flex items-center px-4 md:px-5 xl:px-8 gap-3 z-10 min-w-0">
@@ -649,7 +654,7 @@ function TopBar({ onOpenMobile, fallbackTitle }: { onOpenMobile: () => void; fal
         </span>
       )}
       <button
-        onClick={() => setSopsOpen(true)}
+        onClick={onOpenSops}
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors flex-shrink-0"
         title="Standards & SOPs"
       >
@@ -662,7 +667,6 @@ function TopBar({ onOpenMobile, fallbackTitle }: { onOpenMobile: () => void; fal
           {header.action}
         </div>
       )}
-      <StandardsSopsDialog open={sopsOpen} onClose={() => setSopsOpen(false)} currentStationType={null} />
     </header>
   );
 }
