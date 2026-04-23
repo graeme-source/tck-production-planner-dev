@@ -127,6 +127,7 @@ router.get("/ingredients", async (_req, res) => {
       costPerPack: ingredientsTable.costPerPack,
       supplierId: ingredientsTable.supplierId,
       supplierName: suppliersTable.name,
+      secondarySupplierId: ingredientsTable.secondarySupplierId,
     })
     .from(ingredientsTable)
     .leftJoin(suppliersTable, eq(ingredientsTable.supplierId, suppliersTable.id))
@@ -144,6 +145,7 @@ router.get("/ingredients", async (_req, res) => {
     costPerPack: r.costPerPack != null ? Number(r.costPerPack) : null,
     supplierId: r.supplierId,
     supplierName: r.supplierName ?? null,
+    secondarySupplierId: r.secondarySupplierId,
   })));
 });
 

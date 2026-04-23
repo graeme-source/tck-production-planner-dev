@@ -22,6 +22,7 @@ import {
   Package,
   CheckCircle,
   AlertTriangle,
+  Pencil,
 } from "lucide-react";
 import {
   Dialog,
@@ -126,6 +127,17 @@ export default function Kanbans() {
   const [newSupplierId, setNewSupplierId] = useState<number>(0);
   const [newNotes, setNewNotes] = useState("");
 
+  // Inline ingredient edit dialog for quick-tuning kanban fields from the row
+  const [editIngredientId, setEditIngredientId] = useState<number | null>(null);
+  const [editIngredient, setEditIngredient] = useState<any | null>(null);
+  const [editLoading, setEditLoading] = useState(false);
+  const [editForm, setEditForm] = useState<{
+    kanbanEnabled: boolean;
+    kanbanQuantity: string;
+    kanbanUnit: string;
+    kanbanOrderAmount: string;
+  }>({ kanbanEnabled: true, kanbanQuantity: "", kanbanUnit: "weight", kanbanOrderAmount: "" });
+
   const [isScanOpen, setIsScanOpen] = useState(false);
   const [scanStep, setScanStep] = useState<"scanning" | "loading" | "result" | "pulling" | "done" | "error">("scanning");
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
@@ -205,6 +217,74 @@ export default function Kanbans() {
     },
     onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
+
+  const saveIngredientMutation = useMutation({
+    mutationFn: async (payload: { id: number; body: any }) => {
+      const res = await fetch(`${BASE}/api/ingredients/${payload.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(payload.body),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "Failed to save");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/kanbans"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/ingredients"] });
+      setEditIngredientId(null);
+      setEditIngredient(null);
+      toast({ title: "Success", description: "Kanban updated" });
+    },
+    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const openEditIngredient = useCallback(async (ingredientId: number) => {
+    setEditIngredientId(ingredientId);
+    setEditIngredient(null);
+    setEditLoading(true);
+    try {
+      const res = await fetch(`${BASE}/api/ingredients/${ingredientId}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load ingredient");
+      const ing = await res.json();
+      setEditIngredient(ing);
+      setEditForm({
+        kanbanEnabled: !!ing.kanbanEnabled,
+        kanbanQuantity: ing.kanbanQuantity != null ? String(ing.kanbanQuantity) : "",
+        kanbanUnit: ing.kanbanUnit ?? "weight",
+        kanbanOrderAmount: ing.kanbanOrderAmount != null ? String(ing.kanbanOrderAmount) : "",
+      });
+    } catch (err) {
+      toast({ title: "Error", description: (err as Error).message, variant: "destructive" });
+      setEditIngredientId(null);
+    } finally {
+      setEditLoading(false);
+    }
+  }, [toast]);
+
+  const handleSaveIngredient = () => {
+    if (!editIngredient || !editIngredientId) return;
+    const qty = editForm.kanbanQuantity.trim() === "" ? 0 : Number(editForm.kanbanQuantity);
+    const orderAmt = editForm.kanbanOrderAmount.trim() === "" ? null : Number(editForm.kanbanOrderAmount);
+    if (isNaN(qty) || qty < 0) {
+      toast({ title: "Error", description: "Quantity must be a non-negative number", variant: "destructive" });
+      return;
+    }
+    if (orderAmt != null && (isNaN(orderAmt) || orderAmt < 0)) {
+      toast({ title: "Error", description: "Order amount must be a non-negative number", variant: "destructive" });
+      return;
+    }
+    saveIngredientMutation.mutate({
+      id: editIngredientId,
+      body: {
+        ...editIngredient,
+        kanbanEnabled: editForm.kanbanEnabled,
+        kanbanQuantity: qty,
+        kanbanUnit: editForm.kanbanUnit,
+        kanbanOrderAmount: orderAmt,
+      },
+    });
+  };
 
   const syncMutation = useMutation({
     mutationFn: async () => {
@@ -479,7 +559,21 @@ export default function Kanbans() {
                   "transition-colors",
                   k.status === "pulled" && k.isDueToday && "bg-amber-50/50 dark:bg-amber-950/10"
                 )}>
-                  <td className="px-5 py-3 font-medium">{k.ingredientName ?? `#${k.ingredientId}`}</td>
+                  <td className="px-5 py-3 font-medium">
+                    {canEdit ? (
+                      <button
+                        type="button"
+                        onClick={() => openEditIngredient(k.ingredientId)}
+                        className="inline-flex items-center gap-1.5 text-left hover:text-primary hover:underline underline-offset-2 decoration-primary/40 transition-colors group"
+                        title="Edit kanban settings"
+                      >
+                        {k.ingredientName ?? `#${k.ingredientId}`}
+                        <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-70 transition-opacity" />
+                      </button>
+                    ) : (
+                      <>{k.ingredientName ?? `#${k.ingredientId}`}</>
+                    )}
+                  </td>
                   <td className="px-5 py-3 text-muted-foreground tabular-nums">
                     {k.kanbanQuantity != null ? `${k.kanbanQuantity} ${k.ingredientUnit ?? ""}` : "—"}
                   </td>
@@ -753,6 +847,113 @@ export default function Kanbans() {
               </div>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={editIngredientId != null}
+        onOpenChange={(v) => { if (!v) { setEditIngredientId(null); setEditIngredient(null); } }}
+      >
+        <DialogContent className="sm:max-w-[480px] bg-card border-border rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="font-display text-xl flex items-center gap-2">
+              <Pencil className="w-5 h-5" />
+              Edit Kanban Settings
+            </DialogTitle>
+          </DialogHeader>
+          {editLoading || !editIngredient ? (
+            <div className="flex justify-center py-10">
+              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <div className="space-y-4 mt-2">
+              <div className="rounded-lg bg-secondary/30 px-3 py-2 text-sm">
+                <span className="text-muted-foreground">Ingredient:</span>{" "}
+                <span className="font-medium">{editIngredient.name}</span>
+                <span className="text-muted-foreground"> ({editIngredient.unit})</span>
+              </div>
+
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={editForm.kanbanEnabled}
+                  onChange={e => setEditForm(f => ({ ...f, kanbanEnabled: e.target.checked }))}
+                  className="rounded border-border"
+                />
+                Kanban tracking enabled
+              </label>
+
+              <div>
+                <label className="text-sm font-medium mb-1 block">
+                  Order when using last{" "}
+                  <span className="text-muted-foreground font-normal">
+                    (threshold)
+                  </span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    step="0.01"
+                    value={editForm.kanbanQuantity}
+                    onChange={e => setEditForm(f => ({ ...f, kanbanQuantity: e.target.value }))}
+                    className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                  <span className="text-sm text-muted-foreground min-w-16">{editIngredient.unit}</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium mb-1 block">Kanban unit</label>
+                <select
+                  value={editForm.kanbanUnit}
+                  onChange={e => setEditForm(f => ({ ...f, kanbanUnit: e.target.value }))}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                >
+                  <option value="weight">Weight ({editIngredient.unit})</option>
+                  <option value="pack">Packs</option>
+                  <option value="bottle">Bottles</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium mb-1 block">
+                  Amount to order when pulled{" "}
+                  <span className="text-muted-foreground font-normal">
+                    (leave blank to use threshold)
+                  </span>
+                </label>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min={0}
+                  step="0.01"
+                  value={editForm.kanbanOrderAmount}
+                  onChange={e => setEditForm(f => ({ ...f, kanbanOrderAmount: e.target.value }))}
+                  placeholder="—"
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+                <button
+                  onClick={() => { setEditIngredientId(null); setEditIngredient(null); }}
+                  className="px-4 py-2 text-sm font-medium rounded-lg hover:bg-secondary/60 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveIngredient}
+                  disabled={saveIngredientMutation.isPending}
+                  className="px-4 py-2 text-sm font-semibold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+                >
+                  {saveIngredientMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Save
+                </button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>
