@@ -460,6 +460,13 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                 const ingKgTotal = toKg(ing.rawQty, ing.unit);
                 const ingTrays = ing.trayCount;
                 const perTrayKg = ingTrays && ingTrays > 0 ? ingKgTotal / ingTrays : null;
+                // Piece-counted ingredients (Pigs & Blankets etc.) display
+                // as whole pieces instead of kg — kg stays visible as a
+                // secondary line for tray packing context.
+                const usePieces = ing.pieceCount != null && ing.pieceCount > 0;
+                const perTrayPieces = usePieces && ingTrays && ingTrays > 0
+                  ? Math.ceil((ing.pieceCount ?? 0) / ingTrays)
+                  : null;
                 const ingMarinadeG = meatMarinades.reduce((s, m) => s + m.totalGrams, 0);
                 const trayNums = ingTrays ? Array.from({ length: ingTrays }, (_, i) => i + 1) : [];
                 const ingDone = trayNums.filter(tn => isCompleted(ing.ingredientId, selected.recipeId, tn)).length;
@@ -486,20 +493,41 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                               {ingAllDone && <CheckCircle2 className="w-5 h-5 text-rose-500" />}
                               <p className={cn("font-bold text-2xl leading-tight", ingAllDone && "line-through text-muted-foreground")}>{ing.ingredientName}</p>
                             </div>
-                            <p className="text-sm text-muted-foreground tabular-nums">
-                              {ingKgTotal.toFixed(3)} kg total
-                              {ing.rawMeatTrayCapacityKg && ` · ${ing.rawMeatTrayCapacityKg} kg cap`}
-                            </p>
+                            {usePieces ? (
+                              <p className="text-sm text-muted-foreground tabular-nums">
+                                {ing.pieceCount} pieces total
+                                <span className="opacity-70"> · {ingKgTotal.toFixed(3)} kg</span>
+                                {ing.rawMeatTrayCapacityKg && ` · ${ing.rawMeatTrayCapacityKg} kg cap`}
+                              </p>
+                            ) : (
+                              <p className="text-sm text-muted-foreground tabular-nums">
+                                {ingKgTotal.toFixed(3)} kg total
+                                {ing.rawMeatTrayCapacityKg && ` · ${ing.rawMeatTrayCapacityKg} kg cap`}
+                              </p>
+                            )}
                           </div>
                           <div className="text-right">
-                            <p className="text-xl font-bold tabular-nums text-rose-700 dark:text-rose-300 leading-none">{perTrayKg!.toFixed(3)} kg</p>
-                            <p className="text-sm text-muted-foreground mt-0.5">per tray</p>
+                            {usePieces ? (
+                              <>
+                                <p className="text-xl font-bold tabular-nums text-rose-700 dark:text-rose-300 leading-none">{perTrayPieces} pieces</p>
+                                <p className="text-sm text-muted-foreground mt-0.5">per tray</p>
+                              </>
+                            ) : (
+                              <>
+                                <p className="text-xl font-bold tabular-nums text-rose-700 dark:text-rose-300 leading-none">{perTrayKg!.toFixed(3)} kg</p>
+                                <p className="text-sm text-muted-foreground mt-0.5">per tray</p>
+                              </>
+                            )}
                           </div>
                         </>
                       ) : (
                         <div className="flex-1 flex items-center justify-between">
                           <p className="font-bold text-2xl leading-tight">{ing.ingredientName}</p>
-                          <p className="tabular-nums font-bold text-base text-rose-600 dark:text-rose-400">{ingKgTotal.toFixed(3)} kg</p>
+                          {usePieces ? (
+                            <p className="tabular-nums font-bold text-base text-rose-600 dark:text-rose-400">{ing.pieceCount} pieces</p>
+                          ) : (
+                            <p className="tabular-nums font-bold text-base text-rose-600 dark:text-rose-400">{ingKgTotal.toFixed(3)} kg</p>
+                          )}
                         </div>
                       )}
                     </div>
@@ -556,7 +584,11 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                                   )}
                                   <span className="text-base font-bold">Tray {tn}</span>
                                 </div>
-                                {perTrayKg != null && (
+                                {usePieces && perTrayPieces != null ? (
+                                  <span className={cn("text-xl font-bold tabular-nums", done ? "text-rose-600 dark:text-rose-300" : "text-foreground")}>
+                                    {perTrayPieces} pieces
+                                  </span>
+                                ) : perTrayKg != null && (
                                   <span className={cn("text-xl font-bold tabular-nums", done ? "text-rose-600 dark:text-rose-300" : "text-foreground")}>
                                     {perTrayKg.toFixed(3)} kg
                                   </span>

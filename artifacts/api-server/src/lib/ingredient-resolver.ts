@@ -26,6 +26,7 @@ export interface ResolvedIngredient {
   stockCheckDay: string | null;
   quantityPerBatch: number;
   includeInFillingMix: boolean;
+  prepCountPerPortion: number | null;
 }
 
 export async function resolveSubRecipeIngredients(
@@ -63,6 +64,7 @@ export async function resolveSubRecipeIngredients(
       stockCheckEnabled: ingredientsTable.stockCheckEnabled,
       stockCheckFrequency: ingredientsTable.stockCheckFrequency,
       stockCheckDay: ingredientsTable.stockCheckDay,
+      prepCountPerPortion: ingredientsTable.prepCountPerPortion,
     })
     .from(subRecipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -85,6 +87,7 @@ export async function resolveSubRecipeIngredients(
     stockCheckDay: row.stockCheckDay ?? null,
     quantityPerBatch: Number(row.quantity) * effectiveScale,
     includeInFillingMix: false,
+    prepCountPerPortion: row.prepCountPerPortion != null ? Number(row.prepCountPerPortion) : null,
   }));
 
   const nestedSubRecipes = await db
@@ -136,6 +139,7 @@ export async function resolveRecipeIngredients(
       stockCheckEnabled: ingredientsTable.stockCheckEnabled,
       stockCheckFrequency: ingredientsTable.stockCheckFrequency,
       stockCheckDay: ingredientsTable.stockCheckDay,
+      prepCountPerPortion: ingredientsTable.prepCountPerPortion,
     })
     .from(recipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -160,6 +164,7 @@ export async function resolveRecipeIngredients(
     stockCheckDay: row.stockCheckDay ?? null,
     quantityPerBatch: Number(row.quantity) * portionsPerBatch,
     includeInFillingMix: row.includeInFillingMix ?? false,
+    prepCountPerPortion: row.prepCountPerPortion != null ? Number(row.prepCountPerPortion) : null,
   }));
 
   const recipeSubRecipes = await db

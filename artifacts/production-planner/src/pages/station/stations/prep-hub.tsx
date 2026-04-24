@@ -233,6 +233,8 @@ export interface PrepIngredientDetail {
   isRawMeat: boolean;
   isSeasoning: boolean;
   trayCount: number | null;
+  prepCountPerPortion: number | null;
+  pieceCount: number | null;
 }
 
 export interface PrepMarinadeDetail {

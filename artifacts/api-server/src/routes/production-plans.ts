@@ -2919,6 +2919,8 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       isRawMeat: boolean;
       isSeasoning: boolean;
       trayCount: number | null;
+      prepCountPerPortion: number | null;
+      pieceCount: number | null;
     }> = [];
 
     let hasRelevantIngredients = false;
@@ -3007,6 +3009,16 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
         pastaKg += rawKg;
       }
 
+      // When an ingredient is configured with "Prep count per portion"
+      // (e.g. Pigs & Blankets = 2 per portion), the cook doesn't want a kg
+      // on the prep sheet — they want a whole-piece count. Match the same
+      // logic main-prep already applies: pieceCount = portions × setting,
+      // rounded up so half-pieces don't appear.
+      const portionsTotal = portionsPerBatch * batchesTarget;
+      const pieceCount = ing.prepCountPerPortion != null && ing.prepCountPerPortion > 0
+        ? Math.ceil(portionsTotal * ing.prepCountPerPortion)
+        : null;
+
       ingredients.push({
         ingredientId: ing.ingredientId,
         ingredientName: ing.ingredientName,
@@ -3027,6 +3039,8 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
         prepQty: ing.prepWeightMode === "processed" ? roundedCooked : roundedRaw,
         isRawMeat: category === "raw_meat",
         isSeasoning: false,
+        prepCountPerPortion: ing.prepCountPerPortion,
+        pieceCount,
         trayCount: null,
       });
     }
