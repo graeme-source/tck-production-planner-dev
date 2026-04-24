@@ -24,7 +24,6 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { BreakTracker } from "../shared/break-tracker";
 import { getStationCount, isMacCheese } from "../shared/constants";
-import { toKg } from "../shared/prep-helpers";
 import type { PrepRecipeDetail } from "./prep-hub";
 
 
@@ -802,19 +801,21 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                         const doneCount = Object.values(ingTrayMap).filter(s => s === 2).length;
                         const inOvenCount = Object.values(ingTrayMap).filter(s => s === 1).length;
                         const allIngDone = doneCount >= ingTrays;
-                        const perTrayKg = ingTrays > 0 ? toKg(ing.rawQty, ing.unit) / ingTrays : null;
+                        const minTemp = minTempFor(ing.ingredientId);
 
                         return (
                           <div key={ing.ingredientId} className="px-4 py-4 space-y-3">
-                            {/* Ingredient name + weight info */}
+                            {/* Ingredient name + target temperature. Meat has
+                                already been portioned at prep, so the tray
+                                weight breakdown isn't useful here — what the
+                                cook needs to see is the minimum safe core
+                                temperature they're aiming for. */}
                             <div className="flex items-center justify-between">
                               <div>
                                 <p className={cn("font-semibold text-lg", allIngDone && "line-through text-muted-foreground")}>{ing.ingredientName}</p>
-                                {perTrayKg && (
-                                  <p className="text-sm text-muted-foreground tabular-nums">
-                                    {perTrayKg.toFixed(3)} kg / tray · {toKg(ing.rawQty, ing.unit).toFixed(3)} kg total
-                                  </p>
-                                )}
+                                <p className="text-sm font-semibold tabular-nums text-red-600 dark:text-red-400">
+                                  Target core temp: ≥{minTemp}°C
+                                </p>
                               </div>
                               {inOvenCount > 0 && (
                                 <p className="text-sm font-semibold text-orange-600 dark:text-orange-400">{inOvenCount} in oven</p>
