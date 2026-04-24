@@ -44,6 +44,7 @@ import employeesRouter from "./employees";
 import riskAssessmentsRouter from "./risk-assessments";
 import complianceActionsRouter from "./compliance-actions";
 import standardsRouter from "./standards";
+import aiRouter from "./ai";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -119,6 +120,7 @@ router.use("/employees", employeesRouter);
 router.use("/risk-assessments", riskAssessmentsRouter);
 router.use("/compliance-actions", complianceActionsRouter);
 router.use("/standards", standardsRouter);
+router.use("/ai", aiRouter);
 
 router.post("/backup/trigger", requireAdmin, (_req: Request, res: Response) => {
   res.json({ status: "started", message: "Backup triggered" });

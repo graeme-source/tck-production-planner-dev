@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { X, Lightbulb, AlertTriangle, CheckCircle, Loader2, ChevronDown, CircleDot, HandHelping, ScanLine, ArrowDownCircle, Package } from "lucide-react";
+import { X, Lightbulb, AlertTriangle, CheckCircle, Loader2, ChevronDown, CircleDot, HandHelping, ScanLine, ArrowDownCircle, Package, Sparkles, Mic, MicOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { QrScanner } from "./qr-scanner";
+import { AiChatTab } from "./ai-chat-tab";
+import { useVoiceInput } from "@/hooks/use-voice-input";
 
 interface ImprovementSummary {
   id: number;
@@ -55,10 +57,10 @@ const TIER_LABELS: Record<string, string> = {
   major: "Major",
 };
 
-type Tab = "pullKanban" | "improvements" | "struggle" | "andon";
+type Tab = "pullKanban" | "improvements" | "struggle" | "andon" | "ai";
 
-type QuickIdeaTabSettings = { kanban: boolean; idea: boolean; struggle: boolean; issue: boolean };
-const DEFAULT_TAB_SETTINGS: QuickIdeaTabSettings = { kanban: true, idea: true, struggle: true, issue: true };
+type QuickIdeaTabSettings = { kanban: boolean; idea: boolean; struggle: boolean; issue: boolean; ai: boolean };
+const DEFAULT_TAB_SETTINGS: QuickIdeaTabSettings = { kanban: true, idea: true, struggle: true, issue: true, ai: true };
 
 function useQuickIdeaTabSettings() {
   const [settings, setSettings] = useState<QuickIdeaTabSettings>(DEFAULT_TAB_SETTINGS);
@@ -111,9 +113,15 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
     { key: "improvements", settingKey: "idea" },
     { key: "struggle", settingKey: "struggle" },
     { key: "andon", settingKey: "issue" },
+    { key: "ai", settingKey: "ai" },
   ].filter(t => tabSettings[t.settingKey]) as { key: Tab; settingKey: keyof QuickIdeaTabSettings }[];
 
-  const [activeTab, setActiveTab] = useState<Tab>(enabledTabs[0]?.key ?? "pullKanban");
+  // Prefer "andon" (Issue) as the default landing tab when it's enabled; otherwise
+  // fall back to the first enabled tab so the modal always has something to show.
+  const defaultTab: Tab = enabledTabs.some(t => t.key === "andon")
+    ? "andon"
+    : (enabledTabs[0]?.key ?? "pullKanban");
+  const [activeTab, setActiveTab] = useState<Tab>(defaultTab);
 
   const [scanActive, setScanActive] = useState(false);
   const [scanStep, setScanStep] = useState<"scanning" | "loading" | "result" | "pulling" | "done" | "error">("scanning");
@@ -150,6 +158,16 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
   const impSubmittingRef = useRef(false);
   const struggleSubmittingRef = useRef(false);
 
+  const andonDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
+  const andonDescriptionValueRef = useRef<string>("");
+  useEffect(() => { andonDescriptionValueRef.current = andonDescription; }, [andonDescription]);
+
+  const andonVoice = useVoiceInput({
+    onTranscript: setAndonDescription,
+    mode: "append",
+    getCurrentValue: () => andonDescriptionValueRef.current,
+  });
+
   const [recentImprovements, setRecentImprovements] = useState<ImprovementSummary[]>([]);
   const [impListLoading, setImpListLoading] = useState(false);
 
@@ -166,7 +184,7 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
 
   useEffect(() => {
     if (open) {
-      setActiveTab(enabledTabs[0]?.key ?? "pullKanban");
+      setActiveTab(defaultTab);
     } else {
       setScanActive(false);
       setScanStep("scanning");
@@ -174,6 +192,15 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
       setPullError(null);
     }
   }, [open]);
+
+  // Auto-focus the Issue description when that tab is active, so staff land
+  // on the modal with cursor already in place and can start typing or dictating.
+  useEffect(() => {
+    if (open && activeTab === "andon") {
+      const t = setTimeout(() => andonDescriptionRef.current?.focus(), 120);
+      return () => clearTimeout(t);
+    }
+  }, [open, activeTab]);
 
   const parseQrData = useCallback((raw: string): { type: string; id: number } | null => {
     try {
@@ -470,6 +497,18 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
               >
                 <AlertTriangle className="w-4 h-4 shrink-0" />
                 Issue
+              </button>}
+              {tabSettings.ai && <button
+                onClick={() => setActiveTab("ai")}
+                className={cn(
+                  "flex items-center gap-1.5 flex-1 justify-center px-2.5 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all whitespace-nowrap min-w-0",
+                  activeTab === "ai"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <Sparkles className="w-4 h-4 shrink-0" />
+                Ask AI
               </button>}
             </div>
 
@@ -903,13 +942,37 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
 
                     <div>
                       <label className="block text-sm font-medium mb-1.5">Description <span className="text-muted-foreground font-normal">(optional)</span></label>
-                      <textarea
-                        value={andonDescription}
-                        onChange={e => setAndonDescription(e.target.value)}
-                        placeholder="Describe the issue in more detail..."
-                        rows={3}
-                        className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
-                      />
+                      <div className="relative">
+                        <textarea
+                          ref={andonDescriptionRef}
+                          value={andonDescription}
+                          onChange={e => setAndonDescription(e.target.value)}
+                          placeholder={andonVoice.listening ? "Listening..." : "Describe the issue, or tap the mic to dictate..."}
+                          rows={3}
+                          className={cn(
+                            "w-full pl-3 py-2 border border-border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none",
+                            andonVoice.supported ? "pr-14" : "pr-3",
+                          )}
+                        />
+                        {andonVoice.supported && (
+                          <button
+                            type="button"
+                            onClick={andonVoice.toggle}
+                            className={cn(
+                              "absolute right-2 bottom-2 w-10 h-10 rounded-lg flex items-center justify-center transition-colors shadow-sm",
+                              andonVoice.listening
+                                ? "bg-red-500 text-white hover:bg-red-600 animate-pulse"
+                                : "bg-blue-500 text-white hover:bg-blue-600",
+                            )}
+                            aria-label={andonVoice.listening ? "Stop dictation" : "Dictate description"}
+                          >
+                            {andonVoice.listening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                          </button>
+                        )}
+                      </div>
+                      {andonVoice.error && (
+                        <p className="text-xs text-destructive mt-1.5">{andonVoice.error}</p>
+                      )}
                     </div>
 
                     {andonError && (
@@ -942,6 +1005,10 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
                   </form>
                 </div>
               )}
+
+              {activeTab === "ai" && (
+                <AiChatTab station={defaultStation} />
+              )}
             </div>
           </motion.div>
         </>
@@ -959,7 +1026,7 @@ interface ReportButtonProps {
 export function ReportButton({ defaultStation, reportContext, className }: ReportButtonProps) {
   const [open, setOpen] = useState(false);
   const tabSettings = useQuickIdeaTabSettings();
-  const anyEnabled = tabSettings.kanban || tabSettings.idea || tabSettings.struggle || tabSettings.issue;
+  const anyEnabled = tabSettings.kanban || tabSettings.idea || tabSettings.struggle || tabSettings.issue || tabSettings.ai;
 
   if (!anyEnabled) return null;
 

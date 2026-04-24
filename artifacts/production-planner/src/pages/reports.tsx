@@ -3,7 +3,7 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useSearch, useLocation } from "wouter";
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
-import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, subWeeks, subMonths } from "date-fns";
+import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, subWeeks, subMonths, isToday, isYesterday, differenceInCalendarDays } from "date-fns";
 import {
   Loader2, Coffee, Utensils, Clock, Users,
   ArrowUp, ArrowDown, Minus as MinusIcon,
@@ -3755,13 +3755,9 @@ function AndonLogTab({ userRole, initialIssueId }: { userRole: string; initialIs
               <tr>
                 <th className="px-4 py-3 font-medium text-left">Priority</th>
                 {isManager && <th className="px-4 py-3 font-medium text-center">Actions</th>}
-                <th className="px-4 py-3 font-medium text-left">Category</th>
                 <th className="px-4 py-3 font-medium text-left">Station</th>
                 <th className="px-4 py-3 font-medium text-left">Description</th>
                 <th className="px-4 py-3 font-medium text-left">Reported by</th>
-                <th className="px-4 py-3 font-medium text-left">Submitted</th>
-                <th className="px-4 py-3 font-medium text-left">Acknowledged</th>
-                <th className="px-4 py-3 font-medium text-left">Resolved</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
@@ -3816,39 +3812,25 @@ function AndonLogTab({ userRole, initialIssueId }: { userRole: string; initialIs
                       </div>
                     </td>
                   )}
-                  <td className="px-4 py-3 text-muted-foreground capitalize">
-                    {ANDON_CATEGORY_LABELS[issue.category] ?? issue.category}
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground">
+                  <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
                     {STATION_LABELS_REPORT[issue.station] ?? issue.station}
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground max-w-[300px]">
-                    <span className="line-clamp-3 whitespace-pre-wrap">{issue.description ?? "—"}</span>
+                  <td className="px-4 py-3 text-foreground font-semibold w-full">
+                    <span className="whitespace-pre-wrap">{issue.description ?? "—"}</span>
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground">{issue.reportedByName ?? "—"}</td>
-                  <td className="px-4 py-3 text-muted-foreground whitespace-nowrap text-xs">
-                    {issue.createdAt ? format(new Date(issue.createdAt), "d MMM HH:mm") : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-xs">
-                    {issue.acknowledgedAt ? (
-                      <div>
-                        <p className="text-emerald-600 dark:text-emerald-400 font-medium">Acknowledged</p>
-                        <p className="text-muted-foreground">{issue.acknowledgedByName ?? ""}</p>
-                        <p className="text-muted-foreground">{format(new Date(issue.acknowledgedAt), "d MMM HH:mm")}</p>
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <div className="text-foreground">{issue.reportedByName ?? "—"}</div>
+                    {issue.createdAt && (
+                      <div className="text-xs text-muted-foreground">
+                        {(() => {
+                          const d = new Date(issue.createdAt);
+                          const time = format(d, "HH:mm");
+                          if (isToday(d)) return `at ${time} today`;
+                          if (isYesterday(d)) return `at ${time} yesterday`;
+                          if (differenceInCalendarDays(new Date(), d) < 7) return `at ${time} ${format(d, "EEEE")}`;
+                          return `at ${time} on ${format(d, "d MMM")}`;
+                        })()}
                       </div>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-xs">
-                    {issue.resolvedAt ? (
-                      <div>
-                        <p className="text-emerald-600 dark:text-emerald-400 font-medium">Resolved</p>
-                        <p className="text-muted-foreground">{issue.resolvedByName ?? ""}</p>
-                        <p className="text-muted-foreground">{format(new Date(issue.resolvedAt), "d MMM HH:mm")}</p>
-                      </div>
-                    ) : (
-                      <span className="text-muted-foreground">Open</span>
                     )}
                   </td>
                 </tr>

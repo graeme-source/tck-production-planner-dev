@@ -11,6 +11,7 @@
     "export-seed": "tsx ./scripts/export-prod-seed.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
     "@google-cloud/storage": "^7.19.0",
     "@replit/connectors-sdk": "^0.3.0",
     "@types/multer": "^2.1.0",

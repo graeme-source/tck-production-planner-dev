@@ -2625,7 +2625,7 @@ function StandardsSopsSection() {
 }
 
 function QuickIdeaTabsSection() {
-  const [tabs, setTabs] = useState({ kanban: true, idea: true, struggle: true, issue: true });
+  const [tabs, setTabs] = useState({ kanban: true, idea: true, struggle: true, issue: true, ai: true });
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
@@ -2664,6 +2664,7 @@ function QuickIdeaTabsSection() {
     { key: "idea", label: "Improvement Idea" },
     { key: "struggle", label: "Struggle" },
     { key: "issue", label: "Issue" },
+    { key: "ai", label: "Ask AI" },
   ];
 
   return (
