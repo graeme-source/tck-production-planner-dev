@@ -106,6 +106,115 @@ function stepImageUrl(stepId: number, cacheBust?: number): string {
   return `/api/standards/steps/${stepId}/image${cacheBust ? `?v=${cacheBust}` : ""}`;
 }
 
+// Searchable tag filter — replaces the long wall of tag chips with a
+// combobox-style input. Selected tags appear as removable chips next to
+// the input; typing filters the dropdown.
+function TagFilterInput({
+  tagOptions,
+  tagFilter,
+  setTagFilter,
+}: {
+  tagOptions: string[];
+  tagFilter: Set<string>;
+  setTagFilter: React.Dispatch<React.SetStateAction<Set<string>>>;
+}) {
+  const [search, setSearch] = useState("");
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase();
+    return tagOptions.filter(t => !tagFilter.has(t) && (q === "" || t.toLowerCase().includes(q)));
+  }, [tagOptions, tagFilter, search]);
+
+  const selectedList = useMemo(() => Array.from(tagFilter).sort(), [tagFilter]);
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
+      <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground flex-shrink-0">
+        <Filter className="w-3.5 h-3.5" />
+        Tags
+      </div>
+      {selectedList.map(t => (
+        <span
+          key={t}
+          className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-primary text-primary-foreground border border-primary"
+        >
+          #{t}
+          <button
+            type="button"
+            onClick={() => setTagFilter(prev => {
+              const next = new Set(prev);
+              next.delete(t);
+              return next;
+            })}
+            className="hover:opacity-80"
+            aria-label={`Remove ${t}`}
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </span>
+      ))}
+      <div ref={ref} className="relative flex-1 min-w-[180px] max-w-[280px]">
+        <input
+          type="text"
+          value={search}
+          onChange={e => { setSearch(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          placeholder="Search tags…"
+          className="w-full px-2.5 py-1 text-xs bg-background border border-border rounded-full focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+        />
+        {open && filtered.length > 0 && (
+          <div className="absolute left-0 right-0 top-full mt-1 bg-card border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto z-10">
+            {filtered.slice(0, 50).map(t => (
+              <button
+                key={t}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  setTagFilter(prev => {
+                    const next = new Set(prev);
+                    next.add(t);
+                    return next;
+                  });
+                  setSearch("");
+                }}
+                className="w-full text-left px-3 py-1.5 text-xs hover:bg-secondary/60"
+              >
+                #{t}
+              </button>
+            ))}
+            {filtered.length > 50 && (
+              <div className="px-3 py-1.5 text-[10px] text-muted-foreground">
+                +{filtered.length - 50} more — keep typing to narrow
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+      {tagFilter.size > 0 && (
+        <button
+          onClick={() => setTagFilter(new Set())}
+          className="text-xs px-2.5 py-1 rounded-full border border-transparent text-muted-foreground hover:text-foreground flex-shrink-0"
+        >
+          Clear
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Top-level dialog — library + viewer + editor routing lives here.
 // ─────────────────────────────────────────────────────────────────────────
@@ -341,43 +450,11 @@ function Library({
                 </div>
               </div>
               {tagOptions.length > 0 && (
-                <div className="flex items-center gap-2 flex-wrap">
-                  <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    <Filter className="w-3.5 h-3.5" />
-                    Tags
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {tagOptions.map(t => {
-                      const active = tagFilter.has(t);
-                      return (
-                        <button
-                          key={t}
-                          onClick={() => setTagFilter(prev => {
-                            const next = new Set(prev);
-                            if (next.has(t)) next.delete(t); else next.add(t);
-                            return next;
-                          })}
-                          className={cn(
-                            "text-xs px-2.5 py-1 rounded-full border transition-colors",
-                            active
-                              ? "bg-primary text-primary-foreground border-primary"
-                              : "bg-background text-muted-foreground border-border hover:text-foreground",
-                          )}
-                        >
-                          #{t}
-                        </button>
-                      );
-                    })}
-                    {tagFilter.size > 0 && (
-                      <button
-                        onClick={() => setTagFilter(new Set())}
-                        className="text-xs px-2.5 py-1 rounded-full border border-transparent text-muted-foreground hover:text-foreground"
-                      >
-                        Clear
-                      </button>
-                    )}
-                  </div>
-                </div>
+                <TagFilterInput
+                  tagOptions={tagOptions}
+                  tagFilter={tagFilter}
+                  setTagFilter={setTagFilter}
+                />
               )}
             </div>
           );
