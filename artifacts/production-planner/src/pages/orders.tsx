@@ -402,6 +402,38 @@ export default function Orders() {
     setViewFilter("pending");
   }, [selectedPlanId, setSelectedPlanId, reopenPlacedOrder]);
 
+  // Remove a previously-pulled kanban from the pending order. Used when the
+  // operator pulled one by accident — tapping the same item again drops the
+  // order-table line, matching the mental model of putting the card back on
+  // the board.
+  const handleUnpullKanban = (ingredientId: number) => {
+    const suppliersLeftEmpty: number[] = [];
+    setEditableLines(prev => {
+      const updated: Record<number, EditableLine[]> = {};
+      for (const [sid, lines] of Object.entries(prev)) {
+        const numSid = Number(sid);
+        const filtered = lines.filter(l => !(l.ingredientId === ingredientId && l.isKanban));
+        if (filtered.length > 0) updated[numSid] = filtered;
+        else suppliersLeftEmpty.push(numSid);
+      }
+      return updated;
+    });
+    // Drop temporary (kanban-only) supplier entries whose final line just
+    // disappeared, so we don't leave an empty supplier header behind.
+    if (suppliersLeftEmpty.length > 0) {
+      setKanbanOnlySupplierInfo(prev => {
+        const next = { ...prev };
+        for (const sid of suppliersLeftEmpty) delete next[sid];
+        return next;
+      });
+    }
+    setAddedKanbanIngredientIds(prev => {
+      const next = new Set(prev);
+      next.delete(ingredientId);
+      return next;
+    });
+  };
+
   const handleAddSelectedKanbans = () => {
     const toAdd = kanbanIngredients.filter(
       k =>
@@ -1284,14 +1316,14 @@ export default function Orders() {
       )}
 
       <Dialog open={kanbanSearchOpen} onOpenChange={open => { setKanbanSearchOpen(open); if (!open) { setKanbanSearch(""); setSelectedKanbanIds(new Set()); setKanbanSupplierOverrides({}); } }}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-4xl w-[95vw] max-h-[90vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+            <DialogTitle className="flex items-center gap-2 text-lg">
               <LayoutGrid className="w-5 h-5 text-amber-500" />
-              Add Pulled Kanbans
+              Pulled Kanbans
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-3">
+          <div className="space-y-3 flex-1 flex flex-col min-h-0">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <input
@@ -1300,7 +1332,7 @@ export default function Orders() {
                 onChange={e => setKanbanSearch(e.target.value)}
                 placeholder="Search by ingredient or supplier…"
                 autoFocus
-                className="w-full pl-9 pr-4 py-2.5 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                className="w-full pl-9 pr-4 py-3 rounded-lg border border-border bg-background text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
               {kanbanSearch && (
                 <button onClick={() => setKanbanSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
@@ -1309,20 +1341,42 @@ export default function Orders() {
               )}
             </div>
 
-            {selectedKanbanIds.size > 0 && (
-              <p className="text-xs text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1">
-                <Check className="w-3.5 h-3.5" />
-                {selectedKanbanIds.size} item{selectedKanbanIds.size !== 1 ? "s" : ""} selected
-              </p>
-            )}
+            {/* Status line — counts on both sides so the operator always knows
+                what's staged vs already in the order. */}
+            <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center gap-3">
+                {addedKanbanIngredientIds.size > 0 && (
+                  <span className="text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                    <Check className="w-3.5 h-3.5" />
+                    {addedKanbanIngredientIds.size} pulled
+                  </span>
+                )}
+                {selectedKanbanIds.size > 0 && (
+                  <span className="text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1">
+                    <Check className="w-3.5 h-3.5" />
+                    {selectedKanbanIds.size} selected
+                  </span>
+                )}
+              </div>
+              <span className="text-muted-foreground">
+                Tap a pulled item to un-pull it.
+              </span>
+            </div>
 
-            <div className="max-h-80 overflow-y-auto space-y-1 -mx-1 px-1">
+            <div className="flex-1 overflow-y-auto space-y-1 -mx-1 px-1 min-h-0">
               {filteredKanbanIngredients.length === 0 && (
                 <p className="text-center py-8 text-sm text-muted-foreground">
                   {kanbanIngredients.length === 0 ? "No kanban-enabled ingredients found." : "No ingredients match your search."}
                 </p>
               )}
-              {filteredKanbanIngredients.map(k => {
+              {/* Pulled items float to the top so the operator can scan what
+                  they've already done and spot mis-pulls quickly. */}
+              {[...filteredKanbanIngredients].sort((a, b) => {
+                const aAdded = addedKanbanIngredientIds.has(a.ingredientId) ? 0 : 1;
+                const bAdded = addedKanbanIngredientIds.has(b.ingredientId) ? 0 : 1;
+                if (aAdded !== bAdded) return aAdded - bAdded;
+                return (a.ingredientName ?? "").localeCompare(b.ingredientName ?? "");
+              }).map(k => {
                 const alreadyAdded = addedKanbanIngredientIds.has(k.ingredientId);
                 const isSelected = selectedKanbanIds.has(k.ingredientId);
                 const effectiveSupplierId = effectiveSupplierIdFor(k);
@@ -1337,7 +1391,7 @@ export default function Orders() {
                   <div
                     key={k.ingredientId}
                     className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors border",
+                      "w-full flex items-center gap-3 px-3 py-3 rounded-lg text-base transition-colors border",
                       alreadyAdded
                         ? "bg-emerald-500/10 border-emerald-500/30"
                         : isSelected
@@ -1347,31 +1401,34 @@ export default function Orders() {
                   >
                     <button
                       type="button"
-                      onClick={() => !alreadyAdded && !noSupplier && toggleKanbanSelection(k.ingredientId)}
-                      disabled={alreadyAdded || noSupplier}
+                      onClick={() => {
+                        if (alreadyAdded) handleUnpullKanban(k.ingredientId);
+                        else if (!noSupplier) toggleKanbanSelection(k.ingredientId);
+                      }}
+                      disabled={!alreadyAdded && noSupplier}
                       className={cn(
                         "flex-1 min-w-0 flex items-center gap-3 text-left",
-                        (alreadyAdded || noSupplier) && "cursor-not-allowed"
+                        !alreadyAdded && noSupplier && "cursor-not-allowed"
                       )}
                     >
                       <div className="shrink-0">
                         {alreadyAdded ? (
-                          <div className="w-4 h-4 rounded bg-emerald-500 flex items-center justify-center">
-                            <Check className="w-2.5 h-2.5 text-white" />
+                          <div className="w-5 h-5 rounded bg-emerald-500 flex items-center justify-center">
+                            <Check className="w-3 h-3 text-white" />
                           </div>
                         ) : (
                           <div className={cn(
-                            "w-4 h-4 rounded border-2 flex items-center justify-center transition-colors",
+                            "w-5 h-5 rounded border-2 flex items-center justify-center transition-colors",
                             isSelected ? "bg-amber-500 border-amber-500" : "border-border"
                           )}>
-                            {isSelected && <Check className="w-2.5 h-2.5 text-white" />}
+                            {isSelected && <Check className="w-3 h-3 text-white" />}
                           </div>
                         )}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="font-medium truncate">{k.ingredientName ?? "Unknown"}</p>
                         {orderAmt != null && (
-                          <p className="text-xs text-muted-foreground truncate">
+                          <p className="text-sm text-muted-foreground truncate">
                             <span className="font-medium text-foreground">{orderAmt} {unitLabel}</span> to order
                           </p>
                         )}
@@ -1385,7 +1442,7 @@ export default function Orders() {
                       }}
                       disabled={alreadyAdded}
                       className={cn(
-                        "shrink-0 max-w-[10rem] text-xs rounded-md border border-border bg-background px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/30",
+                        "shrink-0 max-w-[12rem] text-sm rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/30",
                         alreadyAdded && "opacity-60 cursor-not-allowed"
                       )}
                     >
@@ -1397,22 +1454,30 @@ export default function Orders() {
                       ))}
                     </select>
                     {alreadyAdded && (
-                      <span className="shrink-0 text-xs text-emerald-600 dark:text-emerald-400 font-medium">Added</span>
+                      <button
+                        type="button"
+                        onClick={() => handleUnpullKanban(k.ingredientId)}
+                        className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-emerald-500/40 bg-background text-xs font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10 transition-colors"
+                        title="Remove this kanban from the order"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        Un-pull
+                      </button>
                     )}
                   </div>
                 );
               })}
             </div>
 
-            <div className="pt-2 border-t border-border flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">
-                Select the kanbans you have physically pulled
+            <div className="pt-2 border-t border-border flex items-center justify-between flex-shrink-0">
+              <span className="text-sm text-muted-foreground">
+                Tick the kanbans you&rsquo;ve physically pulled. Already-pulled items show at the top.
               </span>
               <button
                 onClick={handleAddSelectedKanbans}
                 disabled={selectedKanbanIds.size === 0}
                 className={cn(
-                  "px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+                  "px-5 py-2.5 rounded-lg text-base font-medium transition-colors",
                   selectedKanbanIds.size > 0
                     ? "bg-primary text-primary-foreground hover:bg-primary/90"
                     : "bg-secondary text-muted-foreground cursor-not-allowed"
