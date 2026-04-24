@@ -637,6 +637,28 @@ function ItemFormDialog({
                 </label>
                 <p className="text-xs text-muted-foreground mt-1 ml-6">When on, staff must enter a use-by date for this ingredient when receiving a delivery.</p>
               </div>
+
+              <div className="bg-secondary/30 rounded-lg px-4 py-3">
+                <label className="text-sm font-medium mb-1 block">
+                  Prep count per portion
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">(optional)</span>
+                </label>
+                <div className="relative max-w-[160px]">
+                  <input
+                    type="number"
+                    step="1"
+                    min="1"
+                    {...register("prepCountPerPortion")}
+                    className={cn(numInputClass, "pr-14")}
+                    placeholder="e.g. 2"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-xs pointer-events-none">pieces</span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  When set, the prep station shows this ingredient as a count of pieces (portions × this number) instead of weight — e.g. Pigs &amp; Blankets at 2 per portion for a 24-portion batch renders as &ldquo;48 pieces&rdquo;. Recipe quantity stays in the ingredient&rsquo;s native unit for ordering and stock. Leave blank for normal weight-based prep.
+                </p>
+                {errors.prepCountPerPortion && <span className="text-destructive text-xs">{String(errors.prepCountPerPortion.message)}</span>}
+              </div>
             </>
           )}
 
