@@ -7,9 +7,15 @@ import { toast } from "@/hooks/use-toast";
 import type { PrepRequirementItem } from "@workspace/api-client-react";
 
 export function fmtQty(q: number, unit: string): string {
-  if (unit === "g" && q >= 1000) return `${(q / 1000).toFixed(3)} kg`;
-  if (unit === "ml" && q >= 1000) return `${(q / 1000).toFixed(3)} l`;
+  // Weights always render as kg with 3 decimals, regardless of whether the
+  // ingredient is stored in g or kg. Keeps the prep sheet visually consistent
+  // across ingredients that happen to be saved in different base units, and
+  // makes like-for-like comparisons obvious at a glance (e.g. sub-recipe
+  // components where one is saved in g and another in kg).
+  if (unit === "g") return `${(q / 1000).toFixed(3)} kg`;
   if (unit === "kg") return `${q.toFixed(3)} kg`;
+  // Volumes always render as litres with 3 decimals for the same reason.
+  if (unit === "ml") return `${(q / 1000).toFixed(3)} l`;
   if (unit === "l" || unit === "L") return `${q.toFixed(3)} l`;
   if (unit === "pieces") {
     const n = Math.round(q);
