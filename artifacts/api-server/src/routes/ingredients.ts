@@ -24,6 +24,7 @@ function mapRow(r: typeof ingredientsTable.$inferSelect) {
       ? Number((r as unknown as { surplusAbsoluteQty?: string | null }).surplusAbsoluteQty)
       : null,
     shelfLifeDays: r.shelfLifeDays ?? null,
+    requiresUseByDate: r.requiresUseByDate ?? false,
     kanbanEnabled: r.kanbanEnabled ?? false,
     kanbanQuantity: Number(r.kanbanQuantity ?? 0),
     kanbanUnit: r.kanbanUnit ?? "weight",
@@ -91,7 +92,7 @@ function validateProcessingRatio(value: unknown): string | null {
 }
 
 router.post("/", validate(CreateIngredientBody), async (req, res) => {
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, requiresUseByDate, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const [row] = await db.insert(ingredientsTable).values({
@@ -122,6 +123,7 @@ router.post("/", validate(CreateIngredientBody), async (req, res) => {
     surplusMode: surplusMode === "absolute" ? "absolute" : "percent",
     surplusAbsoluteQty: surplusAbsoluteQty != null ? String(surplusAbsoluteQty) : null,
     shelfLifeDays: shelfLifeDays != null ? Number(shelfLifeDays) : null,
+    requiresUseByDate: requiresUseByDate ?? false,
     kanbanEnabled: kanbanEnabled ?? false,
     kanbanQuantity: kanbanQuantity != null ? String(kanbanQuantity) : "0",
     kanbanUnit: kanbanUnit ?? "weight",
@@ -211,7 +213,7 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, requiresUseByDate, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const [row] = await db.update(ingredientsTable).set({
@@ -242,6 +244,7 @@ router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
     ...(surplusMode !== undefined ? { surplusMode: surplusMode === "absolute" ? "absolute" : "percent" } : {}),
     ...(surplusAbsoluteQty !== undefined ? { surplusAbsoluteQty: surplusAbsoluteQty != null ? String(surplusAbsoluteQty) : null } : {}),
     ...(shelfLifeDays !== undefined ? { shelfLifeDays: shelfLifeDays != null ? Number(shelfLifeDays) : null } : {}),
+    ...(requiresUseByDate !== undefined ? { requiresUseByDate: !!requiresUseByDate } : {}),
     ...(kanbanEnabled !== undefined ? { kanbanEnabled } : {}),
     ...(kanbanQuantity !== undefined ? { kanbanQuantity: kanbanQuantity != null ? String(kanbanQuantity) : "0" } : {}),
     ...(kanbanUnit !== undefined ? { kanbanUnit } : {}),

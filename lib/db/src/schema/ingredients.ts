@@ -30,6 +30,7 @@ export const ingredientsTable = pgTable("ingredients", {
   surplusMode: text("surplus_mode").notNull().default("percent"),
   surplusAbsoluteQty: numeric("surplus_absolute_qty", { precision: 12, scale: 4 }),
   shelfLifeDays: integer("shelf_life_days"),
+  requiresUseByDate: boolean("requires_use_by_date").notNull().default(false),
   kanbanEnabled: boolean("kanban_enabled").notNull().default(false),
   kanbanQuantity: numeric("kanban_quantity", { precision: 10, scale: 4 }).notNull().default("0"),
   kanbanUnit: text("kanban_unit").notNull().default("weight"),

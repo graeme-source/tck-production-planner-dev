@@ -453,6 +453,7 @@ const schema = z.object({
     (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
     z.number().int().positive().nullable().optional()
   ),
+  requiresUseByDate: z.boolean().optional(),
   kanbanEnabled: z.boolean().optional(),
   kanbanQuantity: z.coerce.number().min(0).optional(),
   kanbanUnit: z.enum(["weight", "pack", "bottle"]).optional(),
@@ -478,7 +479,7 @@ type FormValues = z.infer<typeof schema>;
 const emptyDefaults: FormValues = {
   name: "", unit: "kg", packWeight: 0, costPerPack: 0,
   brand: "", supplierPartNumber: "", supplierId: 0, secondarySupplierId: 0,
-  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null, estimatedCookTimeMin: null, ovenTempC: null, steamPct: null, isBottle: false, bottleSize: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "", surplusPercent: 10, surplusMode: "percent" as const, surplusAbsoluteQty: null, shelfLifeDays: null, kanbanEnabled: false, kanbanQuantity: 0, kanbanUnit: "weight" as const, kanbanOrderAmount: null,
+  orderingUrl: "", notes: "", category: "", processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null, estimatedCookTimeMin: null, ovenTempC: null, steamPct: null, isBottle: false, bottleSize: null, stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "", surplusPercent: 10, surplusMode: "percent" as const, surplusAbsoluteQty: null, shelfLifeDays: null, requiresUseByDate: false, kanbanEnabled: false, kanbanQuantity: 0, kanbanUnit: "weight" as const, kanbanOrderAmount: null,
   energyKj: null, energyKcal: null, fat: null, saturates: null, carbohydrate: null, sugars: null, protein: null, fibre: null, salt: null, labelDeclaration: "", allergens: [],
 };
 
@@ -578,6 +579,7 @@ export default function Ingredients() {
       surplusMode: (((item as Record<string, unknown>).surplusMode as "percent" | "absolute" | undefined) ?? "percent"),
       surplusAbsoluteQty: (item as Record<string, unknown>).surplusAbsoluteQty != null ? Number((item as Record<string, unknown>).surplusAbsoluteQty) : null,
       shelfLifeDays: (item as Record<string, unknown>).shelfLifeDays != null ? Number((item as Record<string, unknown>).shelfLifeDays) : null,
+      requiresUseByDate: (item as Record<string, unknown>).requiresUseByDate as boolean ?? false,
       kanbanEnabled: (item as Record<string, unknown>).kanbanEnabled as boolean ?? false,
       kanbanQuantity: (item as Record<string, unknown>).kanbanQuantity != null ? Number((item as Record<string, unknown>).kanbanQuantity) : 0,
       kanbanUnit: ((item as Record<string, unknown>).kanbanUnit as "weight" | "pack" | "bottle") ?? "weight",
@@ -624,6 +626,7 @@ export default function Ingredients() {
     surplusMode: data.surplusMode ?? "percent",
     surplusAbsoluteQty: data.surplusMode === "absolute" ? (data.surplusAbsoluteQty ?? null) : null,
     shelfLifeDays: data.shelfLifeDays ?? null,
+    requiresUseByDate: data.requiresUseByDate ?? false,
     kanbanEnabled: data.kanbanEnabled ?? false,
     kanbanQuantity: data.kanbanQuantity ?? 0,
     kanbanUnit: data.kanbanUnit ?? "weight",
@@ -1205,6 +1208,20 @@ export default function Ingredients() {
               </div>
               <p className="text-xs text-muted-foreground mt-1">Used for use-by date calculation on deliveries.</p>
               {errors.shelfLifeDays && <span className="text-destructive text-xs">{String(errors.shelfLifeDays.message)}</span>}
+            </div>
+
+            <div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  {...register("requiresUseByDate")}
+                  className="w-4 h-4 rounded border-border"
+                />
+                <span className="text-sm font-medium">Require use-by date at goods-in</span>
+              </label>
+              <p className="text-xs text-muted-foreground mt-1 ml-6">
+                When on, staff must enter a use-by date for this ingredient when receiving a delivery.
+              </p>
             </div>
 
             <div className="grid grid-cols-2 gap-3">

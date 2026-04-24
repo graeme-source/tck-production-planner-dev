@@ -177,6 +177,23 @@ async function runStartupMigrations() {
       ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS shelf_life_days INTEGER
     `);
     await db.execute(sql`
+      ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS requires_use_by_date BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS _migrations_done (key TEXT PRIMARY KEY, done_at TIMESTAMP DEFAULT NOW())`);
+    {
+      const result = await db.execute<{ cnt: number }>(sql`
+        INSERT INTO _migrations_done (key)
+        SELECT 'requires_use_by_date_seed_v1'
+        WHERE NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'requires_use_by_date_seed_v1')
+        RETURNING 1 AS cnt
+      `);
+      if ((result.rowCount ?? 0) > 0) {
+        await db.execute(sql`UPDATE ingredients SET requires_use_by_date = TRUE WHERE category = 'raw_meat'`);
+        await db.execute(sql`UPDATE ingredients SET shelf_life_days = 5 WHERE category = 'vegetable' AND shelf_life_days IS NULL`);
+        console.log("[use-by seed] Seeded raw_meat requires_use_by_date and vegetable shelf_life_days");
+      }
+    }
+    await db.execute(sql`
       ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS order_frequency TEXT NOT NULL DEFAULT 'daily'
     `);
     await db.execute(sql`
