@@ -556,12 +556,9 @@ export default function Ingredients() {
                   <option value="g">g</option>
                   <option value="l">L</option>
                   <option value="ml">ml</option>
-                  <option value="pcs">pcs</option>
-                  <option value="box">box</option>
-                  <option value="bag">bag</option>
-                  <option value="tub">tub</option>
-                  <option value="each">each</option>
+                  <option value="pieces">pieces</option>
                 </select>
+                <p className="text-xs text-muted-foreground mt-1">Ingredients are always measured in weight, volume, or piece count. Packs, bottles and bags are captured separately via Pack size for stock, ordering and deliveries.</p>
               </div>
             </div>
 

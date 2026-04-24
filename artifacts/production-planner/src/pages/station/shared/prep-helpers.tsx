@@ -17,7 +17,9 @@ export function fmtQty(q: number, unit: string): string {
   // Volumes always render as litres with 3 decimals for the same reason.
   if (unit === "ml") return `${(q / 1000).toFixed(3)} l`;
   if (unit === "l" || unit === "L") return `${q.toFixed(3)} l`;
-  if (unit === "pieces") {
+  // Legacy "pcs" and "each" both mean piece counts — render them the same
+  // way as "pieces" so the prep sheet doesn't expose internal naming drift.
+  if (unit === "pieces" || unit === "pcs" || unit === "each") {
     const n = Math.round(q);
     return `${n} ${n === 1 ? "piece" : "pieces"}`;
   }

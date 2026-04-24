@@ -12,6 +12,13 @@ const nullableNumber = (check: (s: z.ZodNumber) => z.ZodNumber = (s) => s) =>
     check(z.number()).nullable().optional(),
   );
 
+// Ingredients (food items used in recipes) must always use a native weight,
+// volume, or count unit — packs/bottles/bags only appear in stock check,
+// ordering, receiving and storage UIs, converted via pack size. Non-ingredient
+// supplies can still use packaging-style units (box, roll, sheet, etc.).
+export const NATIVE_INGREDIENT_UNITS = ["g", "kg", "ml", "l", "L", "pieces"] as const;
+const NATIVE_INGREDIENT_UNIT_SET = new Set<string>(NATIVE_INGREDIENT_UNITS);
+
 export const ingredientFormSchema = z.object({
   // Mode tab (inventory page only — ingredients page pins this to "ingredient").
   formMode: z.enum(["ingredient", "supply"]).optional(),
@@ -74,6 +81,17 @@ export const ingredientFormSchema = z.object({
   salt: nullableNumber((n) => n.min(0)),
   labelDeclaration: z.string().optional(),
   allergens: z.array(z.string()).optional(),
+}).superRefine((val, ctx) => {
+  // Ingredient-mode entries must use a native weight/volume/count unit.
+  // Supplies can use packaging-style units.
+  const isIngredient = val.formMode !== "supply";
+  if (isIngredient && !NATIVE_INGREDIENT_UNIT_SET.has(val.unit)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["unit"],
+      message: "Ingredients must use kg, g, L, ml or pieces. Packs and bottles are captured via Pack size.",
+    });
+  }
 });
 
 export type IngredientFormValues = z.infer<typeof ingredientFormSchema>;

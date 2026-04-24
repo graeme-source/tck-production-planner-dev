@@ -521,13 +521,20 @@ function ItemFormDialog({
                 <option value="g">g</option>
                 <option value="l">L</option>
                 <option value="ml">ml</option>
-                <option value="pcs">pcs</option>
-                <option value="box">box</option>
-                <option value="bag">bag</option>
-                <option value="tub">tub</option>
-                <option value="each">each</option>
-                <option value="roll">roll</option>
-                <option value="sheet">sheet</option>
+                <option value="pieces">pieces</option>
+                {/* Packaging-style units are only valid for non-ingredient
+                    supplies. Ingredients must always use native weight/volume
+                    units so prep, recipe and cost maths stay consistent. */}
+                {formMode === "supply" && (
+                  <>
+                    <option value="box">box</option>
+                    <option value="bag">bag</option>
+                    <option value="tub">tub</option>
+                    <option value="each">each</option>
+                    <option value="roll">roll</option>
+                    <option value="sheet">sheet</option>
+                  </>
+                )}
               </select>
             </div>
           </div>
