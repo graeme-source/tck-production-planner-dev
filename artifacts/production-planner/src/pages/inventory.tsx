@@ -11,8 +11,14 @@ import {
   Carrot, Box, ChevronDown, Printer,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
-import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
+import {
+  ingredientFormSchema,
+  emptyIngredientFormDefaults,
+  ingredientToFormValues,
+  buildIngredientPayload,
+  type IngredientFormValues,
+} from "@/lib/ingredient-form";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import Papa from "papaparse";
 import { useQueryClient } from "@tanstack/react-query";
@@ -65,92 +71,11 @@ const UK14_ALLERGENS = [
   { value: "sulphur_dioxide", label: "Sulphur Dioxide" },
 ] as const;
 
-const schema = z.object({
-  formMode: z.enum(["ingredient", "supply"]),
-  name: z.string().min(1, "Name is required"),
-  unit: z.string().min(1, "Unit is required"),
-  packWeight: z.coerce.number().min(0, "Must be positive"),
-  costPerPack: z.coerce.number().min(0, "Must be positive"),
-  brand: z.string().optional(),
-  supplierPartNumber: z.string().optional(),
-  supplierId: z.coerce.number().optional(),
-  secondarySupplierId: z.coerce.number().optional(),
-  orderingUrl: z.string().optional(),
-  notes: z.string().optional(),
-  category: z.string().optional(),
-  prepWeightMode: z.enum(["raw", "processed"]).optional(),
-  palletSize: z.preprocess(
-    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
-    z.number().int().positive().nullable().optional()
-  ),
-  processingRatioPct: z.preprocess(
-    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
-    z.number().min(0).max(100).nullable().optional()
-  ),
-  rawMeatTrayCapacityKg: z.preprocess(
-    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
-    z.number().positive().nullable().optional()
-  ),
-  minCookingTempC: z.preprocess(
-    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
-    z.number().min(0).max(300).nullable().optional()
-  ),
-  estimatedCookTimeMin: z.preprocess(
-    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
-    z.number().int().min(1).nullable().optional()
-  ),
-  ovenTempC: z.preprocess(
-    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
-    z.number().int().min(0).max(500).nullable().optional()
-  ),
-  steamPct: z.preprocess(
-    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
-    z.number().int().min(0).max(100).nullable().optional()
-  ),
-  stockCheckEnabled: z.boolean().optional(),
-  stockCheckFrequency: z.enum(["daily", "weekly"]).optional(),
-  stockCheckDay: z.string().optional(),
-  surplusPercent: z.coerce.number().min(0).optional(),
-  shelfLifeDays: z.preprocess(
-    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
-    z.number().int().positive().nullable().optional()
-  ),
-  requiresUseByDate: z.boolean().optional(),
-  kanbanEnabled: z.boolean().optional(),
-  kanbanQuantity: z.coerce.number().min(0).optional(),
-  kanbanUnit: z.enum(["weight", "pack", "bottle"]).optional(),
-  kanbanOrderAmount: z.preprocess(
-    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
-    z.number().min(0).nullable().optional()
-  ),
-  energyKj: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
-  energyKcal: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
-  fat: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
-  saturates: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
-  carbohydrate: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
-  sugars: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
-  protein: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
-  fibre: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
-  salt: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).nullable().optional()),
-  labelDeclaration: z.string().optional(),
-  allergens: z.array(z.string()).optional(),
-});
-
-type FormValues = z.infer<typeof schema>;
+const schema = ingredientFormSchema;
+type FormValues = IngredientFormValues;
 
 function emptyDefaults(mode: TabType): FormValues {
-  return {
-    formMode: mode === "supplies" ? "supply" : "ingredient",
-    name: "", unit: mode === "supplies" ? "each" : "kg", packWeight: 0, costPerPack: 0,
-    brand: "", supplierPartNumber: "", supplierId: 0, secondarySupplierId: 0,
-    orderingUrl: "", notes: "", category: "", prepWeightMode: "raw" as const, palletSize: null,
-    processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null,
-    estimatedCookTimeMin: null, ovenTempC: null, steamPct: null,
-    stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "",
-    surplusPercent: 10, shelfLifeDays: null, requiresUseByDate: false,
-    kanbanEnabled: false, kanbanQuantity: 0, kanbanUnit: "weight" as const, kanbanOrderAmount: null,
-    energyKj: null, energyKcal: null, fat: null, saturates: null, carbohydrate: null, sugars: null, protein: null, fibre: null, salt: null, labelDeclaration: "", allergens: [],
-  };
+  return emptyIngredientFormDefaults(mode === "supplies" ? "supply" : "ingredient");
 }
 
 function categoryLabel(value: string | null | undefined, isPerishable: boolean): string {
@@ -514,50 +439,7 @@ function ItemFormDialog({
 
   const populateForm = (item: Ingredient | null, mode: TabType) => {
     if (!item) { reset(emptyDefaults(mode)); return; }
-    const isItemIngredient = item.perishable !== false;
-    reset({
-      formMode: isItemIngredient ? "ingredient" : "supply",
-      name: item.name,
-      unit: item.unit,
-      packWeight: Number(item.packWeight),
-      costPerPack: Number(item.costPerPack),
-      brand: item.brand ?? "",
-      supplierPartNumber: item.supplierPartNumber ?? "",
-      supplierId: item.supplierId ?? 0,
-      secondarySupplierId: item.secondarySupplierId ?? 0,
-      orderingUrl: item.orderingUrl ?? "",
-      notes: item.notes ?? "",
-      category: item.category ?? "",
-      prepWeightMode: ((item as Record<string, unknown>).prepWeightMode as "raw" | "processed") ?? "raw",
-      palletSize: (item as Record<string, unknown>).palletSize != null ? Number((item as Record<string, unknown>).palletSize) : null,
-      processingRatioPct: item.processingRatio != null ? parseFloat((Number(item.processingRatio) * 100).toFixed(4)) : null,
-      rawMeatTrayCapacityKg: item.rawMeatTrayCapacityKg != null ? Number(item.rawMeatTrayCapacityKg) : null,
-      minCookingTempC: item.minCookingTempC != null ? Number(item.minCookingTempC) : null,
-      estimatedCookTimeMin: item.estimatedCookTimeMin != null ? Number(item.estimatedCookTimeMin) : null,
-      ovenTempC: item.ovenTempC != null ? Number(item.ovenTempC) : null,
-      steamPct: item.steamPct != null ? Number(item.steamPct) : null,
-      stockCheckEnabled: item.stockCheckEnabled ?? false,
-      stockCheckFrequency: (item.stockCheckFrequency as "daily" | "weekly") ?? "daily",
-      stockCheckDay: item.stockCheckDay ?? "",
-      surplusPercent: (item as Record<string, unknown>).surplusPercent != null ? Number((item as Record<string, unknown>).surplusPercent) : 10,
-      shelfLifeDays: (item as Record<string, unknown>).shelfLifeDays != null ? Number((item as Record<string, unknown>).shelfLifeDays) : null,
-      requiresUseByDate: (item as Record<string, unknown>).requiresUseByDate as boolean ?? false,
-      kanbanEnabled: (item as Record<string, unknown>).kanbanEnabled as boolean ?? false,
-      kanbanQuantity: (item as Record<string, unknown>).kanbanQuantity != null ? Number((item as Record<string, unknown>).kanbanQuantity) : 0,
-      kanbanUnit: ((item as Record<string, unknown>).kanbanUnit as "weight" | "pack" | "bottle") ?? "weight",
-      kanbanOrderAmount: (item as Record<string, unknown>).kanbanOrderAmount != null ? Number((item as Record<string, unknown>).kanbanOrderAmount) : null,
-      energyKj: (item as Record<string, unknown>).energyKj != null ? Number((item as Record<string, unknown>).energyKj) : null,
-      energyKcal: (item as Record<string, unknown>).energyKcal != null ? Number((item as Record<string, unknown>).energyKcal) : null,
-      fat: (item as Record<string, unknown>).fat != null ? Number((item as Record<string, unknown>).fat) : null,
-      saturates: (item as Record<string, unknown>).saturates != null ? Number((item as Record<string, unknown>).saturates) : null,
-      carbohydrate: (item as Record<string, unknown>).carbohydrate != null ? Number((item as Record<string, unknown>).carbohydrate) : null,
-      sugars: (item as Record<string, unknown>).sugars != null ? Number((item as Record<string, unknown>).sugars) : null,
-      protein: (item as Record<string, unknown>).protein != null ? Number((item as Record<string, unknown>).protein) : null,
-      fibre: (item as Record<string, unknown>).fibre != null ? Number((item as Record<string, unknown>).fibre) : null,
-      salt: (item as Record<string, unknown>).salt != null ? Number((item as Record<string, unknown>).salt) : null,
-      labelDeclaration: ((item as Record<string, unknown>).labelDeclaration as string) ?? "",
-      allergens: ((item as Record<string, unknown>).allergens as string[]) ?? [],
-    });
+    reset(ingredientToFormValues(item, mode === "supplies" ? "supply" : "ingredient"));
   };
 
   const [initialized, setInitialized] = useState(false);
@@ -966,51 +848,7 @@ function ItemFormDialog({
   );
 }
 
-function buildPayload(data: FormValues) {
-  return {
-    name: data.name,
-    unit: data.unit,
-    packWeight: data.packWeight,
-    costPerPack: data.costPerPack,
-    brand: data.brand || null,
-    supplierPartNumber: data.supplierPartNumber || null,
-    supplierId: data.supplierId && data.supplierId > 0 ? data.supplierId : null,
-    secondarySupplierId: data.secondarySupplierId && data.secondarySupplierId > 0 ? data.secondarySupplierId : null,
-    orderingUrl: data.orderingUrl || null,
-    notes: data.notes || null,
-    category: data.category || null,
-    perishable: data.formMode === "ingredient",
-    palletSize: data.palletSize ?? null,
-    prepWeightMode: data.prepWeightMode ?? "raw",
-    processingRatio: data.processingRatioPct != null ? data.processingRatioPct / 100 : null,
-    rawMeatTrayCapacityKg: data.rawMeatTrayCapacityKg ?? null,
-    minCookingTempC: data.minCookingTempC ?? null,
-    estimatedCookTimeMin: data.estimatedCookTimeMin ?? null,
-    ovenTempC: data.ovenTempC ?? null,
-    steamPct: data.steamPct ?? null,
-    stockCheckEnabled: data.stockCheckEnabled ?? false,
-    stockCheckFrequency: data.stockCheckFrequency ?? "daily",
-    stockCheckDay: data.stockCheckFrequency === "weekly" ? (data.stockCheckDay || null) : null,
-    surplusPercent: data.surplusPercent ?? 10,
-    shelfLifeDays: data.shelfLifeDays ?? null,
-    requiresUseByDate: data.requiresUseByDate ?? false,
-    kanbanEnabled: data.kanbanEnabled ?? false,
-    kanbanQuantity: data.kanbanQuantity ?? 0,
-    kanbanUnit: data.kanbanUnit ?? "weight",
-    kanbanOrderAmount: data.kanbanOrderAmount ?? null,
-    energyKj: data.energyKj ?? null,
-    energyKcal: data.energyKcal ?? null,
-    fat: data.fat ?? null,
-    saturates: data.saturates ?? null,
-    carbohydrate: data.carbohydrate ?? null,
-    sugars: data.sugars ?? null,
-    protein: data.protein ?? null,
-    fibre: data.fibre ?? null,
-    salt: data.salt ?? null,
-    labelDeclaration: data.labelDeclaration || null,
-    allergens: data.allergens ?? [],
-  };
-}
+const buildPayload = buildIngredientPayload;
 
 export default function Inventory() {
   const searchStr = useSearch();
