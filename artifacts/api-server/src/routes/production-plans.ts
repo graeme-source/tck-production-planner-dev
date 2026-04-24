@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, stationChangeoversTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, prepTinOverridesTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, fridgeStockBatchesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable, batchWeightRecordsTable } from "@workspace/db";
+import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, stationChangeoversTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, prepTinOverridesTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, fridgeStockBatchesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable, batchWeightRecordsTable, temperatureRecordsTable } from "@workspace/db";
 import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as drizzleSum, ne, isNotNull, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
@@ -2512,12 +2512,14 @@ router.post("/:id/items/:itemId/mark-chilled", async (req, res) => {
   const [item] = await db.select({
     id: productionPlanItemsTable.id,
     recipeId: productionPlanItemsTable.recipeId,
+    recipeCategory: recipesTable.category,
   })
     .from(productionPlanItemsTable)
+    .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
     .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
   if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
 
-  const [lastBatchRow] = await db.select().from(batchWeightRecordsTable)
+  let [lastBatchRow] = await db.select().from(batchWeightRecordsTable)
     .where(and(
       eq(batchWeightRecordsTable.planId, planId),
       eq(batchWeightRecordsTable.recipeId, item.recipeId),
@@ -2526,8 +2528,45 @@ router.post("/:id/items/:itemId/mark-chilled", async (req, res) => {
     .limit(1);
 
   if (!lastBatchRow) {
-    res.status(409).json({ error: "Last batch for this recipe has not been logged yet" });
-    return;
+    // Mac cheese skips the oven weight-log flow, so no batch weight record
+    // exists. Anchor the chill timer to the post-cheese sauce temperature
+    // (the last hot checkpoint before packs go into the blast chiller) and
+    // synthesize a batch weight record so the chill-end stamp and audit
+    // trail share the same shape as calzone recipes.
+    if (item.recipeCategory !== MAC_CHEESE_CATEGORY) {
+      res.status(409).json({ error: "Last batch for this recipe has not been logged yet" });
+      return;
+    }
+    const [postCheese] = await db.select().from(temperatureRecordsTable)
+      .where(and(
+        eq(temperatureRecordsTable.planId, planId),
+        eq(temperatureRecordsTable.recordType, "mac_sauce_post_cheese"),
+      ))
+      .orderBy(asc(temperatureRecordsTable.recordedAt))
+      .limit(1);
+    if (!postCheese) {
+      res.status(409).json({ error: "Record the post-cheese sauce temperature before marking chilled." });
+      return;
+    }
+    const [created] = await db.insert(batchWeightRecordsTable).values({
+      planId,
+      planItemId: itemId,
+      recipeId: item.recipeId,
+      batchSequence: 0,
+      trayWeightG: "0",
+      portionWeightG: "0",
+      packSize: 1,
+      targetWeightG: "0",
+      actualWeightG: "0",
+      varianceG: "0",
+      toleranceUnderG: "0",
+      toleranceOverG: "0",
+      withinTolerance: true,
+      isLastBatchOfRecipe: true,
+      userId: sessionUserId,
+      recordedAt: postCheese.recordedAt,
+    }).returning();
+    lastBatchRow = created;
   }
 
   if (lastBatchRow.chillEndAt) {

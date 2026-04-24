@@ -3,8 +3,8 @@ import { getGetProductionPlanQueryKey, getListProductionPlansQueryKey } from "@w
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Loader2, Plus, Check, Thermometer, Clock,
-  UtensilsCrossed, ChefHat, Package, X,
+  Loader2, Plus, Thermometer, Clock,
+  UtensilsCrossed, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -15,73 +15,6 @@ import { isMacCheese } from "../shared/constants";
 // ──────────────────────────────────────────────────────────────────────────────
 // Macaroni Cheese Station
 // ──────────────────────────────────────────────────────────────────────────────
-
-interface PrepIngredient {
-  ingredientId: number;
-  ingredientName: string;
-  unit: string;
-  totalQty: number;
-  section: "pasta" | "sauce" | "topping";
-}
-
-function useMacCheesePrep(planId: number, macItems: ProductionPlanItem[]) {
-  const [ingredients, setIngredients] = useState<PrepIngredient[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (macItems.length === 0) { setIngredients([]); setLoading(false); return; }
-    fetch(`/api/production-plans/${planId}/prep-requirements-by-recipe?station=all`, { credentials: "include" })
-      .then(r => r.json())
-      .then(data => {
-        const macRecipeIds = new Set(macItems.map(it => it.recipeId));
-        const allIngredients: PrepIngredient[] = [];
-        for (const recipe of (data?.recipes ?? [])) {
-          if (!macRecipeIds.has(recipe.recipeId)) continue;
-          for (const ing of recipe.ingredients ?? []) {
-            allIngredients.push({
-              ingredientId: ing.ingredientId,
-              ingredientName: ing.ingredientName,
-              unit: ing.unit ?? "kg",
-              totalQty: ing.prepQty ?? ing.cookedQty ?? 0,
-              section: classifyIngredient(ing.ingredientName),
-            });
-          }
-        }
-        const agg = new Map<number, PrepIngredient>();
-        for (const ing of allIngredients) {
-          const existing = agg.get(ing.ingredientId);
-          if (existing) { existing.totalQty += ing.totalQty; }
-          else { agg.set(ing.ingredientId, { ...ing }); }
-        }
-        setIngredients([...agg.values()]);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, [planId, macItems.length]);
-
-  return { ingredients, loading };
-}
-
-function classifyIngredient(name: string): "pasta" | "sauce" | "topping" {
-  const lower = name.toLowerCase();
-  if (lower.includes("macaroni") || lower.includes("pasta") || lower.includes("water") || lower.includes("salt")) return "pasta";
-  if (lower.includes("panko") || lower.includes("breadcrumb") || lower.includes("parsley")) return "topping";
-  // Default to sauce (cheese, milk, cream, flour, butter, mustard, seasoning)
-  return "sauce";
-}
-
-function formatQty(qty: number, unit: string): string {
-  if (unit === "kg") return `${qty.toFixed(3)} kg`;
-  if (unit === "g") {
-    if (qty >= 1000) return `${(qty / 1000).toFixed(3)} kg`;
-    return `${qty.toFixed(0)} g`;
-  }
-  if (unit === "ml") {
-    if (qty >= 1000) return `${(qty / 1000).toFixed(3)} L`;
-    return `${qty.toFixed(0)} ml`;
-  }
-  return `${qty % 1 === 0 ? qty : qty.toFixed(3)} ${unit}`;
-}
 
 interface TempRecord {
   id: number;
@@ -362,9 +295,7 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
 
   // Filter to mac cheese items only
   const macItems = (plan.items ?? []).filter(it => isMacCheese(it as any));
-  const { ingredients, loading: prepLoading } = useMacCheesePrep(plan.id, macItems);
 
-  const [checkedIngredients, setCheckedIngredients] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState(false);
   const [removing, setRemoving] = useState(false);
 
@@ -439,10 +370,6 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
     }
     setRemoving(false);
   };
-
-  const pastaIngredients = ingredients.filter(i => i.section === "pasta");
-  const sauceIngredients = ingredients.filter(i => i.section === "sauce");
-  const toppingIngredients = ingredients.filter(i => i.section === "topping");
 
   const totalPacks = macItems.reduce((s, it) => {
     const ppb = (it.portionsPerBatch ?? 10) / (it.packSize ?? 2);
@@ -541,60 +468,6 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
         </div>
       </div>
 
-      {/* Prep Sections */}
-      {prepLoading ? (
-        <div className="flex items-center justify-center py-8 text-muted-foreground">
-          <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading prep requirements…
-        </div>
-      ) : (
-        <>
-          {/* Pasta Prep */}
-          {pastaIngredients.length > 0 && (
-            <IngredientSection
-              title="Pasta Prep"
-              icon={<Package className="w-4 h-4" />}
-              ingredients={pastaIngredients}
-              checked={checkedIngredients}
-              onToggle={id => setCheckedIngredients(prev => {
-                const next = new Set(prev);
-                next.has(id) ? next.delete(id) : next.add(id);
-                return next;
-              })}
-            />
-          )}
-
-          {/* Cheese Sauce */}
-          {sauceIngredients.length > 0 && (
-            <IngredientSection
-              title="Cheese Sauce"
-              icon={<ChefHat className="w-4 h-4" />}
-              ingredients={sauceIngredients}
-              checked={checkedIngredients}
-              onToggle={id => setCheckedIngredients(prev => {
-                const next = new Set(prev);
-                next.has(id) ? next.delete(id) : next.add(id);
-                return next;
-              })}
-            />
-          )}
-
-          {/* Topping */}
-          {toppingIngredients.length > 0 && (
-            <IngredientSection
-              title="Topping"
-              icon={<UtensilsCrossed className="w-4 h-4" />}
-              ingredients={toppingIngredients}
-              checked={checkedIngredients}
-              onToggle={id => setCheckedIngredients(prev => {
-                const next = new Set(prev);
-                next.has(id) ? next.delete(id) : next.add(id);
-                return next;
-              })}
-            />
-          )}
-        </>
-      )}
-
       {/* Temperature Records */}
       <div className="bg-card border border-border rounded-xl p-4">
         <h3 className="font-semibold text-sm flex items-center gap-2 mb-4">
@@ -660,52 +533,6 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function IngredientSection({ title, icon, ingredients, checked, onToggle }: {
-  title: string;
-  icon: React.ReactNode;
-  ingredients: PrepIngredient[];
-  checked: Set<string>;
-  onToggle: (id: string) => void;
-}) {
-  const allChecked = ingredients.every(i => checked.has(`${i.ingredientId}`));
-  return (
-    <div className="bg-card border border-border rounded-xl overflow-hidden">
-      <div className={cn("px-4 py-3 border-b border-border flex items-center gap-2", allChecked && "bg-emerald-50 dark:bg-emerald-900/10")}>
-        {icon}
-        <h3 className="font-semibold text-sm">{title}</h3>
-        {allChecked && <CheckCircle2 className="w-4 h-4 text-emerald-500 ml-auto" />}
-      </div>
-      <div className="divide-y divide-border/50">
-        {ingredients.map(ing => {
-          const key = `${ing.ingredientId}`;
-          const isDone = checked.has(key);
-          return (
-            <button
-              key={key}
-              onClick={() => onToggle(key)}
-              className={cn(
-                "w-full flex items-center justify-between px-4 py-3 text-left transition-colors",
-                isDone ? "bg-emerald-50/50 dark:bg-emerald-900/5" : "hover:bg-muted/30",
-              )}
-            >
-              <div className="flex items-center gap-3">
-                <div className={cn(
-                  "w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors",
-                  isDone ? "bg-emerald-500 border-emerald-500" : "border-border",
-                )}>
-                  {isDone && <Check className="w-3.5 h-3.5 text-white" />}
-                </div>
-                <span className={cn("text-sm font-medium", isDone && "line-through text-muted-foreground")}>{ing.ingredientName}</span>
-              </div>
-              <span className="text-sm tabular-nums font-mono text-muted-foreground">{formatQty(ing.totalQty, ing.unit)}</span>
-            </button>
-          );
-        })}
-      </div>
     </div>
   );
 }

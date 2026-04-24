@@ -23,7 +23,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { BreakTracker } from "../shared/break-tracker";
-import { getStationCount } from "../shared/constants";
+import { getStationCount, isMacCheese } from "../shared/constants";
 import { toKg } from "../shared/prep-helpers";
 import type { PrepRecipeDetail } from "./prep-hub";
 
@@ -366,7 +366,10 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
     },
   });
 
-  const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
+  // Mac cheese has its own dedicated station and doesn't flow through mixing.
+  const items = [...(plan.items ?? [])]
+    .filter(it => !isMacCheese(it as any))
+    .sort((a, b) => a.orderPosition - b.orderPosition);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 

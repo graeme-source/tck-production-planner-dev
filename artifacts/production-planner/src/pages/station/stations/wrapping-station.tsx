@@ -8,7 +8,7 @@ import {
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Loader2, Plus, Minus, CheckCircle2, Snowflake, AlertCircle, Gift, Flame, ChevronDown, ThermometerSnowflake,
+  Loader2, Plus, Minus, CheckCircle2, Snowflake, AlertCircle, Gift, Flame, ChevronDown, ThermometerSnowflake, ArrowDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -449,6 +449,10 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
             const planned = plannedPacks(item);
             const gross = grossPacks(item);
             const net = netTwoPacks(item);
+            // "Produced" is the full two-pack output coming off the ovens —
+            // wonky packs count toward it, they're just tracked separately
+            // afterwards. Matches the oven station's Net + Wonky = Total.
+            const produced = net + (item.wonlyCount ?? 0);
             const eightPkCount = item.eightPackBagCount ?? 0;
             const eightPkFridge = item.fridgeEightPackQty ?? 0;
             const eightPkRemaining = eightPkCount - eightPkFridge;
@@ -524,39 +528,13 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                     {/* Header + wrapping toggle */}
                     <div className="flex items-center gap-3">
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1.5">
+                        <div className="flex items-center gap-2 mb-1">
                           <h3 className={cn("font-semibold text-xl", isWrapped ? "line-through opacity-60" : "")} style={{ color: recipeColour }}>
                             {item.recipeName ?? `Recipe #${item.recipeId}`}
                           </h3>
                           {isWrapped && <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />}
                         </div>
-                        <div className="flex items-center gap-3 text-base">
-                          <div className="text-center">
-                            <span className="text-sm text-muted-foreground block">Produced</span>
-                            <span className="text-lg font-bold tabular-nums">{net}</span>
-                          </div>
-                          <div className="text-center">
-                            <span className="text-sm text-purple-600 dark:text-purple-400 block">In Chiller</span>
-                            <span className="text-2xl font-bold tabular-nums text-purple-700 dark:text-purple-300">{Math.max(0, remaining)}</span>
-                          </div>
-                          <div className="text-center border-l border-border/50 pl-3">
-                            <span className="text-sm text-primary block">Wrapped</span>
-                            <span className="text-2xl font-bold tabular-nums text-primary">{fridge}</span>
-                          </div>
-                          {(item.wonlyCount ?? 0) > 0 && (
-                            <div className="text-center">
-                              <span className="text-sm text-red-500 block">Wonky</span>
-                              <span className="text-lg font-bold tabular-nums text-red-500">{item.wonlyCount}</span>
-                            </div>
-                          )}
-                          {eightPkCount > 0 && (
-                            <div className="text-center border-l border-border/50 pl-3">
-                              <span className="text-sm text-indigo-600 dark:text-indigo-400 block">8-Packs</span>
-                              <span className="text-lg font-bold tabular-nums text-indigo-600 dark:text-indigo-400">{eightPkFridge}/{eightPkCount}</span>
-                            </div>
-                          )}
-                        </div>
-                        <p className="text-sm text-muted-foreground mt-1">
+                        <p className="text-sm text-muted-foreground">
                           {getStationCount(item, "ovens")} / {item.batchesTarget ?? 0} oven loads
                           {item.builderMarkedCompleteAt && (
                             <span className="text-amber-600 dark:text-amber-400"> · builder marked complete</span>
@@ -579,6 +557,80 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                       >
                         {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
                       </button>
+                    </div>
+
+                    {/* From Chiller — Net + Wonky = Produced. Mirrors the
+                        oven station's blast chiller card so the hand-off is
+                        obvious: everything that came out of the chiller, split
+                        between good and wonky. The "=" column is suppressed
+                        when 8-pack bags change the arithmetic (same rule the
+                        oven card uses). */}
+                    <div className="rounded-xl border border-cyan-300 dark:border-cyan-800 bg-cyan-50/40 dark:bg-cyan-950/20 p-4">
+                      <div className="flex items-center gap-2 text-base font-bold text-cyan-700 dark:text-cyan-300 uppercase tracking-wider mb-3">
+                        <Snowflake className="w-5 h-5" /> From Chiller
+                      </div>
+                      <div className="flex items-stretch justify-center gap-3">
+                        <div className="flex-1 text-center bg-background rounded-lg border border-border py-2">
+                          <p className="text-xs text-muted-foreground font-medium mb-0.5">Net packs</p>
+                          <p className="text-3xl font-bold tabular-nums text-indigo-600 dark:text-indigo-400 leading-tight">
+                            {net}
+                          </p>
+                        </div>
+                        <div className="flex items-center text-2xl text-muted-foreground font-light">+</div>
+                        <div className="flex-1 text-center bg-background rounded-lg border border-border py-2">
+                          <p className="text-xs text-muted-foreground font-medium mb-0.5">Wonky</p>
+                          <p className={cn(
+                            "text-3xl font-bold tabular-nums leading-tight",
+                            (item.wonlyCount ?? 0) > 0 ? "text-red-500" : "text-muted-foreground/60",
+                          )}>
+                            {item.wonlyCount ?? 0}
+                          </p>
+                        </div>
+                        {eightPkCount === 0 && (
+                          <>
+                            <div className="flex items-center text-2xl text-muted-foreground font-light">=</div>
+                            <div className="flex-1 text-center bg-cyan-100/60 dark:bg-cyan-900/30 rounded-lg border border-cyan-300 dark:border-cyan-700 py-2">
+                              <p className="text-xs text-cyan-700 dark:text-cyan-300 font-medium mb-0.5">Produced</p>
+                              <p className="text-3xl font-bold tabular-nums text-cyan-700 dark:text-cyan-200 leading-tight">
+                                {produced}
+                              </p>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                      {eightPkCount > 0 && (
+                        <div className="mt-3 pt-3 border-t border-cyan-200 dark:border-cyan-800/60 flex items-center justify-center gap-6 text-sm">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-muted-foreground font-medium">8-packs</span>
+                            <span className="text-lg font-bold tabular-nums text-indigo-600 dark:text-indigo-400">{eightPkFridge}/{eightPkCount}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-muted-foreground font-medium">Produced</span>
+                            <span className="text-lg font-bold tabular-nums text-cyan-700 dark:text-cyan-200">{produced}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Flow arrow — From Chiller → Production Fridge */}
+                    <div className="flex justify-center -my-1">
+                      <ArrowDown className="w-5 h-5 text-muted-foreground/50" />
+                    </div>
+
+                    {/* Disposition — where the net packs have gone. Wonky
+                        packs are tracked separately in the Wonky Rack panel
+                        at the bottom of the station. */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50/40 dark:bg-purple-950/20 px-3 py-3 text-center">
+                        <p className="text-xs text-purple-700 dark:text-purple-300 font-semibold uppercase tracking-wider mb-1">In Chiller</p>
+                        <p className="text-3xl font-bold tabular-nums text-purple-700 dark:text-purple-300 leading-tight">{Math.max(0, remaining)}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">awaiting wrap</p>
+                      </div>
+                      <div className="rounded-xl border border-primary/40 bg-primary/5 px-3 py-3 text-center">
+                        <p className="text-xs text-primary font-semibold uppercase tracking-wider mb-1">In Production Fridge</p>
+                        <p className="text-3xl font-bold tabular-nums text-primary leading-tight">{fridge}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">wrapped &amp; stored</p>
+                      </div>
                     </div>
 
                     {/* Mark as Chilled (HACCP cooling timer) — available to
@@ -651,7 +703,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                     {/* Storage controls */}
                     <div className="pt-3 border-t border-border/40">
                       {fridge > 0 && (
-                        <p className="text-xs text-muted-foreground mb-2">Wrapped: <span className="font-bold">{fridge}</span> in Production Fridge</p>
+                        <p className="text-xs text-muted-foreground mb-2"><span className="font-bold">{fridge}</span> in Production Fridge</p>
                       )}
                       <div className="flex items-center gap-2 flex-wrap">
                         {remaining > 0 && (

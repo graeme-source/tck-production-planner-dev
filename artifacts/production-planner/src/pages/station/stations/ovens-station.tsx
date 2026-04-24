@@ -77,6 +77,9 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
   const [weightInput, setWeightInput] = useState("");
   const [submittingWeight, setSubmittingWeight] = useState(false);
   const [chillingRecipeId, setChillingRecipeId] = useState<number | null>(null);
+  // Earliest post-cheese sauce temperature on this plan — the chill-start
+  // anchor for mac cheese recipes, which skip the oven weight-log flow.
+  const [macChillAnchor, setMacChillAnchor] = useState<string | null>(null);
 
   const refetchWeightData = useCallback(async () => {
     try {
@@ -89,17 +92,55 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
     }
   }, [plan.id]);
 
+  const refetchMacChillAnchor = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/temperature-records?planId=${plan.id}`, { credentials: "include" });
+      if (!res.ok) return;
+      const records = (await res.json()) as Array<{ recordType: string; recordedAt: string }>;
+      const postCheese = (records ?? [])
+        .filter(r => r.recordType === "mac_sauce_post_cheese")
+        .sort((a, b) => a.recordedAt.localeCompare(b.recordedAt))[0];
+      setMacChillAnchor(postCheese?.recordedAt ?? null);
+    } catch (err) {
+      console.warn("[OvensStation] mac chill anchor fetch failed:", err);
+    }
+  }, [plan.id]);
+
   useEffect(() => { refetchWeightData(); }, [refetchWeightData]);
+  useEffect(() => { refetchMacChillAnchor(); }, [refetchMacChillAnchor]);
 
   const targetFor = (recipeId: number | null | undefined): WeightTargetEntry | null => {
     if (!recipeId || !weightData) return null;
     return weightData.targets.find(t => t.recipeId === recipeId) ?? null;
   };
-  const lastBatchRecord = (recipeId: number | null | undefined): WeightRecord | null => {
+  const lastBatchRecord = (item: ProductionPlanItem): WeightRecord | null => {
+    const recipeId = item.recipeId;
     if (!recipeId || !weightData) return null;
-    return weightData.records
+    const real = weightData.records
       .filter(r => r.recipeId === recipeId && r.isLastBatchOfRecipe)
       .sort((a, b) => b.recordedAt.localeCompare(a.recordedAt))[0] ?? null;
+    if (real) return real;
+    // Mac cheese has no oven weight record — synthesize one from the
+    // post-cheese sauce temperature so the chill UI behaves the same way.
+    if (isMacCheese(item as any) && macChillAnchor) {
+      return {
+        id: -1,
+        planItemId: item.id,
+        recipeId,
+        batchSequence: 0,
+        targetWeightG: 0,
+        actualWeightG: 0,
+        varianceG: 0,
+        toleranceUnderG: 0,
+        toleranceOverG: 0,
+        withinTolerance: true,
+        isLastBatchOfRecipe: true,
+        chillEndAt: null,
+        chilledVia: null,
+        recordedAt: macChillAnchor,
+      };
+    }
+    return null;
   };
 
   const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
@@ -933,7 +974,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                     {/* Batch weight target + Mark as Chilled */}
                     {(() => {
                       const tgt = targetFor(item.recipeId);
-                      const last = lastBatchRecord(item.recipeId);
+                      const last = lastBatchRecord(item);
                       const canMarkChilled = !!last && !last.chillEndAt;
                       const alreadyChilled = !!last?.chillEndAt;
                       return (
