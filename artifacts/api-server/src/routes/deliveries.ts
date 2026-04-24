@@ -430,8 +430,8 @@ router.post("/:id/receive", async (req, res) => {
     checkResults,
     notes,
   } = req.body as {
-    lines: { lineId: number; quantityReceived: number; useByDate?: string | null }[];
-    newLines?: { ingredientId: number; quantityOrdered: number; quantityReceived: number; unit: string; useByDate?: string | null }[];
+    lines: { lineId: number; quantityReceived: number; useByDate?: string | null; checked?: boolean }[];
+    newLines?: { ingredientId: number; quantityOrdered: number; quantityReceived: number; unit: string; useByDate?: string | null; checked?: boolean }[];
     chilledTempC?: number | null;
     frozenTempC?: number | null;
     checkResults?: { checkConfigId: number; passed: boolean; notes?: string }[];
@@ -552,6 +552,7 @@ router.post("/:id/receive", async (req, res) => {
       .set({
         quantityReceived: String(newTotal),
         useByDate: line.useByDate || null,
+        ...(line.checked !== undefined ? { checkedOff: line.checked } : {}),
       })
       .where(eq(purchaseOrderLinesTable.id, line.lineId));
 
@@ -584,6 +585,7 @@ router.post("/:id/receive", async (req, res) => {
         quantityReceived: String(nl.quantityReceived),
         unit: nl.unit,
         useByDate: nl.useByDate || null,
+        checkedOff: nl.checked ?? false,
       })
       .returning();
     if (nl.quantityReceived > 0) {

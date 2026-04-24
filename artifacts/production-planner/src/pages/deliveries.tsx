@@ -163,6 +163,7 @@ interface ReceivingLine {
   requiresUseByDate: boolean;
   defaultStorageLocation: string | null;
   useByIsAuto: boolean;
+  checked: boolean;
 }
 
 interface CheckResult {
@@ -272,6 +273,7 @@ function ReceivingDialog({
             requiresUseByDate: l.requiresUseByDate ?? false,
             defaultStorageLocation: l.defaultStorageLocation,
             useByIsAuto: existingUseBy === "" && useByIsAuto,
+            checked: l.checkedOff ?? false,
           };
         })
       );
@@ -323,6 +325,7 @@ function ReceivingDialog({
             lineId: l.lineId,
             quantityReceived: l.quantityReceived,
             useByDate: l.useByDate || null,
+            checked: l.checked,
           })),
           chilledTempC: chilledTemp ? Number(chilledTemp) : null,
           frozenTempC: frozenTemp ? Number(frozenTemp) : null,
@@ -375,35 +378,92 @@ function ReceivingDialog({
 
         <div className="space-y-6 mt-4">
           <div>
-            <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-              <Package className="w-4 h-4" /> Order Lines
-            </h3>
+            <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+              <h3 className="text-sm font-semibold flex items-center gap-2">
+                <Package className="w-4 h-4" /> Order Lines
+                {lines.length > 0 && (
+                  <span
+                    className={cn(
+                      "text-xs font-medium px-2 py-0.5 rounded-full",
+                      lines.every((l) => l.checked)
+                        ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300"
+                        : "bg-secondary text-muted-foreground"
+                    )}
+                  >
+                    {lines.filter((l) => l.checked).length} / {lines.length} checked
+                  </span>
+                )}
+              </h3>
+              {lines.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const allChecked = lines.every((l) => l.checked);
+                    setLines(lines.map((l) => ({ ...l, checked: !allChecked })));
+                  }}
+                  className="text-xs font-medium px-3 py-1 rounded-lg border border-border hover:bg-secondary/50 transition-colors"
+                >
+                  {lines.every((l) => l.checked) ? "Uncheck all" : "Check all"}
+                </button>
+              )}
+            </div>
             <div className="space-y-3">
               {lines.map((line, idx) => {
                 const discrepancy = line.quantityReceived !== line.quantityOrdered;
                 const useByMissing = line.requiresUseByDate && line.quantityReceived > 0 && !line.useByDate;
                 const locationLabel = line.defaultStorageLocation ? LOCATION_LABELS[line.defaultStorageLocation] || line.defaultStorageLocation : null;
+                const toggleChecked = () => {
+                  const next = [...lines];
+                  next[idx] = { ...next[idx], checked: !next[idx].checked };
+                  setLines(next);
+                };
                 return (
                   <div
                     key={line.lineId}
+                    onClick={toggleChecked}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        toggleChecked();
+                      }
+                    }}
                     className={cn(
-                      "rounded-xl border p-3 space-y-2",
-                      useByMissing
+                      "rounded-xl border p-3 space-y-2 cursor-pointer transition-colors",
+                      line.checked
+                        ? "border-green-400 bg-green-50/60 dark:bg-green-900/15 dark:border-green-700"
+                        : useByMissing
                         ? "border-destructive bg-destructive/5"
                         : discrepancy
                         ? "border-amber-300 bg-amber-50/30 dark:bg-amber-900/5 dark:border-amber-700"
-                        : "border-border"
+                        : "border-border hover:bg-secondary/20"
                     )}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-xl font-bold">{line.ingredientName}</span>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div
+                          className={cn(
+                            "w-7 h-7 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors",
+                            line.checked
+                              ? "bg-green-500 border-green-500 text-white"
+                              : "border-border bg-background"
+                          )}
+                          aria-hidden="true"
+                        >
+                          {line.checked && <Check className="w-4 h-4" strokeWidth={3} />}
+                        </div>
+                        <span className={cn("text-xl font-bold truncate", line.checked && "line-through text-muted-foreground decoration-green-600/60")}>
+                          {line.ingredientName}
+                        </span>
+                      </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         {locationLabel && (
                           <span className="text-xs text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">
                             → {locationLabel}
                           </span>
                         )}
-                        {useByMissing && (
+                        {useByMissing && !line.checked && (
                           <span className="text-xs font-medium text-destructive bg-destructive/10 px-2 py-0.5 rounded-full flex items-center gap-1">
                             <AlertTriangle className="w-3 h-3" /> Use-by required
                           </span>
@@ -415,7 +475,7 @@ function ReceivingDialog({
                         )}
                       </div>
                     </div>
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-3 gap-3" onClick={(e) => e.stopPropagation()}>
                       <div>
                         <label className="text-base font-semibold text-muted-foreground block mb-1">Ordered</label>
                         <span className="text-xl font-bold tabular-nums">
