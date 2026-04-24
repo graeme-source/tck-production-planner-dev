@@ -554,7 +554,7 @@ router.get("/purchase-orders", async (req, res) => {
   const orderIds = rows.map(r => r.id);
   let linesMap: Record<number, Array<{
     id: number;
-    ingredientId: number;
+    ingredientId: number | null;
     ingredientName: string | null;
     orderingUrl: string | null;
     quantityRequired: string;
@@ -573,6 +573,7 @@ router.get("/purchase-orders", async (req, res) => {
         purchaseOrderId: purchaseOrderLinesTable.purchaseOrderId,
         ingredientId: purchaseOrderLinesTable.ingredientId,
         ingredientName: ingredientsTable.name,
+        description: purchaseOrderLinesTable.description,
         orderingUrl: ingredientsTable.orderingUrl,
         quantityRequired: purchaseOrderLinesTable.quantityRequired,
         quantityOrdered: purchaseOrderLinesTable.quantityOrdered,
@@ -588,10 +589,12 @@ router.get("/purchase-orders", async (req, res) => {
 
     for (const line of lines) {
       if (!linesMap[line.purchaseOrderId]) linesMap[line.purchaseOrderId] = [];
+      // For misc lines (no ingredientId), fall back to the operator-supplied
+      // description so the UI still has a sensible label.
       linesMap[line.purchaseOrderId].push({
         id: line.id,
         ingredientId: line.ingredientId,
-        ingredientName: line.ingredientName,
+        ingredientName: line.ingredientName ?? line.description ?? null,
         orderingUrl: line.orderingUrl ?? null,
         quantityRequired: line.quantityRequired,
         quantityOrdered: line.quantityOrdered,
@@ -629,9 +632,14 @@ router.post("/purchase-orders", async (req, res) => {
     notes: notes ?? null,
   }).returning();
 
+  // Miscellaneous lines (ingredientId null) carry their operator-typed name
+  // in `description`, so goods-in still has something to render and tick off.
   const lineValues = lines.map((l: any) => ({
     purchaseOrderId: order.id,
-    ingredientId: l.ingredientId,
+    ingredientId: l.ingredientId ?? null,
+    description: (l.ingredientId == null && l.description)
+      ? String(l.description).slice(0, 500)
+      : null,
     quantityRequired: String(l.quantityRequired ?? 0),
     quantityOrdered: String(l.quantityOrdered ?? 0),
     quantityReceived: "0",
@@ -765,15 +773,20 @@ router.patch("/purchase-orders/:id/resubmit", async (req, res) => {
     // field-by-field merge, especially when quantities have been edited.
     await db.delete(purchaseOrderLinesTable).where(eq(purchaseOrderLinesTable.purchaseOrderId, orderId));
 
-    const cleanedLines = lines.map((l: any) => ({
-      purchaseOrderId: orderId,
-      ingredientId: Number(l.ingredientId),
-      quantityRequired: String(l.quantityRequired ?? 0),
-      quantityOrdered: String(l.quantityOrdered ?? l.quantityRequired ?? 0),
-      unit: String(l.unit ?? "kg"),
-      unitPrice: l.unitPrice != null ? String(l.unitPrice) : null,
-      checkedOff: Boolean(l.checkedOff),
-    }));
+    const cleanedLines = lines.map((l: any) => {
+      // Misc lines come through with ingredientId null + description set.
+      const hasIngredient = l.ingredientId != null && !Number.isNaN(Number(l.ingredientId));
+      return {
+        purchaseOrderId: orderId,
+        ingredientId: hasIngredient ? Number(l.ingredientId) : null,
+        description: !hasIngredient && l.description ? String(l.description).slice(0, 500) : null,
+        quantityRequired: String(l.quantityRequired ?? 0),
+        quantityOrdered: String(l.quantityOrdered ?? l.quantityRequired ?? 0),
+        unit: String(l.unit ?? "kg"),
+        unitPrice: l.unitPrice != null ? String(l.unitPrice) : null,
+        checkedOff: Boolean(l.checkedOff),
+      };
+    });
 
     await db.insert(purchaseOrderLinesTable).values(cleanedLines);
 

@@ -182,6 +182,12 @@ async function runStartupMigrations() {
     await db.execute(sql`
       ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS stock_in_packs BOOLEAN NOT NULL DEFAULT FALSE
     `);
+    await db.execute(sql`
+      ALTER TABLE purchase_order_lines ALTER COLUMN ingredient_id DROP NOT NULL
+    `);
+    await db.execute(sql`
+      ALTER TABLE purchase_order_lines ADD COLUMN IF NOT EXISTS description TEXT
+    `);
     await db.execute(sql`CREATE TABLE IF NOT EXISTS _migrations_done (key TEXT PRIMARY KEY, done_at TIMESTAMP DEFAULT NOW())`);
     {
       const result = await db.execute<{ cnt: number }>(sql`

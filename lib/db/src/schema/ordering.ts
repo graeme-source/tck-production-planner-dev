@@ -57,7 +57,11 @@ export const purchaseOrdersTable = pgTable("purchase_orders", {
 export const purchaseOrderLinesTable = pgTable("purchase_order_lines", {
   id: serial("id").primaryKey(),
   purchaseOrderId: integer("purchase_order_id").notNull().references(() => purchaseOrdersTable.id, { onDelete: "cascade" }),
-  ingredientId: integer("ingredient_id").notNull().references(() => ingredientsTable.id, { onDelete: "restrict" }),
+  // Null for miscellaneous one-off lines (samples, packaging trials, etc.)
+  // that aren't worth creating a full ingredient record for. description
+  // carries the operator-supplied name when ingredientId is null.
+  ingredientId: integer("ingredient_id").references(() => ingredientsTable.id, { onDelete: "restrict" }),
+  description: text("description"),
   quantityRequired: numeric("quantity_required", { precision: 10, scale: 4 }).notNull().default("0"),
   quantityOrdered: numeric("quantity_ordered", { precision: 10, scale: 4 }).notNull().default("0"),
   quantityReceived: numeric("quantity_received", { precision: 10, scale: 4 }).notNull().default("0"),

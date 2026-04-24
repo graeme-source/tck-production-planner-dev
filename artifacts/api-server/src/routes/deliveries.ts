@@ -113,6 +113,9 @@ router.get("/weekly", async (req, res) => {
 
   let lines: any[] = [];
   if (orderIds.length > 0) {
+    // leftJoin — misc lines have no ingredient row, but still need to surface
+    // for goods-in tick-off. ingredientName falls back to the operator-typed
+    // description when the ingredient is null.
     lines = await db
       .select({
         id: purchaseOrderLinesTable.id,
@@ -120,6 +123,7 @@ router.get("/weekly", async (req, res) => {
         ingredientId: purchaseOrderLinesTable.ingredientId,
         ingredientName: ingredientsTable.name,
         ingredientCategory: ingredientsTable.category,
+        description: purchaseOrderLinesTable.description,
         quantityRequired: purchaseOrderLinesTable.quantityRequired,
         quantityOrdered: purchaseOrderLinesTable.quantityOrdered,
         quantityReceived: purchaseOrderLinesTable.quantityReceived,
@@ -134,20 +138,22 @@ router.get("/weekly", async (req, res) => {
         packWeight: ingredientsTable.packWeight,
       })
       .from(purchaseOrderLinesTable)
-      .innerJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
+      .leftJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
       .where(inArray(purchaseOrderLinesTable.purchaseOrderId, orderIds));
   }
 
   const linesByOrder: Record<number, typeof lines> = {};
   for (const line of lines) {
     if (!linesByOrder[line.purchaseOrderId]) linesByOrder[line.purchaseOrderId] = [];
+    const nameForDisplay = line.ingredientName ?? line.description ?? "Miscellaneous item";
     linesByOrder[line.purchaseOrderId].push({
       ...line,
+      ingredientName: nameForDisplay,
       quantityRequired: Number(line.quantityRequired),
       quantityOrdered: Number(line.quantityOrdered),
       quantityReceived: Number(line.quantityReceived),
       unitPrice: line.unitPrice ? Number(line.unitPrice) : null,
-      defaultStorageLocation: resolveStorageLocation(line.ingredientCategory, line.ingredientName),
+      defaultStorageLocation: resolveStorageLocation(line.ingredientCategory, nameForDisplay),
     });
   }
 
@@ -358,13 +364,14 @@ router.get("/:id", async (req, res) => {
     return;
   }
 
-  const lines = await db
+  const rawLines = await db
     .select({
       id: purchaseOrderLinesTable.id,
       purchaseOrderId: purchaseOrderLinesTable.purchaseOrderId,
       ingredientId: purchaseOrderLinesTable.ingredientId,
       ingredientName: ingredientsTable.name,
       ingredientCategory: ingredientsTable.category,
+      description: purchaseOrderLinesTable.description,
       shelfLifeDays: ingredientsTable.shelfLifeDays,
       requiresUseByDate: ingredientsTable.requiresUseByDate,
       stockInPacks: ingredientsTable.stockInPacks,
@@ -380,8 +387,14 @@ router.get("/:id", async (req, res) => {
       useByDate: purchaseOrderLinesTable.useByDate,
     })
     .from(purchaseOrderLinesTable)
-    .innerJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
+    .leftJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
     .where(eq(purchaseOrderLinesTable.purchaseOrderId, id));
+
+  // Fall back to the operator-supplied description on misc lines.
+  const lines = rawLines.map(l => ({
+    ...l,
+    ingredientName: l.ingredientName ?? l.description ?? "Miscellaneous item",
+  }));
 
   const checks = await db
     .select()
@@ -470,6 +483,7 @@ router.post("/:id/receive", async (req, res) => {
       id: purchaseOrderLinesTable.id,
       ingredientId: purchaseOrderLinesTable.ingredientId,
       ingredientName: ingredientsTable.name,
+      description: purchaseOrderLinesTable.description,
       quantityOrdered: purchaseOrderLinesTable.quantityOrdered,
       quantityReceived: purchaseOrderLinesTable.quantityReceived,
       unit: purchaseOrderLinesTable.unit,
@@ -479,7 +493,7 @@ router.post("/:id/receive", async (req, res) => {
       requiresUseByDate: ingredientsTable.requiresUseByDate,
     })
     .from(purchaseOrderLinesTable)
-    .innerJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
+    .leftJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
     .where(eq(purchaseOrderLinesTable.purchaseOrderId, poId));
 
   type ExistingLineInfo = (typeof existingLines)[number];
@@ -494,7 +508,8 @@ router.post("/:id/receive", async (req, res) => {
       return;
     }
     if (ing.requiresUseByDate && line.quantityReceived > 0 && !line.useByDate) {
-      res.status(400).json({ error: `Use-by date is required for ${ing.ingredientName}` });
+      const label = ing.ingredientName ?? ing.description ?? "Miscellaneous item";
+      res.status(400).json({ error: `Use-by date is required for ${label}` });
       return;
     }
   }

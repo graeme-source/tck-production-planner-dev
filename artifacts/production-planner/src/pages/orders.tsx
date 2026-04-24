@@ -34,10 +34,14 @@ import {
   toISODate,
 } from "@workspace/business-days";
 import { packNoun } from "@/pages/station/shared/prep-helpers";
+import { toast } from "@/hooks/use-toast";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 type OrderLine = {
+  // For miscellaneous lines (operator-typed one-offs) this is a synthetic
+  // negative id so React key lookups keep working; the backend receives null
+  // plus a description string. See isMisc below.
   ingredientId: number;
   ingredientName: string;
   unit: string;
@@ -60,6 +64,10 @@ type OrderLine = {
   // When true, Required / Surplus / Ordered render in whole packs; recipes
   // and internal maths still use native units.
   stockInPacks?: boolean;
+  // Misc one-off lines not tied to an ingredient record. ingredientId is a
+  // synthetic negative number for UI purposes; serialiser sends null.
+  isMisc?: boolean;
+  description?: string | null;
 };
 
 type SupplierOrder = {
@@ -521,6 +529,57 @@ export default function Orders() {
     ? addItemIngredients.filter(i => i.name.toLowerCase().includes(debouncedAddItemSearch.toLowerCase()))
     : addItemIngredients;
 
+  // Miscellaneous one-off line — operator types a description + qty instead
+  // of picking a real ingredient. Used for samples, packaging trials, etc.
+  // Saved with ingredientId null + description on the PO line so goods-in
+  // still has something to tick off when it arrives.
+  const [miscForm, setMiscForm] = useState<{ description: string; quantity: string; unit: string }>({
+    description: "", quantity: "1", unit: "each",
+  });
+  const miscIdCounter = useRef(-1);
+  const handleAddMiscItem = () => {
+    if (!addItemDialog) return;
+    const desc = miscForm.description.trim();
+    const qty = Number(miscForm.quantity);
+    if (!desc) { toast({ title: "Description required", variant: "destructive" }); return; }
+    if (!Number.isFinite(qty) || qty <= 0) { toast({ title: "Quantity must be > 0", variant: "destructive" }); return; }
+    const supplierId = addItemDialog.supplierId;
+    reopenPlacedOrderIfAny(supplierId);
+    const syntheticId = miscIdCounter.current--;
+    const newLine: EditableLine = {
+      ingredientId: syntheticId,
+      ingredientName: desc,
+      description: desc,
+      isMisc: true,
+      unit: miscForm.unit || "each",
+      totalRequired: qty,
+      stockOnHand: 0,
+      surplusTarget: 0,
+      packWeight: 1,
+      costPerPack: 0,
+      supplierPartNumber: null,
+      orderQty: qty,
+      packsToOrder: qty,
+      isKanban: false,
+      orderingUrl: null,
+      lastStockCheckAt: null,
+      belowRequirement: false,
+      checked: false,
+      editedPacks: qty,
+      editedStock: 0,
+      stockDirty: false,
+      isManual: true,
+    };
+    setEditableLines(prev => {
+      const existing = prev[supplierId] ?? [];
+      return { ...prev, [supplierId]: [...existing, newLine] };
+    });
+    setExpandedSuppliers(prev => new Set([...prev, supplierId]));
+    setMiscForm({ description: "", quantity: "1", unit: "each" });
+    setAddItemDialog(null);
+    setAddItemSearch("");
+  };
+
   const handleAddManualItem = (ingredient: SupplierIngredient) => {
     if (!addItemDialog) return;
     const supplierId = addItemDialog.supplierId;
@@ -575,11 +634,15 @@ export default function Orders() {
       // they're display-only. Manual-added and kanban lines always go through.
       const orderableLines = lines.filter(l => l.isKanban || l.isManual || !l.belowRequirement);
       const payloadLines = orderableLines.map(l => ({
-        ingredientId: l.ingredientId,
+        // Misc lines carry a synthetic negative id client-side; server wants null.
+        ingredientId: l.isMisc ? null : l.ingredientId,
+        description: l.isMisc ? (l.description ?? l.ingredientName) : null,
         quantityRequired: l.orderQty,
-        quantityOrdered: (l.unit === "packs" || l.unit === "bottles")
+        quantityOrdered: l.isMisc
           ? l.editedPacks
-          : l.editedPacks * l.packWeight,
+          : (l.unit === "packs" || l.unit === "bottles")
+            ? l.editedPacks
+            : l.editedPacks * l.packWeight,
         unit: l.unit,
         unitPrice: l.costPerPack > 0 ? l.costPerPack : null,
         checkedOff: l.checked,
@@ -1112,15 +1175,17 @@ export default function Orders() {
                             />
                           </td>
                           <td className="p-3 text-right tabular-nums">
-                            {line.packWeight} kg
+                            {line.isMisc ? "—" : `${line.packWeight} kg`}
                           </td>
                           <td className="p-3 text-right tabular-nums">
-                            {line.stockInPacks && line.packWeight > 0
+                            {line.isMisc ? "—"
+                              : line.stockInPacks && line.packWeight > 0
                               ? `${Math.ceil(line.surplusTarget / line.packWeight)} ${packNoun(line.unit, Math.ceil(line.surplusTarget / line.packWeight))}`
                               : `${line.surplusTarget.toLocaleString()} ${line.unit}`}
                           </td>
                           <td className="p-3 text-right tabular-nums">
-                            {line.stockInPacks && line.packWeight > 0
+                            {line.isMisc ? "—"
+                              : line.stockInPacks && line.packWeight > 0
                               ? `${Math.ceil(line.totalRequired / line.packWeight)} ${packNoun(line.unit, Math.ceil(line.totalRequired / line.packWeight))}`
                               : `${line.totalRequired.toLocaleString()} ${line.unit}`}
                           </td>
@@ -1493,7 +1558,7 @@ export default function Orders() {
       {/* Issue 4: per-supplier Add Item picker */}
       <Dialog
         open={!!addItemDialog}
-        onOpenChange={open => { if (!open) { setAddItemDialog(null); setAddItemSearch(""); } }}
+        onOpenChange={open => { if (!open) { setAddItemDialog(null); setAddItemSearch(""); setMiscForm({ description: "", quantity: "1", unit: "each" }); } }}
       >
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -1519,6 +1584,60 @@ export default function Orders() {
                 </button>
               )}
             </div>
+
+            {/* Miscellaneous one-off item — collapsed by default so the search
+                stays the primary flow; expands on click for the rare case
+                where the operator needs to order something without an
+                ingredient record (sample, trial, etc.). */}
+            <details className="rounded-lg border border-dashed border-border bg-secondary/20 open:border-primary/40 open:bg-primary/5">
+              <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium flex items-center gap-2">
+                <Plus className="w-4 h-4" />
+                Add a miscellaneous item (no ingredient record)
+              </summary>
+              <div className="px-3 pb-3 pt-1 space-y-2">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">Description</label>
+                  <input
+                    type="text"
+                    value={miscForm.description}
+                    onChange={e => setMiscForm(f => ({ ...f, description: e.target.value }))}
+                    placeholder="e.g. Sample bottle of new chilli sauce"
+                    className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground block mb-1">Quantity</label>
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="any"
+                      value={miscForm.quantity}
+                      onChange={e => setMiscForm(f => ({ ...f, quantity: e.target.value }))}
+                      className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground block mb-1">Unit</label>
+                    <input
+                      type="text"
+                      value={miscForm.unit}
+                      onChange={e => setMiscForm(f => ({ ...f, unit: e.target.value }))}
+                      placeholder="each / box / kg"
+                      className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAddMiscItem}
+                  disabled={!miscForm.description.trim() || !(Number(miscForm.quantity) > 0)}
+                  className="w-full px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  Add miscellaneous item to order
+                </button>
+              </div>
+            </details>
 
             <div className="max-h-80 overflow-y-auto space-y-1 -mx-1 px-1">
               {addItemLoading && (
