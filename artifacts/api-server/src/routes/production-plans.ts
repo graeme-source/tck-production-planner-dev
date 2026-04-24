@@ -5464,40 +5464,37 @@ router.get("/:id/main-prep", async (req, res) => {
 
         const qtyPerTin = srTinCount > 0 ? roundByUnit(roundedQty / srTinCount, unit) : roundedQty;
 
-        // Regular sub-recipes shared across recipes are still one batch of
-        // the sub-recipe — collapse into a single combined entry the same
-        // way expand-in-prep ingredients already do, so e.g. Breadcrumb
-        // Topping used by three mac cheese recipes shows as one weighing.
+        // Sub-recipes used by multiple parent recipes get one entry per
+        // parent recipe (same shape as direct ingredients), so e.g. Garlic
+        // Butter used by both Garlic Cheese and Garlic Korma calzones shows
+        // a separate prep line for each recipe with its own batches target.
+        // The totalTinCount derived downstream sums across recipes, so the
+        // header quantity still reflects the combined weighing.
         const srName = sr.subRecipeName ?? `Sub-recipe #${sr.subRecipeId}`;
         const mapKey = `sr_${sr.subRecipeId}`;
         const existing = subRecipeMap.get(mapKey);
-        if (existing && existing.recipes.length > 0) {
+        const recipeEntry = {
+          recipeId: planItem.recipeId!,
+          recipeName: planItem.recipeName ?? srName,
+          batchesTarget,
+          qtyForRecipe: roundedQty,
+          tinSize: planItem.tinSize ?? null,
+          maxBatchesPerTin: planItem.maxBatchesPerTin ?? null,
+          tinCount: srTinCount,
+          qtyPerTin,
+          isOverridden: srIsOverridden,
+          isFillingMix: srIsFillingMix,
+        };
+        if (existing) {
           existing.totalQty += roundedQty;
-          const combined = existing.recipes[0];
-          combined.qtyForRecipe += roundedQty;
-          combined.qtyPerTin = combined.tinCount > 0
-            ? roundByUnit(combined.qtyForRecipe / combined.tinCount, unit)
-            : combined.qtyForRecipe;
-        } else if (existing) {
-          existing.totalQty += roundedQty;
+          existing.recipes.push(recipeEntry);
         } else {
           subRecipeMap.set(mapKey, {
             subRecipeId: sr.subRecipeId,
             ingredientName: srName,
             unit,
             totalQty: roundedQty,
-            recipes: [{
-              recipeId: planItem.recipeId!,
-              recipeName: srName,
-              batchesTarget: 0,
-              qtyForRecipe: roundedQty,
-              tinSize: null,
-              maxBatchesPerTin: null,
-              tinCount: srTinCount,
-              qtyPerTin,
-              isOverridden: srIsOverridden,
-              isFillingMix: srIsFillingMix,
-            }],
+            recipes: [recipeEntry],
           });
         }
       }
