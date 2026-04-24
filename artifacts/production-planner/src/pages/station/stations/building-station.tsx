@@ -18,7 +18,7 @@ import {
   Plus, Minus, CheckCircle2, Loader2, ChevronRight, RotateCcw,
   BarChart2, BookOpen, Target, Scale, GripVertical, Check, ExternalLink,
   ClipboardList, CheckSquare, Square, AlertCircle, Eye, X, AlertTriangle,
-  ChevronDown, Snowflake,
+  ChevronDown, Snowflake, Pencil,
 } from "lucide-react";
 import { format, parseISO, differenceInMinutes } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -445,6 +445,9 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   const prevRecipeIdRef = useRef<number | null>(null);
   // Prompt for extra packs when a recipe finishes
   const [extraPromptItemId, setExtraPromptItemId] = useState<number | null>(null);
+  // Separate state for the edit-after-completion dialog so it doesn't fight
+  // with the natural "batch just finished" prompt.
+  const [editPromptItemId, setEditPromptItemId] = useState<number | null>(null);
   const [prevCurrentItemId, setPrevCurrentItemId] = useState<number | null>(null);
   // Tracks the plan-item id whose final batch THIS builder just completed.
   // Used to show the extra-packs prompt only to the builder who actually
@@ -643,6 +646,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   };
 
   const extraPromptItem = extraPromptItemId != null ? items.find(it => it.id === extraPromptItemId) : null;
+  const editPromptItem = editPromptItemId != null ? items.find(it => it.id === editPromptItemId) : null;
 
   const checklistPending = (() => {
     if (!currentItem) return false;
@@ -897,6 +901,23 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
         </DialogContent>
       </Dialog>
 
+      {/* Edit dialog — reopens pack/leftover-filling entry for a completed recipe */}
+      <Dialog open={!!editPromptItem} onOpenChange={(open) => { if (!open) setEditPromptItemId(null); }}>
+        <DialogContent className="max-w-md mx-auto">
+          {editPromptItem && (
+            <RecipeCompleteDialogBody
+              planId={plan.id}
+              item={editPromptItem}
+              isOnBreak={isOnBreak}
+              hasFilling={(assemblyMap[editPromptItem.id]?.fillingWeightPerBatch ?? 0) > 0}
+              assemblyData={assemblyMap[editPromptItem.id]}
+              onDone={() => setEditPromptItemId(null)}
+              mode="edit"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Part-batch calculator — on-demand overlay for the current (or any) recipe */}
       <Dialog open={calcOpenItemId !== null} onOpenChange={(open) => { if (!open) setCalcOpenItemId(null); }}>
         <DialogContent className="max-w-md mx-auto">
@@ -963,13 +984,14 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
             const isPartialMode = (item.extraPacksBuilt ?? 0) > 0 && itemAvailable > 0;
             const busyWithTap = pendingTap || (isPartialMode && partialCompletePending);
 
+            const rowHasFilling = (asm?.fillingWeightPerBatch ?? 0) > 0;
+            const showEditBtn = isDone && rowHasFilling;
             return (
               <div key={item.id}>
-                {/* Collapsed summary row */}
-                <button
-                  onClick={() => toggleExpanded(item.id)}
+                {/* Collapsed summary row — toggle button + optional edit pencil as sibling */}
+                <div
                   className={cn(
-                    "w-full text-left px-3 py-2.5 flex items-center gap-2 transition-colors",
+                    "flex items-center transition-colors",
                     isExpanded
                       ? isCurrent
                         ? "bg-primary/5"
@@ -980,6 +1002,10 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                           ? "bg-emerald-50/30 dark:bg-emerald-900/10"
                           : "hover:bg-secondary/20"
                   )}
+                >
+                <button
+                  onClick={() => toggleExpanded(item.id)}
+                  className="flex-1 text-left px-3 py-2.5 flex items-center gap-2"
                 >
                   {/* Position */}
                   <span className="text-xs text-muted-foreground w-5 text-center flex-shrink-0">{item.orderPosition}</span>
@@ -1016,6 +1042,17 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                     )} />
                   )}
                 </button>
+                {showEditBtn && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setEditPromptItemId(item.id); }}
+                    title="Edit packs / leftover filling"
+                    className="pr-3 pl-1 py-2.5 text-muted-foreground hover:text-foreground flex-shrink-0"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                )}
+                </div>
 
                 {/* Expanded panel */}
                 {isExpanded && (
@@ -1413,17 +1450,27 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   );
 }
 
-function RecipeCompleteDialogBody({ planId, item, isOnBreak, hasFilling, assemblyData, onDone }: {
+function RecipeCompleteDialogBody({ planId, item, isOnBreak, hasFilling, assemblyData, onDone, mode = "complete" }: {
   planId: number;
   item: ProductionPlanItem;
   isOnBreak: boolean;
   hasFilling: boolean;
   assemblyData?: AssemblyData;
   onDone: () => void;
+  mode?: "complete" | "edit";
 }) {
-  const [noLeftover, setNoLeftover] = useState(false);
-  const [fillingGrams, setFillingGrams] = useState("");
-  const [fillingComment, setFillingComment] = useState("");
+  // In edit mode, prefill from the saved values on the plan item. Grams = 0 means
+  // "no leftover" was confirmed; anything else is a real weight.
+  const initialGrams = (item as unknown as Record<string, unknown>).leftoverFillingGrams;
+  const initialComment = (item as unknown as Record<string, unknown>).leftoverFillingComment;
+  const hasPriorEntry = mode === "edit" && typeof initialGrams === "number";
+  const [noLeftover, setNoLeftover] = useState(hasPriorEntry && initialGrams === 0);
+  const [fillingGrams, setFillingGrams] = useState(
+    hasPriorEntry && typeof initialGrams === "number" && initialGrams > 0 ? String(initialGrams) : ""
+  );
+  const [fillingComment, setFillingComment] = useState(
+    hasPriorEntry && typeof initialComment === "string" ? initialComment : ""
+  );
   const [saving, setSaving] = useState(false);
 
   const fillingValid = !hasFilling || noLeftover || (fillingGrams.trim() !== "" && Number(fillingGrams) >= 0 && Number.isFinite(Number(fillingGrams)));
@@ -1455,10 +1502,10 @@ function RecipeCompleteDialogBody({ planId, item, isOnBreak, hasFilling, assembl
         <AlertCircle className="w-7 h-7 text-amber-500 flex-shrink-0 mt-0.5" />
         <div>
           <h3 className="font-bold text-xl text-foreground">
-            {item.recipeName ?? "Recipe"} complete
+            {mode === "edit" ? `Edit — ${item.recipeName ?? "Recipe"}` : `${item.recipeName ?? "Recipe"} complete`}
           </h3>
           <p className="text-sm text-muted-foreground mt-1">
-            Any extra packs to record before moving on?
+            {mode === "edit" ? "Update pack count or leftover filling." : "Any extra packs to record before moving on?"}
           </p>
         </div>
       </div>
@@ -1514,7 +1561,7 @@ function RecipeCompleteDialogBody({ planId, item, isOnBreak, hasFilling, assembl
             : "bg-muted text-muted-foreground cursor-not-allowed"
         )}
       >
-        {saving ? "Saving..." : "Done — Move On"}
+        {saving ? "Saving..." : mode === "edit" ? "Save changes" : "Done — Move On"}
       </button>
     </div>
   );
