@@ -26,6 +26,7 @@ interface POLine {
   unit: string;
   unitPrice: number | null;
   checkedOff: boolean;
+  goodsInChecked?: boolean;
   notes: string | null;
   useByDate: string | null;
   shelfLifeDays: number | null;
@@ -273,7 +274,7 @@ function ReceivingDialog({
             requiresUseByDate: l.requiresUseByDate ?? false,
             defaultStorageLocation: l.defaultStorageLocation,
             useByIsAuto: existingUseBy === "" && useByIsAuto,
-            checked: l.checkedOff ?? false,
+            checked: l.goodsInChecked ?? false,
           };
         })
       );
@@ -345,7 +346,7 @@ function ReceivingDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-      <DialogContent className="sm:max-w-[700px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[85vw] sm:max-w-[85vw] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display text-3xl font-bold flex items-center gap-3">
             <Truck className="w-7 h-7 text-primary shrink-0" />
@@ -476,13 +477,13 @@ function ReceivingDialog({
                       </div>
                     </div>
                     <div className="grid grid-cols-3 gap-3" onClick={(e) => e.stopPropagation()}>
-                      <div>
+                      <div className="min-w-0">
                         <label className="text-base font-semibold text-muted-foreground block mb-1">Ordered</label>
                         <span className="text-xl font-bold tabular-nums">
                           {line.quantityOrdered} {line.unit}
                         </span>
                       </div>
-                      <div>
+                      <div className="min-w-0">
                         <label className="text-base font-semibold text-muted-foreground block mb-1">Received</label>
                         <div className={cn(
                           "flex items-stretch rounded-lg border bg-background overflow-hidden focus-within:ring-2 focus-within:ring-primary/30",
@@ -528,7 +529,7 @@ function ReceivingDialog({
                           </button>
                         </div>
                       </div>
-                      <div>
+                      <div className="min-w-0">
                         <label className="text-base font-semibold text-muted-foreground block mb-1">
                           Use-by Date
                           {line.requiresUseByDate && <span className="text-destructive ml-1">*</span>}
@@ -545,7 +546,7 @@ function ReceivingDialog({
                             setLines(next);
                           }}
                           className={cn(
-                            "w-full px-3 py-2 bg-background border rounded-lg text-xl font-bold focus:outline-none focus:ring-2 focus:ring-primary/30",
+                            "w-full min-w-0 px-3 py-2 bg-background border rounded-lg text-lg font-bold focus:outline-none focus:ring-2 focus:ring-primary/30",
                             useByMissing ? "border-destructive" : "border-border"
                           )}
                         />

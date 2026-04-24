@@ -64,6 +64,7 @@ export const purchaseOrderLinesTable = pgTable("purchase_order_lines", {
   unit: text("unit").notNull(),
   unitPrice: numeric("unit_price", { precision: 10, scale: 4 }),
   checkedOff: boolean("checked_off").notNull().default(false),
+  goodsInChecked: boolean("goods_in_checked").notNull().default(false),
   notes: text("notes"),
   useByDate: date("use_by_date"),
 });

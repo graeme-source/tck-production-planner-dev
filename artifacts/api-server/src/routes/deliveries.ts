@@ -371,6 +371,7 @@ router.get("/:id", async (req, res) => {
       unit: purchaseOrderLinesTable.unit,
       unitPrice: purchaseOrderLinesTable.unitPrice,
       checkedOff: purchaseOrderLinesTable.checkedOff,
+      goodsInChecked: purchaseOrderLinesTable.goodsInChecked,
       notes: purchaseOrderLinesTable.notes,
       useByDate: purchaseOrderLinesTable.useByDate,
     })
@@ -552,7 +553,7 @@ router.post("/:id/receive", async (req, res) => {
       .set({
         quantityReceived: String(newTotal),
         useByDate: line.useByDate || null,
-        ...(line.checked !== undefined ? { checkedOff: line.checked } : {}),
+        ...(line.checked !== undefined ? { goodsInChecked: line.checked } : {}),
       })
       .where(eq(purchaseOrderLinesTable.id, line.lineId));
 
@@ -585,7 +586,7 @@ router.post("/:id/receive", async (req, res) => {
         quantityReceived: String(nl.quantityReceived),
         unit: nl.unit,
         useByDate: nl.useByDate || null,
-        checkedOff: nl.checked ?? false,
+        goodsInChecked: nl.checked ?? false,
       })
       .returning();
     if (nl.quantityReceived > 0) {
