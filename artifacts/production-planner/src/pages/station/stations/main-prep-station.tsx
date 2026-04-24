@@ -8,6 +8,7 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
+import { useAuth } from "@/contexts/auth-context";
 import { BreakTracker } from "../shared/break-tracker";
 import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtQty, toastDraftBlocked, StockCheckStatusPanel } from "../shared/prep-helpers";
 import type { NextActivePlan } from "../shared/prep-helpers";
@@ -106,6 +107,8 @@ export function useMainPrepData(planId: number, station: string = "main_prep") {
 }
 
 export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
+  const { state: authState } = useAuth();
+  const currentUserId = authState.status === "authenticated" ? authState.user.id : null;
   const { data: nextPlanData, isLoading: isNextPlanLoading } = useNextActivePlan(plan.planDate);
   const nextPlan = nextPlanData as NextActivePlan | null;
   const noFuturePlan = !isNextPlanLoading && nextPlan != null && nextPlan.planId == null;
@@ -113,7 +116,12 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
   const targetPlanId = noFuturePlan ? plan.id : (nextPlan?.planId ?? plan.id);
   const { data, loading, refetch } = useMainPrepData(targetPlanId);
   const [stockValues, setStockValues] = useState<Record<number, string>>({});
+  const [stockValuesLoaded, setStockValuesLoaded] = useState(false);
   const [savingStock, setSavingStock] = useState<Record<number, boolean>>({});
+  // Ingredient ids the user has skipped past in the forced modal for this
+  // session. Temporary escape hatch while the stock-check flow is being
+  // stabilised — resets on page reload.
+  const [dismissedStockCheckIds, setDismissedStockCheckIds] = useState<Set<number>>(new Set());
   const dirtyStockIds = useRef<Set<number>>(new Set());
   const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
   const [presenceData, setPresenceData] = useState<PrepPresenceData>({});
@@ -152,6 +160,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
   useEffect(() => {
     setSelectedItemKey(null);
     setStockValues({});
+    setStockValuesLoaded(false);
     dirtyStockIds.current.clear();
   }, [targetPlanId]);
 
@@ -163,7 +172,11 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
         if (d?.checks) {
           const serverVals: Record<number, string> = {};
           for (const c of d.checks) {
-            if (c.quantity) serverVals[c.ingredientId] = String(parseFloat(c.quantity));
+            // A quantity of 0 is a valid stock reading ("nothing left") — it
+            // still counts as checked, so don't treat it as missing.
+            if (c.quantity != null && c.quantity !== "") {
+              serverVals[c.ingredientId] = String(parseFloat(c.quantity));
+            }
           }
           setStockValues(prev => {
             const merged = { ...serverVals };
@@ -172,6 +185,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
             }
             return merged;
           });
+          setStockValuesLoaded(true);
         }
       })
       .catch((err) => { console.warn("[MainPrep] Stock checks fetch failed:", err); });
@@ -347,26 +361,37 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
     });
   };
 
-  const [runStockCheck, stockCheckBusy] = useGuardedAction();
-
+  // Stock-check save: the single-guard useGuardedAction wrapper was silently
+  // dropping concurrent saves across different ingredients (double-tap guard
+  // is shared across all calls). Per-ingredient savingStock state already
+  // prevents double-taps on the same ingredient, so we call guardedFetch
+  // directly and surface any failure via toast rather than swallowing it.
   const saveStockCheck = async (ingredientId: number) => {
     const val = stockValues[ingredientId];
     if (val === undefined || val === "") return;
     if (isDraft) { toastDraftBlocked(); return; }
+    if (savingStock[ingredientId]) return;
     setSavingStock(s => ({ ...s, [ingredientId]: true }));
     const cd = nextPlan?.planDate ?? plan.planDate;
-    await runStockCheck(async (signal) => {
+    try {
       await guardedFetch("/api/production-plans/stock-checks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ingredientId, checkDate: cd, quantity: Number(val) }),
-        signal,
       });
       dirtyStockIds.current.delete(ingredientId);
       toast({ title: "Stock check saved" });
       refetch();
-    });
-    setSavingStock(s => ({ ...s, [ingredientId]: false }));
+      // Refresh the server-side values immediately so the "saved" state
+      // propagates to other users viewing the same station without waiting
+      // for the 5s poll.
+      fetchStockChecks();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to save stock check";
+      toast({ title: "Save failed", description: msg, variant: "destructive" });
+    } finally {
+      setSavingStock(s => ({ ...s, [ingredientId]: false }));
+    }
   };
 
   const totalTins = ingredients.reduce((s, ing) => s + ing.totalTinCount, 0);
@@ -396,13 +421,38 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
     );
   }
 
+  // Last user to tick off a tin on a given ingredient — used to scope the
+  // blocking stock-check modal to the person who actually finished prepping
+  // it. Without this, the modal pops for every user on the station the
+  // moment any ingredient finishes, interrupting unrelated prep work.
+  const lastCompletedByUserId = (ing: MainPrepIngredient): number | null => {
+    let latest: PrepTinCompletion | null = null;
+    for (const c of completions) {
+      if (c.ingredientId !== ing.ingredientId) continue;
+      if (!!c.isSubRecipe !== !!ing.isSubRecipe) continue;
+      if (!latest || c.completedAt > latest.completedAt) latest = c;
+    }
+    return latest?.userId ?? null;
+  };
+
   // Stock-check items that have all tins done but no value saved yet. The
-  // forced modal (below) appears whenever this list is non-empty so the
-  // operator can't walk away from prep without lodging a record.
-  const pendingStockChecks = ingredients.filter(ing => {
+  // forced modal (below) only appears to the user who finished prepping the
+  // ingredient — other users on the same station keep working uninterrupted.
+  // Every pending check is still visible (and actionable) in the non-blocking
+  // StockCheckStatusPanel above, so nothing gets missed.
+  const allPendingStockChecks = ingredients.filter(ing => {
     const s = ingredientDoneStatus(ing);
-    return stockCheckActiveToday(ing) && s.allTinsDone && !s.stockSaved;
+    if (!(stockCheckActiveToday(ing) && s.allTinsDone && !s.stockSaved)) return false;
+    if (dismissedStockCheckIds.has(ing.ingredientId)) return false;
+    return true;
   });
+  // Wait until the server-side stock values have loaded at least once before
+  // we consider anything "pending" — otherwise a user who just opened the
+  // station sees the forced modal for ingredients that are already checked
+  // (we just haven't heard back from the poll yet).
+  const pendingStockChecks = (!stockValuesLoaded || currentUserId == null)
+    ? []
+    : allPendingStockChecks.filter(ing => lastCompletedByUserId(ing) === currentUserId);
   const activeStockCheckModalIng = pendingStockChecks[0] ?? null;
 
   return (
@@ -435,6 +485,15 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
             setStockValues(prev => ({ ...prev, [activeStockCheckModalIng.ingredientId]: v }));
           }}
           onSave={() => saveStockCheck(activeStockCheckModalIng.ingredientId)}
+          onSkip={() => {
+            const id = activeStockCheckModalIng.ingredientId;
+            setDismissedStockCheckIds(prev => {
+              const next = new Set(prev);
+              next.add(id);
+              return next;
+            });
+            toast({ title: "Stock check skipped", description: "You can still log it from the Stock Check Status panel." });
+          }}
           remainingCount={pendingStockChecks.length}
         />
       )}
@@ -924,7 +983,9 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                           </div>
                           <div className="flex items-center gap-2">
                             <input
-                              type="number" step="0.01"
+                              type="number"
+                              step={ing.unit === "kg" ? "0.1" : "1"}
+                              inputMode="decimal"
                               placeholder={`Remaining ${ing.unit}`}
                               className="flex-1 max-w-[160px] text-base border-2 border-blue-300 dark:border-blue-600 rounded-lg px-3 py-2 text-right bg-background focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
                               value={stockValues[ing.ingredientId] ?? ""}
@@ -981,6 +1042,7 @@ function ForceStockCheckModal({
   saving,
   onChange,
   onSave,
+  onSkip,
   remainingCount,
 }: {
   ingredient: MainPrepIngredient;
@@ -988,6 +1050,7 @@ function ForceStockCheckModal({
   saving: boolean;
   onChange: (v: string) => void;
   onSave: () => void;
+  onSkip: () => void;
   remainingCount: number;
 }) {
   const canSave = value !== "" && !isNaN(Number(value)) && !saving;
@@ -1016,8 +1079,9 @@ function ForceStockCheckModal({
           <div className="flex items-center gap-2">
             <input
               type="number"
-              step="0.01"
+              step={ingredient.unit === "kg" ? "0.1" : "1"}
               min="0"
+              inputMode="decimal"
               autoFocus
               value={value}
               onChange={e => onChange(e.target.value)}
@@ -1031,18 +1095,28 @@ function ForceStockCheckModal({
             Enter <span className="font-semibold">0</span> if there&rsquo;s nothing left — this is still a valid record.
           </p>
         </div>
-        <button
-          onClick={onSave}
-          disabled={!canSave}
-          className={cn(
-            "w-full py-3 rounded-xl text-base font-bold transition-colors",
-            canSave
-              ? "bg-blue-600 text-white hover:bg-blue-700 active:scale-95"
-              : "bg-blue-200 text-blue-400 cursor-not-allowed dark:bg-blue-900/30 dark:text-blue-600",
-          )}
-        >
-          {saving ? <span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Saving…</span> : "Save stock check"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onSkip}
+            disabled={saving}
+            className="px-4 py-3 rounded-xl text-base font-semibold border border-border text-muted-foreground hover:bg-secondary/60 disabled:opacity-50 transition-colors"
+            title="Skip this stock check for now — you can still log it from the Stock Check Status panel"
+          >
+            Skip
+          </button>
+          <button
+            onClick={onSave}
+            disabled={!canSave}
+            className={cn(
+              "flex-1 py-3 rounded-xl text-base font-bold transition-colors",
+              canSave
+                ? "bg-blue-600 text-white hover:bg-blue-700 active:scale-95"
+                : "bg-blue-200 text-blue-400 cursor-not-allowed dark:bg-blue-900/30 dark:text-blue-600",
+            )}
+          >
+            {saving ? <span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Saving…</span> : "Save stock check"}
+          </button>
+        </div>
       </div>
     </div>
   );
