@@ -38,6 +38,7 @@ import {
 import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/user-avatar";
 import { NotificationBell } from "@/components/notification-bell";
+import { NotificationFlash } from "@/components/notification-flash";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { BookOpen } from "lucide-react";
 
@@ -629,6 +630,7 @@ export function Layout({ children }: { children: ReactNode }) {
 
       <ReportButton />
       <StandardsSopsDialog open={sopsOpen} onClose={() => setSopsOpen(false)} currentStationType={null} />
+      <NotificationFlash />
     </div>
   );
 }

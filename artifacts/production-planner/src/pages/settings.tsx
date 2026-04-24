@@ -11,7 +11,7 @@ import {
   CheckCircle2, XCircle, KeyRound, Package, ChevronDown, ChevronUp,
   Lock, Timer, BarChart2, Coffee, Truck, Mail, Warehouse,
   Camera, User, CircleDot, ToggleRight, Boxes, UtensilsCrossed,
-  AlertTriangle, Scale, ThermometerSnowflake, BookOpen,
+  AlertTriangle, Scale, ThermometerSnowflake, BookOpen, Megaphone,
 } from "lucide-react";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { Switch } from "@/components/ui/switch";
@@ -717,6 +717,106 @@ function TeamAccessContent({
 
       {/* Access Control — admin only */}
       {user?.role === "admin" && <AccessControlSection />}
+
+      {/* Broadcast Notification — admin only */}
+      {user?.role === "admin" && <BroadcastNotificationSection />}
+    </div>
+  );
+}
+
+const DEFAULT_BROADCAST_MESSAGE =
+  "Please refresh your browser — a new version is available with the latest fixes.";
+
+function BroadcastNotificationSection() {
+  const [message, setMessage] = useState(DEFAULT_BROADCAST_MESSAGE);
+  const [sending, setSending] = useState(false);
+  const [lastSent, setLastSent] = useState<{ at: string; count: number } | null>(null);
+
+  const send = async () => {
+    const trimmed = message.trim();
+    if (!trimmed) {
+      toast({ title: "Message is empty", variant: "destructive" });
+      return;
+    }
+    if (trimmed.length > 500) {
+      toast({ title: "Too long", description: "Keep it under 500 characters.", variant: "destructive" });
+      return;
+    }
+    setSending(true);
+    try {
+      const res = await fetch("/api/notifications/broadcast", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: trimmed, type: "broadcast" }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? "Failed to send broadcast");
+      }
+      const data = await res.json() as { sent: number };
+      setLastSent({ at: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), count: data.sent });
+      toast({ title: "Broadcast sent", description: `${data.sent} user${data.sent === 1 ? "" : "s"} will see it within ~15 seconds.` });
+    } catch (err) {
+      toast({
+        title: "Broadcast failed",
+        description: err instanceof Error ? err.message : "Try again in a moment.",
+        variant: "destructive",
+      });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-6">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-10 h-10 rounded-lg bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 flex items-center justify-center">
+          <Megaphone className="w-5 h-5" />
+        </div>
+        <div>
+          <h3 className="font-semibold text-lg">Broadcast notification</h3>
+          <p className="text-sm text-muted-foreground">
+            Send a flash notification to every logged-in user. They&rsquo;ll see a banner at the top of their screen and can swipe it away or mark it read.
+          </p>
+        </div>
+      </div>
+
+      <textarea
+        value={message}
+        onChange={e => setMessage(e.target.value)}
+        rows={3}
+        maxLength={500}
+        disabled={sending}
+        className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+        placeholder="Enter the message to send to all users…"
+      />
+      <div className="flex items-center justify-between mt-3">
+        <p className="text-xs text-muted-foreground">
+          {lastSent
+            ? `Last sent ${lastSent.at} to ${lastSent.count} user${lastSent.count === 1 ? "" : "s"}.`
+            : `${message.length} / 500 characters`}
+        </p>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setMessage(DEFAULT_BROADCAST_MESSAGE)}
+            disabled={sending || message === DEFAULT_BROADCAST_MESSAGE}
+            className="px-3 py-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/60 disabled:opacity-40 transition-colors"
+          >
+            Reset to default
+          </button>
+          <button
+            type="button"
+            onClick={send}
+            disabled={sending || !message.trim()}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-600 text-white text-sm font-semibold hover:bg-amber-700 disabled:opacity-50 transition-colors"
+          >
+            {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Megaphone className="w-4 h-4" />}
+            Send broadcast
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,8 +1,13 @@
-import { Router, type Request, type Response } from "express";
-import { db, notificationsTable } from "@workspace/db";
+import { Router, type Request, type Response, type NextFunction } from "express";
+import { db, notificationsTable, usersTable } from "@workspace/db";
 import { eq, and, desc, count } from "drizzle-orm";
 
 const router = Router();
+
+function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  if (req.session.userRole === "admin") { next(); return; }
+  res.status(403).json({ error: "Admin access required" });
+}
 
 // GET /api/notifications — current user's notifications (newest first)
 router.get("/", async (req: Request, res: Response) => {
@@ -69,6 +74,39 @@ router.patch("/read-all", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("Error marking all notifications read:", err);
     res.status(500).json({ error: "Failed to mark all read" });
+  }
+});
+
+// POST /api/notifications/broadcast — admin-only fan-out. Inserts a row per
+// active user so the standard per-user list / unread-count endpoints keep
+// working unchanged, and the recipient can dismiss their own copy without
+// affecting anyone else's. Typical use: "please refresh your browser to pick
+// up the latest version." Body: { message: string, type?: string }.
+router.post("/broadcast", requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+    const type = typeof req.body?.type === "string" && req.body.type.length > 0
+      ? req.body.type
+      : "broadcast";
+    if (!message) { res.status(400).json({ error: "message is required" }); return; }
+    if (message.length > 500) { res.status(400).json({ error: "message too long (max 500 chars)" }); return; }
+
+    const users = await db.select({ id: usersTable.id }).from(usersTable);
+    if (users.length === 0) { res.json({ sent: 0 }); return; }
+
+    const rows = users.map(u => ({
+      userId: u.id,
+      type,
+      message,
+      andonIssueId: null,
+      read: false,
+    }));
+    await db.insert(notificationsTable).values(rows);
+
+    res.json({ sent: rows.length });
+  } catch (err) {
+    console.error("Error broadcasting notification:", err);
+    res.status(500).json({ error: "Failed to broadcast" });
   }
 });
 
