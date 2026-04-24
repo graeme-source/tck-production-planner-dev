@@ -31,6 +31,10 @@ export const ingredientsTable = pgTable("ingredients", {
   surplusAbsoluteQty: numeric("surplus_absolute_qty", { precision: 12, scale: 4 }),
   shelfLifeDays: integer("shelf_life_days"),
   requiresUseByDate: boolean("requires_use_by_date").notNull().default(false),
+  // When true, this ingredient is stock-checked, ordered and received in
+  // whole packs (e.g. bottles of milk) rather than its native weight/volume.
+  // Recipes and prep always use the native unit. Requires packWeight > 0.
+  stockInPacks: boolean("stock_in_packs").notNull().default(false),
   kanbanEnabled: boolean("kanban_enabled").notNull().default(false),
   kanbanQuantity: numeric("kanban_quantity", { precision: 10, scale: 4 }).notNull().default("0"),
   kanbanUnit: text("kanban_unit").notNull().default("weight"),

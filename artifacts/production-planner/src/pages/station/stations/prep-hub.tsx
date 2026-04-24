@@ -235,6 +235,8 @@ export interface PrepIngredientDetail {
   trayCount: number | null;
   prepCountPerPortion: number | null;
   pieceCount: number | null;
+  stockInPacks: boolean;
+  packWeight: number | null;
 }
 
 export interface PrepMarinadeDetail {

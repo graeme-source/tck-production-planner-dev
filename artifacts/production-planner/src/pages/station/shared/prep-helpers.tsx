@@ -29,6 +29,31 @@ export function fmtQty(q: number, unit: string): string {
 export const toKg = (qty: number, unit: string): number =>
   unit === "g" ? qty / 1000 : unit === "mg" ? qty / 1_000_000 : qty;
 
+// Pack/bottle label for an ingredient that's counted in whole packs. Uses
+// "bottle" for liquids (ml/l) and "pack" for everything else, so the UI
+// reads naturally: "2 bottles of milk" vs "3 packs of chutney".
+export function packNoun(unit: string, count: number): string {
+  const isLiquid = unit === "ml" || unit === "l" || unit === "L";
+  const base = isLiquid ? "bottle" : "pack";
+  return count === 1 ? base : `${base}s`;
+}
+
+// Given a native-unit stock value and the ingredient's packWeight, return
+// how many packs that represents (rounded to nearest whole pack for display).
+// Returns null if the ingredient can't be expressed in packs.
+export function nativeToPackCount(nativeQty: number, packWeight: number | null | undefined): number | null {
+  if (packWeight == null || packWeight <= 0) return null;
+  return Math.round(nativeQty / packWeight);
+}
+
+// Convert a whole-pack count back to native units for storage. Keeps the
+// stock table in the same units the recipe costing layer already expects,
+// so the pack flag stays a pure UI concern.
+export function packsToNative(packs: number, packWeight: number | null | undefined): number {
+  if (packWeight == null || packWeight <= 0) return 0;
+  return packs * packWeight;
+}
+
 export function PrepIngredientTable({ items }: { items: PrepRequirementItem[] }) {
   if (items.length === 0) {
     return (
@@ -277,6 +302,8 @@ interface StockCheckStatusItem {
   unit: string;
   stockCheckFrequency: string;
   stockCheckDay: string | null;
+  stockInPacks?: boolean;
+  packWeight?: number | null;
 }
 
 interface StockCheckRecord {
@@ -337,16 +364,24 @@ export function StockCheckStatusPanel({ checkDate }: { checkDate: string }) {
     ? [...outstanding, ...completed]
     : outstanding;
 
+  // "inputValues" holds the user's typed string in the DISPLAY unit (packs
+  // when stockInPacks is on, native otherwise). Convert to native here so
+  // the DB stays in native units — keeps cost/recipe maths untouched.
   const saveOne = async (ingredientId: number) => {
     const v = inputValues[ingredientId];
     if (v === undefined || v === "") return;
+    const item = items.find(it => it.id === ingredientId);
+    const inPacks = !!item?.stockInPacks && (item.packWeight ?? 0) > 0;
+    const typedNumber = Number(v);
+    if (!Number.isFinite(typedNumber)) return;
+    const nativeQty = inPacks ? packsToNative(typedNumber, item.packWeight) : typedNumber;
     setSavingIds(s => new Set(s).add(ingredientId));
     try {
       await fetch("/api/production-plans/stock-checks", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ingredientId, checkDate, quantity: Number(v) }),
+        body: JSON.stringify({ ingredientId, checkDate, quantity: nativeQty }),
       });
       setInputValues(prev => { const copy = { ...prev }; delete copy[ingredientId]; return copy; });
       setEditingIds(prev => { const n = new Set(prev); n.delete(ingredientId); return n; });
@@ -406,21 +441,34 @@ export function StockCheckStatusPanel({ checkDate }: { checkDate: string }) {
               const saving = savingIds.has(it.id);
               const inputVal = inputValues[it.id] ?? "";
               const isEditing = editingIds.has(it.id);
+              const inPacks = !!it.stockInPacks && (it.packWeight ?? 0) > 0;
+              const displayUnit = inPacks
+                ? packNoun(it.unit, Number(inputVal) || 1)
+                : it.unit;
               if (record && !isEditing) {
                 const checkedAt = new Date(record.checkedAt);
                 const timeLabel = checkedAt.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+                const recordNative = Number(record.quantity);
+                const recordPacks = inPacks ? nativeToPackCount(recordNative, it.packWeight) : null;
+                const recordDisplay = inPacks && recordPacks != null
+                  ? `${recordPacks} ${packNoun(it.unit, recordPacks)}`
+                  : `${recordNative} ${it.unit}`;
                 return (
                   <div key={it.id} className="px-4 py-2.5 flex items-center gap-3 text-sm">
                     <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
                     <span className="font-medium flex-1 min-w-0 truncate">{it.name}</span>
                     <span className="text-sm tabular-nums text-foreground font-semibold">
-                      {Number(record.quantity)} {it.unit}
+                      {recordDisplay}
                     </span>
                     <span className="text-xs text-muted-foreground ml-2">{timeLabel}</span>
                     <button
                       onClick={() => {
                         setEditingIds(prev => { const n = new Set(prev); n.add(it.id); return n; });
-                        setInputValues(prev => ({ ...prev, [it.id]: String(Number(record.quantity)) }));
+                        // Prefill the edit input in the display unit so the
+                        // user sees the value they'll be overwriting — saveOne
+                        // converts back to native on submit.
+                        const prefill = inPacks && recordPacks != null ? String(recordPacks) : String(recordNative);
+                        setInputValues(prev => ({ ...prev, [it.id]: prefill }));
                       }}
                       title="Overwrite this record"
                       className="text-muted-foreground hover:text-foreground p-1 -m-1"
@@ -438,16 +486,17 @@ export function StockCheckStatusPanel({ checkDate }: { checkDate: string }) {
                   <span className="font-medium flex-1 min-w-0 truncate">{it.name}</span>
                   <input
                     type="number"
-                    step="0.01"
+                    step={inPacks ? "1" : "0.01"}
                     min="0"
+                    inputMode={inPacks ? "numeric" : "decimal"}
                     value={inputVal}
                     onChange={e => setInputValues(prev => ({ ...prev, [it.id]: e.target.value }))}
                     onKeyDown={e => { if (e.key === "Enter" && inputVal !== "") saveOne(it.id); }}
-                    placeholder="qty"
+                    placeholder={inPacks ? displayUnit : "qty"}
                     autoFocus={isEditing}
                     className="w-20 px-2 py-1 text-sm text-right bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-amber-400/30"
                   />
-                  <span className="text-xs text-muted-foreground min-w-[1.5rem]">{it.unit}</span>
+                  <span className="text-xs text-muted-foreground min-w-[1.5rem]">{displayUnit}</span>
                   <button
                     onClick={() => saveOne(it.id)}
                     disabled={saving || inputVal === ""}

@@ -10,7 +10,7 @@ import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { useAuth } from "@/contexts/auth-context";
 import { BreakTracker } from "../shared/break-tracker";
-import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtQty, toastDraftBlocked, StockCheckStatusPanel } from "../shared/prep-helpers";
+import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtQty, toastDraftBlocked, StockCheckStatusPanel, nativeToPackCount, packsToNative, packNoun } from "../shared/prep-helpers";
 import type { NextActivePlan } from "../shared/prep-helpers";
 import { PrepSubNav } from "./prep-hub";
 
@@ -25,6 +25,8 @@ export interface MainPrepIngredient {
   isBottle?: boolean;
   bottleSize?: number | null;
   bottlesNeeded?: number | null;
+  stockInPacks?: boolean;
+  packWeight?: number | null;
   totalQty: number;
   totalTinCount: number;
   isSubRecipe?: boolean;
@@ -480,14 +482,30 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
 
       <StockCheckStatusPanel checkDate={checkDate} />
 
-      {activeStockCheckModalIng && (
+      {activeStockCheckModalIng && (() => {
+        const ing = activeStockCheckModalIng;
+        const inPacks = !!ing.stockInPacks && (ing.packWeight ?? 0) > 0;
+        const nativeStr = stockValues[ing.ingredientId] ?? "";
+        const display = inPacks && nativeStr !== ""
+          ? String(nativeToPackCount(Number(nativeStr), ing.packWeight) ?? "")
+          : nativeStr;
+        return (
         <ForceStockCheckModal
-          ingredient={activeStockCheckModalIng}
-          value={stockValues[activeStockCheckModalIng.ingredientId] ?? ""}
-          saving={!!savingStock[activeStockCheckModalIng.ingredientId]}
+          ingredient={ing}
+          value={display}
+          unitOverride={inPacks ? packNoun(ing.unit, Number(display) || 0) : null}
+          isPackInput={inPacks}
+          saving={!!savingStock[ing.ingredientId]}
           onChange={v => {
-            dirtyStockIds.current.add(activeStockCheckModalIng.ingredientId);
-            setStockValues(prev => ({ ...prev, [activeStockCheckModalIng.ingredientId]: v }));
+            dirtyStockIds.current.add(ing.ingredientId);
+            if (v === "") {
+              setStockValues(prev => ({ ...prev, [ing.ingredientId]: "" }));
+              return;
+            }
+            const asNumber = Number(v);
+            if (!Number.isFinite(asNumber)) return;
+            const native = inPacks ? packsToNative(asNumber, ing.packWeight) : asNumber;
+            setStockValues(prev => ({ ...prev, [ing.ingredientId]: String(native) }));
           }}
           onSave={() => saveStockCheck(activeStockCheckModalIng.ingredientId)}
           onSkip={() => {
@@ -501,7 +519,8 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
           }}
           remainingCount={pendingStockChecks.length}
         />
-      )}
+        );
+      })()}
 
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
@@ -979,25 +998,46 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                           </div>
                         </div>
                       )}
-                      {status.needsStockCheck && (
+                      {status.needsStockCheck && (() => {
+                        const inPacks = !!ing.stockInPacks && (ing.packWeight ?? 0) > 0;
+                        const nativeStr = stockValues[ing.ingredientId] ?? "";
+                        const inputDisplay = inPacks && nativeStr !== ""
+                          ? String(nativeToPackCount(Number(nativeStr), ing.packWeight) ?? "")
+                          : nativeStr;
+                        const unitLabel = inPacks
+                          ? packNoun(ing.unit, Number(inputDisplay) || 0)
+                          : ing.unit;
+                        const onInputChange = (raw: string) => {
+                          dirtyStockIds.current.add(ing.ingredientId);
+                          if (raw === "") {
+                            setStockValues(v => ({ ...v, [ing.ingredientId]: "" }));
+                            return;
+                          }
+                          const asNumber = Number(raw);
+                          if (!Number.isFinite(asNumber)) return;
+                          const native = inPacks ? packsToNative(asNumber, ing.packWeight) : asNumber;
+                          setStockValues(v => ({ ...v, [ing.ingredientId]: String(native) }));
+                        };
+                        return (
                         <div ref={stockCheckRef} className="mt-4 bg-blue-50/70 dark:bg-blue-950/30 border-2 border-blue-400 dark:border-blue-600 rounded-xl p-4 shadow-md">
                           <div className="flex items-center gap-2 mb-3">
                             <Package className="w-5 h-5 text-blue-600 animate-pulse" />
                             <p className="text-lg font-bold text-blue-800 dark:text-blue-200">Stock Check</p>
-                            <p className="text-sm text-blue-600 dark:text-blue-400">— how much {ing.ingredientName.toLowerCase()} remains?</p>
+                            <p className="text-sm text-blue-600 dark:text-blue-400">— how {inPacks ? "many" : "much"} {ing.ingredientName.toLowerCase()} remains?</p>
                           </div>
                           <div className="flex items-center gap-2">
                             <input
                               type="number"
-                              step={ing.unit === "kg" ? "0.1" : "1"}
-                              inputMode="decimal"
-                              placeholder={`Remaining ${ing.unit}`}
+                              step={inPacks ? "1" : (ing.unit === "kg" ? "0.1" : "1")}
+                              min="0"
+                              inputMode={inPacks ? "numeric" : "decimal"}
+                              placeholder={inPacks ? `Remaining ${unitLabel}` : `Remaining ${ing.unit}`}
                               className="flex-1 max-w-[160px] text-base border-2 border-blue-300 dark:border-blue-600 rounded-lg px-3 py-2 text-right bg-background focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
-                              value={stockValues[ing.ingredientId] ?? ""}
-                              onChange={e => { dirtyStockIds.current.add(ing.ingredientId); setStockValues(v => ({ ...v, [ing.ingredientId]: e.target.value })); }}
+                              value={inputDisplay}
+                              onChange={e => onInputChange(e.target.value)}
                               onKeyDown={e => { if (e.key === "Enter") saveStockCheck(ing.ingredientId); }}
                             />
-                            <span className="text-base text-muted-foreground">{ing.unit}</span>
+                            <span className="text-base text-muted-foreground">{unitLabel}</span>
                             <button
                               onClick={() => saveStockCheck(ing.ingredientId)}
                               disabled={!stockValues[ing.ingredientId] || savingStock[ing.ingredientId]}
@@ -1014,11 +1054,12 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                           {status.stockSaved && (
                             <p className="text-sm text-emerald-600 dark:text-emerald-400 mt-2 flex items-center gap-1">
                               <CheckCircle2 className="w-3 h-3" />
-                              {stockValues[ing.ingredientId]} {ing.unit} recorded
+                              {inputDisplay} {unitLabel} recorded
                             </p>
                           )}
                         </div>
-                      )}
+                        );
+                      })()}
 
               </div>
               );
@@ -1044,6 +1085,8 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
 function ForceStockCheckModal({
   ingredient,
   value,
+  unitOverride,
+  isPackInput,
   saving,
   onChange,
   onSave,
@@ -1052,6 +1095,11 @@ function ForceStockCheckModal({
 }: {
   ingredient: MainPrepIngredient;
   value: string;
+  // Display label for the input — e.g. "bottles" / "packs" when the
+  // ingredient is configured for stockInPacks; defaults to the native unit.
+  unitOverride?: string | null;
+  // When true, value is a whole-pack count and the keypad stays numeric-only.
+  isPackInput?: boolean;
   saving: boolean;
   onChange: (v: string) => void;
   onSave: () => void;
@@ -1059,6 +1107,7 @@ function ForceStockCheckModal({
   remainingCount: number;
 }) {
   const canSave = value !== "" && !isNaN(Number(value)) && !saving;
+  const unitLabel = unitOverride ?? ingredient.unit;
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4">
       <div className="bg-card border-2 border-blue-500 rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
@@ -1084,9 +1133,9 @@ function ForceStockCheckModal({
           <div className="flex items-center gap-2">
             <input
               type="number"
-              step={ingredient.unit === "kg" ? "0.1" : "1"}
+              step={isPackInput ? "1" : (ingredient.unit === "kg" ? "0.1" : "1")}
               min="0"
-              inputMode="decimal"
+              inputMode={isPackInput ? "numeric" : "decimal"}
               autoFocus
               value={value}
               onChange={e => onChange(e.target.value)}
@@ -1094,7 +1143,7 @@ function ForceStockCheckModal({
               placeholder="0"
               className="flex-1 px-4 py-3 bg-background border-2 border-blue-300 dark:border-blue-700 rounded-lg text-lg font-semibold text-right focus:outline-none focus:ring-2 focus:ring-blue-400"
             />
-            <span className="text-base font-semibold text-muted-foreground min-w-[3rem]">{ingredient.unit}</span>
+            <span className="text-base font-semibold text-muted-foreground min-w-[3rem]">{unitLabel}</span>
           </div>
           <p className="text-xs text-muted-foreground">
             Enter <span className="font-semibold">0</span> if there&rsquo;s nothing left — this is still a valid record.

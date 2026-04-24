@@ -801,6 +801,24 @@ export default function Ingredients() {
               </div>
             </div>
 
+            <div className="flex items-center gap-3 py-1">
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  {...register("stockInPacks")}
+                  className="sr-only peer"
+                />
+                <div className="w-9 h-5 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/30 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+              </label>
+              <div>
+                <span className="text-sm font-medium">Count stock in whole packs</span>
+                <p className="text-xs text-muted-foreground">
+                  Stock check, ordering and goods-in will count this ingredient in whole {watchedUnit === "ml" || watchedUnit === "l" ? "bottles" : "packs"} instead of {watchedUnit || "weight"}. Recipes and prep still use {watchedUnit || "the native unit"}. Requires Pack size to be set.
+                </p>
+                {errors.stockInPacks && <span className="text-destructive text-xs">{String(errors.stockInPacks.message)}</span>}
+              </div>
+            </div>
+
             {watchedIsBottle && (
               <div className="pl-4 border-l-2 border-primary/20">
                 <label className="text-sm font-medium mb-1 block">Bottle Size ({watchedUnit || "g"})</label>

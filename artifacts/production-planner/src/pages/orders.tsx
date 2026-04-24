@@ -33,6 +33,7 @@ import {
   formatDeliveryDate,
   toISODate,
 } from "@workspace/business-days";
+import { packNoun } from "@/pages/station/shared/prep-helpers";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -56,6 +57,9 @@ type OrderLine = {
   // non-required stock-checked items" toggle so operators can verify their
   // stock checks went through.
   belowRequirement?: boolean;
+  // When true, Required / Surplus / Ordered render in whole packs; recipes
+  // and internal maths still use native units.
+  stockInPacks?: boolean;
 };
 
 type SupplierOrder = {
@@ -1059,8 +1063,8 @@ export default function Orders() {
                             </div>
                           </td>
                           <td className="p-3 text-right tabular-nums font-bold text-lg text-green-600 dark:text-green-400">
-                            {(line.unit === "packs" || line.unit === "bottles")
-                              ? `${line.editedPacks} ${line.unit}`
+                            {(line.stockInPacks || line.unit === "packs" || line.unit === "bottles")
+                              ? `${line.editedPacks} ${line.stockInPacks ? packNoun(line.unit, line.editedPacks) : line.unit}`
                               : `${(line.editedPacks * line.packWeight).toLocaleString()} ${line.unit}`}
                           </td>
                           <td className="p-3 text-center">
@@ -1079,10 +1083,14 @@ export default function Orders() {
                             {line.packWeight} kg
                           </td>
                           <td className="p-3 text-right tabular-nums">
-                            {line.surplusTarget.toLocaleString()} {line.unit}
+                            {line.stockInPacks && line.packWeight > 0
+                              ? `${Math.ceil(line.surplusTarget / line.packWeight)} ${packNoun(line.unit, Math.ceil(line.surplusTarget / line.packWeight))}`
+                              : `${line.surplusTarget.toLocaleString()} ${line.unit}`}
                           </td>
                           <td className="p-3 text-right tabular-nums">
-                            {line.totalRequired.toLocaleString()} {line.unit}
+                            {line.stockInPacks && line.packWeight > 0
+                              ? `${Math.ceil(line.totalRequired / line.packWeight)} ${packNoun(line.unit, Math.ceil(line.totalRequired / line.packWeight))}`
+                              : `${line.totalRequired.toLocaleString()} ${line.unit}`}
                           </td>
                           {lines.some(l => l.costPerPack > 0) && (
                             <td className="p-3 text-right tabular-nums">

@@ -45,9 +45,22 @@ function mapRow(r: typeof ingredientsTable.$inferSelect) {
     bottleSize: r.bottleSize != null ? Number(r.bottleSize) : null,
     prepCountPerPortion: (r as unknown as { prepCountPerPortion?: number | null }).prepCountPerPortion ?? null,
     isPasta: (r as unknown as { isPasta?: boolean }).isPasta ?? false,
+    stockInPacks: (r as unknown as { stockInPacks?: boolean }).stockInPacks ?? false,
     allergens: (r.allergens as string[] | null) ?? [],
     createdAt: r.createdAt.toISOString(),
   };
+}
+
+// Requires pack size when "count stock in whole packs" is on. Used by create
+// and update — stops the caller from saving a config that would divide by
+// zero when stock-check / order / goods-in UIs convert packs to native units.
+function validateStockInPacks(stockInPacks: unknown, packWeight: unknown): string | null {
+  if (stockInPacks !== true) return null;
+  const pw = Number(packWeight);
+  if (!Number.isFinite(pw) || pw <= 0) {
+    return "Set a Pack size greater than 0 before turning on 'Count stock in whole packs'.";
+  }
+  return null;
 }
 
 router.get("/", async (req, res) => {
@@ -94,9 +107,11 @@ function validateProcessingRatio(value: unknown): string | null {
 }
 
 router.post("/", validate(CreateIngredientBody), async (req, res) => {
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, prepCountPerPortion, isPasta, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, requiresUseByDate, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, prepCountPerPortion, isPasta, stockInPacks, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, requiresUseByDate, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
+  const packsError = validateStockInPacks(stockInPacks, packWeight);
+  if (packsError) { res.status(400).json({ error: packsError }); return; }
   const [row] = await db.insert(ingredientsTable).values({
     name,
     unit,
@@ -120,6 +135,7 @@ router.post("/", validate(CreateIngredientBody), async (req, res) => {
     bottleSize: bottleSize != null ? String(bottleSize) : null,
     prepCountPerPortion: prepCountPerPortion != null ? Number(prepCountPerPortion) : null,
     isPasta: isPasta ?? false,
+    stockInPacks: stockInPacks ?? false,
     stockCheckEnabled: stockCheckEnabled ?? false,
     stockCheckFrequency: stockCheckFrequency ?? "daily",
     stockCheckDay: stockCheckDay || null,
@@ -217,9 +233,18 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, prepCountPerPortion, isPasta, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, requiresUseByDate, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, prepCountPerPortion, isPasta, stockInPacks, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, requiresUseByDate, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
+  // Need the effective packWeight: explicit override in body or fall back to the
+  // stored value so toggling stockInPacks on doesn't require re-entering the pack size.
+  let effectivePackWeight = packWeight;
+  if (stockInPacks === true && (packWeight === undefined || packWeight === null)) {
+    const [existing] = await db.select({ packWeight: ingredientsTable.packWeight }).from(ingredientsTable).where(eq(ingredientsTable.id, id));
+    if (existing) effectivePackWeight = Number(existing.packWeight);
+  }
+  const packsError = validateStockInPacks(stockInPacks, effectivePackWeight);
+  if (packsError) { res.status(400).json({ error: packsError }); return; }
   const [row] = await db.update(ingredientsTable).set({
     name,
     unit,
@@ -243,6 +268,7 @@ router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
     ...(bottleSize !== undefined ? { bottleSize: bottleSize != null ? String(bottleSize) : null } : {}),
     ...(prepCountPerPortion !== undefined ? { prepCountPerPortion: prepCountPerPortion != null ? Number(prepCountPerPortion) : null } : {}),
     ...(isPasta !== undefined ? { isPasta } : {}),
+    ...(stockInPacks !== undefined ? { stockInPacks: !!stockInPacks } : {}),
     ...(stockCheckEnabled !== undefined ? { stockCheckEnabled } : {}),
     ...(stockCheckFrequency !== undefined ? { stockCheckFrequency } : {}),
     stockCheckDay: stockCheckDay || null,

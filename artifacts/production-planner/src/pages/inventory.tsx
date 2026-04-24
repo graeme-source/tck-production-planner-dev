@@ -638,6 +638,17 @@ function ItemFormDialog({
                 <p className="text-xs text-muted-foreground mt-1 ml-6">When on, staff must enter a use-by date for this ingredient when receiving a delivery.</p>
               </div>
 
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" {...register("stockInPacks")} className="w-4 h-4 rounded border-border" />
+                  <span className="text-sm font-medium">Count stock in whole packs</span>
+                </label>
+                <p className="text-xs text-muted-foreground mt-1 ml-6">
+                  Stock check, ordering and goods-in count this in whole {watchedUnit === "ml" || watchedUnit === "l" ? "bottles" : "packs"} instead of {watchedUnit || "weight"}. Recipes and prep still use {watchedUnit || "the native unit"}. Requires Pack size.
+                </p>
+                {errors.stockInPacks && <span className="text-destructive text-xs ml-6 block mt-1">{String(errors.stockInPacks.message)}</span>}
+              </div>
+
               <div className="bg-secondary/30 rounded-lg px-4 py-3">
                 <label className="text-sm font-medium mb-1 block">
                   Prep count per portion

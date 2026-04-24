@@ -130,6 +130,8 @@ router.get("/weekly", async (req, res) => {
         useByDate: purchaseOrderLinesTable.useByDate,
         shelfLifeDays: ingredientsTable.shelfLifeDays,
         requiresUseByDate: ingredientsTable.requiresUseByDate,
+        stockInPacks: ingredientsTable.stockInPacks,
+        packWeight: ingredientsTable.packWeight,
       })
       .from(purchaseOrderLinesTable)
       .innerJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
@@ -365,6 +367,8 @@ router.get("/:id", async (req, res) => {
       ingredientCategory: ingredientsTable.category,
       shelfLifeDays: ingredientsTable.shelfLifeDays,
       requiresUseByDate: ingredientsTable.requiresUseByDate,
+      stockInPacks: ingredientsTable.stockInPacks,
+      packWeight: ingredientsTable.packWeight,
       quantityRequired: purchaseOrderLinesTable.quantityRequired,
       quantityOrdered: purchaseOrderLinesTable.quantityOrdered,
       quantityReceived: purchaseOrderLinesTable.quantityReceived,

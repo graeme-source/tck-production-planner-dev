@@ -11,6 +11,7 @@ import { format, startOfWeek, addDays, isSameDay, parseISO, isToday } from "date
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/auth-context";
+import { packNoun } from "@/pages/station/shared/prep-helpers";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -32,6 +33,8 @@ interface POLine {
   shelfLifeDays: number | null;
   requiresUseByDate: boolean;
   defaultStorageLocation: string | null;
+  stockInPacks?: boolean;
+  packWeight?: number | null;
 }
 
 interface DeliveryRecordSummary {
@@ -165,6 +168,8 @@ interface ReceivingLine {
   defaultStorageLocation: string | null;
   useByIsAuto: boolean;
   checked: boolean;
+  stockInPacks?: boolean;
+  packWeight?: number | null;
 }
 
 interface CheckResult {
@@ -275,6 +280,8 @@ function ReceivingDialog({
             defaultStorageLocation: l.defaultStorageLocation,
             useByIsAuto: existingUseBy === "" && useByIsAuto,
             checked: l.goodsInChecked ?? false,
+            stockInPacks: l.stockInPacks,
+            packWeight: l.packWeight,
           };
         })
       );
@@ -476,53 +483,70 @@ function ReceivingDialog({
                         )}
                       </div>
                     </div>
+                    {(() => {
+                      // For pack-counted ingredients, operators count whole
+                      // packs coming off the truck — the stored quantity stays
+                      // in the ingredient's native unit so everything
+                      // downstream (recipes, cost) keeps working.
+                      const inPacks = !!line.stockInPacks && (line.packWeight ?? 0) > 0;
+                      const pw = line.packWeight || 1;
+                      const orderedDisplay = inPacks
+                        ? `${Math.round(line.quantityOrdered / pw)} ${packNoun(line.unit, Math.round(line.quantityOrdered / pw))}`
+                        : `${line.quantityOrdered} ${line.unit}`;
+                      const receivedPackCount = inPacks ? Math.round(line.quantityReceived / pw) : line.quantityReceived;
+                      const step = inPacks ? 1 : 0.5;
+                      const bump = (deltaPacks: number) => {
+                        const next = [...lines];
+                        const current = Number(next[idx].quantityReceived) || 0;
+                        const currentInDisplay = inPacks ? current / pw : current;
+                        const newDisplay = Math.max(0, currentInDisplay + deltaPacks);
+                        const nextReceived = inPacks ? newDisplay * pw : Number(newDisplay.toFixed(2));
+                        next[idx] = { ...next[idx], quantityReceived: nextReceived };
+                        setLines(next);
+                      };
+                      return (
                     <div className="grid grid-cols-3 gap-3" onClick={(e) => e.stopPropagation()}>
                       <div className="min-w-0">
                         <label className="text-base font-semibold text-muted-foreground block mb-1">Ordered</label>
                         <span className="text-xl font-bold tabular-nums">
-                          {line.quantityOrdered} {line.unit}
+                          {orderedDisplay}
                         </span>
                       </div>
                       <div className="min-w-0">
-                        <label className="text-base font-semibold text-muted-foreground block mb-1">Received</label>
+                        <label className="text-base font-semibold text-muted-foreground block mb-1">
+                          Received {inPacks && <span className="text-xs font-normal text-muted-foreground">({packNoun(line.unit, receivedPackCount || 0)})</span>}
+                        </label>
                         <div className={cn(
                           "flex items-stretch rounded-lg border bg-background overflow-hidden focus-within:ring-2 focus-within:ring-primary/30",
                           discrepancy ? "border-amber-400" : "border-border"
                         )}>
                           <button
                             type="button"
-                            aria-label="Decrease received by 0.5"
-                            onClick={() => {
-                              const next = [...lines];
-                              const current = Number(next[idx].quantityReceived) || 0;
-                              next[idx] = { ...next[idx], quantityReceived: Math.max(0, Number((current - 0.5).toFixed(2))) };
-                              setLines(next);
-                            }}
+                            aria-label={inPacks ? "Decrease received by 1 pack" : "Decrease received by 0.5"}
+                            onClick={() => bump(-step)}
                             className="px-3 bg-secondary/40 hover:bg-secondary/70 active:bg-secondary text-foreground transition-colors flex items-center justify-center shrink-0"
                           >
                             <Minus className="w-5 h-5" />
                           </button>
                           <input
                             type="number"
-                            step="0.5"
+                            step={step}
                             min="0"
-                            value={line.quantityReceived}
+                            inputMode={inPacks ? "numeric" : "decimal"}
+                            value={inPacks ? receivedPackCount : line.quantityReceived}
                             onChange={(e) => {
+                              const raw = Number(e.target.value);
+                              if (!Number.isFinite(raw)) return;
                               const next = [...lines];
-                              next[idx] = { ...next[idx], quantityReceived: Number(e.target.value) };
+                              next[idx] = { ...next[idx], quantityReceived: inPacks ? raw * pw : raw };
                               setLines(next);
                             }}
                             className="flex-1 min-w-0 px-2 py-2 bg-background text-center text-xl font-bold tabular-nums text-[#919b5f] focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                           />
                           <button
                             type="button"
-                            aria-label="Increase received by 0.5"
-                            onClick={() => {
-                              const next = [...lines];
-                              const current = Number(next[idx].quantityReceived) || 0;
-                              next[idx] = { ...next[idx], quantityReceived: Number((current + 0.5).toFixed(2)) };
-                              setLines(next);
-                            }}
+                            aria-label={inPacks ? "Increase received by 1 pack" : "Increase received by 0.5"}
+                            onClick={() => bump(step)}
                             className="px-3 bg-secondary/40 hover:bg-secondary/70 active:bg-secondary text-foreground transition-colors flex items-center justify-center shrink-0"
                           >
                             <Plus className="w-5 h-5" />
@@ -552,6 +576,8 @@ function ReceivingDialog({
                         />
                       </div>
                     </div>
+                      );
+                    })()}
                     {discrepancy && (
                       <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
                         <AlertTriangle className="w-3.5 h-3.5" />

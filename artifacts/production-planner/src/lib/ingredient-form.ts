@@ -52,6 +52,9 @@ export const ingredientFormSchema = z.object({
   bottleSize: nullableNumber((n) => n.min(0)),
   prepCountPerPortion: nullableNumber((n) => n.int().positive()),
   isPasta: z.boolean().optional(),
+  // When true, stock check / orders / goods-in all operate in whole packs.
+  // Prep and recipes continue to use the native unit. Requires packWeight > 0.
+  stockInPacks: z.boolean().optional(),
 
   // Stock / ordering
   stockCheckEnabled: z.boolean().optional(),
@@ -92,6 +95,15 @@ export const ingredientFormSchema = z.object({
       message: "Ingredients must use kg, g, L, ml or pieces. Packs and bottles are captured via Pack size.",
     });
   }
+  // "Count stock in whole packs" needs a pack size, otherwise the pack <->
+  // native conversion divides by zero and UIs can't render anything useful.
+  if (val.stockInPacks === true && (!val.packWeight || val.packWeight <= 0)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["stockInPacks"],
+      message: "Set a Pack size greater than 0 before turning on 'Count stock in whole packs'.",
+    });
+  }
 });
 
 export type IngredientFormValues = z.infer<typeof ingredientFormSchema>;
@@ -124,6 +136,7 @@ export function emptyIngredientFormDefaults(
     bottleSize: null,
     prepCountPerPortion: null,
     isPasta: false,
+    stockInPacks: false,
     stockCheckEnabled: false,
     stockCheckFrequency: "daily",
     stockCheckDay: "",
@@ -198,6 +211,7 @@ export function ingredientToFormValues(
     bottleSize: num(it.bottleSize),
     prepCountPerPortion: num(it.prepCountPerPortion),
     isPasta: bool(it.isPasta),
+    stockInPacks: bool(it.stockInPacks),
     stockCheckEnabled: bool(it.stockCheckEnabled),
     stockCheckFrequency: (it.stockCheckFrequency as "daily" | "weekly" | undefined) ?? "daily",
     stockCheckDay: str(it.stockCheckDay),
@@ -255,6 +269,7 @@ export function buildIngredientPayload(data: IngredientFormValues) {
     bottleSize: data.isBottle ? (data.bottleSize ?? null) : null,
     prepCountPerPortion: data.prepCountPerPortion ?? null,
     isPasta: data.isPasta ?? false,
+    stockInPacks: data.stockInPacks ?? false,
     stockCheckEnabled: data.stockCheckEnabled ?? false,
     stockCheckFrequency: data.stockCheckFrequency ?? "daily",
     stockCheckDay:

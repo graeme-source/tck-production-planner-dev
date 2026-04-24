@@ -1489,6 +1489,8 @@ router.get("/stock-checks", async (req, res) => {
       unit: ingredientsTable.unit,
       stockCheckFrequency: ingredientsTable.stockCheckFrequency,
       stockCheckDay: ingredientsTable.stockCheckDay,
+      stockInPacks: ingredientsTable.stockInPacks,
+      packWeight: ingredientsTable.packWeight,
     })
     .from(ingredientsTable)
     .where(eq(ingredientsTable.stockCheckEnabled, true))
@@ -2921,6 +2923,8 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       trayCount: number | null;
       prepCountPerPortion: number | null;
       pieceCount: number | null;
+      stockInPacks: boolean;
+      packWeight: number | null;
     }> = [];
 
     let hasRelevantIngredients = false;
@@ -3042,6 +3046,8 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
         prepCountPerPortion: ing.prepCountPerPortion,
         pieceCount,
         trayCount: null,
+        stockInPacks: ing.stockInPacks,
+        packWeight: ing.packWeight,
       });
     }
 
@@ -5066,6 +5072,8 @@ router.get("/:id/main-prep", async (req, res) => {
     stockCheckDay: string | null;
     isBottle: boolean;
     bottleSize: number | null;
+    stockInPacks: boolean;
+    packWeight: number | null;
     totalQty: number;
     recipes: Array<{
       recipeId: number;
@@ -5157,6 +5165,7 @@ router.get("/:id/main-prep", async (req, res) => {
         isBottle: ingredientsTable.isBottle,
         bottleSize: ingredientsTable.bottleSize,
         packWeight: ingredientsTable.packWeight,
+        stockInPacks: ingredientsTable.stockInPacks,
         isTopping: recipeIngredientsTable.isTopping,
         showInPrep: recipeIngredientsTable.showInPrep,
         prepCountPerPortion: ingredientsTable.prepCountPerPortion,
@@ -5258,6 +5267,7 @@ router.get("/:id/main-prep", async (req, res) => {
       } else {
         const isBottle = row.isBottle ?? false;
         const bottleSizeVal = row.bottleSize ? Number(row.bottleSize) : (row.packWeight ? Number(row.packWeight) : null);
+        const packWeightVal = row.packWeight != null ? Number(row.packWeight) : null;
         ingredientMap.set(row.ingredientId, {
           ingredientId: row.ingredientId,
           ingredientName: row.ingredientName ?? `Ingredient #${row.ingredientId}`,
@@ -5268,6 +5278,8 @@ router.get("/:id/main-prep", async (req, res) => {
           stockCheckDay: row.stockCheckDay ?? null,
           isBottle,
           bottleSize: isBottle ? bottleSizeVal : null,
+          stockInPacks: (row.stockInPacks ?? false) && packWeightVal != null && packWeightVal > 0,
+          packWeight: packWeightVal,
           totalQty: roundedQty,
           recipes: [{
             recipeId: planItem.recipeId!,

@@ -150,6 +150,7 @@ router.get("/calculate", async (req, res) => {
       kanbanQuantity: ingredientsTable.kanbanQuantity,
       kanbanUnit: ingredientsTable.kanbanUnit,
       orderingUrl: ingredientsTable.orderingUrl,
+      stockInPacks: ingredientsTable.stockInPacks,
     })
     .from(ingredientsTable)
     .where(inArray(ingredientsTable.id, ingredientIds));
@@ -276,6 +277,7 @@ router.get("/calculate", async (req, res) => {
       // these greyed out behind a toggle so operators can verify the check
       // happened and stock levels look sane.
       belowRequirement: boolean;
+      stockInPacks: boolean;
     }>;
   }> = {};
 
@@ -367,6 +369,7 @@ router.get("/calculate", async (req, res) => {
       isKanban,
       orderingUrl: detail.orderingUrl ?? null,
       lastStockCheckAt: stockCheckTimestamps[iid] ?? null,
+      stockInPacks: (detail.stockInPacks ?? false) && packWeight > 0,
       belowRequirement,
     });
   }
@@ -441,6 +444,7 @@ router.get("/calculate", async (req, res) => {
         orderingUrl: d.orderingUrl ?? null,
         lastStockCheckAt: stockCheckTimestamps[d.id] ?? null,
         belowRequirement: false,
+        stockInPacks: (d.stockInPacks ?? false) && packWeight > 0,
       });
     }
   }

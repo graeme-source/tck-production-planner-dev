@@ -27,6 +27,8 @@ export interface ResolvedIngredient {
   quantityPerBatch: number;
   includeInFillingMix: boolean;
   prepCountPerPortion: number | null;
+  stockInPacks: boolean;
+  packWeight: number | null;
 }
 
 export async function resolveSubRecipeIngredients(
@@ -65,6 +67,8 @@ export async function resolveSubRecipeIngredients(
       stockCheckFrequency: ingredientsTable.stockCheckFrequency,
       stockCheckDay: ingredientsTable.stockCheckDay,
       prepCountPerPortion: ingredientsTable.prepCountPerPortion,
+      stockInPacks: ingredientsTable.stockInPacks,
+      packWeight: ingredientsTable.packWeight,
     })
     .from(subRecipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -88,6 +92,8 @@ export async function resolveSubRecipeIngredients(
     quantityPerBatch: Number(row.quantity) * effectiveScale,
     includeInFillingMix: false,
     prepCountPerPortion: row.prepCountPerPortion != null ? Number(row.prepCountPerPortion) : null,
+    stockInPacks: (row.stockInPacks ?? false) && row.packWeight != null && Number(row.packWeight) > 0,
+    packWeight: row.packWeight != null ? Number(row.packWeight) : null,
   }));
 
   const nestedSubRecipes = await db
@@ -140,6 +146,8 @@ export async function resolveRecipeIngredients(
       stockCheckFrequency: ingredientsTable.stockCheckFrequency,
       stockCheckDay: ingredientsTable.stockCheckDay,
       prepCountPerPortion: ingredientsTable.prepCountPerPortion,
+      stockInPacks: ingredientsTable.stockInPacks,
+      packWeight: ingredientsTable.packWeight,
     })
     .from(recipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -165,6 +173,8 @@ export async function resolveRecipeIngredients(
     quantityPerBatch: Number(row.quantity) * portionsPerBatch,
     includeInFillingMix: row.includeInFillingMix ?? false,
     prepCountPerPortion: row.prepCountPerPortion != null ? Number(row.prepCountPerPortion) : null,
+    stockInPacks: (row.stockInPacks ?? false) && row.packWeight != null && Number(row.packWeight) > 0,
+    packWeight: row.packWeight != null ? Number(row.packWeight) : null,
   }));
 
   const recipeSubRecipes = await db
