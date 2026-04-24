@@ -115,6 +115,7 @@ const schema = z.object({
     (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
     z.number().int().positive().nullable().optional()
   ),
+  requiresUseByDate: z.boolean().optional(),
   kanbanEnabled: z.boolean().optional(),
   kanbanQuantity: z.coerce.number().min(0).optional(),
   kanbanUnit: z.enum(["weight", "pack", "bottle"]).optional(),
@@ -146,7 +147,7 @@ function emptyDefaults(mode: TabType): FormValues {
     processingRatioPct: null, rawMeatTrayCapacityKg: null, minCookingTempC: null,
     estimatedCookTimeMin: null, ovenTempC: null, steamPct: null,
     stockCheckEnabled: false, stockCheckFrequency: "daily", stockCheckDay: "",
-    surplusPercent: 10, shelfLifeDays: null,
+    surplusPercent: 10, shelfLifeDays: null, requiresUseByDate: false,
     kanbanEnabled: false, kanbanQuantity: 0, kanbanUnit: "weight" as const, kanbanOrderAmount: null,
     energyKj: null, energyKcal: null, fat: null, saturates: null, carbohydrate: null, sugars: null, protein: null, fibre: null, salt: null, labelDeclaration: "", allergens: [],
   };
@@ -540,6 +541,7 @@ function ItemFormDialog({
       stockCheckDay: item.stockCheckDay ?? "",
       surplusPercent: (item as Record<string, unknown>).surplusPercent != null ? Number((item as Record<string, unknown>).surplusPercent) : 10,
       shelfLifeDays: (item as Record<string, unknown>).shelfLifeDays != null ? Number((item as Record<string, unknown>).shelfLifeDays) : null,
+      requiresUseByDate: (item as Record<string, unknown>).requiresUseByDate as boolean ?? false,
       kanbanEnabled: (item as Record<string, unknown>).kanbanEnabled as boolean ?? false,
       kanbanQuantity: (item as Record<string, unknown>).kanbanQuantity != null ? Number((item as Record<string, unknown>).kanbanQuantity) : 0,
       kanbanUnit: ((item as Record<string, unknown>).kanbanUnit as "weight" | "pack" | "bottle") ?? "weight",
@@ -737,6 +739,14 @@ function ItemFormDialog({
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">days</span>
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">Auto-calculates use-by dates on deliveries.</p>
+              </div>
+
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" {...register("requiresUseByDate")} className="w-4 h-4 rounded border-border" />
+                  <span className="text-sm font-medium">Require use-by date at goods-in</span>
+                </label>
+                <p className="text-xs text-muted-foreground mt-1 ml-6">When on, staff must enter a use-by date for this ingredient when receiving a delivery.</p>
               </div>
             </>
           )}
@@ -983,6 +993,7 @@ function buildPayload(data: FormValues) {
     stockCheckDay: data.stockCheckFrequency === "weekly" ? (data.stockCheckDay || null) : null,
     surplusPercent: data.surplusPercent ?? 10,
     shelfLifeDays: data.shelfLifeDays ?? null,
+    requiresUseByDate: data.requiresUseByDate ?? false,
     kanbanEnabled: data.kanbanEnabled ?? false,
     kanbanQuantity: data.kanbanQuantity ?? 0,
     kanbanUnit: data.kanbanUnit ?? "weight",
