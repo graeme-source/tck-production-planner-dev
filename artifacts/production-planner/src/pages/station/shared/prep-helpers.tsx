@@ -54,6 +54,21 @@ export function packsToNative(packs: number, packWeight: number | null | undefin
   return packs * packWeight;
 }
 
+// Light-grey secondary label for stock-check UIs showing pack-based values.
+// Given a pack count + packWeight + native unit, returns a string like
+// "≈ 3.000 L" that the UI renders next to "3 bottles" so the operator
+// double-checks they're counting the right thing. Returns an empty string
+// when there's nothing useful to show (0 packs / missing pack size).
+export function packsWeightHint(
+  packCount: number,
+  packWeight: number | null | undefined,
+  nativeUnit: string,
+): string {
+  if (!Number.isFinite(packCount) || packCount <= 0) return "";
+  if (packWeight == null || packWeight <= 0) return "";
+  return `≈ ${fmtQty(packCount * packWeight, nativeUnit)}`;
+}
+
 export function PrepIngredientTable({ items }: { items: PrepRequirementItem[] }) {
   if (items.length === 0) {
     return (
@@ -453,6 +468,9 @@ export function StockCheckStatusPanel({ checkDate }: { checkDate: string }) {
                 const recordDisplay = inPacks && recordPacks != null
                   ? `${recordPacks} ${packNoun(it.unit, recordPacks)}`
                   : `${recordNative} ${it.unit}`;
+                const hint = inPacks && recordPacks != null
+                  ? packsWeightHint(recordPacks, it.packWeight, it.unit)
+                  : "";
                 return (
                   <div key={it.id} className="px-4 py-2.5 flex items-center gap-3 text-sm">
                     <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
@@ -460,6 +478,9 @@ export function StockCheckStatusPanel({ checkDate }: { checkDate: string }) {
                     <span className="text-sm tabular-nums text-foreground font-semibold">
                       {recordDisplay}
                     </span>
+                    {hint && (
+                      <span className="text-xs tabular-nums text-muted-foreground/70">{hint}</span>
+                    )}
                     <span className="text-xs text-muted-foreground ml-2">{timeLabel}</span>
                     <button
                       onClick={() => {
@@ -497,6 +518,11 @@ export function StockCheckStatusPanel({ checkDate }: { checkDate: string }) {
                     className="w-20 px-2 py-1 text-sm text-right bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-amber-400/30"
                   />
                   <span className="text-xs text-muted-foreground min-w-[1.5rem]">{displayUnit}</span>
+                  {inPacks && inputVal !== "" && (
+                    <span className="text-xs tabular-nums text-muted-foreground/70">
+                      {packsWeightHint(Number(inputVal) || 0, it.packWeight, it.unit)}
+                    </span>
+                  )}
                   <button
                     onClick={() => saveOne(it.id)}
                     disabled={saving || inputVal === ""}

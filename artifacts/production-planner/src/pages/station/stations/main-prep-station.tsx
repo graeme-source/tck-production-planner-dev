@@ -10,7 +10,7 @@ import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { useAuth } from "@/contexts/auth-context";
 import { BreakTracker } from "../shared/break-tracker";
-import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtQty, toastDraftBlocked, StockCheckStatusPanel, nativeToPackCount, packsToNative, packNoun } from "../shared/prep-helpers";
+import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtQty, toastDraftBlocked, StockCheckStatusPanel, nativeToPackCount, packsToNative, packNoun, packsWeightHint } from "../shared/prep-helpers";
 import type { NextActivePlan } from "../shared/prep-helpers";
 import { PrepSubNav } from "./prep-hub";
 
@@ -1025,7 +1025,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                             <p className="text-lg font-bold text-blue-800 dark:text-blue-200">Stock Check</p>
                             <p className="text-sm text-blue-600 dark:text-blue-400">— how {inPacks ? "many" : "much"} {ing.ingredientName.toLowerCase()} remains?</p>
                           </div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <input
                               type="number"
                               step={inPacks ? "1" : (ing.unit === "kg" ? "0.1" : "1")}
@@ -1038,6 +1038,11 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                               onKeyDown={e => { if (e.key === "Enter") saveStockCheck(ing.ingredientId); }}
                             />
                             <span className="text-base text-muted-foreground">{unitLabel}</span>
+                            {inPacks && (
+                              <span className="text-sm text-muted-foreground/70 tabular-nums">
+                                {packsWeightHint(Number(inputDisplay) || 0, ing.packWeight, ing.unit)}
+                              </span>
+                            )}
                             <button
                               onClick={() => saveStockCheck(ing.ingredientId)}
                               disabled={!stockValues[ing.ingredientId] || savingStock[ing.ingredientId]}
@@ -1052,9 +1057,14 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                             </button>
                           </div>
                           {status.stockSaved && (
-                            <p className="text-sm text-emerald-600 dark:text-emerald-400 mt-2 flex items-center gap-1">
+                            <p className="text-sm text-emerald-600 dark:text-emerald-400 mt-2 flex items-center gap-1 flex-wrap">
                               <CheckCircle2 className="w-3 h-3" />
                               {inputDisplay} {unitLabel} recorded
+                              {inPacks && (
+                                <span className="text-muted-foreground/70 font-normal ml-1">
+                                  {packsWeightHint(Number(inputDisplay) || 0, ing.packWeight, ing.unit)}
+                                </span>
+                              )}
                             </p>
                           )}
                         </div>
@@ -1129,8 +1139,15 @@ function ForceStockCheckModal({
           </div>
         </div>
         <div className="space-y-2">
-          <label className="text-sm font-medium">Remaining {ingredient.ingredientName.toLowerCase()}</label>
-          <div className="flex items-center gap-2">
+          <label className="text-sm font-medium">
+            Remaining {ingredient.ingredientName.toLowerCase()}
+            {isPackInput && (
+              <span className="ml-2 text-xs font-normal text-muted-foreground">
+                (counted in {unitLabel})
+              </span>
+            )}
+          </label>
+          <div className="flex items-center gap-2 flex-wrap">
             <input
               type="number"
               step={isPackInput ? "1" : (ingredient.unit === "kg" ? "0.1" : "1")}
@@ -1144,6 +1161,11 @@ function ForceStockCheckModal({
               className="flex-1 px-4 py-3 bg-background border-2 border-blue-300 dark:border-blue-700 rounded-lg text-lg font-semibold text-right focus:outline-none focus:ring-2 focus:ring-blue-400"
             />
             <span className="text-base font-semibold text-muted-foreground min-w-[3rem]">{unitLabel}</span>
+            {isPackInput && ingredient.packWeight != null && ingredient.packWeight > 0 && (
+              <span className="text-sm text-muted-foreground/70 tabular-nums w-full text-right">
+                {packsWeightHint(Number(value) || 0, ingredient.packWeight, ingredient.unit)}
+              </span>
+            )}
           </div>
           <p className="text-xs text-muted-foreground">
             Enter <span className="font-semibold">0</span> if there&rsquo;s nothing left — this is still a valid record.

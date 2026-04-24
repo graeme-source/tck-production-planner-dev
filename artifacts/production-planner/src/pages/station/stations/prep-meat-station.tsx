@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { BreakTracker } from "../shared/break-tracker";
-import { PrepDateBanner, PrepDraftBanner, toKg, toastDraftBlocked, StockCheckStatusPanel, nativeToPackCount, packsToNative, packNoun } from "../shared/prep-helpers";
+import { PrepDateBanner, PrepDraftBanner, toKg, toastDraftBlocked, StockCheckStatusPanel, nativeToPackCount, packsToNative, packNoun, packsWeightHint } from "../shared/prep-helpers";
 import { PrepSubNav, usePrepByRecipe } from "./prep-hub";
 import type { PrepRecipeDetail, PrepIngredientDetail } from "./prep-hub";
 
@@ -645,7 +645,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                             <p className="text-lg font-bold text-blue-800 dark:text-blue-200">Stock Check</p>
                             <p className="text-sm text-blue-600 dark:text-blue-400">— how {inPacks ? "many" : "much"} {ing.ingredientName.toLowerCase()} remains?</p>
                           </div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <input
                               type="number"
                               step={inPacks ? "1" : "0.01"}
@@ -658,6 +658,11 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                               onKeyDown={e => { if (e.key === "Enter") saveStockCheck(ing.ingredientId); }}
                             />
                             <span className="text-base text-muted-foreground">{unitLabel}</span>
+                            {inPacks && (
+                              <span className="text-sm text-muted-foreground/70 tabular-nums">
+                                {packsWeightHint(Number(inputDisplay) || 0, ing.packWeight, ing.unit)}
+                              </span>
+                            )}
                             <button
                               onClick={() => saveStockCheck(ing.ingredientId)}
                               disabled={!stockValues[ing.ingredientId] || savingStock[ing.ingredientId]}
@@ -672,9 +677,14 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                             </button>
                           </div>
                           {stockSaved && (
-                            <p className="text-sm text-emerald-600 dark:text-emerald-400 mt-2 flex items-center gap-1">
+                            <p className="text-sm text-emerald-600 dark:text-emerald-400 mt-2 flex items-center gap-1 flex-wrap">
                               <CheckCircle2 className="w-3 h-3" />
                               {inputDisplay} {unitLabel} recorded
+                              {inPacks && (
+                                <span className="text-muted-foreground/70 font-normal ml-1">
+                                  {packsWeightHint(Number(inputDisplay) || 0, ing.packWeight, ing.unit)}
+                                </span>
+                              )}
                             </p>
                           )}
                         </div>
