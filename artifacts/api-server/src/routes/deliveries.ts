@@ -73,6 +73,44 @@ router.get("/weekly", async (req, res) => {
 
   const orderIds = orders.map((o) => o.id);
 
+  type DeliveryRecordSummary = {
+    id: number;
+    invoiceFiled: boolean;
+    allPutAway: boolean;
+    kanbansReplaced: boolean;
+    chilledTempC: number | null;
+    frozenTempC: number | null;
+  };
+  const deliveryRecordByOrder: Record<number, DeliveryRecordSummary> = {};
+  if (orderIds.length > 0) {
+    const records = await db
+      .select({
+        id: deliveryRecordsTable.id,
+        purchaseOrderId: deliveryRecordsTable.purchaseOrderId,
+        invoiceFiled: deliveryRecordsTable.invoiceFiled,
+        allPutAway: deliveryRecordsTable.allPutAway,
+        kanbansReplaced: deliveryRecordsTable.kanbansReplaced,
+        chilledTempC: deliveryRecordsTable.chilledTempC,
+        frozenTempC: deliveryRecordsTable.frozenTempC,
+        receivedAt: deliveryRecordsTable.receivedAt,
+      })
+      .from(deliveryRecordsTable)
+      .where(inArray(deliveryRecordsTable.purchaseOrderId, orderIds))
+      .orderBy(desc(deliveryRecordsTable.receivedAt));
+    for (const r of records) {
+      if (r.purchaseOrderId == null) continue;
+      if (deliveryRecordByOrder[r.purchaseOrderId]) continue; // keep latest
+      deliveryRecordByOrder[r.purchaseOrderId] = {
+        id: r.id,
+        invoiceFiled: r.invoiceFiled,
+        allPutAway: r.allPutAway,
+        kanbansReplaced: r.kanbansReplaced,
+        chilledTempC: r.chilledTempC != null ? Number(r.chilledTempC) : null,
+        frozenTempC: r.frozenTempC != null ? Number(r.frozenTempC) : null,
+      };
+    }
+  }
+
   let lines: any[] = [];
   if (orderIds.length > 0) {
     lines = await db
@@ -90,6 +128,8 @@ router.get("/weekly", async (req, res) => {
         checkedOff: purchaseOrderLinesTable.checkedOff,
         notes: purchaseOrderLinesTable.notes,
         useByDate: purchaseOrderLinesTable.useByDate,
+        shelfLifeDays: ingredientsTable.shelfLifeDays,
+        requiresUseByDate: ingredientsTable.requiresUseByDate,
       })
       .from(purchaseOrderLinesTable)
       .innerJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
@@ -105,14 +145,27 @@ router.get("/weekly", async (req, res) => {
       quantityOrdered: Number(line.quantityOrdered),
       quantityReceived: Number(line.quantityReceived),
       unitPrice: line.unitPrice ? Number(line.unitPrice) : null,
+      defaultStorageLocation: resolveStorageLocation(line.ingredientCategory, line.ingredientName),
     });
   }
 
-  const result = orders.map((o) => ({
-    ...o,
-    createdAt: o.createdAt.toISOString(),
-    lines: linesByOrder[o.id] || [],
-  }));
+  const FRIDGE_LOCATIONS = new Set(["prep_fridge", "raw_meat_fridge", "production_fridge"]);
+  const FREEZER_LOCATIONS = new Set(["raw_freezer", "production_freezer"]);
+
+  const result = orders.map((o) => {
+    const orderLines = linesByOrder[o.id] || [];
+    const hasChilled = orderLines.some((l) => FRIDGE_LOCATIONS.has(l.defaultStorageLocation));
+    const hasFrozen = orderLines.some((l) => FREEZER_LOCATIONS.has(l.defaultStorageLocation));
+    return {
+      ...o,
+      createdAt: o.createdAt.toISOString(),
+      lines: orderLines,
+      requiresTemperature: hasChilled || hasFrozen,
+      hasChilled,
+      hasFrozen,
+      deliveryRecord: deliveryRecordByOrder[o.id] || null,
+    };
+  });
 
   res.json({ weekOf: mondayStr, orders: result });
 });
@@ -311,6 +364,7 @@ router.get("/:id", async (req, res) => {
       ingredientName: ingredientsTable.name,
       ingredientCategory: ingredientsTable.category,
       shelfLifeDays: ingredientsTable.shelfLifeDays,
+      requiresUseByDate: ingredientsTable.requiresUseByDate,
       quantityRequired: purchaseOrderLinesTable.quantityRequired,
       quantityOrdered: purchaseOrderLinesTable.quantityOrdered,
       quantityReceived: purchaseOrderLinesTable.quantityReceived,
@@ -330,6 +384,13 @@ router.get("/:id", async (req, res) => {
     .where(eq(deliveryCheckConfigsTable.supplierId, order.supplierId))
     .orderBy(asc(deliveryCheckConfigsTable.sortOrder));
 
+  const [latestRecord] = await db
+    .select()
+    .from(deliveryRecordsTable)
+    .where(eq(deliveryRecordsTable.purchaseOrderId, id))
+    .orderBy(desc(deliveryRecordsTable.receivedAt))
+    .limit(1);
+
   res.json({
     ...order,
     createdAt: order.createdAt.toISOString(),
@@ -340,9 +401,21 @@ router.get("/:id", async (req, res) => {
       quantityReceived: Number(l.quantityReceived),
       unitPrice: l.unitPrice ? Number(l.unitPrice) : null,
       shelfLifeDays: l.shelfLifeDays ?? null,
+      requiresUseByDate: l.requiresUseByDate ?? false,
       defaultStorageLocation: resolveStorageLocation(l.ingredientCategory, l.ingredientName),
     })),
     checks,
+    deliveryRecord: latestRecord
+      ? {
+          id: latestRecord.id,
+          invoiceFiled: latestRecord.invoiceFiled,
+          allPutAway: latestRecord.allPutAway,
+          kanbansReplaced: latestRecord.kanbansReplaced,
+          chilledTempC: latestRecord.chilledTempC != null ? Number(latestRecord.chilledTempC) : null,
+          frozenTempC: latestRecord.frozenTempC != null ? Number(latestRecord.frozenTempC) : null,
+          notes: latestRecord.notes,
+        }
+      : null,
   });
 });
 
@@ -351,24 +424,26 @@ router.post("/:id/receive", async (req, res) => {
   const userId = req.session.userId;
   const {
     lines,
+    newLines,
     chilledTempC,
     frozenTempC,
     checkResults,
     notes,
   } = req.body as {
     lines: { lineId: number; quantityReceived: number; useByDate?: string | null }[];
+    newLines?: { ingredientId: number; quantityOrdered: number; quantityReceived: number; unit: string; useByDate?: string | null }[];
     chilledTempC?: number | null;
     frozenTempC?: number | null;
     checkResults?: { checkConfigId: number; passed: boolean; notes?: string }[];
     notes?: string;
   };
 
-  if (!lines || !Array.isArray(lines) || lines.length === 0) {
+  if ((!lines || !Array.isArray(lines)) && (!newLines || newLines.length === 0)) {
     res.status(400).json({ error: "lines array is required" });
     return;
   }
 
-  for (const line of lines) {
+  for (const line of lines || []) {
     if (typeof line.quantityReceived !== "number" || line.quantityReceived < 0) {
       res.status(400).json({ error: `Invalid quantity for line ${line.lineId}: must be >= 0` });
       return;
@@ -396,29 +471,77 @@ router.post("/:id/receive", async (req, res) => {
       ingredientCategory: ingredientsTable.category,
       ingredientUnit: ingredientsTable.unit,
       packWeight: ingredientsTable.packWeight,
+      requiresUseByDate: ingredientsTable.requiresUseByDate,
     })
     .from(purchaseOrderLinesTable)
     .innerJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
     .where(eq(purchaseOrderLinesTable.purchaseOrderId, poId));
 
-  const existingLineMap = new Map(existingLines.map((l) => [l.id, l]));
+  type ExistingLineInfo = (typeof existingLines)[number];
+  const existingLineMap = new Map<number, ExistingLineInfo>(
+    existingLines.map((l) => [l.id, l] as [number, ExistingLineInfo]),
+  );
 
-  for (const line of lines) {
-    if (!existingLineMap.has(line.lineId)) {
+  for (const line of lines || []) {
+    const ing = existingLineMap.get(line.lineId);
+    if (!ing) {
       res.status(400).json({ error: `Line ${line.lineId} does not belong to PO #${poId}` });
+      return;
+    }
+    if (ing.requiresUseByDate && line.quantityReceived > 0 && !line.useByDate) {
+      res.status(400).json({ error: `Use-by date is required for ${ing.ingredientName}` });
+      return;
+    }
+  }
+
+  // Look up new-line ingredients and validate required use-by
+  type NewLineIngredientInfo = {
+    ingredientId: number;
+    ingredientName: string;
+    ingredientCategory: string | null;
+    ingredientUnit: string;
+    packWeight: string;
+    requiresUseByDate: boolean;
+  };
+  const newLineIngredientIds = [...new Set((newLines ?? []).map((nl) => nl.ingredientId))];
+  const newLineIngredientMap = new Map<number, NewLineIngredientInfo>();
+  if (newLineIngredientIds.length > 0) {
+    const rows = await db
+      .select({
+        ingredientId: ingredientsTable.id,
+        ingredientName: ingredientsTable.name,
+        ingredientCategory: ingredientsTable.category,
+        ingredientUnit: ingredientsTable.unit,
+        packWeight: ingredientsTable.packWeight,
+        requiresUseByDate: ingredientsTable.requiresUseByDate,
+      })
+      .from(ingredientsTable)
+      .where(inArray(ingredientsTable.id, newLineIngredientIds));
+    for (const r of rows) {
+      newLineIngredientMap.set(r.ingredientId, r);
+    }
+  }
+  for (const nl of newLines ?? []) {
+    const ing = newLineIngredientMap.get(nl.ingredientId);
+    if (!ing) {
+      res.status(400).json({ error: `Ingredient ${nl.ingredientId} not found` });
+      return;
+    }
+    if (ing.requiresUseByDate && nl.quantityReceived > 0 && !nl.useByDate) {
+      res.status(400).json({ error: `Use-by date is required for ${ing.ingredientName}` });
       return;
     }
   }
 
   const stockInserts: {
     ingredientId: number;
-    quantity: string;
+    quantity: number;
     unit: string;
     location: string;
     useByDate: string | null;
   }[] = [];
 
-  for (const line of lines) {
+  for (const line of lines || []) {
     const existing = existingLineMap.get(line.lineId)!;
     const previousReceived = Number(existing.quantityReceived);
     const newTotal = line.quantityReceived;
@@ -432,7 +555,7 @@ router.post("/:id/receive", async (req, res) => {
       })
       .where(eq(purchaseOrderLinesTable.id, line.lineId));
 
-    if (delta > 0) {
+    if (delta !== 0) {
       const location = resolveStorageLocation(existing.ingredientCategory, existing.ingredientName);
       const isCountUnit = existing.unit === "packs" || existing.unit === "bottles";
       const pw = Number(existing.packWeight) || 1;
@@ -440,7 +563,7 @@ router.post("/:id/receive", async (req, res) => {
       const stockUnit = isCountUnit ? (existing.ingredientUnit ?? "kg") : existing.unit;
       stockInserts.push({
         ingredientId: existing.ingredientId,
-        quantity: String(stockQty),
+        quantity: stockQty,
         unit: stockUnit,
         location,
         useByDate: line.useByDate || null,
@@ -448,22 +571,79 @@ router.post("/:id/receive", async (req, res) => {
     }
   }
 
-  const [deliveryRecord] = await db
-    .insert(deliveryRecordsTable)
-    .values({
-      purchaseOrderId: poId,
-      supplierId: order.supplierId,
-      receivedByUserId: userId ?? null,
-      chilledTempC: chilledTempC != null ? String(chilledTempC) : null,
-      frozenTempC: frozenTempC != null ? String(frozenTempC) : null,
-      notes: notes || null,
-    })
-    .returning();
+  // Create new PO lines for items that were added at receiving time
+  for (const nl of newLines ?? []) {
+    const ing = newLineIngredientMap.get(nl.ingredientId)!;
+    const [inserted] = await db
+      .insert(purchaseOrderLinesTable)
+      .values({
+        purchaseOrderId: poId,
+        ingredientId: nl.ingredientId,
+        quantityRequired: "0",
+        quantityOrdered: String(nl.quantityOrdered ?? nl.quantityReceived),
+        quantityReceived: String(nl.quantityReceived),
+        unit: nl.unit,
+        useByDate: nl.useByDate || null,
+      })
+      .returning();
+    if (nl.quantityReceived > 0) {
+      const location = resolveStorageLocation(ing.ingredientCategory, ing.ingredientName);
+      const isCountUnit = nl.unit === "packs" || nl.unit === "bottles";
+      const pw = Number(ing.packWeight) || 1;
+      const stockQty = isCountUnit ? nl.quantityReceived * pw : nl.quantityReceived;
+      const stockUnit = isCountUnit ? (ing.ingredientUnit ?? "kg") : nl.unit;
+      stockInserts.push({
+        ingredientId: nl.ingredientId,
+        quantity: stockQty,
+        unit: stockUnit,
+        location,
+        useByDate: nl.useByDate || null,
+      });
+    }
+    void inserted;
+  }
+
+  // Upsert delivery record: reuse the latest one for this PO if present, so edits
+  // update a single row rather than creating a new one each time.
+  const [existingRecord] = await db
+    .select()
+    .from(deliveryRecordsTable)
+    .where(eq(deliveryRecordsTable.purchaseOrderId, poId))
+    .orderBy(desc(deliveryRecordsTable.receivedAt))
+    .limit(1);
+
+  let deliveryRecordId: number;
+  if (existingRecord) {
+    await db
+      .update(deliveryRecordsTable)
+      .set({
+        chilledTempC: chilledTempC != null ? String(chilledTempC) : existingRecord.chilledTempC,
+        frozenTempC: frozenTempC != null ? String(frozenTempC) : existingRecord.frozenTempC,
+        notes: notes ?? existingRecord.notes,
+      })
+      .where(eq(deliveryRecordsTable.id, existingRecord.id));
+    deliveryRecordId = existingRecord.id;
+  } else {
+    const [created] = await db
+      .insert(deliveryRecordsTable)
+      .values({
+        purchaseOrderId: poId,
+        supplierId: order.supplierId,
+        receivedByUserId: userId ?? null,
+        chilledTempC: chilledTempC != null ? String(chilledTempC) : null,
+        frozenTempC: frozenTempC != null ? String(frozenTempC) : null,
+        notes: notes || null,
+      })
+      .returning();
+    deliveryRecordId = created.id;
+  }
 
   if (checkResults && checkResults.length > 0) {
+    // Replace prior check results on edit rather than duplicating
+    await db.delete(deliveryCheckResultsTable).where(eq(deliveryCheckResultsTable.deliveryRecordId, deliveryRecordId));
     await db.insert(deliveryCheckResultsTable).values(
       checkResults.map((cr) => ({
-        deliveryRecordId: deliveryRecord.id,
+        deliveryRecordId,
         checkConfigId: cr.checkConfigId,
         passed: cr.passed,
         notes: cr.notes || null,
@@ -471,13 +651,12 @@ router.post("/:id/receive", async (req, res) => {
     );
   }
 
-  // Look up latest stock per ingredient+location so we can insert cumulative totals
-  const ingredientIds = [...new Set(stockInserts.map(si => si.ingredientId))];
+  // For each stock change, insert a new cumulative entry at the ingredient+location
+  const ingredientIds = [...new Set(stockInserts.map((si) => si.ingredientId))];
   const existingStockMap: Record<string, number> = {};
   if (ingredientIds.length > 0) {
     const existingRows = await db
       .select({
-        id: stockEntriesTable.id,
         ingredientId: stockEntriesTable.ingredientId,
         location: stockEntriesTable.location,
         quantity: stockEntriesTable.quantity,
@@ -500,7 +679,7 @@ router.post("/:id/receive", async (req, res) => {
   for (const si of stockInserts) {
     const key = `${si.ingredientId}|${si.location}`;
     const existingQty = existingStockMap[key] ?? 0;
-    const cumulativeQty = existingQty + Number(si.quantity);
+    const cumulativeQty = Math.max(0, existingQty + si.quantity);
 
     await db.insert(stockEntriesTable).values({
       ingredientId: si.ingredientId,
@@ -509,36 +688,67 @@ router.post("/:id/receive", async (req, res) => {
       unit: si.unit,
       location: si.location,
       useByDate: si.useByDate,
-      notes: `Delivery from PO #${poId}`,
+      notes: `Delivery from PO #${poId}${si.quantity < 0 ? " (edit)" : ""}`,
     });
 
-    // Update map so subsequent inserts for same ingredient accumulate correctly
     existingStockMap[key] = cumulativeQty;
   }
 
-  const allLines = await db
-    .select({
-      quantityOrdered: purchaseOrderLinesTable.quantityOrdered,
-      quantityReceived: purchaseOrderLinesTable.quantityReceived,
-    })
-    .from(purchaseOrderLinesTable)
-    .where(eq(purchaseOrderLinesTable.purchaseOrderId, poId));
-
-  const allFullyReceived = allLines.every(
-    (l) => Number(l.quantityReceived) >= Number(l.quantityOrdered)
-  );
-  const anyReceived = allLines.some((l) => Number(l.quantityReceived) > 0);
-
-  const newStatus = allFullyReceived ? "received" : anyReceived ? "partially_received" : order.status;
-
+  // Any submission marks the PO fully received; short quantities no longer block.
   await db
     .update(purchaseOrdersTable)
-    .set({ status: newStatus })
+    .set({ status: "received" })
     .where(eq(purchaseOrdersTable.id, poId));
 
   res.json({
-    deliveryRecordId: deliveryRecord.id,
-    orderStatus: newStatus,
+    deliveryRecordId,
+    orderStatus: "received",
+  });
+});
+
+// Toggle post-receipt checks (invoice filed, kanbans & put-away) from the card.
+router.patch("/:id/checks", async (req, res) => {
+  const poId = Number(req.params.id);
+  const { invoiceFiled, kanbansAndPutAway } = req.body as {
+    invoiceFiled?: boolean;
+    kanbansAndPutAway?: boolean;
+  };
+
+  const [record] = await db
+    .select()
+    .from(deliveryRecordsTable)
+    .where(eq(deliveryRecordsTable.purchaseOrderId, poId))
+    .orderBy(desc(deliveryRecordsTable.receivedAt))
+    .limit(1);
+
+  if (!record) {
+    res.status(400).json({ error: "Receive the delivery before toggling checks" });
+    return;
+  }
+
+  const patch: Record<string, boolean> = {};
+  if (invoiceFiled !== undefined) patch.invoiceFiled = invoiceFiled;
+  if (kanbansAndPutAway !== undefined) {
+    patch.kanbansReplaced = kanbansAndPutAway;
+    patch.allPutAway = kanbansAndPutAway;
+  }
+
+  if (Object.keys(patch).length === 0) {
+    res.status(400).json({ error: "No check fields provided" });
+    return;
+  }
+
+  const [updated] = await db
+    .update(deliveryRecordsTable)
+    .set(patch)
+    .where(eq(deliveryRecordsTable.id, record.id))
+    .returning();
+
+  res.json({
+    id: updated.id,
+    invoiceFiled: updated.invoiceFiled,
+    allPutAway: updated.allPutAway,
+    kanbansReplaced: updated.kanbansReplaced,
   });
 });
 

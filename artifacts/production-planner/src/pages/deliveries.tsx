@@ -5,6 +5,7 @@ import {
   Truck, ChevronLeft, ChevronRight, Calendar, Package, Thermometer,
   Check, AlertTriangle, Loader2, ClipboardCheck, X,
   CheckCircle2, AlertCircle, PackageCheck, ArrowRightLeft, Plus, Minus,
+  FileText, Boxes, Pencil, Eye, EyeOff,
 } from "lucide-react";
 import { format, startOfWeek, addDays, isSameDay, parseISO, isToday } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -28,7 +29,17 @@ interface POLine {
   notes: string | null;
   useByDate: string | null;
   shelfLifeDays: number | null;
+  requiresUseByDate: boolean;
   defaultStorageLocation: string | null;
+}
+
+interface DeliveryRecordSummary {
+  id: number;
+  invoiceFiled: boolean;
+  allPutAway: boolean;
+  kanbansReplaced: boolean;
+  chilledTempC: number | null;
+  frozenTempC: number | null;
 }
 
 interface DeliveryOrder {
@@ -40,6 +51,10 @@ interface DeliveryOrder {
   notes: string | null;
   createdAt: string;
   lines: POLine[];
+  requiresTemperature?: boolean;
+  hasChilled?: boolean;
+  hasFrozen?: boolean;
+  deliveryRecord?: DeliveryRecordSummary | null;
 }
 
 interface CheckConfig {
@@ -53,7 +68,8 @@ interface CheckConfig {
 const STATUS_COLORS: Record<string, { bg: string; text: string; label: string; dot: string }> = {
   draft:              { bg: "bg-gray-100 dark:bg-gray-800",           text: "text-gray-600 dark:text-gray-400",   label: "Draft",    dot: "bg-gray-400" },
   placed:             { bg: "bg-blue-100 dark:bg-blue-900/30",         text: "text-blue-700 dark:text-blue-300",   label: "Expected", dot: "bg-blue-500" },
-  partially_received: { bg: "bg-amber-100 dark:bg-amber-900/30",       text: "text-amber-700 dark:text-amber-300", label: "Partial",  dot: "bg-amber-500" },
+  // Legacy rows from before "any receive → received"; treated like received.
+  partially_received: { bg: "bg-green-100 dark:bg-green-900/30",       text: "text-green-700 dark:text-green-300", label: "Received", dot: "bg-green-500" },
   received:           { bg: "bg-green-100 dark:bg-green-900/30",       text: "text-green-700 dark:text-green-300", label: "Received", dot: "bg-green-500" },
 };
 
@@ -99,6 +115,42 @@ const LOCATION_LABELS: Record<string, string> = {
   dry_store: "Dry Store",
 };
 
+type DotStatus = "done" | "pending" | "na";
+
+interface ProcessingDots {
+  received: DotStatus;
+  temperature: DotStatus;
+  invoice: DotStatus;
+  kanbanPutAway: DotStatus;
+  fullyProcessed: boolean;
+}
+
+function computeProcessingDots(order: DeliveryOrder): ProcessingDots {
+  const rec = order.deliveryRecord ?? null;
+  const received: DotStatus = rec ? "done" : "pending";
+
+  let temperature: DotStatus;
+  if (!order.requiresTemperature) {
+    temperature = "na";
+  } else if (!rec) {
+    temperature = "pending";
+  } else {
+    const chilledOk = !order.hasChilled || rec.chilledTempC != null;
+    const frozenOk = !order.hasFrozen || rec.frozenTempC != null;
+    temperature = chilledOk && frozenOk ? "done" : "pending";
+  }
+
+  const invoice: DotStatus = rec?.invoiceFiled ? "done" : "pending";
+  const kanbanPutAway: DotStatus =
+    rec?.kanbansReplaced && rec?.allPutAway ? "done" : "pending";
+
+  const required: DotStatus[] = [received, invoice, kanbanPutAway];
+  if (temperature !== "na") required.push(temperature);
+  const fullyProcessed = required.every((d) => d === "done");
+
+  return { received, temperature, invoice, kanbanPutAway, fullyProcessed };
+}
+
 interface ReceivingLine {
   lineId: number;
   ingredientName: string;
@@ -108,6 +160,7 @@ interface ReceivingLine {
   unit: string;
   useByDate: string;
   shelfLifeDays: number | null;
+  requiresUseByDate: boolean;
   defaultStorageLocation: string | null;
   useByIsAuto: boolean;
 }
@@ -116,6 +169,62 @@ interface CheckResult {
   checkConfigId: number;
   passed: boolean;
   notes: string;
+}
+
+function Dot({
+  label,
+  icon: Icon,
+  status,
+  onClick,
+  disabled,
+}: {
+  label: string;
+  icon: typeof PackageCheck;
+  status: DotStatus;
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
+  const isInteractive = !!onClick;
+  const base =
+    "inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border transition-colors select-none";
+  const styles =
+    status === "na"
+      ? "bg-muted/30 text-muted-foreground border-border/50 opacity-60"
+      : status === "done"
+      ? "bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-800"
+      : "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-300 dark:border-red-900/50";
+  if (isInteractive) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        className={cn(base, styles, disabled ? "cursor-not-allowed" : "hover:opacity-80")}
+      >
+        <span
+          className={cn(
+            "w-2 h-2 rounded-full",
+            status === "done" ? "bg-green-500" : status === "na" ? "bg-muted-foreground" : "bg-red-500"
+          )}
+        />
+        <Icon className="w-3.5 h-3.5" />
+        {label}
+      </button>
+    );
+  }
+  return (
+    <span className={cn(base, styles)}>
+      <span
+        className={cn(
+          "w-2 h-2 rounded-full",
+          status === "done" ? "bg-green-500" : status === "na" ? "bg-muted-foreground" : "bg-red-500"
+        )}
+      />
+      <Icon className="w-3.5 h-3.5" />
+      {label}
+      {status === "na" && <span className="opacity-70">(n/a)</span>}
+    </span>
+  );
 }
 
 function ReceivingDialog({
@@ -160,6 +269,7 @@ function ReceivingDialog({
             unit: l.unit,
             useByDate: existingUseBy || autoUseByDate,
             shelfLifeDays: l.shelfLifeDays,
+            requiresUseByDate: l.requiresUseByDate ?? false,
             defaultStorageLocation: l.defaultStorageLocation,
             useByIsAuto: existingUseBy === "" && useByIsAuto,
           };
@@ -168,8 +278,9 @@ function ReceivingDialog({
       setCheckResults(
         checks.map((c) => ({ checkConfigId: c.id, passed: false, notes: "" }))
       );
-      setChilledTemp("");
-      setFrozenTemp("");
+      const rec = order.deliveryRecord;
+      setChilledTemp(rec?.chilledTempC != null ? String(rec.chilledTempC) : "");
+      setFrozenTemp(rec?.frozenTempC != null ? String(rec.frozenTempC) : "");
       setNotes("");
     }
   }, [open, order, checks]);
@@ -183,16 +294,23 @@ function ReceivingDialog({
   const chilledTempMissing = hasChilled && chilledTemp.trim() === "";
   const frozenTempMissing = hasFrozen && frozenTemp.trim() === "";
 
+  const missingRequiredUseBy = lines.some(
+    (l) => l.requiresUseByDate && l.quantityReceived > 0 && !l.useByDate
+  );
+
   const requiredChecks = checks.filter((c) => c.isRequired);
   const allRequiredPassed = requiredChecks.every((rc) => {
     const result = checkResults.find((cr) => cr.checkConfigId === rc.id);
     return result?.passed;
   });
 
+  const isEditMode = order.status === "received" || order.status === "partially_received";
+
   const canReceive =
-    (allRequiredPassed || requiredChecks.length === 0) &&
+    (allRequiredPassed || requiredChecks.length === 0 || isEditMode) &&
     !chilledTempMissing &&
-    !frozenTempMissing;
+    !frozenTempMissing &&
+    !missingRequiredUseBy;
 
   const receiveMutation = useMutation({
     mutationFn: async () => {
@@ -263,15 +381,15 @@ function ReceivingDialog({
             <div className="space-y-3">
               {lines.map((line, idx) => {
                 const discrepancy = line.quantityReceived !== line.quantityOrdered;
-                const needsManualUseBy = !line.useByDate && line.shelfLifeDays == null;
+                const useByMissing = line.requiresUseByDate && line.quantityReceived > 0 && !line.useByDate;
                 const locationLabel = line.defaultStorageLocation ? LOCATION_LABELS[line.defaultStorageLocation] || line.defaultStorageLocation : null;
                 return (
                   <div
                     key={line.lineId}
                     className={cn(
                       "rounded-xl border p-3 space-y-2",
-                      needsManualUseBy
-                        ? "border-amber-300 bg-amber-50/50 dark:bg-amber-900/10 dark:border-amber-700"
+                      useByMissing
+                        ? "border-destructive bg-destructive/5"
                         : discrepancy
                         ? "border-amber-300 bg-amber-50/30 dark:bg-amber-900/5 dark:border-amber-700"
                         : "border-border"
@@ -285,9 +403,9 @@ function ReceivingDialog({
                             → {locationLabel}
                           </span>
                         )}
-                        {needsManualUseBy && (
-                          <span className="text-xs font-medium text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 px-2 py-0.5 rounded-full flex items-center gap-1">
-                            <AlertTriangle className="w-3 h-3" /> Check use-by
+                        {useByMissing && (
+                          <span className="text-xs font-medium text-destructive bg-destructive/10 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <AlertTriangle className="w-3 h-3" /> Use-by required
                           </span>
                         )}
                         {line.useByIsAuto && (
@@ -353,7 +471,10 @@ function ReceivingDialog({
                       <div>
                         <label className="text-base font-semibold text-muted-foreground block mb-1">
                           Use-by Date
-                          {needsManualUseBy && <span className="text-amber-500 ml-1">*</span>}
+                          {line.requiresUseByDate && <span className="text-destructive ml-1">*</span>}
+                          {!line.requiresUseByDate && (
+                            <span className="ml-1 text-xs font-normal text-muted-foreground">(optional)</span>
+                          )}
                         </label>
                         <input
                           type="date"
@@ -365,7 +486,7 @@ function ReceivingDialog({
                           }}
                           className={cn(
                             "w-full px-3 py-2 bg-background border rounded-lg text-xl font-bold focus:outline-none focus:ring-2 focus:ring-primary/30",
-                            needsManualUseBy ? "border-amber-400" : "border-border"
+                            useByMissing ? "border-destructive" : "border-border"
                           )}
                         />
                       </div>
@@ -512,8 +633,12 @@ function ReceivingDialog({
           >
             {receiveMutation.isPending ? (
               <><Loader2 className="w-4 h-4 animate-spin" /> Processing...</>
+            ) : missingRequiredUseBy ? (
+              <><AlertCircle className="w-4 h-4" /> Set use-by dates for required items</>
             ) : !canReceive ? (
               <><AlertCircle className="w-4 h-4" /> Complete all required checks first</>
+            ) : isEditMode ? (
+              <><Pencil className="w-4 h-4" /> Update quantities</>
             ) : (
               <><CheckCircle2 className="w-4 h-4" /> Mark as Received</>
             )}
@@ -548,6 +673,29 @@ export default function Deliveries() {
   const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null);
   const { data: orderDetail } = useDeliveryDetail(selectedOrderId);
   const [receivingOpen, setReceivingOpen] = useState(false);
+  const [showProcessed, setShowProcessed] = useState(false);
+
+  const checksMutation = useMutation({
+    mutationFn: async (payload: { orderId: number; invoiceFiled?: boolean; kanbansAndPutAway?: boolean }) => {
+      const res = await fetch(`${BASE}/api/deliveries/${payload.orderId}/checks`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          invoiceFiled: payload.invoiceFiled,
+          kanbansAndPutAway: payload.kanbansAndPutAway,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to update check");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ predicate: (q) => String(q.queryKey[0]).includes("/api/deliveries") });
+    },
+  });
 
   const [movingOrderId, setMovingOrderId] = useState<number | null>(null);
   const moveMutation = useMutation({
@@ -592,7 +740,13 @@ export default function Deliveries() {
     return map;
   }, [data, weekDays]);
 
-  const selectedDayOrders = ordersByDay[selectedDateStr] || [];
+  const selectedDayOrdersAll = ordersByDay[selectedDateStr] || [];
+  const selectedDayOrders = useMemo(() => {
+    if (showProcessed) return selectedDayOrdersAll;
+    return selectedDayOrdersAll.filter((o) => !computeProcessingDots(o).fullyProcessed);
+  }, [selectedDayOrdersAll, showProcessed]);
+  const hiddenProcessedCount =
+    selectedDayOrdersAll.length - selectedDayOrders.length;
 
   const prevWeek = () => {
     setCurrentDate((d) => addDays(d, -7));
@@ -690,15 +844,25 @@ export default function Deliveries() {
       </div>
 
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
           <h2 className="font-semibold text-lg">
             {isToday(selectedDate) ? "Today" : format(selectedDate, "EEEE, d MMMM")}
-            {selectedDayOrders.length > 0 && (
+            {selectedDayOrdersAll.length > 0 && (
               <span className="ml-2 text-sm font-normal text-muted-foreground">
-                {selectedDayOrders.length} delivery{selectedDayOrders.length !== 1 ? " orders" : " order"}
+                {selectedDayOrders.length} of {selectedDayOrdersAll.length} shown
               </span>
             )}
           </h2>
+          {selectedDayOrdersAll.length > 0 && (
+            <button
+              onClick={() => setShowProcessed((v) => !v)}
+              className="px-3 py-1.5 border border-border rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-secondary/50 transition-colors"
+              title={showProcessed ? "Hide fully processed orders" : "Show fully processed orders"}
+            >
+              {showProcessed ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              {showProcessed ? "Hide processed" : `Show processed${hiddenProcessedCount > 0 ? ` (${hiddenProcessedCount})` : ""}`}
+            </button>
+          )}
         </div>
 
         {isLoading ? (
@@ -718,8 +882,9 @@ export default function Deliveries() {
         ) : (
           <div className="space-y-3">
             {selectedDayOrders.map((order) => {
-              const isReceived = order.status === "received";
-              const cardIsClickable = canEdit && !isReceived;
+              const isReceived = order.status === "received" || order.status === "partially_received";
+              const dots = computeProcessingDots(order);
+              const cardIsClickable = canEdit;
               return (
                 <div
                   key={order.id}
@@ -734,7 +899,7 @@ export default function Deliveries() {
                   } : undefined}
                   className={cn(
                     "rounded-2xl border bg-card overflow-hidden transition-all",
-                    isReceived
+                    dots.fullyProcessed
                       ? "border-green-200 dark:border-green-800 opacity-75"
                       : "border-border hover:border-primary/50 hover:shadow-md",
                     cardIsClickable && "cursor-pointer"
@@ -743,9 +908,9 @@ export default function Deliveries() {
                   <div className="p-4 flex items-center gap-4">
                     <div className={cn(
                       "w-12 h-12 rounded-xl flex items-center justify-center shrink-0",
-                      isReceived ? "bg-green-100 dark:bg-green-900/30" : "bg-primary/10"
+                      dots.fullyProcessed ? "bg-green-100 dark:bg-green-900/30" : "bg-primary/10"
                     )}>
-                      {isReceived
+                      {dots.fullyProcessed
                         ? <PackageCheck className="w-6 h-6 text-green-600 dark:text-green-400" />
                         : <Truck className="w-6 h-6 text-primary" />
                       }
@@ -754,16 +919,23 @@ export default function Deliveries() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="font-bold text-2xl truncate">{order.supplierName}</h3>
-                        <StatusBadge status={order.status} />
+                        {dots.fullyProcessed ? (
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
+                            <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                            Fully processed
+                          </span>
+                        ) : (
+                          <StatusBadge status={order.status} />
+                        )}
                       </div>
                       <p className="text-sm text-muted-foreground mt-1">
                         PO #{order.id} &middot; {order.lines.length} {order.lines.length === 1 ? "item" : "items"}
                       </p>
                     </div>
 
-                    {canEdit && !isReceived && (
-                      <div className="shrink-0 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                        {movingOrderId === order.id ? (
+                    <div className="shrink-0 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                      {canEdit && !isReceived && (
+                        movingOrderId === order.id ? (
                           <div className="flex items-center gap-2">
                             <input
                               type="date"
@@ -791,7 +963,9 @@ export default function Deliveries() {
                           >
                             <ArrowRightLeft className="w-4 h-4" />
                           </button>
-                        )}
+                        )
+                      )}
+                      {canEdit && !isReceived && (
                         <button
                           onClick={(e) => { e.stopPropagation(); openReceiving(order.id); }}
                           className="px-5 py-3 rounded-xl bg-primary text-primary-foreground text-lg font-bold hover:bg-primary/90 transition-colors flex items-center gap-2"
@@ -799,14 +973,58 @@ export default function Deliveries() {
                           <PackageCheck className="w-5 h-5" />
                           Receive Goods
                         </button>
-                      </div>
-                    )}
-                    {isReceived && (
-                      <span className="shrink-0 flex items-center gap-1.5 text-sm text-green-600 dark:text-green-400 font-medium">
-                        <CheckCircle2 className="w-4 h-4" />
-                        Received
-                      </span>
-                    )}
+                      )}
+                      {canEdit && isReceived && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); openReceiving(order.id); }}
+                          className="px-3 py-2 rounded-xl border border-border text-sm font-medium hover:bg-secondary/50 transition-colors flex items-center gap-1.5"
+                          title="Edit received quantities"
+                        >
+                          <Pencil className="w-4 h-4" />
+                          Edit
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div
+                    className="border-t border-border/50 px-4 py-2.5 bg-secondary/10 flex items-center gap-2 flex-wrap"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Dot
+                      label="Received"
+                      icon={PackageCheck}
+                      status={dots.received}
+                    />
+                    <Dot
+                      label={order.hasFrozen && order.hasChilled ? "Temps" : order.hasFrozen ? "Frozen temp" : "Chilled temp"}
+                      icon={Thermometer}
+                      status={dots.temperature}
+                    />
+                    <Dot
+                      label="Invoice filed"
+                      icon={FileText}
+                      status={dots.invoice}
+                      disabled={!canEdit || dots.received !== "done" || checksMutation.isPending}
+                      onClick={() => {
+                        checksMutation.mutate({
+                          orderId: order.id,
+                          invoiceFiled: dots.invoice !== "done",
+                        });
+                      }}
+                    />
+                    <Dot
+                      label="Kanbans & put away"
+                      icon={Boxes}
+                      status={dots.kanbanPutAway}
+                      disabled={!canEdit || dots.received !== "done" || checksMutation.isPending}
+                      onClick={() => {
+                        checksMutation.mutate({
+                          orderId: order.id,
+                          kanbansAndPutAway: dots.kanbanPutAway !== "done",
+                        });
+                      }}
+                    />
                   </div>
 
                   {order.lines.length > 0 && (
