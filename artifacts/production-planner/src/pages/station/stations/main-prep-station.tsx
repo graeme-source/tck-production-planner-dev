@@ -2,7 +2,7 @@ import React from "react";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import {
-  ClipboardList, Loader2, CheckCircle2, Package, Plus, Minus, Check, Snowflake, Salad, Pencil, RotateCcw,
+  ClipboardList, Loader2, CheckCircle2, Package, Plus, Minus, Check, Salad, Pencil, RotateCcw,
 } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -367,30 +367,6 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
       refetch();
     });
     setSavingStock(s => ({ ...s, [ingredientId]: false }));
-  };
-
-  const [transferringId, setTransferringId] = useState<number | null>(null);
-  const [runTransfer, transferBusy] = useGuardedAction();
-
-  const transferToFreezer = async (ingredientId: number, ingredientName: string, qty: number, unit: string) => {
-    setTransferringId(ingredientId);
-    await runTransfer(async (signal) => {
-      await guardedFetch("/api/stock-transfers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ingredientId,
-          fromLocation: "prep_fridge",
-          toLocation: "production_freezer",
-          quantity: qty,
-          unit,
-          notes: `Remaining after prep: ${ingredientName}`,
-        }),
-        signal,
-      });
-      toast({ title: `Transferred ${qty} ${unit} of ${ingredientName} to Freezer` });
-    });
-    setTransferringId(null);
   };
 
   const totalTins = ingredients.reduce((s, ing) => s + ing.totalTinCount, 0);
@@ -978,20 +954,6 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                         </div>
                       )}
 
-                      {status.allTinsDone && status.stockSaved && (() => {
-                        const remaining = Number(stockValues[ing.ingredientId] || 0);
-                        if (remaining <= 0) return null;
-                        return (
-                          <button
-                            onClick={() => transferToFreezer(ing.ingredientId, ing.ingredientName, remaining, ing.unit)}
-                            disabled={transferringId === ing.ingredientId}
-                            className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-300 dark:border-indigo-700 text-indigo-800 dark:text-indigo-300 rounded-xl text-base font-semibold hover:bg-indigo-100 dark:hover:bg-indigo-950/50 transition-colors"
-                          >
-                            {transferringId === ing.ingredientId ? <Loader2 className="w-4 h-4 animate-spin" /> : <Snowflake className="w-4 h-4" />}
-                            Transfer {remaining} {ing.unit} to Freezer
-                          </button>
-                        );
-                      })()}
               </div>
               );
             })() : (
