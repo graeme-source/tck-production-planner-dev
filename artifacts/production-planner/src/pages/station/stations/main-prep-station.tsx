@@ -253,7 +253,12 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
       }
     }
     const allTinsDone = totalTinCount > 0 && completedTinCount >= totalTinCount;
-    const stockSaved = stockValues[ing.ingredientId] !== undefined && stockValues[ing.ingredientId] !== "";
+    // "Saved" means confirmed on the server, NOT just typed locally. If the
+    // user is mid-type (dirty set has the id), don't treat the in-progress
+    // value as saved — otherwise the forced modal closes the instant you
+    // type a digit, before Save is even tapped.
+    const hasValue = stockValues[ing.ingredientId] !== undefined && stockValues[ing.ingredientId] !== "";
+    const stockSaved = hasValue && !dirtyStockIds.current.has(ing.ingredientId);
     const activeStockCheck = stockCheckActiveToday(ing);
     const needsStockCheck = activeStockCheck && allTinsDone;
     const isFullyDone = allTinsDone && (!activeStockCheck || stockSaved);
