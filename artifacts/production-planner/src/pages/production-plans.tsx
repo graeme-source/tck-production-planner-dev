@@ -301,46 +301,28 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
           return <span className="text-muted-foreground/60">{delta > 0 ? `(+${delta})` : "(0)"}</span>;
         })()}
       </td>
-      {(() => {
-        // Rolling FN walk: each day's end-of-day FN = previous day's FN
-        // − that day's dispatch + that day's production. Production from
-        // *this* plan only lands on its own production day.
-        const production = (item.batchesTarget ?? 0) * (item.packsPerBatch ?? 0);
-        const productionAt = (idx: 0 | 1 | 2) => idx === productionDayIndex ? production : 0;
-        const afterD1 = item.fridgeStock - item.dispatch1Qty + productionAt(0);
-        const afterD2 = afterD1 - item.dispatch2Qty + productionAt(1);
-        const afterD3 = afterD2 - item.dispatch3Qty + productionAt(2);
-        const dispatchCell = (qty: number, special: number) => (
-          <td className="py-2 px-1 text-center tabular-nums text-[11px] text-muted-foreground">
-            <div>{qty ? `−${qty}` : "—"}</div>
-            {special > 0 && <div className="text-[9px] text-muted-foreground/70 leading-tight">incl. {special}</div>}
-          </td>
-        );
-        const fnCell = (val: number, idx: 0 | 1 | 2) => {
-          const isProductionDay = idx === productionDayIndex;
-          const negative = val < 0;
+      {/* Single-step projection that matches the operator's mental model:
+          tomorrow's dispatch goes out, tomorrow's production lands, the
+          fridge ends up here. No multi-day roll — too noisy when the
+          operator is just sense-checking against a manually-entered
+          starting Factory Number. */}
+      <td className="py-2 px-2 text-center tabular-nums text-xs text-red-500">
+        <div>{item.dispatch1Qty ? `−${item.dispatch1Qty}` : "—"}</div>
+        {item.special1Count > 0 && <div className="text-[9px] text-muted-foreground leading-tight">incl. {item.special1Count}</div>}
+      </td>
+      <td className="py-2 px-2 text-center tabular-nums text-xs text-green-600 dark:text-green-400">
+        {item.prevProduction ? `+${item.prevProduction}` : "—"}
+      </td>
+      <td className="py-2 px-2 text-center tabular-nums text-sm font-semibold">
+        {(() => {
+          const nextFN = item.fridgeStock - item.dispatch1Qty + item.prevProduction;
           return (
-            <td className={cn(
-              "py-2 px-1.5 text-center tabular-nums",
-              isProductionDay ? "text-sm font-semibold" : "text-xs text-muted-foreground",
-            )}>
-              <span className={negative ? "text-red-600 dark:text-red-400 font-semibold" : ""}>
-                {Math.round(val)}
-              </span>
-            </td>
+            <span className={nextFN < 0 ? "text-red-600 dark:text-red-400" : ""}>
+              {Math.round(nextFN)}
+            </span>
           );
-        };
-        return (
-          <>
-            {dispatchCell(item.dispatch1Qty, item.special1Count)}
-            {fnCell(afterD1, 0)}
-            {dispatchCell(item.dispatch2Qty, item.special2Count)}
-            {fnCell(afterD2, 1)}
-            {dispatchCell(item.dispatch3Qty, item.special3Count)}
-            {fnCell(afterD3, 2)}
-          </>
-        );
-      })()}
+        })()}
+      </td>
       <td className="py-2 px-2 text-center tabular-nums text-xs">
         {item.deficit > 0 ? <span className="text-red-600 dark:text-red-400 font-semibold">-{item.deficit}</span> : "0"}
       </td>
@@ -391,7 +373,6 @@ interface CalcRecipe {
   tinSize: string | null;
   maxBatchesPerTin: number | null;
   sopUrl: string | null;
-  isCoreMenu?: boolean;
   fridgeStock: number;
   // Predicted end-of-today fridge stock from /calculate (factory number
   // accounting loop). Core recipes get the full prediction; non-core
@@ -1397,37 +1378,31 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                             >
                               vs Next
                             </th>
-                            {/* Three pairs: dispatch out → end-of-day FN.
-                                Production day's FN gets emphasis (bigger,
-                                bolder); other two are muted secondaries. */}
-                            {[0, 1, 2].map((idx) => {
-                              const dispatchDate = dispatchDates[idx];
-                              const deliveryDate = deliveryDates[idx];
-                              const isProdDay = !!planDate && dispatchDate === planDate;
-                              return (
-                                <Fragment key={`dispatch-fn-${idx}`}>
-                                  <th
-                                    className="py-2 px-1 text-center font-normal text-muted-foreground/80 text-[11px] min-w-[55px]"
-                                    title={dispatchDate ? `Dispatched ${format(parseISO(dispatchDate), "EEE d MMM")} — delivered ${deliveryDate ? format(parseISO(deliveryDate), "EEE d MMM") : ""}` : `Dispatch ${idx + 1}`}
-                                  >
-                                    {dispatchDate ? `− ${format(parseISO(dispatchDate), "EEE")}` : "−"}
-                                  </th>
-                                  <th
-                                    className={cn(
-                                      "py-2 px-1.5 text-center min-w-[65px]",
-                                      isProdDay ? "font-semibold text-foreground text-xs" : "font-normal text-muted-foreground/80 text-[11px]",
-                                    )}
-                                    title={
-                                      dispatchDate
-                                        ? `End-of-day Factory Number after ${format(parseISO(dispatchDate), "EEE")}'s dispatch${isProdDay ? " + this plan's production" : ""}`
-                                        : "Rolling Factory Number"
-                                    }
-                                  >
-                                    = After {dispatchDate ? format(parseISO(dispatchDate), "EEE") : ""}
-                                  </th>
-                                </Fragment>
-                              );
-                            })}
+                            {/* Single-step projection: tomorrow's dispatch
+                                out, tomorrow's production in (= the previous
+                                production day's plan output landing in the
+                                fridge), giving end-of-tomorrow Factory
+                                Number. Matches the operator's daily
+                                mental model: today's FN − tomorrow dispatch
+                                + tomorrow production = next FN. */}
+                            <th
+                              className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]"
+                              title={dispatchDates[0] ? `Dispatched ${format(parseISO(dispatchDates[0]), "EEE d MMM")} — delivered ${deliveryDates[0] ? format(parseISO(deliveryDates[0]), "EEE d MMM") : ""}` : "Tomorrow's dispatch"}
+                            >
+                              {dispatchDates[0] ? `− ${format(parseISO(dispatchDates[0]), "EEE")} Dispatch` : "− Dispatch"}
+                            </th>
+                            <th
+                              className="py-2 px-2 text-center font-medium text-green-600 min-w-[70px]"
+                              title={calcData?.prevProductionDate ? `Production from the ${format(parseISO(calcData.prevProductionDate), "EEE d MMM")} plan landing in the fridge` : "Tomorrow's production"}
+                            >
+                              {calcData?.prevProductionDate ? `+ ${format(parseISO(calcData.prevProductionDate), "EEE")} Production` : "+ Production"}
+                            </th>
+                            <th
+                              className="py-2 px-2 text-center font-medium text-foreground min-w-[80px]"
+                              title="End-of-tomorrow Factory Number = today's FN − tomorrow's dispatch + tomorrow's production"
+                            >
+                              = Next Factory Number
+                            </th>
                             <th className="py-2 px-2 text-center font-medium text-muted-foreground whitespace-nowrap" title="Packs short — need to produce at least this many">Deficit</th>
                             <th className="py-2 px-2 text-center font-medium text-muted-foreground whitespace-nowrap" title="Batches you want to make">Batches</th>
                             <th className="w-7 py-2 px-1.5" />
@@ -1463,44 +1438,20 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                               if (delta > 0) return <span className="text-emerald-600 dark:text-emerald-400 font-medium">(+{delta})</span>;
                               return <span className="text-muted-foreground">(0)</span>;
                             })()}</td>
-                            {(() => {
-                              // Walk forward through dispatch days the same
-                              // way each row does, summed across recipes,
-                              // so the totals reconcile against per-row
-                              // arithmetic (e.g. ΣafterD2 = ΣafterD1 + Σproduction − Σd2).
-                              const totalFridge = items.reduce((s, i) => s + i.fridgeStock, 0);
-                              const totalD1 = items.reduce((s, i) => s + i.dispatch1Qty, 0);
-                              const totalD2 = items.reduce((s, i) => s + i.dispatch2Qty, 0);
-                              const totalD3 = items.reduce((s, i) => s + i.dispatch3Qty, 0);
-                              const totalProd = items.filter(i => i.included).reduce((s, i) => s + (i.batchesTarget * (i.packsPerBatch ?? 0)), 0);
-                              const dispatchTotals = [totalD1, totalD2, totalD3];
-                              let running = totalFridge;
-                              const cells: React.ReactNode[] = [];
-                              for (let idx = 0 as 0 | 1 | 2; idx <= 2; idx = (idx + 1) as 0 | 1 | 2) {
-                                cells.push(
-                                  <td key={`tot-d${idx}`} className="py-2 px-1 text-center tabular-nums text-[11px] text-muted-foreground">
-                                    {dispatchTotals[idx] ? `−${dispatchTotals[idx]}` : "—"}
-                                  </td>
-                                );
-                                running = running - dispatchTotals[idx] + (idx === productionDayIndex ? totalProd : 0);
-                                const isProd = idx === productionDayIndex;
-                                cells.push(
-                                  <td
-                                    key={`tot-after${idx}`}
-                                    className={cn(
-                                      "py-2 px-1.5 text-center tabular-nums",
-                                      isProd ? "text-xs font-semibold" : "text-[11px] text-muted-foreground",
-                                    )}
-                                  >
-                                    <span className={running < 0 ? "text-red-600 dark:text-red-400 font-semibold" : ""}>
-                                      {Math.round(running)}
-                                    </span>
-                                  </td>
-                                );
-                                if (idx === 2) break;
-                              }
-                              return <>{cells}</>;
-                            })()}
+                            <td className="py-2 px-2 text-center tabular-nums text-red-500">
+                              {items.reduce((s, i) => s + i.dispatch1Qty, 0) || "—"}
+                            </td>
+                            <td className="py-2 px-2 text-center tabular-nums text-green-600 dark:text-green-400">
+                              {items.reduce((s, i) => s + i.prevProduction, 0) || "—"}
+                            </td>
+                            <td className="py-2 px-2 text-center tabular-nums font-semibold">
+                              {(() => {
+                                const fr = items.reduce((s, i) => s + i.fridgeStock, 0);
+                                const d1 = items.reduce((s, i) => s + i.dispatch1Qty, 0);
+                                const pp = items.reduce((s, i) => s + i.prevProduction, 0);
+                                return Math.round(fr - d1 + pp);
+                              })()}
+                            </td>
                             <td className="py-2 px-2 text-center tabular-nums">{items.reduce((s, i) => s + i.deficit, 0) || "—"}</td>
                             <td className="py-2 px-2 text-center tabular-nums font-semibold">{items.filter(i => i.included).reduce((s, i) => s + i.batchesTarget, 0)}</td>
                             <td className="py-2 px-1.5" />
@@ -2181,11 +2132,10 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
                         </th>
                         <th className="py-2 px-2 text-left font-medium text-muted-foreground">Recipe</th>
                         <th className="py-2 px-2 text-center font-medium text-muted-foreground min-w-[70px]">Factory Number</th>
+                        <th className="py-2 px-1 text-center font-medium text-muted-foreground min-w-[60px]">vs Next</th>
                         <th className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]">&minus; Dispatch</th>
                         <th className="py-2 px-2 text-center font-medium text-green-600 min-w-[70px]">+ Production</th>
-                        <th className="py-2 px-2 text-center font-medium text-muted-foreground min-w-[80px]">= Next Factory Number</th>
-                        <th className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]">&minus; Dispatch</th>
-                        <th className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]">&minus; Dispatch</th>
+                        <th className="py-2 px-2 text-center font-medium text-foreground min-w-[80px]">= Next Factory Number</th>
                         <th className="py-2 px-2 text-center font-medium text-muted-foreground whitespace-nowrap">Deficit</th>
                         <th className="py-2 px-2 text-center font-medium text-muted-foreground whitespace-nowrap">Batches</th>
                         <th className="w-7 py-2 px-1.5" />
