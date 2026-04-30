@@ -111,7 +111,7 @@ export function useMainPrepData(planId: number, station: string = "main_prep") {
 export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const { state: authState } = useAuth();
   const currentUserId = authState.status === "authenticated" ? authState.user.id : null;
-  const { data: nextPlanData, isLoading: isNextPlanLoading } = useNextActivePlan(plan.planDate);
+  const { data: nextPlanData, isLoading: isNextPlanLoading } = useNextActivePlan(plan.planDate, "prep");
   const nextPlan = nextPlanData as NextActivePlan | null;
   const noFuturePlan = !isNextPlanLoading && nextPlan != null && nextPlan.planId == null;
   const isDraft = nextPlan?.status === "draft";

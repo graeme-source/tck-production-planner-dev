@@ -165,11 +165,18 @@ export interface NextActivePlan {
   planDate: string | null;
   planName: string | null;
   prepDate: string | null;
+  doughDate: string | null;
   status: string | null;
   sameDayPlans?: Array<{ planId: number; planName: string }>;
 }
 
-export function useNextActivePlan(afterDate?: string) {
+// `forKind` selects which date column /next-active walks. Prep stations
+// pass "prep" so a plan whose prep_date is overridden surfaces on the
+// scheduled prep day, not the previous business day. Dough stations pass
+// "dough". Defaults to "plan" so any caller that doesn't opt in keeps
+// the legacy plan_date behaviour — important so a missed migration on a
+// new caller doesn't silently shift the prep team to the wrong plan.
+export function useNextActivePlan(afterDate?: string, forKind: "plan" | "prep" | "dough" = "plan") {
   const [data, setData] = useState<NextActivePlan | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const initialLoadDone = useRef(false);
@@ -180,12 +187,15 @@ export function useNextActivePlan(afterDate?: string) {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     if (!initialLoadDone.current) setIsLoading(true);
-    const qs = afterDate ? `?afterDate=${afterDate}` : "";
+    const params = new URLSearchParams();
+    if (afterDate) params.set("afterDate", afterDate);
+    if (forKind !== "plan") params.set("for", forKind);
+    const qs = params.toString() ? `?${params.toString()}` : "";
     fetch(`/api/production-plans/next-active${qs}`, { credentials: "include", signal: ctrl.signal })
       .then(r => r.json())
       .then((json: NextActivePlan) => { setData(json); initialLoadDone.current = true; setIsLoading(false); })
       .catch((e) => { if (e.name !== "AbortError") { initialLoadDone.current = true; setIsLoading(false); } });
-  }, [afterDate]);
+  }, [afterDate, forKind]);
 
   useEffect(() => {
     initialLoadDone.current = false;

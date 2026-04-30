@@ -729,6 +729,7 @@ async function runStartupMigrations() {
     await db.execute(sql`ALTER TABLE andon_issues ADD COLUMN IF NOT EXISTS report_context TEXT`);
 
     await db.execute(sql`ALTER TABLE production_plans ADD COLUMN IF NOT EXISTS prep_date DATE`);
+    await db.execute(sql`ALTER TABLE production_plans ADD COLUMN IF NOT EXISTS dough_date DATE`);
 
     // Multi-variant recipe mapping: remove unique-per-recipe constraint,
     // add unique-per-variant instead (many variants can map to one recipe)

@@ -8,7 +8,15 @@ import { ingredientsTable } from "./ingredients";
 export const productionPlansTable = pgTable("production_plans", {
   id: serial("id").primaryKey(),
   planDate: date("plan_date").notNull(),
+  // The day general prep is scheduled for. Defaults to the previous
+  // business day at insert time; can be overridden in the create-plan
+  // dialog so prep slips to e.g. a Saturday for a Monday production.
   prepDate: date("prep_date"),
+  // The day dough prep is scheduled for. Same defaulting rule as
+  // prepDate. Kept separate from prepDate because dough is sometimes
+  // done a different day to general prep (e.g. dough on Saturday,
+  // other prep on Friday for a Monday production).
+  doughDate: date("dough_date"),
   name: text("name").notNull(),
   notes: text("notes"),
   status: text("status").notNull().default("draft"),

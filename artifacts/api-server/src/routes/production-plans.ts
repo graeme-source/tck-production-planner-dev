@@ -149,6 +149,18 @@ function mapPlan(p: typeof productionPlansTable.$inferSelect) {
   };
 }
 
+// Walk back from `fromDate` until we hit a Mon–Fri. Used as the default
+// prep_date and dough_date when a plan is created without overrides — e.g.
+// a Monday production rolls back to the previous Friday. The Create Plan
+// dialog can override either field for cases like "do dough on Saturday".
+export function getPreviousBusinessDay(fromDate: string): string {
+  const d = new Date(`${fromDate}T12:00:00Z`);
+  do {
+    d.setUTCDate(d.getUTCDate() - 1);
+  } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
+  return d.toISOString().slice(0, 10);
+}
+
 function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?: string | null; portionsPerBatch?: number | null; packSize?: number | null; fillWeightGrams?: string | null; baseType?: string | null; baseWeightGrams?: string | null; wrappingComplete?: boolean | null; recipeColor?: string | null; targetBuildSeconds?: number | null; recipeCategory?: string | null }, stationCompletions?: Record<string, number>) {
   return {
     ...i,
@@ -182,6 +194,7 @@ function getPreviousStations(stationType: string): string[] {
 const CreatePlanBody = z.object({
   planDate: z.string(),
   prepDate: z.string().nullish(),
+  doughDate: z.string().nullish(),
   name: z.string(),
   notes: z.string().nullish(),
   status: z.enum(["draft", "active", "prep", "building", "complete"]).optional(),
@@ -203,6 +216,7 @@ type PlanStatus = typeof PLAN_STATUSES[number];
 const UpdatePlanBody = z.object({
   planDate: z.string().optional(),
   prepDate: z.string().nullish(),
+  doughDate: z.string().nullish(),
   name: z.string().optional(),
   notes: z.string().nullish(),
   status: z.enum(PLAN_STATUSES).optional(),
@@ -290,7 +304,7 @@ router.get("/", async (req, res) => {
 });
 
 router.post("/", validate(CreatePlanBody), async (req, res) => {
-  const { planDate, prepDate, name, notes, status, items } = req.body;
+  const { planDate, prepDate, doughDate, name, notes, status, items } = req.body;
   // Enforce Mon–Fri only — parse at noon UTC to avoid timezone edge cases
   const dateObj = new Date(`${planDate}T12:00:00Z`);
   const dayOfWeek = dateObj.getUTCDay(); // 0=Sun, 6=Sat
@@ -312,9 +326,18 @@ router.post("/", validate(CreatePlanBody), async (req, res) => {
   }
   const batchNumber = julianBatchNumber(dateObj);
 
+  // Default both prep_date and dough_date to the previous business day if
+  // the caller didn't override them. Stored at insert time so every reader
+  // (prep stations, dashboard, reports) can trust the column without
+  // duplicating the fallback logic — and operators see the resolved date
+  // immediately on the plan card without any client-side recomputation.
+  const resolvedPrepDate = prepDate ?? getPreviousBusinessDay(planDate);
+  const resolvedDoughDate = doughDate ?? getPreviousBusinessDay(planDate);
+
   const [plan] = await db.insert(productionPlansTable).values({
     planDate,
-    prepDate: prepDate ?? null,
+    prepDate: resolvedPrepDate,
+    doughDate: resolvedDoughDate,
     name,
     notes: notes ?? null,
     status: status ?? "draft",
@@ -1416,10 +1439,19 @@ router.delete("/:id/mac-cheese-items", async (req, res) => {
   res.json({ removed: toDelete.length });
 });
 
-// GET /production-plans/next-active?afterDate=YYYY-MM-DD
+// GET /production-plans/next-active?afterDate=YYYY-MM-DD&for=plan|prep|dough
 // Returns the next active production plan after a given date.
-// If afterDate is provided, searches for the first active plan with plan_date > afterDate.
-// If omitted, defaults to searching from tomorrow onwards (legacy behaviour).
+//
+// `for` selects which column to walk:
+//   - "plan"  (default, legacy behaviour) — ranks by plan_date
+//   - "prep"  — ranks by prep_date so prep stations always land on the
+//              plan whose prep_date is closest in the future. Means a
+//              Monday plan with prep_date=Saturday only surfaces on
+//              Saturday's prep view, not Friday's.
+//   - "dough" — same idea for dough_date.
+// Defensive default: if a row has a NULL prep_date or dough_date, it falls
+// back to plan_date so legacy rows still appear somewhere instead of
+// vanishing from the prep/dough timeline.
 router.get("/next-active", async (req, res) => {
   let afterDateStr: string;
   if (req.query.afterDate && typeof req.query.afterDate === "string") {
@@ -1434,29 +1466,53 @@ router.get("/next-active", async (req, res) => {
     afterDateStr = today.toISOString().slice(0, 10);
   }
 
+  const forParam = (req.query.for === "prep" || req.query.for === "dough") ? req.query.for : "plan";
+  // Build the comparison expression: COALESCE(<override>, plan_date).
+  // We cast to text inside drizzle's sql since both columns are DATE — the
+  // string comparison works the same as date comparison for ISO YYYY-MM-DD.
+  const sortExpr = forParam === "prep"
+    ? sql`COALESCE(${productionPlansTable.prepDate}, ${productionPlansTable.planDate})`
+    : forParam === "dough"
+      ? sql`COALESCE(${productionPlansTable.doughDate}, ${productionPlansTable.planDate})`
+      : sql`${productionPlansTable.planDate}`;
+
   const plans = await db
-    .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate, prepDate: productionPlansTable.prepDate, name: productionPlansTable.name, status: productionPlansTable.status })
+    .select({
+      id: productionPlansTable.id,
+      planDate: productionPlansTable.planDate,
+      prepDate: productionPlansTable.prepDate,
+      doughDate: productionPlansTable.doughDate,
+      name: productionPlansTable.name,
+      status: productionPlansTable.status,
+    })
     .from(productionPlansTable)
     .where(and(
-      gt(productionPlansTable.planDate, afterDateStr),
+      sql`${sortExpr} > ${afterDateStr}`,
       inArray(productionPlansTable.status, ["draft", "active"])
     ))
-    .orderBy(asc(productionPlansTable.planDate), asc(productionPlansTable.id));
+    .orderBy(sql`${sortExpr} ASC`, asc(productionPlansTable.id));
 
   if (plans.length === 0) {
-    res.json({ planId: null, planDate: null, planName: null, prepDate: null, sameDayPlans: [] });
+    res.json({ planId: null, planDate: null, planName: null, prepDate: null, doughDate: null, sameDayPlans: [] });
     return;
   }
 
-  // Return first plan, plus list of all plans on the same date
-  const firstDate = plans[0].planDate;
-  const sameDayPlans = plans.filter(p => p.planDate === firstDate).map(p => ({ planId: p.id, planName: p.name }));
+  // Group by the column we walked — same prep_date / dough_date / plan_date
+  // depending on `for`. Otherwise two plans whose plan_dates are the same
+  // but whose prep_dates differ would get bundled together incorrectly.
+  const keyOf = (p: { planDate: string; prepDate: string | null; doughDate: string | null }): string =>
+    forParam === "prep" ? (p.prepDate ?? p.planDate)
+      : forParam === "dough" ? (p.doughDate ?? p.planDate)
+      : p.planDate;
+  const firstKey = keyOf(plans[0]);
+  const sameDayPlans = plans.filter(p => keyOf(p) === firstKey).map(p => ({ planId: p.id, planName: p.name }));
 
   res.json({
     planId: plans[0].id,
     planDate: plans[0].planDate,
     planName: plans[0].name,
     prepDate: plans[0].prepDate ?? null,
+    doughDate: plans[0].doughDate ?? null,
     status: plans[0].status,
     sameDayPlans: sameDayPlans.length > 1 ? sameDayPlans : [],
   });
@@ -1634,7 +1690,7 @@ const LOCKED_STATUSES: PlanStatus[] = ["active", "prep", "building", "complete"]
 
 router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { planDate, prepDate, name, notes, status, items } = req.body;
+  const { planDate, prepDate, doughDate, name, notes, status, items } = req.body;
 
   const [existing] = await db.select().from(productionPlansTable).where(eq(productionPlansTable.id, id));
   if (!existing) { res.status(404).json({ error: "Not found" }); return; }
@@ -1668,6 +1724,7 @@ router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
   const setPlan: Partial<typeof productionPlansTable.$inferInsert> = {};
   if (planDate !== undefined) setPlan.planDate = planDate;
   if (prepDate !== undefined) setPlan.prepDate = prepDate ?? null;
+  if (doughDate !== undefined) setPlan.doughDate = doughDate ?? null;
   if (name !== undefined) setPlan.name = name;
   if (notes !== undefined) setPlan.notes = notes ?? null;
   if (status !== undefined) setPlan.status = status;
@@ -4669,7 +4726,7 @@ router.get("/:id/dough-prep", async (req, res) => {
   // Optional afterDate=YYYY-MM-DD to override which date to search from
   const useCurrentPlan = req.query.mode === "current";
 
-  let nextPlan: { id: number; planDate: string; name: string; status: string } | null = null;
+  let nextPlan: { id: number; planDate: string; doughDate?: string | null; name: string; status: string } | null = null;
   let targetPlanId = planId;
 
   if (!useCurrentPlan) {
@@ -4681,11 +4738,15 @@ router.get("/:id/dough-prep", async (req, res) => {
       afterDate = currentPlan.length > 0 ? currentPlan[0].planDate : new Date().toISOString().slice(0, 10);
     }
 
+    // Walk by COALESCE(dough_date, plan_date) so a plan whose dough is
+    // explicitly scheduled on a different day surfaces on the dough station
+    // for that day — and legacy rows with NULL dough_date still appear.
+    const doughSortExpr = sql`COALESCE(${productionPlansTable.doughDate}, ${productionPlansTable.planDate})`;
     const nextPlans = await db
-      .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate, name: productionPlansTable.name, status: productionPlansTable.status })
+      .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate, doughDate: productionPlansTable.doughDate, name: productionPlansTable.name, status: productionPlansTable.status })
       .from(productionPlansTable)
-      .where(and(gt(productionPlansTable.planDate, afterDate), inArray(productionPlansTable.status, ["draft", "active"])))
-      .orderBy(asc(productionPlansTable.planDate))
+      .where(and(sql`${doughSortExpr} > ${afterDate}`, inArray(productionPlansTable.status, ["draft", "active"])))
+      .orderBy(sql`${doughSortExpr} ASC`)
       .limit(1);
     if (nextPlans.length > 0) nextPlan = nextPlans[0];
 

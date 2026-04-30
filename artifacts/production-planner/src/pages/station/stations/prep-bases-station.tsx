@@ -613,7 +613,7 @@ function usePlanSubRecipeRequirements(planId: number) {
 export function PrepBasesStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const [selectedItem, setSelectedItem] = useState<"tomato_base" | number>("tomato_base");
   const [completedSubRecipeIds, setCompletedSubRecipeIds] = useState<Set<number>>(new Set());
-  const { data: nextPlanData, isLoading: isNextPlanLoading } = useNextActivePlan(plan.planDate);
+  const { data: nextPlanData, isLoading: isNextPlanLoading } = useNextActivePlan(plan.planDate, "prep");
   const nextPlan = nextPlanData as NextActivePlan | null;
   const noFuturePlan = !isNextPlanLoading && nextPlan != null && nextPlan.planId == null;
   const isDraft = nextPlan?.status === "draft";

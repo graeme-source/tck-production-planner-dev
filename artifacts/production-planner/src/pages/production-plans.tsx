@@ -397,6 +397,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   const defaultDate = initialDate ?? (isAdmin ? new Date() : minPlanDate);
   const [planDate, setPlanDate] = useState(toLocalDateStr(defaultDate));
   const [prepDate, setPrepDate] = useState("");
+  const [doughDate, setDoughDate] = useState("");
   const [planName, setPlanName] = useState("");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<PlanItem[]>([]);
@@ -466,11 +467,13 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   const planNameRef = useRef(planName);
   const notesRef = useRef(notes);
   const prepDateRef = useRef(prepDate);
+  const doughDateRef = useRef(doughDate);
   useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => { planDateRef.current = planDate; }, [planDate]);
   useEffect(() => { planNameRef.current = planName; }, [planName]);
   useEffect(() => { notesRef.current = notes; }, [notes]);
   useEffect(() => { prepDateRef.current = prepDate; }, [prepDate]);
+  useEffect(() => { doughDateRef.current = doughDate; }, [doughDate]);
 
   // Reset dirty state when dialog closes
   useEffect(() => {
@@ -495,6 +498,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       const payload = {
         planDate: planDateRef.current,
         prepDate: prepDateRef.current || null,
+        doughDate: doughDateRef.current || null,
         name: planNameRef.current || `Plan ${planDateRef.current}`,
         notes: notesRef.current || undefined,
         status: "draft" as const,
@@ -918,6 +922,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       const data = {
         planDate,
         prepDate: prepDate || null,
+        doughDate: doughDate || null,
         name: planName || `Plan ${planDate}`,
         notes: notes || undefined,
         status: targetStatus,
@@ -1012,7 +1017,22 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                   className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
                 />
                 {!prepDate && (
-                  <p className="text-xs text-muted-foreground mt-1">Defaults to previous production day</p>
+                  <p className="text-xs text-muted-foreground mt-1">Defaults to previous business day</p>
+                )}
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block text-muted-foreground">
+                  Dough Date <span className="font-normal text-muted-foreground/60">(optional)</span>
+                </label>
+                <input
+                  type="date"
+                  value={doughDate}
+                  max={planDate}
+                  onChange={e => { isDirty.current = true; setDoughDate(e.target.value); }}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
+                />
+                {!doughDate && (
+                  <p className="text-xs text-muted-foreground mt-1">Defaults to previous business day</p>
                 )}
               </div>
               <div>
@@ -1370,6 +1390,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const editIsAdmin = editUserRole === "admin";
   const [planDate, setPlanDate] = useState(plan.planDate);
   const [prepDate, setPrepDate] = useState((plan as any).prepDate ?? "");
+  const [doughDate, setDoughDate] = useState((plan as any).doughDate ?? "");
   const [planName, setPlanName] = useState(plan.name);
   const [notes, setNotes] = useState(plan.notes ?? "");
   const [dateWarning, setDateWarning] = useState<string | null>(null);
@@ -1575,11 +1596,13 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const planNameRef = useRef(planName);
   const notesRef = useRef(notes);
   const prepDateRef = useRef(prepDate);
+  const doughDateRef = useRef(doughDate);
   useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => { planDateRef.current = planDate; }, [planDate]);
   useEffect(() => { planNameRef.current = planName; }, [planName]);
   useEffect(() => { notesRef.current = notes; }, [notes]);
   useEffect(() => { prepDateRef.current = prepDate; }, [prepDate]);
+  useEffect(() => { doughDateRef.current = doughDate; }, [doughDate]);
 
   // Reset dirty state when dialog closes
   useEffect(() => {
@@ -1775,6 +1798,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
         data: {
           planDate,
           prepDate: prepDate || null,
+          doughDate: doughDate || null,
           name: planName,
           notes: notes || undefined,
           status: targetStatus,
@@ -1838,7 +1862,22 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
                 className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
               />
               {!prepDate && (
-                <p className="text-xs text-muted-foreground mt-1">Defaults to previous production day</p>
+                <p className="text-xs text-muted-foreground mt-1">Defaults to previous business day</p>
+              )}
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block text-muted-foreground">
+                Dough Date <span className="font-normal text-muted-foreground/60">(optional override)</span>
+              </label>
+              <input
+                type="date"
+                value={doughDate}
+                max={planDate}
+                onChange={e => { isDirty.current = true; setDoughDate(e.target.value); }}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
+              />
+              {!doughDate && (
+                <p className="text-xs text-muted-foreground mt-1">Defaults to previous business day</p>
               )}
             </div>
             <div>
@@ -3015,14 +3054,17 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const { data: stationActivity } = useGetStationActivity(planId, {
     query: { queryKey: getGetStationActivityQueryKey(planId), refetchInterval: 10000 },
   });
-  // Prep & dough stations work on TOMORROW's plan. Fetch the next active plan
-  // so progress bars show the correct day's data.
-  const { data: nextPlanData } = useQuery<{ planId: number | null; planDate: string | null; status: string | null }>({
+  // Prep & dough stations work on the next plan whose prep_date / dough_date
+  // is upcoming, not necessarily tomorrow's production. Walk by prep_date here
+  // so this dashboard widget stays in sync with the prep stations themselves
+  // (e.g. a Monday plan with prep_date=Saturday is "the next prep" on Friday
+  // → Saturday only, not from earlier in the week).
+  const { data: nextPlanData } = useQuery<{ planId: number | null; planDate: string | null; prepDate: string | null; doughDate: string | null; status: string | null }>({
     queryKey: ["next-active-plan", plan?.planDate],
     queryFn: async () => {
-      if (!plan?.planDate) return { planId: null, planDate: null, status: null };
-      const res = await fetch(`/api/production-plans/next-active?afterDate=${plan.planDate}`, { credentials: "include" });
-      if (!res.ok) return { planId: null, planDate: null, status: null };
+      if (!plan?.planDate) return { planId: null, planDate: null, prepDate: null, doughDate: null, status: null };
+      const res = await fetch(`/api/production-plans/next-active?afterDate=${plan.planDate}&for=prep`, { credentials: "include" });
+      if (!res.ok) return { planId: null, planDate: null, prepDate: null, doughDate: null, status: null };
       return res.json();
     },
     refetchInterval: 30000,

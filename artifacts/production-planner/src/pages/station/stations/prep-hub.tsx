@@ -266,7 +266,7 @@ export interface PrepRecipeDetail {
 // Hook: fetch per-recipe prep requirements for the next active plan
 // ──────────────────────────────────────────────────────────────────────────────
 export function usePrepByRecipe(station: string, currentPlanId: number, afterDate?: string) {
-  const { data: nextPlan, isLoading: isPlanLoading } = useNextActivePlan(afterDate) as { data: NextActivePlan | null; isLoading: boolean };
+  const { data: nextPlan, isLoading: isPlanLoading } = useNextActivePlan(afterDate, "prep") as { data: NextActivePlan | null; isLoading: boolean };
   // When the next-plan lookup has resolved but found nothing, signal "no future plan"
   // instead of falling back to the current plan (which would show today's data).
   const noFuturePlan = !isPlanLoading && nextPlan != null && nextPlan.planId == null;
@@ -346,7 +346,7 @@ function PrepModeToggle({
 
 export function PrepHub({ planId, planDate }: { planId: number; planDate?: string }) {
   const [, navigate] = useLocation();
-  const { data: nextPlan, isLoading } = useNextActivePlan(planDate) as { data: NextActivePlan | null; isLoading: boolean };
+  const { data: nextPlan, isLoading } = useNextActivePlan(planDate, "prep") as { data: NextActivePlan | null; isLoading: boolean };
   const [showReplenish, setShowReplenish] = useState(false);
   const { data: allSubRecipesData } = useListSubRecipes();
   const allSubRecipes = (allSubRecipesData ?? []) as SubRecipe[];
