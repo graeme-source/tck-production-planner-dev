@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { getGetProductionPlanQueryKey, getListProductionPlansQueryKey } from "@workspace/api-client-react";
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -65,6 +65,45 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
   const [extraOverrides, setExtraOverrides] = useState<Record<number, number>>({});
   const [stockOverrides, setStockOverrides] = useState<Record<number, number>>({});
   const [zeroedDays, setZeroedDays] = useState<{ d1: boolean; d2: boolean; d3: boolean }>({ d1: false, d2: false, d3: false });
+  // Debounced writers for stock-entry overrides — mirrors the calzone
+  // calculator's behaviour so editing the leftover-stock cell here updates
+  // the same single source of truth (production_fridge stock_entries) and
+  // tomorrow's plan picks up the corrected number.
+  const stockSaveTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
+
+  // Persist a leftover-stock override back to the master stock_entries
+  // table the same way the calzone planner does, so the next plan's
+  // calculator pulls the corrected fridge count instead of yesterday's
+  // stale figure. Debounced so rapid keystrokes don't spam the API.
+  const persistStockOverride = useCallback((recipeId: number, newStock: number) => {
+    if (stockSaveTimers.current[recipeId]) clearTimeout(stockSaveTimers.current[recipeId]);
+    stockSaveTimers.current[recipeId] = setTimeout(async () => {
+      try {
+        await fetch(`/api/stock-entries`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            recipeId,
+            ingredientId: null,
+            itemType: "recipe",
+            quantity: newStock,
+            unit: "packs",
+            location: "production_fridge",
+            notes: "Mac cheese calculator override",
+          }),
+        });
+      } catch (e) {
+        console.error("Failed to save mac cheese stock override", e);
+      }
+    }, 800);
+  }, []);
+
+  useEffect(() => () => {
+    // Flush any pending timers on unmount so an edit-then-close doesn't
+    // silently drop the operator's typed value.
+    Object.values(stockSaveTimers.current).forEach(t => clearTimeout(t));
+  }, []);
 
   useEffect(() => {
     setLoading(true);
@@ -221,7 +260,11 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
                     <NumberInput
                       min={0}
                       value={stockOverrides[r.recipeId] ?? r.leftOverStock}
-                      onChange={n => setStockOverrides(prev => ({ ...prev, [r.recipeId]: Math.max(0, n) }))}
+                      onChange={n => {
+                        const v = Math.max(0, n);
+                        setStockOverrides(prev => ({ ...prev, [r.recipeId]: v }));
+                        persistStockOverride(r.recipeId, v);
+                      }}
                       className="w-16 px-2 py-1 text-right bg-background border border-border rounded text-sm tabular-nums"
                     />
                   </td>
