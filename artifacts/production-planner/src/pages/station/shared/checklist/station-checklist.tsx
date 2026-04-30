@@ -395,8 +395,9 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
       {/* Two-panel layout */}
       {!adminMode && (
         <div className="flex flex-col lg:flex-row gap-4">
-          {/* LEFT — Categorized list */}
-          <div className="lg:w-80 xl:w-96 flex-shrink-0">
+          {/* LEFT — Categorized list. Equal width with the detail panel so
+              the list isn't squashed and the bigger row font reads clearly. */}
+          <div className="lg:flex-1 lg:basis-1/2 min-w-0">
             <div className="bg-card border border-border rounded-xl overflow-hidden">
               <div className="max-h-[calc(100vh-320px)] overflow-y-auto">
                 {CATEGORY_ORDER.map((cat, ci) => {
@@ -412,7 +413,7 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                       <div className={cn("px-4 py-2 flex items-center justify-between", meta.bg)}>
                         <div className="flex items-center gap-2">
                           <Icon className={cn("w-4 h-4", meta.color)} />
-                          <p className={cn("text-sm font-bold uppercase tracking-wider", meta.color)}>
+                          <p className={cn("text-base font-bold uppercase tracking-wider", meta.color)}>
                             {meta.label}
                           </p>
                         </div>
@@ -427,7 +428,7 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                               {catDone} done
                             </button>
                           )}
-                          <span className={cn("text-sm font-medium", meta.color)}>
+                          <span className={cn("text-base font-medium", meta.color)}>
                             {catDone}/{items.length}
                           </span>
                         </div>
@@ -464,7 +465,7 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                             </div>
                             <div className="min-w-0 flex-1">
                               <p className={cn(
-                                "text-sm font-medium truncate",
+                                "text-base font-medium truncate",
                                 isSelected && "font-semibold",
                                 item.completed && !item.skippedReason && "line-through text-muted-foreground",
                                 item.completed && item.skippedReason && "text-amber-600 dark:text-amber-400",

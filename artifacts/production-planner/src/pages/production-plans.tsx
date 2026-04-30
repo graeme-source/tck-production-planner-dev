@@ -23,7 +23,7 @@ import {
   Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef, UtensilsCrossed,
   ArrowRight, GripVertical, AlertTriangle, AlertCircle, BookmarkCheck, ShoppingCart,
   FlaskConical, Printer, X, ChevronDown, ChevronUp, PoundSterling, ShieldCheck, RotateCcw,
-  Menu, MoreHorizontal,
+  Menu, MoreHorizontal, Lock, Unlock,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -254,6 +254,15 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
               placeholder="0"
             />
           );
+        })()}
+      </td>
+      <td className="py-2 px-1 text-center tabular-nums text-xs">
+        {(() => {
+          const delta = item.fridgeStock - item.dispatch1Qty;
+          if (item.dispatch1Qty === 0) return <span className="text-muted-foreground">—</span>;
+          if (delta < 0) return <span className="text-red-600 dark:text-red-400 font-medium">({delta})</span>;
+          if (delta > 0) return <span className="text-emerald-600 dark:text-emerald-400 font-medium">(+{delta})</span>;
+          return <span className="text-muted-foreground">(0)</span>;
         })()}
       </td>
       <td className="py-2 px-2 text-center tabular-nums text-xs text-red-500">
@@ -1113,6 +1122,12 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                                 )}
                               </div>
                             </th>
+                            <th
+                              className="py-2 px-1 text-center font-medium text-muted-foreground min-w-[60px]"
+                              title="Factory Number minus the next dispatch — negative means short on the pack"
+                            >
+                              vs Next
+                            </th>
                             <th className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]" title={dispatchDates[0] ? `Dispatched ${format(parseISO(dispatchDates[0]), "EEE d MMM")} — delivered ${deliveryDates[0] ? format(parseISO(deliveryDates[0]), "EEE d MMM") : ""}` : "Next dispatch"}>
                               {dispatchDates[0] ? `\u2212 ${format(parseISO(dispatchDates[0]), "EEE")} Dispatch` : "\u2212 Dispatch"}
                             </th>
@@ -1148,6 +1163,15 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                           <tr className="bg-secondary/20 border-t border-border font-medium text-xs">
                             <td colSpan={3} className="py-2 px-2 text-right text-muted-foreground">Totals</td>
                             <td className="py-2 px-2 text-center tabular-nums">{items.reduce((s, i) => s + i.fridgeStock, 0)}</td>
+                            <td className="py-2 px-1 text-center tabular-nums">{(() => {
+                              const totalFridge = items.reduce((s, i) => s + i.fridgeStock, 0);
+                              const totalD1 = items.reduce((s, i) => s + i.dispatch1Qty, 0);
+                              const delta = totalFridge - totalD1;
+                              if (totalD1 === 0) return <span className="text-muted-foreground">—</span>;
+                              if (delta < 0) return <span className="text-red-600 dark:text-red-400 font-medium">({delta})</span>;
+                              if (delta > 0) return <span className="text-emerald-600 dark:text-emerald-400 font-medium">(+{delta})</span>;
+                              return <span className="text-muted-foreground">(0)</span>;
+                            })()}</td>
                             <td className="py-2 px-2 text-center tabular-nums text-red-500">{items.reduce((s, i) => s + i.dispatch1Qty, 0) || "—"}</td>
                             <td className="py-2 px-2 text-center tabular-nums text-green-600 dark:text-green-400">{items.reduce((s, i) => s + i.prevProduction, 0) || "—"}</td>
                             <td className="py-2 px-2 text-center tabular-nums font-medium">{items.reduce((s, i) => s + i.estimatedFactoryNumber, 0)}</td>
@@ -2963,6 +2987,10 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const [validationLoading, setValidationLoading] = useState(false);
   const [regeneratingOrders, setRegeneratingOrders] = useState(false);
   const [showAddMacCheese, setShowAddMacCheese] = useState(false);
+  // Production Items table is locked by default — managers/admins can unlock to
+  // adjust batches and 8-pack bag counts on an active plan without resetting it.
+  const [itemsTableUnlocked, setItemsTableUnlocked] = useState(false);
+  const itemsEditable = canEditPlan && itemsTableUnlocked;
   const [, navigate] = useLocation();
   const { data: stationActivity } = useGetStationActivity(planId, {
     query: { queryKey: getGetStationActivityQueryKey(planId), refetchInterval: 10000 },
@@ -3414,16 +3442,33 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
 
       {/* Items table */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
           <h2 className="font-semibold text-sm flex items-center gap-2">
             <Package className="w-4 h-4 text-primary" />
             Production Items
           </h2>
-          <span className="text-xs text-muted-foreground">
-            {plan.items?.length ?? 0} recipes · {calzoneBatchesTarget} batches
-            {macPacksTarget > 0 && <> + {macPacksTarget} mac packs</>}
-            {" · "}{totalPacks.toLocaleString()} packs
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-muted-foreground">
+              {plan.items?.length ?? 0} recipes · {calzoneBatchesTarget} batches
+              {macPacksTarget > 0 && <> + {macPacksTarget} mac packs</>}
+              {" · "}{totalPacks.toLocaleString()} packs
+            </span>
+            {canEditPlan && (
+              <button
+                onClick={() => setItemsTableUnlocked(v => !v)}
+                className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors",
+                  itemsTableUnlocked
+                    ? "border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/30"
+                    : "border-border text-muted-foreground hover:bg-secondary/50"
+                )}
+                title={itemsTableUnlocked ? "Lock the table to prevent changes" : "Unlock to adjust batches & 8-packs"}
+              >
+                {itemsTableUnlocked ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                {itemsTableUnlocked ? "Unlocked" : "Locked"}
+              </button>
+            )}
+          </div>
         </div>
         <table className="w-full text-sm">
           <thead>
@@ -3468,7 +3513,50 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                       )}
                     </div>
                   </td>
-                  <td className="py-3 px-4 text-center font-medium">{item.batchesTarget ?? 0}</td>
+                  <td className="py-3 px-4 text-center whitespace-nowrap">
+                    <div className="flex items-center justify-center gap-1">
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if ((item.batchesTarget ?? 0) <= (item.batchesComplete ?? 0)) return;
+                          const r = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/batches-target`, {
+                            method: "PATCH",
+                            headers: { "Content-Type": "application/json" },
+                            credentials: "include",
+                            body: JSON.stringify({ delta: -1 }),
+                          });
+                          if (!r.ok) {
+                            const body = await r.json().catch(() => ({}));
+                            toast({ title: "Couldn't reduce batches", description: body.error ?? "Try again.", variant: "destructive" });
+                          }
+                          refetch();
+                        }}
+                        disabled={!itemsEditable || (item.batchesTarget ?? 0) <= (item.batchesComplete ?? 0)}
+                        className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-full border border-border text-xs hover:bg-secondary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        title={!itemsEditable ? "Unlock the table to edit" : "Reduce by one batch"}
+                      >−</button>
+                      <span className="font-medium tabular-nums w-6 text-center">{item.batchesTarget ?? 0}</span>
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const r = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/batches-target`, {
+                            method: "PATCH",
+                            headers: { "Content-Type": "application/json" },
+                            credentials: "include",
+                            body: JSON.stringify({ delta: 1 }),
+                          });
+                          if (!r.ok) {
+                            const body = await r.json().catch(() => ({}));
+                            toast({ title: "Couldn't add batch", description: body.error ?? "Try again.", variant: "destructive" });
+                          }
+                          refetch();
+                        }}
+                        disabled={!itemsEditable}
+                        className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-xs hover:bg-primary/90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        title={!itemsEditable ? "Unlock the table to edit" : "Add one batch"}
+                      >+</button>
+                    </div>
+                  </td>
                   <td className="py-3 px-4 text-center font-mono text-muted-foreground">
                     {((item.batchesTarget ?? 0) * (item.portionsPerBatch ?? 10) / (item.packSize ?? 2)).toLocaleString()}
                   </td>
@@ -3480,19 +3568,22 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                       <span className="text-muted-foreground opacity-40">0</span>
                     )}
                   </td>
-                  <td className="py-3 px-4 text-center">
+                  <td className="py-3 px-4 text-center whitespace-nowrap">
                     <div className="flex items-center justify-center gap-1">
                       <button
                         onClick={async (e) => { e.stopPropagation(); if ((item.eightPackBagCount ?? 0) > 0) { await fetch(`/api/production-plans/${plan.id}/items/${item.id}/eight-pack-bag-count`, { method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ delta: -1 }) }); refetch(); } }}
-                        disabled={(item.eightPackBagCount ?? 0) === 0}
-                        className="w-6 h-6 flex items-center justify-center rounded-full border border-border text-xs hover:bg-secondary disabled:opacity-30 transition-colors"
+                        disabled={!itemsEditable || (item.eightPackBagCount ?? 0) === 0}
+                        className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-full border border-border text-xs hover:bg-secondary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        title={!itemsEditable ? "Unlock the table to edit" : "Remove one 8-pack bag"}
                       >−</button>
                       <span className={cn("font-bold tabular-nums w-6 text-center", (item.eightPackBagCount ?? 0) > 0 ? "text-indigo-600 dark:text-indigo-400" : "text-muted-foreground opacity-40")}>
                         {item.eightPackBagCount ?? 0}
                       </span>
                       <button
                         onClick={async (e) => { e.stopPropagation(); await fetch(`/api/production-plans/${plan.id}/items/${item.id}/eight-pack-bag-count`, { method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ delta: 1 }) }); refetch(); }}
-                        className="w-6 h-6 flex items-center justify-center rounded-full bg-indigo-500 text-white text-xs hover:bg-indigo-600 transition-colors"
+                        disabled={!itemsEditable}
+                        className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-full bg-indigo-500 text-white text-xs hover:bg-indigo-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        title={!itemsEditable ? "Unlock the table to edit" : "Add one 8-pack bag"}
                       >+</button>
                     </div>
                   </td>

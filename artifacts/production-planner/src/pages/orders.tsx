@@ -24,6 +24,7 @@ import {
   Calendar,
   RefreshCw,
   Clock,
+  Trash2,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -102,7 +103,9 @@ type PurchaseOrder = {
   notes: string | null;
   lines: Array<{
     id: number;
-    ingredientId: number;
+    // Null for miscellaneous one-off lines (samples, packaging trials, etc.).
+    // The misc name is stored in `description` and surfaced via ingredientName.
+    ingredientId: number | null;
     ingredientName: string | null;
     orderingUrl: string | null;
     quantityRequired: string;
@@ -339,16 +342,27 @@ export default function Orders() {
     setEditableLines(prev => {
       const existing = prev[supplierId] ?? [];
       const existingIngredientIds = new Set(existing.map(l => l.ingredientId));
+      // Misc lines from the API have ingredientId = null; give each a unique
+      // synthetic negative id so React keys stay stable and downstream code
+      // (which keys by ingredientId) doesn't collapse them into a single row.
+      let miscIdCounter = -1;
+      while (existing.some(l => l.ingredientId === miscIdCounter)) miscIdCounter--;
       const hydratedFromPO: EditableLine[] = placedPO.lines
-        .filter(l => !existingIngredientIds.has(l.ingredientId))
+        .filter(l => l.ingredientId == null || !existingIngredientIds.has(l.ingredientId))
         .map(l => {
           const qtyOrdered = Number(l.quantityOrdered) || 0;
           const unit = l.unit ?? "kg";
           const isPackUnit = unit === "packs" || unit === "bottles";
           const packs = isPackUnit ? qtyOrdered : Math.max(1, Math.round(qtyOrdered));
+          const isMisc = l.ingredientId == null;
+          // For misc lines the backend folds the operator-typed name into
+          // ingredientName via a description fallback. Keep a copy on the
+          // line so the resubmit payload preserves it round-trip.
+          const miscName = isMisc ? (l.ingredientName ?? "Misc item") : null;
+          const syntheticId = isMisc ? miscIdCounter-- : (l.ingredientId as number);
           return {
-            ingredientId: l.ingredientId,
-            ingredientName: l.ingredientName ?? `Ingredient #${l.ingredientId}`,
+            ingredientId: syntheticId,
+            ingredientName: l.ingredientName ?? (isMisc ? "Misc item" : `Ingredient #${l.ingredientId}`),
             unit,
             totalRequired: Number(l.quantityRequired) || 0,
             stockOnHand: 0,
@@ -359,6 +373,8 @@ export default function Orders() {
             orderQty: qtyOrdered,
             packsToOrder: packs,
             isKanban: false,
+            isMisc: isMisc || undefined,
+            description: miscName,
             orderingUrl: l.orderingUrl ?? null,
             lastStockCheckAt: null,
             belowRequirement: false,
@@ -409,6 +425,19 @@ export default function Orders() {
     reopenPlacedOrder(order);
     setViewFilter("pending");
   }, [selectedPlanId, setSelectedPlanId, reopenPlacedOrder]);
+
+  // Drop a single line from the in-progress order. Used when an
+  // auto-included stock-check item shouldn't actually be ordered this round —
+  // simpler to remove than to leave it sitting at qty 0 and risk it slipping
+  // through. Only affects local edit state; the line is never sent to the
+  // backend on save (POST/resubmit serialise editableLines).
+  const removeLine = useCallback((supplierId: number, ingredientId: number) => {
+    setEditableLines(prev => {
+      const lines = prev[supplierId] ?? [];
+      const next = lines.filter(l => l.ingredientId !== ingredientId);
+      return { ...prev, [supplierId]: next };
+    });
+  }, []);
 
   // Remove a previously-pulled kanban from the pending order. Used when the
   // operator pulled one by accident — tapping the same item again drops the
@@ -1073,6 +1102,7 @@ export default function Orders() {
                         {lines.some(l => l.costPerPack > 0) && (
                           <th className="p-3 text-right font-medium text-muted-foreground">Line Total</th>
                         )}
+                        <th className="p-3 w-10"></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1194,11 +1224,22 @@ export default function Orders() {
                               {line.costPerPack > 0 ? `\u00A3${(line.editedPacks * line.costPerPack).toFixed(2)}` : "-"}
                             </td>
                           )}
+                          <td className="p-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => removeLine(so.supplier.id, line.ingredientId)}
+                              className="p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                              title={`Remove ${line.ingredientName} from this order`}
+                              aria-label={`Remove ${line.ingredientName}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
                         </tr>
                         );
                       })}
                       <tr className="bg-secondary/5">
-                        <td colSpan={lines.some(l => l.costPerPack > 0) ? 9 : 8} className="p-2">
+                        <td colSpan={lines.some(l => l.costPerPack > 0) ? 10 : 9} className="p-2">
                           <button
                             type="button"
                             onClick={() => { setAddItemDialog({ supplierId: so.supplier.id, supplierName: so.supplier.name }); setAddItemSearch(""); }}

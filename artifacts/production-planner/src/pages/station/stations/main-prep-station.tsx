@@ -10,7 +10,7 @@ import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { useAuth } from "@/contexts/auth-context";
 import { BreakTracker } from "../shared/break-tracker";
-import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtQty, toastDraftBlocked, StockCheckStatusPanel, nativeToPackCount, packsToNative, packNoun, packsWeightHint } from "../shared/prep-helpers";
+import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtQty, toastDraftBlocked, StockCheckStatusPanel, nativeToPackCount, packsToNative, packNoun, packDescriptor, packsWeightHint } from "../shared/prep-helpers";
 import type { NextActivePlan } from "../shared/prep-helpers";
 import { PrepSubNav } from "./prep-hub";
 
@@ -493,7 +493,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
         <ForceStockCheckModal
           ingredient={ing}
           value={display}
-          unitOverride={inPacks ? packNoun(ing.unit, Number(display) || 0) : null}
+          unitOverride={inPacks ? packDescriptor(ing.unit, ing.packWeight, Number(display) || 0) : null}
           isPackInput={inPacks}
           saving={!!savingStock[ing.ingredientId]}
           onChange={v => {
@@ -1005,7 +1005,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                           ? String(nativeToPackCount(Number(nativeStr), ing.packWeight) ?? "")
                           : nativeStr;
                         const unitLabel = inPacks
-                          ? packNoun(ing.unit, Number(inputDisplay) || 0)
+                          ? packDescriptor(ing.unit, ing.packWeight, Number(inputDisplay) || 0)
                           : ing.unit;
                         const onInputChange = (raw: string) => {
                           dirtyStockIds.current.add(ing.ingredientId);

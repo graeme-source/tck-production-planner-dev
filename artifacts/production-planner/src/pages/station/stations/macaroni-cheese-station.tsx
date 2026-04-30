@@ -11,6 +11,7 @@ import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { useAuth } from "@/contexts/auth-context";
 import { isMacCheese } from "../shared/constants";
+import { NumberInput } from "@/components/ui/number-input";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Macaroni Cheese Station
@@ -217,11 +218,10 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
                     </div>
                   </td>
                   <td className="py-2.5 px-2 text-right">
-                    <input
-                      type="number"
+                    <NumberInput
                       min={0}
                       value={stockOverrides[r.recipeId] ?? r.leftOverStock}
-                      onChange={e => setStockOverrides(prev => ({ ...prev, [r.recipeId]: Math.max(0, Number(e.target.value) || 0) }))}
+                      onChange={n => setStockOverrides(prev => ({ ...prev, [r.recipeId]: Math.max(0, n) }))}
                       className="w-16 px-2 py-1 text-right bg-background border border-border rounded text-sm tabular-nums"
                     />
                   </td>
@@ -230,11 +230,10 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
                   <td className={cn("py-2.5 px-2 text-right tabular-nums", zeroedDays.d2 && "text-muted-foreground line-through")}>{getSalesD2(r)}</td>
                   <td className={cn("py-2.5 px-2 text-right tabular-nums", zeroedDays.d3 && "text-muted-foreground line-through")}>{getSalesD3(r)}</td>
                   <td className="py-2.5 px-2 text-right">
-                    <input
-                      type="number"
+                    <NumberInput
                       min={0}
                       value={extra}
-                      onChange={e => setExtraOverrides(prev => ({ ...prev, [r.recipeId]: Math.max(0, Number(e.target.value) || 0) }))}
+                      onChange={n => setExtraOverrides(prev => ({ ...prev, [r.recipeId]: Math.max(0, n) }))}
                       className="w-16 px-2 py-1 text-right bg-background border border-border rounded text-sm tabular-nums"
                     />
                   </td>

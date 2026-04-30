@@ -19,6 +19,7 @@ const KNOWN_PAGES = [
   { pageKey: "/reports", label: "Reports" },
   { pageKey: "/kanbans", label: "Kanbans" },
   { pageKey: "/product-hub", label: "Product Hub" },
+  { pageKey: "/deliveries/receive", label: "Receive Deliveries (front door)" },
 ];
 
 const DEFAULT_PERMISSIONS: Record<string, string> = {
@@ -27,6 +28,7 @@ const DEFAULT_PERMISSIONS: Record<string, string> = {
   "/fulfilment": "manager",
   "/locations": "admin",
   "/dispatch-tag": "manager",
+  "/deliveries/receive": "viewer",
 };
 
 // GET /api/page-permissions

@@ -17,6 +17,7 @@ import type { NextActivePlan } from "../shared/prep-helpers";
 import { PrepSubNav } from "./prep-hub";
 import { useMainPrepData } from "./main-prep-station";
 import type { MainPrepIngredient, LinkedItem } from "./main-prep-station";
+import { NumberInput } from "@/components/ui/number-input";
 
 interface SubRecipePlanRequirement {
   subRecipeId: number;
@@ -489,11 +490,11 @@ export function SubRecipeMakeFlow({
                 >
                   <Minus className="w-4 h-4" />
                 </button>
-                <input
-                  type="number"
+                <NumberInput
                   min={1}
+                  emptyValue={1}
                   value={state.customBatches}
-                  onChange={e => setState(s => ({ ...s, customBatches: Math.max(1, Number(e.target.value) || 1) }))}
+                  onChange={n => setState(s => ({ ...s, customBatches: Math.max(1, n) }))}
                   className="w-20 text-center px-3 py-2.5 border-2 border-border rounded-xl text-lg font-bold focus:outline-none focus:ring-2 focus:ring-primary/30"
                 />
                 <button

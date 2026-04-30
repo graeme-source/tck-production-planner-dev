@@ -11,7 +11,9 @@ import { format, startOfWeek, addDays, isSameDay, parseISO, isToday } from "date
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/auth-context";
-import { packNoun } from "@/pages/station/shared/prep-helpers";
+import { usePagePermissions } from "@/hooks/use-page-permissions";
+import { packNoun, packDescriptor } from "@/pages/station/shared/prep-helpers";
+import { NumberInput } from "@/components/ui/number-input";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -491,7 +493,7 @@ function ReceivingDialog({
                       const inPacks = !!line.stockInPacks && (line.packWeight ?? 0) > 0;
                       const pw = line.packWeight || 1;
                       const orderedDisplay = inPacks
-                        ? `${Math.round(line.quantityOrdered / pw)} ${packNoun(line.unit, Math.round(line.quantityOrdered / pw))}`
+                        ? `${Math.round(line.quantityOrdered / pw)} ${packDescriptor(line.unit, line.packWeight, Math.round(line.quantityOrdered / pw))}`
                         : `${line.quantityOrdered} ${line.unit}`;
                       const receivedPackCount = inPacks ? Math.round(line.quantityReceived / pw) : line.quantityReceived;
                       const step = inPacks ? 1 : 0.5;
@@ -505,7 +507,7 @@ function ReceivingDialog({
                         setLines(next);
                       };
                       return (
-                    <div className="grid grid-cols-3 gap-3" onClick={(e) => e.stopPropagation()}>
+                    <div className={cn("grid gap-3", line.requiresUseByDate ? "grid-cols-3" : "grid-cols-2")} onClick={(e) => e.stopPropagation()}>
                       <div className="min-w-0">
                         <label className="text-base font-semibold text-muted-foreground block mb-1">Ordered</label>
                         <span className="text-xl font-bold tabular-nums">
@@ -514,7 +516,7 @@ function ReceivingDialog({
                       </div>
                       <div className="min-w-0">
                         <label className="text-base font-semibold text-muted-foreground block mb-1">
-                          Received {inPacks && <span className="text-xs font-normal text-muted-foreground">({packNoun(line.unit, receivedPackCount || 0)})</span>}
+                          Received <span className="text-xs font-normal text-muted-foreground">({inPacks ? packDescriptor(line.unit, line.packWeight, receivedPackCount || 0) : line.unit})</span>
                         </label>
                         <div className={cn(
                           "flex items-stretch rounded-lg border bg-background overflow-hidden focus-within:ring-2 focus-within:ring-primary/30",
@@ -528,17 +530,14 @@ function ReceivingDialog({
                           >
                             <Minus className="w-5 h-5" />
                           </button>
-                          <input
-                            type="number"
+                          <NumberInput
                             step={step}
                             min="0"
                             inputMode={inPacks ? "numeric" : "decimal"}
                             value={inPacks ? receivedPackCount : line.quantityReceived}
-                            onChange={(e) => {
-                              const raw = Number(e.target.value);
-                              if (!Number.isFinite(raw)) return;
+                            onChange={(n) => {
                               const next = [...lines];
-                              next[idx] = { ...next[idx], quantityReceived: inPacks ? raw * pw : raw };
+                              next[idx] = { ...next[idx], quantityReceived: inPacks ? n * pw : n };
                               setLines(next);
                             }}
                             className="flex-1 min-w-0 px-2 py-2 bg-background text-center text-xl font-bold tabular-nums text-[#919b5f] focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
@@ -553,37 +552,42 @@ function ReceivingDialog({
                           </button>
                         </div>
                       </div>
-                      <div className="min-w-0">
-                        <label className="text-base font-semibold text-muted-foreground block mb-1">
-                          Use-by Date
-                          {line.requiresUseByDate && <span className="text-destructive ml-1">*</span>}
-                          {!line.requiresUseByDate && (
-                            <span className="ml-1 text-xs font-normal text-muted-foreground">(optional)</span>
-                          )}
-                        </label>
-                        <input
-                          type="date"
-                          value={line.useByDate}
-                          onChange={(e) => {
-                            const next = [...lines];
-                            next[idx] = { ...next[idx], useByDate: e.target.value, useByIsAuto: false };
-                            setLines(next);
-                          }}
-                          className={cn(
-                            "w-full min-w-0 px-3 py-2 bg-background border rounded-lg text-lg font-bold focus:outline-none focus:ring-2 focus:ring-primary/30",
-                            useByMissing ? "border-destructive" : "border-border"
-                          )}
-                        />
-                      </div>
+                      {line.requiresUseByDate && (
+                        <div className="min-w-0">
+                          <label className="text-base font-semibold text-muted-foreground block mb-1">
+                            Use-by Date<span className="text-destructive ml-1">*</span>
+                          </label>
+                          <input
+                            type="date"
+                            value={line.useByDate}
+                            onChange={(e) => {
+                              const next = [...lines];
+                              next[idx] = { ...next[idx], useByDate: e.target.value, useByIsAuto: false };
+                              setLines(next);
+                            }}
+                            className={cn(
+                              "w-full min-w-0 px-3 py-2 bg-background border rounded-lg text-lg font-bold focus:outline-none focus:ring-2 focus:ring-primary/30",
+                              useByMissing ? "border-destructive" : "border-border"
+                            )}
+                          />
+                        </div>
+                      )}
                     </div>
                       );
                     })()}
-                    {discrepancy && (
-                      <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
-                        <AlertTriangle className="w-3.5 h-3.5" />
-                        Quantity differs from order ({line.quantityOrdered} ordered)
-                      </div>
-                    )}
+                    {discrepancy && (() => {
+                      const inPacks = !!line.stockInPacks && (line.packWeight ?? 0) > 0;
+                      const pw = line.packWeight || 1;
+                      const orderedDisp = inPacks
+                        ? `${Math.round(line.quantityOrdered / pw)} ${packDescriptor(line.unit, line.packWeight, Math.round(line.quantityOrdered / pw))}`
+                        : `${line.quantityOrdered} ${line.unit}`;
+                      return (
+                        <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                          <AlertTriangle className="w-3.5 h-3.5" />
+                          Quantity differs from order ({orderedDisp} ordered)
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}
@@ -745,7 +749,10 @@ function ReceivingDialog({
 export default function Deliveries() {
   const { state } = useAuth();
   const queryClient = useQueryClient();
+  const { canAccess } = usePagePermissions();
+  const userRole = state.status === "authenticated" ? state.user.role : "viewer";
   const canEdit = state.status === "authenticated" && (state.user.role === "admin" || state.user.role === "manager");
+  const canReceive = state.status === "authenticated" && canAccess(userRole, "/deliveries/receive");
 
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const [selectedDate, setSelectedDate] = useState(() => new Date());
@@ -971,7 +978,7 @@ export default function Deliveries() {
             {selectedDayOrders.map((order) => {
               const isReceived = order.status === "received" || order.status === "partially_received";
               const dots = computeProcessingDots(order);
-              const cardIsClickable = canEdit;
+              const cardIsClickable = canReceive;
               return (
                 <div
                   key={order.id}
@@ -1052,7 +1059,7 @@ export default function Deliveries() {
                           </button>
                         )
                       )}
-                      {canEdit && !isReceived && (
+                      {canReceive && !isReceived && (
                         <button
                           onClick={(e) => { e.stopPropagation(); openReceiving(order.id); }}
                           className="px-5 py-3 rounded-xl bg-primary text-primary-foreground text-lg font-bold hover:bg-primary/90 transition-colors flex items-center gap-2"
@@ -1061,7 +1068,7 @@ export default function Deliveries() {
                           Receive Goods
                         </button>
                       )}
-                      {canEdit && isReceived && (
+                      {canReceive && isReceived && (
                         <button
                           onClick={(e) => { e.stopPropagation(); openReceiving(order.id); }}
                           className="px-3 py-2 rounded-xl border border-border text-sm font-medium hover:bg-secondary/50 transition-colors flex items-center gap-1.5"
@@ -1092,7 +1099,7 @@ export default function Deliveries() {
                       label="Invoice filed"
                       icon={FileText}
                       status={dots.invoice}
-                      disabled={!canEdit || dots.received !== "done" || checksMutation.isPending}
+                      disabled={!canReceive || dots.received !== "done" || checksMutation.isPending}
                       onClick={() => {
                         checksMutation.mutate({
                           orderId: order.id,
@@ -1104,7 +1111,7 @@ export default function Deliveries() {
                       label="Kanbans & put away"
                       icon={Boxes}
                       status={dots.kanbanPutAway}
-                      disabled={!canEdit || dots.received !== "done" || checksMutation.isPending}
+                      disabled={!canReceive || dots.received !== "done" || checksMutation.isPending}
                       onClick={() => {
                         checksMutation.mutate({
                           orderId: order.id,
@@ -1117,22 +1124,32 @@ export default function Deliveries() {
                   {order.lines.length > 0 && (
                     <div className="border-t border-border/50 px-4 py-3 bg-secondary/20">
                       <div className="flex flex-wrap gap-2">
-                        {order.lines.map((line) => (
-                          <span
-                            key={line.id}
-                            className="text-base bg-background border border-border rounded-full px-4 py-1.5 flex items-center gap-2"
-                          >
-                            <span className="font-bold">{line.ingredientName}</span>
-                            <span className="font-bold tabular-nums">
-                              {line.quantityOrdered} {line.unit}
-                            </span>
-                            {line.quantityReceived > 0 && (
-                              <span className="text-green-600 dark:text-green-400 font-semibold">
-                                ✓ {line.quantityReceived} received
+                        {order.lines.map((line) => {
+                          const inPacks = !!line.stockInPacks && (line.packWeight ?? 0) > 0;
+                          const pw = line.packWeight || 1;
+                          const orderedPacks = inPacks ? Math.round(line.quantityOrdered / pw) : 0;
+                          const receivedPacks = inPacks ? Math.round(line.quantityReceived / pw) : 0;
+                          return (
+                            <span
+                              key={line.id}
+                              className="text-base bg-background border border-border rounded-full px-4 py-1.5 flex items-center gap-2"
+                            >
+                              <span className="font-bold">{line.ingredientName}</span>
+                              <span className="font-bold tabular-nums">
+                                {inPacks
+                                  ? `${orderedPacks} ${packDescriptor(line.unit, line.packWeight, orderedPacks)}`
+                                  : `${line.quantityOrdered} ${line.unit}`}
                               </span>
-                            )}
-                          </span>
-                        ))}
+                              {line.quantityReceived > 0 && (
+                                <span className="text-green-600 dark:text-green-400 font-semibold">
+                                  ✓ {inPacks
+                                    ? `${receivedPacks} ${packDescriptor(line.unit, line.packWeight, receivedPacks)}`
+                                    : `${line.quantityReceived} ${line.unit}`} received
+                                </span>
+                              )}
+                            </span>
+                          );
+                        })}
                       </div>
                     </div>
                   )}

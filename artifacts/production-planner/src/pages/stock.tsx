@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { NumberInput } from "@/components/ui/number-input";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -596,14 +597,13 @@ export default function Stock() {
                         <td className="px-6 py-3">
                           {isEditing && row ? (
                             <div className="flex items-center gap-2">
-                              <input
-                                type="number"
+                              <NumberInput
                                 min="0"
                                 step="1"
                                 value={row.quantity}
-                                onChange={e => setEditRows(prev => ({
+                                onChange={n => setEditRows(prev => ({
                                   ...prev,
-                                  [item.key]: { ...prev[item.key], quantity: Number(e.target.value), dirty: true },
+                                  [item.key]: { ...prev[item.key], quantity: n, dirty: true },
                                 }))}
                                 className="w-24 px-2 py-1 bg-background border border-primary/40 rounded-lg text-sm font-bold tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30"
                               />
@@ -855,12 +855,11 @@ export default function Stock() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-sm font-medium mb-1 block">Quantity</label>
-                <input
-                  type="number"
+                <NumberInput
                   step="0.01"
                   min="0"
                   value={transferQty}
-                  onChange={e => setTransferQty(Number(e.target.value))}
+                  onChange={n => setTransferQty(n)}
                   className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                 />
               </div>

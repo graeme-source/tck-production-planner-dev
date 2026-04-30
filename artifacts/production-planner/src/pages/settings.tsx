@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { Switch } from "@/components/ui/switch";
+import { NumberInput } from "@/components/ui/number-input";
 import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { upsertDptSettingByRecipe, updateTimingStandard, getListDptSettingsQueryKey, getListTimingStandardsQueryKey } from "@workspace/api-client-react";
 import { useForm } from "react-hook-form";
@@ -1373,11 +1374,10 @@ function DptSettingsSection() {
         <>
           <div className="bg-card border border-border rounded-xl p-4 flex items-center gap-4">
             <label className="text-sm font-medium whitespace-nowrap">Total Daily Batches</label>
-            <input
-              type="number"
+            <NumberInput
               min={0}
               value={totalDailyBatches}
-              onChange={e => setTotalDailyBatches(Math.max(0, Number(e.target.value) || 0))}
+              onChange={n => setTotalDailyBatches(Math.max(0, n))}
               className="w-24 px-3 py-2 bg-background border border-border rounded-lg text-sm text-right focus-ring font-mono"
             />
             <p className="text-xs text-muted-foreground flex-1">
@@ -1404,11 +1404,10 @@ function DptSettingsSection() {
                     <tr key={recipe.id} className="hover:bg-secondary/10 transition-colors">
                       <td className="px-5 py-3.5 font-medium" style={recipe.color ? { color: recipe.color } : undefined}>{recipe.name}</td>
                       <td className="px-5 py-3.5 text-right">
-                        <input
-                          type="number"
+                        <NumberInput
                           min={0}
                           value={sold}
-                          onChange={e => setLocalPacksSold(prev => ({ ...prev, [recipe.id]: Math.max(0, Number(e.target.value) || 0) }))}
+                          onChange={n => setLocalPacksSold(prev => ({ ...prev, [recipe.id]: Math.max(0, n) }))}
                           className="w-24 px-2 py-1 border border-border rounded-lg text-sm text-right font-mono focus-ring"
                         />
                       </td>
@@ -1541,11 +1540,10 @@ function MacCheeseSettingsSection() {
               <tr key={recipe.id} className="hover:bg-secondary/10 transition-colors">
                 <td className="px-5 py-3.5 font-medium" style={recipe.color ? { color: recipe.color } : undefined}>{recipe.name}</td>
                 <td className="px-5 py-3.5 text-right">
-                  <input
-                    type="number"
+                  <NumberInput
                     min={0}
                     value={extras[recipe.id] ?? 5}
-                    onChange={e => setExtras(prev => ({ ...prev, [recipe.id]: Math.max(0, Number(e.target.value) || 0) }))}
+                    onChange={n => setExtras(prev => ({ ...prev, [recipe.id]: Math.max(0, n) }))}
                     className="w-24 px-2 py-1 border border-border rounded-lg text-sm text-right font-mono focus-ring"
                   />
                 </td>

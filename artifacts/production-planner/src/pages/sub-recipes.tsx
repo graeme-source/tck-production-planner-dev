@@ -12,6 +12,7 @@ import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { NumberInput } from "@/components/ui/number-input";
 
 const schema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -910,11 +911,11 @@ function BatchMultiplierControl({
             >
               <Minus className="w-3.5 h-3.5" />
             </button>
-            <input
-              type="number"
+            <NumberInput
               min={1}
+              emptyValue={1}
               value={customBatches}
-              onChange={e => onCustomBatchesChange(Math.max(1, Number(e.target.value) || 1))}
+              onChange={n => onCustomBatchesChange(Math.max(1, n))}
               className="w-16 text-center px-2 py-1.5 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
             <button

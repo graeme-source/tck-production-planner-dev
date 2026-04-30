@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { BreakTracker } from "../shared/break-tracker";
-import { PrepDateBanner, PrepDraftBanner, toKg, toastDraftBlocked, StockCheckStatusPanel, nativeToPackCount, packsToNative, packNoun, packsWeightHint } from "../shared/prep-helpers";
+import { PrepDateBanner, PrepDraftBanner, toKg, toastDraftBlocked, StockCheckStatusPanel, nativeToPackCount, packsToNative, packNoun, packDescriptor, packsWeightHint } from "../shared/prep-helpers";
 import { PrepSubNav, usePrepByRecipe } from "./prep-hub";
 import type { PrepRecipeDetail, PrepIngredientDetail } from "./prep-hub";
 
@@ -625,7 +625,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                         ? String(nativeToPackCount(Number(nativeStr), ing.packWeight) ?? "")
                         : nativeStr;
                       const unitLabel = inPacks
-                        ? packNoun(ing.unit, Number(inputDisplay) || 0)
+                        ? packDescriptor(ing.unit, ing.packWeight, Number(inputDisplay) || 0)
                         : ing.unit;
                       const onInputChange = (raw: string) => {
                         dirtyStockIds.current.add(ing.ingredientId);

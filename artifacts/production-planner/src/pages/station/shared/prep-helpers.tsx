@@ -38,6 +38,21 @@ export function packNoun(unit: string, count: number): string {
   return count === 1 ? base : `${base}s`;
 }
 
+// Descriptive pack label including the pack size, e.g. "2.27 kg packs" or
+// "1 L bottle". Used in stock-check prompts so operators can tell at a glance
+// what each pack actually contains, instead of just "packs".
+export function packDescriptor(unit: string, packWeight: number | string | null | undefined, count: number): string {
+  const noun = packNoun(unit, count);
+  // Some endpoints return pgNumeric as a string ("2.2700") — coerce so the
+  // formatter doesn't blow up on `.toFixed`. Treats non-numeric input as missing.
+  const pw = packWeight == null ? null : Number(packWeight);
+  if (pw == null || !Number.isFinite(pw) || pw <= 0) return noun;
+  // Reuse fmtQty so weights/volumes get normalised the same way the rest of
+  // the prep sheet displays them (kg/L with 3 decimals, ml→L, etc.).
+  const sized = fmtQty(pw, unit);
+  return `${sized} ${noun}`;
+}
+
 // Given a native-unit stock value and the ingredient's packWeight, return
 // how many packs that represents (rounded to nearest whole pack for display).
 // Returns null if the ingredient can't be expressed in packs.
@@ -458,7 +473,7 @@ export function StockCheckStatusPanel({ checkDate }: { checkDate: string }) {
               const isEditing = editingIds.has(it.id);
               const inPacks = !!it.stockInPacks && (it.packWeight ?? 0) > 0;
               const displayUnit = inPacks
-                ? packNoun(it.unit, Number(inputVal) || 1)
+                ? packDescriptor(it.unit, it.packWeight, Number(inputVal) || 1)
                 : it.unit;
               if (record && !isEditing) {
                 const checkedAt = new Date(record.checkedAt);
@@ -466,7 +481,7 @@ export function StockCheckStatusPanel({ checkDate }: { checkDate: string }) {
                 const recordNative = Number(record.quantity);
                 const recordPacks = inPacks ? nativeToPackCount(recordNative, it.packWeight) : null;
                 const recordDisplay = inPacks && recordPacks != null
-                  ? `${recordPacks} ${packNoun(it.unit, recordPacks)}`
+                  ? `${recordPacks} ${packDescriptor(it.unit, it.packWeight, recordPacks)}`
                   : `${recordNative} ${it.unit}`;
                 const hint = inPacks && recordPacks != null
                   ? packsWeightHint(recordPacks, it.packWeight, it.unit)

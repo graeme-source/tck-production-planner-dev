@@ -179,6 +179,20 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
   const redShortfalls = shortfalls.filter(s => s.level === "red");
   const yellowShortfalls = shortfalls.filter(s => s.level === "yellow");
 
+  // "Short on the pack" — current factory number (fridge) vs today's dispatch,
+  // explicitly NOT counting today's planned production. Mirrors the same delta
+  // shown in brackets on the production-plan creation table so the morning
+  // pack team sees the live deficit before any of today's batches go in.
+  const packShortfalls = packingItems
+    .filter(item => item.totalDispatch > 0 && (item.fridgeQty ?? 0) < item.totalDispatch)
+    .map(item => ({
+      recipeId: item.recipeId,
+      recipeName: item.recipeName,
+      fridgeQty: item.fridgeQty ?? 0,
+      totalDispatch: item.totalDispatch,
+      shortBy: item.totalDispatch - (item.fridgeQty ?? 0),
+    }));
+
   // Today's packing-rate KPI — Shopify fulfilment timestamps drive it, so it
   // refreshes every 30s with the rest of the packing station data. Idle gaps
   // over 10 minutes are excluded from "active" time (matches reports page).
@@ -397,6 +411,29 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
                 <div className="flex items-center gap-3">
                   <span className="text-sm text-muted-foreground">{p.orderCount} orders</span>
                   <span className="font-bold tabular-nums text-base bg-pink-100 dark:bg-pink-900/30 px-2.5 py-0.5 rounded-lg text-pink-800 dark:text-pink-200">{p.quantity}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {packShortfalls.length > 0 && (
+        <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-border/50 bg-red-50/60 dark:bg-red-900/10">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">⚠️</span>
+              <h3 className="font-semibold text-base">Short on the Pack</h3>
+              <span className="text-xs text-muted-foreground ml-auto">Factory number vs today's dispatch — before today's production</span>
+            </div>
+          </div>
+          <div className="divide-y divide-border/50">
+            {packShortfalls.map(s => (
+              <div key={s.recipeId ?? s.recipeName} className="flex items-center justify-between px-4 py-2.5">
+                <span className="text-base">{s.recipeName}</span>
+                <div className="flex items-center gap-3 text-sm">
+                  <span className="text-muted-foreground tabular-nums">{s.fridgeQty} in fridge / {s.totalDispatch} to dispatch</span>
+                  <span className="font-bold tabular-nums text-base bg-red-100 dark:bg-red-900/30 px-2.5 py-0.5 rounded-lg text-red-700 dark:text-red-300">−{s.shortBy}</span>
                 </div>
               </div>
             ))}

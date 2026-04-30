@@ -1482,7 +1482,7 @@ router.get("/stock-checks", async (req, res) => {
     .leftJoin(ingredientsTable, eq(dailyStockChecksTable.ingredientId, ingredientsTable.id))
     .where(eq(dailyStockChecksTable.checkDate, checkDate));
 
-  const stockIngredients = await db
+  const stockIngredientsRaw = await db
     .select({
       id: ingredientsTable.id,
       name: ingredientsTable.name,
@@ -1495,6 +1495,11 @@ router.get("/stock-checks", async (req, res) => {
     .from(ingredientsTable)
     .where(eq(ingredientsTable.stockCheckEnabled, true))
     .orderBy(ingredientsTable.name);
+
+  const stockIngredients = stockIngredientsRaw.map(i => ({
+    ...i,
+    packWeight: i.packWeight != null ? Number(i.packWeight) : null,
+  }));
 
   res.json({ date: checkDate, checks, stockIngredients });
 });
@@ -4386,6 +4391,11 @@ router.patch("/:id/items/:itemId/leftover-filling", async (req, res) => {
 // Works on any plan status (like wonky/short). Each 8-pack bag deducts 4 two-packs.
 // ──────────────────────────────────────────────────────────────────────────────
 router.patch("/:id/items/:itemId/eight-pack-bag-count", async (req, res) => {
+  const role = req.session.userRole;
+  if (role !== "admin" && role !== "manager") {
+    res.status(403).json({ error: "Admin or manager role required" });
+    return;
+  }
   const planId = Number(req.params.id);
   const itemId = Number(req.params.itemId);
   const { delta } = req.body; // +1 or -1
@@ -4416,6 +4426,53 @@ router.patch("/:id/items/:itemId/eight-pack-bag-count", async (req, res) => {
     .returning({ eightPackBagCount: productionPlanItemsTable.eightPackBagCount });
 
   res.json({ itemId, eightPackBagCount: updated.eightPackBagCount });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PATCH /:id/items/:itemId/batches-target — adjust batches target by ±1
+// Used to top up an active plan without resetting prep state. Admin/manager
+// only — viewers see the controls disabled until the table is unlocked.
+// Floors at the existing batchesComplete so we don't shrink below work
+// already recorded for this recipe.
+// ──────────────────────────────────────────────────────────────────────────────
+router.patch("/:id/items/:itemId/batches-target", async (req, res) => {
+  const role = req.session.userRole;
+  if (role !== "admin" && role !== "manager") {
+    res.status(403).json({ error: "Admin or manager role required" });
+    return;
+  }
+  const planId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+  const { delta } = req.body;
+  if (typeof delta !== "number" || (delta !== 1 && delta !== -1)) {
+    res.status(400).json({ error: "Body must contain { delta: 1 | -1 }" });
+    return;
+  }
+
+  const [item] = await db.select({
+    id: productionPlanItemsTable.id,
+    batchesTarget: productionPlanItemsTable.batchesTarget,
+    batchesComplete: productionPlanItemsTable.batchesComplete,
+  })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
+
+  if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
+
+  const floor = item.batchesComplete ?? 0;
+  const next = Math.max(floor, (item.batchesTarget ?? 0) + delta);
+  if (next === item.batchesTarget) {
+    res.status(409).json({ error: `Cannot reduce below batches already completed (${floor})` });
+    return;
+  }
+
+  const [updated] = await db
+    .update(productionPlanItemsTable)
+    .set({ batchesTarget: next })
+    .where(eq(productionPlanItemsTable.id, itemId))
+    .returning({ batchesTarget: productionPlanItemsTable.batchesTarget });
+
+  res.json({ itemId, batchesTarget: updated.batchesTarget });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -5136,6 +5193,8 @@ router.get("/:id/main-prep", async (req, res) => {
     stockCheckDay: string | null;
     isBottle: boolean;
     bottleSize: number | null;
+    stockInPacks: boolean;
+    packWeight: number | null;
     totalQty: number;
     subRecipeName: string;
     // The first real recipe that drags this expanded sub-recipe component
@@ -5360,6 +5419,8 @@ router.get("/:id/main-prep", async (req, res) => {
               stockCheckFrequency: ingredientsTable.stockCheckFrequency,
               isBottle: ingredientsTable.isBottle,
               bottleSize: ingredientsTable.bottleSize,
+              stockInPacks: ingredientsTable.stockInPacks,
+              packWeight: ingredientsTable.packWeight,
               hideFromPrep: subRecipeIngredientsTable.hideFromPrep,
               prepCountPerPortion: ingredientsTable.prepCountPerPortion,
               isPasta: ingredientsTable.isPasta,
@@ -5400,6 +5461,7 @@ router.get("/:id/main-prep", async (req, res) => {
             if (existing) {
               existing.totalQty += scaledQty;
             } else {
+              const compPackWeight = comp.packWeight != null ? Number(comp.packWeight) : null;
               expandedIngMap.set(expandKey, {
                 ingredientId: comp.ingredientId,
                 ingredientName: comp.ingredientName ?? `Ingredient #${comp.ingredientId}`,
@@ -5411,6 +5473,8 @@ router.get("/:id/main-prep", async (req, res) => {
                 totalQty: scaledQty,
                 isBottle: comp.isBottle ?? false,
                 bottleSize: comp.bottleSize != null ? Number(comp.bottleSize) : null,
+                stockInPacks: (comp.stockInPacks ?? false) && compPackWeight != null && compPackWeight > 0,
+                packWeight: compPackWeight,
                 subRecipeName: sr.subRecipeName ?? `Sub-recipe #${sr.subRecipeId}`,
                 parentRecipeId: planItem.recipeId!,
               });
@@ -5589,6 +5653,21 @@ router.get("/:id/main-prep", async (req, res) => {
       r.tinCount = 1;
       r.qtyPerTin = roundByUnit(r.qtyForRecipe, ing.unit);
     }
+  }
+
+  // Same rule for sub-recipes — when Garlic Butter (or Basil/Basil Puree) is
+  // pulled in as a sub-recipe rather than a direct ingredient, the loop above
+  // misses it because subRecipeIngredients is keyed by sub-recipe id, not
+  // ingredient id. Match by name (case-insensitive) so it stays a single
+  // weighing per parent recipe regardless of how it was wired up.
+  const SINGLE_TIN_PER_RECIPE_SUB_RECIPE_NAMES = new Set(["garlic butter", "basil", "basil puree"]);
+  for (const sr of subRecipeIngredients) {
+    if (!SINGLE_TIN_PER_RECIPE_SUB_RECIPE_NAMES.has(sr.ingredientName.toLowerCase())) continue;
+    for (const r of sr.recipes) {
+      r.tinCount = 1;
+      r.qtyPerTin = roundByUnit(r.qtyForRecipe, sr.unit);
+    }
+    sr.totalTinCount = sr.recipes.reduce((s, r) => s + r.tinCount, 0);
   }
 
   const FIXED_TWO_TIN_IDS = new Set<number>();

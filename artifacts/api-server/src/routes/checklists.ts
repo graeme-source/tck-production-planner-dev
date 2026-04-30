@@ -24,9 +24,13 @@ type ChecklistCompletion = typeof checklistCompletionsTable.$inferSelect;
 const router: IRouter = Router();
 
 
-// Shared checklists: building_1 and building_2 share one checklist stored under building_1
+// Shared checklists: stations on the left share a single checklist stored
+// under the canonical station on the right. Editing or viewing the alias
+// transparently routes to the canonical record so a "weekly Monday" item
+// added to either station shows up on both for every user.
 const SHARED_CHECKLIST_STATIONS: Record<string, string> = {
   building_2: "building_1",
+  dough_prep: "dough_sheeting",
 };
 
 /** Resolve to the canonical station type for checklist storage */
@@ -69,7 +73,11 @@ const CreateTemplateBody = z.object({
 
 router.get("/templates", async (req: Request, res: Response) => {
   const station = req.query.station as string | undefined;
-  const where = station ? eq(checklistTemplatesTable.stationType, station) : undefined;
+  // Resolve aliases so the admin panel on e.g. building_2 sees the same list
+  // it'll be evaluated against at runtime — without this, edits made on the
+  // alias save under one stationType but render from another.
+  const canonicalStation = station ? resolveChecklistStation(station) : undefined;
+  const where = canonicalStation ? eq(checklistTemplatesTable.stationType, canonicalStation) : undefined;
   const rows = await db.select().from(checklistTemplatesTable)
     .where(where)
     .orderBy(asc(checklistTemplatesTable.category), asc(checklistTemplatesTable.orderPosition));
@@ -79,9 +87,13 @@ router.get("/templates", async (req: Request, res: Response) => {
 router.post("/templates", async (req: Request, res: Response) => {
   const parsed = CreateTemplateBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
-  const { scheduleDays, ...rest } = parsed.data;
+  const { scheduleDays, stationType, ...rest } = parsed.data;
+  // Force aliased stations onto the canonical row so reads/writes can't
+  // diverge. A row created from building_2 becomes a building_1 template.
+  const canonicalStation = resolveChecklistStation(stationType);
   const [row] = await db.insert(checklistTemplatesTable).values({
     ...rest,
+    stationType: canonicalStation,
     scheduleDays: scheduleDays ? JSON.stringify(scheduleDays) : null,
   }).returning();
   res.status(201).json(row);
