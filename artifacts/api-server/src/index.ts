@@ -565,11 +565,15 @@ async function runStartupMigrations() {
     await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS kanban_items_sub_recipe_unique ON kanban_items (sub_recipe_id) WHERE source_type = 'sub_recipe' AND sub_recipe_id IS NOT NULL`);
     await db.execute(sql`DO $$ BEGIN ALTER TABLE kanban_items ADD CONSTRAINT kanban_items_source_type_check CHECK (source_type IN ('ingredient', 'recipe', 'sub_recipe')); EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
     // Standards & SOPs — multi-step SOPs with optional per-step image.
-    // The old single-image `standards_sops` table (image_url column) is
-    // dropped on first run after this deploy since no records survived the
-    // object-storage misconfiguration. From here on, images live as BYTEA
-    // on sop_steps so everything works local + prod with no external deps.
-    await db.execute(sql`DROP TABLE IF EXISTS standards_sops CASCADE`);
+    // Images live as BYTEA on sop_steps so everything works local + prod
+    // with no external deps.
+    //
+    // NOTE: an earlier version of this block ran `DROP TABLE IF EXISTS
+    // standards_sops CASCADE` here, intended as a one-shot legacy schema
+    // wipe. The drop was never gated, so it fired on every API startup —
+    // erasing every SOP each time the container restarted. The legacy
+    // wipe has long since completed on prod; the table now only needs the
+    // idempotent CREATE + ALTERs below.
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS standards_sops (
         id SERIAL PRIMARY KEY,
