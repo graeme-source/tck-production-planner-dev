@@ -38,6 +38,10 @@ const CATEGORY_META: Record<Category, { label: string; icon: typeof Sun; color: 
 };
 
 const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+// Weekdays default — almost no checks in this kitchen run seven days a
+// week, so new templates land on Mon–Fri and the operator opts into
+// weekends if they need them.
+const WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday"];
 
 interface Props {
   stationType: string;
@@ -54,8 +58,8 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
   // Form state
   const [formTitle, setFormTitle] = useState("");
   const [formDescription, setFormDescription] = useState("");
-  const [formSchedule, setFormSchedule] = useState<"daily" | "weekly" | "specific_days">("daily");
-  const [formDays, setFormDays] = useState<string[]>(["monday"]);
+  const [formSchedule, setFormSchedule] = useState<"daily" | "weekly" | "specific_days">("specific_days");
+  const [formDays, setFormDays] = useState<string[]>(WEEKDAYS);
   const [formDynamic, setFormDynamic] = useState<string>("");
 
   const [runSave, saveBusy] = useGuardedAction();
@@ -82,8 +86,8 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
   const resetForm = () => {
     setFormTitle("");
     setFormDescription("");
-    setFormSchedule("daily");
-    setFormDays(["monday"]);
+    setFormSchedule("specific_days");
+    setFormDays(WEEKDAYS);
     setFormDynamic("");
     setEditingId(null);
     setAdding(false);
