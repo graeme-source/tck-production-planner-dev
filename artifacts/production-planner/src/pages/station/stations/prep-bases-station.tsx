@@ -270,7 +270,9 @@ export function SubRecipeMakeFlow({
         <div className="text-center">
           <h3 className="font-bold text-2xl">{sr?.subRecipeName} Complete!</h3>
           <p className="text-muted-foreground mt-1">
-            {state.batches} batch{state.batches !== 1 ? "es" : ""} made · {(yieldPerBatch * state.batches).toFixed(3)} {sr?.yieldUnit} ready
+            {state.batches === 0
+              ? "Existing stock covered today's requirement — nothing made."
+              : `${state.batches} batch${state.batches !== 1 ? "es" : ""} made · ${(yieldPerBatch * state.batches).toFixed(3)} ${sr?.yieldUnit} ready`}
           </p>
         </div>
         <div className="flex gap-3">
@@ -414,10 +416,21 @@ export function SubRecipeMakeFlow({
           )}
 
           {stockValid && batchCount !== null && batchCount === 0 ? (
-            <div className="rounded-xl bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 px-4 py-3 text-center">
-              <CheckCircle2 className="w-6 h-6 text-emerald-500 mx-auto mb-1" />
-              <p className="text-emerald-700 dark:text-emerald-300 font-semibold">Stock is sufficient — no batches needed</p>
-            </div>
+            // Stock already covers requirement — give the operator an
+            // explicit "nothing to make, tick this off" path so the prep
+            // item lists this sub-recipe as complete instead of leaving
+            // it sitting in limbo. Records 0 batches via onDone(), same
+            // as a normal completion, then jumps to the done screen.
+            <button
+              onClick={() => {
+                if (state.sr) onDone?.(state.sr.subRecipeId);
+                setState(s => ({ ...s, phase: "done", batches: 0 }));
+              }}
+              className="w-full py-4 rounded-2xl bg-emerald-500 text-white font-bold text-base hover:bg-emerald-600 transition-colors flex items-center justify-center gap-2"
+            >
+              <CheckCircle2 className="w-5 h-5" />
+              Mark complete — nothing required
+            </button>
           ) : (
             <button
               disabled={!stockValid || batchCount == null || batchCount <= 0}
