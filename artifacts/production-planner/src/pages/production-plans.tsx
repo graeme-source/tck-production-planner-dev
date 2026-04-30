@@ -567,6 +567,27 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     }
   }, [planDate]);
 
+  // When the production date changes, ask the backend what prep_date and
+  // dough_date will default to (using the per-day-of-week settings) and
+  // pre-fill the input fields. The operator sees the resolved Friday /
+  // Saturday immediately and can override either before saving.
+  useEffect(() => {
+    if (!planDate) return;
+    let cancelled = false;
+    fetch(`/api/production-plans/default-dates?planDate=${planDate}`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (cancelled || !d) return;
+        // Only auto-fill if the user hasn't already typed an override —
+        // otherwise switching the production date back-and-forth would
+        // wipe their manual edit.
+        setPrepDate(prev => prev || d.prepDate);
+        setDoughDate(prev => prev || d.doughDate);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [planDate]);
+
   const allocateBatches = useCallback((recipes: CalcRecipe[], capacity: number): { suggestedBatches: number; surplusBatches: number }[] => {
     if (capacity <= 0) {
       return recipes.map(() => ({ suggestedBatches: 0, surplusBatches: 0 }));
@@ -3863,6 +3884,7 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
   const { state: listAuthState } = useAuth();
   const listUserRole = listAuthState.status === "authenticated" ? listAuthState.user.role : undefined;
   const canEditPlanList = listUserRole === "admin" || listUserRole === "manager";
+  const [, navigate] = useLocation();
 
   const weekStart = useMemo(() => startOfWeek(currentDate, { weekStartsOn: 1 }), [currentDate]);
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
@@ -3877,8 +3899,38 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
     return map;
   }, [plans]);
 
+  // Synthetic indexes — for each prep_date / dough_date, list the plans
+  // that need prep/dough work that day. Lets the calendar surface a card
+  // on days with no production but where prep or dough is scheduled
+  // (e.g. bank-holiday Monday with a Tuesday plan whose prep_date=Mon).
+  // Skip rows where prep_date / dough_date equals plan_date so we don't
+  // duplicate the regular production card on its own day.
+  type PlanRow = NonNullable<typeof plans>[number];
+  const prepWorkByDate = useMemo(() => {
+    const map: Record<string, PlanRow[]> = {};
+    for (const plan of plans ?? []) {
+      const prep = (plan as PlanRow & { prepDate?: string | null }).prepDate;
+      if (!prep || prep === plan.planDate) continue;
+      if (!map[prep]) map[prep] = [];
+      map[prep]!.push(plan);
+    }
+    return map;
+  }, [plans]);
+  const doughWorkByDate = useMemo(() => {
+    const map: Record<string, PlanRow[]> = {};
+    for (const plan of plans ?? []) {
+      const dough = (plan as PlanRow & { doughDate?: string | null }).doughDate;
+      if (!dough || dough === plan.planDate) continue;
+      if (!map[dough]) map[dough] = [];
+      map[dough]!.push(plan);
+    }
+    return map;
+  }, [plans]);
+
   const selectedDateKey = format(selectedDate, "yyyy-MM-dd");
   const selectedDayPlans = plansByDate[selectedDateKey] ?? [];
+  const selectedPrepWork = prepWorkByDate[selectedDateKey] ?? [];
+  const selectedDoughWork = doughWorkByDate[selectedDateKey] ?? [];
 
   const prevWeek = () => setCurrentDate(addDays(currentDate, -7));
   const nextWeek = () => setCurrentDate(addDays(currentDate, 7));
@@ -3936,11 +3988,18 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
           {weekDays.map(day => {
             const dateKey = format(day, "yyyy-MM-dd");
             const dayPlans = plansByDate[dateKey] ?? [];
+            const dayPrepWork = prepWorkByDate[dateKey] ?? [];
+            const dayDoughWork = doughWorkByDate[dateKey] ?? [];
             const today = isToday(day);
             const selected = isSameDay(day, selectedDate);
             const isComplete = dayPlans.length > 0 && dayPlans.every(p => p.status === "complete" || p.status === "completed");
             const hasPlan = dayPlans.length > 0;
             const isInProgress = hasPlan && !isComplete;
+            // Show a small secondary indicator on days with prep or dough
+            // work but no production of their own (e.g. Saturday dough day
+            // for Monday production). Means a no-production day still
+            // visibly has work on it.
+            const hasOffsiteWork = (dayPrepWork.length > 0 || dayDoughWork.length > 0) && !hasPlan;
 
             return (
               <button
@@ -3978,6 +4037,11 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
                       ? "bg-amber-500"
                       : "bg-primary"
                   )} />
+                ) : hasOffsiteWork ? (
+                  <span className={cn(
+                    "w-2 h-2 rounded-full ring-2",
+                    selected ? "bg-white/70 ring-white/40" : "bg-violet-500/70 ring-violet-500/20"
+                  )} title="Prep or dough scheduled this day" />
                 ) : (
                   <span className="h-2" />
                 )}
@@ -4013,7 +4077,56 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
           </h2>
         </div>
 
-        {selectedDayPlans.length === 0 ? (
+        {/* Prep / dough work scheduled for this day on a different
+            production plan. Surfaces e.g. "Prep on Sat for Mon production"
+            so the team can open the prep station directly even when this
+            specific day has no production of its own. */}
+        {(selectedPrepWork.length > 0 || selectedDoughWork.length > 0) && (
+          <div className="grid gap-2">
+            {selectedPrepWork.map(p => (
+              <button
+                key={`prep-${p.id}`}
+                onClick={() => navigate(`/plans/${p.id}/station/main_prep`)}
+                className="text-left rounded-xl px-4 py-3 border border-violet-300/60 dark:border-violet-700/60 bg-violet-50 dark:bg-violet-950/20 hover:bg-violet-100 dark:hover:bg-violet-950/30 transition-colors flex items-center gap-3"
+              >
+                <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center flex-shrink-0">
+                  <ClipboardList className="w-4 h-4 text-violet-700 dark:text-violet-300" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-violet-800 dark:text-violet-200">
+                    Prep day for {p.name}
+                  </p>
+                  <p className="text-xs text-violet-700/80 dark:text-violet-300/80">
+                    Production on {format(parseISO(p.planDate), "EEE d MMM")} · open Main Prep
+                  </p>
+                </div>
+                <ArrowRight className="w-4 h-4 text-violet-700 dark:text-violet-300 flex-shrink-0" />
+              </button>
+            ))}
+            {selectedDoughWork.map(p => (
+              <button
+                key={`dough-${p.id}`}
+                onClick={() => navigate(`/plans/${p.id}/station/dough_prep`)}
+                className="text-left rounded-xl px-4 py-3 border border-amber-300/60 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100 dark:hover:bg-amber-950/30 transition-colors flex items-center gap-3"
+              >
+                <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center flex-shrink-0">
+                  <Layers className="w-4 h-4 text-amber-700 dark:text-amber-300" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">
+                    Dough day for {p.name}
+                  </p>
+                  <p className="text-xs text-amber-700/80 dark:text-amber-300/80">
+                    Production on {format(parseISO(p.planDate), "EEE d MMM")} · open Dough Prep
+                  </p>
+                </div>
+                <ArrowRight className="w-4 h-4 text-amber-700 dark:text-amber-300 flex-shrink-0" />
+              </button>
+            ))}
+          </div>
+        )}
+
+        {selectedDayPlans.length === 0 && selectedPrepWork.length === 0 && selectedDoughWork.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-border bg-card flex flex-col items-center justify-center py-14 text-muted-foreground">
             <CalendarDays className="w-10 h-10 mb-3 opacity-20" />
             <p className="text-sm font-medium">No production plan for this day</p>
@@ -4026,7 +4139,7 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
               Create Plan
             </button>
           </div>
-        ) : (
+        ) : selectedDayPlans.length === 0 ? null : (
           <div className="grid gap-3">
             {selectedDayPlans.map(plan => {
               const statusConfig = STATUS_CONFIG[plan.status as keyof typeof STATUS_CONFIG] ?? STATUS_CONFIG.draft;

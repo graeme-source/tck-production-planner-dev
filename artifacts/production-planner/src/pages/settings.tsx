@@ -11,7 +11,7 @@ import {
   CheckCircle2, XCircle, KeyRound, Package, ChevronDown, ChevronUp,
   Lock, Timer, BarChart2, Coffee, Truck, Mail, Warehouse,
   Camera, User, CircleDot, ToggleRight, Boxes, UtensilsCrossed,
-  AlertTriangle, Scale, ThermometerSnowflake, BookOpen, Megaphone,
+  AlertTriangle, Scale, ThermometerSnowflake, BookOpen, Megaphone, CalendarDays,
 } from "lucide-react";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { Switch } from "@/components/ui/switch";
@@ -908,6 +908,7 @@ export default function Settings() {
           {activeSection === "production" && (
             <div className="space-y-8">
               {user?.role === "admin" && <AdminDateOverrideSection />}
+              {user?.role === "admin" && <PrepDoughScheduleSection />}
               <div ref={dptRef}>
                 {user?.role === "admin" && <DptSettingsSection />}
                 {user?.role === "admin" && <MacCheeseSettingsSection />}
@@ -2591,6 +2592,161 @@ function PastaCookingSection() {
             className="ml-auto px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 disabled:opacity-60"
           >
             {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Per-day-of-week defaults for prep_date and dough_date offsets.
+// Each value is the number of CALENDAR days the prep / dough day sits
+// before production. 1 = previous day, 3 = three days back (e.g. Mon
+// production → Fri prep). Sat dough for Mon production = 2.
+function PrepDoughScheduleSection() {
+  const DAYS = [
+    { key: "monday", label: "Monday" },
+    { key: "tuesday", label: "Tuesday" },
+    { key: "wednesday", label: "Wednesday" },
+    { key: "thursday", label: "Thursday" },
+    { key: "friday", label: "Friday" },
+  ];
+  // These mirror DEFAULT_PREP_OFFSETS / DEFAULT_DOUGH_OFFSETS on the
+  // backend — kept in sync so an unset row shows the in-effect default
+  // rather than a blank field.
+  const DEFAULT_PREP: Record<string, number> = { monday: 3, tuesday: 1, wednesday: 1, thursday: 1, friday: 1 };
+  const DEFAULT_DOUGH: Record<string, number> = { monday: 2, tuesday: 1, wednesday: 1, thursday: 1, friday: 1 };
+
+  const [prepOffsets, setPrepOffsets] = useState<Record<string, string>>({});
+  const [doughOffsets, setDoughOffsets] = useState<Record<string, string>>({});
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const fetches = DAYS.flatMap(d => [
+        fetch(`/api/app-settings/prep_offset_days_${d.key}`, { credentials: "include" })
+          .then(r => r.ok ? r.json() : null)
+          .then(j => ({ kind: "prep" as const, day: d.key, value: j?.value ?? null })),
+        fetch(`/api/app-settings/dough_offset_days_${d.key}`, { credentials: "include" })
+          .then(r => r.ok ? r.json() : null)
+          .then(j => ({ kind: "dough" as const, day: d.key, value: j?.value ?? null })),
+      ]);
+      const results = await Promise.all(fetches);
+      const prepNext: Record<string, string> = {};
+      const doughNext: Record<string, string> = {};
+      for (const d of DAYS) {
+        prepNext[d.key] = String(DEFAULT_PREP[d.key] ?? 1);
+        doughNext[d.key] = String(DEFAULT_DOUGH[d.key] ?? 1);
+      }
+      for (const r of results) {
+        if (r.value != null) {
+          if (r.kind === "prep") prepNext[r.day] = String(r.value);
+          else doughNext[r.day] = String(r.value);
+        }
+      }
+      setPrepOffsets(prepNext);
+      setDoughOffsets(doughNext);
+      setLoaded(true);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const writes: Promise<Response>[] = [];
+      for (const d of DAYS) {
+        writes.push(fetch(`/api/app-settings/prep_offset_days_${d.key}`, {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ value: String(Math.max(0, parseInt(prepOffsets[d.key] || "0", 10) || 0)) }),
+        }));
+        writes.push(fetch(`/api/app-settings/dough_offset_days_${d.key}`, {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ value: String(Math.max(0, parseInt(doughOffsets[d.key] || "0", 10) || 0)) }),
+        }));
+      }
+      const results = await Promise.all(writes);
+      if (results.some(r => !r.ok)) throw new Error("Save failed");
+      setSavedMsg("Saved");
+      setTimeout(() => setSavedMsg(null), 2000);
+    } catch {
+      setSavedMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <CalendarDays className="w-4 h-4 text-primary" /> Prep &amp; Dough Schedule
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            For each production day-of-week, how many calendar days earlier
+            should prep and dough happen by default? E.g. Monday production
+            with prep offset 3 = Friday, dough offset 2 = Saturday. Operators
+            can override per-plan in the Create Plan dialog.
+          </p>
+        </div>
+        {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
+      </div>
+      <div className="rounded-2xl border border-border bg-card p-5">
+        <div className="overflow-x-auto">
+          <table className="text-sm">
+            <thead>
+              <tr className="text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                <th className="pb-2 pr-6">Production Day</th>
+                <th className="pb-2 pr-6 text-center">Prep offset (days back)</th>
+                <th className="pb-2 text-center">Dough offset (days back)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {DAYS.map(d => (
+                <tr key={d.key} className="border-t border-border/40">
+                  <td className="py-2 pr-6 font-medium">{d.label}</td>
+                  <td className="py-2 pr-6 text-center">
+                    <input
+                      type="number"
+                      min="0"
+                      max="14"
+                      step="1"
+                      value={prepOffsets[d.key] ?? ""}
+                      onChange={e => setPrepOffsets(prev => ({ ...prev, [d.key]: e.target.value }))}
+                      className="w-16 px-2 py-1.5 border border-border rounded-lg text-sm text-center"
+                      onWheel={e => { if (document.activeElement === e.currentTarget) e.currentTarget.blur(); }}
+                    />
+                  </td>
+                  <td className="py-2 text-center">
+                    <input
+                      type="number"
+                      min="0"
+                      max="14"
+                      step="1"
+                      value={doughOffsets[d.key] ?? ""}
+                      onChange={e => setDoughOffsets(prev => ({ ...prev, [d.key]: e.target.value }))}
+                      className="w-16 px-2 py-1.5 border border-border rounded-lg text-sm text-center"
+                      onWheel={e => { if (document.activeElement === e.currentTarget) e.currentTarget.blur(); }}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="mt-4 flex justify-end">
+          <button
+            onClick={handleSave}
+            disabled={saving || !loaded}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+            Save schedule
           </button>
         </div>
       </div>

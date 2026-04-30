@@ -149,16 +149,56 @@ function mapPlan(p: typeof productionPlansTable.$inferSelect) {
   };
 }
 
-// Walk back from `fromDate` until we hit a Mon–Fri. Used as the default
-// prep_date and dough_date when a plan is created without overrides — e.g.
-// a Monday production rolls back to the previous Friday. The Create Plan
-// dialog can override either field for cases like "do dough on Saturday".
+// Walk back from `fromDate` until we hit a Mon–Fri. Used as the very-last
+// fallback when a plan is created without an override AND no per-day-of-week
+// schedule setting is configured. Most callers should use
+// resolveDefaultPrepDate / resolveDefaultDoughDate instead.
 export function getPreviousBusinessDay(fromDate: string): string {
   const d = new Date(`${fromDate}T12:00:00Z`);
   do {
     d.setUTCDate(d.getUTCDate() - 1);
   } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
   return d.toISOString().slice(0, 10);
+}
+
+// Default prep / dough lead times, in calendar days, by production-day-of-
+// week. Mirrors the kitchen's actual rhythm: prep happens the previous
+// business day for Tue–Fri productions; for Monday production prep happens
+// on Friday (3 days back) and dough comes in on Saturday (2 days back).
+// Operators can override per-day in Settings — these are just the seeds.
+const DAY_NAMES_LOWER = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
+const DEFAULT_PREP_OFFSETS: Record<string, number> = { monday: 3, tuesday: 1, wednesday: 1, thursday: 1, friday: 1 };
+const DEFAULT_DOUGH_OFFSETS: Record<string, number> = { monday: 2, tuesday: 1, wednesday: 1, thursday: 1, friday: 1 };
+
+async function readOffsetSetting(key: string): Promise<number | null> {
+  const [row] = await db.select({ value: appSettingsTable.value }).from(appSettingsTable).where(eq(appSettingsTable.key, key)).limit(1);
+  if (!row) return null;
+  const n = Number(row.value);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+}
+
+function applyOffset(fromDate: string, offsetDays: number): string {
+  const d = new Date(`${fromDate}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - offsetDays);
+  return d.toISOString().slice(0, 10);
+}
+
+export async function resolveDefaultPrepDate(planDate: string): Promise<string> {
+  const dow = new Date(`${planDate}T12:00:00Z`).getUTCDay();
+  const dayName = DAY_NAMES_LOWER[dow];
+  const fromSettings = await readOffsetSetting(`prep_offset_days_${dayName}`);
+  const offset = fromSettings ?? DEFAULT_PREP_OFFSETS[dayName];
+  if (offset == null) return getPreviousBusinessDay(planDate);
+  return applyOffset(planDate, offset);
+}
+
+export async function resolveDefaultDoughDate(planDate: string): Promise<string> {
+  const dow = new Date(`${planDate}T12:00:00Z`).getUTCDay();
+  const dayName = DAY_NAMES_LOWER[dow];
+  const fromSettings = await readOffsetSetting(`dough_offset_days_${dayName}`);
+  const offset = fromSettings ?? DEFAULT_DOUGH_OFFSETS[dayName];
+  if (offset == null) return getPreviousBusinessDay(planDate);
+  return applyOffset(planDate, offset);
 }
 
 function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?: string | null; portionsPerBatch?: number | null; packSize?: number | null; fillWeightGrams?: string | null; baseType?: string | null; baseWeightGrams?: string | null; wrappingComplete?: boolean | null; recipeColor?: string | null; targetBuildSeconds?: number | null; recipeCategory?: string | null }, stationCompletions?: Record<string, number>) {
@@ -303,6 +343,25 @@ router.get("/", async (req, res) => {
   })));
 });
 
+// GET /production-plans/default-dates?planDate=YYYY-MM-DD
+// Returns the prep_date and dough_date the backend will assign to a new
+// plan with this planDate (assuming no overrides). The Create Plan dialog
+// fetches this when the production date changes so operators see the
+// configured defaults — including any per-day-of-week settings — instead
+// of an empty input that gets resolved silently on submit.
+router.get("/default-dates", async (req, res) => {
+  const planDate = String(req.query.planDate ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(planDate)) {
+    res.status(400).json({ error: "planDate query param required (YYYY-MM-DD)" });
+    return;
+  }
+  const [prepDate, doughDate] = await Promise.all([
+    resolveDefaultPrepDate(planDate),
+    resolveDefaultDoughDate(planDate),
+  ]);
+  res.json({ planDate, prepDate, doughDate });
+});
+
 router.post("/", validate(CreatePlanBody), async (req, res) => {
   const { planDate, prepDate, doughDate, name, notes, status, items } = req.body;
   // Enforce Mon–Fri only — parse at noon UTC to avoid timezone edge cases
@@ -326,13 +385,13 @@ router.post("/", validate(CreatePlanBody), async (req, res) => {
   }
   const batchNumber = julianBatchNumber(dateObj);
 
-  // Default both prep_date and dough_date to the previous business day if
-  // the caller didn't override them. Stored at insert time so every reader
-  // (prep stations, dashboard, reports) can trust the column without
-  // duplicating the fallback logic — and operators see the resolved date
-  // immediately on the plan card without any client-side recomputation.
-  const resolvedPrepDate = prepDate ?? getPreviousBusinessDay(planDate);
-  const resolvedDoughDate = doughDate ?? getPreviousBusinessDay(planDate);
+  // Default both prep_date and dough_date based on the per-day-of-week
+  // offsets configured in Settings (Phase 2), falling back to a sensible
+  // baseline (prev business day for Tue–Fri, Fri/Sat for Mon production).
+  // Stored at insert time so every reader can trust the column without
+  // duplicating the fallback logic.
+  const resolvedPrepDate = prepDate ?? await resolveDefaultPrepDate(planDate);
+  const resolvedDoughDate = doughDate ?? await resolveDefaultDoughDate(planDate);
 
   const [plan] = await db.insert(productionPlansTable).values({
     planDate,
