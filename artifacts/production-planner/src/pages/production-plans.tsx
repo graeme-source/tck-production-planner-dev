@@ -334,6 +334,9 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
         {item.special3Count > 0 && <div className="text-[9px] text-muted-foreground leading-tight">incl. {item.special3Count}</div>}
       </td>
       <td className="py-2 px-2 text-center">
+        {/* The Batches input is the operator's headline output — what we're
+            actually going to make. Bold, larger, and tinted with the recipe
+            colour so the eye lands on it as the conclusion of the row. */}
         <input
           type="number"
           min={0}
@@ -343,7 +346,8 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
           onWheel={e => { if (document.activeElement === e.currentTarget) e.currentTarget.blur(); }}
           disabled={!item.included || saving}
           placeholder="0"
-          className="w-16 px-1.5 py-1 bg-background border border-border rounded-lg text-xs text-center focus-ring disabled:opacity-40 tabular-nums"
+          style={item.recipeColor ? { color: item.recipeColor, borderColor: item.recipeColor } : undefined}
+          className="w-16 px-1.5 py-1 bg-background border-2 rounded-lg text-base font-bold text-center focus-ring disabled:opacity-40 tabular-nums"
         />
       </td>
       <td className="py-2 px-1.5 text-right">
