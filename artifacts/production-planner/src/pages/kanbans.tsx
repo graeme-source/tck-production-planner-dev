@@ -914,6 +914,7 @@ export default function Kanbans() {
                   <option value="weight">Weight ({editIngredient.unit})</option>
                   <option value="pack">Packs</option>
                   <option value="bottle">Bottles</option>
+                  <option value="pallet">Pallets</option>
                 </select>
               </div>
 

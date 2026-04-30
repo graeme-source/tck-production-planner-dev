@@ -1008,12 +1008,26 @@ export default function Ingredients() {
                     >
                       Bottle
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setValue("kanbanUnit", "pallet")}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors",
+                        watchedKanbanUnit === "pallet"
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-background border-border text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      Pallet
+                    </button>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
                     {watchedKanbanUnit === "pack"
                       ? "Each kanban card will order a set number of packs (bags, etc.)."
                       : watchedKanbanUnit === "bottle"
                       ? "Each kanban card will order a set number of bottles."
+                      : watchedKanbanUnit === "pallet"
+                      ? "Each kanban card will order a set number of pallets."
                       : `Each kanban card will order a set weight in ${watchedUnit || "kg"}.`}
                   </p>
                 </div>
@@ -1032,7 +1046,7 @@ export default function Ingredients() {
                       placeholder={watchedKanbanUnit === "weight" ? "e.g. 10" : "e.g. 2"}
                     />
                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">
-                      {watchedKanbanUnit === "pack" ? "packs" : watchedKanbanUnit === "bottle" ? "bottles" : (watchedUnit || "unit")}
+                      {watchedKanbanUnit === "pack" ? "packs" : watchedKanbanUnit === "bottle" ? "bottles" : watchedKanbanUnit === "pallet" ? "pallets" : (watchedUnit || "unit")}
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
@@ -1040,6 +1054,8 @@ export default function Ingredients() {
                       ? "Number of packs to order per kanban card."
                       : watchedKanbanUnit === "bottle"
                       ? "Number of bottles to order per kanban card."
+                      : watchedKanbanUnit === "pallet"
+                      ? "Number of pallets to order per kanban card."
                       : "Standard order quantity per kanban card."}
                   </p>
                 </div>
@@ -1058,7 +1074,7 @@ export default function Ingredients() {
                       placeholder="e.g. 13"
                     />
                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">
-                      {watchedKanbanUnit === "pack" ? "packs" : watchedKanbanUnit === "bottle" ? "bottles" : (watchedUnit || "unit")}
+                      {watchedKanbanUnit === "pack" ? "packs" : watchedKanbanUnit === "bottle" ? "bottles" : watchedKanbanUnit === "pallet" ? "pallets" : (watchedUnit || "unit")}
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">

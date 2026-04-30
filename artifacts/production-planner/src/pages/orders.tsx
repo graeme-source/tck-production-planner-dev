@@ -484,6 +484,7 @@ export default function Orders() {
       const unit =
         kanban.kanbanUnit === "pack" ? "packs"
         : kanban.kanbanUnit === "bottle" ? "bottles"
+        : kanban.kanbanUnit === "pallet" ? "pallets"
         : (kanban.ingredientUnit ?? "kg");
       const newLine: EditableLine = {
         ingredientId: kanban.ingredientId,
@@ -1491,6 +1492,7 @@ export default function Orders() {
                 const unitLabel =
                   k.kanbanUnit === "pack" ? "packs"
                   : k.kanbanUnit === "bottle" ? "bottles"
+                  : k.kanbanUnit === "pallet" ? "pallets"
                   : (k.ingredientUnit ?? "");
                 const supplierOptions = supplierOptionsFor(k);
                 return (

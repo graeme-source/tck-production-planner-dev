@@ -69,7 +69,7 @@ export const ingredientFormSchema = z.object({
   // Kanban
   kanbanEnabled: z.boolean().optional(),
   kanbanQuantity: z.coerce.number().min(0).optional(),
-  kanbanUnit: z.enum(["weight", "pack", "bottle"]).optional(),
+  kanbanUnit: z.enum(["weight", "pack", "bottle", "pallet"]).optional(),
   kanbanOrderAmount: nullableNumber((n) => n.min(0)),
 
   // Nutritionals

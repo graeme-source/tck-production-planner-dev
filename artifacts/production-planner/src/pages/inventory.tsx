@@ -794,6 +794,7 @@ function ItemFormDialog({
                     <option value="weight">Weight (kg/g/L)</option>
                     <option value="pack">Pack</option>
                     <option value="bottle">Bottle</option>
+                    <option value="pallet">Pallet</option>
                   </select>
                 </div>
                 <div>
