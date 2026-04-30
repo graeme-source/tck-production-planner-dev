@@ -187,15 +187,43 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
     }
   };
 
-  // Oven batch completion goes through a weight-input modal: the operator
-  // must enter the actual pack weight (grams) before the batch can be logged.
-  // The record is written to batch_weight_records on the server so the HACCP
-  // cooling timer can start from the final batch's timestamp.
-  const addBatch = (item: ProductionPlanItem) => {
+  // Oven batch completion goes through a weight-input modal for calzones:
+  // the operator must enter the actual pack weight (grams) before the batch
+  // can be logged. The record is written to batch_weight_records on the
+  // server so the HACCP cooling timer can start from the final batch's
+  // timestamp. Macaroni Cheese recipes don't go through this flow at all —
+  // their HACCP anchor is the post-cheese-sauce temperature record — so the
+  // batch is logged straight through with no weight prompt.
+  const addBatch = async (item: ProductionPlanItem) => {
     if (isOnBreak) return;
     const avail = getAvailableFromPrev(item, "ovens");
     if (avail <= 0) {
       toast({ title: "Waiting for Building", description: "Building station must complete more batches first.", variant: "destructive" });
+      return;
+    }
+    if (isMacCheese(item as any)) {
+      setSubmittingWeight(true);
+      try {
+        const res = await fetch(`/api/production-plans/${plan.id}/batch-completions`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            planItemId: item.id,
+            stationType: "ovens",
+            completedAt: new Date().toISOString(),
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: "Failed to record batch" }));
+          toast({ title: "Could not log batch", description: err.error ?? "Failed", variant: "destructive" });
+          return;
+        }
+        await refetchWeightData();
+        await queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+      } finally {
+        setSubmittingWeight(false);
+      }
       return;
     }
     setWeightInput("");

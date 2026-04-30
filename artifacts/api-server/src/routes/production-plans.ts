@@ -1798,16 +1798,6 @@ router.post("/:id/batch-completions", async (req, res) => {
 
   if (await planDraftStatus(planId)) { res.status(409).json({ error: DRAFT_COMPLETION_ERROR }); return; }
 
-  // Oven-station batches require an actual pack weight (g) so HACCP cooling
-  // data and weight variance can be tracked per batch.
-  if (stationType === "ovens") {
-    const w = Number(actualWeightG);
-    if (!Number.isFinite(w) || w < 100 || w > 2000) {
-      res.status(400).json({ error: "actualWeightG is required for oven batches and must be between 100–2000g" });
-      return;
-    }
-  }
-
   // Verify that the planItemId belongs to this plan (prevent cross-plan contamination)
   const [planItem] = await db.select({
     id: productionPlanItemsTable.id,
@@ -1820,6 +1810,7 @@ router.post("/:id/batch-completions", async (req, res) => {
     leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
     portionsPerBatch: recipesTable.portionsPerBatch,
     packSize: recipesTable.packSize,
+    recipeCategory: recipesTable.category,
   })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
@@ -1827,6 +1818,19 @@ router.post("/:id/batch-completions", async (req, res) => {
   if (!planItem) {
     res.status(400).json({ error: "planItemId does not belong to this plan" });
     return;
+  }
+
+  // Oven-station batches require an actual pack weight (g) so HACCP cooling
+  // data and weight variance can be tracked per batch — except Macaroni
+  // Cheese, which doesn't go through the calzone weighing flow at all
+  // (HACCP anchor comes from the post-cheese-sauce temperature record).
+  const isMacCheeseRecipe = planItem.recipeCategory === "Macaroni Cheese";
+  if (stationType === "ovens" && !isMacCheeseRecipe) {
+    const w = Number(actualWeightG);
+    if (!Number.isFinite(w) || w < 100 || w > 2000) {
+      res.status(400).json({ error: "actualWeightG is required for oven batches and must be between 100–2000g" });
+      return;
+    }
   }
 
   // Once the builder has marked this recipe complete, the building pipeline
@@ -1939,7 +1943,7 @@ router.post("/:id/batch-completions", async (req, res) => {
   // cooked weight + tray weight. `is_last_batch_of_recipe` flips on the batch
   // whose new oven count equals the effective target (post-builder-complete
   // the target is the combined building count).
-  if (stationType === "ovens" && planItem.recipeId) {
+  if (stationType === "ovens" && planItem.recipeId && !isMacCheeseRecipe) {
     try {
       const settings = await getWeightAppSettings();
       const { portionWeightG } = await computePortionWeightG(planItem.recipeId);
