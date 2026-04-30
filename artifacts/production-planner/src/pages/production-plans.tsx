@@ -313,7 +313,7 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
       <td className="py-2 px-2 text-center tabular-nums text-xs text-green-600 dark:text-green-400">
         {item.prevProduction ? `+${item.prevProduction}` : "—"}
       </td>
-      <td className="py-2 px-2 text-center tabular-nums text-sm font-semibold">
+      <td className="py-2 px-1 text-center tabular-nums text-sm font-semibold">
         {(() => {
           const nextFN = item.fridgeStock - item.dispatch1Qty + item.prevProduction;
           return (
@@ -323,8 +323,15 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
           );
         })()}
       </td>
-      <td className="py-2 px-2 text-center tabular-nums text-xs">
-        {item.deficit > 0 ? <span className="text-red-600 dark:text-red-400 font-semibold">-{item.deficit}</span> : "0"}
+      {/* D2 + D3 dispatches displayed for visual sense-check; the suggested
+          batches still use these values via the deficit math on the server. */}
+      <td className="py-2 px-1 text-center tabular-nums text-xs text-red-500">
+        <div>{item.dispatch2Qty ? `−${item.dispatch2Qty}` : "—"}</div>
+        {item.special2Count > 0 && <div className="text-[9px] text-muted-foreground leading-tight">incl. {item.special2Count}</div>}
+      </td>
+      <td className="py-2 px-1 text-center tabular-nums text-xs text-red-500">
+        <div>{item.dispatch3Qty ? `−${item.dispatch3Qty}` : "—"}</div>
+        {item.special3Count > 0 && <div className="text-[9px] text-muted-foreground leading-tight">incl. {item.special3Count}</div>}
       </td>
       <td className="py-2 px-2 text-center">
         <input
@@ -1398,12 +1405,27 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                               {calcData?.prevProductionDate ? `+ ${format(parseISO(calcData.prevProductionDate), "EEE")} Production` : "+ Production"}
                             </th>
                             <th
-                              className="py-2 px-2 text-center font-medium text-foreground min-w-[80px]"
+                              className="py-2 px-1 text-center font-medium text-foreground min-w-[60px] leading-tight"
                               title="End-of-tomorrow Factory Number = today's FN − tomorrow's dispatch + tomorrow's production"
                             >
-                              = Next Factory Number
+                              = Next<br />Factory&nbsp;No.
                             </th>
-                            <th className="py-2 px-2 text-center font-medium text-muted-foreground whitespace-nowrap" title="Packs short — need to produce at least this many">Deficit</th>
+                            {/* D2 + D3 dispatch columns — visible for sense-check.
+                                The deficit / suggested batches still use these
+                                values via the server math, even though the
+                                Deficit column itself is no longer displayed. */}
+                            <th
+                              className="py-2 px-1 text-center font-medium text-red-500 min-w-[60px] leading-tight"
+                              title={dispatchDates[1] ? `Dispatched ${format(parseISO(dispatchDates[1]), "EEE d MMM")} — delivered ${deliveryDates[1] ? format(parseISO(deliveryDates[1]), "EEE d MMM") : ""}` : "Day-after dispatch"}
+                            >
+                              {dispatchDates[1] ? <>− {format(parseISO(dispatchDates[1]), "EEE")}<br />Dispatch</> : "− Dispatch"}
+                            </th>
+                            <th
+                              className="py-2 px-1 text-center font-medium text-red-500 min-w-[60px] leading-tight"
+                              title={dispatchDates[2] ? `Dispatched ${format(parseISO(dispatchDates[2]), "EEE d MMM")} — delivered ${deliveryDates[2] ? format(parseISO(deliveryDates[2]), "EEE d MMM") : ""}` : "Two-days-after dispatch"}
+                            >
+                              {dispatchDates[2] ? <>− {format(parseISO(dispatchDates[2]), "EEE")}<br />Dispatch</> : "− Dispatch"}
+                            </th>
                             <th className="py-2 px-2 text-center font-medium text-muted-foreground whitespace-nowrap" title="Batches you want to make">Batches</th>
                             <th className="w-7 py-2 px-1.5" />
                           </tr>
@@ -1444,7 +1466,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                             <td className="py-2 px-2 text-center tabular-nums text-green-600 dark:text-green-400">
                               {items.reduce((s, i) => s + i.prevProduction, 0) || "—"}
                             </td>
-                            <td className="py-2 px-2 text-center tabular-nums font-semibold">
+                            <td className="py-2 px-1 text-center tabular-nums font-semibold">
                               {(() => {
                                 const fr = items.reduce((s, i) => s + i.fridgeStock, 0);
                                 const d1 = items.reduce((s, i) => s + i.dispatch1Qty, 0);
@@ -1452,7 +1474,12 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                                 return Math.round(fr - d1 + pp);
                               })()}
                             </td>
-                            <td className="py-2 px-2 text-center tabular-nums">{items.reduce((s, i) => s + i.deficit, 0) || "—"}</td>
+                            <td className="py-2 px-1 text-center tabular-nums text-red-500">
+                              {items.reduce((s, i) => s + i.dispatch2Qty, 0) || "—"}
+                            </td>
+                            <td className="py-2 px-1 text-center tabular-nums text-red-500">
+                              {items.reduce((s, i) => s + i.dispatch3Qty, 0) || "—"}
+                            </td>
                             <td className="py-2 px-2 text-center tabular-nums font-semibold">{items.filter(i => i.included).reduce((s, i) => s + i.batchesTarget, 0)}</td>
                             <td className="py-2 px-1.5" />
                           </tr>
@@ -2135,8 +2162,9 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
                         <th className="py-2 px-1 text-center font-medium text-muted-foreground min-w-[60px]">vs Next</th>
                         <th className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]">&minus; Dispatch</th>
                         <th className="py-2 px-2 text-center font-medium text-green-600 min-w-[70px]">+ Production</th>
-                        <th className="py-2 px-2 text-center font-medium text-foreground min-w-[80px]">= Next Factory Number</th>
-                        <th className="py-2 px-2 text-center font-medium text-muted-foreground whitespace-nowrap">Deficit</th>
+                        <th className="py-2 px-1 text-center font-medium text-foreground min-w-[60px] leading-tight">= Next<br />Factory&nbsp;No.</th>
+                        <th className="py-2 px-1 text-center font-medium text-red-500 min-w-[60px] leading-tight">&minus; Dispatch</th>
+                        <th className="py-2 px-1 text-center font-medium text-red-500 min-w-[60px] leading-tight">&minus; Dispatch</th>
                         <th className="py-2 px-2 text-center font-medium text-muted-foreground whitespace-nowrap">Batches</th>
                         <th className="w-7 py-2 px-1.5" />
                       </tr>
