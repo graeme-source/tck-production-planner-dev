@@ -45,6 +45,13 @@ export const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(
           setText(raw);
           onChange(raw === "" ? emptyValue : Number(raw));
         }}
+        // Block the browser's default "scroll-wheel = change value" behaviour
+        // on focused number inputs. Without this, hovering over a factory
+        // number / batch input and scrolling the page silently mutates the
+        // value, which can drift production counts unnoticed.
+        onWheel={e => {
+          if (document.activeElement === e.currentTarget) e.currentTarget.blur();
+        }}
         {...rest}
       />
     );

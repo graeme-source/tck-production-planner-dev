@@ -245,6 +245,7 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
               value={item.fridgeStock === 0 ? "" : item.fridgeStock}
               onChange={e => onFridgeStockChange(item.id, e.target.value === "" ? 0 : Math.max(0, parseInt(e.target.value, 10) || 0))}
               onFocus={e => e.currentTarget.select()}
+              onWheel={e => { if (document.activeElement === e.currentTarget) e.currentTarget.blur(); }}
               disabled={saving}
               title={title}
               className={cn(
@@ -295,6 +296,7 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
           value={item.batchesTarget === 0 ? "" : item.batchesTarget}
           onChange={e => onBatchChange(item.id, e.target.value === "" ? 0 : Math.max(0, Number(e.target.value) || 0))}
           onFocus={e => e.currentTarget.select()}
+          onWheel={e => { if (document.activeElement === e.currentTarget) e.currentTarget.blur(); }}
           disabled={!item.included || saving}
           placeholder="0"
           className="w-16 px-1.5 py-1 bg-background border border-border rounded-lg text-xs text-center focus-ring disabled:opacity-40 tabular-nums"
@@ -966,69 +968,159 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-[95vw] w-[1200px] bg-card border-border rounded-2xl max-h-[90vh] overflow-hidden flex flex-col">
-        <DialogHeader className="pb-4 border-b border-border flex-shrink-0">
+      <DialogContent className="max-w-[98vw] w-[1600px] bg-card border-border rounded-2xl max-h-[95vh] overflow-hidden flex flex-col p-0">
+        <DialogHeader className="px-6 pt-5 pb-4 border-b border-border flex-shrink-0">
           <DialogTitle className="font-display text-xl flex items-center gap-2">
             <CalendarDays className="w-5 h-5 text-primary" />
             Create Production Plan
           </DialogTitle>
         </DialogHeader>
 
-        <div className="overflow-y-auto flex-1 px-1 pt-1">
-          <div className="grid grid-cols-2 gap-4 mb-5">
-            <div>
-              <label className="text-sm font-medium mb-1 block text-muted-foreground">Production Date</label>
-              <input
-                type="date"
-                value={planDate}
-                min={isAdmin ? undefined : toLocalDateStr(minPlanDate)}
-                onChange={e => handleDateChange(e.target.value)}
-                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
-              />
-              {dateWarning && (
-                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
-                  <Info className="w-3 h-3 flex-shrink-0" />
-                  {dateWarning}
-                </p>
-              )}
-            </div>
-            <div>
-              <label className="text-sm font-medium mb-1 block text-muted-foreground">
-                Prep Date <span className="font-normal text-muted-foreground/60">(optional override)</span>
-              </label>
-              <input
-                type="date"
-                value={prepDate}
-                max={planDate}
-                onChange={e => { isDirty.current = true; setPrepDate(e.target.value); }}
-                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
-              />
-              {!prepDate && (
-                <p className="text-xs text-muted-foreground mt-1">Defaults to previous production day</p>
-              )}
-            </div>
-            <div>
-              <label className="text-sm font-medium mb-1 block text-muted-foreground">Plan Name</label>
-              <input
-                value={planName}
-                onChange={e => { isDirty.current = true; setPlanName(e.target.value); }}
-                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
-                placeholder="Auto-generated from date"
-              />
-            </div>
-            <div className="col-span-2">
-              <label className="text-sm font-medium mb-1 block text-muted-foreground">Notes</label>
-              <textarea
-                value={notes}
-                onChange={e => { isDirty.current = true; setNotes(e.target.value); }}
-                rows={2}
-                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring resize-none"
-                placeholder="Optional notes for this plan..."
-              />
-            </div>
-          </div>
+        {/* Two-pane layout: left = plan meta + actions (everything that
+            isn't a recipe row), right = the recipes table given the full
+            vertical height. Means operators can see every recipe at once
+            without scrolling between fields and the table. */}
+        <div className="flex-1 flex min-h-0">
+          {/* LEFT — plan meta + footer-style controls */}
+          <aside className="w-[340px] flex-shrink-0 border-r border-border flex flex-col">
+            <div className="overflow-y-auto p-5 space-y-4 flex-1">
+              <div>
+                <label className="text-sm font-medium mb-1 block text-muted-foreground">Production Date</label>
+                <input
+                  type="date"
+                  value={planDate}
+                  min={isAdmin ? undefined : toLocalDateStr(minPlanDate)}
+                  onChange={e => handleDateChange(e.target.value)}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
+                />
+                {dateWarning && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+                    <Info className="w-3 h-3 flex-shrink-0" />
+                    {dateWarning}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block text-muted-foreground">
+                  Prep Date <span className="font-normal text-muted-foreground/60">(optional)</span>
+                </label>
+                <input
+                  type="date"
+                  value={prepDate}
+                  max={planDate}
+                  onChange={e => { isDirty.current = true; setPrepDate(e.target.value); }}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
+                />
+                {!prepDate && (
+                  <p className="text-xs text-muted-foreground mt-1">Defaults to previous production day</p>
+                )}
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block text-muted-foreground">Plan Name</label>
+                <input
+                  value={planName}
+                  onChange={e => { isDirty.current = true; setPlanName(e.target.value); }}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
+                  placeholder="Auto-generated from date"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block text-muted-foreground">Notes</label>
+                <textarea
+                  value={notes}
+                  onChange={e => { isDirty.current = true; setNotes(e.target.value); }}
+                  rows={3}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring resize-none"
+                  placeholder="Optional notes for this plan..."
+                />
+              </div>
 
-          <div className="flex items-center justify-between mb-2">
+              <div className="border-t border-border pt-4 space-y-2 text-sm text-muted-foreground">
+                <div className="flex items-center justify-between">
+                  <span>Julian batch</span>
+                  <span className="font-mono font-semibold text-foreground">{julianBatchNumber(planDate)}</span>
+                </div>
+                {calcData && (
+                  <div className="flex items-center justify-between gap-2">
+                    <span>Total batches</span>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min={0}
+                        value={effectiveTotalBatches === 0 ? "" : effectiveTotalBatches}
+                        onChange={e => handleTotalBatchesChange(e.target.value === "" ? 0 : Math.max(0, Number(e.target.value) || 0))}
+                        onFocus={e => e.currentTarget.select()}
+                        onWheel={e => { if (document.activeElement === e.currentTarget) e.currentTarget.blur(); }}
+                        placeholder="0"
+                        className="w-16 px-1.5 py-0.5 bg-background border border-border rounded-lg text-sm text-center font-semibold text-foreground focus-ring tabular-nums"
+                      />
+                      {totalBatchesOverride !== null && totalBatchesOverride !== calcData.totalDailyBatches && (
+                        <button
+                          onClick={() => handleTotalBatchesChange(calcData.totalDailyBatches)}
+                          className="text-xs text-muted-foreground hover:text-foreground transition-colors underline"
+                          title={`Reset to default (${calcData.totalDailyBatches})`}
+                        >
+                          reset
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+                <div className="flex items-center justify-between text-xs">
+                  <span>Planned</span>
+                  <span>
+                    <span className={cn(
+                      "font-semibold",
+                      items.filter(i => i.included).reduce((s, i) => s + i.batchesTarget, 0) > effectiveTotalBatches
+                        ? "text-red-600 dark:text-red-400"
+                        : "text-foreground"
+                    )}>
+                      {items.filter(i => i.included).reduce((s, i) => s + i.batchesTarget, 0)}
+                    </span>
+                    {" / "}
+                    {effectiveTotalBatches}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t border-border p-4 space-y-2 flex-shrink-0">
+              {autoSavedAt && (
+                <div className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 animate-in fade-in duration-200">
+                  <BookmarkCheck className="w-3 h-3" /> Auto-saved
+                </div>
+              )}
+              <button
+                onClick={() => handleSubmit("active")}
+                disabled={includedCount === 0 || isSubmitting}
+                className="w-full px-5 py-2.5 text-sm bg-primary text-primary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center justify-center gap-2 transition-opacity shadow-md shadow-primary/20 hover:opacity-90"
+              >
+                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                Activate &amp; Lock ({includedCount})
+              </button>
+              <button
+                onClick={() => handleSubmit("draft")}
+                disabled={includedCount === 0 || isSubmitting}
+                className="w-full px-4 py-2 text-sm border border-border bg-secondary text-secondary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center justify-center gap-2 transition-colors hover:bg-secondary/80"
+              >
+                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardList className="w-4 h-4" />}
+                Save as Draft
+              </button>
+              <button
+                onClick={onClose}
+                className="w-full px-4 py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+              <p className="text-[10px] text-muted-foreground text-center pt-1">
+                Activating locks batch numbers — they won't change as new orders come in.
+              </p>
+            </div>
+          </aside>
+
+          {/* RIGHT — recipes table fills the remaining width and height */}
+          <div className="flex-1 flex flex-col min-w-0">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-border flex-shrink-0">
             <h3 className="font-semibold text-sm flex items-center gap-2">
               <BarChart2 className="w-4 h-4 text-primary" />
               Production Calculator
@@ -1067,6 +1159,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
             </div>
           </div>
 
+          <div className="overflow-y-auto flex-1 px-5 py-4">
           {loadingCalc ? (
             <div className="flex items-center justify-center h-32 text-muted-foreground">
               <Loader2 className="w-5 h-5 animate-spin mr-2" />
@@ -1253,81 +1346,8 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
               )}
             </>
           )}
-        </div>
-
-        <div className="border-t border-border pt-4 flex items-center justify-between flex-shrink-0">
-          <div className="text-sm text-muted-foreground flex items-center gap-4">
-            <span>
-              Julian batch: <span className="font-mono font-semibold text-foreground">{julianBatchNumber(planDate)}</span>
-            </span>
-            {calcData && (
-              <span className="flex items-center gap-1.5">
-                Total batches:
-                <input
-                  type="number"
-                  min={0}
-                  value={effectiveTotalBatches === 0 ? "" : effectiveTotalBatches}
-                  onChange={e => handleTotalBatchesChange(e.target.value === "" ? 0 : Math.max(0, Number(e.target.value) || 0))}
-                  onFocus={e => e.currentTarget.select()}
-                  placeholder="0"
-                  className="w-16 px-1.5 py-0.5 bg-background border border-border rounded-lg text-sm text-center font-semibold text-foreground focus-ring tabular-nums"
-                />
-                {totalBatchesOverride !== null && totalBatchesOverride !== calcData.totalDailyBatches && (
-                  <button
-                    onClick={() => handleTotalBatchesChange(calcData.totalDailyBatches)}
-                    className="text-xs text-muted-foreground hover:text-foreground transition-colors underline"
-                    title={`Reset to default (${calcData.totalDailyBatches})`}
-                  >
-                    reset
-                  </button>
-                )}
-              </span>
-            )}
-            <span className="text-xs">
-              Planned: <span className={cn(
-                "font-semibold",
-                items.filter(i => i.included).reduce((s, i) => s + i.batchesTarget, 0) > effectiveTotalBatches
-                  ? "text-red-600 dark:text-red-400"
-                  : "text-foreground"
-              )}>
-                {items.filter(i => i.included).reduce((s, i) => s + i.batchesTarget, 0)}
-              </span>
-              {" / "}
-              {effectiveTotalBatches}
-            </span>
           </div>
-          <div className="flex items-center gap-3">
-            {autoSavedAt && (
-              <span className="text-xs flex items-center gap-1 text-emerald-600 dark:text-emerald-400 animate-in fade-in duration-200">
-                <BookmarkCheck className="w-3 h-3" /> Auto-saved
-              </span>
-            )}
-            <button
-              onClick={onClose}
-              className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-xl transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => handleSubmit("draft")}
-              disabled={includedCount === 0 || isSubmitting}
-              className="px-4 py-2 text-sm border border-border bg-secondary text-secondary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center gap-2 transition-colors hover:bg-secondary/80"
-            >
-              {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardList className="w-4 h-4" />}
-              Save as Draft
-            </button>
-            <button
-              onClick={() => handleSubmit("active")}
-              disabled={includedCount === 0 || isSubmitting}
-              className="px-5 py-2 text-sm bg-primary text-primary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center gap-2 transition-opacity shadow-md shadow-primary/20 hover:opacity-90"
-            >
-              {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-              Activate & Lock ({includedCount})
-            </button>
           </div>
-          <p className="text-[10px] text-muted-foreground text-right mt-1">
-            Activating locks batch numbers — they won't change as new orders come in.
-          </p>
         </div>
       </DialogContent>
     </Dialog>
