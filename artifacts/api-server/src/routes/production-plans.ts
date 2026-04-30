@@ -149,6 +149,55 @@ function mapPlan(p: typeof productionPlansTable.$inferSelect) {
   };
 }
 
+// ── Non-dispatch days (bank holidays, factory shutdowns) ─────────────
+// Stored as a JSON array of ISO dates in app_settings.non_dispatch_dates.
+// Editable from Settings → Production. Used by every working-day walk
+// in /calculate and /calculate-mac-cheese so a Tuesday production
+// following a bank-holiday Monday correctly pulls Friday's dispatch as
+// "previous", not the empty Monday slot.
+const NON_DISPATCH_SETTING_KEY = "non_dispatch_dates";
+
+export async function getNonDispatchDates(): Promise<Set<string>> {
+  const [row] = await db.select({ value: appSettingsTable.value })
+    .from(appSettingsTable)
+    .where(eq(appSettingsTable.key, NON_DISPATCH_SETTING_KEY))
+    .limit(1);
+  if (!row) return new Set();
+  try {
+    const parsed = JSON.parse(row.value);
+    if (Array.isArray(parsed)) {
+      return new Set(parsed.filter((s): s is string => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s)));
+    }
+  } catch {}
+  return new Set();
+}
+
+// Top-level holiday-aware variants. Async because they read app_settings.
+// The inline sync versions inside /calculate are wrappers that pass the
+// resolved Set in to keep the per-request DB hit to one read.
+export async function getPreviousDispatchDayAsync(fromDate: string): Promise<string> {
+  const skip = await getNonDispatchDates();
+  return getPreviousDispatchDay(fromDate, skip);
+}
+export async function getNextDispatchDayAsync(fromDate: string): Promise<string> {
+  const skip = await getNonDispatchDates();
+  return getNextDispatchDay(fromDate, skip);
+}
+export function getPreviousDispatchDay(fromDate: string, skip: Set<string>): string {
+  const d = new Date(`${fromDate}T12:00:00Z`);
+  do {
+    d.setUTCDate(d.getUTCDate() - 1);
+  } while (d.getUTCDay() === 0 || d.getUTCDay() === 6 || skip.has(d.toISOString().slice(0, 10)));
+  return d.toISOString().slice(0, 10);
+}
+export function getNextDispatchDay(fromDate: string, skip: Set<string>): string {
+  const d = new Date(`${fromDate}T12:00:00Z`);
+  do {
+    d.setUTCDate(d.getUTCDate() + 1);
+  } while (d.getUTCDay() === 0 || d.getUTCDay() === 6 || skip.has(d.toISOString().slice(0, 10)));
+  return d.toISOString().slice(0, 10);
+}
+
 // Walk back from `fromDate` until we hit a Mon–Fri. Used as the very-last
 // fallback when a plan is created without an override AND no per-day-of-week
 // schedule setting is configured. Most callers should use
@@ -446,21 +495,12 @@ router.get("/calculate", async (req, res) => {
     }
   }
 
-  function getPreviousWorkingDay(fromDate: string): string {
-    const d = new Date(`${fromDate}T12:00:00Z`);
-    do {
-      d.setUTCDate(d.getUTCDate() - 1);
-    } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
-    return d.toISOString().slice(0, 10);
-  }
-
-  function getNextWorkingDay(fromDate: string): string {
-    const d = new Date(`${fromDate}T12:00:00Z`);
-    do {
-      d.setUTCDate(d.getUTCDate() + 1);
-    } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
-    return d.toISOString().slice(0, 10);
-  }
+  // Holiday-aware dispatch-day helpers. Bank holidays / factory shutdowns
+  // come from app_settings.non_dispatch_dates. We resolve the Set once
+  // per request and reuse it for both walks.
+  const nonDispatch = await getNonDispatchDates();
+  const getPreviousWorkingDay = (from: string): string => getPreviousDispatchDay(from, nonDispatch);
+  const getNextWorkingDay = (from: string): string => getNextDispatchDay(from, nonDispatch);
 
   function getNextCalendarDay(dateStr: string): string {
     const d = new Date(`${dateStr}T12:00:00Z`);
@@ -469,9 +509,12 @@ router.get("/calculate", async (req, res) => {
   }
 
   // Dispatch happens Mon–Fri; delivery is always dispatch + 1 calendar day (APC overnight).
-  // dispatch1 = yesterday's dispatch (reduces fridge stock)
+  // dispatch1 = previous DISPATCH day (skipping weekends + bank holidays) —
+  //             reduces fridge stock from earlier production
   // dispatch2 = today's dispatch (main production target)
-  // dispatch3 = tomorrow's dispatch
+  // dispatch3 = next DISPATCH day (skipping weekends + bank holidays)
+  // For e.g. Tue production after a bank-holiday Mon, dispatch1 walks back
+  // to the previous Fri instead of landing on the empty Mon slot.
   const dispatchDates = [
     getPreviousWorkingDay(planDate),
     planDate,
@@ -1046,16 +1089,10 @@ router.get("/calculate-mac-cheese", async (req, res) => {
     return;
   }
 
-  function getPreviousWorkingDay(fromDate: string): string {
-    const d = new Date(`${fromDate}T12:00:00Z`);
-    do { d.setUTCDate(d.getUTCDate() - 1); } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
-    return d.toISOString().slice(0, 10);
-  }
-  function getNextWorkingDay(fromDate: string): string {
-    const d = new Date(`${fromDate}T12:00:00Z`);
-    do { d.setUTCDate(d.getUTCDate() + 1); } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
-    return d.toISOString().slice(0, 10);
-  }
+  // Holiday-aware (see /calculate above for shared logic).
+  const nonDispatchMc = await getNonDispatchDates();
+  const getPreviousWorkingDay = (from: string): string => getPreviousDispatchDay(from, nonDispatchMc);
+  const getNextWorkingDay = (from: string): string => getNextDispatchDay(from, nonDispatchMc);
   function getNextCalendarDay(dateStr: string): string {
     const d = new Date(`${dateStr}T12:00:00Z`);
     d.setUTCDate(d.getUTCDate() + 1);

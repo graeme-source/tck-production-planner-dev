@@ -908,6 +908,7 @@ export default function Settings() {
           {activeSection === "production" && (
             <div className="space-y-8">
               {user?.role === "admin" && <AdminDateOverrideSection />}
+              {user?.role === "admin" && <NonDispatchDatesSection />}
               {user?.role === "admin" && <PrepDoughScheduleSection />}
               <div ref={dptRef}>
                 {user?.role === "admin" && <DptSettingsSection />}
@@ -2594,6 +2595,122 @@ function PastaCookingSection() {
             {saving ? "Saving…" : "Save"}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Editable list of non-dispatch dates (bank holidays / factory shutdowns).
+// These get skipped by the working-day walks in /calculate so a Tuesday
+// production after a bank-holiday Monday correctly pulls the previous
+// Friday's dispatch instead of the empty Monday slot.
+function NonDispatchDatesSection() {
+  const [dates, setDates] = useState<string[]>([]);
+  const [newDate, setNewDate] = useState<string>("");
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/app-settings/non_dispatch_dates", { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => {
+        if (!j?.value) { setLoaded(true); return; }
+        try {
+          const arr = JSON.parse(j.value);
+          if (Array.isArray(arr)) {
+            setDates(arr.filter((s: unknown) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s)).sort());
+          }
+        } catch {}
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+  }, []);
+
+  const persist = async (next: string[]) => {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/app-settings/non_dispatch_dates", {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: JSON.stringify(next) }),
+      });
+      if (!res.ok) throw new Error("save failed");
+      setSavedMsg("Saved");
+      setTimeout(() => setSavedMsg(null), 2000);
+    } catch {
+      setSavedMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const addDate = async () => {
+    if (!newDate || !/^\d{4}-\d{2}-\d{2}$/.test(newDate)) return;
+    if (dates.includes(newDate)) { setNewDate(""); return; }
+    const next = [...dates, newDate].sort();
+    setDates(next);
+    setNewDate("");
+    await persist(next);
+  };
+
+  const removeDate = async (d: string) => {
+    const next = dates.filter(x => x !== d);
+    setDates(next);
+    await persist(next);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <CalendarDays className="w-4 h-4 text-primary" /> Non-dispatch days
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Bank holidays and factory shutdowns. Production plans created
+            with a date adjacent to one of these days will correctly skip
+            it when picking the "previous" / "next" dispatch — sales
+            mapping won't roll into an empty Monday.
+          </p>
+        </div>
+        {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
+      </div>
+      <div className="rounded-2xl border border-border bg-card p-5 space-y-3">
+        <div className="flex items-center gap-2">
+          <input
+            type="date"
+            value={newDate}
+            onChange={e => setNewDate(e.target.value)}
+            className="px-3 py-2 border border-border rounded-lg text-sm"
+          />
+          <button
+            onClick={addDate}
+            disabled={saving || !loaded || !newDate}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            <Plus className="w-3.5 h-3.5" /> Add date
+          </button>
+        </div>
+        {dates.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No non-dispatch dates configured.</p>
+        ) : (
+          <ul className="divide-y divide-border/50">
+            {dates.map(d => (
+              <li key={d} className="flex items-center justify-between py-1.5">
+                <span className="font-mono text-sm">{d}</span>
+                <button
+                  onClick={() => removeDate(d)}
+                  disabled={saving}
+                  className="text-muted-foreground hover:text-destructive transition-colors p-1.5 -mr-1.5"
+                  title="Remove"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </div>
   );

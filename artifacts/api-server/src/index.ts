@@ -731,6 +731,19 @@ async function runStartupMigrations() {
     await db.execute(sql`ALTER TABLE production_plans ADD COLUMN IF NOT EXISTS prep_date DATE`);
     await db.execute(sql`ALTER TABLE production_plans ADD COLUMN IF NOT EXISTS dough_date DATE`);
 
+    // Seed the non-dispatch dates list (bank holidays / shutdowns) on
+    // first run so the calc endpoints handle the upcoming May Day Monday
+    // correctly without operator intervention. ON CONFLICT DO NOTHING
+    // keeps any user-edited list intact across restarts.
+    await db.execute(sql`
+      INSERT INTO app_settings (key, value)
+      VALUES (
+        'non_dispatch_dates',
+        '["2026-05-04","2026-05-25","2026-08-31","2026-12-25","2026-12-28","2027-01-01"]'
+      )
+      ON CONFLICT (key) DO NOTHING
+    `);
+
     // Multi-variant recipe mapping: remove unique-per-recipe constraint,
     // add unique-per-variant instead (many variants can map to one recipe)
     await db.execute(sql`
