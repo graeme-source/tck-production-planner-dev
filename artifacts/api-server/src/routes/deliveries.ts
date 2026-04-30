@@ -56,6 +56,7 @@ router.get("/weekly", async (req, res) => {
       id: purchaseOrdersTable.id,
       supplierId: purchaseOrdersTable.supplierId,
       supplierName: suppliersTable.name,
+      planId: purchaseOrdersTable.planId,
       status: purchaseOrdersTable.status,
       expectedDeliveryDate: purchaseOrdersTable.expectedDeliveryDate,
       notes: purchaseOrdersTable.notes,

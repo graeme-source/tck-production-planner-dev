@@ -246,13 +246,18 @@ export default function Orders() {
     enabled: !!selectedPlanId,
   });
 
+  // Fetch every placed PO linked to the selected plan so the "Placed for
+  // this Plan" tab shows them regardless of when they were placed —
+  // yesterday's order shouldn't drop off when the calendar flips.
   const { data: placedOrders = [] } = useQuery<PurchaseOrder[]>({
-    queryKey: ["purchase-orders-today"],
+    queryKey: ["purchase-orders-for-plan", selectedPlanId],
     queryFn: async () => {
-      const res = await fetch(`${BASE}/api/orders/purchase-orders?filter=today`, { credentials: "include" });
+      if (!selectedPlanId) return [];
+      const res = await fetch(`${BASE}/api/orders/purchase-orders?planId=${selectedPlanId}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load orders");
       return res.json();
     },
+    enabled: !!selectedPlanId,
   });
 
   useEffect(() => {
@@ -412,6 +417,23 @@ export default function Orders() {
     if (!placedPO) return;
     reopenPlacedOrder(placedPO);
   }, [placedOrders, selectedPlanId, reopenedPlacedOrders, reopenPlacedOrder]);
+
+  // Deep-link from the deliveries page: ?editPo=N pops the matching placed
+  // order into edit mode as soon as the placed-orders query lands. We strip
+  // the param after handling so a refresh doesn't keep re-opening it.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const editPoParam = url.searchParams.get("editPo");
+    if (!editPoParam) return;
+    const editPoId = Number(editPoParam);
+    if (!Number.isFinite(editPoId)) return;
+    const target = placedOrders.find(o => o.id === editPoId);
+    if (!target) return;
+    handleEditPlacedOrder(target);
+    url.searchParams.delete("editPo");
+    window.history.replaceState({}, "", url.toString());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [placedOrders]);
 
   // Used by the "Edit" button on a placed order card — switches the plan
   // selector (if needed) and view filter, then reopens the PO for editing.
@@ -718,7 +740,7 @@ export default function Orders() {
       return placeRes.json();
     },
     onSuccess: (_result, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["purchase-orders-today"] });
+      queryClient.invalidateQueries({ queryKey: ["purchase-orders-for-plan"] });
       queryClient.invalidateQueries({ queryKey: ["order-calculate"] });
       // After a successful resubmit, drop the supplier from the reopened set
       // so the card moves back to the Placed tab on the next render.
@@ -840,7 +862,7 @@ export default function Orders() {
     .map(s => ({ supplier: { id: s.id, name: s.name, contactName: null, email: null, phone: null, website: null }, lines: [] as OrderLine[] }));
   const pendingSuppliers = [...dptPendingSuppliers, ...kanbanOnlyPending];
   const totalPendingItems = pendingSuppliers.reduce((sum, s) => sum + (editableLines[s.supplier.id]?.length ?? 0), 0);
-  const totalPlacedToday = placedOrders.filter(o => o.status === "placed").length;
+  const totalPlacedForPlan = placedForPlan.length;
 
   const estimatedCost = (supplierLines: EditableLine[]) =>
     supplierLines.reduce((sum, l) => sum + l.editedPacks * l.costPerPack, 0);
@@ -905,8 +927,8 @@ export default function Orders() {
               <CheckCircle2 className="w-5 h-5 text-green-500" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{totalPlacedToday}</p>
-              <p className="text-xs text-muted-foreground">Orders placed today</p>
+              <p className="text-2xl font-bold">{totalPlacedForPlan}</p>
+              <p className="text-xs text-muted-foreground">Placed for this plan</p>
             </div>
           </div>
         </div>
@@ -942,7 +964,7 @@ export default function Orders() {
           )}
         >
           <CheckCircle2 className="w-4 h-4 inline mr-1.5" />
-          Placed Today ({totalPlacedToday})
+          Placed for this Plan ({totalPlacedForPlan})
         </button>
         <label
           className="ml-auto flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-secondary/40 hover:bg-secondary/60 cursor-pointer transition-colors"
@@ -1349,12 +1371,12 @@ export default function Orders() {
 
       {viewFilter === "placed" && (
         <div className="space-y-4">
-          {placedOrders.filter(o => o.status === "placed").length === 0 && (
+          {placedForPlan.length === 0 && (
             <div className="text-center py-12 text-muted-foreground">
-              No orders placed today yet.
+              No orders placed for this production plan yet.
             </div>
           )}
-          {placedOrders.filter(o => o.status === "placed").map(order => {
+          {placedForPlan.map(order => {
             const isReopened = !!reopenedPlacedOrders[order.supplierId];
             return (
             <div key={order.id} className="rounded-xl border border-green-500/30 bg-green-500/5 overflow-hidden">

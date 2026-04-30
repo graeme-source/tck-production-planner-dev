@@ -449,9 +449,37 @@ router.get("/calculate", async (req, res) => {
     }
   }
 
+  // Subtract anything we've already placed against this plan. Without this
+  // the calculator re-derives the same line items from the recipe
+  // requirements every time the page loads, so an order placed yesterday
+  // (or earlier today) keeps re-appearing in "To Order" until a brand-new
+  // production plan is created. Match on (supplierId, ingredientId) — a
+  // misc/no-ingredient line can't be deduped this way and is left alone.
+  const placedRows = await db
+    .select({
+      supplierId: purchaseOrdersTable.supplierId,
+      ingredientId: purchaseOrderLinesTable.ingredientId,
+    })
+    .from(purchaseOrdersTable)
+    .innerJoin(purchaseOrderLinesTable, eq(purchaseOrderLinesTable.purchaseOrderId, purchaseOrdersTable.id))
+    .where(and(
+      eq(purchaseOrdersTable.planId, planId),
+      sql`${purchaseOrdersTable.status} IN ('placed', 'received')`,
+      sql`${purchaseOrderLinesTable.ingredientId} IS NOT NULL`,
+    ));
+  const placedKeys = new Set(placedRows.map(r => `${r.supplierId}:${r.ingredientId}`));
+
+  for (const so of Object.values(supplierOrderMap)) {
+    so.lines = so.lines.filter(l => !placedKeys.has(`${so.supplier.id}:${l.ingredientId}`));
+  }
+  // Drop suppliers whose entire requirement is already covered.
+  for (const sid of Object.keys(supplierOrderMap)) {
+    if (supplierOrderMap[Number(sid)].lines.length === 0) delete supplierOrderMap[Number(sid)];
+  }
+
   const suppliers = Object.values(supplierOrderMap).sort((a, b) => a.supplier.name.localeCompare(b.supplier.name));
 
-  console.log(`[Orders] Calculate for plan ${planId}: ${Object.keys(ingredientMap).length} ingredients resolved, ${ingredientIds.length} looked up, ${suppliers.length} suppliers with orders: ${suppliers.map(s => `${s.supplier.name} (${s.lines.length} lines)`).join(", ")}`);
+  console.log(`[Orders] Calculate for plan ${planId}: ${Object.keys(ingredientMap).length} ingredients resolved, ${ingredientIds.length} looked up, ${placedKeys.size} already placed, ${suppliers.length} suppliers with orders: ${suppliers.map(s => `${s.supplier.name} (${s.lines.length} lines)`).join(", ")}`);
 
   res.json({
     planId,
@@ -507,9 +535,32 @@ router.get("/suppliers/:id/ingredients", async (req, res) => {
 
 router.get("/purchase-orders", async (req, res) => {
   const filter = req.query.filter as string | undefined;
+  const planIdParam = req.query.planId as string | undefined;
+  const planIdFilter = planIdParam ? Number(planIdParam) : null;
 
   let rows;
-  if (filter === "today") {
+  // Plan-scoped fetch — used by the "Placed for this Plan" tab on the
+  // orders page. Returns every PO linked to the plan regardless of when
+  // it was placed, so yesterday's order doesn't disappear from the view.
+  if (planIdFilter && Number.isFinite(planIdFilter)) {
+    rows = await db
+      .select({
+        id: purchaseOrdersTable.id,
+        supplierId: purchaseOrdersTable.supplierId,
+        supplierName: suppliersTable.name,
+        planId: purchaseOrdersTable.planId,
+        status: purchaseOrdersTable.status,
+        createdAt: purchaseOrdersTable.createdAt,
+        placedAt: purchaseOrdersTable.placedAt,
+        expectedDeliveryDate: purchaseOrdersTable.expectedDeliveryDate,
+        notes: purchaseOrdersTable.notes,
+        placedByUserId: purchaseOrdersTable.placedByUserId,
+      })
+      .from(purchaseOrdersTable)
+      .leftJoin(suppliersTable, eq(purchaseOrdersTable.supplierId, suppliersTable.id))
+      .where(eq(purchaseOrdersTable.planId, planIdFilter))
+      .orderBy(desc(purchaseOrdersTable.createdAt));
+  } else if (filter === "today") {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const todayEnd = new Date();

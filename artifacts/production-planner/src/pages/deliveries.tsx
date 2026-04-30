@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
+import { useLocation } from "wouter";
 import { packNoun, packDescriptor } from "@/pages/station/shared/prep-helpers";
 import { NumberInput } from "@/components/ui/number-input";
 
@@ -52,6 +53,11 @@ interface DeliveryOrder {
   id: number;
   supplierId: number;
   supplierName: string;
+  // FK back to the production plan this PO was raised for. Drives the
+  // "Edit order" link on un-received deliveries — clicking it opens the
+  // orders page on that plan so a manager can amend ordered quantities
+  // before goods-in instead of going through the receive flow.
+  planId: number | null;
   status: string;
   expectedDeliveryDate: string | null;
   notes: string | null;
@@ -750,6 +756,7 @@ export default function Deliveries() {
   const { state } = useAuth();
   const queryClient = useQueryClient();
   const { canAccess } = usePagePermissions();
+  const [, navigate] = useLocation();
   const userRole = state.status === "authenticated" ? state.user.role : "viewer";
   const canEdit = state.status === "authenticated" && (state.user.role === "admin" || state.user.role === "manager");
   const canReceive = state.status === "authenticated" && canAccess(userRole, "/deliveries/receive");
@@ -1058,6 +1065,16 @@ export default function Deliveries() {
                             <ArrowRightLeft className="w-4 h-4" />
                           </button>
                         )
+                      )}
+                      {canEdit && !isReceived && order.planId && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); navigate(`/orders?planId=${order.planId}&editPo=${order.id}`); }}
+                          className="px-3 py-2 rounded-xl border border-border text-sm font-medium hover:bg-secondary/50 transition-colors flex items-center gap-1.5"
+                          title="Edit ordered quantities on the orders page (manager / admin)"
+                        >
+                          <Pencil className="w-4 h-4" />
+                          Edit order
+                        </button>
                       )}
                       {canReceive && !isReceived && (
                         <button
