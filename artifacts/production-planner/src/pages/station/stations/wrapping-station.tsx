@@ -42,6 +42,12 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
     totalQty: number;
   } | null>(null);
   const [postOvenMap, setPostOvenMap] = useState<PostOvenMap>({});
+  // One-shot reminder shown the first time a recipe with post-oven items
+  // (e.g. garlic butter) is opened in this session, so wrappers don't forget
+  // to brush before sealing. Tracked in-memory so it resets per page load,
+  // dismissed per item via the modal's Complete button.
+  const [garlicReminderItem, setGarlicReminderItem] = useState<ProductionPlanItem | null>(null);
+  const dismissedGarlicReminders = useRef<Set<number>>(new Set());
   const addingRef = useRef(false);
   const [expandedItemId, setExpandedItemId] = useState<number | null>(null);
   const userOverrideRef = useRef(false);
@@ -189,6 +195,13 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
     } else {
       setExpandedItemId(itemId);
       userOverrideRef.current = itemId !== currentWrappingItem?.id;
+      // Pop the post-oven reminder the first time this recipe is opened
+      // in the current session — surfaces garlic butter before wrapping
+      // starts, when it's still actionable.
+      if ((postOvenMap[itemId]?.length ?? 0) > 0 && !dismissedGarlicReminders.current.has(itemId)) {
+        const item = items.find(it => it.id === itemId);
+        if (item) setGarlicReminderItem(item);
+      }
     }
   };
 
@@ -362,7 +375,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
     addingRef.current = false;
   };
 
-  const undoStorage = async (item: ProductionPlanItem, qty: number, storageKey: string) => {
+  const undoStorage = async (item: ProductionPlanItem, qty: number, storageKey: string, packSize: number = 2) => {
     if (qty < 1) return;
     const loc = STORAGE_LOCATIONS.find(l => l.key === storageKey);
     if (!loc) return;
@@ -371,17 +384,44 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
       await guardedFetch(`/api/production-plans/${plan.id}/items/${item.id}/${loc.endpoint}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ qty }),
+        body: JSON.stringify({ qty, packSize }),
         signal,
       });
       queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
-      toast({ title: `−${qty} packs from ${loc.label}`, description: `${item.recipeName ?? "Recipe"}` });
+      const packLabel = packSize === 8 ? "8-pack bags" : "packs";
+      toast({ title: `−${qty} ${packLabel} from ${loc.label}`, description: `${item.recipeName ?? "Recipe"}` });
     });
     setStorageLoading(null);
   };
 
   return (
     <div className="space-y-4">
+      {garlicReminderItem && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4">
+          <div className="bg-card border-2 border-amber-500 rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/40 flex items-center justify-center flex-shrink-0">
+                <Flame className="w-5 h-5 text-amber-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h2 className="font-display font-bold text-xl">Don't forget the garlic butter</h2>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  Brush garlic butter onto every <span className="font-semibold text-foreground">{garlicReminderItem.recipeName ?? "recipe"}</span> before wrapping. Tap Complete once you've done this batch.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                if (garlicReminderItem) dismissedGarlicReminders.current.add(garlicReminderItem.id);
+                setGarlicReminderItem(null);
+              }}
+              className="w-full py-3 rounded-xl text-base font-bold bg-amber-600 text-white hover:bg-amber-700 active:scale-95 transition-colors"
+            >
+              Complete
+            </button>
+          </div>
+        </div>
+      )}
       {shopifyConfirm && (
         <ShopifyConfirmDialog
           title="Update Shopify inventory?"
@@ -779,6 +819,17 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                             >
                               {isStorageLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
                               Add {eightPkRemaining} to Fridge
+                            </button>
+                          )}
+                          {eightPkFridge > 0 && (
+                            <button
+                              onClick={() => undoStorage(item, 1, "fridge", 8)}
+                              disabled={isStorageLoading || isOnBreak || storageBusy}
+                              className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-indigo-300 dark:border-indigo-700 text-indigo-600 dark:text-indigo-400 text-sm font-medium hover:bg-indigo-100/60 dark:hover:bg-indigo-900/40 disabled:opacity-50 transition-colors"
+                              title="Undo last 8-pack added to fridge"
+                            >
+                              <Minus className="w-4 h-4" />
+                              Undo one
                             </button>
                           )}
                           {eightPkFridge > 0 && (
