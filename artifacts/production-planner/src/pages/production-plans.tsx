@@ -169,9 +169,17 @@ interface SortableRowProps {
   onBatchChange: (id: string, val: number) => void;
   onFridgeStockChange: (id: string, val: number) => void;
   onRemove: (id: string) => void;
+  // Whether the current fridgeStock value differs from the last value
+  // that was successfully written to /api/stock-entries. Drives the
+  // "unsaved" badge + active Save button on each row.
+  hasUnsavedFridgeStock: boolean;
+  // True for ~1.5s after a successful explicit save so we can flash
+  // a tick on the row.
+  fridgeStockJustSaved: boolean;
+  onSaveFridgeStock: (id: string) => void;
 }
 
-function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChange, onRemove }: SortableRowProps) {
+function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChange, onRemove, hasUnsavedFridgeStock, fridgeStockJustSaved, onSaveFridgeStock }: SortableRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
 
   const style = {
@@ -239,21 +247,40 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
             ? `Fridge ${item.fridgeStock} − next dispatch ${item.dispatch1Qty} = ${margin >= 0 ? "+" : ""}${margin}`
             : `Fridge ${item.fridgeStock} (no dispatch tomorrow)`;
           return (
-            <input
-              type="number"
-              min={0}
-              value={item.fridgeStock === 0 ? "" : item.fridgeStock}
-              onChange={e => onFridgeStockChange(item.id, e.target.value === "" ? 0 : Math.max(0, parseInt(e.target.value, 10) || 0))}
-              onFocus={e => e.currentTarget.select()}
-              onWheel={e => { if (document.activeElement === e.currentTarget) e.currentTarget.blur(); }}
-              disabled={saving}
-              title={title}
-              className={cn(
-                "w-20 px-1.5 py-1 border rounded-lg text-xs text-center focus-ring disabled:opacity-40 tabular-nums font-medium",
-                tone,
+            <div className="flex items-center justify-center gap-1">
+              <input
+                type="number"
+                min={0}
+                value={item.fridgeStock === 0 ? "" : item.fridgeStock}
+                onChange={e => onFridgeStockChange(item.id, e.target.value === "" ? 0 : Math.max(0, parseInt(e.target.value, 10) || 0))}
+                onFocus={e => e.currentTarget.select()}
+                onWheel={e => { if (document.activeElement === e.currentTarget) e.currentTarget.blur(); }}
+                disabled={saving}
+                title={title}
+                className={cn(
+                  "w-20 px-1.5 py-1 border rounded-lg text-xs text-center focus-ring disabled:opacity-40 tabular-nums font-medium",
+                  tone,
+                )}
+                placeholder="0"
+              />
+              {hasUnsavedFridgeStock ? (
+                <button
+                  type="button"
+                  onClick={() => onSaveFridgeStock(item.id)}
+                  disabled={saving}
+                  className="px-1.5 py-1 rounded-md bg-primary text-primary-foreground text-[10px] font-semibold hover:bg-primary/90 disabled:opacity-40 transition-colors"
+                  title="Save this factory number to stock_entries now (also auto-saves after a brief pause)"
+                >
+                  Save
+                </button>
+              ) : fridgeStockJustSaved ? (
+                <span className="text-emerald-600 dark:text-emerald-400 text-[10px] font-semibold flex items-center gap-0.5" title="Saved">
+                  <CheckCircle2 className="w-3 h-3" />
+                </span>
+              ) : (
+                <span className="w-3 h-3" />
               )}
-              placeholder="0"
-            />
+            </div>
           );
         })()}
       </td>
@@ -826,6 +853,59 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   }, [items, allocateBatches, effectiveTotalBatches]);
 
   const fridgeStockTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  // Last value successfully POSTed to /api/stock-entries per item, so the
+  // row can show "unsaved" while the operator is still editing and
+  // "Saved ✓" briefly after a successful explicit save.
+  const [savedFridgeStock, setSavedFridgeStock] = useState<Record<string, number>>({});
+  const [recentlySaved, setRecentlySaved] = useState<Record<string, number>>({}); // id → timestamp ms
+
+  // Whenever the calc lands fresh items, treat their fridgeStock as the
+  // server-of-record. Switching planDate refetches → new baseline.
+  useEffect(() => {
+    if (!calcData?.recipes) return;
+    const next: Record<string, number> = {};
+    // Match the row id format the items effect uses (calc-${recipeId}).
+    // Manual rows get a different id (manual-…) and start with no
+    // baseline — their first edit immediately marks "unsaved" which
+    // is the right behaviour for a recipe the operator just added.
+    for (const r of calcData.recipes) next[`calc-${r.recipeId}`] = r.predictedFridgeStock ?? r.fridgeStock ?? 0;
+    setSavedFridgeStock(next);
+  }, [calcData]);
+
+  const flushFridgeStock = useCallback(async (id: string, newStock: number, recipeId: number) => {
+    if (fridgeStockTimers.current[id]) {
+      clearTimeout(fridgeStockTimers.current[id]);
+      delete fridgeStockTimers.current[id];
+    }
+    try {
+      await fetch(`${BASE}/api/stock-entries`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          recipeId,
+          ingredientId: null,
+          itemType: "recipe",
+          quantity: newStock,
+          unit: "packs",
+          location: "production_fridge",
+          notes: "Calculator override",
+        }),
+      });
+      setSavedFridgeStock(prev => ({ ...prev, [id]: newStock }));
+      setRecentlySaved(prev => ({ ...prev, [id]: Date.now() }));
+      setTimeout(() => {
+        setRecentlySaved(prev => {
+          if (Date.now() - (prev[id] ?? 0) < 1500) return prev;
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+      }, 1600);
+    } catch (e) {
+      console.error("Failed to save fridge stock override", e);
+    }
+  }, []);
 
   const handleFridgeStockOverride = useCallback((id: string, newStock: number) => {
     setItems(prev =>
@@ -841,27 +921,19 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     const item = items.find(it => it.id === id);
     if (!item) return;
     if (fridgeStockTimers.current[id]) clearTimeout(fridgeStockTimers.current[id]);
-    fridgeStockTimers.current[id] = setTimeout(async () => {
-      try {
-        await fetch(`${BASE}/api/stock-entries`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({
-            recipeId: item.recipeId,
-            ingredientId: null,
-            itemType: "recipe",
-            quantity: newStock,
-            unit: "packs",
-            location: "production_fridge",
-            notes: "Calculator override",
-          }),
-        });
-      } catch (e) {
-        console.error("Failed to save fridge stock override", e);
-      }
+    fridgeStockTimers.current[id] = setTimeout(() => {
+      flushFridgeStock(id, newStock, item.recipeId);
     }, 800);
-  }, [items]);
+  }, [items, flushFridgeStock]);
+
+  // Click-the-Save-button-now path: bypass the 800ms debounce and POST
+  // immediately. Used when the operator is about to step away and wants
+  // confirmation rather than trusting auto-save.
+  const handleExplicitFridgeSave = useCallback((id: string) => {
+    const item = items.find(it => it.id === id);
+    if (!item) return;
+    flushFridgeStock(id, item.fridgeStock, item.recipeId);
+  }, [items, flushFridgeStock]);
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -992,8 +1064,36 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   const deliveryDates = calcData?.deliveryDates ?? [];
   const dispatchDates = (calcData as { dispatchDates?: string[] } | undefined)?.dispatchDates ?? [];
 
+  // Closing the dialog with unsaved work is a frequent foot-gun: an
+  // operator clicks outside the modal, the recipes list resets, and
+  // they have to re-enter every batch / factory number override. Wrap
+  // onClose so dirty-state needs explicit confirmation. We treat both
+  // form-level dirty (planDate / batches / etc.) AND any factory-number
+  // override that hasn't been written back to /api/stock-entries yet
+  // as "unsaved", so a debounced timer that hasn't fired can't silently
+  // disappear.
+  const hasPendingFridgeWrites = items.some(it =>
+    savedFridgeStock[it.id] != null && it.fridgeStock !== savedFridgeStock[it.id]
+  );
+  const closeWithGuard = () => {
+    if (isDirty.current || hasPendingFridgeWrites) {
+      const ok = window.confirm(
+        hasPendingFridgeWrites
+          ? "You have factory-number changes that haven't saved yet. Close and lose them?"
+          : "You have unsaved changes on this plan. Close and lose them?"
+      );
+      if (!ok) return;
+    }
+    // Cancel any in-flight debounced fridge-stock timers so they don't
+    // fire against a closed dialog and surprise-write a stale value.
+    for (const t of Object.values(fridgeStockTimers.current)) clearTimeout(t);
+    fridgeStockTimers.current = {};
+    isDirty.current = false;
+    onClose();
+  };
+
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+    <Dialog open={open} onOpenChange={(v) => !v && closeWithGuard()}>
       <DialogContent className="max-w-[98vw] w-[1600px] bg-card border-border rounded-2xl max-h-[95vh] overflow-hidden flex flex-col p-0">
         <DialogHeader className="px-6 pt-5 pb-4 border-b border-border flex-shrink-0">
           <DialogTitle className="font-display text-xl flex items-center gap-2">
@@ -1148,7 +1248,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                 Save as Draft
               </button>
               <button
-                onClick={onClose}
+                onClick={closeWithGuard}
                 className="w-full px-4 py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-xl transition-colors"
               >
                 Cancel
@@ -1290,6 +1390,9 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                               onBatchChange={(id, val) => updateItem(id, { batchesTarget: val })}
                               onFridgeStockChange={(id, val) => handleFridgeStockOverride(id, val)}
                               onRemove={(id) => { isDirty.current = true; setItems(prev => prev.filter(i => i.id !== id)); }}
+                              hasUnsavedFridgeStock={savedFridgeStock[it.id] != null && it.fridgeStock !== savedFridgeStock[it.id]}
+                              fridgeStockJustSaved={!!recentlySaved[it.id] && Date.now() - recentlySaved[it.id] < 1500}
+                              onSaveFridgeStock={handleExplicitFridgeSave}
                             />
                           ))}
                         </tbody>
