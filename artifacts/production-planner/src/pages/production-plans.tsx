@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef, Fragment } from "react";
 import {
   useListProductionPlans,
   useGetProductionPlan,
@@ -177,9 +177,14 @@ interface SortableRowProps {
   // a tick on the row.
   fridgeStockJustSaved: boolean;
   onSaveFridgeStock: (id: string) => void;
+  // Index into dispatchDates whose date matches planDate — i.e. which of
+  // d1 / d2 / d3 is the production day. Defaults to 1 (d2) which is how
+  // /calculate constructs dispatchDates ([prev, planDate, next]). Used so
+  // the row can credit this plan's production to the correct rolling FN.
+  productionDayIndex: 0 | 1 | 2;
 }
 
-function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChange, onRemove, hasUnsavedFridgeStock, fridgeStockJustSaved, onSaveFridgeStock }: SortableRowProps) {
+function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChange, onRemove, hasUnsavedFridgeStock, fridgeStockJustSaved, onSaveFridgeStock, productionDayIndex }: SortableRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
 
   const style = {
@@ -284,35 +289,58 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
           );
         })()}
       </td>
-      <td className="py-2 px-1 text-center tabular-nums text-xs">
+      <td className="py-2 px-1 text-center tabular-nums text-[11px]">
         {(() => {
+          // Quick "is the fridge enough to cover the next dispatch?"
+          // glance. Muted unless we're actually short — then bold red so
+          // the operator's eye lands on it without it competing with the
+          // factory number / batches inputs day-to-day.
           const delta = item.fridgeStock - item.dispatch1Qty;
-          if (item.dispatch1Qty === 0) return <span className="text-muted-foreground">—</span>;
-          if (delta < 0) return <span className="text-red-600 dark:text-red-400 font-medium">({delta})</span>;
-          if (delta > 0) return <span className="text-emerald-600 dark:text-emerald-400 font-medium">(+{delta})</span>;
-          return <span className="text-muted-foreground">(0)</span>;
+          if (item.dispatch1Qty === 0) return <span className="text-muted-foreground/60">—</span>;
+          if (delta < 0) return <span className="text-red-600 dark:text-red-400 font-semibold">({delta})</span>;
+          return <span className="text-muted-foreground/60">{delta > 0 ? `(+${delta})` : "(0)"}</span>;
         })()}
       </td>
-      <td className="py-2 px-2 text-center tabular-nums text-xs text-red-500">
-        <div>{item.dispatch1Qty || "—"}</div>
-        {item.special1Count > 0 && <div className="text-[9px] text-muted-foreground leading-tight">incl. {item.special1Count} club special</div>}
-      </td>
-      <td className="py-2 px-2 text-center tabular-nums text-xs text-green-600 dark:text-green-400">{item.prevProduction ? `+${item.prevProduction}` : "—"}</td>
-      <td className="py-2 px-2 text-center tabular-nums text-sm font-medium">
-        <span className={cn(
-          item.estimatedFactoryNumber < 0 && "text-red-600 dark:text-red-400",
-        )}>
-          {item.estimatedFactoryNumber}
-        </span>
-      </td>
-      <td className="py-2 px-2 text-center tabular-nums text-xs text-red-500">
-        <div>{item.dispatch2Qty || "—"}</div>
-        {item.special2Count > 0 && <div className="text-[9px] text-muted-foreground leading-tight">incl. {item.special2Count} club special</div>}
-      </td>
-      <td className="py-2 px-2 text-center tabular-nums text-xs text-red-500">
-        <div>{item.dispatch3Qty || "—"}</div>
-        {item.special3Count > 0 && <div className="text-[9px] text-muted-foreground leading-tight">incl. {item.special3Count} club special</div>}
-      </td>
+      {(() => {
+        // Rolling FN walk: each day's end-of-day FN = previous day's FN
+        // − that day's dispatch + that day's production. Production from
+        // *this* plan only lands on its own production day.
+        const production = (item.batchesTarget ?? 0) * (item.packsPerBatch ?? 0);
+        const productionAt = (idx: 0 | 1 | 2) => idx === productionDayIndex ? production : 0;
+        const afterD1 = item.fridgeStock - item.dispatch1Qty + productionAt(0);
+        const afterD2 = afterD1 - item.dispatch2Qty + productionAt(1);
+        const afterD3 = afterD2 - item.dispatch3Qty + productionAt(2);
+        const dispatchCell = (qty: number, special: number) => (
+          <td className="py-2 px-1 text-center tabular-nums text-[11px] text-muted-foreground">
+            <div>{qty ? `−${qty}` : "—"}</div>
+            {special > 0 && <div className="text-[9px] text-muted-foreground/70 leading-tight">incl. {special}</div>}
+          </td>
+        );
+        const fnCell = (val: number, idx: 0 | 1 | 2) => {
+          const isProductionDay = idx === productionDayIndex;
+          const negative = val < 0;
+          return (
+            <td className={cn(
+              "py-2 px-1.5 text-center tabular-nums",
+              isProductionDay ? "text-sm font-semibold" : "text-xs text-muted-foreground",
+            )}>
+              <span className={negative ? "text-red-600 dark:text-red-400 font-semibold" : ""}>
+                {Math.round(val)}
+              </span>
+            </td>
+          );
+        };
+        return (
+          <>
+            {dispatchCell(item.dispatch1Qty, item.special1Count)}
+            {fnCell(afterD1, 0)}
+            {dispatchCell(item.dispatch2Qty, item.special2Count)}
+            {fnCell(afterD2, 1)}
+            {dispatchCell(item.dispatch3Qty, item.special3Count)}
+            {fnCell(afterD3, 2)}
+          </>
+        );
+      })()}
       <td className="py-2 px-2 text-center tabular-nums text-xs">
         {item.deficit > 0 ? <span className="text-red-600 dark:text-red-400 font-semibold">-{item.deficit}</span> : "0"}
       </td>
@@ -1063,6 +1091,13 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   const availableToAdd = (allRecipes ?? []).filter((r: Recipe) => !items.some(it => it.recipeId === r.id));
   const deliveryDates = calcData?.deliveryDates ?? [];
   const dispatchDates = (calcData as { dispatchDates?: string[] } | undefined)?.dispatchDates ?? [];
+  // Which of d1 / d2 / d3 is the production day. /calculate constructs
+  // dispatchDates as [prev, planDate, next] so this is normally 1, but
+  // we resolve dynamically in case the calc semantics change.
+  const productionDayIndex: 0 | 1 | 2 = (() => {
+    const i = dispatchDates.findIndex(d => d === planDate);
+    return (i === 0 || i === 1 || i === 2) ? i : 1;
+  })();
 
   // Closing the dialog with unsaved work is a frequent foot-gun: an
   // operator clicks outside the modal, the recipes list resets, and
@@ -1362,19 +1397,37 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                             >
                               vs Next
                             </th>
-                            <th className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]" title={dispatchDates[0] ? `Dispatched ${format(parseISO(dispatchDates[0]), "EEE d MMM")} — delivered ${deliveryDates[0] ? format(parseISO(deliveryDates[0]), "EEE d MMM") : ""}` : "Next dispatch"}>
-                              {dispatchDates[0] ? `\u2212 ${format(parseISO(dispatchDates[0]), "EEE")} Dispatch` : "\u2212 Dispatch"}
-                            </th>
-                            <th className="py-2 px-2 text-center font-medium text-green-600 min-w-[70px]" title={calcData?.prevProductionDate ? `Production coming in from ${format(parseISO(calcData.prevProductionDate), "EEE d MMM")} plan` : "Previous day's production output"}>
-                              {calcData?.prevProductionDate ? `+ ${format(parseISO(calcData.prevProductionDate), "EEE")} Production` : "+ Prev Production"}
-                            </th>
-                            <th className="py-2 px-2 text-center font-medium text-muted-foreground min-w-[80px]" title="Next day's factory number: Factory Number − Dispatch + Production">= Next Factory Number</th>
-                            <th className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]" title={dispatchDates[1] ? `Dispatched ${format(parseISO(dispatchDates[1]), "EEE d MMM")} — delivered ${deliveryDates[1] ? format(parseISO(deliveryDates[1]), "EEE d MMM") : ""}` : "Dispatch 2"}>
-                              {dispatchDates[1] ? `\u2212 ${format(parseISO(dispatchDates[1]), "EEE")} Dispatch` : "\u2212 Dispatch"}
-                            </th>
-                            <th className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]" title={dispatchDates[2] ? `Dispatched ${format(parseISO(dispatchDates[2]), "EEE d MMM")} — delivered ${deliveryDates[2] ? format(parseISO(deliveryDates[2]), "EEE d MMM") : ""}` : "Dispatch 3"}>
-                              {dispatchDates[2] ? `\u2212 ${format(parseISO(dispatchDates[2]), "EEE")} Dispatch` : "\u2212 Dispatch"}
-                            </th>
+                            {/* Three pairs: dispatch out → end-of-day FN.
+                                Production day's FN gets emphasis (bigger,
+                                bolder); other two are muted secondaries. */}
+                            {[0, 1, 2].map((idx) => {
+                              const dispatchDate = dispatchDates[idx];
+                              const deliveryDate = deliveryDates[idx];
+                              const isProdDay = !!planDate && dispatchDate === planDate;
+                              return (
+                                <Fragment key={`dispatch-fn-${idx}`}>
+                                  <th
+                                    className="py-2 px-1 text-center font-normal text-muted-foreground/80 text-[11px] min-w-[55px]"
+                                    title={dispatchDate ? `Dispatched ${format(parseISO(dispatchDate), "EEE d MMM")} — delivered ${deliveryDate ? format(parseISO(deliveryDate), "EEE d MMM") : ""}` : `Dispatch ${idx + 1}`}
+                                  >
+                                    {dispatchDate ? `− ${format(parseISO(dispatchDate), "EEE")}` : "−"}
+                                  </th>
+                                  <th
+                                    className={cn(
+                                      "py-2 px-1.5 text-center min-w-[65px]",
+                                      isProdDay ? "font-semibold text-foreground text-xs" : "font-normal text-muted-foreground/80 text-[11px]",
+                                    )}
+                                    title={
+                                      dispatchDate
+                                        ? `End-of-day Factory Number after ${format(parseISO(dispatchDate), "EEE")}'s dispatch${isProdDay ? " + this plan's production" : ""}`
+                                        : "Rolling Factory Number"
+                                    }
+                                  >
+                                    = After {dispatchDate ? format(parseISO(dispatchDate), "EEE") : ""}
+                                  </th>
+                                </Fragment>
+                              );
+                            })}
                             <th className="py-2 px-2 text-center font-medium text-muted-foreground whitespace-nowrap" title="Packs short — need to produce at least this many">Deficit</th>
                             <th className="py-2 px-2 text-center font-medium text-muted-foreground whitespace-nowrap" title="Batches you want to make">Batches</th>
                             <th className="w-7 py-2 px-1.5" />
@@ -1393,6 +1446,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                               hasUnsavedFridgeStock={savedFridgeStock[it.id] != null && it.fridgeStock !== savedFridgeStock[it.id]}
                               fridgeStockJustSaved={!!recentlySaved[it.id] && Date.now() - recentlySaved[it.id] < 1500}
                               onSaveFridgeStock={handleExplicitFridgeSave}
+                              productionDayIndex={productionDayIndex}
                             />
                           ))}
                         </tbody>
@@ -1409,11 +1463,44 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                               if (delta > 0) return <span className="text-emerald-600 dark:text-emerald-400 font-medium">(+{delta})</span>;
                               return <span className="text-muted-foreground">(0)</span>;
                             })()}</td>
-                            <td className="py-2 px-2 text-center tabular-nums text-red-500">{items.reduce((s, i) => s + i.dispatch1Qty, 0) || "—"}</td>
-                            <td className="py-2 px-2 text-center tabular-nums text-green-600 dark:text-green-400">{items.reduce((s, i) => s + i.prevProduction, 0) || "—"}</td>
-                            <td className="py-2 px-2 text-center tabular-nums font-medium">{items.reduce((s, i) => s + i.estimatedFactoryNumber, 0)}</td>
-                            <td className="py-2 px-2 text-center tabular-nums text-red-500">{items.reduce((s, i) => s + i.dispatch2Qty, 0) || "—"}</td>
-                            <td className="py-2 px-2 text-center tabular-nums text-red-500">{items.reduce((s, i) => s + i.dispatch3Qty, 0) || "—"}</td>
+                            {(() => {
+                              // Walk forward through dispatch days the same
+                              // way each row does, summed across recipes,
+                              // so the totals reconcile against per-row
+                              // arithmetic (e.g. ΣafterD2 = ΣafterD1 + Σproduction − Σd2).
+                              const totalFridge = items.reduce((s, i) => s + i.fridgeStock, 0);
+                              const totalD1 = items.reduce((s, i) => s + i.dispatch1Qty, 0);
+                              const totalD2 = items.reduce((s, i) => s + i.dispatch2Qty, 0);
+                              const totalD3 = items.reduce((s, i) => s + i.dispatch3Qty, 0);
+                              const totalProd = items.filter(i => i.included).reduce((s, i) => s + (i.batchesTarget * (i.packsPerBatch ?? 0)), 0);
+                              const dispatchTotals = [totalD1, totalD2, totalD3];
+                              let running = totalFridge;
+                              const cells: React.ReactNode[] = [];
+                              for (let idx = 0 as 0 | 1 | 2; idx <= 2; idx = (idx + 1) as 0 | 1 | 2) {
+                                cells.push(
+                                  <td key={`tot-d${idx}`} className="py-2 px-1 text-center tabular-nums text-[11px] text-muted-foreground">
+                                    {dispatchTotals[idx] ? `−${dispatchTotals[idx]}` : "—"}
+                                  </td>
+                                );
+                                running = running - dispatchTotals[idx] + (idx === productionDayIndex ? totalProd : 0);
+                                const isProd = idx === productionDayIndex;
+                                cells.push(
+                                  <td
+                                    key={`tot-after${idx}`}
+                                    className={cn(
+                                      "py-2 px-1.5 text-center tabular-nums",
+                                      isProd ? "text-xs font-semibold" : "text-[11px] text-muted-foreground",
+                                    )}
+                                  >
+                                    <span className={running < 0 ? "text-red-600 dark:text-red-400 font-semibold" : ""}>
+                                      {Math.round(running)}
+                                    </span>
+                                  </td>
+                                );
+                                if (idx === 2) break;
+                              }
+                              return <>{cells}</>;
+                            })()}
                             <td className="py-2 px-2 text-center tabular-nums">{items.reduce((s, i) => s + i.deficit, 0) || "—"}</td>
                             <td className="py-2 px-2 text-center tabular-nums font-semibold">{items.filter(i => i.included).reduce((s, i) => s + i.batchesTarget, 0)}</td>
                             <td className="py-2 px-1.5" />
@@ -2114,6 +2201,10 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
                           onBatchChange={(id, val) => updateItem(id, { batchesTarget: val })}
                           onFridgeStockChange={(id, val) => handleFridgeStockOverride(id, val)}
                           onRemove={(id) => { isDirty.current = true; setItems(prev => prev.filter(i => i.id !== id)); }}
+                          hasUnsavedFridgeStock={false}
+                          fridgeStockJustSaved={false}
+                          onSaveFridgeStock={() => {}}
+                          productionDayIndex={1}
                         />
                       ))}
                     </tbody>
