@@ -270,12 +270,16 @@ export interface PrepRecipeDetail {
 // ──────────────────────────────────────────────────────────────────────────────
 // Hook: fetch per-recipe prep requirements for the next active plan
 // ──────────────────────────────────────────────────────────────────────────────
-export function usePrepByRecipe(station: string, currentPlanId: number, afterDate?: string) {
-  const { data: nextPlan, isLoading: isPlanLoading } = useNextActivePlan(afterDate, "prep") as { data: NextActivePlan | null; isLoading: boolean };
+export function usePrepByRecipe(station: string, currentPlanId: number, afterDate?: string, direct = false) {
+  // When direct=true (calendar prep-card flow), skip the auto-route to "next
+  // active plan" and stick with currentPlanId. The hook is still called so
+  // React's hook rules are satisfied; its result is just ignored.
+  const { data: nextPlanData, isLoading: isPlanLoading } = useNextActivePlan(direct ? undefined : afterDate, "prep") as { data: NextActivePlan | null; isLoading: boolean };
+  const nextPlan = direct ? null : nextPlanData;
   // When the next-plan lookup has resolved but found nothing, signal "no future plan"
   // instead of falling back to the current plan (which would show today's data).
-  const noFuturePlan = !isPlanLoading && nextPlan != null && nextPlan.planId == null;
-  const targetPlanId = noFuturePlan ? null : (nextPlan?.planId ?? null);
+  const noFuturePlan = !direct && !isPlanLoading && nextPlan != null && nextPlan.planId == null;
+  const targetPlanId = direct ? currentPlanId : (noFuturePlan ? null : (nextPlan?.planId ?? null));
   const [recipes, setRecipes] = useState<PrepRecipeDetail[]>([]);
   const [isPrepLoading, setIsPrepLoading] = useState(false);
   const initialLoadDone = useRef(false);

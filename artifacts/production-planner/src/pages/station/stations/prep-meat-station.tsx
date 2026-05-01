@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
+import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 import { BreakTracker } from "../shared/break-tracker";
 import { PrepDateBanner, PrepDraftBanner, toKg, toastDraftBlocked, StockCheckStatusPanel, nativeToPackCount, packsToNative, packNoun, packDescriptor, packsWeightHint } from "../shared/prep-helpers";
@@ -56,7 +57,9 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   const { toast } = useToast();
   const [selectedRecipeId, setSelectedRecipeId] = useState<number | null>(null);
   const [hideCompleted, setHideCompleted] = useState(false);
-  const { recipes, isLoading, nextPlan, targetPlanId, noFuturePlan } = usePrepByRecipe("prep_meat", plan.id, plan.planDate);
+  const search = useSearch();
+  const isDirect = new URLSearchParams(search).get("direct") === "1";
+  const { recipes, isLoading, nextPlan, targetPlanId, noFuturePlan } = usePrepByRecipe("prep_meat", plan.id, plan.planDate, isDirect);
   const isDraft = nextPlan?.status === "draft";
   const { completions, refetch } = usePrepMeatCompletions(targetPlanId ?? plan.id);
 
