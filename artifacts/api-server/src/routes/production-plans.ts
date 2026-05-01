@@ -3572,6 +3572,12 @@ router.get("/:id/filling-mix", async (req, res) => {
       }
     }
 
+    // Even-split: total recipe qty across all tins = qty/portion × portions/batch × target.
+    // Using batchesPerTin (= ceil(target/tinsTarget)) here would over-portion when target
+    // doesn't divide evenly into tinsTarget — e.g. 16 batches across 3 tins would give
+    // 6 batches/tin × 3 tins = 18 batches' worth, ~12.5% too much filling.
+    const evenBatchesPerTin = tinsTarget > 0 ? target / tinsTarget : target;
+
     const ingredients = recipeIngRows
       .filter(fi => !marinadeIngIds.has(fi.ingredientId))
       .map(fi => {
@@ -3585,7 +3591,7 @@ router.get("/:id/filling-mix", async (req, res) => {
           name: fi.ingredientName,
           unit: fi.unit,
           qtyPerBatch: totalQtyPerPortion * ppb,
-          qtyPerTin: totalQtyPerPortion * ppb * batchesPerTin + overagePerTin,
+          qtyPerTin: totalQtyPerPortion * ppb * evenBatchesPerTin + overagePerTin,
           mixingOverage: overage,
         };
       });
@@ -3601,7 +3607,7 @@ router.get("/:id/filling-mix", async (req, res) => {
           name: fs.subRecipeName,
           unit: fs.unit,
           qtyPerBatch: Number(fs.quantity) * ppb,
-          qtyPerTin: Number(fs.quantity) * ppb * batchesPerTin + overagePerTin,
+          qtyPerTin: Number(fs.quantity) * ppb * evenBatchesPerTin + overagePerTin,
           mixingOverage: overage,
         };
       });
