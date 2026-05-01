@@ -921,6 +921,7 @@ export default function Settings() {
               {user?.role === "admin" && <MixerCapacitySection />}
               {user?.role === "admin" && <ProductionExtrasSection />}
               {user?.role === "admin" && <WeightChillSettingsSection />}
+              {user?.role === "admin" && <OvenDefaultsSection />}
               {user?.role === "admin" && <ExtraTomatoBaseSection />}
               {user?.role === "admin" && <PastaCookingSection />}
               {user?.role === "admin" && <BreakDefaultsSection />}
@@ -2150,6 +2151,119 @@ function WeightChillSettingsSection() {
           </div>
         </div>
 
+        <div className="border-t border-border/60 pt-4 flex justify-end">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Oven defaults — temp/time per dietary category. Recipes tagged "meat" or
+ * "vegetarian" use these on the building station's first-batch overlay so
+ * the oven settings are confirmed before assembly continues.
+ */
+function OvenDefaultsSection() {
+  const KEYS = [
+    { key: "oven_meat_temp_c",    defaultVal: "220" },
+    { key: "oven_meat_time_min",  defaultVal: "8"   },
+    { key: "oven_veg_temp_c",     defaultVal: "210" },
+    { key: "oven_veg_time_min",   defaultVal: "7"   },
+  ] as const;
+  const [vals, setVals] = useState<Record<string, string>>({});
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    Promise.all(
+      KEYS.map(({ key, defaultVal }) =>
+        fetch(`/api/app-settings/${key}`, { credentials: "include" })
+          .then(r => r.ok ? r.json() : null)
+          .then(d => ({ key, value: d?.value ?? defaultVal }))
+          .catch(() => ({ key, value: defaultVal }))
+      )
+    ).then(results => {
+      const v: Record<string, string> = {};
+      for (const r of results) v[r.key] = r.value;
+      setVals(v);
+      setLoaded(true);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await Promise.all(
+        KEYS.map(({ key, defaultVal }) =>
+          fetch(`/api/app-settings/${key}`, {
+            method: "PUT", credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ value: String(Number(vals[key] ?? defaultVal)) }),
+          })
+        )
+      );
+      setSavedMsg("Saved"); setTimeout(() => setSavedMsg(null), 2000);
+    } catch {
+      setSavedMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!loaded) return null;
+
+  const Row = ({ label, tempKey, timeKey }: { label: string; tempKey: string; timeKey: string }) => (
+    <div className="flex items-end gap-4 flex-wrap">
+      <div className="text-sm font-semibold w-28">{label}</div>
+      <div className="flex items-center gap-2">
+        <label className="text-xs text-muted-foreground">Temp</label>
+        <input
+          type="number" min="50" max="350" step="5"
+          value={vals[tempKey] ?? ""}
+          onChange={e => setVals(v => ({ ...v, [tempKey]: e.target.value }))}
+          className="w-20 px-3 py-2 border border-border rounded-lg text-sm text-right"
+        />
+        <span className="text-xs text-muted-foreground">°C</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <label className="text-xs text-muted-foreground">Time</label>
+        <input
+          type="number" min="1" max="60" step="1"
+          value={vals[timeKey] ?? ""}
+          onChange={e => setVals(v => ({ ...v, [timeKey]: e.target.value }))}
+          className="w-20 px-3 py-2 border border-border rounded-lg text-sm text-right"
+        />
+        <span className="text-xs text-muted-foreground">min</span>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <UtensilsCrossed className="w-4 h-4 text-primary" /> Oven Defaults
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Per-category cooking time and temperature, shown to the builder on the first batch of each recipe. Tag a recipe as Meat or Vegetarian on its edit page to enable the prompt.
+          </p>
+        </div>
+        {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
+      </div>
+      <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
+        <Row label="Meat" tempKey="oven_meat_temp_c" timeKey="oven_meat_time_min" />
+        <Row label="Vegetarian" tempKey="oven_veg_temp_c" timeKey="oven_veg_time_min" />
         <div className="border-t border-border/60 pt-4 flex justify-end">
           <button
             onClick={handleSave}

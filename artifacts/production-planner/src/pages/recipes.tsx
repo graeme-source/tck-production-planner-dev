@@ -37,6 +37,7 @@ const schema = z.object({
   isCurrentSpecial: z.boolean().optional(),
   color: z.string().optional(),
   cookingLossPercent: z.preprocess(v => (v === "" || v == null ? null : Number(v)), z.number().min(0).max(50).nullable().optional()),
+  dietaryCategory: z.preprocess(v => (v === "" ? null : v), z.enum(["meat", "vegetarian"]).nullable().optional()),
   ingredients: z.array(z.object({
     ingredientId: z.coerce.number().min(1, "Select ingredient"),
     quantity: z.coerce.number().min(0.001, "Must be > 0"),
@@ -414,6 +415,20 @@ function RecipeForm({
           <div className="col-span-2">
             <label className="text-sm font-medium mb-1 block">SOP URL</label>
             <input type="url" {...register("sopUrl")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="https://…" />
+          </div>
+          <div className="col-span-2 flex items-end gap-3">
+            <div className="flex-1 max-w-xs">
+              <label className="text-sm font-medium mb-1 block">Dietary category</label>
+              <select
+                {...register("dietaryCategory")}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                <option value="">— not set —</option>
+                <option value="meat">Meat</option>
+                <option value="vegetarian">Vegetarian</option>
+              </select>
+              <span className="text-xs text-muted-foreground mt-1 block">Drives the oven-defaults overlay shown on the first batch built.</span>
+            </div>
           </div>
           <div className="col-span-2 flex items-center gap-4 flex-wrap">
             <div className="flex items-center gap-2">
@@ -950,10 +965,11 @@ function EditRecipeDialog({
         isCurrentSpecial: detail.isCurrentSpecial ?? false,
         color: detail.color ?? "",
         cookingLossPercent: (detail as Record<string, unknown>).cookingLossPercent != null ? Number((detail as Record<string, unknown>).cookingLossPercent) : 3,
+        dietaryCategory: ((detail as Record<string, unknown>).dietaryCategory as "meat" | "vegetarian" | null | undefined) ?? null,
         ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, quid: (i as Record<string, unknown>).quid === true, showInPrep: (i as Record<string, unknown>).showInPrep === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
         subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, quid: (s as Record<string, unknown>).quid === true, showInPrep: (s as Record<string, unknown>).showInPrep === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
       }
-    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", cookingLossPercent: 3, ingredients: [], subRecipes: [] };
+    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", cookingLossPercent: 3, dietaryCategory: null, ingredients: [], subRecipes: [] };
 
   return (
     <>
@@ -1699,6 +1715,7 @@ export default function Recipes() {
         isCurrentSpecial: false,
         color: duplicateDetail.color ?? "",
         cookingLossPercent: (duplicateDetail as Record<string, unknown>).cookingLossPercent != null ? Number((duplicateDetail as Record<string, unknown>).cookingLossPercent) : 3,
+        dietaryCategory: ((duplicateDetail as Record<string, unknown>).dietaryCategory as "meat" | "vegetarian" | null | undefined) ?? null,
         ingredients: (duplicateDetail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, quid: (i as Record<string, unknown>).quid === true, showInPrep: (i as Record<string, unknown>).showInPrep === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
         subRecipes: (duplicateDetail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, quid: (s as Record<string, unknown>).quid === true, showInPrep: (s as Record<string, unknown>).showInPrep === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
       };
@@ -1732,7 +1749,7 @@ export default function Recipes() {
   const addDefaults: FormValues = {
     name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "",
     packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined,
-    tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", cookingLossPercent: 3, ingredients: [], subRecipes: [],
+    tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", cookingLossPercent: 3, dietaryCategory: null, ingredients: [], subRecipes: [],
   };
 
   return (

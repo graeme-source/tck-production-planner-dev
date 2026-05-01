@@ -250,11 +250,12 @@ export async function resolveDefaultDoughDate(planDate: string): Promise<string>
   return applyOffset(planDate, offset);
 }
 
-function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?: string | null; portionsPerBatch?: number | null; packSize?: number | null; fillWeightGrams?: string | null; baseType?: string | null; baseWeightGrams?: string | null; wrappingComplete?: boolean | null; recipeColor?: string | null; targetBuildSeconds?: number | null; recipeCategory?: string | null }, stationCompletions?: Record<string, number>) {
+function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?: string | null; portionsPerBatch?: number | null; packSize?: number | null; fillWeightGrams?: string | null; baseType?: string | null; baseWeightGrams?: string | null; wrappingComplete?: boolean | null; recipeColor?: string | null; targetBuildSeconds?: number | null; recipeCategory?: string | null; dietaryCategory?: string | null }, stationCompletions?: Record<string, number>) {
   return {
     ...i,
     recipeName: i.recipeName ?? "",
     recipeCategory: i.recipeCategory ?? null,
+    dietaryCategory: i.dietaryCategory ?? null,
     portionsPerBatch: i.portionsPerBatch ?? 10,
     packSize: i.packSize ?? 2,
     fillWeightGrams: i.fillWeightGrams ? Number(i.fillWeightGrams) : null,
@@ -1757,6 +1758,7 @@ router.get("/:id", async (req, res) => {
       baseWeightGrams: recipesTable.baseWeightGrams,
       recipeColor: recipesTable.color,
       recipeCategory: recipesTable.category,
+      dietaryCategory: recipesTable.dietaryCategory,
     })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))

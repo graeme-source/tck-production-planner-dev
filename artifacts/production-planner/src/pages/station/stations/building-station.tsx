@@ -305,6 +305,33 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   const [pendingTap, setPendingTap] = useState(false);
   const isOnBreak = isOnBreakProp;
 
+  // Oven-settings overlay state. Shown on the FIRST batch the builder taps for
+  // a recipe that has a dietary category set; the values come from the four
+  // app_settings keys seeded with sane defaults. Confirmed item-ids are
+  // remembered for the lifetime of this station mount.
+  const [ovenDefaults, setOvenDefaults] = useState<{ meatTemp: number; meatTime: number; vegTemp: number; vegTime: number } | null>(null);
+  const [ovenConfirmedItemIds, setOvenConfirmedItemIds] = useState<Set<number>>(new Set());
+  const [ovenPromptItemId, setOvenPromptItemId] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      fetch("/api/app-settings/oven_meat_temp_c", { credentials: "include" }).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch("/api/app-settings/oven_meat_time_min", { credentials: "include" }).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch("/api/app-settings/oven_veg_temp_c", { credentials: "include" }).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch("/api/app-settings/oven_veg_time_min", { credentials: "include" }).then(r => r.ok ? r.json() : null).catch(() => null),
+    ]).then(([mt, mm, vt, vm]) => {
+      if (cancelled) return;
+      setOvenDefaults({
+        meatTemp: Number(mt?.value ?? 220) || 220,
+        meatTime: Number(mm?.value ?? 8) || 8,
+        vegTemp: Number(vt?.value ?? 210) || 210,
+        vegTime: Number(vm?.value ?? 7) || 7,
+      });
+    });
+    return () => { cancelled = true; };
+  }, []);
+
   // Accordion state
   const [expandedItemId, setExpandedItemId] = useState<number | null>(null);
   const userOverrideRef = useRef(false);
@@ -658,6 +685,15 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
 
   const handleBatchComplete = () => {
     if (!currentItem || pendingTap || available <= 0 || isOnBreak || checklistPending) return;
+    // First-batch oven-settings gate: if this is the very first batch of a
+    // recipe with a dietary category set, ask the operator to confirm the
+    // oven settings before recording the completion.
+    const dietary = (currentItem as any).dietaryCategory as "meat" | "vegetarian" | null | undefined;
+    const isFirstBatch = getCombinedBuildCount(currentItem) === 0;
+    if (isFirstBatch && dietary && !ovenConfirmedItemIds.has(currentItem.id)) {
+      setOvenPromptItemId(currentItem.id);
+      return;
+    }
     setPendingTap(true);
     const completingItemId = currentItem.id;
     // If this tap would complete the recipe (I'm on the last batch), remember
@@ -799,10 +835,15 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   const combinedDone = totalBatchesDone + totalMacPacksDone;
   const overallProgress = combinedTarget > 0 ? Math.round((combinedDone / combinedTarget) * 100) : 0;
 
-  // KPI calculations for daily progress card
+  // KPI calculations for daily progress card. When every planned batch is
+  // built, freeze the clock at the last completion so per-user BPH stops
+  // decaying through tidy-up / breaks at end of day. Mirrors the server-side
+  // freeze in /api/production-plans/:id/kpi.
+  const allBuiltOut = combinedTarget > 0 && combinedDone >= combinedTarget;
   const now = new Date();
+  const localClockCeiling = allBuiltOut && lastBatchAt ? lastBatchAt : now;
   const localActiveMinutes = sessionStartedAt
-    ? Math.max(0, differenceInMinutes(now, sessionStartedAt) - totalBreakMinutes - activeBreakMinutes)
+    ? Math.max(0, differenceInMinutes(localClockCeiling, sessionStartedAt) - totalBreakMinutes - activeBreakMinutes)
     : 0;
   const localBph = localActiveMinutes > 0 ? sessionBatches / (localActiveMinutes / 60) : 0;
   const teamBph = serverKpi?.batchesPerHour ?? 0;
@@ -915,6 +956,65 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
               mode="edit"
             />
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* First-batch oven settings — confirm before recording the very first
+          batch of a meat / vegetarian recipe. */}
+      <Dialog open={ovenPromptItemId !== null} onOpenChange={(open) => { if (!open) setOvenPromptItemId(null); }}>
+        <DialogContent className="max-w-md mx-auto" onPointerDownOutside={e => e.preventDefault()} onEscapeKeyDown={e => e.preventDefault()}>
+          {(() => {
+            if (ovenPromptItemId === null) return null;
+            const item = items.find(it => it.id === ovenPromptItemId);
+            if (!item) return null;
+            const dietary = (item as any).dietaryCategory as "meat" | "vegetarian" | null;
+            if (!dietary || !ovenDefaults) return null;
+            const isMeat = dietary === "meat";
+            const temp = isMeat ? ovenDefaults.meatTemp : ovenDefaults.vegTemp;
+            const time = isMeat ? ovenDefaults.meatTime : ovenDefaults.vegTime;
+            return (
+              <div className="space-y-5 pt-2">
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">First batch · check oven settings</p>
+                  <h3 className="font-bold text-2xl mt-1" style={{ color: item.recipeColor || undefined }}>
+                    {item.recipeName ?? `Recipe #${item.recipeId}`}
+                  </h3>
+                  <p className="text-sm text-muted-foreground mt-0.5">
+                    {isMeat ? "Meat" : "Vegetarian"} profile
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-2xl border-2 border-primary/30 bg-primary/5 p-4 text-center">
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">Temperature</div>
+                    <div className="text-4xl font-bold tabular-nums mt-1">{temp}<span className="text-xl font-normal text-muted-foreground">°C</span></div>
+                  </div>
+                  <div className="rounded-2xl border-2 border-primary/30 bg-primary/5 p-4 text-center">
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">Time</div>
+                    <div className="text-4xl font-bold tabular-nums mt-1">{time}<span className="text-xl font-normal text-muted-foreground"> min</span></div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOvenConfirmedItemIds(prev => {
+                      const next = new Set(prev);
+                      next.add(item.id);
+                      return next;
+                    });
+                    setOvenPromptItemId(null);
+                    // Re-tap the build action; the gate now sees a confirmed id.
+                    setTimeout(() => handleBatchComplete(), 0);
+                  }}
+                  className="w-full py-4 rounded-xl bg-primary text-primary-foreground font-bold text-lg hover:bg-primary/90 active:scale-95 transition-all"
+                >
+                  Checked oven settings
+                </button>
+                <p className="text-[11px] text-muted-foreground text-center">
+                  This prompt only shows on the first batch of each recipe.
+                </p>
+              </div>
+            );
+          })()}
         </DialogContent>
       </Dialog>
 

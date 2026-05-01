@@ -28,6 +28,10 @@ export const recipesTable = pgTable("recipes", {
   baseWeightGrams: numeric("base_weight_grams", { precision: 10, scale: 2 }),
   isCoreMenu: boolean("is_core_menu").notNull().default(false),
   isCurrentSpecial: boolean("is_current_special").notNull().default(false),
+  // Drives which oven defaults to apply at the building station's first-batch
+  // overlay. Nullable for legacy rows; kept as text so we can extend without a
+  // migration if a third profile is ever added.
+  dietaryCategory: text("dietary_category"),
   color: text("color"),
   cookingLossPercent: numeric("cooking_loss_percent", { precision: 5, scale: 2 }).notNull().default("3"),
   fillingAssemblyOrder: integer("filling_assembly_order"),
