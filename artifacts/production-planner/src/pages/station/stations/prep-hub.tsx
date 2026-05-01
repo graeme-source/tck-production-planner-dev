@@ -1,6 +1,6 @@
 import React from "react";
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import {
   useListSubRecipes,
 } from "@workspace/api-client-react";
@@ -22,6 +22,11 @@ const PREP_SUB_STATIONS = [
 
 export function PrepSubNav({ planId, current }: { planId: number; current: string }) {
   const [, navigate] = useLocation();
+  const search = useSearch();
+  // Preserve ?direct=1 across sub-station switches so the calendar-card flow
+  // stays anchored to the URL plan id instead of falling back to the
+  // auto-route to "next active plan".
+  const qs = search ? `?${search.replace(/^\?/, "")}` : "";
   return (
     <div className="flex items-center gap-1 bg-card border border-border rounded-xl p-1.5">
       {PREP_SUB_STATIONS.map(s => {
@@ -30,7 +35,7 @@ export function PrepSubNav({ planId, current }: { planId: number; current: strin
         return (
           <button
             key={s.key}
-            onClick={() => navigate(`/plans/${planId}/station/${s.key}`)}
+            onClick={() => navigate(`/plans/${planId}/station/${s.key}${qs}`)}
             className={cn(
               "flex flex-1 items-center justify-center gap-2 px-3 py-2 rounded-lg text-base font-medium transition-all",
               isActive ? s.activeClass : s.inactiveClass
