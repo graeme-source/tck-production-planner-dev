@@ -9,8 +9,34 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import {
   ChevronUp, Plus, Minus, Check, CheckCircle2, PlayCircle, Loader2,
-  GripVertical, Lock, RotateCcw, Package, ChevronRight,
+  GripVertical, Lock, RotateCcw, Package, ChevronRight, AlertTriangle,
 } from "lucide-react";
+
+// Sanity-check that the per-tin filling qty multiplied by tin count matches
+// the recipe-derived total (qty/portion × portions/batch × batches), allowing
+// for any declared mixing overage. Catches calculation bugs in real time.
+const QTY_MISMATCH_TOLERANCE = 0.005; // 0.5%
+function checkFillingLineMath(args: {
+  qtyPerBatch: number;
+  qtyPerTin: number;
+  mixingOverage: number;
+  target: number;
+  tinsTarget: number;
+}): { ok: boolean; expected: number; shown: number; deltaPct: number } | null {
+  const { qtyPerBatch, qtyPerTin, mixingOverage, target, tinsTarget } = args;
+  if (target <= 0 || tinsTarget <= 0 || !Number.isFinite(qtyPerBatch) || qtyPerBatch <= 0) return null;
+  const expected = qtyPerBatch * target + mixingOverage;
+  const shown = qtyPerTin * tinsTarget;
+  if (expected <= 0) return null;
+  const deltaPct = Math.abs(shown - expected) / expected;
+  return { ok: deltaPct <= QTY_MISMATCH_TOLERANCE, expected, shown, deltaPct };
+}
+
+function formatQtyForUnit(qty: number, unit: string | null): string {
+  if (unit === "kg" || unit === "l") return `${qty.toFixed(3)} ${unit}`;
+  if (unit === "g" || unit === "ml") return `${Math.round(qty)} ${unit}`;
+  return `${qty.toFixed(2)} ${unit ?? ""}`.trim();
+}
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
@@ -1170,50 +1196,109 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
         </div>
       </div>
 
-      {isActive && hasFillingItems && filling && (
+      {isActive && hasFillingItems && filling && (() => {
+        const lineChecks = [
+          ...filling.fillingIngredients.map(fi => ({
+            key: `ing-${fi.ingredientId}`,
+            check: checkFillingLineMath({
+              qtyPerBatch: fi.qtyPerBatch,
+              qtyPerTin: fi.qtyPerTin,
+              mixingOverage: fi.mixingOverage ?? 0,
+              target,
+              tinsTarget,
+            }),
+          })),
+          ...filling.fillingSubRecipes.map(fs => ({
+            key: `sub-${fs.subRecipeId}`,
+            check: checkFillingLineMath({
+              qtyPerBatch: fs.qtyPerBatch,
+              qtyPerTin: fs.qtyPerTin,
+              mixingOverage: fs.mixingOverage ?? 0,
+              target,
+              tinsTarget,
+            }),
+          })),
+        ];
+        const checkByKey = new Map(lineChecks.map(c => [c.key, c.check]));
+        const mismatchCount = lineChecks.filter(c => c.check && !c.check.ok).length;
+        const renderWarning = (check: ReturnType<typeof checkFillingLineMath>, unit: string | null) => {
+          if (!check || check.ok) return null;
+          const overByPct = ((check.shown - check.expected) / check.expected) * 100;
+          const sign = overByPct >= 0 ? "+" : "";
+          return (
+            <div
+              className="mt-1 flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded px-2 py-1"
+              title={`Expected ${formatQtyForUnit(check.expected, unit)} total across all tins, but display sums to ${formatQtyForUnit(check.shown, unit)} (${sign}${overByPct.toFixed(1)}%). Don't mix more than the recipe needs.`}
+            >
+              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+              <span>
+                Math check: {sign}{overByPct.toFixed(1)}% vs recipe ({formatQtyForUnit(check.expected, unit)} expected total)
+              </span>
+            </div>
+          );
+        };
+        return (
         <div className="border-t border-primary/20 bg-primary/5">
           <div className="px-4 py-2 flex items-center justify-between">
             <p className="text-sm font-medium text-primary">
               Filling Mix — Tin {tinsComplete + 1} of {tinsTarget}
             </p>
+            {mismatchCount > 0 && (
+              <span className="flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 rounded px-2 py-0.5">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                {mismatchCount} math mismatch{mismatchCount === 1 ? "" : "es"}
+              </span>
+            )}
           </div>
           <div className="px-4 pb-3 space-y-0.5">
-            {filling.fillingIngredients.map((fi, idx) => (
-              <div key={`ing-${idx}`} className="flex items-center gap-3 py-2 px-3 rounded-lg">
-                <div className="flex-1">
-                  <span className="text-lg">{fi.name ?? `Ingredient #${fi.ingredientId}`}</span>
-                  {(fi.mixingOverage ?? 0) > 0 && (
-                    <span className="ml-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded px-1.5 py-0.5">
-                      +{formatMixQty(fi.mixingOverage!, fi.unit)} extra total
+            {filling.fillingIngredients.map((fi, idx) => {
+              const check = checkByKey.get(`ing-${fi.ingredientId}`);
+              return (
+              <div key={`ing-${idx}`} className="py-2 px-3 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <div className="flex-1">
+                    <span className="text-lg">{fi.name ?? `Ingredient #${fi.ingredientId}`}</span>
+                    {(fi.mixingOverage ?? 0) > 0 && (
+                      <span className="ml-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded px-1.5 py-0.5">
+                        +{formatMixQty(fi.mixingOverage!, fi.unit)} extra total
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-col items-end">
+                    <span className="text-lg font-mono tabular-nums font-bold text-foreground">
+                      {formatMixQty(fi.qtyPerTin, fi.unit)}
                     </span>
-                  )}
+                    <span className="text-sm text-muted-foreground leading-none mt-0.5">per tin</span>
+                  </div>
                 </div>
-                <div className="flex flex-col items-end">
-                  <span className="text-lg font-mono tabular-nums font-bold text-foreground">
-                    {formatMixQty(fi.qtyPerTin, fi.unit)}
-                  </span>
-                  <span className="text-sm text-muted-foreground leading-none mt-0.5">per tin</span>
-                </div>
+                {renderWarning(check, fi.unit)}
               </div>
-            ))}
-            {filling.fillingSubRecipes.map((fs, idx) => (
-              <div key={`sub-${idx}`} className="flex items-center gap-3 py-2 px-3 rounded-lg">
-                <div className="flex-1">
-                  <span className="text-lg">{fs.name ?? `Sub-recipe #${fs.subRecipeId}`}</span>
-                  {(fs.mixingOverage ?? 0) > 0 && (
-                    <span className="ml-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded px-1.5 py-0.5">
-                      +{formatMixQty(fs.mixingOverage!, fs.unit)} extra total
+              );
+            })}
+            {filling.fillingSubRecipes.map((fs, idx) => {
+              const check = checkByKey.get(`sub-${fs.subRecipeId}`);
+              return (
+              <div key={`sub-${idx}`} className="py-2 px-3 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <div className="flex-1">
+                    <span className="text-lg">{fs.name ?? `Sub-recipe #${fs.subRecipeId}`}</span>
+                    {(fs.mixingOverage ?? 0) > 0 && (
+                      <span className="ml-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded px-1.5 py-0.5">
+                        +{formatMixQty(fs.mixingOverage!, fs.unit)} extra total
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-col items-end">
+                    <span className="text-lg font-mono tabular-nums font-bold text-foreground">
+                      {formatMixQty(fs.qtyPerTin, fs.unit)}
                     </span>
-                  )}
+                    <span className="text-sm text-muted-foreground leading-none mt-0.5">per tin</span>
+                  </div>
                 </div>
-                <div className="flex flex-col items-end">
-                  <span className="text-lg font-mono tabular-nums font-bold text-foreground">
-                    {formatMixQty(fs.qtyPerTin, fs.unit)}
-                  </span>
-                  <span className="text-sm text-muted-foreground leading-none mt-0.5">per tin</span>
-                </div>
+                {renderWarning(check, fs.unit)}
               </div>
-            ))}
+              );
+            })}
           </div>
 
           {!completing && !completeFailed && (
@@ -1249,7 +1334,8 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
             </div>
           )}
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
