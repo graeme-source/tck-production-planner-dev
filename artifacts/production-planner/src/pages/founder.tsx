@@ -11,6 +11,7 @@ import {
   Calendar,
   BarChart2,
   Calculator,
+  ChefHat,
   RefreshCw,
   ChevronDown,
   ShoppingBag,

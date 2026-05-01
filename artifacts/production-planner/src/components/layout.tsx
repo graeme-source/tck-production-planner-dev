@@ -40,7 +40,8 @@ import { UserAvatar } from "@/components/user-avatar";
 import { NotificationBell } from "@/components/notification-bell";
 import { NotificationFlash } from "@/components/notification-flash";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
-import { BookOpen } from "lucide-react";
+import { FoundersAssistant, ASSISTANT_NAME } from "@/components/founders-assistant";
+import { BookOpen, Bot } from "lucide-react";
 
 export type NavItem = { name: string; href: string; icon: React.ComponentType<{ className?: string }> };
 
@@ -489,6 +490,8 @@ export function Layout({ children }: { children: ReactNode }) {
   // that traps any fixed-position child's z-index inside it. Rendering the
   // dialog as a sibling of <main> keeps it above everything.
   const [sopsOpen, setSopsOpen] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const isFounder = user?.email === "graeme@thecalzonekitchen.co.uk";
 
   const userRole = user?.role ?? "viewer";
   const isManagerOrAdmin = userRole === "admin" || userRole === "manager";
@@ -631,6 +634,24 @@ export function Layout({ children }: { children: ReactNode }) {
       <ReportButton />
       <StandardsSopsDialog open={sopsOpen} onClose={() => setSopsOpen(false)} currentStationType={null} />
       <NotificationFlash />
+
+      {isFounder && (
+        <>
+          <FoundersAssistant open={assistantOpen} onClose={() => setAssistantOpen(false)} />
+          {!assistantOpen && (
+            <button
+              type="button"
+              onClick={() => setAssistantOpen(true)}
+              className="fixed bottom-20 right-5 z-30 flex items-center gap-2 px-4 h-12 rounded-full bg-orange-500 text-white shadow-lg shadow-orange-500/30 hover:bg-orange-600 active:scale-95 transition-all"
+              aria-label={`Ask ${ASSISTANT_NAME}`}
+              title={`Ask ${ASSISTANT_NAME}`}
+            >
+              <Bot className="w-5 h-5" />
+              <span className="text-sm font-semibold">Ask {ASSISTANT_NAME}</span>
+            </button>
+          )}
+        </>
+      )}
     </div>
   );
 }

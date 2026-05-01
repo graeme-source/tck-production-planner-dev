@@ -45,6 +45,7 @@ import riskAssessmentsRouter from "./risk-assessments";
 import complianceActionsRouter from "./compliance-actions";
 import standardsRouter from "./standards";
 import aiRouter from "./ai";
+import recipeDesignerRouter from "./recipe-designer";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -121,6 +122,15 @@ router.use("/risk-assessments", riskAssessmentsRouter);
 router.use("/compliance-actions", complianceActionsRouter);
 router.use("/standards", standardsRouter);
 router.use("/ai", aiRouter);
+
+const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
+async function requireFounder(req: Request, res: Response, next: NextFunction) {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const [user] = await db.select({ email: usersTable.email }).from(usersTable).where(eq(usersTable.id, req.session.userId));
+  if (user?.email === FOUNDER_EMAIL) { next(); return; }
+  res.status(403).json({ error: "Founder access required" });
+}
+router.use("/recipe-designer", requireFounder, recipeDesignerRouter);
 
 router.post("/backup/trigger", requireAdmin, (_req: Request, res: Response) => {
   res.json({ status: "started", message: "Backup triggered" });

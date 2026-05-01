@@ -60,6 +60,35 @@ async function runStartupMigrations() {
         used_at TIMESTAMP
       )
     `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS recipe_chat_threads (
+        id SERIAL PRIMARY KEY,
+        title TEXT NOT NULL DEFAULT 'New conversation',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS recipe_chat_messages (
+        id SERIAL PRIMARY KEY,
+        thread_id INTEGER NOT NULL REFERENCES recipe_chat_threads(id) ON DELETE CASCADE,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_recipe_chat_messages_thread ON recipe_chat_messages (thread_id, id)`);
+    // Recipe dietary category (meat / vegetarian) — drives oven-defaults overlay.
+    await db.execute(sql`ALTER TABLE recipes ADD COLUMN IF NOT EXISTS dietary_category TEXT`);
+    // Seed oven-defaults app_settings keys (sane starting values; admin edits in Settings).
+    await db.execute(sql`
+      INSERT INTO app_settings (key, value, updated_at) VALUES
+        ('oven_meat_temp_c', '220', NOW()),
+        ('oven_meat_time_min', '8', NOW()),
+        ('oven_veg_temp_c', '210', NOW()),
+        ('oven_veg_time_min', '7', NOW())
+      ON CONFLICT (key) DO NOTHING
+    `);
     // Add fulfilled_at to dispatch_orders if missing (added in v1.1)
     await db.execute(sql`
       ALTER TABLE dispatch_orders ADD COLUMN IF NOT EXISTS fulfilled_at TIMESTAMP
