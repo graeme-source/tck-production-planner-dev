@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { useLocation } from "wouter";
-import { packNoun, packDescriptor } from "@/pages/station/shared/prep-helpers";
+import { packNoun, packDescriptor, fmtQty } from "@/pages/station/shared/prep-helpers";
 import { NumberInput } from "@/components/ui/number-input";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -259,6 +259,34 @@ function ReceivingDialog({
   const [frozenTemp, setFrozenTemp] = useState("");
   const [checkResults, setCheckResults] = useState<CheckResult[]>([]);
   const [notes, setNotes] = useState("");
+  // Tracks whether the user has made any edit since opening. Lets us prompt
+  // before closing the dialog (and lose the in-progress work) on accidental
+  // backdrop click / escape.
+  const [dirty, setDirty] = useState(false);
+
+  // Suppress the global pull-to-refresh gesture while this dialog is open —
+  // a swipe-down inside a long form would otherwise reload the page and
+  // discard everything the operator has typed.
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.dataset.suppressPullToRefresh ?? null;
+    document.body.dataset.suppressPullToRefresh = "1";
+    return () => {
+      if (prev === null) delete document.body.dataset.suppressPullToRefresh;
+      else document.body.dataset.suppressPullToRefresh = prev;
+    };
+  }, [open]);
+
+  // Reset the dirty flag whenever the dialog (re)opens, so we don't carry
+  // a stale "yes you have changes" state from a previous order.
+  useEffect(() => { if (open) setDirty(false); }, [open]);
+
+  // User-driven setters — flag dirty so the close-confirm guard can fire.
+  const editLines: typeof setLines = (v) => { setDirty(true); setLines(v); };
+  const editChilledTemp: typeof setChilledTemp = (v) => { setDirty(true); setChilledTemp(v); };
+  const editFrozenTemp: typeof setFrozenTemp = (v) => { setDirty(true); setFrozenTemp(v); };
+  const editCheckResults: typeof setCheckResults = (v) => { setDirty(true); setCheckResults(v); };
+  const editNotes: typeof setNotes = (v) => { setDirty(true); setNotes(v); };
 
   useEffect(() => {
     if (open && order) {
@@ -359,8 +387,16 @@ function ReceivingDialog({
     },
   });
 
+  const handleClose = () => {
+    if (dirty && !receiveMutation.isPending) {
+      const ok = window.confirm("You've made changes to this delivery — close without saving?");
+      if (!ok) return;
+    }
+    onClose();
+  };
+
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+    <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
       <DialogContent className="w-[85vw] sm:max-w-[85vw] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display text-3xl font-bold flex items-center gap-3">
@@ -415,7 +451,7 @@ function ReceivingDialog({
                   type="button"
                   onClick={() => {
                     const allChecked = lines.every((l) => l.checked);
-                    setLines(lines.map((l) => ({ ...l, checked: !allChecked })));
+                    editLines(lines.map((l) => ({ ...l, checked: !allChecked })));
                   }}
                   className="text-xs font-medium px-3 py-1 rounded-lg border border-border hover:bg-secondary/50 transition-colors"
                 >
@@ -431,7 +467,7 @@ function ReceivingDialog({
                 const toggleChecked = () => {
                   const next = [...lines];
                   next[idx] = { ...next[idx], checked: !next[idx].checked };
-                  setLines(next);
+                  editLines(next);
                 };
                 return (
                   <div
@@ -498,9 +534,13 @@ function ReceivingDialog({
                       // downstream (recipes, cost) keeps working.
                       const inPacks = !!line.stockInPacks && (line.packWeight ?? 0) > 0;
                       const pw = line.packWeight || 1;
-                      const orderedDisplay = inPacks
-                        ? `${Math.round(line.quantityOrdered / pw)} ${packDescriptor(line.unit, line.packWeight, Math.round(line.quantityOrdered / pw))}`
-                        : `${line.quantityOrdered} ${line.unit}`;
+                      const orderedPacks = inPacks ? Math.round(line.quantityOrdered / pw) : 0;
+                      const orderedDisplay = inPacks ? (
+                        <>
+                          {orderedPacks} {packNoun(line.unit, orderedPacks)}{" "}
+                          <span className="text-sm font-normal text-muted-foreground">({fmtQty(pw, line.unit)})</span>
+                        </>
+                      ) : `${line.quantityOrdered} ${line.unit}`;
                       const receivedPackCount = inPacks ? Math.round(line.quantityReceived / pw) : line.quantityReceived;
                       const step = inPacks ? 1 : 0.5;
                       const bump = (deltaPacks: number) => {
@@ -510,7 +550,7 @@ function ReceivingDialog({
                         const newDisplay = Math.max(0, currentInDisplay + deltaPacks);
                         const nextReceived = inPacks ? newDisplay * pw : Number(newDisplay.toFixed(2));
                         next[idx] = { ...next[idx], quantityReceived: nextReceived };
-                        setLines(next);
+                        editLines(next);
                       };
                       return (
                     <div className={cn("grid gap-3", line.requiresUseByDate ? "grid-cols-3" : "grid-cols-2")} onClick={(e) => e.stopPropagation()}>
@@ -544,7 +584,7 @@ function ReceivingDialog({
                             onChange={(n) => {
                               const next = [...lines];
                               next[idx] = { ...next[idx], quantityReceived: inPacks ? n * pw : n };
-                              setLines(next);
+                              editLines(next);
                             }}
                             className="flex-1 min-w-0 px-2 py-2 bg-background text-center text-xl font-bold tabular-nums text-[#919b5f] focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                           />
@@ -569,7 +609,7 @@ function ReceivingDialog({
                             onChange={(e) => {
                               const next = [...lines];
                               next[idx] = { ...next[idx], useByDate: e.target.value, useByIsAuto: false };
-                              setLines(next);
+                              editLines(next);
                             }}
                             className={cn(
                               "w-full min-w-0 px-3 py-2 bg-background border rounded-lg text-lg font-bold focus:outline-none focus:ring-2 focus:ring-primary/30",
@@ -584,13 +624,15 @@ function ReceivingDialog({
                     {discrepancy && (() => {
                       const inPacks = !!line.stockInPacks && (line.packWeight ?? 0) > 0;
                       const pw = line.packWeight || 1;
-                      const orderedDisp = inPacks
-                        ? `${Math.round(line.quantityOrdered / pw)} ${packDescriptor(line.unit, line.packWeight, Math.round(line.quantityOrdered / pw))}`
-                        : `${line.quantityOrdered} ${line.unit}`;
+                      const orderedPacks = inPacks ? Math.round(line.quantityOrdered / pw) : 0;
                       return (
                         <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
                           <AlertTriangle className="w-3.5 h-3.5" />
-                          Quantity differs from order ({orderedDisp} ordered)
+                          Quantity differs from order (
+                          {inPacks
+                            ? <>{orderedPacks} {packNoun(line.unit, orderedPacks)} <span className="opacity-70">({fmtQty(pw, line.unit)})</span></>
+                            : `${line.quantityOrdered} ${line.unit}`}
+                          {" "}ordered)
                         </div>
                       );
                     })()}
@@ -619,7 +661,7 @@ function ReceivingDialog({
                       type="number"
                       step="0.1"
                       value={chilledTemp}
-                      onChange={(e) => setChilledTemp(e.target.value)}
+                      onChange={(e) => editChilledTemp(e.target.value)}
                       placeholder="e.g. 3.5"
                       className={cn(
                         "w-full px-3 py-2 bg-background border rounded-lg text-xl font-bold tabular-nums focus:outline-none focus:ring-2",
@@ -644,7 +686,7 @@ function ReceivingDialog({
                       type="number"
                       step="0.1"
                       value={frozenTemp}
-                      onChange={(e) => setFrozenTemp(e.target.value)}
+                      onChange={(e) => editFrozenTemp(e.target.value)}
                       placeholder="e.g. -18.0"
                       className={cn(
                         "w-full px-3 py-2 bg-background border rounded-lg text-xl font-bold tabular-nums focus:outline-none focus:ring-2",
@@ -682,7 +724,7 @@ function ReceivingDialog({
                           : "border-border hover:bg-secondary/30"
                       )}
                       onClick={() => {
-                        setCheckResults((prev) =>
+                        editCheckResults((prev) =>
                           prev.map((cr) =>
                             cr.checkConfigId === check.id ? { ...cr, passed: !cr.passed } : cr
                           )
@@ -712,7 +754,7 @@ function ReceivingDialog({
             <label className="text-sm font-medium mb-1 block">Delivery Notes</label>
             <textarea
               value={notes}
-              onChange={(e) => setNotes(e.target.value)}
+              onChange={(e) => editNotes(e.target.value)}
               className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[60px] resize-none"
               placeholder="Any notes about this delivery..."
             />

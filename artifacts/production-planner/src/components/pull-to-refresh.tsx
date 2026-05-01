@@ -54,8 +54,14 @@ export function PullToRefresh() {
   useEffect(() => {
     if (!enabled) return;
 
+    // Pages can opt-out by setting `data-suppress-pull-to-refresh="1"` on the
+     // <body> element — used by modal flows where an accidental reload would
+     // wipe in-progress work (e.g. goods-in receiving).
+    const isSuppressed = () => document.body.dataset.suppressPullToRefresh === "1";
+
     function onTouchStart(e: TouchEvent) {
       if (refreshing) return;
+      if (isSuppressed()) return;
       if (window.scrollY > 0) return;
       if (e.touches.length !== 1) return;
       startYRef.current = e.touches[0].clientY;
@@ -64,6 +70,12 @@ export function PullToRefresh() {
 
     function onTouchMove(e: TouchEvent) {
       if (refreshing) return;
+      if (isSuppressed()) {
+        startYRef.current = null;
+        activeRef.current = false;
+        setPullDistance(0);
+        return;
+      }
       if (startYRef.current === null) return;
       // If the user has scrolled during the gesture, abort.
       if (window.scrollY > 0) {
