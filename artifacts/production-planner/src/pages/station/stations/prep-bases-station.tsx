@@ -9,6 +9,7 @@ import {
   FlaskConical, ChevronRight, Minus, Plus, PackageSearch, Pencil, RotateCcw, Check,
 } from "lucide-react";
 import { format } from "date-fns";
+import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { BreakTracker } from "../shared/break-tracker";
@@ -626,11 +627,16 @@ function usePlanSubRecipeRequirements(planId: number) {
 export function PrepBasesStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const [selectedItem, setSelectedItem] = useState<"tomato_base" | number>("tomato_base");
   const [completedSubRecipeIds, setCompletedSubRecipeIds] = useState<Set<number>>(new Set());
-  const { data: nextPlanData, isLoading: isNextPlanLoading } = useNextActivePlan(plan.planDate, "prep");
-  const nextPlan = nextPlanData as NextActivePlan | null;
-  const noFuturePlan = !isNextPlanLoading && nextPlan != null && nextPlan.planId == null;
-  const isDraft = nextPlan?.status === "draft";
-  const targetPlanId = noFuturePlan ? plan.id : (nextPlan?.planId ?? plan.id);
+  // ?direct=1 — see main-prep-station for rationale.
+  const search = useSearch();
+  const isDirect = new URLSearchParams(search).get("direct") === "1";
+  const { data: nextPlanData, isLoading: isNextPlanLoading } = useNextActivePlan(isDirect ? undefined : plan.planDate, "prep");
+  const nextPlan = isDirect ? null : (nextPlanData as NextActivePlan | null);
+  const noFuturePlan = !isDirect && !isNextPlanLoading && nextPlan != null && nextPlan.planId == null;
+  const isDraft = !isDirect && nextPlan?.status === "draft";
+  const targetPlanId = isDirect
+    ? plan.id
+    : (noFuturePlan ? plan.id : (nextPlan?.planId ?? plan.id));
   const { subRecipes: planSubRecipes, loading: subRecipesLoading } = usePlanSubRecipeRequirements(targetPlanId);
   const { data: allSubRecipesData } = useListSubRecipes();
   const allSubRecipes = (allSubRecipesData ?? []) as SubRecipe[];

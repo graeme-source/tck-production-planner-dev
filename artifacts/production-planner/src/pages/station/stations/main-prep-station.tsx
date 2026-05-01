@@ -5,6 +5,7 @@ import {
   ClipboardList, Loader2, CheckCircle2, Package, Plus, Minus, Check, Salad, Pencil, RotateCcw,
 } from "lucide-react";
 import { format } from "date-fns";
+import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
@@ -111,11 +112,19 @@ export function useMainPrepData(planId: number, station: string = "main_prep") {
 export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const { state: authState } = useAuth();
   const currentUserId = authState.status === "authenticated" ? authState.user.id : null;
-  const { data: nextPlanData, isLoading: isNextPlanLoading } = useNextActivePlan(plan.planDate, "prep");
-  const nextPlan = nextPlanData as NextActivePlan | null;
-  const noFuturePlan = !isNextPlanLoading && nextPlan != null && nextPlan.planId == null;
-  const isDraft = nextPlan?.status === "draft";
-  const targetPlanId = noFuturePlan ? plan.id : (nextPlan?.planId ?? plan.id);
+  // ?direct=1 means the user navigated here from a calendar prep card for a
+  // specific plan — bypass the auto-route to "next active plan" and use the
+  // URL plan id as-is. Without this, an explicit click can be redirected past
+  // the user's intended plan into an unrelated future one.
+  const search = useSearch();
+  const isDirect = new URLSearchParams(search).get("direct") === "1";
+  const { data: nextPlanData, isLoading: isNextPlanLoading } = useNextActivePlan(isDirect ? undefined : plan.planDate, "prep");
+  const nextPlan = isDirect ? null : (nextPlanData as NextActivePlan | null);
+  const noFuturePlan = !isDirect && !isNextPlanLoading && nextPlan != null && nextPlan.planId == null;
+  const isDraft = !isDirect && nextPlan?.status === "draft";
+  const targetPlanId = isDirect
+    ? plan.id
+    : (noFuturePlan ? plan.id : (nextPlan?.planId ?? plan.id));
   const { data, loading, refetch } = useMainPrepData(targetPlanId);
   const [stockValues, setStockValues] = useState<Record<number, string>>({});
   const [stockValuesLoaded, setStockValuesLoaded] = useState(false);

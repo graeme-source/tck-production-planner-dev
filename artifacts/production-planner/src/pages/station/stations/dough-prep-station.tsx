@@ -10,6 +10,7 @@ import {
   PackageSearch, ChevronRight, Layers, ClipboardList, Check, Package,
 } from "lucide-react";
 import { format, parseISO, differenceInMinutes, differenceInSeconds } from "date-fns";
+import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
@@ -101,7 +102,12 @@ type DoughView = "mixing" | "balling" | "overview";
 
 export function DoughPrepStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const queryClient = useQueryClient();
-  const { data: doughData, loading: doughLoading, refetch: refetchDough } = useDoughPrepData(plan.id);
+  // ?direct=1 means the user clicked a calendar dough card for THIS specific
+  // plan — pass mode=current so the backend uses planId as-is instead of
+  // walking forward to "next active plan".
+  const search = useSearch();
+  const isDirect = new URLSearchParams(search).get("direct") === "1";
+  const { data: doughData, loading: doughLoading, refetch: refetchDough } = useDoughPrepData(plan.id, isDirect ? "current" : undefined);
   const [activeMix, setActiveMix] = useState<number>(1);
   const [activeView, setActiveView] = useState<DoughView>("mixing");
   const [checkedIngredients, setCheckedIngredients] = useState<Record<number, Set<string>>>({});

@@ -4082,26 +4082,36 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
   // Skip rows where prep_date / dough_date equals plan_date so we don't
   // duplicate the regular production card on its own day.
   type PlanRow = NonNullable<typeof plans>[number];
+  // Days that already have a production plan of their own — synthetic prep /
+  // dough cards shouldn't surface there. Production day workflow already
+  // implicitly covers next-day prep without a separate prompt.
+  const datesWithOwnPlan = useMemo(() => {
+    const set = new Set<string>();
+    for (const plan of plans ?? []) set.add(plan.planDate);
+    return set;
+  }, [plans]);
   const prepWorkByDate = useMemo(() => {
     const map: Record<string, PlanRow[]> = {};
     for (const plan of plans ?? []) {
       const prep = (plan as PlanRow & { prepDate?: string | null }).prepDate;
       if (!prep || prep === plan.planDate) continue;
+      if (datesWithOwnPlan.has(prep)) continue;
       if (!map[prep]) map[prep] = [];
       map[prep]!.push(plan);
     }
     return map;
-  }, [plans]);
+  }, [plans, datesWithOwnPlan]);
   const doughWorkByDate = useMemo(() => {
     const map: Record<string, PlanRow[]> = {};
     for (const plan of plans ?? []) {
       const dough = (plan as PlanRow & { doughDate?: string | null }).doughDate;
       if (!dough || dough === plan.planDate) continue;
+      if (datesWithOwnPlan.has(dough)) continue;
       if (!map[dough]) map[dough] = [];
       map[dough]!.push(plan);
     }
     return map;
-  }, [plans]);
+  }, [plans, datesWithOwnPlan]);
 
   const selectedDateKey = format(selectedDate, "yyyy-MM-dd");
   const selectedDayPlans = plansByDate[selectedDateKey] ?? [];
@@ -4262,7 +4272,7 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
             {selectedPrepWork.map(p => (
               <button
                 key={`prep-${p.id}`}
-                onClick={() => navigate(`/plans/${p.id}/station/main_prep`)}
+                onClick={() => navigate(`/plans/${p.id}/station/main_prep?direct=1`)}
                 className="text-left rounded-xl px-4 py-3 border border-violet-300/60 dark:border-violet-700/60 bg-violet-50 dark:bg-violet-950/20 hover:bg-violet-100 dark:hover:bg-violet-950/30 transition-colors flex items-center gap-3"
               >
                 <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center flex-shrink-0">
@@ -4282,7 +4292,7 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
             {selectedDoughWork.map(p => (
               <button
                 key={`dough-${p.id}`}
-                onClick={() => navigate(`/plans/${p.id}/station/dough_prep`)}
+                onClick={() => navigate(`/plans/${p.id}/station/dough_prep?direct=1`)}
                 className="text-left rounded-xl px-4 py-3 border border-amber-300/60 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100 dark:hover:bg-amber-950/30 transition-colors flex items-center gap-3"
               >
                 <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center flex-shrink-0">
