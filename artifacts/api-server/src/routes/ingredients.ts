@@ -231,6 +231,57 @@ router.get("/:id", async (req, res) => {
   res.json(mapRow(row));
 });
 
+// Where is this ingredient used? Returns recipes that contain it directly, the
+// sub-recipes that contain it, and the recipes that use those sub-recipes
+// (transitive). Used by the inventory page's "used in" count to pop a list.
+router.get("/:id/usage", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  const direct = await db.execute(sql`
+    SELECT DISTINCT r.id, r.name
+    FROM recipes r
+    JOIN recipe_ingredients ri ON ri.recipe_id = r.id
+    WHERE ri.ingredient_id = ${id}
+    ORDER BY r.name
+  `);
+  const directRows = (direct as unknown as { rows: Array<{ id: number; name: string }> }).rows;
+
+  const subs = await db.execute(sql`
+    SELECT DISTINCT sr.id, sr.name
+    FROM sub_recipes sr
+    JOIN sub_recipe_ingredients sri ON sri.sub_recipe_id = sr.id
+    WHERE sri.ingredient_id = ${id}
+    ORDER BY sr.name
+  `);
+  const subRows = (subs as unknown as { rows: Array<{ id: number; name: string }> }).rows;
+
+  let viaSubRecipes: Array<{ id: number; name: string; viaSubRecipe: { id: number; name: string } }> = [];
+  if (subRows.length > 0) {
+    const subIds = subRows.map(s => Number(s.id));
+    const transitive = await db.execute(sql`
+      SELECT DISTINCT r.id AS recipe_id, r.name AS recipe_name, sr.id AS sub_recipe_id, sr.name AS sub_recipe_name
+      FROM recipes r
+      JOIN recipe_sub_recipes rsr ON rsr.recipe_id = r.id
+      JOIN sub_recipes sr ON sr.id = rsr.sub_recipe_id
+      WHERE rsr.sub_recipe_id IN (${sql.join(subIds.map(i => sql`${i}`), sql`, `)})
+      ORDER BY r.name
+    `);
+    const tRows = (transitive as unknown as { rows: Array<{ recipe_id: number; recipe_name: string; sub_recipe_id: number; sub_recipe_name: string }> }).rows;
+    viaSubRecipes = tRows.map(t => ({
+      id: Number(t.recipe_id),
+      name: t.recipe_name,
+      viaSubRecipe: { id: Number(t.sub_recipe_id), name: t.sub_recipe_name },
+    }));
+  }
+
+  res.json({
+    recipes: directRows.map(r => ({ id: Number(r.id), name: r.name })),
+    subRecipes: subRows.map(s => ({ id: Number(s.id), name: s.name })),
+    viaSubRecipes,
+  });
+});
+
 router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
   const id = Number(req.params.id);
   const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, prepCountPerPortion, isPasta, stockInPacks, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, requiresUseByDate, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens } = req.body;

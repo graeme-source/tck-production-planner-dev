@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useListIngredients, useListSuppliers } from "@workspace/api-client-react";
 import type { Ingredient } from "@workspace/api-client-react";
@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import {
   Search, Plus, Trash2, Edit2, Loader2, ExternalLink, Upload,
   FileText, CheckCircle2, XCircle, AlertTriangle, RefreshCw,
-  Carrot, Box, ChevronDown, Printer,
+  Carrot, Box, ChevronDown, Printer, X, ChefHat, ClipboardList,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -910,6 +910,7 @@ export default function Inventory() {
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Ingredient | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
+  const [usageTarget, setUsageTarget] = useState<{ id: number; name: string } | null>(null);
   const [isPending, setIsPending] = useState(false);
 
   const tabItems = useMemo(() => {
@@ -1136,7 +1137,16 @@ export default function Inventory() {
                         const parts: string[] = [];
                         if (r > 0) parts.push(`${r} recipe${r > 1 ? "s" : ""}`);
                         if (s > 0) parts.push(`${s} sub-recipe${s > 1 ? "s" : ""}`);
-                        return <span className="text-xs text-primary font-medium" title={parts.join(", ")}>{total}</span>;
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => setUsageTarget({ id: item.id, name: item.name })}
+                            className="text-xs text-primary font-medium hover:underline focus:outline-none focus:ring-2 focus:ring-primary/40 rounded px-1.5 py-0.5"
+                            title={`${parts.join(", ")} — click to see which`}
+                          >
+                            {total}
+                          </button>
+                        );
                       })()}
                     </td>
                     <td className="py-3 px-3 text-center">
@@ -1207,6 +1217,111 @@ export default function Inventory() {
           </div>
         </div>
       )}
+
+      {usageTarget && (
+        <IngredientUsageModal
+          id={usageTarget.id}
+          name={usageTarget.name}
+          onClose={() => setUsageTarget(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+interface IngredientUsageModalProps {
+  id: number;
+  name: string;
+  onClose: () => void;
+}
+
+interface UsageData {
+  recipes: Array<{ id: number; name: string }>;
+  subRecipes: Array<{ id: number; name: string }>;
+  viaSubRecipes: Array<{ id: number; name: string; viaSubRecipe: { id: number; name: string } }>;
+}
+
+function IngredientUsageModal({ id, name, onClose }: IngredientUsageModalProps) {
+  const [data, setData] = useState<UsageData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/ingredients/${id}/usage`, { credentials: "include" });
+        if (!res.ok) throw new Error(`Failed to load usage (${res.status})`);
+        const json = await res.json();
+        if (!cancelled) setData(json);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [id]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="bg-card border border-border rounded-2xl shadow-xl w-full max-w-lg max-h-[85dvh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between px-5 py-4 border-b border-border">
+          <div className="min-w-0">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">Used in</p>
+            <h3 className="text-lg font-semibold truncate">{name}</h3>
+          </div>
+          <button onClick={onClose} className="p-1 hover:bg-secondary rounded" aria-label="Close">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          {!data && !error && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+            </div>
+          )}
+          {data && (
+            <>
+              {data.recipes.length === 0 && data.subRecipes.length === 0 && (
+                <p className="text-sm text-muted-foreground">Not currently used in any recipe or sub-recipe.</p>
+              )}
+              {data.recipes.length > 0 && (
+                <section>
+                  <h4 className="text-xs uppercase tracking-wide text-muted-foreground font-semibold mb-2 flex items-center gap-1.5">
+                    <ChefHat className="w-3.5 h-3.5" /> Recipes ({data.recipes.length})
+                  </h4>
+                  <ul className="space-y-1">
+                    {data.recipes.map(r => (
+                      <li key={r.id} className="text-sm py-1 px-2 rounded hover:bg-secondary/40">{r.name}</li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+              {data.subRecipes.length > 0 && (
+                <section>
+                  <h4 className="text-xs uppercase tracking-wide text-muted-foreground font-semibold mb-2 flex items-center gap-1.5">
+                    <ClipboardList className="w-3.5 h-3.5" /> Sub-recipes ({data.subRecipes.length})
+                  </h4>
+                  <ul className="space-y-1">
+                    {data.subRecipes.map(s => {
+                      const usedBy = data.viaSubRecipes.filter(v => v.viaSubRecipe.id === s.id).map(v => v.name);
+                      return (
+                        <li key={s.id} className="text-sm py-1.5 px-2 rounded hover:bg-secondary/40">
+                          <div>{s.name}</div>
+                          {usedBy.length > 0 && (
+                            <div className="text-[11px] text-muted-foreground mt-0.5">
+                              used in: {usedBy.join(", ")}
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              )}
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
