@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/auth-context";
 import {
   ShoppingCart,
   Package,
@@ -159,6 +160,9 @@ type KanbanIngredient = {
 
 export default function Orders() {
   const queryClient = useQueryClient();
+  const { state: authState } = useAuth();
+  const canManageOrders = authState.status === "authenticated"
+    && (authState.user.role === "admin" || authState.user.role === "manager");
   const initialPlanId = (() => {
     const urlParam = new URLSearchParams(window.location.search).get("planId");
     if (urlParam) return Number(urlParam);
@@ -216,6 +220,44 @@ export default function Orders() {
   const [addItemSearch, setAddItemSearch] = useState("");
   const debouncedAddItemSearch = useDebouncedValue(addItemSearch);
 
+  // Operator-dismissed supplier cards for the current plan. Persisted in
+  // sessionStorage so a refresh doesn't re-surface them; cleared when the
+  // plan selector changes. Used when the system suggests an order the team
+  // has decided not to place this round.
+  const [dismissedSupplierIds, setDismissedSupplierIds] = useState<Set<number>>(new Set());
+  useEffect(() => {
+    if (!selectedPlanId) { setDismissedSupplierIds(new Set()); return; }
+    const raw = sessionStorage.getItem(`orders_dismissedSuppliers_${selectedPlanId}`);
+    if (!raw) { setDismissedSupplierIds(new Set()); return; }
+    try {
+      const ids = JSON.parse(raw) as number[];
+      setDismissedSupplierIds(new Set(ids.filter(n => Number.isFinite(n))));
+    } catch {
+      setDismissedSupplierIds(new Set());
+    }
+  }, [selectedPlanId]);
+  const persistDismissed = useCallback((next: Set<number>) => {
+    if (!selectedPlanId) return;
+    if (next.size === 0) sessionStorage.removeItem(`orders_dismissedSuppliers_${selectedPlanId}`);
+    else sessionStorage.setItem(`orders_dismissedSuppliers_${selectedPlanId}`, JSON.stringify([...next]));
+  }, [selectedPlanId]);
+
+  // Confirmation modal state for dismissing a supplier card. Two-step so the
+  // operator can't drop an order accidentally.
+  const [dismissConfirm, setDismissConfirm] = useState<{ supplierId: number; supplierName: string } | null>(null);
+
+  // "+ Add Supplier Order" dialog — picks any supplier, even ones the calc
+  // didn't suggest. Adds an empty card the operator can fill via the existing
+  // "+ Add item" / Misc flow.
+  const [addSupplierDialogOpen, setAddSupplierDialogOpen] = useState(false);
+  const [addSupplierSearch, setAddSupplierSearch] = useState("");
+  const debouncedAddSupplierSearch = useDebouncedValue(addSupplierSearch);
+
+  // Confirmation modal state for deleting a placed PO from the inline edit
+  // card (manager / admin only). Mirrors dismissConfirm — second click guard
+  // so a fat-finger doesn't nuke a real placed order.
+  const [deleteOrderConfirm, setDeleteOrderConfirm] = useState<{ poId: number; supplierId: number; supplierName: string } | null>(null);
+
   const { data: plans } = useQuery<Plan[]>({
     queryKey: ["production-plans-list"],
     queryFn: async () => {
@@ -261,20 +303,66 @@ export default function Orders() {
   });
 
   useEffect(() => {
-    if (calculated?.suppliers) {
-      const newLines: Record<number, EditableLine[]> = {};
+    if (!calculated?.suppliers) return;
+    setEditableLines(prev => {
+      const next: Record<number, EditableLine[]> = {};
+      const calcSupplierIds = new Set(calculated.suppliers.map(s => s.supplier.id));
+
       for (const so of calculated.suppliers) {
-        newLines[so.supplier.id] = so.lines.map(l => ({
-          ...l,
-          checked: false,
-          editedPacks: l.packsToOrder,
-          editedStock: l.stockOnHand,
-          stockDirty: false,
-        }));
+        const existing = prev[so.supplier.id] ?? [];
+        const calcIngIds = new Set(so.lines.map(l => l.ingredientId));
+        // Preserve operator-added lines that the API doesn't know about:
+        //   • manual ingredient adds via "+ Add item"
+        //   • misc one-off lines
+        //   • kanbans whose orderDayTarget != today (weekly suppliers) and so
+        //     don't come back from /calculate, but the operator has explicitly
+        //     queued for this round.
+        // Otherwise placing an order on supplier A invalidates the calc query,
+        // and the refetched response wipes B's queued kanbans on its way back.
+        const preservedLocals = existing.filter(l =>
+          (l.isManual || l.isMisc || l.isKanban) && !calcIngIds.has(l.ingredientId)
+        );
+        const merged = so.lines.map(l => {
+          // Preserve in-flight operator edits (pack count, stock count, check
+          // toggle) so a refetch doesn't blow away their typing.
+          const prior = existing.find(e => e.ingredientId === l.ingredientId);
+          if (prior && !prior.isManual && !prior.isMisc) {
+            return {
+              ...l,
+              checked: prior.checked,
+              editedPacks: prior.stockDirty ? prior.editedPacks : l.packsToOrder,
+              editedStock: prior.stockDirty ? prior.editedStock : l.stockOnHand,
+              stockDirty: prior.stockDirty,
+            };
+          }
+          return {
+            ...l,
+            checked: false,
+            editedPacks: l.packsToOrder,
+            editedStock: l.stockOnHand,
+            stockDirty: false,
+          };
+        });
+        next[so.supplier.id] = [...merged, ...preservedLocals];
       }
-      setEditableLines(newLines);
-      setExpandedSuppliers(new Set(calculated.suppliers.map(s => s.supplier.id)));
-    }
+
+      // Suppliers that exist only via locally-added kanbans/manual items
+      // (not in calculated.suppliers) — keep their lines so they don't
+      // vanish when an unrelated supplier's order is placed.
+      for (const sidStr of Object.keys(prev)) {
+        const sid = Number(sidStr);
+        if (calcSupplierIds.has(sid)) continue;
+        const preserved = (prev[sid] ?? []).filter(l => l.isManual || l.isMisc || l.isKanban);
+        if (preserved.length > 0) next[sid] = preserved;
+      }
+
+      return next;
+    });
+    setExpandedSuppliers(prev => {
+      const next = new Set(prev);
+      for (const s of calculated.suppliers) next.add(s.supplier.id);
+      return next;
+    });
   }, [calculated]);
 
   const { data: kanbanIngredients = [] } = useQuery<KanbanIngredient[]>({
@@ -742,13 +830,41 @@ export default function Orders() {
     onSuccess: (_result, variables) => {
       queryClient.invalidateQueries({ queryKey: ["purchase-orders-for-plan"] });
       queryClient.invalidateQueries({ queryKey: ["order-calculate"] });
-      // After a successful resubmit, drop the supplier from the reopened set
-      // so the card moves back to the Placed tab on the next render.
+      // Drop the placed supplier's editable lines + locally-added-kanban
+      // tracking so the merge in the calc useEffect doesn't keep showing
+      // already-placed lines as still-pending. Other suppliers' state is
+      // untouched — that's the whole point of the merge.
       if (variables?.supplierId) {
-        setReopenedPlacedOrders(prev => {
-          if (!prev[variables.supplierId]) return prev;
+        const placedSupplierId = variables.supplierId;
+        const placedIngredientIds = new Set(
+          (variables.lines ?? [])
+            .map(l => l.ingredientId)
+            .filter((id): id is number => Number.isFinite(id) && id >= 0),
+        );
+        setEditableLines(prev => {
+          if (!(placedSupplierId in prev)) return prev;
           const next = { ...prev };
-          delete next[variables.supplierId];
+          delete next[placedSupplierId];
+          return next;
+        });
+        setKanbanOnlySupplierInfo(prev => {
+          if (!(placedSupplierId in prev)) return prev;
+          const next = { ...prev };
+          delete next[placedSupplierId];
+          return next;
+        });
+        setAddedKanbanIngredientIds(prev => {
+          if (placedIngredientIds.size === 0) return prev;
+          const next = new Set(prev);
+          for (const iid of placedIngredientIds) next.delete(iid);
+          return next;
+        });
+        // After a successful resubmit, drop the supplier from the reopened set
+        // so the card moves back to the Placed tab on the next render.
+        setReopenedPlacedOrders(prev => {
+          if (!prev[placedSupplierId]) return prev;
+          const next = { ...prev };
+          delete next[placedSupplierId];
           return next;
         });
       }
@@ -856,13 +972,111 @@ export default function Orders() {
   // Suppliers whose placed order has been "reopened" via a kanban/manual add
   // are shown in the pending view so the operator can resubmit.
   const reopenedSupplierIds = new Set(Object.keys(reopenedPlacedOrders).map(Number));
-  const dptPendingSuppliers = suppliers.filter(s => !placedSupplierIds.has(s.supplier.id) || reopenedSupplierIds.has(s.supplier.id));
-  const kanbanOnlyPending = Object.values(kanbanOnlySupplierInfo)
+  const dptPendingSuppliersAll = suppliers.filter(s => !placedSupplierIds.has(s.supplier.id) || reopenedSupplierIds.has(s.supplier.id));
+  const kanbanOnlyPendingAll = Object.values(kanbanOnlySupplierInfo)
     .filter(s => (!placedSupplierIds.has(s.id) || reopenedSupplierIds.has(s.id)) && !suppliers.some(ds => ds.supplier.id === s.id))
     .map(s => ({ supplier: { id: s.id, name: s.name, contactName: null, email: null, phone: null, website: null }, lines: [] as OrderLine[] }));
-  const pendingSuppliers = [...dptPendingSuppliers, ...kanbanOnlyPending];
+  const allPendingSuppliers = [...dptPendingSuppliersAll, ...kanbanOnlyPendingAll];
+  // Operator-dismissed cards drop out of the pending list but stay tracked so
+  // a "Show N dismissed" link can restore them. Reopened POs always render
+  // even if dismissed — that flow is the user explicitly editing.
+  const pendingSuppliers = allPendingSuppliers.filter(s =>
+    !dismissedSupplierIds.has(s.supplier.id) || reopenedSupplierIds.has(s.supplier.id)
+  );
+  const dismissedPendingSuppliers = allPendingSuppliers.filter(s =>
+    dismissedSupplierIds.has(s.supplier.id) && !reopenedSupplierIds.has(s.supplier.id)
+  );
   const totalPendingItems = pendingSuppliers.reduce((sum, s) => sum + (editableLines[s.supplier.id]?.length ?? 0), 0);
   const totalPlacedForPlan = placedForPlan.length;
+
+  const dismissSupplier = useCallback((supplierId: number) => {
+    setDismissedSupplierIds(prev => {
+      const next = new Set(prev);
+      next.add(supplierId);
+      persistDismissed(next);
+      return next;
+    });
+  }, [persistDismissed]);
+  const restoreSupplier = useCallback((supplierId: number) => {
+    setDismissedSupplierIds(prev => {
+      if (!prev.has(supplierId)) return prev;
+      const next = new Set(prev);
+      next.delete(supplierId);
+      persistDismissed(next);
+      return next;
+    });
+  }, [persistDismissed]);
+
+  // Suppliers picker for "+ Add supplier order" — fetched lazily when the
+  // dialog opens so the orders page doesn't pay for it on every load.
+  const { data: pickerSuppliers = [] } = useQuery<{ id: number; name: string }[]>({
+    queryKey: ["suppliers-for-add-supplier-order"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/suppliers`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load suppliers");
+      return res.json();
+    },
+    enabled: addSupplierDialogOpen,
+  });
+  const filteredPickerSuppliers = debouncedAddSupplierSearch.trim()
+    ? pickerSuppliers.filter(s => s.name.toLowerCase().includes(debouncedAddSupplierSearch.toLowerCase()))
+    : pickerSuppliers;
+  const handleAddManualSupplier = useCallback((supplier: { id: number; name: string }) => {
+    // Drop the dismiss state if the operator is re-adding a supplier they'd
+    // previously dismissed — otherwise the new card wouldn't appear.
+    restoreSupplier(supplier.id);
+    setKanbanOnlySupplierInfo(prev => ({ ...prev, [supplier.id]: { id: supplier.id, name: supplier.name } }));
+    setEditableLines(prev => prev[supplier.id] ? prev : { ...prev, [supplier.id]: [] });
+    setExpandedSuppliers(prev => new Set([...prev, supplier.id]));
+    setAddSupplierDialogOpen(false);
+    setAddSupplierSearch("");
+    // Open the per-supplier "Add item" picker straight away so the operator
+    // doesn't land on an empty card with no obvious next step.
+    setAddItemDialog({ supplierId: supplier.id, supplierName: supplier.name });
+  }, [restoreSupplier]);
+
+  const deleteOrderMutation = useMutation({
+    mutationFn: async (poId: number) => {
+      const res = await fetch(`${BASE}/api/orders/purchase-orders/${poId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Failed to delete order (${res.status})`);
+      }
+    },
+    onSuccess: (_data, poId) => {
+      queryClient.invalidateQueries({ queryKey: ["purchase-orders-for-plan"] });
+      queryClient.invalidateQueries({ queryKey: ["order-calculate"] });
+      const supplierId = deleteOrderConfirm?.supplierId;
+      if (supplierId != null) {
+        // Drop the local edit state for the deleted PO's supplier so the
+        // freshly-recalculated lines show up clean.
+        setEditableLines(prev => {
+          if (!(supplierId in prev)) return prev;
+          const next = { ...prev };
+          delete next[supplierId];
+          return next;
+        });
+        setReopenedPlacedOrders(prev => {
+          if (!prev[supplierId]) return prev;
+          const next = { ...prev };
+          delete next[supplierId];
+          return next;
+        });
+      }
+      toast({ title: "Order deleted", description: `PO #${poId} has been removed.` });
+      setDeleteOrderConfirm(null);
+    },
+    onError: (err) => {
+      toast({
+        title: "Couldn't delete order",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
+    },
+  });
 
   const estimatedCost = (supplierLines: EditableLine[]) =>
     supplierLines.reduce((sum, l) => sum + l.editedPacks * l.costPerPack, 0);
@@ -999,6 +1213,14 @@ export default function Orders() {
             </span>
           )}
         </button>
+        <button
+          onClick={() => { setAddSupplierDialogOpen(true); setAddSupplierSearch(""); }}
+          className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-primary/10 text-primary hover:bg-primary/20 border border-primary/30 flex items-center gap-1.5"
+          title="Manually start an order for a supplier the system didn't suggest"
+        >
+          <Plus className="w-4 h-4" />
+          Add supplier order
+        </button>
       </div>
 
       {calcLoading && (
@@ -1103,6 +1325,16 @@ export default function Orders() {
                   >
                     <ExternalLink className="w-4 h-4" />
                   </a>
+                )}
+                {!isReopened && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setDismissConfirm({ supplierId: so.supplier.id, supplierName: so.supplier.name }); }}
+                    className="p-2 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                    title="Dismiss this draft order — we're not ordering from this supplier today"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
                 )}
                 {expanded ? <ChevronUp className="w-5 h-5 text-muted-foreground" /> : <ChevronDown className="w-5 h-5 text-muted-foreground" />}
               </div>
@@ -1345,29 +1577,67 @@ export default function Orders() {
                       <span>{checkedCount} of {orderableLines.length} items checked</span>
                     )}
                   </div>
-                  <button
-                    onClick={() => handlePlaceOrder(so.supplier.id, so.supplier.name, so.supplier.leadTimeDays, so.supplier.cutoffTime)}
-                    disabled={!allChecked || placeMutation.isPending}
-                    className={cn(
-                      "px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2",
-                      allChecked
-                        ? "bg-green-600 text-white hover:bg-green-700"
-                        : "bg-secondary text-muted-foreground cursor-not-allowed"
+                  <div className="flex items-center gap-2">
+                    {isReopened && canManageOrders && reopenedPOId && (
+                      <button
+                        onClick={() => setDeleteOrderConfirm({ poId: reopenedPOId, supplierId: so.supplier.id, supplierName: so.supplier.name })}
+                        className="px-3 py-2 rounded-lg text-sm font-medium transition-colors border border-destructive/40 text-destructive hover:bg-destructive/10 flex items-center gap-1.5"
+                        title="Delete this placed order — for orders placed by mistake (manager / admin only)"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Delete order
+                      </button>
                     )}
-                  >
-                    {placeMutation.isPending ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Truck className="w-4 h-4" />
-                    )}
-                    {isReopened ? "Update & Resend Order" : "Mark as Placed"}
-                  </button>
+                    <button
+                      onClick={() => handlePlaceOrder(so.supplier.id, so.supplier.name, so.supplier.leadTimeDays, so.supplier.cutoffTime)}
+                      disabled={!allChecked || placeMutation.isPending}
+                      className={cn(
+                        "px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2",
+                        allChecked
+                          ? "bg-green-600 text-white hover:bg-green-700"
+                          : "bg-secondary text-muted-foreground cursor-not-allowed"
+                      )}
+                    >
+                      {placeMutation.isPending ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Truck className="w-4 h-4" />
+                      )}
+                      {isReopened ? "Update & Resend Order" : "Mark as Placed"}
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
           </div>
         );
       })}
+
+      {viewFilter === "pending" && dismissedPendingSuppliers.length > 0 && (
+        <div className="text-center text-sm text-muted-foreground bg-secondary/20 border border-dashed border-border rounded-xl py-3 px-4">
+          <span className="font-medium">{dismissedPendingSuppliers.length}</span> dismissed{" "}
+          {dismissedPendingSuppliers.length === 1 ? "order" : "orders"}:
+          {" "}
+          {dismissedPendingSuppliers.map((s, i) => (
+            <span key={s.supplier.id}>
+              {i > 0 && ", "}
+              <button
+                onClick={() => restoreSupplier(s.supplier.id)}
+                className="text-primary hover:underline font-medium"
+              >
+                {s.supplier.name}
+              </button>
+            </span>
+          ))}
+          <span className="mx-1">·</span>
+          <button
+            onClick={() => { dismissedSupplierIds.forEach(id => restoreSupplier(id)); }}
+            className="text-primary hover:underline"
+          >
+            Restore all
+          </button>
+        </div>
+      )}
 
       {viewFilter === "placed" && (
         <div className="space-y-4">
@@ -1763,6 +2033,120 @@ export default function Orders() {
               })}
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!dismissConfirm} onOpenChange={(open) => !open && setDismissConfirm(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Dismiss draft order?</DialogTitle>
+          </DialogHeader>
+          {dismissConfirm && (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Hide the draft order for <span className="font-semibold text-foreground">{dismissConfirm.supplierName}</span>?
+                Any items the system suggested won't be placed and the card will disappear from the To-Order list.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                You can bring it back via the "Show dismissed" link at the bottom of the list, or click "+ Add supplier order" to start fresh.
+              </p>
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => setDismissConfirm(null)}
+                  className="px-4 py-2 rounded-lg text-sm border border-border hover:bg-secondary transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => { dismissSupplier(dismissConfirm.supplierId); setDismissConfirm(null); }}
+                  className="px-4 py-2 rounded-lg text-sm bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={addSupplierDialogOpen} onOpenChange={(open) => { setAddSupplierDialogOpen(open); if (!open) setAddSupplierSearch(""); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Add supplier order</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Pick a supplier to start a new draft order. You'll then add items to it via the per-supplier "+ Add item" picker.
+            </p>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <input
+                type="text"
+                placeholder="Search suppliers..."
+                value={addSupplierSearch}
+                onChange={e => setAddSupplierSearch(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-background text-sm"
+                autoFocus
+              />
+            </div>
+            <div className="max-h-80 overflow-y-auto border border-border rounded-lg divide-y divide-border">
+              {filteredPickerSuppliers.length === 0 ? (
+                <div className="text-center text-sm text-muted-foreground py-8">
+                  {pickerSuppliers.length === 0 ? "Loading suppliers…" : "No suppliers match that search."}
+                </div>
+              ) : filteredPickerSuppliers.map(s => {
+                const alreadyPending = allPendingSuppliers.some(p => p.supplier.id === s.id);
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => handleAddManualSupplier(s)}
+                    className="w-full text-left px-3 py-2.5 text-sm hover:bg-secondary/40 transition-colors flex items-center justify-between gap-2"
+                  >
+                    <span className="font-medium">{s.name}</span>
+                    {alreadyPending && (
+                      <span className="text-xs text-muted-foreground">already in pending list</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!deleteOrderConfirm} onOpenChange={(open) => !open && setDeleteOrderConfirm(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete this order?</DialogTitle>
+          </DialogHeader>
+          {deleteOrderConfirm && (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Permanently delete <span className="font-semibold text-foreground">PO #{deleteOrderConfirm.poId}</span> for{" "}
+                <span className="font-semibold text-foreground">{deleteOrderConfirm.supplierName}</span>?
+                The order will be removed from the deliveries list. This can't be undone.
+              </p>
+              <p className="text-xs text-amber-700 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1.5">
+                Use this for orders placed by mistake. Orders that have already been received can't be deleted.
+              </p>
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => setDeleteOrderConfirm(null)}
+                  className="px-4 py-2 rounded-lg text-sm border border-border hover:bg-secondary transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => deleteOrderMutation.mutate(deleteOrderConfirm.poId)}
+                  disabled={deleteOrderMutation.isPending}
+                  className="px-4 py-2 rounded-lg text-sm bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors flex items-center gap-2"
+                >
+                  {deleteOrderMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                  Delete order
+                </button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

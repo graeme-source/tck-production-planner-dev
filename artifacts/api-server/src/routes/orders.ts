@@ -107,18 +107,30 @@ router.get("/calculate", async (req, res) => {
   // totalRequired = 0 so they still flow through the stockOnHand / surplus
   // logic below and surface under the "show non-required" toggle, or as a
   // real order line if surplus exceeds stock.
+  // Weekly-frequency items only surface on their scheduled weekday — otherwise
+  // they prompt the operator to order/check every day instead of just the
+  // assigned one.
+  const todayDayName = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date().getDay()];
   const stockCheckedIngredients = await db
     .select({
       id: ingredientsTable.id,
       name: ingredientsTable.name,
       unit: ingredientsTable.unit,
       stockCheckEnabled: ingredientsTable.stockCheckEnabled,
+      stockCheckFrequency: ingredientsTable.stockCheckFrequency,
+      stockCheckDay: ingredientsTable.stockCheckDay,
     })
     .from(ingredientsTable)
     .where(eq(ingredientsTable.stockCheckEnabled, true));
 
+  const isStockCheckedToday = (frequency: string | null, day: string | null) => {
+    if (frequency === "weekly") return day === todayDayName;
+    return true;
+  };
+
   for (const ing of stockCheckedIngredients) {
     if (ingredientMap[ing.id]) continue;
+    if (!isStockCheckedToday(ing.stockCheckFrequency, ing.stockCheckDay)) continue;
     ingredientMap[ing.id] = {
       ingredientId: ing.id,
       ingredientName: ing.name,
@@ -144,6 +156,8 @@ router.get("/calculate", async (req, res) => {
       supplierId: ingredientsTable.supplierId,
       supplierPartNumber: ingredientsTable.supplierPartNumber,
       stockCheckEnabled: ingredientsTable.stockCheckEnabled,
+      stockCheckFrequency: ingredientsTable.stockCheckFrequency,
+      stockCheckDay: ingredientsTable.stockCheckDay,
       surplusPercent: ingredientsTable.surplusPercent,
       surplusMode: ingredientsTable.surplusMode,
       surplusAbsoluteQty: ingredientsTable.surplusAbsoluteQty,
@@ -295,6 +309,8 @@ router.get("/calculate", async (req, res) => {
 
     const isKanban = kanbanIngredientIds.has(iid);
     const isStockChecked = detail.stockCheckEnabled ?? false;
+    const isStockCheckActiveToday = isStockChecked
+      && isStockCheckedToday(detail.stockCheckFrequency, detail.stockCheckDay);
 
     if (!isStockChecked && !isKanban) {
       console.log(`[Orders] Skipping ${ing.ingredientName} (id=${iid}): stockCheckEnabled=${isStockChecked}, isKanban=${isKanban}`);
@@ -327,6 +343,13 @@ router.get("/calculate", async (req, res) => {
     const rawOrderQty = Math.max(0, ing.totalRequired + surplusTarget - stockOnHand);
     const packsToOrder = packWeight > 0 ? Math.ceil(rawOrderQty / packWeight) : 0;
     const orderQty = packsToOrder * packWeight;
+
+    // Suppress weekly stock-check items on non-scheduled days unless there's
+    // a real shortfall that has to be ordered today regardless. Otherwise
+    // they'd nag the operator to count/order them every day.
+    if (isStockChecked && !isStockCheckActiveToday && !isKanban && orderQty <= 0) {
+      continue;
+    }
 
     // Issue 5: keep non-required stock-checked items in the payload so the
     // front-end can optionally render them behind a toggle. They're flagged
@@ -1123,9 +1146,16 @@ router.get("/by-plan/:planId", async (req, res) => {
   })));
 });
 
-// ── Delete draft purchase orders ────────────────────────────────────
-router.delete("/purchase-orders/:id", async (req, res) => {
+// ── Delete a purchase order ─────────────────────────────────────────
+// Anyone can delete a draft (it's never been placed). Manager / admin can
+// also delete a placed order — used for "we placed that one by mistake"
+// rescues from the orders page edit flow. Once an order is `received` the
+// goods-in record references its lines, so deletion is refused outright to
+// keep the receipt history intact.
+router.delete("/purchase-orders/:id", requireManagerOrAdmin, async (req, res) => {
   const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
   const [order] = await db
     .select({ id: purchaseOrdersTable.id, status: purchaseOrdersTable.status })
     .from(purchaseOrdersTable)
@@ -1133,7 +1163,10 @@ router.delete("/purchase-orders/:id", async (req, res) => {
     .limit(1);
 
   if (!order) { res.status(404).json({ error: "Order not found" }); return; }
-  if (order.status !== "draft") { res.status(409).json({ error: "Only draft orders can be deleted" }); return; }
+  if (order.status === "received") {
+    res.status(409).json({ error: "This order has already been received and can't be deleted." });
+    return;
+  }
 
   await db.delete(purchaseOrderLinesTable).where(eq(purchaseOrderLinesTable.purchaseOrderId, id));
   await db.delete(purchaseOrdersTable).where(eq(purchaseOrdersTable.id, id));
