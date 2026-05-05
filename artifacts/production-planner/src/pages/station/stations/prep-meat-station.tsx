@@ -9,7 +9,7 @@ import { format } from "date-fns";
 import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 import { BreakTracker } from "../shared/break-tracker";
-import { PrepDateBanner, PrepDraftBanner, toKg, toastDraftBlocked, StockCheckStatusPanel, nativeToPackCount, packsToNative, packNoun, packDescriptor, packsWeightHint } from "../shared/prep-helpers";
+import { PrepDateBanner, PrepDraftBanner, toKg, toastDraftBlocked, StockCheckStatusPanel, nativeToPackCount, packsToNative, packNoun, packDescriptor, packsWeightHint, packSizeHint } from "../shared/prep-helpers";
 import { PrepSubNav, usePrepByRecipe } from "./prep-hub";
 import type { PrepRecipeDetail, PrepIngredientDetail } from "./prep-hub";
 
@@ -627,9 +627,13 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                       const inputDisplay = inPacks && nativeStr !== ""
                         ? String(nativeToPackCount(Number(nativeStr), ing.packWeight) ?? "")
                         : nativeStr;
-                      const unitLabel = inPacks
-                        ? packDescriptor(ing.unit, ing.packWeight, Number(inputDisplay) || 0)
-                        : ing.unit;
+                      const count = Number(inputDisplay) || 0;
+                      // Mirror the main-prep stock check display: bold "<count>
+                      // packs/bottles" primary, smaller grey "(<size> per pack)"
+                      // underneath. Drops the old packDescriptor output that
+                      // produced "0.500 kg pack" — confusing in the kitchen.
+                      const primaryUnit = inPacks ? packNoun(ing.unit, count) : ing.unit;
+                      const sizeHint = inPacks ? packSizeHint(ing.packWeight, ing.unit) : null;
                       const onInputChange = (raw: string) => {
                         dirtyStockIds.current.add(ing.ingredientId);
                         if (raw === "") {
@@ -643,7 +647,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                       };
                       return (
                         <div ref={stockCheckRef} className="px-4 pb-4 pt-3 bg-blue-50/70 dark:bg-blue-950/30 border-t-2 border-blue-400 dark:border-blue-600">
-                          <div className="flex items-center gap-2 mb-3">
+                          <div className="flex items-center gap-2 mb-3 flex-wrap">
                             <Package className="w-5 h-5 text-blue-600 animate-pulse" />
                             <p className="text-lg font-bold text-blue-800 dark:text-blue-200">Stock Check</p>
                             <p className="text-sm text-blue-600 dark:text-blue-400">— how {inPacks ? "many" : "much"} {ing.ingredientName.toLowerCase()} remains?</p>
@@ -654,23 +658,23 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                               step={inPacks ? "1" : "0.01"}
                               min="0"
                               inputMode={inPacks ? "numeric" : "decimal"}
-                              placeholder={inPacks ? `Remaining ${unitLabel}` : `Remaining ${ing.unit}`}
+                              placeholder={inPacks ? `Remaining ${packNoun(ing.unit, 0)}` : `Remaining ${ing.unit}`}
                               className="flex-1 max-w-[160px] text-base border-2 border-blue-300 dark:border-blue-600 rounded-lg px-3 py-2 text-right bg-background focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
                               value={inputDisplay}
                               onChange={e => onInputChange(e.target.value)}
                               onKeyDown={e => { if (e.key === "Enter") saveStockCheck(ing.ingredientId); }}
                             />
-                            <span className="text-base text-muted-foreground">{unitLabel}</span>
-                            {inPacks && (
-                              <span className="text-sm text-muted-foreground/70 tabular-nums">
-                                {packsWeightHint(Number(inputDisplay) || 0, ing.packWeight, ing.unit)}
-                              </span>
-                            )}
+                            <div className="flex flex-col">
+                              <span className="text-base font-semibold">{primaryUnit}</span>
+                              {sizeHint && (
+                                <span className="text-xs text-muted-foreground tabular-nums">({sizeHint})</span>
+                              )}
+                            </div>
                             <button
                               onClick={() => saveStockCheck(ing.ingredientId)}
                               disabled={!stockValues[ing.ingredientId] || savingStock[ing.ingredientId]}
                               className={cn(
-                                "px-4 py-2 rounded-lg text-base font-bold transition-all",
+                                "px-4 py-2 rounded-lg text-base font-bold transition-all ml-auto",
                                 stockValues[ing.ingredientId]
                                   ? "bg-blue-600 text-white hover:bg-blue-700 shadow active:scale-95"
                                   : "bg-blue-200 text-blue-400 cursor-not-allowed"
@@ -682,11 +686,9 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                           {stockSaved && (
                             <p className="text-sm text-emerald-600 dark:text-emerald-400 mt-2 flex items-center gap-1 flex-wrap">
                               <CheckCircle2 className="w-3 h-3" />
-                              {inputDisplay} {unitLabel} recorded
-                              {inPacks && (
-                                <span className="text-muted-foreground/70 font-normal ml-1">
-                                  {packsWeightHint(Number(inputDisplay) || 0, ing.packWeight, ing.unit)}
-                                </span>
+                              {inputDisplay} {primaryUnit} recorded
+                              {sizeHint && (
+                                <span className="text-muted-foreground/70 font-normal ml-1">({sizeHint})</span>
                               )}
                             </p>
                           )}
