@@ -6,24 +6,29 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import type { PrepRequirementItem } from "@workspace/api-client-react";
 
-export function fmtQty(q: number, unit: string): string {
+export function fmtQty(q: number | string, unit: string): string {
+  // Defensive coercion: pgNumeric columns come back as strings ("2.2700"),
+  // and several callers pass packWeight / quantity straight from the API
+  // without converting. Without this coerce, .toFixed crashes the page.
+  const n = typeof q === "number" ? q : Number(q);
+  const safe = Number.isFinite(n) ? n : 0;
   // Weights always render as kg with 3 decimals, regardless of whether the
   // ingredient is stored in g or kg. Keeps the prep sheet visually consistent
   // across ingredients that happen to be saved in different base units, and
   // makes like-for-like comparisons obvious at a glance (e.g. sub-recipe
   // components where one is saved in g and another in kg).
-  if (unit === "g") return `${(q / 1000).toFixed(3)} kg`;
-  if (unit === "kg") return `${q.toFixed(3)} kg`;
+  if (unit === "g") return `${(safe / 1000).toFixed(3)} kg`;
+  if (unit === "kg") return `${safe.toFixed(3)} kg`;
   // Volumes always render as litres with 3 decimals for the same reason.
-  if (unit === "ml") return `${(q / 1000).toFixed(3)} l`;
-  if (unit === "l" || unit === "L") return `${q.toFixed(3)} l`;
+  if (unit === "ml") return `${(safe / 1000).toFixed(3)} l`;
+  if (unit === "l" || unit === "L") return `${safe.toFixed(3)} l`;
   // Legacy "pcs" and "each" both mean piece counts — render them the same
   // way as "pieces" so the prep sheet doesn't expose internal naming drift.
   if (unit === "pieces" || unit === "pcs" || unit === "each") {
-    const n = Math.round(q);
-    return `${n} ${n === 1 ? "piece" : "pieces"}`;
+    const r = Math.round(safe);
+    return `${r} ${r === 1 ? "piece" : "pieces"}`;
   }
-  return `${q % 1 === 0 ? q : q.toFixed(2)} ${unit}`;
+  return `${safe % 1 === 0 ? safe : safe.toFixed(2)} ${unit}`;
 }
 
 export const toKg = (qty: number, unit: string): number =>
@@ -58,14 +63,17 @@ export function packDescriptor(unit: string, packWeight: number | string | null 
 // ("330ml"), bigger packs stay in their primary unit ("2.27 kg", "1.5 L").
 // Distinct from fmtQty (which always normalises to kg/L for prep-sheet
 // consistency) because pack labels read more naturally at human scales.
-function fmtPackSize(weight: number, nativeUnit: string): string {
+export function fmtPackSize(weight: number | string, nativeUnit: string): string {
+  // Same defensive coerce as fmtQty — packWeight from the API is a string.
+  const w = typeof weight === "number" ? weight : Number(weight);
+  if (!Number.isFinite(w)) return "";
   const u = nativeUnit;
   const isWeight = u === "g" || u === "kg" || u === "mg";
   const isVolume = u === "ml" || u === "l" || u === "L";
   // Convert any weight to grams first so the threshold check works regardless
   // of source unit, then pick g vs kg by magnitude.
   if (isWeight) {
-    const grams = u === "kg" ? weight * 1000 : u === "mg" ? weight / 1000 : weight;
+    const grams = u === "kg" ? w * 1000 : u === "mg" ? w / 1000 : w;
     if (grams < 1000) {
       const rounded = grams % 1 === 0 ? grams : Number(grams.toFixed(1));
       return `${rounded}g`;
@@ -74,7 +82,7 @@ function fmtPackSize(weight: number, nativeUnit: string): string {
     return `${kg % 1 === 0 ? kg : Number(kg.toFixed(2))} kg`;
   }
   if (isVolume) {
-    const ml = u === "l" || u === "L" ? weight * 1000 : weight;
+    const ml = u === "l" || u === "L" ? w * 1000 : w;
     if (ml < 1000) {
       const rounded = ml % 1 === 0 ? ml : Number(ml.toFixed(1));
       return `${rounded}ml`;
@@ -82,7 +90,19 @@ function fmtPackSize(weight: number, nativeUnit: string): string {
     const litres = ml / 1000;
     return `${litres % 1 === 0 ? litres : Number(litres.toFixed(2))} L`;
   }
-  return `${weight % 1 === 0 ? weight : Number(weight.toFixed(2))} ${u}`;
+  return `${w % 1 === 0 ? w : Number(w.toFixed(2))} ${u}`;
+}
+
+// Compact "<size> per pack" / "<size> per bottle" suffix used as small grey
+// secondary text next to a pack-count input or pill. Returns null when the
+// pack size is missing/invalid so the caller can skip rendering entirely.
+export function packSizeHint(
+  packWeight: number | string | null | undefined,
+  nativeUnit: string,
+): string | null {
+  const pw = packWeight == null ? NaN : Number(packWeight);
+  if (!Number.isFinite(pw) || pw <= 0) return null;
+  return `${fmtPackSize(pw, nativeUnit)} per ${packNoun(nativeUnit, 1)}`;
 }
 
 // Render a PO line quantity in two parts: a primary "<count> pack(s)" label
