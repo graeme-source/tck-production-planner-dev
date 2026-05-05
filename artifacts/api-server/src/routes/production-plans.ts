@@ -1573,6 +1573,14 @@ router.get("/next-active", async (req, res) => {
       ? sql`COALESCE(${productionPlansTable.doughDate}, ${productionPlansTable.planDate})`
       : sql`${productionPlansTable.planDate}`;
 
+  // Prep / dough modes use >= so that plans whose prep day equals afterDate
+  // still surface — e.g. Tuesday viewer asks "next prep" and Wednesday's plan
+  // (prep_date=Tuesday) is what they should be doing today. Plan-mode keeps
+  // strict > because a plan can't be "next" to itself.
+  const cmpExpr = forParam === "prep" || forParam === "dough"
+    ? sql`${sortExpr} >= ${afterDateStr}`
+    : sql`${sortExpr} > ${afterDateStr}`;
+
   const plans = await db
     .select({
       id: productionPlansTable.id,
@@ -1584,7 +1592,7 @@ router.get("/next-active", async (req, res) => {
     })
     .from(productionPlansTable)
     .where(and(
-      sql`${sortExpr} > ${afterDateStr}`,
+      cmpExpr,
       inArray(productionPlansTable.status, ["draft", "active"])
     ))
     .orderBy(sql`${sortExpr} ASC`, asc(productionPlansTable.id));
@@ -4846,10 +4854,13 @@ router.get("/:id/dough-prep", async (req, res) => {
     // explicitly scheduled on a different day surfaces on the dough station
     // for that day — and legacy rows with NULL dough_date still appear.
     const doughSortExpr = sql`COALESCE(${productionPlansTable.doughDate}, ${productionPlansTable.planDate})`;
+    // >= so the plan whose dough_date equals afterDate (i.e. dough day is
+    // today, when the operator is sitting on yesterday's plan view) still
+    // surfaces. Mirrors the next-active resolver's prep/dough mode.
     const nextPlans = await db
       .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate, doughDate: productionPlansTable.doughDate, name: productionPlansTable.name, status: productionPlansTable.status })
       .from(productionPlansTable)
-      .where(and(sql`${doughSortExpr} > ${afterDate}`, inArray(productionPlansTable.status, ["draft", "active"])))
+      .where(and(sql`${doughSortExpr} >= ${afterDate}`, inArray(productionPlansTable.status, ["draft", "active"])))
       .orderBy(sql`${doughSortExpr} ASC`)
       .limit(1);
     if (nextPlans.length > 0) nextPlan = nextPlans[0];
