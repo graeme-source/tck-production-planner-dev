@@ -36,9 +36,12 @@ export const toKg = (qty: number, unit: string): number =>
 
 // Pack/bottle label for an ingredient that's counted in whole packs. Uses
 // "bottle" for liquids (ml/l) and "pack" for everything else, so the UI
-// reads naturally: "2 bottles of milk" vs "3 packs of chutney".
+// reads naturally: "2 bottles of milk" vs "3 packs of chutney". Already-
+// pluralised pack-units ("packs" / "bottles") collapse straight back to
+// the right singular/plural so we never end up with "1 packs" or
+// "2 bottless".
 export function packNoun(unit: string, count: number): string {
-  const isLiquid = unit === "ml" || unit === "l" || unit === "L";
+  const isLiquid = unit === "ml" || unit === "l" || unit === "L" || unit === "bottle" || unit === "bottles";
   const base = isLiquid ? "bottle" : "pack";
   return count === 1 ? base : `${base}s`;
 }
@@ -47,6 +50,11 @@ export function packNoun(unit: string, count: number): string {
 // "1 L bottle". Used in stock-check prompts so operators can tell at a glance
 // what each pack actually contains, instead of just "packs".
 export function packDescriptor(unit: string, packWeight: number | string | null | undefined, count: number): string {
+  // If `unit` is itself a pack-counted unit (e.g. a PO line stored with
+  // unit="packs" or "bottles"), we don't know the native weight unit — so
+  // just return "packs" / "bottles" rather than "1 packs packs". Callers
+  // that do have the native unit should reach for packSizeHint instead.
+  if (unit === "packs" || unit === "bottles") return packNoun(unit, count);
   const noun = packNoun(unit, count);
   // Some endpoints return pgNumeric as a string ("2.2700") — coerce so the
   // formatter doesn't blow up on `.toFixed`. Treats non-numeric input as missing.

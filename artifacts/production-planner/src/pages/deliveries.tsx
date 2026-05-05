@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { useLocation } from "wouter";
-import { packNoun, packDescriptor, fmtQty, formatLineQty, formatLineQtyParts } from "@/pages/station/shared/prep-helpers";
+import { packNoun, packDescriptor, fmtQty, formatLineQty, formatLineQtyParts, packSizeHint } from "@/pages/station/shared/prep-helpers";
 import { NumberInput } from "@/components/ui/number-input";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -536,22 +536,42 @@ function ReceivingDialog({
                       // in the ingredient's native unit so everything
                       // downstream (recipes, cost) keeps working.
                       const inPacks = !!line.stockInPacks && (line.packWeight ?? 0) > 0;
-                      const pw = line.packWeight || 1;
-                      const orderedPacks = inPacks ? Math.round(line.quantityOrdered / pw) : 0;
+                      const pw = Number(line.packWeight) || 1;
+                      // For lines stored as a pack count (line.unit = "packs" /
+                      // "bottles") the quantity IS already a pack count; for
+                      // native-unit lines we divide by packWeight. Either way
+                      // we need the ingredient's nativeUnit to label the size.
+                      const lineIsPackUnit = line.unit === "packs" || line.unit === "bottles";
+                      const orderedPacks = inPacks
+                        ? (lineIsPackUnit ? line.quantityOrdered : Math.round(line.quantityOrdered / pw))
+                        : 0;
+                      const nativeUnitForLine = line.nativeUnit ?? line.unit;
+                      const sizeHint = inPacks ? packSizeHint(line.packWeight, nativeUnitForLine) : null;
                       const orderedDisplay = inPacks ? (
                         <>
-                          {orderedPacks} {packNoun(line.unit, orderedPacks)}{" "}
-                          <span className="text-sm font-normal text-muted-foreground">({fmtQty(pw, line.unit)})</span>
+                          {orderedPacks} {packNoun(nativeUnitForLine, orderedPacks)}
+                          {sizeHint && (
+                            <> <span className="text-sm font-normal text-muted-foreground">({sizeHint})</span></>
+                          )}
                         </>
                       ) : `${line.quantityOrdered} ${line.unit}`;
-                      const receivedPackCount = inPacks ? Math.round(line.quantityReceived / pw) : line.quantityReceived;
+                      // For lineIsPackUnit lines, the stored quantity IS already
+                      // a pack count — don't divide by pw. For native-unit lines
+                      // we keep the legacy display↔native conversion.
+                      const receivedPackCount = inPacks
+                        ? (lineIsPackUnit ? line.quantityReceived : Math.round(line.quantityReceived / pw))
+                        : line.quantityReceived;
                       const step = inPacks ? 1 : 0.5;
                       const bump = (deltaPacks: number) => {
                         const next = [...lines];
                         const current = Number(next[idx].quantityReceived) || 0;
-                        const currentInDisplay = inPacks ? current / pw : current;
+                        const currentInDisplay = inPacks
+                          ? (lineIsPackUnit ? current : current / pw)
+                          : current;
                         const newDisplay = Math.max(0, currentInDisplay + deltaPacks);
-                        const nextReceived = inPacks ? newDisplay * pw : Number(newDisplay.toFixed(2));
+                        const nextReceived = inPacks
+                          ? (lineIsPackUnit ? newDisplay : newDisplay * pw)
+                          : Number(newDisplay.toFixed(2));
                         next[idx] = { ...next[idx], quantityReceived: nextReceived };
                         editLines(next);
                       };
@@ -564,8 +584,19 @@ function ReceivingDialog({
                         </span>
                       </div>
                       <div className="min-w-0">
-                        <label className="text-base font-semibold text-muted-foreground block mb-1">
-                          Received <span className="text-xs font-normal text-muted-foreground">({inPacks ? packDescriptor(line.unit, line.packWeight, receivedPackCount || 0) : line.unit})</span>
+                        <label className="text-base font-semibold text-muted-foreground block mb-1 flex items-baseline gap-1.5 flex-wrap">
+                          <span>Received</span>
+                          {inPacks ? (
+                            <>
+                              <span className="text-sm font-semibold">({packNoun(line.nativeUnit ?? line.unit, receivedPackCount || 0)})</span>
+                              {(() => {
+                                const hint = packSizeHint(line.packWeight, line.nativeUnit ?? line.unit);
+                                return hint ? <span className="text-xs font-normal text-muted-foreground">{hint}</span> : null;
+                              })()}
+                            </>
+                          ) : (
+                            <span className="text-xs font-normal text-muted-foreground">({line.unit})</span>
+                          )}
                         </label>
                         <div className={cn(
                           "flex items-stretch rounded-lg border bg-background overflow-hidden focus-within:ring-2 focus-within:ring-primary/30",
@@ -586,7 +617,10 @@ function ReceivingDialog({
                             value={inPacks ? receivedPackCount : line.quantityReceived}
                             onChange={(n) => {
                               const next = [...lines];
-                              next[idx] = { ...next[idx], quantityReceived: inPacks ? n * pw : n };
+                              const stored = inPacks
+                                ? (lineIsPackUnit ? n : n * pw)
+                                : n;
+                              next[idx] = { ...next[idx], quantityReceived: stored };
                               editLines(next);
                             }}
                             className="flex-1 min-w-0 px-2 py-2 bg-background text-center text-xl font-bold tabular-nums text-[#919b5f] focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
@@ -626,14 +660,19 @@ function ReceivingDialog({
                     })()}
                     {discrepancy && (() => {
                       const inPacks = !!line.stockInPacks && (line.packWeight ?? 0) > 0;
-                      const pw = line.packWeight || 1;
-                      const orderedPacks = inPacks ? Math.round(line.quantityOrdered / pw) : 0;
+                      const pw = Number(line.packWeight) || 1;
+                      const lineIsPackUnit = line.unit === "packs" || line.unit === "bottles";
+                      const orderedPacks = inPacks
+                        ? (lineIsPackUnit ? line.quantityOrdered : Math.round(line.quantityOrdered / pw))
+                        : 0;
+                      const native = line.nativeUnit ?? line.unit;
+                      const sizeHint = inPacks ? packSizeHint(line.packWeight, native) : null;
                       return (
                         <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
                           <AlertTriangle className="w-3.5 h-3.5" />
                           Quantity differs from order (
                           {inPacks
-                            ? <>{orderedPacks} {packNoun(line.unit, orderedPacks)} <span className="opacity-70">({fmtQty(pw, line.unit)})</span></>
+                            ? <>{orderedPacks} {packNoun(native, orderedPacks)}{sizeHint && <> <span className="opacity-70">({sizeHint})</span></>}</>
                             : `${line.quantityOrdered} ${line.unit}`}
                           {" "}ordered)
                         </div>
