@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { useLocation } from "wouter";
-import { packNoun, packDescriptor, fmtQty, formatLineQty } from "@/pages/station/shared/prep-helpers";
+import { packNoun, packDescriptor, fmtQty, formatLineQty, formatLineQtyParts } from "@/pages/station/shared/prep-helpers";
 import { NumberInput } from "@/components/ui/number-input";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -1187,14 +1187,14 @@ export default function Deliveries() {
                     <div className="border-t border-border/50 px-4 py-3 bg-secondary/20">
                       <div className="flex flex-wrap gap-2">
                         {order.lines.map((line) => {
-                          const orderedLabel = formatLineQty(
+                          const ordered = formatLineQtyParts(
                             line.quantityOrdered,
                             line.unit,
                             line.nativeUnit,
                             line.packWeight,
                             line.stockInPacks,
                           );
-                          const receivedLabel = formatLineQty(
+                          const received = formatLineQtyParts(
                             line.quantityReceived,
                             line.unit,
                             line.nativeUnit,
@@ -1204,13 +1204,20 @@ export default function Deliveries() {
                           return (
                             <span
                               key={line.id}
-                              className="text-base bg-background border border-border rounded-full px-4 py-1.5 flex items-center gap-2"
+                              className="text-base bg-background border border-border rounded-2xl px-4 py-2 flex flex-col items-start"
                             >
-                              <span className="font-bold">{line.ingredientName}</span>
-                              <span className="font-bold tabular-nums">{orderedLabel}</span>
-                              {line.quantityReceived > 0 && (
-                                <span className="text-green-600 dark:text-green-400 font-semibold">
-                                  ✓ {receivedLabel} received
+                              <span className="flex items-baseline gap-2 flex-wrap">
+                                <span className="font-bold">{line.ingredientName}</span>
+                                <span className="font-bold tabular-nums">× {ordered.primary}</span>
+                                {line.quantityReceived > 0 && (
+                                  <span className="text-green-600 dark:text-green-400 font-semibold">
+                                    ✓ {received.primary} received
+                                  </span>
+                                )}
+                              </span>
+                              {ordered.descriptor && (
+                                <span className="text-xs text-muted-foreground mt-0.5">
+                                  ({ordered.descriptor})
                                 </span>
                               )}
                             </span>

@@ -53,11 +53,74 @@ export function packDescriptor(unit: string, packWeight: number | string | null 
   return `${sized} ${noun}`;
 }
 
-// Render a PO line quantity as "<count> pack(s) (<size> per pack)". Handles
-// both storage shapes: lines whose unit is already "packs"/"bottles" (the
-// quantity IS the pack count) and lines stored in native units (kg/g/ml/l)
-// where the count is derived by dividing by packWeight. Returns plain native
-// formatting when the line isn't pack-counted.
+// Pack-size formatter that uses the most natural unit at the scale of the
+// pack. Sub-1 kg packs render in grams ("500g"), sub-1 L bottles in ml
+// ("330ml"), bigger packs stay in their primary unit ("2.27 kg", "1.5 L").
+// Distinct from fmtQty (which always normalises to kg/L for prep-sheet
+// consistency) because pack labels read more naturally at human scales.
+function fmtPackSize(weight: number, nativeUnit: string): string {
+  const u = nativeUnit;
+  const isWeight = u === "g" || u === "kg" || u === "mg";
+  const isVolume = u === "ml" || u === "l" || u === "L";
+  // Convert any weight to grams first so the threshold check works regardless
+  // of source unit, then pick g vs kg by magnitude.
+  if (isWeight) {
+    const grams = u === "kg" ? weight * 1000 : u === "mg" ? weight / 1000 : weight;
+    if (grams < 1000) {
+      const rounded = grams % 1 === 0 ? grams : Number(grams.toFixed(1));
+      return `${rounded}g`;
+    }
+    const kg = grams / 1000;
+    return `${kg % 1 === 0 ? kg : Number(kg.toFixed(2))} kg`;
+  }
+  if (isVolume) {
+    const ml = u === "l" || u === "L" ? weight * 1000 : weight;
+    if (ml < 1000) {
+      const rounded = ml % 1 === 0 ? ml : Number(ml.toFixed(1));
+      return `${rounded}ml`;
+    }
+    const litres = ml / 1000;
+    return `${litres % 1 === 0 ? litres : Number(litres.toFixed(2))} L`;
+  }
+  return `${weight % 1 === 0 ? weight : Number(weight.toFixed(2))} ${u}`;
+}
+
+// Render a PO line quantity in two parts: a primary "<count> pack(s)" label
+// and an optional "<size> per pack" descriptor for smaller secondary text.
+// Handles both storage shapes — lines whose unit is already "packs"/"bottles"
+// (the quantity IS the pack count) and lines stored in native units (kg/g/
+// ml/l) where the count is derived by dividing by packWeight.
+export function formatLineQtyParts(
+  qty: number,
+  lineUnit: string,
+  nativeUnit: string | null | undefined,
+  packWeight: number | string | null | undefined,
+  stockInPacks: boolean | null | undefined,
+): { primary: string; descriptor: string | null } {
+  const pw = packWeight == null ? NaN : Number(packWeight);
+  const hasPackSize = Number.isFinite(pw) && pw > 0;
+  const lineIsPackUnit = lineUnit === "packs" || lineUnit === "bottles";
+  const native = nativeUnit ?? lineUnit;
+  const buildDescriptor = (count: number) =>
+    `${fmtPackSize(pw, native)} per ${packNoun(native, 1)}`;
+  if (lineIsPackUnit && hasPackSize) {
+    return {
+      primary: `${qty} ${packNoun(native, qty)}`,
+      descriptor: buildDescriptor(qty),
+    };
+  }
+  if (stockInPacks && hasPackSize) {
+    const count = Math.round(qty / pw);
+    return {
+      primary: `${count} ${packNoun(native, count)}`,
+      descriptor: buildDescriptor(count),
+    };
+  }
+  return { primary: `${qty} ${lineUnit}`, descriptor: null };
+}
+
+// Single-line variant for callers that don't have separate styling for the
+// pack-size descriptor. Built on top of formatLineQtyParts.
 export function formatLineQty(
   qty: number,
   lineUnit: string,
@@ -65,21 +128,8 @@ export function formatLineQty(
   packWeight: number | string | null | undefined,
   stockInPacks: boolean | null | undefined,
 ): string {
-  const pw = packWeight == null ? NaN : Number(packWeight);
-  const hasPackSize = Number.isFinite(pw) && pw > 0;
-  const lineIsPackUnit = lineUnit === "packs" || lineUnit === "bottles";
-  const native = nativeUnit ?? lineUnit;
-  if (lineIsPackUnit && hasPackSize) {
-    // PO line carries the pack count directly — don't re-divide.
-    const noun = packNoun(native, qty);
-    return `${qty} ${noun} (${fmtQty(pw, native)} per ${packNoun(native, 1)})`;
-  }
-  if (stockInPacks && hasPackSize) {
-    const count = Math.round(qty / pw);
-    const noun = packNoun(native, count);
-    return `${count} ${noun} (${fmtQty(pw, native)} per ${packNoun(native, 1)})`;
-  }
-  return `${qty} ${lineUnit}`;
+  const { primary, descriptor } = formatLineQtyParts(qty, lineUnit, nativeUnit, packWeight, stockInPacks);
+  return descriptor ? `${primary} (${descriptor})` : primary;
 }
 
 // Given a native-unit stock value and the ingredient's packWeight, return
