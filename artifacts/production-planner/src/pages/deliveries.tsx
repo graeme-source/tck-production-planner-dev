@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { useLocation } from "wouter";
-import { packNoun, packDescriptor, fmtQty } from "@/pages/station/shared/prep-helpers";
+import { packNoun, packDescriptor, fmtQty, formatLineQty } from "@/pages/station/shared/prep-helpers";
 import { NumberInput } from "@/components/ui/number-input";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -28,6 +28,9 @@ interface POLine {
   quantityOrdered: number;
   quantityReceived: number;
   unit: string;
+  // The ingredient's native unit (kg / g / ml / l / pieces). May differ from
+  // `unit` when the line was stored as a pack count ("packs" / "bottles").
+  nativeUnit?: string | null;
   unitPrice: number | null;
   checkedOff: boolean;
   goodsInChecked?: boolean;
@@ -1184,26 +1187,30 @@ export default function Deliveries() {
                     <div className="border-t border-border/50 px-4 py-3 bg-secondary/20">
                       <div className="flex flex-wrap gap-2">
                         {order.lines.map((line) => {
-                          const inPacks = !!line.stockInPacks && (line.packWeight ?? 0) > 0;
-                          const pw = line.packWeight || 1;
-                          const orderedPacks = inPacks ? Math.round(line.quantityOrdered / pw) : 0;
-                          const receivedPacks = inPacks ? Math.round(line.quantityReceived / pw) : 0;
+                          const orderedLabel = formatLineQty(
+                            line.quantityOrdered,
+                            line.unit,
+                            line.nativeUnit,
+                            line.packWeight,
+                            line.stockInPacks,
+                          );
+                          const receivedLabel = formatLineQty(
+                            line.quantityReceived,
+                            line.unit,
+                            line.nativeUnit,
+                            line.packWeight,
+                            line.stockInPacks,
+                          );
                           return (
                             <span
                               key={line.id}
                               className="text-base bg-background border border-border rounded-full px-4 py-1.5 flex items-center gap-2"
                             >
                               <span className="font-bold">{line.ingredientName}</span>
-                              <span className="font-bold tabular-nums">
-                                {inPacks
-                                  ? `${orderedPacks} ${packDescriptor(line.unit, line.packWeight, orderedPacks)}`
-                                  : `${line.quantityOrdered} ${line.unit}`}
-                              </span>
+                              <span className="font-bold tabular-nums">{orderedLabel}</span>
                               {line.quantityReceived > 0 && (
                                 <span className="text-green-600 dark:text-green-400 font-semibold">
-                                  ✓ {inPacks
-                                    ? `${receivedPacks} ${packDescriptor(line.unit, line.packWeight, receivedPacks)}`
-                                    : `${line.quantityReceived} ${line.unit}`} received
+                                  ✓ {receivedLabel} received
                                 </span>
                               )}
                             </span>

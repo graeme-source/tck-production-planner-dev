@@ -129,6 +129,11 @@ router.get("/weekly", async (req, res) => {
         quantityOrdered: purchaseOrderLinesTable.quantityOrdered,
         quantityReceived: purchaseOrderLinesTable.quantityReceived,
         unit: purchaseOrderLinesTable.unit,
+        // The ingredient's native unit (kg / g / ml / l / pieces). The PO line
+        // unit can be a display unit like "packs" / "bottles" when the line was
+        // stored as a pack count — in that case the display layer needs the
+        // native unit to format pack-size descriptors like "(3 kg per pack)".
+        nativeUnit: ingredientsTable.unit,
         unitPrice: purchaseOrderLinesTable.unitPrice,
         checkedOff: purchaseOrderLinesTable.checkedOff,
         notes: purchaseOrderLinesTable.notes,

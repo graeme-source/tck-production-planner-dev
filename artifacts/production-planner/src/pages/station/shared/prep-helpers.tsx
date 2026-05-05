@@ -53,6 +53,35 @@ export function packDescriptor(unit: string, packWeight: number | string | null 
   return `${sized} ${noun}`;
 }
 
+// Render a PO line quantity as "<count> pack(s) (<size> per pack)". Handles
+// both storage shapes: lines whose unit is already "packs"/"bottles" (the
+// quantity IS the pack count) and lines stored in native units (kg/g/ml/l)
+// where the count is derived by dividing by packWeight. Returns plain native
+// formatting when the line isn't pack-counted.
+export function formatLineQty(
+  qty: number,
+  lineUnit: string,
+  nativeUnit: string | null | undefined,
+  packWeight: number | string | null | undefined,
+  stockInPacks: boolean | null | undefined,
+): string {
+  const pw = packWeight == null ? NaN : Number(packWeight);
+  const hasPackSize = Number.isFinite(pw) && pw > 0;
+  const lineIsPackUnit = lineUnit === "packs" || lineUnit === "bottles";
+  const native = nativeUnit ?? lineUnit;
+  if (lineIsPackUnit && hasPackSize) {
+    // PO line carries the pack count directly — don't re-divide.
+    const noun = packNoun(native, qty);
+    return `${qty} ${noun} (${fmtQty(pw, native)} per ${packNoun(native, 1)})`;
+  }
+  if (stockInPacks && hasPackSize) {
+    const count = Math.round(qty / pw);
+    const noun = packNoun(native, count);
+    return `${count} ${noun} (${fmtQty(pw, native)} per ${packNoun(native, 1)})`;
+  }
+  return `${qty} ${lineUnit}`;
+}
+
 // Given a native-unit stock value and the ingredient's packWeight, return
 // how many packs that represents (rounded to nearest whole pack for display).
 // Returns null if the ingredient can't be expressed in packs.
