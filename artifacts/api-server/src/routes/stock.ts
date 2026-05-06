@@ -282,6 +282,11 @@ router.put("/:id", validate(UpdateStockEntryBody), async (req, res) => {
   const id = Number(req.params.id);
   const { recipeId, ingredientId, stockItemId, itemType, quantity, unit, location, notes } = req.body;
   const defaultLocation = itemType === "recipe" ? "production_fridge" : "prep_fridge";
+  // Bump checkedAt to NOW on every edit. Downstream queries (the Create Plan
+  // /calculate, the stock-control GET, etc.) use checkedAt to decide which
+  // row is the most recent reading; without this an in-place edit kept the
+  // original creation timestamp and a stale, older row from another path
+  // could outrank the operator's fresh manual update.
   const [row] = await db.update(stockEntriesTable).set({
     recipeId: recipeId ?? null,
     ingredientId: ingredientId ?? null,
@@ -291,6 +296,7 @@ router.put("/:id", validate(UpdateStockEntryBody), async (req, res) => {
     unit,
     location: location ?? defaultLocation,
     notes,
+    checkedAt: new Date(),
   }).where(eq(stockEntriesTable.id, id)).returning();
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   res.json({ ...row, quantity: Number(row.quantity), checkedAt: row.checkedAt.toISOString() });

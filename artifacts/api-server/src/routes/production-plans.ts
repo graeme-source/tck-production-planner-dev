@@ -571,6 +571,11 @@ router.get("/calculate", async (req, res) => {
     }
   }
 
+  // Factory Number reflects production_fridge stock only — that's the spec
+  // the kitchen works to. Previously this excluded freezers but pooled all
+  // other locations, so a stale row from any other non-freezer location
+  // could out-rank an operator's production_fridge update on checkedAt
+  // recency and silently override their reading.
   const stockRows = await db
     .select({
       recipeId: stockEntriesTable.recipeId,
@@ -579,7 +584,7 @@ router.get("/calculate", async (req, res) => {
     .from(stockEntriesTable)
     .where(and(
       eq(stockEntriesTable.itemType, "recipe"),
-      notInArray(stockEntriesTable.location, ["production_freezer", "raw_freezer"]),
+      eq(stockEntriesTable.location, "production_fridge"),
     ))
     .orderBy(asc(stockEntriesTable.checkedAt));
 
@@ -1127,7 +1132,9 @@ router.get("/calculate-mac-cheese", async (req, res) => {
     return;
   }
 
-  // Fetch fridge stock for mac cheese recipes
+  // Fetch fridge stock for mac cheese recipes — production_fridge only,
+  // mirroring the calzone /calculate path so the Factory Number is
+  // consistent across product categories.
   const macRecipeIds = macRecipes.map(r => r.recipeId);
   const stockRows = await db
     .select({ recipeId: stockEntriesTable.recipeId, quantity: stockEntriesTable.quantity })
@@ -1135,7 +1142,7 @@ router.get("/calculate-mac-cheese", async (req, res) => {
     .where(and(
       inArray(stockEntriesTable.recipeId, macRecipeIds),
       eq(stockEntriesTable.itemType, "recipe"),
-      notInArray(stockEntriesTable.location, ["production_freezer", "raw_freezer"]),
+      eq(stockEntriesTable.location, "production_fridge"),
     ))
     .orderBy(asc(stockEntriesTable.checkedAt));
   const latestStock: Record<number, number> = {};
