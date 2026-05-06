@@ -305,12 +305,13 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   const [pendingTap, setPendingTap] = useState(false);
   const isOnBreak = isOnBreakProp;
 
-  // Oven-settings overlay state. Shown on the FIRST batch the builder taps for
-  // a recipe that has a dietary category set; the values come from the four
-  // app_settings keys seeded with sane defaults. Confirmed item-ids are
-  // remembered for the lifetime of this station mount.
+  // Oven-settings overlay state. Shown when the builder switches between
+  // dietary categories (meat ↔ vegetarian) — first meat or veg of the day,
+  // and any time they swap from one profile to the other after that. Doing
+  // four meat recipes in a row only prompts on the first one. Defaults
+  // come from the four app_settings keys seeded with sane numbers.
   const [ovenDefaults, setOvenDefaults] = useState<{ meatTemp: number; meatTime: number; vegTemp: number; vegTime: number } | null>(null);
-  const [ovenConfirmedItemIds, setOvenConfirmedItemIds] = useState<Set<number>>(new Set());
+  const [lastConfirmedDietary, setLastConfirmedDietary] = useState<"meat" | "vegetarian" | null>(null);
   const [ovenPromptItemId, setOvenPromptItemId] = useState<number | null>(null);
 
   useEffect(() => {
@@ -683,14 +684,49 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     return checklistLockedForItem !== currentItem.id;
   })();
 
+  // Records a batch immediately, bypassing the oven-settings gate. Used by
+  // the gate's "Checked oven settings" button so the same finger-tap that
+  // confirms the temperature also lands the batch — operators were having
+  // to tap "Done" twice (once to dismiss the prompt, once to record).
+  const recordBatchNow = (item: typeof currentItem) => {
+    if (!item || pendingTap || available <= 0 || isOnBreak || checklistPending) return;
+    setPendingTap(true);
+    const completingItemId = item.id;
+    const wasLastBatchTap = remaining === 1;
+    const otherStation = stationType === "building_1" ? "building_2" : "building_1";
+    const otherStationCount = getStationCount(item, otherStation);
+    const handOffFinalBatch = remaining === 2 && otherStationCount >= 1;
+    createBatch.mutate(
+      {
+        id: plan.id,
+        data: { planItemId: completingItemId, stationType, completedAt: new Date().toISOString() },
+      },
+      {
+        onSuccess: () => {
+          if (wasLastBatchTap) myLastBatchItemIdRef.current = completingItemId;
+          if (handOffFinalBatch) {
+            setMySkippedItemIds(prev => {
+              if (prev.has(completingItemId)) return prev;
+              const next = new Set(prev);
+              next.add(completingItemId);
+              return next;
+            });
+          }
+        },
+      },
+    );
+  };
+
   const handleBatchComplete = () => {
     if (!currentItem || pendingTap || available <= 0 || isOnBreak || checklistPending) return;
-    // First-batch oven-settings gate: if this is the very first batch of a
-    // recipe with a dietary category set, ask the operator to confirm the
-    // oven settings before recording the completion.
+    // Oven-settings gate: prompt only when the builder is moving between
+    // dietary profiles (meat ↔ vegetarian), so the oven temp / time actually
+    // needs to change. Same profile back-to-back skips the prompt — four
+    // meat recipes in a row only ask once. First profile of the session
+    // (lastConfirmedDietary === null) always prompts.
     const dietary = (currentItem as any).dietaryCategory as "meat" | "vegetarian" | null | undefined;
-    const isFirstBatch = getCombinedBuildCount(currentItem) === 0;
-    if (isFirstBatch && dietary && !ovenConfirmedItemIds.has(currentItem.id)) {
+    const needsOvenPrompt = !!dietary && dietary !== lastConfirmedDietary;
+    if (needsOvenPrompt) {
       setOvenPromptItemId(currentItem.id);
       return;
     }
@@ -996,21 +1032,21 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                 <button
                   type="button"
                   onClick={() => {
-                    setOvenConfirmedItemIds(prev => {
-                      const next = new Set(prev);
-                      next.add(item.id);
-                      return next;
-                    });
+                    setLastConfirmedDietary(dietary);
                     setOvenPromptItemId(null);
-                    // Re-tap the build action; the gate now sees a confirmed id.
-                    setTimeout(() => handleBatchComplete(), 0);
+                    // Record the batch right away so the same tap that
+                    // confirms the oven settings also lands the build —
+                    // bypassing handleBatchComplete's gate avoids the
+                    // stale-closure / state-not-yet-committed re-prompt
+                    // we used to hit when re-running the gate.
+                    recordBatchNow(item);
                   }}
                   className="w-full py-4 rounded-xl bg-primary text-primary-foreground font-bold text-lg hover:bg-primary/90 active:scale-95 transition-all"
                 >
-                  Checked oven settings
+                  Checked oven settings — record batch
                 </button>
                 <p className="text-[11px] text-muted-foreground text-center">
-                  This prompt only shows on the first batch of each recipe.
+                  Only shows when switching between meat and vegetarian profiles.
                 </p>
               </div>
             );
