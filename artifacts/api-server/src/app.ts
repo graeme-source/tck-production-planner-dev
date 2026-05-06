@@ -3,7 +3,7 @@ import cors from "cors";
 import helmet from "helmet";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import path from "path";
 import router from "./routes";
 
@@ -65,32 +65,11 @@ app.use(express.json({ limit: "1mb" }));
 app.use(express.text({ limit: "10mb", type: "text/plain" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
-// Per-IP rate limit. The kitchen runs ~5+ iPads behind a single NATed
-// public IP, every prep / building / oven station polls every 5s, plus
-// auth-me checks, plan queries, etc. — at ~12 req/min/iPad just from
-// polling, 5 iPads = 60/min sustained = 900/15min, and that's before
-// any actual page load fans out its own 5–10 GETs. The old 2000-req
-// budget was burning out mid-shift and surfacing as 429 toasts on
-// "Batch Done" clicks, which is a really bad place to drop a request.
-//
-// Two changes:
-//   1. Bump the cap to 20000 / 15min — still well above any plausible
-//      legitimate usage but headroom for the kitchen at full tilt.
-//   2. Skip GET / HEAD / OPTIONS — read-only polling is the bulk of
-//      the traffic and doesn't need throttling. Mutations (POST /
-//      PATCH / PUT / DELETE) still fall under the limit so we keep
-//      the abuse protection where it matters.
-const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20000,
-  standardHeaders: true,
-  legacyHeaders: false,
-  skip: (req) => req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS",
-  message: { error: "Too many requests, please try again later." },
-});
-
-app.use("/api", generalLimiter);
-
+// Session middleware runs BEFORE the rate limiter so each iPad's sessionID
+// is available to the limiter's keyGenerator. Kitchens behind a single NATed
+// public IP would otherwise pool all iPads against one IP-keyed bucket,
+// which is what surfaced the 429 storms. Per-session keying gives every
+// device its own budget.
 app.use(
   session({
     store: new PgSession({
@@ -110,6 +89,30 @@ app.use(
     },
   }),
 );
+
+// Rate limit per-session (with IP fallback for unauthenticated traffic).
+// Reads (GET / HEAD / OPTIONS) skip the limiter entirely — they're the bulk
+// of the traffic and idempotent. Mutations still fall under the cap so abuse
+// protection stays where it matters. The cap is generous because legitimate
+// kitchen usage at peak (multiple stations polling + manual actions) easily
+// fans out to thousands of requests per session per 15 min.
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS",
+  // Prefer sessionID so each iPad/browser gets its own budget; fall back to
+  // the library's IP key generator for pre-session traffic (login, health
+  // checks) so IPv6 addresses are normalised correctly. The "rl:" prefix
+  // keeps the namespace obvious in any future redis-backed store.
+  keyGenerator: (req, res) => req.sessionID
+    ? `rl:sess:${req.sessionID}`
+    : `rl:ip:${ipKeyGenerator(req.ip ?? "")}`,
+  message: { error: "Too many requests, please try again later." },
+});
+
+app.use("/api", generalLimiter);
 
 // Desktop machines get a short-lived rolling session so shared PCs don't
 // carry one user's login into the next shift. Mobile/tablet keeps the 30-day
