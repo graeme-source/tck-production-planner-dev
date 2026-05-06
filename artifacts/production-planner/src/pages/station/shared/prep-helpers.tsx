@@ -589,30 +589,30 @@ export function StockCheckStatusPanel({ checkDate }: { checkDate: string }) {
               const inputVal = inputValues[it.id] ?? "";
               const isEditing = editingIds.has(it.id);
               const inPacks = !!it.stockInPacks && (it.packWeight ?? 0) > 0;
-              const displayUnit = inPacks
-                ? packDescriptor(it.unit, it.packWeight, Number(inputVal) || 1)
-                : it.unit;
+              const inputCount = Number(inputVal) || 0;
+              const primaryUnit = inPacks ? packNoun(it.unit, inputCount) : it.unit;
+              const sizeHint = inPacks ? packSizeHint(it.packWeight, it.unit) : null;
               if (record && !isEditing) {
                 const checkedAt = new Date(record.checkedAt);
                 const timeLabel = checkedAt.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
                 const recordNative = Number(record.quantity);
                 const recordPacks = inPacks ? nativeToPackCount(recordNative, it.packWeight) : null;
-                const recordDisplay = inPacks && recordPacks != null
-                  ? `${recordPacks} ${packDescriptor(it.unit, it.packWeight, recordPacks)}`
+                const sizeHint = inPacks ? packSizeHint(it.packWeight, it.unit) : null;
+                const primary = inPacks && recordPacks != null
+                  ? `${recordPacks} × ${packNoun(it.unit, recordPacks)}`
                   : `${recordNative} ${it.unit}`;
-                const hint = inPacks && recordPacks != null
-                  ? packsWeightHint(recordPacks, it.packWeight, it.unit)
-                  : "";
                 return (
                   <div key={it.id} className="px-4 py-2.5 flex items-center gap-3 text-sm">
                     <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
                     <span className="font-medium flex-1 min-w-0 truncate">{it.name}</span>
-                    <span className="text-sm tabular-nums text-foreground font-semibold">
-                      {recordDisplay}
-                    </span>
-                    {hint && (
-                      <span className="text-xs tabular-nums text-muted-foreground/70">{hint}</span>
-                    )}
+                    <div className="flex flex-col items-end leading-tight">
+                      <span className="text-sm tabular-nums text-foreground font-semibold">
+                        {primary}
+                      </span>
+                      {sizeHint && (
+                        <span className="text-[11px] tabular-nums text-muted-foreground/70">({sizeHint})</span>
+                      )}
+                    </div>
                     <span className="text-xs text-muted-foreground ml-2">{timeLabel}</span>
                     <button
                       onClick={() => {
@@ -645,16 +645,16 @@ export function StockCheckStatusPanel({ checkDate }: { checkDate: string }) {
                     value={inputVal}
                     onChange={e => setInputValues(prev => ({ ...prev, [it.id]: e.target.value }))}
                     onKeyDown={e => { if (e.key === "Enter" && inputVal !== "") saveOne(it.id); }}
-                    placeholder={inPacks ? displayUnit : "qty"}
+                    placeholder={inPacks ? "0" : "qty"}
                     autoFocus={isEditing}
                     className="w-20 px-2 py-1 text-sm text-right bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-amber-400/30"
                   />
-                  <span className="text-xs text-muted-foreground min-w-[1.5rem]">{displayUnit}</span>
-                  {inPacks && inputVal !== "" && (
-                    <span className="text-xs tabular-nums text-muted-foreground/70">
-                      {packsWeightHint(Number(inputVal) || 0, it.packWeight, it.unit)}
-                    </span>
-                  )}
+                  <div className="flex flex-col leading-tight">
+                    <span className="text-xs font-semibold">{primaryUnit}</span>
+                    {sizeHint && (
+                      <span className="text-[11px] tabular-nums text-muted-foreground/70">({sizeHint})</span>
+                    )}
+                  </div>
                   <button
                     onClick={() => saveOne(it.id)}
                     disabled={saving || inputVal === ""}
