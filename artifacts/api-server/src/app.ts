@@ -65,11 +65,27 @@ app.use(express.json({ limit: "1mb" }));
 app.use(express.text({ limit: "10mb", type: "text/plain" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
+// Per-IP rate limit. The kitchen runs ~5+ iPads behind a single NATed
+// public IP, every prep / building / oven station polls every 5s, plus
+// auth-me checks, plan queries, etc. — at ~12 req/min/iPad just from
+// polling, 5 iPads = 60/min sustained = 900/15min, and that's before
+// any actual page load fans out its own 5–10 GETs. The old 2000-req
+// budget was burning out mid-shift and surfacing as 429 toasts on
+// "Batch Done" clicks, which is a really bad place to drop a request.
+//
+// Two changes:
+//   1. Bump the cap to 20000 / 15min — still well above any plausible
+//      legitimate usage but headroom for the kitchen at full tilt.
+//   2. Skip GET / HEAD / OPTIONS — read-only polling is the bulk of
+//      the traffic and doesn't need throttling. Mutations (POST /
+//      PATCH / PUT / DELETE) still fall under the limit so we keep
+//      the abuse protection where it matters.
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 2000,
+  max: 20000,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS",
   message: { error: "Too many requests, please try again later." },
 });
 
