@@ -19,7 +19,10 @@ export const FREEZER_LOCATIONS: readonly string[] = [
   "raw_freezer",
 ] as const;
 
-export type StorageLocation = typeof STORAGE_LOCATIONS[number];
+// Renamed from `StorageLocation` to avoid colliding with the row type of the
+// newer `storage_locations` table (see ordering.ts). This is a string-literal
+// union of legacy fixed location codes used by the original stock-control flow.
+export type StorageLocationCode = typeof STORAGE_LOCATIONS[number];
 
 export const stockEntriesTable = pgTable("stock_entries", {
   id: serial("id").primaryKey(),
