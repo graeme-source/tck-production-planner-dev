@@ -312,11 +312,26 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
       items: Array<{ ing: MainPrepIngredient; qtyForRecipe: number }>;
     }>();
     for (const ing of ingredients) {
+      // An ingredient that's pulled into the same parent recipe via several
+      // expanded sub-recipes (e.g. cheddar via both Breadcrumb Topping and
+      // the Macaroni Cheese sub-recipe inside one parent) ends up with
+      // multiple `recipes` entries that share the same recipeId. Render it
+      // once per group — the right-hand panel still breaks the tins down by
+      // sub-recipe origin via ing.recipes directly.
+      const seenInGroup = new Set<number>();
       for (const r of ing.recipes) {
         if (!map.has(r.recipeId)) {
           map.set(r.recipeId, { recipeId: r.recipeId, recipeName: r.recipeName, batchesTarget: r.batchesTarget, items: [] });
         }
-        map.get(r.recipeId)!.items.push({ ing, qtyForRecipe: r.qtyForRecipe });
+        if (seenInGroup.has(r.recipeId)) continue;
+        seenInGroup.add(r.recipeId);
+        // Sum the per-recipe qty across all entries with this recipeId so
+        // the displayed quantity reflects the total ingredient demand
+        // contributed by this parent recipe, not just the first sub-recipe.
+        const qtyForRecipe = ing.recipes
+          .filter(rr => rr.recipeId === r.recipeId)
+          .reduce((s, rr) => s + rr.qtyForRecipe, 0);
+        map.get(r.recipeId)!.items.push({ ing, qtyForRecipe });
       }
     }
     return [...map.values()];
