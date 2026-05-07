@@ -1,4 +1,5 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
+import multer from "multer";
 import {
   db,
   riskAssessmentsTable,
@@ -9,6 +10,37 @@ import {
 import { eq, and, isNull, sql, asc, desc, gte, lte, inArray, ne } from "drizzle-orm";
 
 const router: IRouter = Router();
+
+// PDF uploads only. Cap at 15MB — typical compliance docs are <1MB; the cap
+// is generous for the occasional scanned multi-page certificate.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024 },
+});
+
+// Columns selected for list/get endpoints — excludes fileBlob so the list
+// query doesn't drag every PDF over the wire.
+const documentMetaColumns = {
+  id: riskAssessmentsTable.id,
+  assessmentType: riskAssessmentsTable.assessmentType,
+  title: riskAssessmentsTable.title,
+  bodyMarkdown: riskAssessmentsTable.bodyMarkdown,
+  status: riskAssessmentsTable.status,
+  reviewFrequencyMonths: riskAssessmentsTable.reviewFrequencyMonths,
+  lastReviewedAt: riskAssessmentsTable.lastReviewedAt,
+  nextReviewDue: riskAssessmentsTable.nextReviewDue,
+  lastReviewedByUserId: riskAssessmentsTable.lastReviewedByUserId,
+  lastReviewedByName: riskAssessmentsTable.lastReviewedByName,
+  reviewerQualifications: riskAssessmentsTable.reviewerQualifications,
+  fileMime: riskAssessmentsTable.fileMime,
+  fileName: riskAssessmentsTable.fileName,
+  fileSizeBytes: riskAssessmentsTable.fileSizeBytes,
+  fileVersion: riskAssessmentsTable.fileVersion,
+  fileUploadedAt: riskAssessmentsTable.fileUploadedAt,
+  originalIssueDate: riskAssessmentsTable.originalIssueDate,
+  createdAt: riskAssessmentsTable.createdAt,
+  updatedAt: riskAssessmentsTable.updatedAt,
+} as const;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -48,7 +80,7 @@ async function resolveUserName(userId: number | null | undefined): Promise<strin
 router.get("/", async (_req: Request, res: Response) => {
   try {
     const rows = await db
-      .select()
+      .select(documentMetaColumns)
       .from(riskAssessmentsTable)
       .orderBy(asc(riskAssessmentsTable.assessmentType), asc(riskAssessmentsTable.title));
     res.json(rows);
@@ -61,7 +93,7 @@ router.get("/", async (_req: Request, res: Response) => {
 router.get("/:id", async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
-    const [ra] = await db.select().from(riskAssessmentsTable).where(eq(riskAssessmentsTable.id, id));
+    const [ra] = await db.select(documentMetaColumns).from(riskAssessmentsTable).where(eq(riskAssessmentsTable.id, id));
     if (!ra) { res.status(404).json({ error: "Risk assessment not found" }); return; }
     const actions = await db
       .select()
@@ -75,9 +107,125 @@ router.get("/:id", async (req: Request, res: Response) => {
   }
 });
 
+// ─── File upload / download / removal ────────────────────────────────────────
+//
+// PDFs are stored inline as bytea on the risk_assessments row (~200KB–1MB
+// each, capped at 15MB). Upload replaces any existing file. Download streams
+// the bytes back with the stored filename and mime.
+
+router.post(
+  "/:id/file",
+  requireAdmin,
+  upload.single("file"),
+  async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      if (!req.file) {
+        res.status(400).json({ error: "No file uploaded" });
+        return;
+      }
+      // Be permissive on mime — Safari sometimes posts application/octet-stream
+      // for PDFs. Reject anything that's clearly not a document.
+      const mime = req.file.mimetype || "application/octet-stream";
+      const looksLikePdf =
+        mime === "application/pdf" ||
+        mime === "application/octet-stream" ||
+        (req.file.originalname || "").toLowerCase().endsWith(".pdf");
+      if (!looksLikePdf) {
+        res.status(415).json({ error: `Unsupported file type: ${mime}. PDF only.` });
+        return;
+      }
+      const fileVersion = typeof req.body.fileVersion === "string" && req.body.fileVersion.trim()
+        ? String(req.body.fileVersion).trim()
+        : null;
+      const [row] = await db
+        .update(riskAssessmentsTable)
+        .set({
+          fileBlob: req.file.buffer,
+          fileMime: "application/pdf",
+          fileName: req.file.originalname || "document.pdf",
+          fileSizeBytes: req.file.size,
+          fileVersion: fileVersion ?? undefined,
+          fileUploadedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(riskAssessmentsTable.id, id))
+        .returning(documentMetaColumns);
+      if (!row) {
+        res.status(404).json({ error: "Risk assessment not found" });
+        return;
+      }
+      res.json(row);
+    } catch (err: any) {
+      if (err?.code === "LIMIT_FILE_SIZE") {
+        res.status(413).json({ error: "File too large (15MB max)" });
+        return;
+      }
+      console.error("[risk-assessments] upload error:", err);
+      res.status(500).json({ error: "Failed to upload file" });
+    }
+  },
+);
+
+router.get("/:id/file", async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const [row] = await db
+      .select({
+        fileBlob: riskAssessmentsTable.fileBlob,
+        fileMime: riskAssessmentsTable.fileMime,
+        fileName: riskAssessmentsTable.fileName,
+        fileSizeBytes: riskAssessmentsTable.fileSizeBytes,
+      })
+      .from(riskAssessmentsTable)
+      .where(eq(riskAssessmentsTable.id, id));
+    if (!row || !row.fileBlob) {
+      res.status(404).json({ error: "No file attached" });
+      return;
+    }
+    const buf = Buffer.isBuffer(row.fileBlob) ? row.fileBlob : Buffer.from(row.fileBlob as any);
+    const filename = (row.fileName || "document.pdf").replace(/"/g, "");
+    const disposition = req.query.download === "1" ? "attachment" : "inline";
+    res.setHeader("Content-Type", row.fileMime || "application/pdf");
+    res.setHeader("Content-Length", String(buf.length));
+    res.setHeader("Content-Disposition", `${disposition}; filename="${filename}"`);
+    res.end(buf);
+  } catch (err) {
+    console.error("[risk-assessments] download error:", err);
+    res.status(500).json({ error: "Failed to download file" });
+  }
+});
+
+router.delete("/:id/file", requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const [row] = await db
+      .update(riskAssessmentsTable)
+      .set({
+        fileBlob: null as any,
+        fileMime: null,
+        fileName: null,
+        fileSizeBytes: null,
+        fileVersion: null,
+        fileUploadedAt: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(riskAssessmentsTable.id, id))
+      .returning(documentMetaColumns);
+    if (!row) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(row);
+  } catch (err) {
+    console.error("[risk-assessments] file delete error:", err);
+    res.status(500).json({ error: "Failed to remove file" });
+  }
+});
+
 router.post("/", requireAdmin, async (req: Request, res: Response) => {
   try {
-    const { assessmentType, title, bodyMarkdown, status, reviewFrequencyMonths } = req.body;
+    const { assessmentType, title, bodyMarkdown, status, reviewFrequencyMonths, originalIssueDate, fileVersion } = req.body;
     if (!assessmentType || !title) {
       res.status(400).json({ error: "assessmentType and title are required" });
       return;
@@ -90,8 +238,10 @@ router.post("/", requireAdmin, async (req: Request, res: Response) => {
         bodyMarkdown: bodyMarkdown ?? "",
         status: status ?? "draft",
         reviewFrequencyMonths: reviewFrequencyMonths ?? 12,
+        originalIssueDate: originalIssueDate ?? null,
+        fileVersion: fileVersion ?? null,
       })
-      .returning();
+      .returning(documentMetaColumns);
     res.status(201).json(row);
   } catch (err) {
     console.error("[risk-assessments] create error:", err);
@@ -102,14 +252,16 @@ router.post("/", requireAdmin, async (req: Request, res: Response) => {
 router.patch("/:id", requireAdmin, async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
-    const { title, bodyMarkdown, status, reviewFrequencyMonths, assessmentType } = req.body;
+    const { title, bodyMarkdown, status, reviewFrequencyMonths, assessmentType, originalIssueDate, fileVersion } = req.body;
     const updates: Partial<typeof riskAssessmentsTable.$inferInsert> = { updatedAt: new Date() };
     if (title !== undefined) updates.title = String(title);
     if (bodyMarkdown !== undefined) updates.bodyMarkdown = String(bodyMarkdown);
     if (status !== undefined) updates.status = String(status);
     if (assessmentType !== undefined) updates.assessmentType = String(assessmentType);
     if (reviewFrequencyMonths !== undefined) updates.reviewFrequencyMonths = Number(reviewFrequencyMonths);
-    const [row] = await db.update(riskAssessmentsTable).set(updates).where(eq(riskAssessmentsTable.id, id)).returning();
+    if (originalIssueDate !== undefined) updates.originalIssueDate = originalIssueDate || null;
+    if (fileVersion !== undefined) updates.fileVersion = fileVersion || null;
+    const [row] = await db.update(riskAssessmentsTable).set(updates).where(eq(riskAssessmentsTable.id, id)).returning(documentMetaColumns);
     if (!row) { res.status(404).json({ error: "Not found" }); return; }
     res.json(row);
   } catch (err) {

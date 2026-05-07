@@ -922,6 +922,22 @@ async function runStartupMigrations() {
     await db.execute(sql`CREATE INDEX IF NOT EXISTS compliance_completions_action_idx ON compliance_action_completions (action_id)`);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS compliance_completions_at_idx ON compliance_action_completions (completed_at)`);
 
+    // Documents repository — extend risk_assessments with file storage so it
+    // can hold PDFs (insurance, certifications, licences, SOPs etc), not just
+    // markdown bodies. See lib/db/migrations/0015_documents_files.sql.
+    await db.execute(sql`ALTER TABLE risk_assessments ADD COLUMN IF NOT EXISTS file_blob          BYTEA`);
+    await db.execute(sql`ALTER TABLE risk_assessments ADD COLUMN IF NOT EXISTS file_mime          TEXT`);
+    await db.execute(sql`ALTER TABLE risk_assessments ADD COLUMN IF NOT EXISTS file_name          TEXT`);
+    await db.execute(sql`ALTER TABLE risk_assessments ADD COLUMN IF NOT EXISTS file_size_bytes    INTEGER`);
+    await db.execute(sql`ALTER TABLE risk_assessments ADD COLUMN IF NOT EXISTS file_version       TEXT`);
+    await db.execute(sql`ALTER TABLE risk_assessments ADD COLUMN IF NOT EXISTS file_uploaded_at   TIMESTAMP`);
+    await db.execute(sql`ALTER TABLE risk_assessments ADD COLUMN IF NOT EXISTS original_issue_date DATE`);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS risk_assessments_next_review_idx
+        ON risk_assessments (next_review_due)
+        WHERE status <> 'archived'
+    `);
+
     // Notifications table
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS notifications (

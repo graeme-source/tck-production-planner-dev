@@ -266,7 +266,7 @@ const REPORTS_NAV_ITEMS: ReportsNavItem[] = [
   { id: "breaks", label: "Breaks & Lunches", icon: Coffee },
   { id: "temperature", label: "Temperature Log", icon: Thermometer },
   { id: "haccp", label: "HACCP", icon: ShieldCheck },
-  { id: "risk-assessments", label: "Risk Assessments", icon: ClipboardList },
+  { id: "risk-assessments", label: "Documents", icon: ClipboardList },
   { id: "improvements", label: "Improvements & Struggles", icon: Lightbulb },
   { id: "issues", label: "Issue Log", icon: AlertTriangle },
   { id: "leftover-filling", label: "Leftover Filling", icon: Droplets },
@@ -2833,7 +2833,9 @@ function LeftoverFillingTab({ fromDate, toDate }: { fromDate: string; toDate: st
 
 interface RiskAssessmentRecord {
   id: number;
-  assessmentType: "fire" | "food_safety" | "general_safety" | "other" | string;
+  // Free-text category. Known: fire | food_safety | general_safety |
+  // insurance | certification | licence | sop | other.
+  assessmentType: string;
   title: string;
   bodyMarkdown: string;
   status: "draft" | "active" | "archived" | string;
@@ -2842,6 +2844,12 @@ interface RiskAssessmentRecord {
   nextReviewDue: string | null;
   lastReviewedByName: string | null;
   reviewerQualifications: string | null;
+  fileMime: string | null;
+  fileName: string | null;
+  fileSizeBytes: number | null;
+  fileVersion: string | null;
+  fileUploadedAt: string | null;
+  originalIssueDate: string | null;
   createdAt: string;
   updatedAt: string;
   openCount?: number;
@@ -2905,15 +2913,30 @@ const CATEGORY_ICON: Record<string, typeof TrendingUp> = {
   training: Users,
   other: ClipboardList,
   finance: PoundSterling,
+  insurance: ShieldCheck,
+  certification: ShieldCheck,
+  licence: ClipboardList,
+  sop: ClipboardList,
 };
 
 function assessmentTypeLabel(t: string): string {
   switch (t) {
     case "fire": return "Fire";
     case "food_safety": return "Food Safety";
-    case "general_safety": return "General Safety";
+    case "general_safety": return "Health & Safety";
+    case "insurance": return "Insurance";
+    case "certification": return "Certification";
+    case "licence": return "Licence";
+    case "sop": return "SOP";
     default: return t.charAt(0).toUpperCase() + t.slice(1);
   }
+}
+
+function formatFileSize(bytes: number | null | undefined): string {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function formatDueLabel(dueDate: string | null): { text: string; tone: "red" | "amber" | "slate" | "green" } {
@@ -3017,56 +3040,81 @@ function RiskAssessmentsTab({ userRole, currentUserName }: { userRole: string; c
         </div>
       )}
 
-      {/* Assessments list */}
+      {/* Documents list */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h3 className="font-bold text-lg">Risk Assessments</h3>
+          <h3 className="font-bold text-lg">Documents</h3>
           {isAdmin && (
             <button
-              onClick={() => alert("Coming in v2 — use the existing Fire RA for now, which was seeded on first startup.")}
+              onClick={() => alert("Use the existing detail view to upload a PDF onto a record. New-record creation flow coming next.")}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 transition-colors"
             >
-              <Plus className="w-4 h-4" /> New RA
+              <Plus className="w-4 h-4" /> New Document
             </button>
           )}
         </div>
         <div className="grid md:grid-cols-2 gap-3">
           {dashboard.assessments.map((ra) => {
             const Icon = CATEGORY_ICON[ra.assessmentType] ?? ClipboardList;
+            const hasFile = ra.fileSizeBytes != null && ra.fileSizeBytes > 0;
             return (
-              <button
+              <div
                 key={ra.id}
-                onClick={() => setSelectedAssessmentId(ra.id)}
                 className="text-left bg-card border border-border rounded-xl p-4 hover:border-primary/50 hover:shadow-sm transition-all"
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3 min-w-0 flex-1">
-                    <Icon className="w-5 h-5 text-muted-foreground flex-shrink-0 mt-0.5" />
-                    <div className="min-w-0 flex-1">
-                      <p className="font-semibold truncate">{ra.title}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {assessmentTypeLabel(ra.assessmentType)}
-                        {" · "}
-                        {ra.status === "draft" ? "Draft" : ra.status === "active" ? "Active" : "Archived"}
-                      </p>
+                <button
+                  type="button"
+                  onClick={() => setSelectedAssessmentId(ra.id)}
+                  className="w-full text-left"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-3 min-w-0 flex-1">
+                      <Icon className="w-5 h-5 text-muted-foreground flex-shrink-0 mt-0.5" />
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold truncate">{ra.title}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {assessmentTypeLabel(ra.assessmentType)}
+                          {" · "}
+                          {ra.status === "draft" ? "Draft" : ra.status === "active" ? "Active" : "Archived"}
+                          {hasFile && ` · PDF ${formatFileSize(ra.fileSizeBytes)}`}
+                        </p>
+                      </div>
                     </div>
+                    <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-1" />
                   </div>
-                  <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-1" />
-                </div>
-                <div className="flex items-center gap-3 mt-3 text-xs">
-                  <span className="text-muted-foreground">{ra.openCount ?? 0} open</span>
-                  {(ra.overdueCount ?? 0) > 0 && (
-                    <span className="text-red-600 dark:text-red-400 font-semibold">
-                      {ra.overdueCount} overdue
-                    </span>
-                  )}
-                  {ra.nextReviewDue && (
-                    <span className="text-muted-foreground ml-auto">
-                      Review due {format(new Date(ra.nextReviewDue + "T00:00:00"), "d MMM yyyy")}
-                    </span>
-                  )}
-                </div>
-              </button>
+                  <div className="flex items-center gap-3 mt-3 text-xs">
+                    <span className="text-muted-foreground">{ra.openCount ?? 0} open</span>
+                    {(ra.overdueCount ?? 0) > 0 && (
+                      <span className="text-red-600 dark:text-red-400 font-semibold">
+                        {ra.overdueCount} overdue
+                      </span>
+                    )}
+                    {ra.nextReviewDue && (
+                      <span className="text-muted-foreground ml-auto">
+                        Review due {format(new Date(ra.nextReviewDue + "T00:00:00"), "d MMM yyyy")}
+                      </span>
+                    )}
+                  </div>
+                </button>
+                {hasFile && (
+                  <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border">
+                    <a
+                      href={`${BASE}/api/risk-assessments/${ra.id}/file`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 text-center text-xs px-3 py-1.5 rounded-md bg-secondary hover:bg-secondary/80 text-secondary-foreground transition-colors"
+                    >
+                      View PDF
+                    </a>
+                    <a
+                      href={`${BASE}/api/risk-assessments/${ra.id}/file?download=1`}
+                      className="flex-1 text-center text-xs px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                    >
+                      Download
+                    </a>
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>
@@ -3340,6 +3388,147 @@ function CompleteActionDialog({
   );
 }
 
+function DocumentFileSection({
+  ra, isAdmin, onChanged,
+}: {
+  ra: RiskAssessmentRecord;
+  isAdmin: boolean;
+  onChanged: () => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const hasFile = ra.fileSizeBytes != null && ra.fileSizeBytes > 0;
+
+  const handleSelectFile = () => fileInputRef.current?.click();
+
+  const handleFileChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > 15 * 1024 * 1024) { setError("File too large — 15MB max."); return; }
+    setUploading(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`${BASE}/api/risk-assessments/${ra.id}/file`, {
+        method: "POST",
+        body: form,
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Upload failed");
+      }
+      onChanged();
+    } catch (err: any) {
+      setError(err.message || "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleRemove = async () => {
+    if (!confirm("Remove the attached PDF? The document record itself will remain.")) return;
+    setUploading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${BASE}/api/risk-assessments/${ra.id}/file`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Remove failed");
+      onChanged();
+    } catch (err: any) {
+      setError(err.message || "Remove failed");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+            <ClipboardList className="w-5 h-5 text-primary" />
+          </div>
+          <div className="min-w-0">
+            {hasFile ? (
+              <>
+                <p className="font-semibold truncate">{ra.fileName ?? "Document.pdf"}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  PDF · {formatFileSize(ra.fileSizeBytes)}
+                  {ra.fileVersion && ` · v${ra.fileVersion}`}
+                  {ra.fileUploadedAt && ` · uploaded ${format(new Date(ra.fileUploadedAt), "d MMM yyyy")}`}
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="font-semibold">No PDF attached</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {isAdmin ? "Upload a PDF to make this document downloadable." : "Ask an admin to upload the PDF."}
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {hasFile && (
+            <>
+              <a
+                href={`${BASE}/api/risk-assessments/${ra.id}/file`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3 py-1.5 rounded-md bg-secondary hover:bg-secondary/80 text-secondary-foreground text-sm"
+              >
+                View
+              </a>
+              <a
+                href={`${BASE}/api/risk-assessments/${ra.id}/file?download=1`}
+                className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 text-sm"
+              >
+                Download
+              </a>
+            </>
+          )}
+          {isAdmin && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/pdf,.pdf"
+                onChange={handleFileChosen}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={handleSelectFile}
+                disabled={uploading}
+                className="px-3 py-1.5 rounded-md border border-border hover:bg-secondary/50 text-sm disabled:opacity-50"
+              >
+                {uploading ? "Uploading…" : hasFile ? "Replace" : "Upload PDF"}
+              </button>
+              {hasFile && (
+                <button
+                  type="button"
+                  onClick={handleRemove}
+                  disabled={uploading}
+                  className="px-3 py-1.5 rounded-md border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 text-sm disabled:opacity-50"
+                >
+                  Remove
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+      {error && <p className="text-xs text-red-600 dark:text-red-400 mt-2">{error}</p>}
+    </div>
+  );
+}
+
 function RiskAssessmentDetail({
   id, userRole, currentUserName, onBack, onRequestComplete, externalRefreshKey,
 }: {
@@ -3401,6 +3590,13 @@ function RiskAssessmentDetail({
           )}
         </div>
       </div>
+
+      {/* Attached PDF + admin upload/replace */}
+      <DocumentFileSection
+        ra={ra}
+        isAdmin={isAdmin}
+        onChanged={() => setRefresh(r => r + 1)}
+      />
 
       {/* Body markdown — rendered as plain-text with line wrapping; no markdown lib yet */}
       {ra.bodyMarkdown && (

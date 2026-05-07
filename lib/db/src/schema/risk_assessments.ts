@@ -1,14 +1,27 @@
-import { pgTable, serial, text, integer, timestamp, date } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, date, customType } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { usersTable } from "./users";
 
-// ─── Risk assessment documents ──────────────────────────────────────────────
-// Each row is one risk assessment: the Fire Risk Assessment, the General Safety
-// Risk Assessment, etc. The body is free-form markdown; structured controls live
-// on complianceActionsTable.
+// Custom Drizzle type for Postgres `bytea` — stored / returned as Buffer.
+const bytea = customType<{ data: Buffer; notNull: false; default: false }>({
+  dataType() {
+    return "bytea";
+  },
+});
+
+// ─── Documents repository ───────────────────────────────────────────────────
+// Originally created as risk_assessments. Now stores any compliance-tracked
+// document: risk assessments (fire/food/general), insurance policies,
+// certifications, licences, SOPs, etc. The table name is preserved for
+// backwards compatibility but the user-facing label is "Documents".
+//
+// Metadata fields (review frequency, last reviewed, next review due) drive the
+// compliance dashboard. Files are stored inline as bytea — PDFs only, ~200KB–
+// 1MB typical, 15MB cap enforced at the upload route.
 export const riskAssessmentsTable = pgTable("risk_assessments", {
   id: serial("id").primaryKey(),
-  // "fire" | "food_safety" | "general_safety" | "other"
+  // Free-text category. Known values: fire | food_safety | general_safety |
+  // insurance | certification | licence | sop | other.
   assessmentType: text("assessment_type").notNull(),
   title: text("title").notNull(),
   bodyMarkdown: text("body_markdown").notNull().default(""),
@@ -20,6 +33,14 @@ export const riskAssessmentsTable = pgTable("risk_assessments", {
   lastReviewedByUserId: integer("last_reviewed_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
   lastReviewedByName: text("last_reviewed_by_name"),
   reviewerQualifications: text("reviewer_qualifications"),
+  // File storage — NULL when no file attached (e.g. body is markdown-only).
+  fileBlob: bytea("file_blob"),
+  fileMime: text("file_mime"),
+  fileName: text("file_name"),
+  fileSizeBytes: integer("file_size_bytes"),
+  fileVersion: text("file_version"),
+  fileUploadedAt: timestamp("file_uploaded_at"),
+  originalIssueDate: date("original_issue_date"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

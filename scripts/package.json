@@ -9,6 +9,7 @@
     "import-kanbans:commit": "tsx ./src/import-kanbans.ts --commit",
     "push-kanban-import": "tsx ./src/push-kanban-import.ts",
     "push-kanban-import:prod": "tsx ./src/push-kanban-import.ts --production",
+    "seed-documents": "tsx ./src/seed-documents.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
