@@ -2962,28 +2962,10 @@ function PlanDetailHeader({
           </div>
         </div>
 
-        {/* Desktop: inline buttons */}
-        <div className="hidden lg:flex items-center gap-1.5 flex-wrap justify-end shrink-0">
-          {actions.map(a => (
-            <button
-              key={a.key}
-              onClick={() => { a.onClick(); }}
-              disabled={a.disabled}
-              className={cn(
-                "px-3 py-1.5 text-xs rounded-lg font-medium flex items-center gap-1.5 transition-colors border whitespace-nowrap disabled:opacity-50",
-                a.key === "delete" || a.key === "reset"
-                  ? "border-red-200 dark:border-red-900/40 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
-                  : "border-border bg-secondary text-secondary-foreground hover:bg-secondary/80"
-              )}
-            >
-              {a.icon}
-              {a.key !== "delete" && a.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Mobile/Tablet: burger menu */}
-        <div className="lg:hidden relative shrink-0">
+        {/* Burger menu — used at every breakpoint so iPad landscape (1080px,
+            above the lg threshold) doesn't get the inline button row that
+            squashes the title/batch/date down the page. */}
+        <div className="relative shrink-0">
           <button
             onClick={() => setMenuOpen(o => !o)}
             className="p-2.5 rounded-xl border border-border bg-card hover:bg-secondary/80 transition-colors"

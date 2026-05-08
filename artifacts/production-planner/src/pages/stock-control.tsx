@@ -489,81 +489,82 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center gap-4 px-6 py-5 border-b border-border">
-        <div className={cn("p-3 rounded-xl", colors.bg)}>
-          <ZoneIcon zone={location.zone} className={cn("w-5 h-5", colors.icon)} />
-        </div>
-        <div className="flex-1 min-w-0">
-          <h2 className="font-display font-bold text-xl leading-tight">{location.label}</h2>
-          <p className="text-xs text-muted-foreground capitalize mt-0.5">{location.zone} storage</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="text-right shrink-0">
-            <p className="text-3xl font-display font-bold tabular-nums leading-none">
-              {Math.round(
-                bulkEdit
-                  ? location.items.reduce((s, i) => {
-                      const v = parseFloat(bulkValues[i.stockEntryIds[0]] ?? String(i.qty));
-                      return s + (isNaN(v) ? i.qty : v);
-                    }, 0)
-                  : totalQty
-              ).toLocaleString()}
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
+      {/* Header — title row + actions row. Two rows because at iPad width
+          (~360px panel) the action buttons don't fit alongside the title. */}
+      <div className="px-3 py-2.5 border-b border-border space-y-2">
+        <div className="flex items-center gap-2.5">
+          <div className={cn("p-2 rounded-lg flex-shrink-0", colors.bg)}>
+            <ZoneIcon zone={location.zone} className={cn("w-4 h-4", colors.icon)} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="font-display font-bold text-base leading-tight truncate">{location.label}</h2>
+            <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+              <span className="capitalize">{location.zone} storage</span>
+              <span className="mx-1.5 text-border">·</span>
+              <span className="font-semibold tabular-nums text-foreground">
+                {Math.round(
+                  bulkEdit
+                    ? location.items.reduce((s, i) => {
+                        const v = parseFloat(bulkValues[i.stockEntryIds[0]] ?? String(i.qty));
+                        return s + (isNaN(v) ? i.qty : v);
+                      }, 0)
+                    : totalQty
+                ).toLocaleString()}
+              </span>{" "}packs
+              <span className="mx-1.5 text-border">·</span>
               {location.items.length} {location.items.length === 1 ? "item" : "items"}
             </p>
           </div>
-
-          {bulkEdit ? (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={exitBulkEdit}
-                disabled={bulkSaving}
-                className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-50"
-              >
-                <X className="w-3.5 h-3.5" /> Cancel
-              </button>
-              <button
-                onClick={saveAll}
-                disabled={bulkSaving}
-                className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 font-medium"
-              >
-                {bulkSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                Save All
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              {isFridgeLocation && (
-                <ProcessFulfilledTodayButton size="sm" />
-              )}
-              {location.items.length > 0 && (
-                <button
-                  onClick={enterBulkEdit}
-                  className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-                  title="Edit all quantities at once"
-                >
-                  <LockOpen className="w-3.5 h-3.5" />
-                  Unlock
-                </button>
-              )}
-              <button
-                onClick={() => { setAddingStock(a => !a); setEditingEntryId(null); setDeletingEntryId(null); setStockError(null); }}
-                className={cn(
-                  "flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border transition-colors",
-                  addingStock
-                    ? "bg-primary/10 text-primary border-primary/30"
-                    : "text-muted-foreground hover:text-foreground border-border hover:bg-secondary"
-                )}
-                title="Add stock entry"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Add Stock
-              </button>
-            </div>
-          )}
         </div>
+
+        {bulkEdit ? (
+          <div className="flex items-center gap-1.5 justify-end">
+            <button
+              onClick={exitBulkEdit}
+              disabled={bulkSaving}
+              className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-50"
+            >
+              <X className="w-3.5 h-3.5" /> Cancel
+            </button>
+            <button
+              onClick={saveAll}
+              disabled={bulkSaving}
+              className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 font-medium"
+            >
+              {bulkSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              Save All
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 flex-wrap justify-end">
+            {isFridgeLocation && (
+              <ProcessFulfilledTodayButton size="sm" />
+            )}
+            {location.items.length > 0 && (
+              <button
+                onClick={enterBulkEdit}
+                className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
+                title="Edit all quantities at once"
+              >
+                <LockOpen className="w-3.5 h-3.5" />
+                Unlock
+              </button>
+            )}
+            <button
+              onClick={() => { setAddingStock(a => !a); setEditingEntryId(null); setDeletingEntryId(null); setStockError(null); }}
+              className={cn(
+                "flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border transition-colors whitespace-nowrap",
+                addingStock
+                  ? "bg-primary/10 text-primary border-primary/30"
+                  : "text-muted-foreground hover:text-foreground border-border hover:bg-secondary"
+              )}
+              title="Add stock entry"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add Stock
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Add Stock Form */}
@@ -1027,8 +1028,10 @@ export default function StockControl() {
   const selectedLocation = data?.locations.find(l => l.key === selectedKey) ?? null;
 
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)] -mt-0">
-      <div className="px-6 pt-6 pb-0 flex-shrink-0">
+    // Break out of the global Layout padding (p-4 md:p-8 + pb-[200px]) so
+    // stock control gets the full iPad width with only ~12px breathing room.
+    <div className="flex flex-col h-[calc(100vh-4rem)] -mx-4 md:-mx-8 -mt-4 md:-mt-8 -mb-[200px]">
+      <div className="px-3 pt-3 pb-0 flex-shrink-0">
         <PageHeader
           title="Stock Control"
           description="Current stock levels across all storage locations"
@@ -1051,14 +1054,14 @@ export default function StockControl() {
           <span className="text-sm">Loading stock levels…</span>
         </div>
       ) : error ? (
-        <div className="m-6 glass-panel rounded-2xl p-8 text-center text-destructive text-sm">
+        <div className="m-3 glass-panel rounded-2xl p-8 text-center text-destructive text-sm">
           Failed to load stock data. Please refresh and try again.
         </div>
       ) : (
-        <div className="flex flex-1 gap-4 px-6 pb-6 pt-4 overflow-hidden min-h-0">
+        <div className="flex flex-1 gap-3 px-3 pb-3 pt-2 overflow-hidden min-h-0">
 
           {/* ── LEFT — location list ─────────────────────────────── */}
-          <div className="w-64 xl:w-72 flex-shrink-0 glass-panel rounded-2xl overflow-hidden flex flex-col">
+          <div className="w-52 xl:w-60 flex-shrink-0 glass-panel rounded-2xl overflow-hidden flex flex-col">
             <div className="px-4 py-3 border-b border-border flex items-center justify-between">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Locations</p>
               <div className="flex items-center gap-1">

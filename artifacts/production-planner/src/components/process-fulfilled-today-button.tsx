@@ -104,7 +104,7 @@ export function ProcessFulfilledTodayButton({ className, size = "md" }: Props) {
   });
 
   const sizeClasses = size === "sm"
-    ? "text-xs px-3 py-2 rounded-lg gap-1.5"
+    ? "text-xs px-2.5 py-1.5 rounded-lg gap-1 whitespace-nowrap"
     : "text-sm px-5 py-2.5 rounded-xl gap-2 font-medium";
   const iconSize = size === "sm" ? "w-3.5 h-3.5" : "w-4 h-4";
 
