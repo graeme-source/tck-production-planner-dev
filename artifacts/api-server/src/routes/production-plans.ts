@@ -605,6 +605,14 @@ router.get("/calculate", async (req, res) => {
   // close of business, regardless of whether planDate is tomorrow or
   // three days out.
   const todayStr = new Date().toISOString().slice(0, 10);
+  // Shopify orders are tagged with the DELIVERY date, which TCK ships out
+  // the day before (today's dispatch → tomorrow's delivery). Mirrors the
+  // packing-station logic at packing-station.tsx:99-101 so the audit
+  // panel and the packing screen agree on which tag identifies "today's
+  // outbound work".
+  const deliveryTodayDate = new Date(`${todayStr}T12:00:00Z`);
+  deliveryTodayDate.setUTCDate(deliveryTodayDate.getUTCDate() + 1);
+  const deliveryTodayStr = deliveryTodayDate.toISOString().slice(0, 10);
   const coreMenuOnly = await getFactoryNumberCoreMenuOnly();
 
   const todayPlanItems = await db
@@ -667,7 +675,7 @@ router.get("/calculate", async (req, res) => {
     unmappedVariantIds: string[];
     error: string | null;
   } = {
-    tagQueried: todayStr,
+    tagQueried: deliveryTodayStr,
     unfulfilledOrderCount: 0,
     totalLineItems: 0,
     mappedLineItems: 0,
@@ -676,7 +684,7 @@ router.get("/calculate", async (req, res) => {
     error: null,
   };
   try {
-    const unfulfilled = await getUnfulfilledOrdersByTag(todayStr);
+    const unfulfilled = await getUnfulfilledOrdersByTag(deliveryTodayStr);
     fulfilmentDiagnostics.unfulfilledOrderCount = unfulfilled.length;
     if (unfulfilled.length > 0) {
       const mappingRows = await db.execute<{
