@@ -625,6 +625,15 @@ router.post("/postcode-validate-tag", requireManagerOrAdmin, async (req: Request
   }
 });
 
+// Marker tag we set on every Shopify order we've decremented production_fridge
+// stock for. Two paths set it: the in-app fulfil flow at POST /orders/:id/complete
+// and the manual "Process Fulfilled Today" button below. Both consult the tag
+// (via Shopify's `-tag:` search filter) to avoid double-decrementing the same
+// order — historically /complete used a separate shopify_fulfilment_tracking
+// table for this, which the button never read, so an order fulfilled in-app
+// would still be re-decremented on the next button click.
+const FACTORY_NUMBER_TAG = "factory-number-adjusted";
+
 const CompleteOrderBody = z.object({
   consignmentNumber: z.string().min(1),
   trackingUrl: z.string().optional(),
@@ -648,8 +657,11 @@ router.post("/orders/:id/complete", requireManagerOrAdmin, async (req: Request, 
   // Factory-number accounting loop: decrement production_fridge stock
   // for the recipes in this order, BEFORE we call Shopify's fulfil
   // endpoint. If this step fails we log and keep going — the dispatch
-  // must not be blocked by an inventory bug. The tracking table
-  // dedupes against the safety-net poller so no double-decrement.
+  // must not be blocked by an inventory bug. After a successful decrement
+  // we tag the order with FACTORY_NUMBER_TAG so the manual "Process
+  // Fulfilled Today" button skips it (it filters its GraphQL query by
+  // -tag:FACTORY_NUMBER_TAG). Without the tag, same-day clicks of the
+  // button after an in-app fulfil would re-decrement the same order.
   try {
     const [existing] = await db
       .select({ shopifyOrderId: shopifyFulfilmentTrackingTable.shopifyOrderId })
@@ -670,6 +682,18 @@ router.post("/orders/:id/complete", requireManagerOrAdmin, async (req: Request, 
           fulfilledAt: new Date(),
           source: "immediate",
         }).onConflictDoNothing();
+        // Tag the order so the Process Fulfilled Today button skips it.
+        // Tag-write failure is logged but non-fatal — the tracking table
+        // still dedupes a same-process retry, and the worst case is one
+        // extra warning the next time someone clicks the button (which
+        // will then double-decrement). We accept that small risk over
+        // failing the customer-facing dispatch.
+        try {
+          await addTagToOrder(orderId, order.tags ?? "", FACTORY_NUMBER_TAG);
+        } catch (tagErr) {
+          const msg = tagErr instanceof Error ? tagErr.message : String(tagErr);
+          console.warn(`[Fulfilment] FACTORY_NUMBER_TAG write FAILED for order ${orderId} — Process Fulfilled Today may re-decrement this order:`, msg);
+        }
       }
     }
   } catch (err) {
@@ -699,8 +723,9 @@ router.post("/orders/:id/complete", requireManagerOrAdmin, async (req: Request, 
 // Dedup lives on the Shopify order itself (the tag), NOT in our local
 // shopify_fulfilment_tracking table — Shopify is the source of truth,
 // so a DB wipe or staging restore can't cause double-decrements.
-
-const FACTORY_NUMBER_TAG = "factory-number-adjusted";
+// FACTORY_NUMBER_TAG is declared above (used by both /orders/:id/complete and
+// the button — single source of truth for "this order's already been
+// decremented, don't decrement again").
 
 /**
  * Compute midnight of the current London calendar day as a UTC ISO
