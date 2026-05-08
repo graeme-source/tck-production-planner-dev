@@ -500,6 +500,33 @@ router.get("/calculate", async (req, res) => {
     if (supplierOrderMap[Number(sid)].lines.length === 0) delete supplierOrderMap[Number(sid)];
   }
 
+  // Suppliers configured with orderFrequency=weekly + orderDays only place
+  // orders on those weekdays — A.D.Maria (Tuesday) was reappearing on every
+  // plan because we filtered ingredients by stockCheckDay but never consulted
+  // the supplier's own order day. Drop the supplier entirely on non-scheduled
+  // weekdays: the operator literally can't order from them today, and any
+  // "shortfall" their lines display is calculated from stock-counts that are
+  // themselves on a weekly-stock-check cadence (so the number is unreliable
+  // off-schedule and shouldn't drive a panic order). If a real emergency
+  // requires calling the supplier off-schedule, the operator can still add a
+  // PO manually from the suppliers page. Daily-frequency suppliers
+  // unaffected.
+  const orderDaysSet = (raw: string | null): Set<string> | null => {
+    if (!raw) return null;
+    const set = new Set(raw.split(",").map(d => d.trim()).filter(Boolean));
+    return set.size > 0 ? set : null;
+  };
+  for (const sid of Object.keys(supplierOrderMap)) {
+    const numericSid = Number(sid);
+    const fullSupplier = supplierLookup[numericSid];
+    if (!fullSupplier) continue;
+    if (fullSupplier.orderFrequency !== "weekly") continue;
+    const days = orderDaysSet(fullSupplier.orderDays);
+    if (!days) continue;
+    if (days.has(todayDayName)) continue;
+    delete supplierOrderMap[numericSid];
+  }
+
   const suppliers = Object.values(supplierOrderMap).sort((a, b) => a.supplier.name.localeCompare(b.supplier.name));
 
   console.log(`[Orders] Calculate for plan ${planId}: ${Object.keys(ingredientMap).length} ingredients resolved, ${ingredientIds.length} looked up, ${placedKeys.size} already placed, ${suppliers.length} suppliers with orders: ${suppliers.map(s => `${s.supplier.name} (${s.lines.length} lines)`).join(", ")}`);
