@@ -492,7 +492,11 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
             // "Produced" is the full two-pack output coming off the ovens —
             // wonky packs count toward it, they're just tracked separately
             // afterwards. Matches the oven station's Net + Wonky = Total.
-            const produced = net + (item.wonlyCount ?? 0);
+            // Use wonlyTotal (cumulative) so the count survives wonky-to-freezer
+            // transfer and the auto-freeze on wrapping-complete. Falls back to
+            // wonlyCount if the field isn't present (older API client cache).
+            const wonkiesRecorded = ((item as ProductionPlanItem & { wonlyTotal?: number }).wonlyTotal ?? item.wonlyCount ?? 0);
+            const produced = net + wonkiesRecorded;
             const eightPkCount = item.eightPackBagCount ?? 0;
             const eightPkFridge = item.fridgeEightPackQty ?? 0;
             const eightPkRemaining = eightPkCount - eightPkFridge;
@@ -621,9 +625,9 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                           <p className="text-xs text-muted-foreground font-medium mb-0.5">Wonky</p>
                           <p className={cn(
                             "text-3xl font-bold tabular-nums leading-tight",
-                            (item.wonlyCount ?? 0) > 0 ? "text-red-500" : "text-muted-foreground/60",
+                            wonkiesRecorded > 0 ? "text-red-500" : "text-muted-foreground/60",
                           )}>
-                            {item.wonlyCount ?? 0}
+                            {wonkiesRecorded}
                           </p>
                         </div>
                         {eightPkCount === 0 && (

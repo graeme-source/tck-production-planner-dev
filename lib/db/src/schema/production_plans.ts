@@ -34,6 +34,11 @@ export const productionPlanItemsTable = pgTable("production_plan_items", {
   batchesTarget: integer("batches_target").notNull().default(0),
   batchesComplete: integer("batches_complete").notNull().default(0),
   wonlyCount: integer("wonly_count").notNull().default(0),
+  // Cumulative wonky count for display. wonlyCount is reset to 0 when wonkies
+  // are transferred to the freezer (manual or auto-on-completion); wonlyTotal
+  // is not, so the wrapping station can keep showing how many wonkies were
+  // recorded for a recipe today.
+  wonlyTotal: integer("wonly_total").notNull().default(0),
   wrappingComplete: boolean("wrapping_complete").notNull().default(false),
   fridgeQty: integer("fridge_qty").notNull().default(0),
   freezerQty: integer("freezer_qty").notNull().default(0),

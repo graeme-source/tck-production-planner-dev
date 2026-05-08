@@ -156,6 +156,25 @@ async function runStartupMigrations() {
       ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS short_count INTEGER NOT NULL DEFAULT 0
     `);
     await db.execute(sql`
+      ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS wonly_total INTEGER NOT NULL DEFAULT 0
+    `);
+    // Best-effort backfill so today's plans don't all show "0 wonkies recorded"
+    // straight after the migration. For items where wrapping has been marked
+    // complete, the auto-freeze has already moved wonkies into freezer_qty so
+    // we approximate wonly_total = wonly_count + freezer_qty. Pre-completion
+    // items just take wonly_count. May slightly over-count for items where
+    // freezer_qty came from direct freezer transfers rather than wonkies, but
+    // that's a minor display artefact compared to losing the count entirely.
+    await db.execute(sql`
+      UPDATE production_plan_items
+      SET wonly_total = CASE
+        WHEN wrapping_complete THEN wonly_count + freezer_qty
+        ELSE wonly_count
+      END
+      WHERE wonly_total = 0
+        AND (wonly_count > 0 OR (wrapping_complete AND freezer_qty > 0))
+    `);
+    await db.execute(sql`
       ALTER TABLE recipe_ingredients ADD COLUMN IF NOT EXISTS is_topping BOOLEAN NOT NULL DEFAULT FALSE
     `);
     await db.execute(sql`

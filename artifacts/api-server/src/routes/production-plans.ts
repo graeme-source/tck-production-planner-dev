@@ -615,6 +615,7 @@ router.get("/calculate", async (req, res) => {
       fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
       freezerQty: productionPlanItemsTable.freezerQty,
       wonlyCount: productionPlanItemsTable.wonlyCount,
+      wonlyTotal: productionPlanItemsTable.wonlyTotal,
       wrappingComplete: productionPlanItemsTable.wrappingComplete,
       portionsPerBatch: recipesTable.portionsPerBatch,
       packSize: recipesTable.packSize,
@@ -1481,6 +1482,7 @@ router.post("/:id/add-mac-cheese", validate(AddMacCheeseBody), async (req, res) 
       batchesTarget: productionPlanItemsTable.batchesTarget,
       batchesComplete: productionPlanItemsTable.batchesComplete,
       wonlyCount: productionPlanItemsTable.wonlyCount,
+      wonlyTotal: productionPlanItemsTable.wonlyTotal,
       wrappingComplete: productionPlanItemsTable.wrappingComplete,
       fridgeQty: productionPlanItemsTable.fridgeQty,
       freezerQty: productionPlanItemsTable.freezerQty,
@@ -1778,6 +1780,7 @@ router.get("/:id", async (req, res) => {
       batchesTarget: productionPlanItemsTable.batchesTarget,
       batchesComplete: productionPlanItemsTable.batchesComplete,
       wonlyCount: productionPlanItemsTable.wonlyCount,
+      wonlyTotal: productionPlanItemsTable.wonlyTotal,
       wrappingComplete: productionPlanItemsTable.wrappingComplete,
       fridgeQty: productionPlanItemsTable.fridgeQty,
       freezerQty: productionPlanItemsTable.freezerQty,
@@ -4291,14 +4294,23 @@ router.post("/:id/items/:itemId/wonly", async (req, res) => {
     return;
   }
 
-  // Atomic increment — avoids read-modify-write race under concurrent taps
+  // Atomic increment — avoids read-modify-write race under concurrent taps.
+  // wonly_total tracks the cumulative count for display (so the wrapping
+  // station still shows the recorded number after wonkies are transferred to
+  // the freezer); wonly_count is the live "currently on the rack" counter.
   const [updated] = await db
     .update(productionPlanItemsTable)
-    .set({ wonlyCount: sql`${productionPlanItemsTable.wonlyCount} + 1` })
+    .set({
+      wonlyCount: sql`${productionPlanItemsTable.wonlyCount} + 1`,
+      wonlyTotal: sql`${productionPlanItemsTable.wonlyTotal} + 1`,
+    })
     .where(eq(productionPlanItemsTable.id, itemId))
-    .returning({ wonlyCount: productionPlanItemsTable.wonlyCount });
+    .returning({
+      wonlyCount: productionPlanItemsTable.wonlyCount,
+      wonlyTotal: productionPlanItemsTable.wonlyTotal,
+    });
 
-  res.json({ itemId, wonlyCount: updated.wonlyCount });
+  res.json({ itemId, wonlyCount: updated.wonlyCount, wonlyTotal: updated.wonlyTotal });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -4322,14 +4334,22 @@ router.delete("/:id/items/:itemId/wonly", async (req, res) => {
     return;
   }
 
-  // Atomic decrement with GREATEST guard so DB can never go below 0
+  // Atomic decrement with GREATEST guard so DB can never go below 0. Decrement
+  // wonly_total alongside so an undo of a mistaken click doesn't leave the
+  // recorded total inflated.
   const [updated] = await db
     .update(productionPlanItemsTable)
-    .set({ wonlyCount: sql`GREATEST(${productionPlanItemsTable.wonlyCount} - 1, 0)` })
+    .set({
+      wonlyCount: sql`GREATEST(${productionPlanItemsTable.wonlyCount} - 1, 0)`,
+      wonlyTotal: sql`GREATEST(${productionPlanItemsTable.wonlyTotal} - 1, 0)`,
+    })
     .where(eq(productionPlanItemsTable.id, itemId))
-    .returning({ wonlyCount: productionPlanItemsTable.wonlyCount });
+    .returning({
+      wonlyCount: productionPlanItemsTable.wonlyCount,
+      wonlyTotal: productionPlanItemsTable.wonlyTotal,
+    });
 
-  res.json({ itemId, wonlyCount: updated.wonlyCount });
+  res.json({ itemId, wonlyCount: updated.wonlyCount, wonlyTotal: updated.wonlyTotal });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -5200,6 +5220,7 @@ router.get("/:id/packing", async (req, res) => {
       batchesTarget: productionPlanItemsTable.batchesTarget,
       batchesComplete: productionPlanItemsTable.batchesComplete,
       wonlyCount: productionPlanItemsTable.wonlyCount,
+      wonlyTotal: productionPlanItemsTable.wonlyTotal,
       wrappingComplete: productionPlanItemsTable.wrappingComplete,
       fridgeQty: productionPlanItemsTable.fridgeQty,
       fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
