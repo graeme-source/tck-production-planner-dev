@@ -612,6 +612,10 @@ router.get("/calculate", async (req, res) => {
       recipeId: productionPlanItemsTable.recipeId,
       batchesTarget: productionPlanItemsTable.batchesTarget,
       fridgeQty: productionPlanItemsTable.fridgeQty,
+      fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
+      freezerQty: productionPlanItemsTable.freezerQty,
+      wonlyCount: productionPlanItemsTable.wonlyCount,
+      wrappingComplete: productionPlanItemsTable.wrappingComplete,
       portionsPerBatch: recipesTable.portionsPerBatch,
       packSize: recipesTable.packSize,
     })
@@ -630,7 +634,21 @@ router.get("/calculate", async (req, res) => {
     const packSize = Number(row.packSize) || 1;
     const packsPerBatch = portionsPerBatch / packSize;
     const targetPacks = (row.batchesTarget ?? 0) * packsPerBatch;
-    const remaining = Math.max(0, targetPacks - (row.fridgeQty ?? 0));
+    // If the wrapping station has been marked complete for this item, no
+    // more packs are coming in — irrespective of whether the count tallies.
+    // Otherwise subtract everything that's already been accounted for: packs
+    // wrapped to the production fridge, packs in 8-pack overflow, packs sent
+    // to the freezer (wonkies + auto-freeze on completion), and packs still
+    // sitting on the wonky rack waiting to move. Without the wonky / freezer
+    // subtractions, recipes with wonkies were stuck reading "still N to wrap"
+    // forever — those packs were never going to land in the fridge.
+    const accountedFor = (row.fridgeQty ?? 0)
+      + (row.fridgeEightPackQty ?? 0)
+      + (row.freezerQty ?? 0)
+      + (row.wonlyCount ?? 0);
+    const remaining = row.wrappingComplete
+      ? 0
+      : Math.max(0, targetPacks - accountedFor);
     remainingWrappingPacksToday[row.recipeId] = (remainingWrappingPacksToday[row.recipeId] ?? 0) + remaining;
   }
 
