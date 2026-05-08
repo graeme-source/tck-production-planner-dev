@@ -129,7 +129,7 @@ async function loadVariantMap(): Promise<Map<string, VariantMapping>> {
   if (mappingCache && Date.now() - mappingCacheLoadedAt < MAPPING_CACHE_TTL_MS) {
     return mappingCache;
   }
-  const rows = await db.execute<{
+  const result = await db.execute<{
     recipe_id: number;
     shopify_variant_id: string;
     wonky_variant_id: string | null;
@@ -140,8 +140,11 @@ async function loadVariantMap(): Promise<Map<string, VariantMapping>> {
     INNER JOIN recipes r ON r.id = m.recipe_id
   `);
 
+  // node-postgres returns { rows, rowCount } — not a directly iterable array.
+  // Bug: iterating the result object threw "rows is not iterable" the first
+  // time an operator clicked Process Fulfilled Today on the live server.
   const map = new Map<string, VariantMapping>();
-  for (const row of rows) {
+  for (const row of result.rows) {
     const entry: VariantMapping = { recipeId: row.recipe_id, isCoreMenu: row.is_core_menu };
     if (row.shopify_variant_id) map.set(String(row.shopify_variant_id), entry);
     if (row.wonky_variant_id) map.set(String(row.wonky_variant_id), entry);
