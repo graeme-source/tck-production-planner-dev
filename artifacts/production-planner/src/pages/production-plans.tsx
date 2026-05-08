@@ -436,6 +436,94 @@ async function fetchCalculation(planDate: string): Promise<CalcResponse> {
   return res.json();
 }
 
+// Per-recipe breakdown of the Factory Number formula. Designed to be opened
+// during plan-build so the operator can physically walk to the fridge and
+// verify each input. Pulls straight from the live /calculate response so it
+// never reflects a local fridgeStock override the user has typed in.
+function FactoryNumberAuditDialog({
+  open,
+  onClose,
+  recipes,
+  planDate,
+}: {
+  open: boolean;
+  onClose: () => void;
+  recipes: CalcRecipe[];
+  planDate: string;
+}) {
+  const todayLabel = format(new Date(), "EEE d MMM");
+  const sorted = [...recipes].sort((a, b) => a.recipeName.localeCompare(b.recipeName));
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Factory Number — calculation breakdown</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 text-sm">
+          <div className="rounded-lg border border-border bg-secondary/40 p-3 space-y-1">
+            <p className="font-medium">Formula</p>
+            <p className="font-mono text-xs">
+              Factory Number = max(0, fridge stock + remaining wrapping today − remaining fulfilment today)
+            </p>
+            <p className="text-xs text-muted-foreground">
+              "Today" is real wall-clock today ({todayLabel}), not the plan date ({format(parseISO(planDate), "EEE d MMM")}). The Factory Number is where the fridge will be by close of business today, before tomorrow's plan starts.
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-border overflow-hidden">
+            <table className="w-full text-xs tabular-nums">
+              <thead className="bg-secondary/40 text-muted-foreground">
+                <tr>
+                  <th className="text-left py-2 px-3 font-medium">Recipe</th>
+                  <th className="text-center py-2 px-2 font-medium" title="Latest production_fridge stock_entry reading">Fridge now</th>
+                  <th className="text-center py-2 px-2 font-medium text-green-600" title="Packs still to be wrapped today across active plans">+ Wrap left</th>
+                  <th className="text-center py-2 px-2 font-medium text-red-500" title="Today's unfulfilled Shopify orders mapped to this recipe">− Fulfil left</th>
+                  <th className="text-center py-2 px-2 font-medium text-foreground" title="Predicted end-of-today fridge stock = the Factory Number">= Factory No.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map(r => {
+                  const fridge = r.fridgeStock ?? 0;
+                  const wrap = r.remainingWrappingPacksToday ?? 0;
+                  const fulfil = r.remainingFulfilmentPacksToday ?? 0;
+                  const fn = r.estimatedFactoryNumber ?? 0;
+                  const expected = Math.max(0, fridge + wrap - fulfil);
+                  const mismatch = !r.isCoreMenu ? false : fn !== expected;
+                  return (
+                    <tr key={r.recipeId} className="border-t border-border">
+                      <td className="py-1.5 px-3">
+                        <div className="flex items-center gap-2">
+                          {r.color && <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: r.color }} />}
+                          <span className={cn(!r.isCoreMenu && "text-muted-foreground")}>{r.recipeName}</span>
+                          {!r.isCoreMenu && <span className="text-[10px] text-muted-foreground">(non-core)</span>}
+                        </div>
+                      </td>
+                      <td className="text-center py-1.5 px-2">{Math.round(fridge)}</td>
+                      <td className="text-center py-1.5 px-2 text-green-600">{wrap > 0 ? `+${Math.round(wrap)}` : <span className="text-muted-foreground">—</span>}</td>
+                      <td className="text-center py-1.5 px-2 text-red-500">{fulfil > 0 ? `−${Math.round(fulfil)}` : <span className="text-muted-foreground">—</span>}</td>
+                      <td className={cn(
+                        "text-center py-1.5 px-2 font-semibold",
+                        mismatch && "text-amber-600",
+                      )} title={mismatch ? `Server returned ${fn} but the inputs sum to ${expected} — non-core legacy formula or rounding` : undefined}>
+                        {Math.round(fn)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            <span className="font-medium">How to verify:</span> walk to the production fridge, count the actual packs of a recipe, then check the wrapping station's outstanding work-to-do and the fulfilment station's pending orders for that recipe. The three numbers in this row should match what you observe.
+          </p>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanDialogProps) {
   const { state: authState } = useAuth();
   const userRole = authState.status === "authenticated" ? authState.user.role : undefined;
@@ -460,6 +548,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   // the server-side flag flips to false, this automatically updates
   // on the next dialog open without a frontend rebuild.
   const [factoryConfig, setFactoryConfig] = useState<{ coreMenuOnly: boolean } | null>(null);
+  const [auditOpen, setAuditOpen] = useState(false);
   useEffect(() => {
     if (!open) return;
     fetch("/api/stock-entries/factory-number-config", { credentials: "include" })
@@ -1125,6 +1214,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   };
 
   return (
+    <>
     <Dialog open={open} onOpenChange={(v) => !v && closeWithGuard()}>
       <DialogContent className="max-w-[98vw] w-[1600px] bg-card border-border rounded-2xl max-h-[95vh] overflow-hidden flex flex-col p-0">
         <DialogHeader className="px-6 pt-5 pb-4 border-b border-border flex-shrink-0">
@@ -1380,7 +1470,17 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                               title="Predicted packs in the fridge at end-of-today = live + remaining wrapping − remaining fulfilment"
                             >
                               <div className="flex flex-col items-center gap-0.5">
-                                <span>Factory Number</span>
+                                <div className="flex items-center gap-1">
+                                  <span>Factory Number</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setAuditOpen(true)}
+                                    className="text-muted-foreground hover:text-foreground transition-colors"
+                                    title="Show calculation breakdown"
+                                  >
+                                    <Info className="w-3 h-3" />
+                                  </button>
+                                </div>
                                 {factoryConfig && (
                                   <span className="text-[9px] text-primary/80 font-normal tracking-tight">
                                     {factoryConfig.coreMenuOnly ? "Core menu · predicted" : "Predicted"}
@@ -1569,6 +1669,13 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
         </div>
       </DialogContent>
     </Dialog>
+    <FactoryNumberAuditDialog
+      open={auditOpen}
+      onClose={() => setAuditOpen(false)}
+      recipes={calcData?.recipes ?? []}
+      planDate={planDate}
+    />
+    </>
   );
 }
 
@@ -1594,6 +1701,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const [dateWarning, setDateWarning] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [addRecipeId, setAddRecipeId] = useState<string>("");
+  const [auditOpen, setAuditOpen] = useState(false);
 
   const [items, setItems] = useState<PlanItem[]>(() =>
     (plan.items ?? []).map(it => ({
@@ -2024,6 +2132,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const availableToAdd = ((allRecipes as Recipe[] | undefined) ?? []).filter(r => !items.some(it => it.recipeId === r.id));
 
   return (
+    <>
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-[95vw] w-[1200px] bg-card border-border rounded-2xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader className="pb-4 border-b border-border flex-shrink-0">
@@ -2170,7 +2279,19 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
                           />
                         </th>
                         <th className="py-2 px-2 text-left font-medium text-muted-foreground">Recipe</th>
-                        <th className="py-2 px-2 text-center font-medium text-muted-foreground min-w-[70px]">Factory Number</th>
+                        <th className="py-2 px-2 text-center font-medium text-muted-foreground min-w-[70px]">
+                          <div className="flex items-center justify-center gap-1">
+                            <span>Factory Number</span>
+                            <button
+                              type="button"
+                              onClick={() => setAuditOpen(true)}
+                              className="text-muted-foreground hover:text-foreground transition-colors"
+                              title="Show calculation breakdown"
+                            >
+                              <Info className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </th>
                         <th className="py-2 px-1 text-center font-medium text-muted-foreground min-w-[60px]">vs Next</th>
                         <th className="py-2 px-2 text-center font-medium text-red-500 min-w-[70px]">&minus; Dispatch</th>
                         <th className="py-2 px-2 text-center font-medium text-green-600 min-w-[70px]">+ Production</th>
@@ -2275,6 +2396,13 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
         />
       )}
     </Dialog>
+    <FactoryNumberAuditDialog
+      open={auditOpen}
+      onClose={() => setAuditOpen(false)}
+      recipes={editCalcData?.recipes ?? []}
+      planDate={planDate}
+    />
+    </>
   );
 }
 

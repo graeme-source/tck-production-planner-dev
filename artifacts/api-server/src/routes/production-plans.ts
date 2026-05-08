@@ -649,7 +649,13 @@ router.get("/calculate", async (req, res) => {
         INNER JOIN recipes r ON r.id = m.recipe_id
       `);
       const variantToRecipe = new Map<string, { recipeId: number; isCoreMenu: boolean }>();
-      for (const m of mappingRows) {
+      // node-postgres returns { rows, rowCount } from db.execute() — iterating
+      // the wrapper directly throws "rows is not iterable" and silently falls
+      // through to the catch below, leaving remainingFulfilmentPacksToday
+      // empty. That overstates the Factory Number by exactly today's
+      // unfulfilled-order count. Match the .rows defensive pattern used at
+      // lines 818 and 1170.
+      for (const m of mappingRows.rows ?? mappingRows) {
         if (m.shopify_variant_id) variantToRecipe.set(String(m.shopify_variant_id), { recipeId: m.recipe_id, isCoreMenu: m.is_core_menu });
         if (m.wonky_variant_id) variantToRecipe.set(String(m.wonky_variant_id), { recipeId: m.recipe_id, isCoreMenu: m.is_core_menu });
       }
