@@ -654,8 +654,30 @@ router.get("/calculate", async (req, res) => {
   }
 
   const remainingFulfilmentPacksToday: Record<number, number> = {};
+  // Diagnostics surfaced in the /calculate response so operators can see
+  // whether a discrepancy ("the audit panel says 0 fulfil-left but the
+  // dispatches page shows 2 packs to ship") is a Shopify tag-index lag, a
+  // missing variant mapping, or the core-menu-only flag filtering it out.
+  let fulfilmentDiagnostics: {
+    tagQueried: string;
+    unfulfilledOrderCount: number;
+    totalLineItems: number;
+    mappedLineItems: number;
+    skippedNonCoreLineItems: number;
+    unmappedVariantIds: string[];
+    error: string | null;
+  } = {
+    tagQueried: todayStr,
+    unfulfilledOrderCount: 0,
+    totalLineItems: 0,
+    mappedLineItems: 0,
+    skippedNonCoreLineItems: 0,
+    unmappedVariantIds: [],
+    error: null,
+  };
   try {
     const unfulfilled = await getUnfulfilledOrdersByTag(todayStr);
+    fulfilmentDiagnostics.unfulfilledOrderCount = unfulfilled.length;
     if (unfulfilled.length > 0) {
       const mappingRows = await db.execute<{
         recipe_id: number;
@@ -678,18 +700,30 @@ router.get("/calculate", async (req, res) => {
         if (m.shopify_variant_id) variantToRecipe.set(String(m.shopify_variant_id), { recipeId: m.recipe_id, isCoreMenu: m.is_core_menu });
         if (m.wonky_variant_id) variantToRecipe.set(String(m.wonky_variant_id), { recipeId: m.recipe_id, isCoreMenu: m.is_core_menu });
       }
+      const unmappedSet = new Set<string>();
       for (const order of unfulfilled) {
         for (const line of order.line_items ?? []) {
           if (!line.variant_id) continue;
+          fulfilmentDiagnostics.totalLineItems += 1;
           const mapping = variantToRecipe.get(String(line.variant_id));
-          if (!mapping) continue;
-          if (coreMenuOnly && !mapping.isCoreMenu) continue;
+          if (!mapping) {
+            unmappedSet.add(String(line.variant_id));
+            continue;
+          }
+          if (coreMenuOnly && !mapping.isCoreMenu) {
+            fulfilmentDiagnostics.skippedNonCoreLineItems += 1;
+            continue;
+          }
+          fulfilmentDiagnostics.mappedLineItems += 1;
           remainingFulfilmentPacksToday[mapping.recipeId] =
             (remainingFulfilmentPacksToday[mapping.recipeId] ?? 0) + (line.quantity || 0);
         }
       }
+      fulfilmentDiagnostics.unmappedVariantIds = [...unmappedSet];
     }
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    fulfilmentDiagnostics.error = msg;
     console.warn("[/calculate] prediction: failed to fetch unfulfilled orders for today, falling back to live stock", err);
   }
 
@@ -1105,6 +1139,7 @@ router.get("/calculate", async (req, res) => {
     salesSource: hasShopifyData ? "shopify" : "dpt",
     shopifyError,
     unmatchedRecipes,
+    fulfilmentDiagnostics,
     recipes: result,
   });
 });

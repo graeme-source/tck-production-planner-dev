@@ -415,6 +415,16 @@ interface CalcRecipe {
   totalSpecialCount: number;
 }
 
+interface FulfilmentDiagnostics {
+  tagQueried: string;
+  unfulfilledOrderCount: number;
+  totalLineItems: number;
+  mappedLineItems: number;
+  skippedNonCoreLineItems: number;
+  unmappedVariantIds: string[];
+  error: string | null;
+}
+
 interface CalcResponse {
   planDate: string;
   prevProductionDate: string;
@@ -425,6 +435,7 @@ interface CalcResponse {
   salesSource: "shopify" | "dpt";
   shopifyError: string | null;
   unmatchedRecipes: string[];
+  fulfilmentDiagnostics?: FulfilmentDiagnostics;
   recipes: CalcRecipe[];
 }
 
@@ -445,11 +456,13 @@ function FactoryNumberAuditDialog({
   onClose,
   recipes,
   planDate,
+  fulfilmentDiagnostics,
 }: {
   open: boolean;
   onClose: () => void;
   recipes: CalcRecipe[];
   planDate: string;
+  fulfilmentDiagnostics?: FulfilmentDiagnostics;
 }) {
   const todayLabel = format(new Date(), "EEE d MMM");
   const sorted = [...recipes].sort((a, b) => a.recipeName.localeCompare(b.recipeName));
@@ -518,6 +531,41 @@ function FactoryNumberAuditDialog({
           <p className="text-xs text-muted-foreground">
             <span className="font-medium">How to verify:</span> walk to the production fridge, count the actual packs of a recipe, then check the wrapping station's outstanding work-to-do and the fulfilment station's pending orders for that recipe. The three numbers in this row should match what you observe.
           </p>
+
+          {fulfilmentDiagnostics && (
+            <div className="rounded-lg border border-border bg-secondary/20 p-3 space-y-1 text-[11px] text-muted-foreground">
+              <p className="font-medium text-foreground">Fulfilment lookup diagnostics</p>
+              <p>
+                Shopify tag queried: <span className="font-mono">{fulfilmentDiagnostics.tagQueried}</span>
+                <span className="mx-1.5 text-border">·</span>
+                Unfulfilled orders found: <span className="font-mono">{fulfilmentDiagnostics.unfulfilledOrderCount}</span>
+                <span className="mx-1.5 text-border">·</span>
+                Line items mapped: <span className="font-mono">{fulfilmentDiagnostics.mappedLineItems}/{fulfilmentDiagnostics.totalLineItems}</span>
+                {fulfilmentDiagnostics.skippedNonCoreLineItems > 0 && (
+                  <>
+                    <span className="mx-1.5 text-border">·</span>
+                    Non-core skipped: <span className="font-mono">{fulfilmentDiagnostics.skippedNonCoreLineItems}</span>
+                  </>
+                )}
+              </p>
+              {fulfilmentDiagnostics.unmappedVariantIds.length > 0 && (
+                <p className="text-amber-700 dark:text-amber-400">
+                  Unmapped variant IDs ({fulfilmentDiagnostics.unmappedVariantIds.length}):{" "}
+                  <span className="font-mono">{fulfilmentDiagnostics.unmappedVariantIds.slice(0, 5).join(", ")}</span>
+                  {fulfilmentDiagnostics.unmappedVariantIds.length > 5 && "…"}
+                  <br />These line items aren't subtracted from Factory Number — add them to <span className="font-medium">Recipe Shopify Mappings</span>.
+                </p>
+              )}
+              {fulfilmentDiagnostics.error && (
+                <p className="text-red-700 dark:text-red-400">Error: {fulfilmentDiagnostics.error}</p>
+              )}
+              {fulfilmentDiagnostics.unfulfilledOrderCount === 0 && (
+                <p className="text-amber-700 dark:text-amber-400">
+                  Shopify returned 0 unfulfilled orders for this tag. If you've just re-tagged an existing order, give Shopify ~30s for its tag-search index to update, then refresh. Already-fulfilled orders won't appear here even if they have today's tag.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>
@@ -1687,6 +1735,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       onClose={() => setAuditOpen(false)}
       recipes={calcData?.recipes ?? []}
       planDate={planDate}
+      fulfilmentDiagnostics={calcData?.fulfilmentDiagnostics}
     />
     </>
   );
@@ -2414,6 +2463,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
       onClose={() => setAuditOpen(false)}
       recipes={editCalcData?.recipes ?? []}
       planDate={planDate}
+      fulfilmentDiagnostics={editCalcData?.fulfilmentDiagnostics}
     />
     </>
   );
