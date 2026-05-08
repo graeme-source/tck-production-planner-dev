@@ -533,6 +533,12 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   const [planDate, setPlanDate] = useState(toLocalDateStr(defaultDate));
   const [prepDate, setPrepDate] = useState("");
   const [doughDate, setDoughDate] = useState("");
+  // Track whether the user has explicitly edited the prep/dough fields. If
+  // they haven't, changing the production date should refresh the defaults
+  // — otherwise stale auto-fills (from an earlier production-date guess at
+  // dialog-open time) stick around even after the planDate moves.
+  const [prepTouched, setPrepTouched] = useState(false);
+  const [doughTouched, setDoughTouched] = useState(false);
   const [planName, setPlanName] = useState("");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<PlanItem[]>([]);
@@ -622,6 +628,9 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       isDirty.current = false;
       autoSavedPlanId.current = null;
       setAutoSavedAt(null);
+      // Clear the touched flags so the next open re-auto-fills from scratch.
+      setPrepTouched(false);
+      setDoughTouched(false);
       if (autoSavedTimerRef.current) {
         clearTimeout(autoSavedTimerRef.current);
         autoSavedTimerRef.current = null;
@@ -719,15 +728,19 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (cancelled || !d) return;
-        // Only auto-fill if the user hasn't already typed an override —
-        // otherwise switching the production date back-and-forth would
-        // wipe their manual edit.
-        setPrepDate(prev => prev || d.prepDate);
-        setDoughDate(prev => prev || d.doughDate);
+        // Refresh the auto-fills whenever the planDate changes, unless the
+        // user has explicitly edited the field. The previous "if empty,
+        // fill" guard let stale defaults stick around: open the dialog at
+        // Fri 8 May → prep auto-fills to Thu 7 May → user changes plan
+        // date to Tue 12 May → prep should refresh to Mon 11 May, but the
+        // 7 May value wasn't empty so the guard kept it. Tracking touched
+        // state distinguishes auto-fill from override.
+        if (!prepTouched) setPrepDate(d.prepDate);
+        if (!doughTouched) setDoughDate(d.doughDate);
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [planDate]);
+  }, [planDate, prepTouched, doughTouched]);
 
   const allocateBatches = useCallback((recipes: CalcRecipe[], capacity: number): { suggestedBatches: number; surplusBatches: number }[] => {
     if (capacity <= 0) {
@@ -1256,7 +1269,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                   type="date"
                   value={prepDate}
                   max={planDate}
-                  onChange={e => { isDirty.current = true; setPrepDate(e.target.value); }}
+                  onChange={e => { isDirty.current = true; setPrepTouched(true); setPrepDate(e.target.value); }}
                   className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
                 />
                 {!prepDate && (
@@ -1271,7 +1284,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                   type="date"
                   value={doughDate}
                   max={planDate}
-                  onChange={e => { isDirty.current = true; setDoughDate(e.target.value); }}
+                  onChange={e => { isDirty.current = true; setDoughTouched(true); setDoughDate(e.target.value); }}
                   className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
                 />
                 {!doughDate && (
