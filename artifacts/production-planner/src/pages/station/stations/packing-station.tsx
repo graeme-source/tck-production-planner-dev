@@ -2,7 +2,7 @@ import React from "react";
 import { useState, useEffect, useCallback } from "react";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import {
-  Loader2, RefreshCw, AlertCircle, Box, Truck, Scan, CheckCircle2, Gauge,
+  Loader2, RefreshCw, AlertCircle, Box, Truck, Scan, CheckCircle2, Gauge, Refrigerator,
 } from "lucide-react";
 import { format, parseISO, addDays } from "date-fns";
 import { useLocation } from "wouter";
@@ -245,6 +245,14 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate("/stock-control")}
+              className="flex items-center gap-1.5 text-sm font-medium text-foreground bg-secondary hover:bg-secondary/80 border border-border rounded-lg px-3 py-2 transition-colors"
+              title="Edit production-fridge stock — updates the Factory Number"
+            >
+              <Refrigerator className="w-4 h-4 text-indigo-500" />
+              Update Factory Number
+            </button>
             {progress && (
               <span className="text-2xl font-bold font-display">
                 {progress.totalOrders > 0 ? Math.round((progress.totalFulfilled / progress.totalOrders) * 100) : 0}%

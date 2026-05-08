@@ -413,6 +413,11 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["stock-control"] });
+    // Cross-invalidate the Create/Edit Plan calc + factory-numbers so an open
+    // Create Plan dialog (on this iPad or any other) refetches and shows the
+    // operator's fresh reading instead of cached data.
+    queryClient.invalidateQueries({ queryKey: ["production-plan-calculate"] });
+    queryClient.invalidateQueries({ queryKey: ["factory-numbers"] });
     onRefresh();
   };
 
@@ -985,6 +990,11 @@ export default function StockControl() {
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["storage-locations"] });
     queryClient.invalidateQueries({ queryKey: ["stock-control"] });
+    // Bulk-save and location admin paths land here. Same cross-invalidation
+    // as the FocusPanel — keeps the Create Plan dialog's Factory Number in
+    // sync with whatever was just saved.
+    queryClient.invalidateQueries({ queryKey: ["production-plan-calculate"] });
+    queryClient.invalidateQueries({ queryKey: ["factory-numbers"] });
   };
 
   const createMutation = useMutation({

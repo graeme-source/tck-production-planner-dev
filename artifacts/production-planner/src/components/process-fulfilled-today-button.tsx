@@ -90,6 +90,8 @@ export function ProcessFulfilledTodayButton({ className, size = "md" }: Props) {
       queryClient.invalidateQueries({ queryKey: ["stock-control"] });
       queryClient.invalidateQueries({ queryKey: ["stock-control-dashboard"] });
       queryClient.invalidateQueries({ queryKey: ["fridge-batches"] });
+      queryClient.invalidateQueries({ queryKey: ["production-plan-calculate"] });
+      queryClient.invalidateQueries({ queryKey: ["factory-numbers"] });
     },
     onError: (err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);

@@ -492,6 +492,11 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     queryKey: ["production-plan-calculate", planDate],
     queryFn: () => fetchCalculation(planDate),
     enabled: open && !!planDate,
+    // Always refetch when the Create Plan dialog opens — never serve a
+    // 30s-stale Factory Number. Stock-control mutations also cross-invalidate
+    // this key, but this guarantees freshness even if the operator opens the
+    // dialog after a cross-iPad edit we didn't observe.
+    refetchOnMount: "always",
   });
 
   const effectiveTotalBatches = totalBatchesOverride ?? calcData?.totalDailyBatches ?? 0;
@@ -1640,6 +1645,9 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
     queryKey: ["production-plan-calculate", planDate],
     queryFn: () => fetchCalculation(planDate),
     enabled: open && !!planDate,
+    // Same as Create dialog — always refetch on open so the Factory Number
+    // overlay reflects the latest stock-control reading.
+    refetchOnMount: "always",
   });
 
   useEffect(() => {
