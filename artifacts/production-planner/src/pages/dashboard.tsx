@@ -190,16 +190,24 @@ function TodayPlanRecipes({ planId }: { planId: number }) {
   if (items.length === 0) return <p className="text-xs text-muted-foreground px-1">No recipes with batches.</p>;
   return (
     <div className="space-y-1.5">
-      {items.map((it: any) => (
-        <div key={it.id} className="flex items-center justify-between py-1.5 px-3 rounded-lg hover:bg-secondary/50 transition-colors">
-          <span className="text-sm font-medium truncate pr-2" style={it.recipeColor ? { color: it.recipeColor } : undefined}>
-            {it.recipeName ?? "Unknown"}
-          </span>
-          <span className="text-sm font-bold tabular-nums shrink-0" style={it.recipeColor ? { color: it.recipeColor } : undefined}>
-            {it.batchesTarget} <span className="text-xs font-normal text-muted-foreground">batch{it.batchesTarget !== 1 ? "es" : ""}</span>
-          </span>
-        </div>
-      ))}
+      {items.map((it: any) => {
+        // Mac cheese is tracked in packs (1 batch = 1 pack); calzones in
+        // batches. Match the unit the rest of the app uses for each.
+        const isMac = it.recipeCategory === MAC_CHEESE_CATEGORY;
+        const unit = isMac
+          ? `pack${it.batchesTarget !== 1 ? "s" : ""}`
+          : `batch${it.batchesTarget !== 1 ? "es" : ""}`;
+        return (
+          <div key={it.id} className="flex items-center justify-between py-1.5 px-3 rounded-lg hover:bg-secondary/50 transition-colors">
+            <span className="text-sm font-medium truncate pr-2" style={it.recipeColor ? { color: it.recipeColor } : undefined}>
+              {it.recipeName ?? "Unknown"}
+            </span>
+            <span className="text-sm font-bold tabular-nums shrink-0" style={it.recipeColor ? { color: it.recipeColor } : undefined}>
+              {it.batchesTarget} <span className="text-xs font-normal text-muted-foreground">{unit}</span>
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
