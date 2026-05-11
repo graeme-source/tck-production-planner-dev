@@ -847,27 +847,34 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                 onClick={() => setSelectedItem("tomato_base")}
                 className={cn(
                   "w-full flex items-center gap-3 px-4 py-3 text-left transition-colors border-b border-border",
-                  selectedItem === "tomato_base"
-                    ? "bg-primary/10 border-l-4 border-l-primary"
-                    : "hover:bg-secondary/40 border-l-4 border-l-transparent",
-                  tomatoBaseDone && selectedItem !== "tomato_base" && "opacity-60"
+                  tomatoBaseDone
+                    ? selectedItem === "tomato_base"
+                      ? "bg-emerald-100/80 dark:bg-emerald-900/30 border-l-4 border-l-emerald-500"
+                      : "bg-emerald-50/70 dark:bg-emerald-950/20 border-l-4 border-l-emerald-400 hover:bg-emerald-100/60 dark:hover:bg-emerald-900/30"
+                    : selectedItem === "tomato_base"
+                      ? "bg-primary/10 border-l-4 border-l-primary"
+                      : "hover:bg-secondary/40 border-l-4 border-l-transparent",
                 )}
               >
                 {tomatoBaseDone ? (
-                  <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-500" />
+                  <CheckCircle2 className="w-5 h-5 flex-shrink-0 text-emerald-600 dark:text-emerald-400" />
                 ) : (
                   <FlaskConical className={cn("w-4 h-4 flex-shrink-0", selectedItem === "tomato_base" ? "text-primary" : "text-muted-foreground")} />
                 )}
                 <div className="min-w-0 flex-1">
                   <p className={cn(
                     "text-base font-semibold",
-                    selectedItem === "tomato_base" && "text-primary",
-                    tomatoBaseDone && "line-through text-muted-foreground"
+                    tomatoBaseDone
+                      ? "line-through text-emerald-700 dark:text-emerald-300"
+                      : selectedItem === "tomato_base" && "text-primary"
                   )}>
                     Tomato Base
                   </p>
-                  <p className="text-sm text-muted-foreground">
-                    {tomatoBaseDone ? "Complete" : "Sub-recipe production"}
+                  <p className={cn(
+                    "text-sm",
+                    tomatoBaseDone ? "text-emerald-600 dark:text-emerald-400 font-medium" : "text-muted-foreground"
+                  )}>
+                    {tomatoBaseDone ? "✓ Completed today" : "Sub-recipe production"}
                   </p>
                 </div>
                 {!tomatoBaseDone && <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
@@ -978,25 +985,49 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
         {/* RIGHT — Sub-recipe flow for Tomato Base, tin view for sauces */}
         <div className="flex-1 min-w-0">
           {selectedItem === "tomato_base" ? (
-            <div className="bg-card border border-border rounded-2xl p-5">
-              <div className="flex items-center gap-3 mb-4">
-                <FlaskConical className="w-5 h-5 text-primary" />
-                <div>
-                  <h3 className="font-semibold">Tomato Base — Sub-Recipe Production</h3>
-                  <p className="text-sm text-muted-foreground">Stock check → auto-calculate batches → ingredient checklist</p>
+            tomatoBaseDone ? (
+              <div className="bg-emerald-50 dark:bg-emerald-950/30 border-2 border-emerald-300 dark:border-emerald-700 rounded-2xl p-6">
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
+                    <CheckCircle2 className="w-7 h-7 text-emerald-600 dark:text-emerald-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-bold text-xl text-emerald-700 dark:text-emerald-300">Tomato Base — Already Completed</h3>
+                    <p className="text-base text-emerald-700/80 dark:text-emerald-300/80 mt-1">
+                      All {baseSubRecipes.length} base sub-recipe{baseSubRecipes.length !== 1 ? "s" : ""} for today's plan {baseSubRecipes.length !== 1 ? "have" : "has"} been made. No further action required.
+                    </p>
+                    <ul className="mt-4 space-y-1.5">
+                      {baseSubRecipes.map(sr => (
+                        <li key={sr.subRecipeId} className="flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-300">
+                          <Check className="w-4 h-4 flex-shrink-0" />
+                          <span className="line-through opacity-80">{sr.subRecipeName}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
               </div>
-              {subRecipesLoading ? (
-                <div className="py-8 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
-              ) : (
-                <SubRecipeMakeFlow
-                  mode="plan"
-                  planRequirements={planSubRecipes}
-                  allSubRecipes={allSubRecipes}
-                  onDone={handleSubRecipeDone}
-                />
-              )}
-            </div>
+            ) : (
+              <div className="bg-card border border-border rounded-2xl p-5">
+                <div className="flex items-center gap-3 mb-4">
+                  <FlaskConical className="w-5 h-5 text-primary" />
+                  <div>
+                    <h3 className="font-semibold">Tomato Base — Sub-Recipe Production</h3>
+                    <p className="text-sm text-muted-foreground">Stock check → auto-calculate batches → ingredient checklist</p>
+                  </div>
+                </div>
+                {subRecipesLoading ? (
+                  <div className="py-8 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+                ) : (
+                  <SubRecipeMakeFlow
+                    mode="plan"
+                    planRequirements={planSubRecipes}
+                    allSubRecipes={allSubRecipes}
+                    onDone={handleSubRecipeDone}
+                  />
+                )}
+              </div>
+            )
           ) : selectedIngredient ? (() => {
             const ing = selectedIngredient;
             const status = ingredientDoneStatus(ing);
