@@ -4468,7 +4468,7 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
                 <th className="text-right px-3 py-3 font-medium text-rose-700">Total absent</th>
                 <th className="text-right px-2 py-3 font-medium text-rose-700/70 text-xs">%</th>
                 {activeShiftTypes.map(name => (
-                  <React.Fragment key={`sh:${name}`}>
+                  <Fragment key={`sh:${name}`}>
                     <th
                       className={cn(
                         "text-right px-3 py-3 font-medium whitespace-nowrap",
@@ -4485,15 +4485,15 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
                     >
                       %
                     </th>
-                  </React.Fragment>
+                  </Fragment>
                 ))}
                 {activeAbsenceAccounts.map(name => (
-                  <React.Fragment key={`ab:${name}`}>
+                  <Fragment key={`ab:${name}`}>
                     <th className="text-right px-3 py-3 font-medium text-rose-700 whitespace-nowrap">
                       {displayAbsenceAccountName(name)}
                     </th>
                     <th className="text-right px-2 py-3 font-medium text-rose-700/70 text-xs">%</th>
-                  </React.Fragment>
+                  </Fragment>
                 ))}
               </tr>
             </thead>
@@ -4531,7 +4531,7 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
                     const n = r.shiftTypeCounts?.[name] ?? 0;
                     const isUnpaid = unpaidMap[name];
                     return (
-                      <React.Fragment key={`sh:${name}`}>
+                      <Fragment key={`sh:${name}`}>
                         <td
                           className={cn(
                             "px-3 py-3 text-right tabular-nums",
@@ -4545,20 +4545,20 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
                         <td className="px-2 py-3 text-right tabular-nums">
                           {fmtPct(n, r.totalShifts)}
                         </td>
-                      </React.Fragment>
+                      </Fragment>
                     );
                   })}
                   {activeAbsenceAccounts.map(name => {
                     const n = r.absenceAccountCounts?.[name] ?? 0;
                     return (
-                      <React.Fragment key={`ab:${name}`}>
+                      <Fragment key={`ab:${name}`}>
                         <td className={cn("px-3 py-3 text-right tabular-nums", n > 0 ? "text-rose-700 font-medium" : "text-muted-foreground")}>
                           {n}
                         </td>
                         <td className="px-2 py-3 text-right tabular-nums">
                           {fmtPct(n, r.totalShifts)}
                         </td>
-                      </React.Fragment>
+                      </Fragment>
                     );
                   })}
                 </tr>
