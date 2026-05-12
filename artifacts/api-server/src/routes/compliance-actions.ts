@@ -7,6 +7,7 @@ import {
   usersTable,
 } from "@workspace/db";
 import { eq, and, desc, asc, lte, gte, sql, inArray } from "drizzle-orm";
+import { londonDateString, londonEndOfDay } from "../lib/london-time";
 
 const router: IRouter = Router();
 
@@ -34,7 +35,7 @@ function addDaysIso(base: Date, days: number): string {
 }
 
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  return londonDateString();
 }
 
 async function resolveUserName(userId: number | null | undefined): Promise<string | null> {
@@ -125,9 +126,7 @@ router.get("/log", async (req: Request, res: Response) => {
     const conds: any[] = [];
     if (from) conds.push(gte(complianceActionCompletionsTable.completedAt, new Date(String(from))));
     if (to) {
-      const endOfDay = new Date(String(to));
-      endOfDay.setHours(23, 59, 59, 999);
-      conds.push(lte(complianceActionCompletionsTable.completedAt, endOfDay));
+      conds.push(lte(complianceActionCompletionsTable.completedAt, londonEndOfDay(new Date(String(to)))));
     }
     const rows = await db
       .select({

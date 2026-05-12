@@ -13,6 +13,7 @@ import {
 } from "@workspace/db";
 import { eq, and, gte, lte, sql, isNotNull, inArray } from "drizzle-orm";
 import { getOrdersByTag } from "../services/shopify";
+import { londonDateString, londonEndOfDay } from "../lib/london-time";
 
 // Recipe category name for macaroni cheese products. Mac cheese completions are
 // split out from calzone completions in KPI reports (1 mac batch_completion
@@ -31,9 +32,7 @@ router.get("/breaks", async (req, res) => {
   const conditions = [isNotNull(stationBreaksTable.endedAt)];
   if (from) conditions.push(gte(stationBreaksTable.startedAt, new Date(String(from))));
   if (to) {
-    const toDate = new Date(String(to));
-    toDate.setHours(23, 59, 59, 999);
-    conditions.push(lte(stationBreaksTable.startedAt, toDate));
+    conditions.push(lte(stationBreaksTable.startedAt, londonEndOfDay(new Date(String(to)))));
   }
 
   const rows = await db
@@ -137,9 +136,7 @@ router.get("/production-kpis", async (req, res) => {
   const completionConditions: any[] = [];
   if (from) completionConditions.push(sql`${batchCompletionsTable.completedAt} >= ${new Date(String(from)).toISOString()}`);
   if (to) {
-    const toDate = new Date(String(to));
-    toDate.setHours(23, 59, 59, 999);
-    completionConditions.push(sql`${batchCompletionsTable.completedAt} <= ${toDate.toISOString()}`);
+    completionConditions.push(sql`${batchCompletionsTable.completedAt} <= ${londonEndOfDay(new Date(String(to))).toISOString()}`);
   }
 
   const completions = await db
@@ -191,9 +188,7 @@ router.get("/production-kpis", async (req, res) => {
   const breakConditions: any[] = [isNotNull(stationBreaksTable.endedAt)];
   if (from) breakConditions.push(sql`${stationBreaksTable.startedAt} >= ${new Date(String(from)).toISOString()}`);
   if (to) {
-    const toDate = new Date(String(to));
-    toDate.setHours(23, 59, 59, 999);
-    breakConditions.push(sql`${stationBreaksTable.startedAt} <= ${toDate.toISOString()}`);
+    breakConditions.push(sql`${stationBreaksTable.startedAt} <= ${londonEndOfDay(new Date(String(to))).toISOString()}`);
   }
 
   const breaks = await db
@@ -600,10 +595,9 @@ router.get("/production-kpis", async (req, res) => {
 // timestamps to compute the packing window, then calculates orders/hour.
 
 function toDateTag(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  // YYYY-MM-DD as seen in London — order tags follow the kitchen's
+  // wall-clock day, not Railway's UTC.
+  return londonDateString(d);
 }
 
 router.get("/packing-speed", async (req, res) => {

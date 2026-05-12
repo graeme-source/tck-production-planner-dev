@@ -17,6 +17,7 @@ import {
 } from "@workspace/db";
 import { eq, and, desc, sql, inArray, notInArray } from "drizzle-orm";
 import { resolveRecipeIngredients, aggregateIngredients } from "../lib/ingredient-resolver";
+import { londonDateString, londonEndOfDay, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
 
 async function requireManagerOrAdmin(req: Request, res: Response, next: NextFunction) {
   let role = (req.session as any).userRole;
@@ -109,14 +110,8 @@ router.get("/calculate", async (req, res) => {
   // real order line if surplus exceeds stock.
   // Weekly-frequency items only surface on their scheduled weekday — otherwise
   // they prompt the operator to order/check every day instead of just the
-  // assigned one. Compute the weekday in Europe/London — Railway's containers
-  // run in UTC, so `new Date().getDay()` would roll over an hour before UK
-  // midnight in BST (and at UK midnight in GMT, with the same risk of late
-  // ops seeing the wrong day).
-  const todayDayName = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Europe/London",
-    weekday: "long",
-  }).format(new Date());
+  // assigned one.
+  const todayDayName = londonWeekdayName();
   const stockCheckedIngredients = await db
     .select({
       id: ingredientsTable.id,
@@ -217,7 +212,7 @@ router.get("/calculate", async (req, res) => {
   //     uses the plan's planDate (typically tomorrow)
   // Read both so prep-station counts actually reach the orders view, then
   // take the latest by checkedAt per ingredient.
-  const today = new Date().toISOString().split("T")[0];
+  const today = londonDateString();
   const checkDates = Array.from(new Set([today, plan[0].planDate]));
   const stockChecks = await db
     .select({
@@ -617,10 +612,8 @@ router.get("/purchase-orders", async (req, res) => {
       .where(eq(purchaseOrdersTable.planId, planIdFilter))
       .orderBy(desc(purchaseOrdersTable.createdAt));
   } else if (filter === "today") {
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
+    const todayStart = londonStartOfDay();
+    const todayEnd = londonEndOfDay();
 
     rows = await db
       .select({
@@ -811,8 +804,7 @@ router.patch("/purchase-orders/:id/place", async (req, res) => {
       res.status(400).json({ error: "Invalid calendar date" });
       return;
     }
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const today = londonStartOfDay();
     if (overrideParsed < today) {
       res.status(400).json({ error: "Delivery date cannot be in the past" });
       return;
@@ -925,10 +917,8 @@ router.patch("/purchase-orders/:id/resubmit", async (req, res) => {
 });
 
 router.get("/summary", async (req, res) => {
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const todayEnd = new Date();
-  todayEnd.setHours(23, 59, 59, 999);
+  const todayStart = londonStartOfDay();
+  const todayEnd = londonEndOfDay();
 
   const todayOrders = await db
     .select({
@@ -963,7 +953,7 @@ router.patch("/stock-check", async (req, res) => {
   }
 
   const userId = (req.session as any)?.userId ?? null;
-  const today = new Date().toISOString().split("T")[0];
+  const today = londonDateString();
 
   try {
     // 1. Upsert daily stock check

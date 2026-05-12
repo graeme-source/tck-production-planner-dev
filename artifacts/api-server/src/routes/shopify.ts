@@ -2,6 +2,10 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { getOrdersByTag, getProducts, countProductsByTag, getOrdersByDateRange, countOrdersByTag, type ShopifyOrder } from "../services/shopify";
 import { db, recipesTable, usersTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
+import { londonDateString, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
+
+const WEEKDAY_TO_NUM: Record<string, number> = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
+const londonWeekdayNumber = (d: Date) => WEEKDAY_TO_NUM[londonWeekdayName(d)] ?? 0;
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -55,10 +59,9 @@ async function requireFounder(req: Request, res: Response, next: NextFunction) {
 }
 
 function toDateTag(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  // YYYY-MM-DD as seen in London — Shopify order tags follow the kitchen's
+  // wall-clock day, not Railway's UTC.
+  return londonDateString(d);
 }
 
 const router = Router();
@@ -157,15 +160,14 @@ router.get("/weekly-orders", async (req, res) => {
     let monday: Date;
 
     if (weekStartParam) {
-      monday = new Date(weekStartParam + "T00:00:00");
+      monday = new Date(weekStartParam + "T00:00:00Z");
     } else {
-      const today = new Date();
-      const dayOfWeek = today.getDay();
+      const today = londonStartOfDay();
+      const dayOfWeek = londonWeekdayNumber(today);
       const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
       monday = new Date(today);
-      monday.setDate(today.getDate() + diff);
+      monday.setUTCDate(monday.getUTCDate() + diff);
     }
-    monday.setHours(0, 0, 0, 0);
 
     // Use GraphQL ordersCount for per-day totals instead of fetching the
     // whole order list. The dashboard widget only needs numbers, and the
@@ -191,7 +193,7 @@ router.get("/weekly-orders", async (req, res) => {
         return {
           date: toDateTag(dispatchDay),
           deliveryDate: tag,
-          day: DAY_NAMES[dispatchDay.getDay()],
+          day: DAY_NAMES[londonWeekdayNumber(dispatchDay)],
           orderCount,
           fulfilledCount,
           unfulfilledCount: orderCount - fulfilledCount,

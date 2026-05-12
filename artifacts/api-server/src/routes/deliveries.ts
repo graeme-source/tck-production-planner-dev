@@ -11,6 +11,7 @@ import {
   stockEntriesTable,
 } from "@workspace/db";
 import { eq, and, gte, lte, sql, desc, asc, inArray } from "drizzle-orm";
+import { londonDateString } from "../lib/london-time";
 
 const router: IRouter = Router();
 
@@ -40,7 +41,7 @@ function resolveStorageLocation(category: string | null, ingredientName?: string
 }
 
 router.get("/weekly", async (req, res) => {
-  const dateStr = (req.query.weekOf as string) || new Date().toISOString().split("T")[0];
+  const dateStr = (req.query.weekOf as string) || londonDateString();
   const anchor = new Date(dateStr + "T00:00:00Z");
   const dayOfWeek = anchor.getUTCDay();
   const monday = new Date(anchor);
@@ -251,7 +252,7 @@ router.get("/expiry-warnings", async (_req, res) => {
         ...e,
         quantity: Number(e.quantity),
         checkedAt: e.checkedAt.toISOString(),
-        isExpired: e.useByDate ? new Date(e.useByDate) < new Date(new Date().toISOString().split("T")[0]) : false,
+        isExpired: e.useByDate ? new Date(e.useByDate) < new Date(londonDateString()) : false,
       }))
     );
   } catch (err) {

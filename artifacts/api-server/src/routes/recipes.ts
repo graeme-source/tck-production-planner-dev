@@ -8,6 +8,7 @@ import { validate } from "../middleware/validate";
 import { computeSubRecipeCosts } from "../lib/sub-recipe-costs";
 import { generateQrCode } from "../lib/qr-code";
 import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
+import { londonDateString } from "../lib/london-time";
 import * as z from "zod";
 
 function requireAdmin(req: Request, res: Response, next: NextFunction) {
@@ -528,7 +529,7 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
 
   if (!updated) { res.status(404).json({ error: "Not found" }); return; }
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = londonDateString();
   const draftPlansWithRecipe = await db
     .select({ itemId: productionPlanItemsTable.id })
     .from(productionPlanItemsTable)

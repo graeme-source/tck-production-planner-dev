@@ -8,6 +8,7 @@ import {
   usersTable,
 } from "@workspace/db";
 import { eq, and, isNull, sql, asc, desc, gte, lte, inArray, ne } from "drizzle-orm";
+import { londonDateString } from "../lib/london-time";
 
 const router: IRouter = Router();
 
@@ -66,7 +67,7 @@ function addDaysIso(base: Date, days: number): string {
 }
 
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  return londonDateString();
 }
 
 async function resolveUserName(userId: number | null | undefined): Promise<string | null> {

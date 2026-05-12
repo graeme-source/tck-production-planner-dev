@@ -1,3 +1,5 @@
+import { londonDateString, londonStartOfDay, londonWeekdayName } from "./london-time";
+
 const WEEKDAY_MAP: Record<string, number> = {
   Sunday: 0,
   Monday: 1,
@@ -9,6 +11,16 @@ const WEEKDAY_MAP: Record<string, number> = {
 };
 
 const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** Convert a date-or-string to the integer (0-6) weekday in London. */
+function londonWeekdayNumber(d: Date): number {
+  return WEEKDAY_MAP[londonWeekdayName(d)] ?? 0;
+}
+
+/** UTC midnight on the London date that contains `date`. */
+function londonDayUTC(date: Date): Date {
+  return new Date(`${londonDateString(date)}T00:00:00Z`);
+}
 
 export function computeNextOrderDay(
   orderFrequency: string,
@@ -33,7 +45,7 @@ export function computeNextOrderDay(
     return fromDate;
   }
 
-  const currentDay = fromDate.getDay();
+  const currentDay = londonWeekdayNumber(fromDate);
 
   for (const dayNum of dayNumbers) {
     if (dayNum >= currentDay) {
@@ -51,7 +63,7 @@ export function computeNextOrderDay(
 }
 
 export function formatOrderDayTarget(date: Date): string {
-  return date.toISOString().split("T")[0];
+  return londonDateString(date);
 }
 
 export function getOrderDayLabel(
@@ -62,10 +74,8 @@ export function getOrderDayLabel(
   if (!orderDayTarget) return "Due today";
 
   const target = typeof orderDayTarget === "string" ? new Date(orderDayTarget) : orderDayTarget;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const targetDay = new Date(target);
-  targetDay.setHours(0, 0, 0, 0);
+  const today = londonStartOfDay();
+  const targetDay = londonDayUTC(target);
 
   const diffMs = targetDay.getTime() - today.getTime();
   const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
@@ -73,7 +83,7 @@ export function getOrderDayLabel(
   if (diffDays <= 0) return "Due today";
   if (diffDays === 1) return "Due tomorrow";
 
-  const dayName = WEEKDAY_NAMES[targetDay.getDay()];
+  const dayName = WEEKDAY_NAMES[londonWeekdayNumber(targetDay)];
   return `Waiting for ${dayName}`;
 }
 
@@ -82,10 +92,8 @@ export function isDueToday(orderDayTarget: string | Date | null, orderFrequency:
   if (!orderDayTarget) return true;
 
   const target = typeof orderDayTarget === "string" ? new Date(orderDayTarget) : orderDayTarget;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const targetDay = new Date(target);
-  targetDay.setHours(0, 0, 0, 0);
+  const today = londonStartOfDay();
+  const targetDay = londonDayUTC(target);
 
   return targetDay.getTime() <= today.getTime();
 }

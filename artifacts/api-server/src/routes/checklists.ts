@@ -18,6 +18,7 @@ import {
 } from "@workspace/db";
 import { eq, and, gt, asc, desc, gte, lte, sql, isNull, inArray } from "drizzle-orm";
 import * as z from "zod";
+import { londonDateString } from "../lib/london-time";
 
 type ChecklistCompletion = typeof checklistCompletionsTable.$inferSelect;
 
@@ -699,10 +700,13 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
   }
 
   if (type === "desserts_report") {
-    // Always use tomorrow's date for delivery tag (dispatch is always for next day)
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tag = tomorrow.toISOString().split("T")[0]; // yyyy-MM-dd
+    // Always use tomorrow's date for delivery tag (dispatch is always for next day).
+    // "Tomorrow" is measured in London — Railway runs UTC so a plain
+    // new Date() would roll over an hour before UK midnight in BST.
+    const todayLondon = new Date(`${londonDateString()}T00:00:00Z`);
+    const tomorrow = new Date(todayLondon);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    const tag = londonDateString(tomorrow); // yyyy-MM-dd
 
     try {
       const { getProductsByTag, getOrdersByTag } = await import("../services/shopify");

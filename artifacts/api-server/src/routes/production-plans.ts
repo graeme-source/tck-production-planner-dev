@@ -7,6 +7,7 @@ import * as z from "zod";
 import { resolveRecipeIngredients, resolveSubRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
 import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag } from "../services/shopify";
 import { getFactoryNumberCoreMenuOnly, getShopifyFreezerSyncEnabled } from "../lib/inventory-sync";
+import { londonDateString, londonStartOfDay } from "../lib/london-time";
 
 /** Recipe category name for macaroni cheese products. Used to split calzone
  *  vs mac cheese metrics (mac cheese is tracked in packs, calzones in batches). */
@@ -126,10 +127,10 @@ async function isAdminUser(req: import("express").Request): Promise<boolean> {
   return role === "admin";
 }
 
-/** Returns true if `planDateStr` is at least 2 working days from today (UTC). */
+/** Returns true if `planDateStr` is at least 2 working days from today (London). */
 function isAtLeast2WorkingDaysAhead(planDateStr: string): boolean {
-  const todayUTC = new Date();
-  todayUTC.setUTCHours(0, 0, 0, 0);
+  const todayStr = londonDateString();
+  const todayUTC = new Date(`${todayStr}T00:00:00Z`);
   const planUTC = new Date(`${planDateStr}T00:00:00Z`);
   let workingDays = 0;
   const cursor = new Date(todayUTC);
@@ -604,7 +605,7 @@ router.get("/calculate", async (req, res) => {
   // building the plan at 3pm wants to know where the fridge will be by
   // close of business, regardless of whether planDate is tomorrow or
   // three days out.
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = londonDateString();
   // Shopify orders are tagged with the DELIVERY date, which TCK ships out
   // the day before (today's dispatch → tomorrow's delivery). Mirrors the
   // packing-station logic at packing-station.tsx:99-101 so the audit
@@ -1634,9 +1635,7 @@ router.get("/next-active", async (req, res) => {
     }
     afterDateStr = req.query.afterDate;
   } else {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    afterDateStr = today.toISOString().slice(0, 10);
+    afterDateStr = londonDateString();
   }
 
   const forParam = (req.query.for === "prep" || req.query.for === "dough") ? req.query.for : "plan";
@@ -1703,7 +1702,7 @@ router.get("/next-active", async (req, res) => {
 // Daily Stock Checks (before /:id to avoid route shadowing)
 // ──────────────────────────────────────────────────────────────────────────────
 router.get("/stock-checks", async (req, res) => {
-  const checkDate = String(req.query.date ?? new Date().toISOString().slice(0, 10));
+  const checkDate = String(req.query.date ?? londonDateString());
 
   const checks = await db
     .select({
@@ -4042,8 +4041,7 @@ router.get("/:id/kpi", async (req, res) => {
     return;
   }
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = londonStartOfDay();
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
@@ -4211,8 +4209,7 @@ router.get("/:id/kpi", async (req, res) => {
 // Derived from batch_completions (primary) and station_breaks (supplementary)
 router.get("/:id/station-activity", async (req, res) => {
   const planId = Number(req.params.id);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = londonStartOfDay();
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
@@ -4941,7 +4938,7 @@ router.get("/:id/dough-prep", async (req, res) => {
       afterDate = req.query.afterDate;
     } else {
       const currentPlan = await db.select({ planDate: productionPlansTable.planDate }).from(productionPlansTable).where(eq(productionPlansTable.id, planId)).limit(1);
-      afterDate = currentPlan.length > 0 ? currentPlan[0].planDate : new Date().toISOString().slice(0, 10);
+      afterDate = currentPlan.length > 0 ? currentPlan[0].planDate : londonDateString();
     }
 
     // Walk by COALESCE(dough_date, plan_date) so a plan whose dough is

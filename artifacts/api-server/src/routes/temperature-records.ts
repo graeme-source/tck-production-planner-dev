@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { db, temperatureRecordsTable, usersTable } from "@workspace/db";
 import { eq, desc, and, gte, lte } from "drizzle-orm";
 import * as z from "zod";
+import { londonEndOfDay } from "../lib/london-time";
 
 const router: IRouter = Router();
 
@@ -92,9 +93,7 @@ router.get("/", async (req, res) => {
   if (planId) conditions.push(eq(temperatureRecordsTable.planId, Number(planId)));
   if (from) conditions.push(gte(temperatureRecordsTable.recordedAt, new Date(String(from))));
   if (to) {
-    const toDate = new Date(String(to));
-    toDate.setHours(23, 59, 59, 999);
-    conditions.push(lte(temperatureRecordsTable.recordedAt, toDate));
+    conditions.push(lte(temperatureRecordsTable.recordedAt, londonEndOfDay(new Date(String(to)))));
   }
 
   const rows = await db
