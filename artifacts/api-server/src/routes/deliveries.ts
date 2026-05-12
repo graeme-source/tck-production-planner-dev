@@ -17,6 +17,8 @@ const router: IRouter = Router();
 
 // Raw materials never go in production_fridge (that's finished product only).
 // Chilled ingredients → prep_fridge, dry goods → dry_store, raw meat → raw_meat_fridge.
+// Non-food supplies (packaging, consumables, etc.) → dry_store so the
+// deliveries page doesn't ask for a temperature on a pallet of boxes.
 const CATEGORY_LOCATION_MAP: Record<string, string> = {
   vegetable: "prep_fridge",
   herb: "prep_fridge",
@@ -30,14 +32,23 @@ const CATEGORY_LOCATION_MAP: Record<string, string> = {
   seasoning: "dry_store",
   other: "dry_store",
   dough: "dry_store",
+  packaging: "dry_store",
+  supplies: "dry_store",
+  consumable: "dry_store",
+  consumables: "dry_store",
 };
 
 function resolveStorageLocation(category: string | null, ingredientName?: string | null): string {
-  if (!category) return "prep_fridge";
+  // Unknown / null category defaults to dry_store. Defaulting to
+  // prep_fridge previously made the deliveries page believe pallets of
+  // boxes or insulation were chilled goods and prompt for a fridge
+  // temperature. Dry store is the safer fallback — chilled items will
+  // be reclassified once their category is set on the ingredient.
+  if (!category) return "dry_store";
   const lower = category.toLowerCase();
   const name = (ingredientName || "").toLowerCase();
   if (lower === "dough" && name.includes("frozen")) return "production_freezer";
-  return CATEGORY_LOCATION_MAP[lower] ?? "prep_fridge";
+  return CATEGORY_LOCATION_MAP[lower] ?? "dry_store";
 }
 
 router.get("/weekly", async (req, res) => {
@@ -585,7 +596,7 @@ router.post("/:id/receive", async (req, res) => {
 
     if (delta !== 0) {
       const location = resolveStorageLocation(existing.ingredientCategory, existing.ingredientName);
-      const isCountUnit = existing.unit === "packs" || existing.unit === "bottles";
+      const isCountUnit = existing.unit === "packs" || existing.unit === "bottles" || existing.unit === "pallets";
       const pw = Number(existing.packWeight) || 1;
       const stockQty = isCountUnit ? delta * pw : delta;
       const stockUnit = isCountUnit ? (existing.ingredientUnit ?? "kg") : existing.unit;
@@ -617,7 +628,7 @@ router.post("/:id/receive", async (req, res) => {
       .returning();
     if (nl.quantityReceived > 0) {
       const location = resolveStorageLocation(ing.ingredientCategory, ing.ingredientName);
-      const isCountUnit = nl.unit === "packs" || nl.unit === "bottles";
+      const isCountUnit = nl.unit === "packs" || nl.unit === "bottles" || nl.unit === "pallets";
       const pw = Number(ing.packWeight) || 1;
       const stockQty = isCountUnit ? nl.quantityReceived * pw : nl.quantityReceived;
       const stockUnit = isCountUnit ? (ing.ingredientUnit ?? "kg") : nl.unit;

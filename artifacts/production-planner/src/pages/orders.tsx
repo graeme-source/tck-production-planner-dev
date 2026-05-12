@@ -445,7 +445,7 @@ export default function Orders() {
         .map(l => {
           const qtyOrdered = Number(l.quantityOrdered) || 0;
           const unit = l.unit ?? "kg";
-          const isPackUnit = unit === "packs" || unit === "bottles";
+          const isPackUnit = unit === "packs" || unit === "bottles" || unit === "pallets";
           const packs = isPackUnit ? qtyOrdered : Math.max(1, Math.round(qtyOrdered));
           const isMisc = l.ingredientId == null;
           // For misc lines the backend folds the operator-typed name into
@@ -778,9 +778,14 @@ export default function Orders() {
         ingredientId: l.isMisc ? null : l.ingredientId,
         description: l.isMisc ? (l.description ?? l.ingredientName) : null,
         quantityRequired: l.orderQty,
+        // Pack-counted units (packs, bottles, pallets) store the pack
+        // count directly. Weight/volume-based units multiply by packWeight
+        // to get the native quantity. Pallets were previously missing
+        // from this list, so a 1-pallet order with packWeight = 0 saved
+        // as quantityOrdered = 0 and showed as zero on deliveries.
         quantityOrdered: l.isMisc
           ? l.editedPacks
-          : (l.unit === "packs" || l.unit === "bottles")
+          : (l.unit === "packs" || l.unit === "bottles" || l.unit === "pallets")
             ? l.editedPacks
             : l.editedPacks * l.packWeight,
         unit: l.unit,

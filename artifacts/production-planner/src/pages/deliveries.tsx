@@ -541,7 +541,7 @@ function ReceivingDialog({
                       // "bottles") the quantity IS already a pack count; for
                       // native-unit lines we divide by packWeight. Either way
                       // we need the ingredient's nativeUnit to label the size.
-                      const lineIsPackUnit = line.unit === "packs" || line.unit === "bottles";
+                      const lineIsPackUnit = line.unit === "packs" || line.unit === "bottles" || line.unit === "pallets";
                       const orderedPacks = inPacks
                         ? (lineIsPackUnit ? line.quantityOrdered : Math.round(line.quantityOrdered / pw))
                         : 0;
@@ -661,7 +661,7 @@ function ReceivingDialog({
                     {discrepancy && (() => {
                       const inPacks = !!line.stockInPacks && (line.packWeight ?? 0) > 0;
                       const pw = Number(line.packWeight) || 1;
-                      const lineIsPackUnit = line.unit === "packs" || line.unit === "bottles";
+                      const lineIsPackUnit = line.unit === "packs" || line.unit === "bottles" || line.unit === "pallets";
                       const orderedPacks = inPacks
                         ? (lineIsPackUnit ? line.quantityOrdered : Math.round(line.quantityOrdered / pw))
                         : 0;
