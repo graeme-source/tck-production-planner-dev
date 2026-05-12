@@ -19,7 +19,7 @@ import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
-import { getStationCount, getAvailableFromPrev, isMacCheese } from "../shared/constants";
+import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisplay } from "../shared/constants";
 import { effectiveBatchesTarget, netTwoPacks as computeNetTwoPacks, packsTargetForItem, packsDoneForItem, packsPerBatch } from "../shared/recipe-completion";
 import { RECIPE_RACK_COLOURS, WonkyColour, ChillerRackItem, ChillerRackVisual } from "./dough-sheeting-station";
 
@@ -143,7 +143,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
     return null;
   };
 
-  const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
+  const items = [...(plan.items ?? [])].sort(compareItemsForDisplay);
   const combinedBuildingCount = (it: ProductionPlanItem) =>
     getStationCount(it, "building_1") + getStationCount(it, "building_2");
   const effTarget = (it: ProductionPlanItem) =>

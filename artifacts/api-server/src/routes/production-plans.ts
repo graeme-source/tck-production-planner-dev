@@ -369,7 +369,7 @@ router.get("/", async (req, res) => {
     .from(productionPlanItemsTable)
     .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
     .where(inArray(productionPlanItemsTable.planId, planIds))
-    .orderBy(productionPlanItemsTable.planId, productionPlanItemsTable.orderPosition);
+    .orderBy(productionPlanItemsTable.planId, sql`CASE WHEN ${recipesTable.category} = 'Macaroni Cheese' THEN 0 ELSE 1 END`, productionPlanItemsTable.orderPosition);
 
   const itemsByPlan = new Map<number, typeof itemRows>();
   for (const it of itemRows) {
@@ -1569,7 +1569,7 @@ router.post("/:id/add-mac-cheese", validate(AddMacCheeseBody), async (req, res) 
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
     .where(eq(productionPlanItemsTable.planId, planId))
-    .orderBy(productionPlanItemsTable.orderPosition);
+    .orderBy(sql`CASE WHEN ${recipesTable.category} = 'Macaroni Cheese' THEN 0 ELSE 1 END`, productionPlanItemsTable.orderPosition);
 
   const itemIds = updatedItems.map(it => it.id);
   let completionsByItem: Record<number, Record<string, number>> = {};
@@ -1866,7 +1866,7 @@ router.get("/:id", async (req, res) => {
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
     .where(eq(productionPlanItemsTable.planId, id))
-    .orderBy(productionPlanItemsTable.orderPosition);
+    .orderBy(sql`CASE WHEN ${recipesTable.category} = 'Macaroni Cheese' THEN 0 ELSE 1 END`, productionPlanItemsTable.orderPosition);
 
   const itemIds = items.map(it => it.id);
   let completionsByItem: Record<number, Record<string, number>> = {};
@@ -5008,7 +5008,7 @@ router.get("/:id/dough-prep", async (req, res) => {
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
     .where(eq(productionPlanItemsTable.planId, targetPlanId))
-    .orderBy(productionPlanItemsTable.orderPosition);
+    .orderBy(sql`CASE WHEN ${recipesTable.category} = 'Macaroni Cheese' THEN 0 ELSE 1 END`, productionPlanItemsTable.orderPosition);
 
   if (planItems.length === 0) {
     res.json({ ingredients: [], recipes: [], totalDoughKg: 0, mixerCapacityKg, mixCount: 0, nextPlan });
@@ -5213,7 +5213,7 @@ router.get("/:id/dough-prep", async (req, res) => {
       .from(productionPlanItemsTable)
       .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
       .where(eq(productionPlanItemsTable.planId, targetPlanId))
-      .orderBy(productionPlanItemsTable.orderPosition);
+      .orderBy(sql`CASE WHEN ${recipesTable.category} = 'Macaroni Cheese' THEN 0 ELSE 1 END`, productionPlanItemsTable.orderPosition);
 
     const nextItemIds = nextItems.map(it => it.id);
     let completionsByItem: Record<number, Record<string, number>> = {};
@@ -5295,7 +5295,7 @@ router.get("/:id/packing", async (req, res) => {
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
     .where(eq(productionPlanItemsTable.planId, planId))
-    .orderBy(productionPlanItemsTable.orderPosition);
+    .orderBy(sql`CASE WHEN ${recipesTable.category} = 'Macaroni Cheese' THEN 0 ELSE 1 END`, productionPlanItemsTable.orderPosition);
 
   // Dispatch orders for the plan date
   const dispatches = await db
@@ -7007,7 +7007,7 @@ router.get("/:id/validate", async (req, res) => {
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
     .where(eq(productionPlanItemsTable.planId, planId))
-    .orderBy(productionPlanItemsTable.orderPosition);
+    .orderBy(sql`CASE WHEN ${recipesTable.category} = 'Macaroni Cheese' THEN 0 ELSE 1 END`, productionPlanItemsTable.orderPosition);
 
   interface ValidationWarning {
     level: "error" | "warning" | "info";

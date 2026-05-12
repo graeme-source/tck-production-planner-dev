@@ -16,7 +16,7 @@ import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
-import { getStationCount, getAvailableFromPrev } from "../shared/constants";
+import { getStationCount, getAvailableFromPrev, compareItemsForDisplay } from "../shared/constants";
 import { netTwoPacks as computeNetTwoPacks, effectiveBatchesTarget } from "../shared/recipe-completion";
 
 interface ShopifyWrapConfirmState {
@@ -127,7 +127,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
 
   const STACK_SIZE = 24;
 
-  const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
+  const items = [...(plan.items ?? [])].sort(compareItemsForDisplay);
 
   const plannedPacks = (item: ProductionPlanItem) =>
     Math.floor(((item.batchesTarget ?? 0) * (item.portionsPerBatch ?? 10)) / 2);

@@ -7,6 +7,20 @@ export function isMacCheese(item: { recipeCategory?: string | null }): boolean {
   return item.recipeCategory === MAC_CHEESE_CATEGORY;
 }
 
+/** Stable comparator for plan items across every station and the plans
+ *  list. Mac & Cheese variants always sort ahead of calzones — kitchen
+ *  convention, since Mac & Cheese starts the day on its own line. Within
+ *  each category, items keep their saved orderPosition so the operator's
+ *  drag-reorder still works. */
+export function compareItemsForDisplay(
+  a: { orderPosition: number; recipeCategory?: string | null },
+  b: { orderPosition: number; recipeCategory?: string | null },
+): number {
+  const aRank = isMacCheese(a) ? 0 : 1;
+  const bRank = isMacCheese(b) ? 0 : 1;
+  return aRank - bRank || a.orderPosition - b.orderPosition;
+}
+
 export const STATIONS = [
   { key: "dough_prep", label: "Dough Prep", short: "Dough Prep", icon: Layers, color: "text-amber-600" },
   { key: "macaroni_cheese", label: "Macaroni Cheese", short: "Mac Cheese", icon: UtensilsCrossed, color: "text-yellow-600" },

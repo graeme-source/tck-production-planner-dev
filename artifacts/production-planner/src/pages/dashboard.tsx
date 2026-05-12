@@ -8,6 +8,7 @@ import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRig
 import { Link } from "wouter";
 import { useAuth } from "@/contexts/auth-context";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import { compareItemsForDisplay } from "@/pages/station/shared/constants";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 
@@ -186,7 +187,7 @@ function TodayPlanRecipes({ planId }: { planId: number }) {
   if (isLoading) return <p className="text-xs text-muted-foreground px-1">Loading…</p>;
   const items = (plan?.items ?? [])
     .filter((it: any) => (it.batchesTarget ?? 0) > 0)
-    .sort((a: any, b: any) => a.orderPosition - b.orderPosition);
+    .sort(compareItemsForDisplay);
   if (items.length === 0) return <p className="text-xs text-muted-foreground px-1">No recipes with batches.</p>;
   return (
     <div className="space-y-1.5">

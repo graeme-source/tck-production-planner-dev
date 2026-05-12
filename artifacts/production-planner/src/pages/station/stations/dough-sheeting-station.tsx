@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { BreakTracker } from "../shared/break-tracker";
-import { getStationCount } from "../shared/constants";
+import { getStationCount, compareItemsForDisplay } from "../shared/constants";
 import { useDoughPrepData } from "./dough-prep-station";
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -78,7 +78,7 @@ export function DoughSheetingStation({ plan, isOnBreak = false }: { plan: Produc
     },
   });
 
-  const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
+  const items = [...(plan.items ?? [])].sort(compareItemsForDisplay);
 
   const nextItem = items.find(it => {
     const sheeted = getStationCount(it, "dough_sheeting");

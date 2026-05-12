@@ -30,7 +30,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 // ExtraPackControl removed — replaced by inline PackAdjustment
 import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
-import { getStationCount, getAvailableFromPrev, isMacCheese } from "../shared/constants";
+import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisplay } from "../shared/constants";
 import { effectiveBatchesTarget, packsPerBatch } from "../shared/recipe-completion";
 
 import {
@@ -501,7 +501,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     return effectiveBatchesTarget(it, getCombinedBuildCount(it));
   }
 
-  const items = [...(plan.items ?? [])].sort((a, b) => a.orderPosition - b.orderPosition);
+  const items = [...(plan.items ?? [])].sort(compareItemsForDisplay);
   // Find the first recipe that still has batches to build.
   // Both builders can always take the next available batch — the server-side
   // combined count check prevents over-recording if both tap simultaneously.
