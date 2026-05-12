@@ -1,5 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { getOrdersByTag, getProducts, countProductsByTag, getOrdersByDateRange, countOrdersByTag, type ShopifyOrder } from "../services/shopify";
+import { getOrdersByTag, getProducts, countProductsByTag, getOrdersByDateRange, countOrdersByTag, getOnlineStoreSessions, type ShopifyOrder } from "../services/shopify";
 import { db, recipesTable, usersTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { londonDateString, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
@@ -321,6 +321,32 @@ router.get("/orders-by-type", requireFounder, async (req, res) => {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[Shopify] orders-by-type error:", msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
+// ── Founder View: Conversion (sessions → orders) ──────────────────────────────
+// GET /api/shopify/conversion?from=YYYY-MM-DD&to=YYYY-MM-DD
+// Pulls online-store session count via ShopifyQL and divides yesterday's
+// (or whatever range's) order count to give a true storefront conversion
+// rate matching Shopify Admin's report.
+router.get("/conversion", requireFounder, async (req, res) => {
+  const { from, to } = req.query as { from?: string; to?: string };
+  if (!from || !to) {
+    res.status(400).json({ error: "from and to query params required (YYYY-MM-DD)" });
+    return;
+  }
+  try {
+    const [sessions, allOrders] = await Promise.all([
+      getOnlineStoreSessions(from, to),
+      getOrdersByDateRange(from, to).then(orders => orders.filter(isCountableOrder)),
+    ]);
+    const orderCount = allOrders.length;
+    const conversionRate = sessions > 0 ? orderCount / sessions : null;
+    res.json({ from, to, sessions, orderCount, conversionRate });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Shopify] conversion error:", msg);
     res.status(502).json({ error: msg });
   }
 });

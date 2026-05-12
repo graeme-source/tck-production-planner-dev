@@ -171,6 +171,53 @@ export async function shopifyGraphQL<T>(query: string): Promise<T> {
 }
 
 /**
+ * Total online-store sessions (visits) in the inclusive date range.
+ *
+ * Uses Shopify's `shopifyqlQuery` GraphQL endpoint with a ShopifyQL
+ * statement targeting the `sessions` schema. This is the same data
+ * source that powers the Online Store conversion-rate report in
+ * Shopify Admin, so dividing yesterday's order count by this number
+ * gives the same conversion rate the storefront reports.
+ *
+ * Requires the `read_reports` scope on the app's access token. If the
+ * query returns zero rows (e.g. brand-new day with no sessions yet),
+ * the result is 0.
+ */
+export async function getOnlineStoreSessions(from: string, to: string): Promise<number> {
+  // ShopifyQL is whitespace-tolerant but the dates have to be bare YYYY-MM-DD
+  // (no quotes). The `total_sessions` measure on the `sessions` source is
+  // the canonical count behind Shopify's storefront conversion report.
+  const shopifyql = `FROM sessions SHOW total_sessions SINCE ${from} UNTIL ${to}`;
+  const escaped = shopifyql.replace(/"/g, '\\"');
+  const gql = `{
+    shopifyqlQuery(query: "${escaped}") {
+      __typename
+      ... on TableResponse {
+        parseErrors { code message }
+        tableData { rowData }
+      }
+    }
+  }`;
+  const data = await shopifyGraphQL<{
+    shopifyqlQuery: {
+      __typename: string;
+      parseErrors?: Array<{ code: string; message: string }>;
+      tableData?: { rowData: string[][] };
+    };
+  }>(gql);
+  const q = data.shopifyqlQuery;
+  if (q.parseErrors && q.parseErrors.length > 0) {
+    throw new Error(`ShopifyQL parse: ${q.parseErrors.map(e => e.message).join("; ")}`);
+  }
+  const rows = q.tableData?.rowData ?? [];
+  if (rows.length === 0) return 0;
+  // Single-measure SHOW with no GROUP BY returns one row, one column.
+  const cell = rows[0]?.[0];
+  const n = Number(cell);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
  * Count orders matching a Shopify tag, optionally narrowed by
  * fulfillment status. Uses GraphQL's server-side filtering, so the
  * response is a single integer regardless of how many orders match.

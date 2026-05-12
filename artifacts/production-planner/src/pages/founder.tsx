@@ -75,6 +75,24 @@ async function fetchSalesSummary(from: string, to: string) {
   }>;
 }
 
+async function fetchConversion(from: string, to: string) {
+  const res = await fetch(
+    `${BASE}/api/shopify/conversion?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    { credentials: "include" },
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{
+    from: string;
+    to: string;
+    sessions: number;
+    orderCount: number;
+    conversionRate: number | null;
+  }>;
+}
+
 async function fetchOrdersByType(from: string, to: string) {
   const res = await fetch(
     `${BASE}/api/shopify/orders-by-type?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
@@ -588,6 +606,22 @@ function FounderDashboard() {
     staleTime: 5 * 60 * 1000,
   });
 
+  // Yesterday's storefront conversion (sessions → orders) via ShopifyQL.
+  // Returns conversionRate = orderCount / sessions, matching what Shopify
+  // Admin's online-store conversion report shows.
+  const {
+    data: yesterdayConversion,
+    isLoading: conversionLoading,
+    isFetching: conversionFetching,
+    error: conversionError,
+    refetch: refetchConversion,
+    dataUpdatedAt: conversionUpdatedAt,
+  } = useQuery({
+    queryKey: ["founder-conversion-yesterday", yesterdayStr],
+    queryFn: () => fetchConversion(yesterdayStr, yesterdayStr),
+    staleTime: 5 * 60 * 1000,
+  });
+
   // ── Order breakdown expand ────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [expandedPanel, setExpandedPanel] = useState(false);
@@ -618,10 +652,10 @@ function FounderDashboard() {
   });
 
   // ── Helpers ───────────────────────────────────────────────────────────────
-  const isAnyLoading = monthLoading || periodLoading || orderTypesLoading || yesterdayLoading;
+  const isAnyLoading = monthLoading || periodLoading || orderTypesLoading || yesterdayLoading || conversionLoading;
   const tagSummaryFetching = useIsFetching({ queryKey: ["tag-summary"] });
   const customPanelsFetching = useIsFetching({ queryKey: ["founder-custom-panels"] });
-  const isAnyFetching = monthFetching || periodFetching || orderTypesFetching || yesterdayFetching || tagSummaryFetching > 0 || customPanelsFetching > 0;
+  const isAnyFetching = monthFetching || periodFetching || orderTypesFetching || yesterdayFetching || conversionFetching || tagSummaryFetching > 0 || customPanelsFetching > 0;
   const [, setTick] = useState(0);
 
   useEffect(() => {
@@ -630,9 +664,9 @@ function FounderDashboard() {
   }, []);
 
   const latestDataUpdate = useMemo(() => {
-    const timestamps = [monthUpdatedAt, periodUpdatedAt, orderTypesUpdatedAt, yesterdayUpdatedAt].filter(Boolean);
+    const timestamps = [monthUpdatedAt, periodUpdatedAt, orderTypesUpdatedAt, yesterdayUpdatedAt, conversionUpdatedAt].filter(Boolean);
     return timestamps.length > 0 ? new Date(Math.max(...timestamps)) : null;
-  }, [monthUpdatedAt, periodUpdatedAt, orderTypesUpdatedAt, yesterdayUpdatedAt]);
+  }, [monthUpdatedAt, periodUpdatedAt, orderTypesUpdatedAt, yesterdayUpdatedAt, conversionUpdatedAt]);
 
   const handleRefresh = useCallback(async () => {
     await Promise.all([
@@ -640,10 +674,11 @@ function FounderDashboard() {
       refetchPeriod(),
       refetchOrderTypes(),
       refetchYesterday(),
+      refetchConversion(),
       queryClient.invalidateQueries({ queryKey: ["tag-summary"] }),
       queryClient.invalidateQueries({ queryKey: ["founder-custom-panels"] }),
     ]);
-  }, [refetchMonth, refetchPeriod, refetchOrderTypes, refetchYesterday, queryClient]);
+  }, [refetchMonth, refetchPeriod, refetchOrderTypes, refetchYesterday, refetchConversion, queryClient]);
 
   function getGroupCount(tag: string) {
     return orderTypes?.groups.find((g) => g.tag === tag)?.count ?? 0;
@@ -653,6 +688,11 @@ function FounderDashboard() {
   }
   function getYesterdayCount(tag: string) {
     return yesterdayOrderTypes?.groups.find((g) => g.tag === tag)?.count ?? 0;
+  }
+  function getYesterdayRevenue(tag: string) {
+    const group = yesterdayOrderTypes?.groups.find((g) => g.tag === tag);
+    if (!group) return 0;
+    return group.orders.reduce((sum, o) => sum + (o.total ?? 0), 0);
   }
 
   const presets = useMemo(() => buildPresets(), [todayStr]);
@@ -757,13 +797,13 @@ function FounderDashboard() {
       {/* ── Yesterday's Order Analysis (fixed, independent of date picker) ─── */}
       <section>
         {sectionHeading("Yesterday's Order Analysis — " + format(subDays(today, 1), "EEEE d MMMM"))}
-        {yesterdayError && (
+        {(yesterdayError || conversionError) && (
           <div className="glass-panel rounded-2xl p-5 flex items-center gap-3 text-destructive mb-4">
             <AlertCircle className="w-5 h-5 shrink-0" />
-            <p className="text-sm">{(yesterdayError as Error).message}</p>
+            <p className="text-sm">{((yesterdayError ?? conversionError) as Error).message}</p>
           </div>
         )}
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6 gap-4">
           {CUSTOMER_TYPES.map((type) => {
             const { label, icon: Icon, color, bg } = type;
             return (
@@ -785,6 +825,43 @@ function FounderDashboard() {
               </div>
             );
           })}
+
+          {/* New Customer Revenue — sum of order totals tagged new-customer */}
+          <div className="glass-panel p-5 rounded-2xl flex items-center gap-4">
+            <div className="p-3 rounded-xl bg-blue-500/10 text-blue-500 shrink-0">
+              <TrendingUp className="w-5 h-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-muted-foreground truncate">New Customer Revenue</p>
+              {yesterdayLoading ? (
+                <Skeleton className="h-7 w-20 mt-1" />
+              ) : (
+                <p className="text-2xl font-display font-bold">{formatGBP(getYesterdayRevenue("new-customer"))}</p>
+              )}
+            </div>
+          </div>
+
+          {/* Conversion Rate — orderCount / sessions from ShopifyQL */}
+          <div className="glass-panel p-5 rounded-2xl flex items-center gap-4">
+            <div className="p-3 rounded-xl bg-emerald-500/10 text-emerald-500 shrink-0">
+              <BarChart2 className="w-5 h-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-muted-foreground truncate">Conversion Rate</p>
+              {conversionLoading ? (
+                <Skeleton className="h-7 w-16 mt-1" />
+              ) : yesterdayConversion?.conversionRate != null ? (
+                <>
+                  <p className="text-2xl font-display font-bold">{(yesterdayConversion.conversionRate * 100).toFixed(2)}%</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {yesterdayConversion.orderCount} / {yesterdayConversion.sessions} sessions
+                  </p>
+                </>
+              ) : (
+                <p className="text-2xl font-display font-bold text-muted-foreground">—</p>
+              )}
+            </div>
+          </div>
         </div>
       </section>
 
