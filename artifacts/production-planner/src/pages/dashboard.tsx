@@ -4,7 +4,7 @@ import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { format, isToday, startOfWeek, addWeeks } from "date-fns";
-import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X } from "lucide-react";
+import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X, Sparkles } from "lucide-react";
 import { Link } from "wouter";
 import { useAuth } from "@/contexts/auth-context";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
@@ -368,7 +368,7 @@ export default function Dashboard() {
 
       {showIssueBanner && <AndonBanner userRole={userRole} />}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <StatCard
           title="Total Batches Today"
           value={batchesLoading ? "…" : (totalBatches?.calzoneBatches ?? 0).toString()}
@@ -403,6 +403,15 @@ export default function Dashboard() {
           color="text-cyan-500"
           bg="bg-cyan-500/10"
           href="/stock-control"
+        />
+        <StatCard
+          title="Start Morning Meeting"
+          value="▶"
+          subtitle="10-min Two Second Lean"
+          icon={Sparkles}
+          color="text-amber-500"
+          bg="bg-amber-500/10"
+          href="/meeting"
         />
       </div>
 

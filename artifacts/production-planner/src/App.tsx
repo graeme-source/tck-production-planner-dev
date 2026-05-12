@@ -12,6 +12,7 @@ import { NetworkStatusBanner } from "@/components/network-status-banner";
 import { StagingEnvBanner } from "@/components/staging-env-banner";
 import { PullToRefresh } from "@/components/pull-to-refresh";
 import Dashboard from "@/pages/dashboard";
+import MeetingPage from "@/pages/meeting";
 import Ingredients from "@/pages/ingredients";
 import Inventory from "@/pages/inventory";
 import SubRecipes from "@/pages/sub-recipes";
@@ -102,6 +103,9 @@ function Router() {
     <Switch>
       {/* Station pages — full-screen, no sidebar layout */}
       <Route path="/plans/:planId/station/:stationType" component={StationPage} />
+
+      {/* Morning Meeting — full-screen slideshow */}
+      <Route path="/meeting" component={MeetingPage} />
 
       {/* Print / resource pages — full-screen, no sidebar, print-optimised */}
       <Route path="/print/fire-action-notice" component={FireActionNoticePrint} />

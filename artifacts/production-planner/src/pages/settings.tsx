@@ -956,6 +956,7 @@ export default function Settings() {
           {activeSection === "sops" && (
             <div className="space-y-8">
               <StandardsSopsSection />
+              <LeanCurriculumSection />
             </div>
           )}
 
@@ -3082,6 +3083,142 @@ function BreakDefaultsSection() {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Edits the 12 rolling lean lessons that drive the Morning Meeting
+ *  Learning slide. Each lesson has three markdown blocks the host walks
+ *  through in prep mode before they present. Admin-only. */
+function LeanCurriculumSection() {
+  interface Lesson {
+    id: number;
+    weekNumber: number;
+    title: string;
+    summary: string;
+    explanationMd: string;
+    whatToShowMd: string;
+    deliveryNotesMd: string;
+    videoUrl: string | null;
+    isActive: boolean;
+  }
+  const queryClient = useQueryClient();
+  const { data: lessons = [], isLoading } = useQuery<Lesson[]>({
+    queryKey: ["lean-lessons"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/morning-meetings/lessons`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load lessons");
+      return res.json();
+    },
+  });
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [draft, setDraft] = useState<Partial<Lesson>>({});
+  const editing = lessons.find(l => l.id === editingId) ?? null;
+
+  const startEdit = (l: Lesson) => {
+    setEditingId(l.id);
+    setDraft({
+      title: l.title,
+      summary: l.summary,
+      explanationMd: l.explanationMd,
+      whatToShowMd: l.whatToShowMd,
+      deliveryNotesMd: l.deliveryNotesMd,
+      videoUrl: l.videoUrl,
+      isActive: l.isActive,
+    });
+  };
+  const cancel = () => { setEditingId(null); setDraft({}); };
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      if (!editingId) return;
+      const res = await fetch(`${BASE}/api/morning-meetings/lessons/${editingId}`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(draft),
+      });
+      if (!res.ok) throw new Error("Save failed");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["lean-lessons"] });
+      cancel();
+      toast({ title: "Lesson saved" });
+    },
+    onError: () => toast({ title: "Save failed", variant: "destructive" }),
+  });
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-6">
+      <h2 className="text-xl font-semibold mb-1 flex items-center gap-2">
+        <BookOpen className="w-5 h-5 text-purple-500" />
+        Lean Curriculum (Morning Meeting)
+      </h2>
+      <p className="text-sm text-muted-foreground mb-4">
+        Twelve rolling lessons that drive the Morning Meeting&apos;s Learning slide. Today&apos;s lesson
+        is picked by week-of-year, so the curriculum cycles automatically.
+        Each lesson has three blocks: what it means, what the team sees, and how to deliver it.
+      </p>
+      {isLoading ? (
+        <div className="py-8 text-center text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin inline" /></div>
+      ) : (
+        <div className="space-y-2">
+          {lessons.map(l => (
+            <div key={l.id} className="border border-border rounded-xl">
+              <button
+                onClick={() => editingId === l.id ? cancel() : startEdit(l)}
+                className="w-full flex items-center justify-between px-4 py-3 hover:bg-secondary/30"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="text-xs font-semibold text-muted-foreground tabular-nums w-12 shrink-0">Wk {l.weekNumber}</span>
+                  <div className="text-left min-w-0">
+                    <p className="font-medium truncate">{l.title}</p>
+                    <p className="text-xs text-muted-foreground truncate">{l.summary}</p>
+                  </div>
+                </div>
+                <span className="text-xs text-muted-foreground shrink-0 ml-3">{editingId === l.id ? "Cancel" : "Edit"}</span>
+              </button>
+              {editing && editing.id === l.id && (
+                <div className="px-4 pb-4 space-y-3 border-t border-border">
+                  <LessonField label="Title" value={draft.title ?? ""} onChange={v => setDraft(d => ({ ...d, title: v }))} />
+                  <LessonField label="Summary (one-liner)" value={draft.summary ?? ""} onChange={v => setDraft(d => ({ ...d, summary: v }))} />
+                  <LessonField label="What it means (host briefing — Markdown)" value={draft.explanationMd ?? ""} onChange={v => setDraft(d => ({ ...d, explanationMd: v }))} multiline />
+                  <LessonField label="What you'll show the team (slide content — Markdown)" value={draft.whatToShowMd ?? ""} onChange={v => setDraft(d => ({ ...d, whatToShowMd: v }))} multiline />
+                  <LessonField label="How to deliver (talking points — Markdown)" value={draft.deliveryNotesMd ?? ""} onChange={v => setDraft(d => ({ ...d, deliveryNotesMd: v }))} multiline />
+                  <LessonField label="Video URL (optional)" value={draft.videoUrl ?? ""} onChange={v => setDraft(d => ({ ...d, videoUrl: v || null }))} />
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <button onClick={cancel} className="px-4 py-2 rounded-lg text-sm border border-border hover:bg-secondary/30">Cancel</button>
+                    <button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} className="px-4 py-2 rounded-lg text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+                      {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LessonField({ label, value, onChange, multiline }: { label: string; value: string; onChange: (v: string) => void; multiline?: boolean }) {
+  return (
+    <div>
+      <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5 block">{label}</label>
+      {multiline ? (
+        <textarea
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          className="w-full min-h-[120px] bg-background border border-border rounded-lg p-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
+        />
+      ) : (
+        <input
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          className="w-full bg-background border border-border rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+        />
+      )}
     </div>
   );
 }

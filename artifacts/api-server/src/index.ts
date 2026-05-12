@@ -1073,6 +1073,45 @@ async function runStartupMigrations() {
       ON CONFLICT (key) DO NOTHING
     `);
 
+    // Morning Meeting feature: lean curriculum + meeting log + gratitude.
+    // Safety issues + struggles raised during the meeting are written into
+    // the existing andon_issues / improvement_submissions tables.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS lean_lessons (
+        id SERIAL PRIMARY KEY,
+        week_number INTEGER NOT NULL UNIQUE,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        explanation_md TEXT NOT NULL,
+        what_to_show_md TEXT NOT NULL,
+        delivery_notes_md TEXT NOT NULL,
+        video_url TEXT,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS morning_meetings (
+        id SERIAL PRIMARY KEY,
+        meeting_date DATE NOT NULL UNIQUE,
+        host_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        host_name TEXT,
+        lesson_id INTEGER REFERENCES lean_lessons(id) ON DELETE SET NULL,
+        started_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        ended_at TIMESTAMP
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS meeting_gratitude (
+        id SERIAL PRIMARY KEY,
+        meeting_id INTEGER NOT NULL REFERENCES morning_meetings(id) ON DELETE CASCADE,
+        from_name TEXT NOT NULL,
+        to_name TEXT,
+        content TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);
@@ -1119,6 +1158,8 @@ async function startup() {
     await guardMarinadeSettings();
     const { seedRiskAssessmentsIfNeeded } = await import("./lib/seed-risk-assessments");
     await seedRiskAssessmentsIfNeeded();
+    const { seedLeanLessonsIfNeeded } = await import("./lib/seed-lean-lessons");
+    await seedLeanLessonsIfNeeded();
     startBackupScheduler();
     // DISABLED 2026-04-17 — the 5-minute fulfilment poller was not
     // reliably decrementing fridge stock and contributed to Railway
