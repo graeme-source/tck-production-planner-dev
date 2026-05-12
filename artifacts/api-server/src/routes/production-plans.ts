@@ -581,6 +581,7 @@ router.get("/calculate", async (req, res) => {
     .select({
       recipeId: stockEntriesTable.recipeId,
       quantity: stockEntriesTable.quantity,
+      checkedAt: stockEntriesTable.checkedAt,
     })
     .from(stockEntriesTable)
     .where(and(
@@ -590,9 +591,14 @@ router.get("/calculate", async (req, res) => {
     .orderBy(asc(stockEntriesTable.checkedAt));
 
   const latestStock: Record<number, number> = {};
+  // Timestamp of the latest production_fridge reading per recipe so the
+  // Create Plan UI can show "Updated 2h ago" next to the factory number,
+  // letting the operator spot stale readings before they trust them.
+  const latestStockCheckedAt: Record<number, Date> = {};
   for (const row of stockRows) {
     if (row.recipeId != null) {
       latestStock[row.recipeId] = Number(row.quantity);
+      latestStockCheckedAt[row.recipeId] = row.checkedAt;
     }
   }
 
@@ -1060,6 +1066,7 @@ router.get("/calculate", async (req, res) => {
       color: r.color ?? null,
       isCoreMenu: isCore,
       fridgeStock: Math.round(fridgeStock),
+      stockCheckedAt: latestStockCheckedAt[recipeId]?.toISOString() ?? null,
       predictedFridgeStock,
       remainingWrappingPacksToday: Math.round(wrapRemain),
       remainingFulfilmentPacksToday: Math.round(fulRemain),

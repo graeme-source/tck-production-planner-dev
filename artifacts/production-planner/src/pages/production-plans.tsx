@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { format, addDays, parseISO, isWeekend, isToday, startOfWeek, isSameDay } from "date-fns";
+import { format, addDays, parseISO, isWeekend, isToday, startOfWeek, isSameDay, formatDistanceToNow } from "date-fns";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -134,6 +134,10 @@ interface PlanItem {
   sopUrl: string | null;
   isFromDpt: boolean;
   fridgeStock: number;
+  // ISO timestamp of the latest production_fridge stock_entries row for
+  // this recipe (or null if no reading exists). Rendered as "Updated 2h
+  // ago" next to the factory number so the operator can spot stale data.
+  stockCheckedAt: string | null;
   prevProduction: number;
   estimatedFactoryNumber: number;
   dispatch1Qty: number;
@@ -160,6 +164,30 @@ function computeStockWarning(item: PlanItem): "ok" | "low" | "short" {
   if (surplus < 0) return "short";
   if (surplus <= 10) return "low";
   return "ok";
+}
+
+// Small "Updated 2h ago" label under the factory-number input. Re-renders
+// every minute so a long-open Create Plan dialog doesn't fossilise. Returns
+// "Never checked" in muted italics when the recipe has no stock_entries
+// row yet, so the operator can spot recipes that need an initial reading.
+function StockCheckedAtLabel({ checkedAt }: { checkedAt: string | null }) {
+  // Re-trigger every 60s so "2 minutes ago" rolls forward on its own.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  if (!checkedAt) {
+    return <span className="text-[9px] text-muted-foreground/70 italic">never checked</span>;
+  }
+  const date = new Date(checkedAt);
+  const relative = formatDistanceToNow(date, { addSuffix: true });
+  const exact = format(date, "EEE d MMM HH:mm");
+  return (
+    <span className="text-[9px] text-muted-foreground" title={`Last stock check: ${exact}`}>
+      {relative}
+    </span>
+  );
 }
 
 interface SortableRowProps {
@@ -252,39 +280,42 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
             ? `Fridge ${item.fridgeStock} − next dispatch ${item.dispatch1Qty} = ${margin >= 0 ? "+" : ""}${margin}`
             : `Fridge ${item.fridgeStock} (no dispatch tomorrow)`;
           return (
-            <div className="flex items-center justify-center gap-1">
-              <input
-                type="number"
-                min={0}
-                value={item.fridgeStock === 0 ? "" : item.fridgeStock}
-                onChange={e => onFridgeStockChange(item.id, e.target.value === "" ? 0 : Math.max(0, parseInt(e.target.value, 10) || 0))}
-                onFocus={e => e.currentTarget.select()}
-                onWheel={e => { if (document.activeElement === e.currentTarget) e.currentTarget.blur(); }}
-                disabled={saving}
-                title={title}
-                className={cn(
-                  "w-20 px-1.5 py-1 border rounded-lg text-xs text-center focus-ring disabled:opacity-40 tabular-nums font-medium",
-                  tone,
-                )}
-                placeholder="0"
-              />
-              {hasUnsavedFridgeStock ? (
-                <button
-                  type="button"
-                  onClick={() => onSaveFridgeStock(item.id)}
+            <div className="flex flex-col items-center gap-0.5">
+              <div className="flex items-center justify-center gap-1">
+                <input
+                  type="number"
+                  min={0}
+                  value={item.fridgeStock === 0 ? "" : item.fridgeStock}
+                  onChange={e => onFridgeStockChange(item.id, e.target.value === "" ? 0 : Math.max(0, parseInt(e.target.value, 10) || 0))}
+                  onFocus={e => e.currentTarget.select()}
+                  onWheel={e => { if (document.activeElement === e.currentTarget) e.currentTarget.blur(); }}
                   disabled={saving}
-                  className="px-1.5 py-1 rounded-md bg-primary text-primary-foreground text-[10px] font-semibold hover:bg-primary/90 disabled:opacity-40 transition-colors"
-                  title="Save this factory number to stock_entries now (also auto-saves after a brief pause)"
-                >
-                  Save
-                </button>
-              ) : fridgeStockJustSaved ? (
-                <span className="text-emerald-600 dark:text-emerald-400 text-[10px] font-semibold flex items-center gap-0.5" title="Saved">
-                  <CheckCircle2 className="w-3 h-3" />
-                </span>
-              ) : (
-                <span className="w-3 h-3" />
-              )}
+                  title={title}
+                  className={cn(
+                    "w-20 px-1.5 py-1 border rounded-lg text-xs text-center focus-ring disabled:opacity-40 tabular-nums font-medium",
+                    tone,
+                  )}
+                  placeholder="0"
+                />
+                {hasUnsavedFridgeStock ? (
+                  <button
+                    type="button"
+                    onClick={() => onSaveFridgeStock(item.id)}
+                    disabled={saving}
+                    className="px-1.5 py-1 rounded-md bg-primary text-primary-foreground text-[10px] font-semibold hover:bg-primary/90 disabled:opacity-40 transition-colors"
+                    title="Save this factory number to stock_entries now (also auto-saves after a brief pause)"
+                  >
+                    Save
+                  </button>
+                ) : fridgeStockJustSaved ? (
+                  <span className="text-emerald-600 dark:text-emerald-400 text-[10px] font-semibold flex items-center gap-0.5" title="Saved">
+                    <CheckCircle2 className="w-3 h-3" />
+                  </span>
+                ) : (
+                  <span className="w-3 h-3" />
+                )}
+              </div>
+              <StockCheckedAtLabel checkedAt={item.stockCheckedAt} />
             </div>
           );
         })()}
@@ -385,6 +416,7 @@ interface CalcRecipe {
   maxBatchesPerTin: number | null;
   sopUrl: string | null;
   fridgeStock: number;
+  stockCheckedAt: string | null;
   // Predicted end-of-today fridge stock from /calculate (factory number
   // accounting loop). Core recipes get the full prediction; non-core
   // recipes fall back to `fridgeStock` while the feature flag is on.
@@ -897,6 +929,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
         // flag on) receive `predictedFridgeStock == fridgeStock` from
         // the backend.
         fridgeStock: prev ? prev.fridgeStock : (r.predictedFridgeStock ?? r.fridgeStock),
+        stockCheckedAt: r.stockCheckedAt,
         prevProduction: r.prevProduction,
         estimatedFactoryNumber: r.estimatedFactoryNumber,
         dispatch1Qty: r.dispatch1Qty,
@@ -1161,6 +1194,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       sopUrl: recipe.sopUrl ?? null,
       isFromDpt: false,
       fridgeStock: 0,
+      stockCheckedAt: null,
       prevProduction: 0,
       estimatedFactoryNumber: 0,
       dispatch1Qty: 0,
@@ -1783,6 +1817,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
       sopUrl: it.sopUrl ?? null,
       isFromDpt: false,
       fridgeStock: 0,
+      stockCheckedAt: null,
       prevProduction: 0,
       estimatedFactoryNumber: 0,
       dispatch1Qty: 0,
@@ -1836,6 +1871,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
         sopUrl: calc.sopUrl ?? it.sopUrl,
         isFromDpt: true,
         fridgeStock: calc.predictedFridgeStock ?? calc.fridgeStock,
+        stockCheckedAt: calc.stockCheckedAt,
         prevProduction: calc.prevProduction,
         estimatedFactoryNumber: calc.estimatedFactoryNumber,
         dispatch1Qty: calc.dispatch1Qty,
@@ -2141,6 +2177,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
       sopUrl: recipe.sopUrl ?? null,
       isFromDpt: false,
       fridgeStock: 0,
+      stockCheckedAt: null,
       prevProduction: 0,
       estimatedFactoryNumber: 0,
       dispatch1Qty: 0,
