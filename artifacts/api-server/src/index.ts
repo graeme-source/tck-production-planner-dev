@@ -887,6 +887,23 @@ async function runStartupMigrations() {
       WHERE first_batch_number IS NULL AND batch_number IS NOT NULL
     `);
 
+    // Per-fridge/freezer opening + closing temperature recording, driven
+    // by the storage_locations table (system + admin-added locations).
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS location_temperature_records (
+        id SERIAL PRIMARY KEY,
+        plan_id INTEGER NOT NULL REFERENCES production_plans(id) ON DELETE CASCADE,
+        storage_location_id INTEGER NOT NULL REFERENCES storage_locations(id) ON DELETE CASCADE,
+        opening_temperature_c NUMERIC(5,1),
+        closing_temperature_c NUMERIC(5,1),
+        opening_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        closing_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        opening_recorded_at TIMESTAMP,
+        closing_recorded_at TIMESTAMP,
+        UNIQUE(plan_id, storage_location_id)
+      )
+    `);
+
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS prep_tin_overrides (
         id SERIAL PRIMARY KEY,

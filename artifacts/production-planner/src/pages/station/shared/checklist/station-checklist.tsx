@@ -843,6 +843,122 @@ function PackBatchNumbers({ data, planId, kind }: { data: unknown[]; planId: num
   );
 }
 
+// Fridge / freezer temperatures, one row per storage_location with
+// zone IN (fridge, freezer). Same record-per-(plan, location) carries
+// both opening and closing values; this component switches its label
+// and which column it POSTs to based on the `kind` prop.
+interface LocationTempRow {
+  storageLocationId: number;
+  locationName: string;
+  zone: string;
+  openingTemperatureC: number | null;
+  closingTemperatureC: number | null;
+  openingRecordedAt: string | null;
+  closingRecordedAt: string | null;
+}
+
+function LocationTemperatures({ data, planId, kind }: { data: unknown[]; planId: number; kind: "opening" | "closing" }) {
+  const items = data as LocationTempRow[];
+  const [values, setValues] = useState<Record<number, string>>({});
+  const [saving, setSaving] = useState<Record<number, boolean>>({});
+
+  const isClosing = kind === "closing";
+
+  useEffect(() => {
+    const init: Record<number, string> = {};
+    for (const item of items) {
+      const recorded = isClosing ? item.closingTemperatureC : item.openingTemperatureC;
+      init[item.storageLocationId] = recorded != null ? String(recorded) : "";
+    }
+    setValues(init);
+  }, [data, isClosing]);
+
+  const saveTemp = async (locationId: number) => {
+    const raw = values[locationId];
+    if (raw == null || raw.trim() === "") return;
+    const parsed = parseFloat(raw);
+    if (Number.isNaN(parsed)) return;
+    setSaving(s => ({ ...s, [locationId]: true }));
+    try {
+      const res = await fetch(`${BASE}/api/checklists/location-temperature-record`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planId, storageLocationId: locationId, temperatureC: parsed, kind }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      toast({ title: "Saved", description: `${isClosing ? "Closing" : "Opening"} temperature recorded` });
+    } catch {
+      toast({ title: "Error", description: "Failed to save temperature", variant: "destructive" });
+    } finally {
+      setSaving(s => ({ ...s, [locationId]: false }));
+    }
+  };
+
+  if (items.length === 0) {
+    return (
+      <div className="mb-4 p-3 bg-secondary/30 rounded-lg text-sm text-muted-foreground">
+        No fridges or freezers configured. Add them in Settings → Storage Locations.
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-4 space-y-2">
+      <p className="text-sm font-semibold text-foreground mb-2">
+        Record {isClosing ? "closing" : "opening"} temperature for each fridge and freezer
+      </p>
+      {items.map(item => {
+        const val = values[item.storageLocationId] ?? "";
+        const recorded = isClosing ? item.closingTemperatureC : item.openingTemperatureC;
+        const isSaved = recorded != null && val !== "" && parseFloat(val) === recorded;
+        const contextLine = isClosing
+          ? (item.openingTemperatureC != null ? `Opening: ${item.openingTemperatureC.toFixed(1)}°C` : null)
+          : null;
+        return (
+          <div key={item.storageLocationId} className={cn(
+            "flex items-center gap-3 p-3 rounded-xl border transition-colors",
+            isSaved ? "bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800" : "bg-secondary/20 border-border",
+          )}>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold truncate">{item.locationName}</p>
+              <p className="text-xs text-muted-foreground capitalize">
+                {item.zone}
+                {contextLine ? ` · ${contextLine}` : ""}
+              </p>
+              {isSaved && (
+                <p className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" /> Recorded
+                </p>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <input
+                type="number"
+                step="0.1"
+                inputMode="decimal"
+                className="w-20 px-2 py-1.5 text-sm text-center font-mono font-bold border border-border rounded-lg bg-background tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30"
+                value={val}
+                onChange={e => setValues(v => ({ ...v, [item.storageLocationId]: e.target.value }))}
+                onKeyDown={e => { if (e.key === "Enter") saveTemp(item.storageLocationId); }}
+                placeholder="—"
+              />
+              <span className="text-xs text-muted-foreground">°C</span>
+              <button
+                onClick={() => saveTemp(item.storageLocationId)}
+                disabled={!val || saving[item.storageLocationId]}
+                className="p-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+              >
+                {saving[item.storageLocationId] ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function DynamicDataDisplay({ type, data, loading, planId }: { type: string; data: unknown[]; loading: boolean; planId: number }) {
   if (type === "desserts_report") {
     if (loading) {
@@ -900,6 +1016,18 @@ function DynamicDataDisplay({ type, data, loading, planId }: { type: string; dat
       );
     }
     return <PackBatchNumbers data={data} planId={planId} kind={type === "last_pack_batch_numbers" ? "last" : "first"} />;
+  }
+
+  if (type === "fridge_freezer_temps_opening" || type === "fridge_freezer_temps_closing") {
+    if (loading) {
+      return (
+        <div className="mb-4 p-3 bg-blue-50/60 dark:bg-blue-950/20 rounded-lg flex items-center gap-2 text-sm text-blue-600">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Loading fridge / freezer locations...
+        </div>
+      );
+    }
+    return <LocationTemperatures data={data} planId={planId} kind={type === "fridge_freezer_temps_closing" ? "closing" : "opening"} />;
   }
 
   if (loading) {

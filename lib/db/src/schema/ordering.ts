@@ -1,4 +1,4 @@
-import { pgTable, serial, text, numeric, integer, timestamp, boolean, date } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, numeric, integer, timestamp, boolean, date, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { ingredientsTable } from "./ingredients";
@@ -15,6 +15,23 @@ export const storageLocationsTable = pgTable("storage_locations", {
   isSystem: boolean("is_system").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+// One row per (plan, fridge/freezer) capturing opening and closing
+// temperatures from the checklist. Both columns nullable — opening
+// check fills the opening_* fields, closing check fills closing_*.
+export const locationTemperatureRecordsTable = pgTable("location_temperature_records", {
+  id: serial("id").primaryKey(),
+  planId: integer("plan_id").notNull().references(() => productionPlansTable.id, { onDelete: "cascade" }),
+  storageLocationId: integer("storage_location_id").notNull().references(() => storageLocationsTable.id, { onDelete: "cascade" }),
+  openingTemperatureC: numeric("opening_temperature_c", { precision: 5, scale: 1 }),
+  closingTemperatureC: numeric("closing_temperature_c", { precision: 5, scale: 1 }),
+  openingUserId: integer("opening_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  closingUserId: integer("closing_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  openingRecordedAt: timestamp("opening_recorded_at"),
+  closingRecordedAt: timestamp("closing_recorded_at"),
+}, (table) => [
+  unique("uq_location_temperature_record").on(table.planId, table.storageLocationId),
+]);
 
 export const storageRacksTable = pgTable("storage_racks", {
   id: serial("id").primaryKey(),

@@ -15,6 +15,8 @@ import {
   fridgeStockBatchesTable,
   packingBatchRecordsTable,
   stockEntriesTable,
+  storageLocationsTable,
+  locationTemperatureRecordsTable,
 } from "@workspace/db";
 import { eq, and, gt, asc, desc, gte, lte, sql, isNull, inArray } from "drizzle-orm";
 import * as z from "zod";
@@ -850,7 +852,87 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
     return;
   }
 
+  // Per-fridge/freezer temperature recording (opening + closing). Both
+  // types return the same shape; the frontend component switches which
+  // column it POSTs to based on the type. Storage locations come from
+  // the admin-managed storage_locations table (zone IN fridge|freezer)
+  // so adding a new fridge in Settings makes it show up here.
+  if (type === "fridge_freezer_temps_opening" || type === "fridge_freezer_temps_closing") {
+    const locations = await db
+      .select({
+        id: storageLocationsTable.id,
+        name: storageLocationsTable.name,
+        zone: storageLocationsTable.zone,
+      })
+      .from(storageLocationsTable)
+      .where(inArray(storageLocationsTable.zone, ["fridge", "freezer"]))
+      .orderBy(asc(storageLocationsTable.zone), asc(storageLocationsTable.name));
+
+    const existing = await db
+      .select()
+      .from(locationTemperatureRecordsTable)
+      .where(eq(locationTemperatureRecordsTable.planId, planId));
+    const recordMap = new Map<number, typeof existing[number]>();
+    for (const r of existing) recordMap.set(r.storageLocationId, r);
+
+    const result = locations.map((loc) => {
+      const rec = recordMap.get(loc.id);
+      return {
+        storageLocationId: loc.id,
+        locationName: loc.name,
+        zone: loc.zone,
+        openingTemperatureC: rec?.openingTemperatureC != null ? Number(rec.openingTemperatureC) : null,
+        closingTemperatureC: rec?.closingTemperatureC != null ? Number(rec.closingTemperatureC) : null,
+        openingRecordedAt: rec?.openingRecordedAt?.toISOString() ?? null,
+        closingRecordedAt: rec?.closingRecordedAt?.toISOString() ?? null,
+      };
+    });
+    res.json(result);
+    return;
+  }
+
   res.status(400).json({ error: `Unknown dynamic data type: ${type}` });
+});
+
+// POST /location-temperature-record — save opening or closing temperature
+// for one fridge/freezer in the current plan. `kind` selects which column
+// to update so opening and closing checks can share the (plan, location)
+// row.
+router.post("/location-temperature-record", async (req: Request, res: Response) => {
+  const { planId, storageLocationId, temperatureC, kind } = req.body as {
+    planId: number;
+    storageLocationId: number;
+    temperatureC: number;
+    kind?: "opening" | "closing";
+  };
+  if (!planId || !storageLocationId || typeof temperatureC !== "number" || Number.isNaN(temperatureC)) {
+    res.status(400).json({ error: "planId, storageLocationId, and numeric temperatureC are required" });
+    return;
+  }
+  const which: "opening" | "closing" = kind === "closing" ? "closing" : "opening";
+  const userId = (req.session as any)?.userId ?? null;
+  const tempStr = temperatureC.toFixed(1);
+  try {
+    if (which === "opening") {
+      await db.execute(sql`
+        INSERT INTO location_temperature_records (plan_id, storage_location_id, opening_temperature_c, opening_user_id, opening_recorded_at)
+        VALUES (${planId}, ${storageLocationId}, ${tempStr}, ${userId}, NOW())
+        ON CONFLICT (plan_id, storage_location_id)
+        DO UPDATE SET opening_temperature_c = ${tempStr}, opening_user_id = ${userId}, opening_recorded_at = NOW()
+      `);
+    } else {
+      await db.execute(sql`
+        INSERT INTO location_temperature_records (plan_id, storage_location_id, closing_temperature_c, closing_user_id, closing_recorded_at)
+        VALUES (${planId}, ${storageLocationId}, ${tempStr}, ${userId}, NOW())
+        ON CONFLICT (plan_id, storage_location_id)
+        DO UPDATE SET closing_temperature_c = ${tempStr}, closing_user_id = ${userId}, closing_recorded_at = NOW()
+      `);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("location-temperature-record error:", err);
+    res.status(500).json({ error: "Failed to save temperature record" });
+  }
 });
 
 // POST /packing-batch-record — save first OR last pack batch number for
