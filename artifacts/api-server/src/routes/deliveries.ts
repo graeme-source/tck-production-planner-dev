@@ -17,8 +17,10 @@ const router: IRouter = Router();
 
 // Raw materials never go in production_fridge (that's finished product only).
 // Chilled ingredients → prep_fridge, dry goods → dry_store, raw meat → raw_meat_fridge.
-// Non-food supplies (packaging, consumables, etc.) → dry_store so the
-// deliveries page doesn't ask for a temperature on a pallet of boxes.
+// Non-food supplies (packaging, courier, insulation, etc.) → dry_store so the
+// deliveries page doesn't ask for a fridge temperature on a pallet of boxes.
+// Keep these keys in sync with INGREDIENT_CATEGORIES / SUPPLY_CATEGORIES in
+// artifacts/production-planner/src/pages/inventory.tsx.
 const CATEGORY_LOCATION_MAP: Record<string, string> = {
   vegetable: "prep_fridge",
   herb: "prep_fridge",
@@ -32,13 +34,29 @@ const CATEGORY_LOCATION_MAP: Record<string, string> = {
   seasoning: "dry_store",
   other: "dry_store",
   dough: "dry_store",
+  pasta: "dry_store",
+  // Supplies (non-perishable goods). Always dry_store regardless of how
+  // the user labelled them.
   packaging: "dry_store",
+  courier: "dry_store",
+  insulation: "dry_store",
+  tape_labels: "dry_store",
+  cleaning: "dry_store",
+  trays: "dry_store",
   supplies: "dry_store",
   consumable: "dry_store",
   consumables: "dry_store",
 };
 
-function resolveStorageLocation(category: string | null, ingredientName?: string | null): string {
+function resolveStorageLocation(
+  category: string | null,
+  ingredientName?: string | null,
+  perishable?: boolean | null,
+): string {
+  // Non-perishable items (supplies) NEVER need a temperature record —
+  // short-circuit to dry_store before the category lookup. This is the
+  // safety net for any supply category we haven't explicitly mapped.
+  if (perishable === false) return "dry_store";
   // Unknown / null category defaults to dry_store. Defaulting to
   // prep_fridge previously made the deliveries page believe pallets of
   // boxes or insulation were chilled goods and prompt for a fridge
@@ -154,6 +172,7 @@ router.get("/weekly", async (req, res) => {
         requiresUseByDate: ingredientsTable.requiresUseByDate,
         stockInPacks: ingredientsTable.stockInPacks,
         packWeight: ingredientsTable.packWeight,
+        perishable: ingredientsTable.perishable,
       })
       .from(purchaseOrderLinesTable)
       .leftJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
@@ -171,7 +190,7 @@ router.get("/weekly", async (req, res) => {
       quantityOrdered: Number(line.quantityOrdered),
       quantityReceived: Number(line.quantityReceived),
       unitPrice: line.unitPrice ? Number(line.unitPrice) : null,
-      defaultStorageLocation: resolveStorageLocation(line.ingredientCategory, nameForDisplay),
+      defaultStorageLocation: resolveStorageLocation(line.ingredientCategory, nameForDisplay, line.perishable),
     });
   }
 
@@ -394,6 +413,7 @@ router.get("/:id", async (req, res) => {
       requiresUseByDate: ingredientsTable.requiresUseByDate,
       stockInPacks: ingredientsTable.stockInPacks,
       packWeight: ingredientsTable.packWeight,
+      perishable: ingredientsTable.perishable,
       quantityRequired: purchaseOrderLinesTable.quantityRequired,
       quantityOrdered: purchaseOrderLinesTable.quantityOrdered,
       quantityReceived: purchaseOrderLinesTable.quantityReceived,
@@ -438,7 +458,7 @@ router.get("/:id", async (req, res) => {
       unitPrice: l.unitPrice ? Number(l.unitPrice) : null,
       shelfLifeDays: l.shelfLifeDays ?? null,
       requiresUseByDate: l.requiresUseByDate ?? false,
-      defaultStorageLocation: resolveStorageLocation(l.ingredientCategory, l.ingredientName),
+      defaultStorageLocation: resolveStorageLocation(l.ingredientCategory, l.ingredientName, l.perishable),
     })),
     checks,
     deliveryRecord: latestRecord
@@ -509,6 +529,7 @@ router.post("/:id/receive", async (req, res) => {
       ingredientUnit: ingredientsTable.unit,
       packWeight: ingredientsTable.packWeight,
       requiresUseByDate: ingredientsTable.requiresUseByDate,
+      perishable: ingredientsTable.perishable,
     })
     .from(purchaseOrderLinesTable)
     .leftJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
@@ -540,6 +561,7 @@ router.post("/:id/receive", async (req, res) => {
     ingredientUnit: string;
     packWeight: string;
     requiresUseByDate: boolean;
+    perishable: boolean;
   };
   const newLineIngredientIds = [...new Set((newLines ?? []).map((nl) => nl.ingredientId))];
   const newLineIngredientMap = new Map<number, NewLineIngredientInfo>();
@@ -552,6 +574,7 @@ router.post("/:id/receive", async (req, res) => {
         ingredientUnit: ingredientsTable.unit,
         packWeight: ingredientsTable.packWeight,
         requiresUseByDate: ingredientsTable.requiresUseByDate,
+        perishable: ingredientsTable.perishable,
       })
       .from(ingredientsTable)
       .where(inArray(ingredientsTable.id, newLineIngredientIds));
@@ -595,7 +618,7 @@ router.post("/:id/receive", async (req, res) => {
       .where(eq(purchaseOrderLinesTable.id, line.lineId));
 
     if (delta !== 0) {
-      const location = resolveStorageLocation(existing.ingredientCategory, existing.ingredientName);
+      const location = resolveStorageLocation(existing.ingredientCategory, existing.ingredientName, existing.perishable);
       const isCountUnit = existing.unit === "packs" || existing.unit === "bottles" || existing.unit === "pallets";
       const pw = Number(existing.packWeight) || 1;
       const stockQty = isCountUnit ? delta * pw : delta;
@@ -627,7 +650,7 @@ router.post("/:id/receive", async (req, res) => {
       })
       .returning();
     if (nl.quantityReceived > 0) {
-      const location = resolveStorageLocation(ing.ingredientCategory, ing.ingredientName);
+      const location = resolveStorageLocation(ing.ingredientCategory, ing.ingredientName, ing.perishable);
       const isCountUnit = nl.unit === "packs" || nl.unit === "bottles" || nl.unit === "pallets";
       const pw = Number(ing.packWeight) || 1;
       const stockQty = isCountUnit ? nl.quantityReceived * pw : nl.quantityReceived;
