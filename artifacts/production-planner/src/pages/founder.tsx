@@ -511,6 +511,7 @@ function FounderDashboard() {
   const founderRefresh = useRefreshSpin();
   const today = new Date();
   const todayStr = format(today, "yyyy-MM-dd");
+  const yesterdayStr = format(subDays(today, 1), "yyyy-MM-dd");
   const monthStart = format(startOfMonth(today), "yyyy-MM-dd");
 
   // ── Fixed date range: always this month → today ──────────────────────────
@@ -571,6 +572,22 @@ function FounderDashboard() {
     staleTime: 5 * 60 * 1000,
   });
 
+  // Fixed to yesterday — independent of the dynamic date picker so the
+  // "Yesterday's Order Analysis" section always shows the previous day's
+  // numbers.
+  const {
+    data: yesterdayOrderTypes,
+    isLoading: yesterdayLoading,
+    isFetching: yesterdayFetching,
+    error: yesterdayError,
+    refetch: refetchYesterday,
+    dataUpdatedAt: yesterdayUpdatedAt,
+  } = useQuery({
+    queryKey: ["founder-orders-by-type-yesterday", yesterdayStr],
+    queryFn: () => fetchOrdersByType(yesterdayStr, yesterdayStr),
+    staleTime: 5 * 60 * 1000,
+  });
+
   // ── Order breakdown expand ────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [expandedPanel, setExpandedPanel] = useState(false);
@@ -601,10 +618,10 @@ function FounderDashboard() {
   });
 
   // ── Helpers ───────────────────────────────────────────────────────────────
-  const isAnyLoading = monthLoading || periodLoading || orderTypesLoading;
+  const isAnyLoading = monthLoading || periodLoading || orderTypesLoading || yesterdayLoading;
   const tagSummaryFetching = useIsFetching({ queryKey: ["tag-summary"] });
   const customPanelsFetching = useIsFetching({ queryKey: ["founder-custom-panels"] });
-  const isAnyFetching = monthFetching || periodFetching || orderTypesFetching || tagSummaryFetching > 0 || customPanelsFetching > 0;
+  const isAnyFetching = monthFetching || periodFetching || orderTypesFetching || yesterdayFetching || tagSummaryFetching > 0 || customPanelsFetching > 0;
   const [, setTick] = useState(0);
 
   useEffect(() => {
@@ -613,25 +630,29 @@ function FounderDashboard() {
   }, []);
 
   const latestDataUpdate = useMemo(() => {
-    const timestamps = [monthUpdatedAt, periodUpdatedAt, orderTypesUpdatedAt].filter(Boolean);
+    const timestamps = [monthUpdatedAt, periodUpdatedAt, orderTypesUpdatedAt, yesterdayUpdatedAt].filter(Boolean);
     return timestamps.length > 0 ? new Date(Math.max(...timestamps)) : null;
-  }, [monthUpdatedAt, periodUpdatedAt, orderTypesUpdatedAt]);
+  }, [monthUpdatedAt, periodUpdatedAt, orderTypesUpdatedAt, yesterdayUpdatedAt]);
 
   const handleRefresh = useCallback(async () => {
     await Promise.all([
       refetchMonth(),
       refetchPeriod(),
       refetchOrderTypes(),
+      refetchYesterday(),
       queryClient.invalidateQueries({ queryKey: ["tag-summary"] }),
       queryClient.invalidateQueries({ queryKey: ["founder-custom-panels"] }),
     ]);
-  }, [refetchMonth, refetchPeriod, refetchOrderTypes, queryClient]);
+  }, [refetchMonth, refetchPeriod, refetchOrderTypes, refetchYesterday, queryClient]);
 
   function getGroupCount(tag: string) {
     return orderTypes?.groups.find((g) => g.tag === tag)?.count ?? 0;
   }
   function getGroupOrders(tag: string) {
     return orderTypes?.groups.find((g) => g.tag === tag)?.orders ?? [];
+  }
+  function getYesterdayCount(tag: string) {
+    return yesterdayOrderTypes?.groups.find((g) => g.tag === tag)?.count ?? 0;
   }
 
   const presets = useMemo(() => buildPresets(), [todayStr]);
@@ -730,6 +751,40 @@ function FounderDashboard() {
             loading={monthLoading}
             error={!!monthError}
           />
+        </div>
+      </section>
+
+      {/* ── Yesterday's Order Analysis (fixed, independent of date picker) ─── */}
+      <section>
+        {sectionHeading("Yesterday's Order Analysis — " + format(subDays(today, 1), "EEEE d MMMM"))}
+        {yesterdayError && (
+          <div className="glass-panel rounded-2xl p-5 flex items-center gap-3 text-destructive mb-4">
+            <AlertCircle className="w-5 h-5 shrink-0" />
+            <p className="text-sm">{(yesterdayError as Error).message}</p>
+          </div>
+        )}
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+          {CUSTOMER_TYPES.map((type) => {
+            const { label, icon: Icon, color, bg } = type;
+            return (
+              <div
+                key={type.tag}
+                className="glass-panel p-5 rounded-2xl flex items-center gap-4"
+              >
+                <div className={`p-3 rounded-xl ${bg} ${color} shrink-0`}>
+                  <Icon className="w-5 h-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-muted-foreground truncate">{label}</p>
+                  {yesterdayLoading ? (
+                    <Skeleton className="h-7 w-12 mt-1" />
+                  ) : (
+                    <p className="text-2xl font-display font-bold">{getYesterdayCount(type.tag)}</p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </section>
 
