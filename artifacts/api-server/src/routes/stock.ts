@@ -11,6 +11,33 @@ import {
   invalidateFactoryNumberFlagCache,
   invalidateShopifyFreezerSyncFlagCache,
 } from "../lib/inventory-sync";
+import { adjustFridgeStock } from "../lib/fridge-stock";
+
+/** Returns the latest stock_entries row for a (recipe, production_fridge,
+ *  packSize) tuple — the same row the factory-number calc and the
+ *  adjustFridgeStock helper both treat as canonical. Returns null if no
+ *  row exists yet. */
+async function readLatestProductionFridgeRow(recipeId: number, packSize: number) {
+  const [row] = await db
+    .select()
+    .from(stockEntriesTable)
+    .where(and(
+      eq(stockEntriesTable.recipeId, recipeId),
+      eq(stockEntriesTable.itemType, "recipe"),
+      eq(stockEntriesTable.location, "production_fridge"),
+      eq(stockEntriesTable.packSize, packSize),
+    ))
+    .orderBy(desc(stockEntriesTable.checkedAt))
+    .limit(1);
+  return row ?? null;
+}
+
+/** Truthy when a stock_entries write targets the FIFO-tracked path
+ *  (recipe rows at the production fridge). All such writes must go
+ *  through adjustFridgeStock so fridge_stock_batches stays in sync. */
+function isFifoTracked(itemType: string, location: string | undefined): boolean {
+  return itemType === "recipe" && (location ?? "production_fridge") === "production_fridge";
+}
 
 const FREEZER_LOCATIONS = ["production_freezer", "raw_freezer"];
 
@@ -113,6 +140,27 @@ router.get("/", async (req, res) => {
 router.post("/", validate(CreateStockEntryBody), async (req, res) => {
   const { recipeId, ingredientId, stockItemId, itemType, quantity, unit, location, notes } = req.body;
   const defaultLocation = itemType === "recipe" ? "production_fridge" : "prep_fridge";
+
+  // FIFO-tracked path: route through adjustFridgeStock so stock_entries
+  // and fridge_stock_batches stay in lockstep. Treat the POSTed quantity
+  // as an absolute level: delta = newQty - currentLatestQty.
+  if (recipeId != null && isFifoTracked(itemType, location)) {
+    const packSize = (req.body.packSize as number | undefined) ?? 2;
+    const existing = await readLatestProductionFridgeRow(recipeId, packSize);
+    const currentQty = existing ? Number(existing.quantity) : 0;
+    const delta = Math.round(Number(quantity)) - Math.round(currentQty);
+    await adjustFridgeStock({
+      recipeId,
+      delta,
+      packSize,
+      reason: notes ?? "Manual stock-control entry",
+    });
+    const row = await readLatestProductionFridgeRow(recipeId, packSize);
+    if (!row) { res.status(500).json({ error: "Adjustment failed to produce a row" }); return; }
+    res.status(201).json({ ...row, quantity: Number(row.quantity), checkedAt: row.checkedAt.toISOString() });
+    return;
+  }
+
   const [row] = await db.insert(stockEntriesTable).values({
     recipeId: recipeId ?? null,
     ingredientId: ingredientId ?? null,
@@ -282,6 +330,32 @@ router.put("/:id", validate(UpdateStockEntryBody), async (req, res) => {
   const id = Number(req.params.id);
   const { recipeId, ingredientId, stockItemId, itemType, quantity, unit, location, notes } = req.body;
   const defaultLocation = itemType === "recipe" ? "production_fridge" : "prep_fridge";
+
+  // FIFO-tracked path: route through adjustFridgeStock with the implied
+  // delta. We need the CURRENT row (the one keyed by :id) to compute the
+  // delta against, then let the helper update the latest aggregate row
+  // and reconcile fridge_stock_batches. In the normal case these are the
+  // same row — the stock-control UI only ever PUTs the latest per item.
+  if (recipeId != null && isFifoTracked(itemType, location)) {
+    const packSize = (req.body.packSize as number | undefined) ?? 2;
+    const [target] = await db
+      .select({ quantity: stockEntriesTable.quantity })
+      .from(stockEntriesTable)
+      .where(eq(stockEntriesTable.id, id));
+    if (!target) { res.status(404).json({ error: "Not found" }); return; }
+    const delta = Math.round(Number(quantity)) - Math.round(Number(target.quantity));
+    await adjustFridgeStock({
+      recipeId,
+      delta,
+      packSize,
+      reason: notes ?? "Manual stock-control edit",
+    });
+    const row = await readLatestProductionFridgeRow(recipeId, packSize);
+    if (!row) { res.status(500).json({ error: "Adjustment failed to produce a row" }); return; }
+    res.json({ ...row, quantity: Number(row.quantity), checkedAt: row.checkedAt.toISOString() });
+    return;
+  }
+
   // Bump checkedAt to NOW on every edit. Downstream queries (the Create Plan
   // /calculate, the stock-control GET, etc.) use checkedAt to decide which
   // row is the most recent reading; without this an in-place edit kept the
