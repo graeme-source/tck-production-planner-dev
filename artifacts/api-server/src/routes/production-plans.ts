@@ -5888,20 +5888,38 @@ router.get("/:id/main-prep", async (req, res) => {
   for (const [, exp] of expandedIngMap) {
     const existing = ingredientMap.get(exp.ingredientId);
     if (existing) {
-      // Ingredient already exists from a direct recipe link — add expanded qty
+      // Ingredient already exists from a direct recipe link OR a previous
+      // sub-recipe expansion. Fold this expansion's qty into the existing
+      // entry for the same parent recipe if one is present; otherwise
+      // push a new entry. Without this dedupe, an ingredient that appears
+      // in TWO sub-recipes of the same parent (e.g. Matture Cheddar in
+      // both Macaroni Cheese and Breadcrumb Topping under Big Nanny's)
+      // ends up with two recipe entries sharing the same recipeId, which
+      // makes the prep UI's tin completions collide — ticking one tin
+      // lights up the matching tin number in every duplicate panel.
       existing.totalQty += exp.totalQty;
-      existing.recipes.push({
-        recipeId: exp.parentRecipeId,
-        recipeName: exp.subRecipeName,
-        batchesTarget: 0,
-        qtyForRecipe: exp.totalQty,
-        tinSize: null,
-        maxBatchesPerTin: null,
-        tinCount: 1,
-        qtyPerTin: exp.totalQty,
-        isOverridden: false,
-        isFillingMix: false,
-      });
+      const sameParent = existing.recipes.find(r => r.recipeId === exp.parentRecipeId);
+      if (sameParent) {
+        sameParent.qtyForRecipe += exp.totalQty;
+        sameParent.qtyPerTin = sameParent.tinCount > 0
+          ? ((existing.unit === "kg" || existing.unit === "l")
+              ? Math.round((sameParent.qtyForRecipe / sameParent.tinCount) * 1000) / 1000
+              : roundByUnit(sameParent.qtyForRecipe / sameParent.tinCount, existing.unit))
+          : sameParent.qtyForRecipe;
+      } else {
+        existing.recipes.push({
+          recipeId: exp.parentRecipeId,
+          recipeName: exp.subRecipeName,
+          batchesTarget: 0,
+          qtyForRecipe: exp.totalQty,
+          tinSize: null,
+          maxBatchesPerTin: null,
+          tinCount: 1,
+          qtyPerTin: exp.totalQty,
+          isOverridden: false,
+          isFillingMix: false,
+        });
+      }
     } else {
       // Strip parentRecipeId from the spread — private marker, not response.
       const { parentRecipeId: _pRid, ...expRest } = exp;
