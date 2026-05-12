@@ -3998,7 +3998,25 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                     </div>
                   </td>
                   <td className="py-3 px-4 text-center font-mono text-muted-foreground">
-                    {((item.batchesTarget ?? 0) * (item.portionsPerBatch ?? 10) / (item.packSize ?? 2)).toLocaleString()}
+                    {(() => {
+                      const grossPacks = (item.batchesTarget ?? 0) * (item.portionsPerBatch ?? 10) / (item.packSize ?? 2);
+                      const bags = item.eightPackBagCount ?? 0;
+                      // Each 8-pack bag commits 4 two-packs. Show the net so
+                      // adding a bag here visibly drops the "Packs" figure
+                      // and the operator can sanity-check at a glance.
+                      const netPacks = Math.max(0, grossPacks - bags * 4);
+                      if (bags > 0) {
+                        return (
+                          <span className="inline-flex flex-col leading-tight">
+                            <span className="tabular-nums">{netPacks.toLocaleString()} packs</span>
+                            <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-normal">
+                              + {bags} × 8-pack bag
+                            </span>
+                          </span>
+                        );
+                      }
+                      return grossPacks.toLocaleString();
+                    })()}
                   </td>
                   <td className="py-3 px-4 text-center">{item.batchesComplete ?? 0}</td>
                   <td className="py-3 px-4 text-center">

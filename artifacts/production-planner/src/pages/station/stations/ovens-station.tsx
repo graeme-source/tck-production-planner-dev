@@ -892,59 +892,117 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                       <ArrowDown className="w-5 h-5 text-muted-foreground/50" />
                     </div>
 
-                    {/* Blast Chiller — Net + Wonky = what's sitting in the
-                        chiller. Equals display only shown in the common case
-                        where there are no 8-pack bags changing the arithmetic. */}
-                    <div className="rounded-xl border border-cyan-300 dark:border-cyan-800 bg-cyan-50/40 dark:bg-cyan-950/20 p-4">
-                      <div className="flex items-center gap-2 text-base font-bold text-cyan-700 dark:text-cyan-300 uppercase tracking-wider mb-3">
-                        <Snowflake className="w-5 h-5" /> Blast Chiller
-                      </div>
-                      <div className="flex items-stretch justify-center gap-3">
-                        <div className="flex-1 text-center bg-background rounded-lg border border-border py-2">
-                          <p className="text-xs text-muted-foreground font-medium mb-0.5">Net packs</p>
-                          <p className="text-3xl font-bold tabular-nums text-indigo-600 dark:text-indigo-400 leading-tight">
-                            {nTwoPacks}
-                          </p>
-                        </div>
-                        <div className="flex items-center text-2xl text-muted-foreground font-light">+</div>
-                        <div className="flex-1 text-center bg-background rounded-lg border border-border py-2">
-                          <p className="text-xs text-muted-foreground font-medium mb-0.5">Wonky</p>
-                          <p className={cn(
-                            "text-3xl font-bold tabular-nums leading-tight",
-                            wonlys > 0 ? "text-red-500" : "text-muted-foreground/60",
-                          )}>
-                            {wonlys}
-                          </p>
-                        </div>
-                        {eightPacks === 0 && (
-                          <>
-                            <div className="flex items-center text-2xl text-muted-foreground font-light">=</div>
-                            <div className="flex-1 text-center bg-cyan-100/60 dark:bg-cyan-900/30 rounded-lg border border-cyan-300 dark:border-cyan-700 py-2">
-                              <p className="text-xs text-cyan-700 dark:text-cyan-300 font-medium mb-0.5">Total in chiller</p>
-                              <p className="text-3xl font-bold tabular-nums text-cyan-700 dark:text-cyan-200 leading-tight">
-                                {nTwoPacks + wonlys}
+                    {/* Blast Chiller. When 8-pack bags are in play, surface the
+                        deduction explicitly: the calzones still come through the
+                        ovens same as ever, but the operator prepares 4 of them as
+                        an 8-pack bag (different prep) instead of two 2-packs in
+                        the chiller lane. Showing Gross − 8-pack = Net makes that
+                        split obvious at a glance. */}
+                    {(() => {
+                      const eightPackPacks = eightPacks * 4;
+                      const showEightPackBreakdown = eightPacks > 0;
+                      return (
+                        <div className="rounded-xl border border-cyan-300 dark:border-cyan-800 bg-cyan-50/40 dark:bg-cyan-950/20 p-4">
+                          <div className="flex items-center gap-2 text-base font-bold text-cyan-700 dark:text-cyan-300 uppercase tracking-wider mb-3">
+                            <Snowflake className="w-5 h-5" /> Blast Chiller
+                          </div>
+
+                          {showEightPackBreakdown && (
+                            <div className="mb-3 rounded-lg border border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-950/30 px-3 py-2">
+                              <p className="text-xs font-semibold text-indigo-700 dark:text-indigo-300 mb-1.5 uppercase tracking-wide">
+                                8-pack bag split
+                              </p>
+                              <div className="flex items-baseline gap-1.5 flex-wrap text-sm">
+                                <span className="font-bold text-indigo-700 dark:text-indigo-300 tabular-nums">{eightPacks}</span>
+                                <span className="text-indigo-700 dark:text-indigo-300">× 8-pack bag =</span>
+                                <span className="font-bold text-indigo-700 dark:text-indigo-300 tabular-nums">{eightPackPacks}</span>
+                                <span className="text-indigo-700 dark:text-indigo-300">packs prep'd into 8-pack bags</span>
+                              </div>
+                              <p className="text-[11px] text-indigo-600/80 dark:text-indigo-400/80 mt-0.5">
+                                These come off the same oven run but skip the 2-pack lane — they go straight into an 8-pack bag for the chiller.
                               </p>
                             </div>
-                          </>
-                        )}
-                      </div>
-                      {(eightPacks > 0 || trays > 0) && (
-                        <div className="mt-3 pt-3 border-t border-cyan-200 dark:border-cyan-800/60 flex items-center justify-center gap-6 text-sm">
-                          {eightPacks > 0 && (
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-muted-foreground font-medium">8-packs</span>
-                              <span className="text-lg font-bold tabular-nums text-indigo-600 dark:text-indigo-400">{eightPacks}</span>
+                          )}
+
+                          {showEightPackBreakdown ? (
+                            <div className="flex items-stretch justify-center gap-2">
+                              <div className="flex-1 text-center bg-background rounded-lg border border-border py-2">
+                                <p className="text-[10px] text-muted-foreground font-medium mb-0.5">Gross packs</p>
+                                <p className="text-2xl font-bold tabular-nums text-foreground leading-tight">
+                                  {gPacks}
+                                </p>
+                              </div>
+                              <div className="flex items-center text-xl text-muted-foreground font-light">−</div>
+                              <div className="flex-1 text-center bg-indigo-50 dark:bg-indigo-950/30 rounded-lg border border-indigo-300 dark:border-indigo-700 py-2">
+                                <p className="text-[10px] text-indigo-700 dark:text-indigo-300 font-medium mb-0.5">8-pack</p>
+                                <p className="text-2xl font-bold tabular-nums text-indigo-700 dark:text-indigo-300 leading-tight">
+                                  {eightPackPacks}
+                                </p>
+                              </div>
+                              <div className="flex items-center text-xl text-muted-foreground font-light">=</div>
+                              <div className="flex-1 text-center bg-background rounded-lg border border-border py-2">
+                                <p className="text-[10px] text-muted-foreground font-medium mb-0.5">Net 2-packs</p>
+                                <p className="text-2xl font-bold tabular-nums text-indigo-600 dark:text-indigo-400 leading-tight">
+                                  {nTwoPacks}
+                                </p>
+                              </div>
+                              <div className="flex items-center text-xl text-muted-foreground font-light">+</div>
+                              <div className="flex-1 text-center bg-background rounded-lg border border-border py-2">
+                                <p className="text-[10px] text-muted-foreground font-medium mb-0.5">Wonky</p>
+                                <p className={cn(
+                                  "text-2xl font-bold tabular-nums leading-tight",
+                                  wonlys > 0 ? "text-red-500" : "text-muted-foreground/60",
+                                )}>
+                                  {wonlys}
+                                </p>
+                              </div>
+                              <div className="flex items-center text-xl text-muted-foreground font-light">=</div>
+                              <div className="flex-1 text-center bg-cyan-100/60 dark:bg-cyan-900/30 rounded-lg border border-cyan-300 dark:border-cyan-700 py-2">
+                                <p className="text-[10px] text-cyan-700 dark:text-cyan-300 font-medium mb-0.5">In 2-pack lane</p>
+                                <p className="text-2xl font-bold tabular-nums text-cyan-700 dark:text-cyan-200 leading-tight">
+                                  {nTwoPacks + wonlys}
+                                </p>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-stretch justify-center gap-3">
+                              <div className="flex-1 text-center bg-background rounded-lg border border-border py-2">
+                                <p className="text-xs text-muted-foreground font-medium mb-0.5">Net packs</p>
+                                <p className="text-3xl font-bold tabular-nums text-indigo-600 dark:text-indigo-400 leading-tight">
+                                  {nTwoPacks}
+                                </p>
+                              </div>
+                              <div className="flex items-center text-2xl text-muted-foreground font-light">+</div>
+                              <div className="flex-1 text-center bg-background rounded-lg border border-border py-2">
+                                <p className="text-xs text-muted-foreground font-medium mb-0.5">Wonky</p>
+                                <p className={cn(
+                                  "text-3xl font-bold tabular-nums leading-tight",
+                                  wonlys > 0 ? "text-red-500" : "text-muted-foreground/60",
+                                )}>
+                                  {wonlys}
+                                </p>
+                              </div>
+                              <div className="flex items-center text-2xl text-muted-foreground font-light">=</div>
+                              <div className="flex-1 text-center bg-cyan-100/60 dark:bg-cyan-900/30 rounded-lg border border-cyan-300 dark:border-cyan-700 py-2">
+                                <p className="text-xs text-cyan-700 dark:text-cyan-300 font-medium mb-0.5">Total in chiller</p>
+                                <p className="text-3xl font-bold tabular-nums text-cyan-700 dark:text-cyan-200 leading-tight">
+                                  {nTwoPacks + wonlys}
+                                </p>
+                              </div>
                             </div>
                           )}
+
                           {trays > 0 && (
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-muted-foreground font-medium">Chiller trays</span>
-                              <span className="text-lg font-bold tabular-nums text-cyan-600 dark:text-cyan-400">{trays}</span>
+                            <div className="mt-3 pt-3 border-t border-cyan-200 dark:border-cyan-800/60 flex items-center justify-center gap-6 text-sm">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-muted-foreground font-medium">Chiller trays</span>
+                                <span className="text-lg font-bold tabular-nums text-cyan-600 dark:text-cyan-400">{trays}</span>
+                              </div>
                             </div>
                           )}
                         </div>
-                      )}
-                    </div>
+                      );
+                    })()}
 
                     {/* Wonky quality rejects */}
                     <div className="flex items-center justify-between">
