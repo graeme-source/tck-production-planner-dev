@@ -109,8 +109,14 @@ router.get("/calculate", async (req, res) => {
   // real order line if surplus exceeds stock.
   // Weekly-frequency items only surface on their scheduled weekday — otherwise
   // they prompt the operator to order/check every day instead of just the
-  // assigned one.
-  const todayDayName = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date().getDay()];
+  // assigned one. Compute the weekday in Europe/London — Railway's containers
+  // run in UTC, so `new Date().getDay()` would roll over an hour before UK
+  // midnight in BST (and at UK midnight in GMT, with the same risk of late
+  // ops seeing the wrong day).
+  const todayDayName = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    weekday: "long",
+  }).format(new Date());
   const stockCheckedIngredients = await db
     .select({
       id: ingredientsTable.id,
