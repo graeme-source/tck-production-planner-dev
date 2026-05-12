@@ -62,6 +62,7 @@ interface WeeklyOrderDay {
   orderCount: number;
   fulfilledCount: number;
   unfulfilledCount: number;
+  packCount: number;
 }
 
 interface WeeklyOrdersResponse {
@@ -536,7 +537,25 @@ export default function Dispatches() {
                 if (e?.activePayload?.[0]?.payload) handleBarClick(e.activePayload[0].payload);
               }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                <XAxis dataKey="day" stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} />
+                <XAxis
+                  dataKey="day"
+                  stroke="hsl(var(--muted-foreground))"
+                  fontSize={12}
+                  tickLine={false}
+                  axisLine={false}
+                  height={36}
+                  interval={0}
+                  tick={(props: { x: number; y: number; payload: { value: string } }) => {
+                    const day = props.payload.value;
+                    const row = weeklyOrders?.find(d => d.day === day);
+                    return (
+                      <g transform={`translate(${props.x},${props.y})`}>
+                        <text x={0} y={0} dy={12} textAnchor="middle" fill="hsl(var(--muted-foreground))" fontSize={12}>{day}</text>
+                        <text x={0} y={0} dy={26} textAnchor="middle" fill="hsl(var(--foreground))" fontSize={11} fontWeight={600}>{row?.packCount ?? 0}</text>
+                      </g>
+                    );
+                  }}
+                />
                 <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} allowDecimals={false} width={28} />
                 <Tooltip
                   cursor={{ fill: "hsl(var(--secondary))", cursor: "pointer" }}
@@ -556,6 +575,7 @@ export default function Dispatches() {
                             <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: "hsl(var(--primary) / 0.3)" }} />
                             <span>{item.unfulfilledCount} unfulfilled</span>
                           </div>
+                          <p className="text-xs text-muted-foreground pt-1">{item.packCount} packs total</p>
                           <p className="text-xs text-muted-foreground pt-1">Click to view breakdown</p>
                         </div>
                       );

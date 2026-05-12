@@ -169,13 +169,33 @@ router.get("/weekly-orders", async (req, res) => {
       monday.setUTCDate(monday.getUTCDate() + diff);
     }
 
-    // Use GraphQL ordersCount for per-day totals instead of fetching the
-    // whole order list. The dashboard widget only needs numbers, and the
-    // REST ?tag= filter is broken on this store — pulling 250+ heavy
-    // orders × 7 days previously OOM-crashed the Railway container.
-    // Two count queries per day (total, fulfilled); unfulfilled is the
-    // remainder so any "partial" fulfillment still shows as not-yet-done,
-    // matching the old widget semantics.
+    // Load the variant → pack-size map once. Each Shopify line_item.quantity
+    // represents that many *units* sold (e.g. a 2-pack or 8-pack bag), and
+    // each recipe declares its pack_size, so total individual packs = sum of
+    // line_item.quantity × recipe.pack_size for variants that resolve to a
+    // recipe. Unmapped variants (non-core items, gift cards, etc.) are
+    // skipped — consistent with how the fulfilment decrement counts packs.
+    const variantPackSize = new Map<string, number>();
+    try {
+      const mappings = await db.execute<{ shopify_variant_id: string | null; wonky_variant_id: string | null; pack_size: string }>(sql`
+        SELECT m.shopify_variant_id, m.wonky_variant_id, r.pack_size
+        FROM recipe_shopify_mappings m
+        INNER JOIN recipes r ON r.id = m.recipe_id
+      `);
+      for (const row of mappings.rows ?? mappings) {
+        const ps = Number(row.pack_size) || 1;
+        if (row.shopify_variant_id) variantPackSize.set(String(row.shopify_variant_id), ps);
+        if (row.wonky_variant_id) variantPackSize.set(String(row.wonky_variant_id), ps);
+      }
+    } catch (mapErr) {
+      console.warn("[Shopify] weekly-orders: variant→packSize map unavailable", mapErr);
+    }
+
+    // Pull each day's orders with line_items so we can compute pack count
+    // alongside the order count. getOrdersByTag is REST-paginated; the
+    // previous OOM concern was about pulling unfiltered 250-page slices
+    // — tag filtering keeps each day's result bounded to that day's
+    // deliveries (~50-100 orders typically).
     const results = await Promise.all(
       Array.from({ length: 7 }, async (_, i) => {
         const dispatchDay = new Date(monday);
@@ -185,10 +205,20 @@ router.get("/weekly-orders", async (req, res) => {
         deliveryDay.setDate(monday.getDate() + i + 1);
 
         const tag = toDateTag(deliveryDay);
-        const [orderCount, fulfilledCount] = await Promise.all([
-          countOrdersByTag(tag),
-          countOrdersByTag(tag, "fulfilled"),
-        ]);
+        const orders = await getOrdersByTag(tag);
+
+        let orderCount = 0;
+        let fulfilledCount = 0;
+        let packCount = 0;
+        for (const o of orders) {
+          orderCount += 1;
+          if (o.fulfillment_status === "fulfilled") fulfilledCount += 1;
+          for (const li of o.line_items ?? []) {
+            const variantKey = li.variant_id != null ? String(li.variant_id) : null;
+            const packSize = variantKey ? variantPackSize.get(variantKey) ?? 0 : 0;
+            packCount += (li.quantity || 0) * packSize;
+          }
+        }
 
         return {
           date: toDateTag(dispatchDay),
@@ -197,6 +227,7 @@ router.get("/weekly-orders", async (req, res) => {
           orderCount,
           fulfilledCount,
           unfulfilledCount: orderCount - fulfilledCount,
+          packCount,
         };
       })
     );

@@ -253,7 +253,7 @@ async function fetchWeeklyOrders(weekStart: string) {
   const res = await fetch(`${BASE}/api/shopify/weekly-orders?weekStart=${encodeURIComponent(weekStart)}`, { credentials: "include" });
   if (!res.ok) throw new Error("Failed to fetch weekly orders");
   const data = await res.json();
-  return (data.days ?? data) as { date: string; deliveryDate: string; day: string; orderCount: number; fulfilledCount: number; unfulfilledCount: number }[];
+  return (data.days ?? data) as { date: string; deliveryDate: string; day: string; orderCount: number; fulfilledCount: number; unfulfilledCount: number; packCount: number }[];
 }
 
 async function fetchTodayDeliveriesCount(): Promise<number> {
@@ -342,6 +342,7 @@ export default function Dashboard() {
             <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: "hsl(var(--primary) / 0.3)" }} />
             <span>{item.unfulfilledCount} unfulfilled</span>
           </div>
+          <p className="text-xs text-muted-foreground pt-1">{item.packCount} packs total</p>
         </div>
       );
     }
@@ -508,6 +509,18 @@ export default function Dashboard() {
                     fontSize={12}
                     tickLine={false}
                     axisLine={false}
+                    height={36}
+                    interval={0}
+                    tick={(props: { x: number; y: number; payload: { value: string } }) => {
+                      const day = props.payload.value;
+                      const row = weeklyOrders?.find(d => d.day === day);
+                      return (
+                        <g transform={`translate(${props.x},${props.y})`}>
+                          <text x={0} y={0} dy={12} textAnchor="middle" fill="hsl(var(--muted-foreground))" fontSize={12}>{day}</text>
+                          <text x={0} y={0} dy={26} textAnchor="middle" fill="hsl(var(--foreground))" fontSize={11} fontWeight={600}>{row?.packCount ?? 0}</text>
+                        </g>
+                      );
+                    }}
                   />
                   <YAxis
                     stroke="hsl(var(--muted-foreground))"
