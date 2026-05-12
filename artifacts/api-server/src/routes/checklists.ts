@@ -742,7 +742,12 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
     return;
   }
 
-  if (type === "first_pack_batch_numbers") {
+  // Both opening (first) and closing (last) pack-batch checklists pull
+  // the same shape of payload — per-recipe fridge qty, suggested-oldest
+  // batch, and whatever's already been recorded for first/last today.
+  // The frontend component switches its label, suggestion logic, and
+  // which column it POSTs to based on the dynamic data type.
+  if (type === "first_pack_batch_numbers" || type === "last_pack_batch_numbers") {
     // Get ALL recipes currently in the production fridge from stock_entries
     // (the aggregate stock table that always has data, unlike fridge_stock_batches
     // which only populates from new wrapping going forward)
@@ -798,14 +803,27 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
       }
     }
 
-    // Get any already-recorded batch numbers for this plan
+    // Get any already-recorded batch numbers for this plan (both first
+    // and last — opening check will show what's recorded as first;
+    // closing check will show first as context and what's recorded as
+    // last).
     const existingRecords = await db
       .select()
       .from(packingBatchRecordsTable)
       .where(eq(packingBatchRecordsTable.planId, planId));
-    const recordMap = new Map<number, { batchNumber: number; recordedAt: string }>();
+    const recordMap = new Map<number, {
+      firstBatchNumber: number | null;
+      lastBatchNumber: number | null;
+      firstRecordedAt: string | null;
+      lastRecordedAt: string | null;
+    }>();
     for (const r of existingRecords) {
-      recordMap.set(r.recipeId, { batchNumber: r.batchNumber, recordedAt: r.recordedAt.toISOString() });
+      recordMap.set(r.recipeId, {
+        firstBatchNumber: r.firstBatchNumber,
+        lastBatchNumber: r.lastBatchNumber,
+        firstRecordedAt: r.firstRecordedAt?.toISOString() ?? null,
+        lastRecordedAt: r.lastRecordedAt?.toISOString() ?? null,
+      });
     }
 
     const result = fridgeRecipeIds.map(recipeId => {
@@ -816,10 +834,15 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
         recipeId,
         recipeName: recipe.recipeName,
         fridgeQty: recipe.qty,
+        // First-pack suggestion = oldest batch in the fridge (FIFO).
+        // Last-pack consumers ignore this and use the first-pack
+        // recorded value as context instead.
         suggestedBatchNumber: suggested?.batchNumber ?? null,
         suggestedUseByDate: suggested?.useByDate ?? null,
-        recordedBatchNumber: recorded?.batchNumber ?? null,
-        recordedAt: recorded?.recordedAt ?? null,
+        recordedFirstBatchNumber: recorded?.firstBatchNumber ?? null,
+        recordedLastBatchNumber: recorded?.lastBatchNumber ?? null,
+        firstRecordedAt: recorded?.firstRecordedAt ?? null,
+        lastRecordedAt: recorded?.lastRecordedAt ?? null,
       };
     });
 
@@ -830,21 +853,39 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
   res.status(400).json({ error: `Unknown dynamic data type: ${type}` });
 });
 
-// POST /packing-batch-record — save or update a first-pack batch number for a recipe
+// POST /packing-batch-record — save first OR last pack batch number for
+// a recipe. `kind` selects which column to update. The other column is
+// left alone, so the same (plan, recipe) row carries both values across
+// opening and closing checks.
 router.post("/packing-batch-record", async (req: Request, res: Response) => {
-  const { planId, recipeId, batchNumber } = req.body as { planId: number; recipeId: number; batchNumber: number };
+  const { planId, recipeId, batchNumber, kind } = req.body as {
+    planId: number;
+    recipeId: number;
+    batchNumber: number;
+    kind?: "first" | "last";
+  };
   if (!planId || !recipeId || !batchNumber) {
     res.status(400).json({ error: "planId, recipeId, and batchNumber are required" });
     return;
   }
+  const which: "first" | "last" = kind === "last" ? "last" : "first";
   const userId = (req.session as any)?.userId ?? null;
   try {
-    await db.execute(sql`
-      INSERT INTO packing_batch_records (plan_id, recipe_id, batch_number, user_id)
-      VALUES (${planId}, ${recipeId}, ${batchNumber}, ${userId})
-      ON CONFLICT (plan_id, recipe_id)
-      DO UPDATE SET batch_number = ${batchNumber}, user_id = ${userId}, recorded_at = NOW()
-    `);
+    if (which === "first") {
+      await db.execute(sql`
+        INSERT INTO packing_batch_records (plan_id, recipe_id, first_batch_number, first_user_id, first_recorded_at)
+        VALUES (${planId}, ${recipeId}, ${batchNumber}, ${userId}, NOW())
+        ON CONFLICT (plan_id, recipe_id)
+        DO UPDATE SET first_batch_number = ${batchNumber}, first_user_id = ${userId}, first_recorded_at = NOW()
+      `);
+    } else {
+      await db.execute(sql`
+        INSERT INTO packing_batch_records (plan_id, recipe_id, last_batch_number, last_user_id, last_recorded_at)
+        VALUES (${planId}, ${recipeId}, ${batchNumber}, ${userId}, NOW())
+        ON CONFLICT (plan_id, recipe_id)
+        DO UPDATE SET last_batch_number = ${batchNumber}, last_user_id = ${userId}, last_recorded_at = NOW()
+      `);
+    }
     res.json({ ok: true });
   } catch (err) {
     console.error("packing-batch-record error:", err);

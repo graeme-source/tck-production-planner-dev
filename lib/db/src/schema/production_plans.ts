@@ -210,13 +210,22 @@ export const batchWeightRecordsTable = pgTable("batch_weight_records", {
 
 export type BatchWeightRecord = typeof batchWeightRecordsTable.$inferSelect;
 
+// One row per (plan, recipe) capturing both the FIRST and LAST pack
+// batch numbers shipped that day, for traceability. Both columns are
+// nullable — opening check fills `first_*`, closing check fills `last_*`.
+// Legacy columns (`batch_number`, `user_id`, `recorded_at`) are kept on
+// the DB side during the migration window but are no longer read by the
+// app.
 export const packingBatchRecordsTable = pgTable("packing_batch_records", {
   id: serial("id").primaryKey(),
   planId: integer("plan_id").notNull().references(() => productionPlansTable.id, { onDelete: "cascade" }),
   recipeId: integer("recipe_id").notNull().references(() => recipesTable.id, { onDelete: "cascade" }),
-  batchNumber: integer("batch_number").notNull(),
-  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
-  recordedAt: timestamp("recorded_at").notNull().defaultNow(),
+  firstBatchNumber: integer("first_batch_number"),
+  lastBatchNumber: integer("last_batch_number"),
+  firstUserId: integer("first_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  lastUserId: integer("last_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  firstRecordedAt: timestamp("first_recorded_at"),
+  lastRecordedAt: timestamp("last_recorded_at"),
 }, (table) => [
   unique("uq_packing_batch_record").on(table.planId, table.recipeId),
 ]);

@@ -397,7 +397,7 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
         <div className="flex flex-col lg:flex-row gap-4">
           {/* LEFT — Categorized list. Equal width with the detail panel so
               the list isn't squashed and the bigger row font reads clearly. */}
-          <div className="lg:flex-1 lg:basis-1/2 min-w-0">
+          <div className="lg:flex-1 min-w-0">
             <div className="bg-card border border-border rounded-xl overflow-hidden">
               <div className="max-h-[calc(100vh-320px)] overflow-y-auto">
                 {CATEGORY_ORDER.map((cat, ci) => {
@@ -715,29 +715,45 @@ function itemKey(item: { type: string; id: number; category: string }): string {
 
 // ─── Dynamic Data Display ────────────────────────────────────────────
 
-function FirstPackBatchNumbers({ data, planId }: { data: unknown[]; planId: number }) {
-  const items = data as Array<{
-    recipeId: number;
-    recipeName: string;
-    fridgeQty?: number;
-    suggestedBatchNumber: number | null;
-    suggestedUseByDate: string | null;
-    recordedBatchNumber: number | null;
-    recordedAt: string | null;
-  }>;
+// Shared shape returned by the server for both first_pack_batch_numbers
+// and last_pack_batch_numbers dynamic data types. The component below
+// switches its label, suggestion, and POST `kind` based on the `kind`
+// prop rather than having two duplicated components.
+interface PackBatchRow {
+  recipeId: number;
+  recipeName: string;
+  fridgeQty?: number;
+  suggestedBatchNumber: number | null;
+  suggestedUseByDate: string | null;
+  recordedFirstBatchNumber: number | null;
+  recordedLastBatchNumber: number | null;
+  firstRecordedAt: string | null;
+  lastRecordedAt: string | null;
+}
+
+function PackBatchNumbers({ data, planId, kind }: { data: unknown[]; planId: number; kind: "first" | "last" }) {
+  const items = data as PackBatchRow[];
   const [values, setValues] = useState<Record<number, string>>({});
   const [saving, setSaving] = useState<Record<number, boolean>>({});
 
-  // Initialize values from recorded or suggested
+  const isLast = kind === "last";
+
+  // Initialize values: for first-pack, prefill from recorded-first or
+  // suggested-oldest. For last-pack, prefill only from recorded-last —
+  // we never suggest a value because the operator must read the actual
+  // batch number off the pack going out.
   useEffect(() => {
     const init: Record<number, string> = {};
     for (const item of items) {
-      if (item.recipeId != null) {
-        init[item.recipeId] = String(item.recordedBatchNumber ?? item.suggestedBatchNumber ?? "");
-      }
+      if (item.recipeId == null) continue;
+      const recorded = isLast ? item.recordedLastBatchNumber : item.recordedFirstBatchNumber;
+      const seed = isLast
+        ? recorded
+        : (recorded ?? item.suggestedBatchNumber);
+      init[item.recipeId] = seed != null ? String(seed) : "";
     }
     setValues(init);
-  }, [data]);
+  }, [data, isLast]);
 
   const saveBatch = async (recipeId: number) => {
     const val = parseInt(values[recipeId]);
@@ -748,10 +764,10 @@ function FirstPackBatchNumbers({ data, planId }: { data: unknown[]; planId: numb
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planId, recipeId, batchNumber: val }),
+        body: JSON.stringify({ planId, recipeId, batchNumber: val, kind }),
       });
       if (!res.ok) throw new Error("Failed to save");
-      toast({ title: "Saved", description: "Batch number recorded" });
+      toast({ title: "Saved", description: `${isLast ? "Last" : "First"} pack batch number recorded` });
     } catch {
       toast({ title: "Error", description: "Failed to save batch number", variant: "destructive" });
     } finally {
@@ -770,12 +786,21 @@ function FirstPackBatchNumbers({ data, planId }: { data: unknown[]; planId: numb
   return (
     <div className="mb-4 space-y-2">
       <p className="text-sm font-semibold text-foreground mb-2">
-        Record first pack batch number for each recipe in the fridge
+        {isLast
+          ? "Record last pack batch number for each recipe shipped today"
+          : "Record first pack batch number for each recipe in the fridge"}
       </p>
       {items.map(item => {
         if (!item.recipeId) return null;
         const val = values[item.recipeId] ?? "";
-        const isSaved = item.recordedBatchNumber != null && String(item.recordedBatchNumber) === val;
+        const recorded = isLast ? item.recordedLastBatchNumber : item.recordedFirstBatchNumber;
+        const isSaved = recorded != null && String(recorded) === val;
+        // For last-pack: surface today's first-pack as context if it's
+        // already been recorded. For first-pack: surface the FIFO
+        // suggestion as before.
+        const contextLine = isLast
+          ? (item.recordedFirstBatchNumber != null ? `First today: #${item.recordedFirstBatchNumber}` : null)
+          : (item.suggestedBatchNumber && !isSaved ? `Suggested: #${item.suggestedBatchNumber}` : null);
         return (
           <div key={item.recipeId} className={cn(
             "flex items-center gap-3 p-3 rounded-xl border transition-colors",
@@ -785,7 +810,7 @@ function FirstPackBatchNumbers({ data, planId }: { data: unknown[]; planId: numb
               <p className="text-sm font-semibold truncate">{item.recipeName}</p>
               <p className="text-xs text-muted-foreground">
                 {item.fridgeQty != null ? `${Math.round(item.fridgeQty)} packs in fridge` : ""}
-                {item.suggestedBatchNumber && !isSaved ? ` · Suggested: #${item.suggestedBatchNumber}` : ""}
+                {contextLine ? ` · ${contextLine}` : ""}
               </p>
               {isSaved && (
                 <p className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
@@ -865,7 +890,7 @@ function DynamicDataDisplay({ type, data, loading, planId }: { type: string; dat
     );
   }
 
-  if (type === "first_pack_batch_numbers") {
+  if (type === "first_pack_batch_numbers" || type === "last_pack_batch_numbers") {
     if (loading) {
       return (
         <div className="mb-4 p-3 bg-blue-50/60 dark:bg-blue-950/20 rounded-lg flex items-center gap-2 text-sm text-blue-600">
@@ -874,7 +899,7 @@ function DynamicDataDisplay({ type, data, loading, planId }: { type: string; dat
         </div>
       );
     }
-    return <FirstPackBatchNumbers data={data} planId={planId} />;
+    return <PackBatchNumbers data={data} planId={planId} kind={type === "last_pack_batch_numbers" ? "last" : "first"} />;
   }
 
   if (loading) {

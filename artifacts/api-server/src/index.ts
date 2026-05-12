@@ -867,6 +867,25 @@ async function runStartupMigrations() {
         UNIQUE(plan_id, recipe_id)
       )
     `);
+    // Split single batch_number into first/last for opening + closing
+    // checks. Old `batch_number`/`user_id`/`recorded_at` columns kept for
+    // safety until everything has migrated; the app now reads the
+    // first_*/last_* columns exclusively.
+    await db.execute(sql`ALTER TABLE packing_batch_records ADD COLUMN IF NOT EXISTS first_batch_number INTEGER`);
+    await db.execute(sql`ALTER TABLE packing_batch_records ADD COLUMN IF NOT EXISTS last_batch_number INTEGER`);
+    await db.execute(sql`ALTER TABLE packing_batch_records ADD COLUMN IF NOT EXISTS first_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL`);
+    await db.execute(sql`ALTER TABLE packing_batch_records ADD COLUMN IF NOT EXISTS last_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL`);
+    await db.execute(sql`ALTER TABLE packing_batch_records ADD COLUMN IF NOT EXISTS first_recorded_at TIMESTAMP`);
+    await db.execute(sql`ALTER TABLE packing_batch_records ADD COLUMN IF NOT EXISTS last_recorded_at TIMESTAMP`);
+    await db.execute(sql`ALTER TABLE packing_batch_records ALTER COLUMN batch_number DROP NOT NULL`);
+    // Backfill from the legacy columns where the new ones are still empty.
+    await db.execute(sql`
+      UPDATE packing_batch_records
+      SET first_batch_number = batch_number,
+          first_user_id = user_id,
+          first_recorded_at = recorded_at
+      WHERE first_batch_number IS NULL AND batch_number IS NOT NULL
+    `);
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS prep_tin_overrides (
