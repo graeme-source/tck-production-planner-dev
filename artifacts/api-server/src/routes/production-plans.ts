@@ -1144,6 +1144,18 @@ router.get("/calculate", async (req, res) => {
     ? [...unmatchedRecipeNames, `Calzone Club Special (${clubSpecialSales} units — no special recipe is configured)`]
     : unmatchedRecipeNames;
 
+  // Default ordering for new plans: Mac & Cheese variants first (kitchen
+  // convention — they share equipment and start the day), then everything
+  // else alphabetically by name. Plans that have been saved keep their
+  // own per-item orderPosition via Edit Plan's drag-and-drop, so this
+  // only affects what Create Plan suggests by default.
+  const orderedResult = [...result].sort((a, b) => {
+    const aMac = (a.recipeCategory ?? "").toLowerCase() === "macaroni cheese" ? 0 : 1;
+    const bMac = (b.recipeCategory ?? "").toLowerCase() === "macaroni cheese" ? 0 : 1;
+    if (aMac !== bMac) return aMac - bMac;
+    return a.recipeName.localeCompare(b.recipeName);
+  });
+
   res.json({
     planDate,
     prevProductionDate,
@@ -1156,7 +1168,7 @@ router.get("/calculate", async (req, res) => {
     shopifyError,
     unmatchedRecipes,
     fulfilmentDiagnostics,
-    recipes: result,
+    recipes: orderedResult,
   });
 });
 
