@@ -262,6 +262,7 @@ type SlideKind =
   | "bag_orders"
   | "short_on_pack"
   | "safety_issues"
+  | "system_updates"
   | "new_sops"
   | "struggles"
   | "lesson"
@@ -277,6 +278,7 @@ const SLIDE_KIND_META: Record<SlideKind, { icon: React.ElementType; color: strin
   bag_orders:          { icon: ShoppingBag,   color: "text-indigo-500",  fallbackTitle: "Bag Orders" },
   short_on_pack:       { icon: AlertCircle,   color: "text-orange-500",  fallbackTitle: "Short on the Pack" },
   safety_issues:       { icon: AlertCircle,   color: "text-red-500",     fallbackTitle: "Safety Issues" },
+  system_updates:      { icon: Sparkles,      color: "text-purple-500",  fallbackTitle: "System Updates" },
   new_sops:            { icon: FileText,      color: "text-cyan-500",    fallbackTitle: "New & Updated SOPs" },
   struggles:           { icon: MessageCircle, color: "text-pink-500",    fallbackTitle: "Struggles" },
   lesson:              { icon: BookOpen,      color: "text-purple-500",  fallbackTitle: "Today's Lean Lesson" },
@@ -766,6 +768,7 @@ function SlideBody({ slide, data, onRefresh }: { slide: MeetingSlide; data: Dash
     case "bag_orders": return <BagOrdersSlide slide={slide} />;
     case "short_on_pack": return <ShortOnPackSlide data={data} slide={slide} />;
     case "safety_issues": return <SafetyIssuesSlide data={data} onRefresh={onRefresh} slide={slide} />;
+    case "system_updates": return <SystemUpdatesSlide slide={slide} />;
     case "new_sops": return <NewSopsSlide data={data} slide={slide} />;
     case "struggles": return <StrugglesSlide data={data} onRefresh={onRefresh} slide={slide} />;
     case "lesson":
@@ -1093,6 +1096,120 @@ function SafetyIssuesSlide({ data, onRefresh, slide }: { data: DashboardData; on
   );
 }
 
+interface SystemCommit {
+  sha: string;
+  shortSha: string;
+  date: string;
+  author: string;
+  subject: string;
+  body: string;
+}
+
+function SystemUpdatesSlide({ slide }: { slide: MeetingSlide }) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [show7Days, setShow7Days] = useState(false);
+
+  const { data, isLoading } = useQuery<{
+    available: boolean;
+    last24h: SystemCommit[];
+    last7Days: SystemCommit[];
+  }>({
+    queryKey: ["system-updates"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/system-updates`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+    staleTime: 5 * 60_000,
+  });
+
+  const last24 = data?.last24h ?? [];
+  const earlier = (data?.last7Days ?? []).filter(c => !last24.some(c24 => c24.sha === c.sha));
+
+  return (
+    <div>
+      <SectionTitle>{slide.title || "System Updates"}</SectionTitle>
+      <SectionLead>
+        What's changed in the planner — anything fixed, anything new. Pulled automatically from commits.
+      </SectionLead>
+
+      {isLoading ? (
+        <div className="glass-panel rounded-2xl p-6 flex justify-center">
+          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : !data?.available ? (
+        <div className="glass-panel rounded-2xl p-6 text-muted-foreground">
+          System update feed isn't available in this environment.
+        </div>
+      ) : (
+        <>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Last 24 hours</p>
+          {last24.length === 0 ? (
+            <div className="glass-panel rounded-2xl p-5 text-muted-foreground italic">
+              No changes shipped in the last 24 hours.
+            </div>
+          ) : (
+            <div className="glass-panel rounded-2xl overflow-hidden">
+              {last24.map((c, i) => (
+                <div key={c.sha} className={cn("px-5 py-3", i > 0 && "border-t border-border/50")}>
+                  <button
+                    type="button"
+                    onClick={() => setExpanded(e => ({ ...e, [c.sha]: !e[c.sha] }))}
+                    className="w-full flex items-start justify-between gap-3 text-left"
+                  >
+                    <span className="font-medium leading-snug flex-1">{c.subject}</span>
+                    <span className="text-xs text-muted-foreground shrink-0 tabular-nums">
+                      {format(new Date(c.date), "EEE HH:mm")}
+                    </span>
+                  </button>
+                  {expanded[c.sha] && c.body && (
+                    <pre className="mt-2 text-xs text-muted-foreground whitespace-pre-wrap font-sans leading-relaxed bg-secondary/30 rounded-lg p-3">{c.body}</pre>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {earlier.length > 0 && (
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={() => setShow7Days(s => !s)}
+                className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+              >
+                <ChevronRight className={cn("w-3.5 h-3.5 transition-transform", show7Days && "rotate-90")} />
+                {show7Days ? "Hide" : "Show"} earlier this week ({earlier.length})
+              </button>
+              {show7Days && (
+                <div className="glass-panel rounded-xl overflow-hidden mt-2">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-secondary/40 border-b border-border/50">
+                        <th className="text-left px-4 py-2 text-xs font-medium text-muted-foreground">When</th>
+                        <th className="text-left px-4 py-2 text-xs font-medium text-muted-foreground">Change</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {earlier.map((c, i) => (
+                        <tr key={c.sha} className={cn(i > 0 && "border-t border-border/50")}>
+                          <td className="px-4 py-2 text-xs text-muted-foreground tabular-nums whitespace-nowrap align-top">
+                            {format(new Date(c.date), "EEE d MMM HH:mm")}
+                          </td>
+                          <td className="px-4 py-2">{c.subject}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function NewSopsSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
   const [openSopId, setOpenSopId] = useState<number | null>(null);
   return (
@@ -1328,6 +1445,7 @@ const SLIDE_KIND_CATALOG: Array<{ kind: SlideKind; label: string; description: s
   { kind: "bag_orders",          label: "Bag Orders",           description: "Discussion prompt" },
   { kind: "short_on_pack",       label: "Short on the Pack",    description: "Yesterday's shorts + leftover" },
   { kind: "safety_issues",       label: "Safety Issues",        description: "Open andons + log new" },
+  { kind: "system_updates",      label: "System Updates",       description: "Auto-pulls recent commits to the planner" },
   { kind: "new_sops",            label: "New & Updated SOPs",   description: "SOPs touched in last 7 days" },
   { kind: "struggles",           label: "Struggles",            description: "Open struggles + log new" },
   { kind: "lesson",              label: "Lean Lesson",          description: "Today's principle + example" },

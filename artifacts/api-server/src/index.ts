@@ -1204,7 +1204,31 @@ async function runStartupMigrations() {
     // Morning meeting — reorder slides + rename "Special Prep" →
     // "Test Product Prep" and "Local Delivery" → "Local Despatch" on
     // the default template (and on any future cloned meetings that
-    // still carry the legacy titles). Idempotent.
+    // still carry the legacy titles). Inserts the system_updates
+    // slide after the operational "first things first" block.
+    // Idempotent.
+    await db.execute(sql`
+      INSERT INTO template_slides (template_id, kind, title, order_position)
+      SELECT mt.id, 'system_updates', 'System Updates', 7
+      FROM meeting_templates mt
+      WHERE mt.is_default = true
+        AND NOT EXISTS (
+          SELECT 1 FROM template_slides ts
+          WHERE ts.template_id = mt.id AND ts.kind = 'system_updates'
+        )
+    `);
+    await db.execute(sql`
+      INSERT INTO meeting_slides (meeting_id, kind, title, order_position)
+      SELECT mm.id, 'system_updates', 'System Updates', 7
+      FROM morning_meetings mm
+      WHERE NOT EXISTS (
+        SELECT 1 FROM meeting_slides ms
+        WHERE ms.meeting_id = mm.id AND ms.kind = 'system_updates'
+      )
+      AND EXISTS (
+        SELECT 1 FROM meeting_slides ms WHERE ms.meeting_id = mm.id
+      )
+    `);
     await db.execute(sql`
       UPDATE template_slides ts
       SET order_position = m.new_pos, title = m.new_title
@@ -1216,11 +1240,12 @@ async function runStartupMigrations() {
         ('short_on_pack', 4, 'Short on the Pack'),
         ('local_delivery', 5, 'Local Despatch'),
         ('bag_orders', 6, 'Bag Orders'),
-        ('yesterday_kpis', 7, 'Yesterday''s Numbers'),
-        ('new_sops', 8, 'New & Updated SOPs'),
-        ('struggles', 9, 'Struggles'),
-        ('lesson', 10, 'Today''s Lean Lesson'),
-        ('gratitude', 11, 'Gratitude')
+        ('system_updates', 7, 'System Updates'),
+        ('yesterday_kpis', 8, 'Yesterday''s Numbers'),
+        ('new_sops', 9, 'New & Updated SOPs'),
+        ('struggles', 10, 'Struggles'),
+        ('lesson', 11, 'Today''s Lean Lesson'),
+        ('gratitude', 12, 'Gratitude')
       ) AS m(kind, new_pos, new_title)
       WHERE ts.kind = m.kind
         AND ts.template_id IN (SELECT id FROM meeting_templates WHERE is_default = true)
@@ -1237,11 +1262,12 @@ async function runStartupMigrations() {
         ('short_on_pack', 4, 'Short on the Pack'),
         ('local_delivery', 5, 'Local Despatch'),
         ('bag_orders', 6, 'Bag Orders'),
-        ('yesterday_kpis', 7, 'Yesterday''s Numbers'),
-        ('new_sops', 8, 'New & Updated SOPs'),
-        ('struggles', 9, 'Struggles'),
-        ('lesson', 10, 'Today''s Lean Lesson'),
-        ('gratitude', 11, 'Gratitude')
+        ('system_updates', 7, 'System Updates'),
+        ('yesterday_kpis', 8, 'Yesterday''s Numbers'),
+        ('new_sops', 9, 'New & Updated SOPs'),
+        ('struggles', 10, 'Struggles'),
+        ('lesson', 11, 'Today''s Lean Lesson'),
+        ('gratitude', 12, 'Gratitude')
       ) AS m(kind, new_pos, new_title)
       WHERE ms.kind = m.kind
     `);
