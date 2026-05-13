@@ -169,18 +169,20 @@ router.get("/weekly-orders", async (req, res) => {
       monday.setUTCDate(monday.getUTCDate() + diff);
     }
 
-    // Load the variant → pack-size map once. Each Shopify line_item.quantity
-    // represents that many *units* sold (e.g. a 2-pack or 8-pack bag), and
-    // each recipe declares its pack_size, so total individual packs = sum of
-    // line_item.quantity × recipe.pack_size for variants that resolve to a
-    // recipe. Unmapped variants (non-core items, gift cards, etc.) are
-    // skipped — consistent with how the fulfilment decrement counts packs.
+    // Load the variant → pack-size map once. Restricted to the standard
+    // 2-pack SKU per recipe (2-pack calzones and 2-portion mac & cheese)
+    // — anything else (8-pack bundles, single items, gift sets, etc.)
+    // is excluded so the dashboard count reflects "how many standard
+    // packs are going out the door", not a mixed total inflated by
+    // bundle orders. Wonky variants share the recipe's pack_size so
+    // they're included automatically as long as the recipe is 2-pack.
     const variantPackSize = new Map<string, number>();
     try {
       const mappings = await db.execute<{ shopify_variant_id: string | null; wonky_variant_id: string | null; pack_size: string }>(sql`
         SELECT m.shopify_variant_id, m.wonky_variant_id, r.pack_size
         FROM recipe_shopify_mappings m
         INNER JOIN recipes r ON r.id = m.recipe_id
+        WHERE r.pack_size = 2
       `);
       for (const row of mappings.rows ?? mappings) {
         const ps = Number(row.pack_size) || 1;
