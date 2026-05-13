@@ -35,6 +35,7 @@ export const recipesTable = pgTable("recipes", {
   color: text("color"),
   cookingLossPercent: numeric("cooking_loss_percent", { precision: 5, scale: 2 }).notNull().default("3"),
   fillingAssemblyOrder: integer("filling_assembly_order"),
+  tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

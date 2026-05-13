@@ -1187,6 +1187,9 @@ async function runStartupMigrations() {
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `);
+    // Recipe tags — see lib/db/migrations/0016_add_recipe_tags.sql
+    await db.execute(sql`ALTER TABLE recipes ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT '{}'`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS recipes_tags_gin_idx ON recipes USING GIN (tags)`);
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

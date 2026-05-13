@@ -51,8 +51,25 @@ function mapRecipe(r: typeof recipesTable.$inferSelect) {
     color: r.color ?? null,
     cookingLossPercent: r.cookingLossPercent != null ? Number(r.cookingLossPercent) : 3,
     dietaryCategory: r.dietaryCategory ?? null,
+    tags: r.tags ?? [],
     createdAt: r.createdAt.toISOString(),
   };
+}
+
+function normaliseTags(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const t of input) {
+    if (typeof t !== "string") continue;
+    const trimmed = t.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+  }
+  return out;
 }
 
 export async function computeCosts(recipeIds: number[]) {
@@ -166,7 +183,7 @@ function validateMarinades(marinades: MarinadeInput[], recipeIngredientIds: numb
 // never stripped, and the OpenAPI spec has been updated with all fields.
 
 router.post("/", validate(CreateRecipeBody), async (req, res) => {
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, targetBuildSeconds, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, dietaryCategory, ingredients, subRecipes, marinades } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, targetBuildSeconds, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, dietaryCategory, tags, ingredients, subRecipes, marinades } = req.body;
 
   if (marinades?.length) {
     const recipeIngIds = (ingredients ?? []).map(i => i.ingredientId);
@@ -201,6 +218,7 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
     color: color ?? null,
     cookingLossPercent: cookingLossPercent != null ? String(cookingLossPercent) : "3",
     dietaryCategory: dietaryCategory ?? null,
+    tags: normaliseTags(tags),
   };
 
   const [recipe] = await db.transaction(async (tx) => {
@@ -413,7 +431,7 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, targetBuildSeconds, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, dietaryCategory, ingredients, subRecipes, marinades } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, targetBuildSeconds, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, dietaryCategory, tags, ingredients, subRecipes, marinades } = req.body;
 
   if (marinades?.length) {
     const recipeIngIds = (ingredients ?? []).map(i => i.ingredientId);
@@ -448,6 +466,7 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
     cookingLossPercent: cookingLossPercent != null ? String(cookingLossPercent) : "3",
     ...(dietaryCategory !== undefined ? { dietaryCategory: dietaryCategory ?? null } : {}),
     ...(isCurrentSpecial !== undefined ? { isCurrentSpecial } : {}),
+    ...(tags !== undefined ? { tags: normaliseTags(tags) } : {}),
   };
 
   const [updated] = await db.transaction(async (tx) => {

@@ -39,6 +39,7 @@ const schema = z.object({
   color: z.string().optional(),
   cookingLossPercent: z.preprocess(v => (v === "" || v == null ? null : Number(v)), z.number().min(0).max(50).nullable().optional()),
   dietaryCategory: z.preprocess(v => (v === "" ? null : v), z.enum(["meat", "vegetarian"]).nullable().optional()),
+  tags: z.array(z.string()).optional(),
   ingredients: z.array(z.object({
     ingredientId: z.coerce.number().min(1, "Select ingredient"),
     quantity: z.coerce.number().min(0.001, "Must be > 0"),
@@ -64,6 +65,71 @@ const schema = z.object({
 type FormValues = z.infer<typeof schema>;
 
 function fmt(n: number | undefined | null) { return (Number(n) || 0).toFixed(2); }
+
+/** Chip-style tag editor used inside the recipe form. Suggestions
+ *  come from the union of tags already used on other recipes so the
+ *  operator doesn't end up with "GF" / "gluten-free" / "GLUTEN FREE"
+ *  as three separate tags. Enter/comma to commit, backspace on an
+ *  empty input deletes the last chip. */
+function TagInput({ value, onChange, suggestions }: {
+  value: string[];
+  onChange: (next: string[]) => void;
+  suggestions: string[];
+}) {
+  const [draft, setDraft] = useState("");
+  const lowerExisting = new Set(value.map(v => v.toLowerCase()));
+  const addTag = (raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    if (lowerExisting.has(trimmed.toLowerCase())) { setDraft(""); return; }
+    onChange([...value, trimmed]);
+    setDraft("");
+  };
+  const removeTag = (i: number) => onChange(value.filter((_, idx) => idx !== i));
+  const filteredSuggestions = draft.trim()
+    ? suggestions.filter(s => !lowerExisting.has(s.toLowerCase()) && s.toLowerCase().includes(draft.trim().toLowerCase())).slice(0, 8)
+    : [];
+
+  return (
+    <div>
+      <div className="flex flex-wrap gap-1.5 items-center px-2 py-1.5 bg-background border border-border rounded-lg min-h-[40px] focus-within:ring-2 focus-within:ring-primary/30">
+        {value.map((tag, i) => (
+          <span key={`${tag}-${i}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary text-xs font-medium">
+            {tag}
+            <button type="button" onClick={() => removeTag(i)} className="hover:text-destructive">
+              <X className="w-3 h-3" />
+            </button>
+          </span>
+        ))}
+        <input
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addTag(draft); }
+            else if (e.key === "Backspace" && draft === "" && value.length > 0) { removeTag(value.length - 1); }
+          }}
+          onBlur={() => { if (draft.trim()) addTag(draft); }}
+          placeholder={value.length === 0 ? "Type a tag and press Enter (e.g. gluten-free, summer, kids)" : ""}
+          className="flex-1 min-w-[160px] bg-transparent text-sm focus:outline-none"
+        />
+      </div>
+      {filteredSuggestions.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mt-1.5">
+          {filteredSuggestions.map(s => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => addTag(s)}
+              className="px-2 py-0.5 rounded-full text-xs bg-secondary/60 text-muted-foreground hover:bg-secondary border border-border"
+            >
+              + {s}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function MarginBadge({ margin }: { margin: number | null | undefined }) {
   if (margin == null) return <span className="text-xs text-muted-foreground italic">No RRP set</span>;
@@ -125,6 +191,7 @@ function RecipeForm({
   thisRecipeIsSpecial,
   onDirtyChange,
   submitRef,
+  allTags,
 }: {
   defaultValues: FormValues;
   onSubmit: (data: FormValues) => void;
@@ -137,6 +204,7 @@ function RecipeForm({
   thisRecipeIsSpecial?: boolean;
   onDirtyChange?: (isDirty: boolean) => void;
   submitRef?: React.MutableRefObject<(() => void) | null>;
+  allTags?: string[];
 }) {
   const { register, control, handleSubmit, setValue, watch, formState: { errors, isDirty } } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -395,6 +463,21 @@ function RecipeForm({
           <div className="col-span-2">
             <label className="text-sm font-medium mb-1 block">Description (optional)</label>
             <textarea {...register("description")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[48px] resize-none" placeholder="Brief description…" />
+          </div>
+          <div className="col-span-2">
+            <label className="text-sm font-medium mb-1 block">Tags</label>
+            <Controller
+              control={control}
+              name="tags"
+              render={({ field }) => (
+                <TagInput
+                  value={field.value ?? []}
+                  onChange={(next) => field.onChange(next)}
+                  suggestions={allTags ?? []}
+                />
+              )}
+            />
+            <span className="text-xs text-muted-foreground mt-1 block">Free-form labels — drives the search bar &amp; tag filter on the recipes list.</span>
           </div>
         </div>
 
@@ -745,12 +828,13 @@ interface ShopifyMapping {
 }
 
 function EditRecipeDialog({
-  id, open, onOpenChange, ingredients, subRecipes, categoryDefaults,
+  id, open, onOpenChange, ingredients, subRecipes, categoryDefaults, allTags,
 }: {
   id: number; open: boolean; onOpenChange: (v: boolean) => void;
   ingredients: IngredientOption[];
   subRecipes: SubRecipeOption[];
   categoryDefaults: { category: string; defaultPackagingCost: number; defaultLabourCost: number }[];
+  allTags?: string[];
 }) {
   const { state: authState } = useAuth();
   const canEditShopify = authState.status === "authenticated" &&
@@ -908,10 +992,11 @@ function EditRecipeDialog({
         color: detail.color ?? "",
         cookingLossPercent: (detail as Record<string, unknown>).cookingLossPercent != null ? Number((detail as Record<string, unknown>).cookingLossPercent) : 3,
         dietaryCategory: ((detail as Record<string, unknown>).dietaryCategory as "meat" | "vegetarian" | null | undefined) ?? null,
+        tags: Array.isArray((detail as Record<string, unknown>).tags) ? ((detail as Record<string, unknown>).tags as string[]) : [],
         ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, quid: (i as Record<string, unknown>).quid === true, showInPrep: (i as Record<string, unknown>).showInPrep === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
         subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, quid: (s as Record<string, unknown>).quid === true, showInPrep: (s as Record<string, unknown>).showInPrep === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
       }
-    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", cookingLossPercent: 3, dietaryCategory: null, ingredients: [], subRecipes: [] };
+    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", cookingLossPercent: 3, dietaryCategory: null, tags: [], ingredients: [], subRecipes: [] };
 
   return (
     <>
@@ -960,6 +1045,7 @@ function EditRecipeDialog({
                 thisRecipeIsSpecial={thisRecipeIsSpecial}
                 onDirtyChange={setFormIsDirty}
                 submitRef={submitRef}
+                allTags={allTags}
                 onSubmit={(data) => {
                   const { targetBuildMinutes, ...rest } = data;
                   const payload = {
@@ -1630,7 +1716,24 @@ export default function Recipes() {
   const [duplicateDefaults, setDuplicateDefaults] = useState<FormValues | null>(null);
 
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const { data: duplicateDetail } = useGetRecipe(duplicatingId!, { query: { enabled: duplicatingId !== null } });
+
+  // Union of every tag currently in use across recipes — drives both
+  // the filter pill row and the autocomplete suggestions inside the
+  // recipe form's TagInput.
+  const allTags = (() => {
+    const seen = new Map<string, string>();
+    for (const r of recipes ?? []) {
+      const tags = ((r as Record<string, unknown>).tags as string[] | undefined) ?? [];
+      for (const t of tags) {
+        const key = t.toLowerCase();
+        if (!seen.has(key)) seen.set(key, t);
+      }
+    }
+    return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
+  })();
 
   useEffect(() => {
     if (duplicatingId !== null && duplicateDetail && duplicateDetail.id === duplicatingId) {
@@ -1658,6 +1761,7 @@ export default function Recipes() {
         color: duplicateDetail.color ?? "",
         cookingLossPercent: (duplicateDetail as Record<string, unknown>).cookingLossPercent != null ? Number((duplicateDetail as Record<string, unknown>).cookingLossPercent) : 3,
         dietaryCategory: ((duplicateDetail as Record<string, unknown>).dietaryCategory as "meat" | "vegetarian" | null | undefined) ?? null,
+        tags: Array.isArray((duplicateDetail as Record<string, unknown>).tags) ? ((duplicateDetail as Record<string, unknown>).tags as string[]) : [],
         ingredients: (duplicateDetail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, quid: (i as Record<string, unknown>).quid === true, showInPrep: (i as Record<string, unknown>).showInPrep === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
         subRecipes: (duplicateDetail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, quid: (s as Record<string, unknown>).quid === true, showInPrep: (s as Record<string, unknown>).showInPrep === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
       };
@@ -1691,7 +1795,7 @@ export default function Recipes() {
   const addDefaults: FormValues = {
     name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "",
     packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined,
-    tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", cookingLossPercent: 3, dietaryCategory: null, ingredients: [], subRecipes: [],
+    tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", cookingLossPercent: 3, dietaryCategory: null, tags: [], ingredients: [], subRecipes: [],
   };
 
   return (
@@ -1728,6 +1832,64 @@ export default function Recipes() {
         </div>
       </div>
 
+      {/* Search + tag filter — both AND together with the category dropdown above. */}
+      <div className="space-y-2">
+        <div className="relative max-w-md">
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search recipes by name…"
+            className="w-full px-3 py-2 pr-8 bg-card border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              title="Clear search"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+        {allTags.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs text-muted-foreground mr-1">Tags:</span>
+            {allTags.map(tag => {
+              const active = selectedTags.includes(tag);
+              return (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => setSelectedTags(active
+                    ? selectedTags.filter(t => t !== tag)
+                    : [...selectedTags, tag]
+                  )}
+                  className={cn(
+                    "px-2.5 py-0.5 rounded-full text-xs font-medium border transition-colors",
+                    active
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-card text-muted-foreground border-border hover:border-primary/50 hover:text-foreground"
+                  )}
+                >
+                  {tag}
+                </button>
+              );
+            })}
+            {selectedTags.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setSelectedTags([])}
+                className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline ml-1"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Add dialog */}
       <Dialog open={isAddOpen} onOpenChange={(v) => { setIsAddOpen(v); if (!v) setDuplicateDefaults(null); }}>
         <DialogContent className="sm:max-w-[720px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
@@ -1740,6 +1902,7 @@ export default function Recipes() {
             ingredients={ingredientList}
             subRecipes={subRecipeList}
             categoryDefaults={catDefaults}
+            allTags={allTags}
             onSubmit={(data) => {
               const { targetBuildMinutes, ...rest } = data;
               const payload = {
@@ -1770,6 +1933,7 @@ export default function Recipes() {
           ingredients={ingredientList}
           subRecipes={subRecipeList}
           categoryDefaults={catDefaults}
+          allTags={allTags}
         />
       )}
 
@@ -1784,7 +1948,21 @@ export default function Recipes() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {recipes?.filter(r => categoryFilter === "all" || r.category === categoryFilter).map((recipe) => (
+        {recipes?.filter(r => {
+          if (categoryFilter !== "all" && r.category !== categoryFilter) return false;
+          if (searchQuery.trim()) {
+            const q = searchQuery.trim().toLowerCase();
+            if (!r.name.toLowerCase().includes(q)) return false;
+          }
+          if (selectedTags.length > 0) {
+            const rTags = ((r as Record<string, unknown>).tags as string[] | undefined) ?? [];
+            const rLower = new Set(rTags.map(t => t.toLowerCase()));
+            for (const sel of selectedTags) {
+              if (!rLower.has(sel.toLowerCase())) return false;
+            }
+          }
+          return true;
+        }).map((recipe) => (
           <RecipeCard
             key={recipe.id}
             recipe={recipe as RecipeItem}
