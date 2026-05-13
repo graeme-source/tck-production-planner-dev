@@ -15,7 +15,7 @@
  * it end-to-end. Flip it off once all recipes have correct Shopify
  * variant mappings.
  */
-import { db, appSettingsTable, fridgeStockBatchesTable } from "@workspace/db";
+import { db, appSettingsTable, fridgeStockBatchesTable, recipesTable } from "@workspace/db";
 import { eq, and, gt, asc, sql } from "drizzle-orm";
 import { syncRecipeFridgeStock } from "../routes/production-plans";
 import type { ShopifyLineItem } from "../services/shopify";
@@ -159,6 +159,20 @@ export function invalidateVariantMapCache() {
   mappingCache = null;
 }
 
+/** Resolve which recipe is currently flagged isCurrentSpecial so the
+ *  fulfilment decrement can route the rotating "Calzone Club Special"
+ *  Shopify product to the right fridge stock. Returns null if no
+ *  current special is configured. */
+async function loadCurrentSpecial(): Promise<{ recipeId: number; isCoreMenu: boolean } | null> {
+  const [row] = await db
+    .select({ id: recipesTable.id, isCoreMenu: recipesTable.isCoreMenu })
+    .from(recipesTable)
+    .where(eq(recipesTable.isCurrentSpecial, true))
+    .limit(1);
+  if (!row) return null;
+  return { recipeId: row.id, isCoreMenu: row.isCoreMenu };
+}
+
 export interface DecrementResult {
   decremented: Array<{ recipeId: number; packs: number }>;
   unmapped: string[]; // variant IDs we couldn't resolve to a recipe (only logged in non-core-only mode)
@@ -174,14 +188,23 @@ export interface DecrementResult {
  * variants so the operator can populate them later, but fulfilment
  * must keep working.
  */
+/** Shopify product title used for the rotating "Calzone Club Special".
+ *  Customers order the Special as a single product on Shopify; there's
+ *  no per-recipe variant mapping (which would be wrong anyway — the
+ *  Special rotates). When we see this title, the line item belongs to
+ *  whichever recipe is currently flagged isCurrentSpecial. Lowercase
+ *  match — mirrors the dispatches/order-summary endpoint. */
+const SPECIAL_PRODUCT_TITLE_LC = "calzone club special";
+
 export async function decrementFridgeForShopifyOrder(
   _orderId: number,
   lineItems: ShopifyLineItem[],
 ): Promise<DecrementResult> {
   const result: DecrementResult = { decremented: [], unmapped: [], skippedNonCore: 0 };
-  const [variantMap, coreMenuOnly] = await Promise.all([
+  const [variantMap, coreMenuOnly, currentSpecial] = await Promise.all([
     loadVariantMap(),
     getFactoryNumberCoreMenuOnly(),
+    loadCurrentSpecial(),
   ]);
 
   // Aggregate per recipe so orders with multiple variants of the same
@@ -189,6 +212,26 @@ export async function decrementFridgeForShopifyOrder(
   const perRecipe = new Map<number, number>();
 
   for (const line of lineItems) {
+    // "Calzone Club Special" routes by product title, not variant id —
+    // it's the only product on Shopify that doesn't have a stable
+    // per-recipe variant. Resolve it to whichever recipe is currently
+    // flagged isCurrentSpecial.
+    const titleLc = (line.title ?? "").toLowerCase().trim();
+    if (titleLc === SPECIAL_PRODUCT_TITLE_LC) {
+      if (!currentSpecial) {
+        // No current special is set — operator hasn't picked one. Log
+        // the variant so they know the order didn't decrement.
+        if (line.variant_id) result.unmapped.push(String(line.variant_id));
+        continue;
+      }
+      if (coreMenuOnly && !currentSpecial.isCoreMenu) {
+        result.skippedNonCore += 1;
+        continue;
+      }
+      perRecipe.set(currentSpecial.recipeId, (perRecipe.get(currentSpecial.recipeId) ?? 0) + (line.quantity || 0));
+      continue;
+    }
+
     if (!line.variant_id) continue;
     const variantKey = String(line.variant_id);
     const mapping = variantMap.get(variantKey);
