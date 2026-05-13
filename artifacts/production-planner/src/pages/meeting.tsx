@@ -699,14 +699,67 @@ function SlideBody({ slide, data, onRefresh }: { slide: MeetingSlide; data: Dash
 }
 
 function CustomMarkdownSlide({ slide }: { slide: MeetingSlide }) {
+  const videoUrl = typeof slide.configJson?.videoUrl === "string" ? slide.configJson.videoUrl : null;
   return (
-    <div>
+    <div className="space-y-4">
       <SectionTitle>{slide.title}</SectionTitle>
-      {slide.contentMd ? (
+      {slide.contentMd && (
         <div className="glass-panel rounded-2xl p-6"><MarkdownBlock content={slide.contentMd} /></div>
-      ) : (
+      )}
+      {videoUrl && <YouTubeEmbed url={videoUrl} />}
+      {!slide.contentMd && !videoUrl && (
         <p className="text-muted-foreground italic">No content yet — open the editor to add some.</p>
       )}
+    </div>
+  );
+}
+
+/** Parse YouTube share URLs (youtu.be, youtube.com/watch?v=, embed,
+ *  shorts) to a bare 11-char video ID. Returns null for anything we
+ *  can't parse so callers can fall back. */
+function youtubeIdFromUrl(url: string): string | null {
+  try {
+    const u = new URL(url);
+    if (u.hostname === "youtu.be") {
+      const id = u.pathname.replace(/^\//, "").split("/")[0];
+      return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+    }
+    if (u.hostname.endsWith("youtube.com") || u.hostname.endsWith("youtube-nocookie.com")) {
+      if (u.pathname.startsWith("/embed/")) {
+        const id = u.pathname.split("/embed/")[1]?.split("/")[0] ?? "";
+        return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+      }
+      if (u.pathname.startsWith("/shorts/")) {
+        const id = u.pathname.split("/shorts/")[1]?.split("/")[0] ?? "";
+        return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+      }
+      const v = u.searchParams.get("v");
+      if (v && /^[A-Za-z0-9_-]{11}$/.test(v)) return v;
+    }
+  } catch {
+    // not a URL — fall through
+  }
+  return null;
+}
+
+function YouTubeEmbed({ url }: { url: string }) {
+  const id = youtubeIdFromUrl(url);
+  if (!id) {
+    return (
+      <a href={url} target="_blank" rel="noopener" className="inline-flex items-center gap-2 text-sm text-primary hover:underline">
+        <Play className="w-4 h-4" /> Open video in new tab
+      </a>
+    );
+  }
+  return (
+    <div className="w-full rounded-2xl overflow-hidden bg-black" style={{ aspectRatio: "16 / 9" }}>
+      <iframe
+        src={`https://www.youtube.com/embed/${id}?rel=0`}
+        title="Video"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        allowFullScreen
+        className="w-full h-full border-0"
+      />
     </div>
   );
 }
@@ -1056,9 +1109,9 @@ function LearningSlide({ data, slide }: { data: DashboardData; slide: MeetingSli
         <MarkdownBlock content={data.lesson.whatToShowMd} />
       </div>
       {data.lesson.videoUrl && (
-        <a href={data.lesson.videoUrl} target="_blank" rel="noopener" className="mt-4 inline-flex items-center gap-2 text-sm text-primary hover:underline">
-          <Play className="w-4 h-4" /> Watch the related video
-        </a>
+        <div className="mt-4">
+          <YouTubeEmbed url={data.lesson.videoUrl} />
+        </div>
       )}
       {meetingId && examples.length > 1 && (
         <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
@@ -1428,6 +1481,15 @@ function SortableSlideRow({
     onSave({ configJson: { ...(slide.configJson ?? {}), kpis: next } });
   };
 
+  // YouTube URL is a per-slide config knob for the freeform / discussion
+  // slide kinds — paste a URL and it embeds inline at the bottom.
+  const initialVideoUrl = typeof slide.configJson?.videoUrl === "string" ? slide.configJson.videoUrl : "";
+  const [videoUrl, setVideoUrl] = useState(initialVideoUrl);
+  useEffect(() => { setVideoUrl(initialVideoUrl); }, [slide.id, initialVideoUrl]);
+  const videoSupported = slide.kind === "custom_markdown" || slide.kind === "bag_orders" || slide.kind === "short_on_pack" || slide.kind === "special_prep";
+  const videoDirty = videoSupported && videoUrl !== initialVideoUrl;
+  const anyDirty = dirty || videoDirty;
+
   return (
     <div ref={setNodeRef} style={style} className="border border-border rounded-xl bg-card">
       <div className="flex items-center gap-2 px-3 py-2">
@@ -1462,15 +1524,31 @@ function SortableSlideRow({
               className="w-full bg-background border border-border rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
           </div>
-          {(slide.kind === "custom_markdown" || slide.kind === "bag_orders" || slide.kind === "short_on_pack" || slide.kind === "special_prep") && (
-            <div>
-              <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5 block">Note / discussion prompt (markdown, optional)</label>
-              <textarea
-                value={contentMd}
-                onChange={e => setContentMd(e.target.value)}
-                className="w-full min-h-[100px] bg-background border border-border rounded-lg p-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
-              />
-            </div>
+          {videoSupported && (
+            <>
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5 block">Note / discussion prompt (markdown, optional)</label>
+                <textarea
+                  value={contentMd}
+                  onChange={e => setContentMd(e.target.value)}
+                  className="w-full min-h-[100px] bg-background border border-border rounded-lg p-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5 block">YouTube URL (optional)</label>
+                <input
+                  value={videoUrl}
+                  onChange={e => setVideoUrl(e.target.value)}
+                  placeholder="https://www.youtube.com/watch?v=… or https://youtu.be/…"
+                  className="w-full bg-background border border-border rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+                {videoUrl && (
+                  <div className="mt-2">
+                    <YouTubeEmbed url={videoUrl} />
+                  </div>
+                )}
+              </div>
+            </>
           )}
           {slide.kind === "yesterday_kpis" && cfgKpis && (
             <div>
@@ -1496,15 +1574,24 @@ function SortableSlideRow({
           )}
           <div className="flex items-center justify-end gap-2">
             <button
-              onClick={() => { setTitle(slide.title); setContentMd(slide.contentMd ?? ""); }}
-              disabled={!dirty}
+              onClick={() => { setTitle(slide.title); setContentMd(slide.contentMd ?? ""); setVideoUrl(initialVideoUrl); }}
+              disabled={!anyDirty}
               className="text-sm text-muted-foreground hover:text-foreground disabled:opacity-30"
             >
               Reset
             </button>
             <button
-              onClick={() => onSave({ title, contentMd: contentMd || null })}
-              disabled={!dirty}
+              onClick={() => {
+                const patch: Partial<EditorSlide> = { title, contentMd: contentMd || null };
+                if (videoSupported) {
+                  const nextCfg: Record<string, unknown> = { ...(slide.configJson ?? {}) };
+                  if (videoUrl.trim()) nextCfg.videoUrl = videoUrl.trim();
+                  else delete nextCfg.videoUrl;
+                  patch.configJson = nextCfg;
+                }
+                onSave(patch);
+              }}
+              disabled={!anyDirty}
               className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
             >
               <Save className="w-3.5 h-3.5" /> Save
@@ -1809,18 +1896,19 @@ function ExampleRowEdit({ example, principleId }: { example: ExampleRow; princip
   const [explanation, setExplanation] = useState(example.explanationMd);
   const [whatToShow, setWhatToShow] = useState(example.whatToShowMd);
   const [deliveryNotes, setDeliveryNotes] = useState(example.deliveryNotesMd);
+  const [videoUrl, setVideoUrl] = useState(example.videoUrl ?? "");
   useEffect(() => {
     setTitle(example.title); setSummary(example.summary);
     setExplanation(example.explanationMd); setWhatToShow(example.whatToShowMd);
-    setDeliveryNotes(example.deliveryNotesMd);
-  }, [example.id, example.title, example.summary, example.explanationMd, example.whatToShowMd, example.deliveryNotesMd]);
+    setDeliveryNotes(example.deliveryNotesMd); setVideoUrl(example.videoUrl ?? "");
+  }, [example.id, example.title, example.summary, example.explanationMd, example.whatToShowMd, example.deliveryNotesMd, example.videoUrl]);
 
   const save = useMutation({
     mutationFn: async () => {
       await fetch(`${BASE}/api/morning-meetings/examples/${example.id}`, {
         method: "PUT", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, summary, explanationMd: explanation, whatToShowMd: whatToShow, deliveryNotesMd: deliveryNotes }),
+        body: JSON.stringify({ title, summary, explanationMd: explanation, whatToShowMd: whatToShow, deliveryNotesMd: deliveryNotes, videoUrl: videoUrl.trim() || null }),
       });
     },
     onSuccess: () => {
@@ -1847,6 +1935,15 @@ function ExampleRowEdit({ example, principleId }: { example: ExampleRow; princip
         <div className="border-t border-border p-3 space-y-2">
           <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Title" className="w-full bg-background border border-border rounded-lg p-2 text-sm" />
           <input value={summary} onChange={e => setSummary(e.target.value)} placeholder="Summary" className="w-full bg-background border border-border rounded-lg p-2 text-sm" />
+          <div>
+            <input
+              value={videoUrl}
+              onChange={e => setVideoUrl(e.target.value)}
+              placeholder="YouTube URL (optional) — https://www.youtube.com/watch?v=… or https://youtu.be/…"
+              className="w-full bg-background border border-border rounded-lg p-2 text-sm"
+            />
+            {videoUrl && <div className="mt-2"><YouTubeEmbed url={videoUrl} /></div>}
+          </div>
           <details className="text-xs">
             <summary className="cursor-pointer text-muted-foreground">Host briefing (Markdown — optional)</summary>
             <div className="mt-2 space-y-2">
