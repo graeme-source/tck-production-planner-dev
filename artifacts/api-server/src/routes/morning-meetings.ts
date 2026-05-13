@@ -528,6 +528,229 @@ router.put("/lessons/:id", async (req: Request, res: Response) => {
   res.json(updated);
 });
 
+// ── Meeting slide CRUD ──────────────────────────────────────────────
+// All slide edits go through the same endpoints whether the host is
+// editing today's meeting or the master template (templateId vs
+// meetingId in the URL). Reordering is bulk to avoid the N+1 round
+// trip from a drag-and-drop.
+
+router.get("/:id/slides", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid meeting id" }); return; }
+  const rows = await fetchMeetingSlides(id);
+  res.json(rows);
+});
+
+router.post("/:id/slides", async (req: Request, res: Response) => {
+  const meetingId = Number(req.params.id);
+  const { kind, title, contentMd, configJson, afterSlideId } = req.body as {
+    kind: string;
+    title: string;
+    contentMd?: string | null;
+    configJson?: Record<string, unknown> | null;
+    afterSlideId?: number;
+  };
+  if (!meetingId || !kind || !title) { res.status(400).json({ error: "kind and title are required" }); return; }
+
+  // Insert after the named slide, otherwise at the end. Renumber all
+  // following rows to leave room.
+  const existing = await db
+    .select({ id: meetingSlidesTable.id, orderPosition: meetingSlidesTable.orderPosition })
+    .from(meetingSlidesTable)
+    .where(eq(meetingSlidesTable.meetingId, meetingId))
+    .orderBy(asc(meetingSlidesTable.orderPosition));
+  let insertAt = existing.length;
+  if (afterSlideId) {
+    const idx = existing.findIndex(s => s.id === afterSlideId);
+    if (idx >= 0) insertAt = idx + 1;
+  }
+  // Shift down
+  for (let i = insertAt; i < existing.length; i++) {
+    await db.update(meetingSlidesTable)
+      .set({ orderPosition: i + 1 })
+      .where(eq(meetingSlidesTable.id, existing[i].id));
+  }
+  const [row] = await db.insert(meetingSlidesTable).values({
+    meetingId,
+    kind,
+    title,
+    orderPosition: insertAt,
+    contentMd: contentMd ?? null,
+    configJson: configJson ?? null,
+  }).returning();
+  res.status(201).json(row);
+});
+
+router.put("/slides/:slideId", async (req: Request, res: Response) => {
+  const slideId = Number(req.params.slideId);
+  const body = req.body as Partial<{
+    title: string;
+    contentMd: string | null;
+    configJson: Record<string, unknown> | null;
+  }>;
+  const [updated] = await db.update(meetingSlidesTable)
+    .set({
+      ...(body.title !== undefined ? { title: body.title } : {}),
+      ...(body.contentMd !== undefined ? { contentMd: body.contentMd } : {}),
+      ...(body.configJson !== undefined ? { configJson: body.configJson } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(meetingSlidesTable.id, slideId))
+    .returning();
+  if (!updated) { res.status(404).json({ error: "Slide not found" }); return; }
+  res.json(updated);
+});
+
+router.delete("/slides/:slideId", async (req: Request, res: Response) => {
+  const slideId = Number(req.params.slideId);
+  await db.delete(meetingSlidesTable).where(eq(meetingSlidesTable.id, slideId));
+  res.json({ ok: true });
+});
+
+/** Reorder slides in one shot — body is `{ order: [{id, orderPosition}, ...] }`.
+ *  Atomic; runs in a transaction so the slideshow never flashes a
+ *  half-reordered state. */
+router.put("/:id/slides/reorder", async (req: Request, res: Response) => {
+  const meetingId = Number(req.params.id);
+  const { order } = req.body as { order: Array<{ id: number; orderPosition: number }> };
+  if (!meetingId || !Array.isArray(order)) { res.status(400).json({ error: "order required" }); return; }
+  await db.transaction(async (tx) => {
+    for (const o of order) {
+      await tx.update(meetingSlidesTable)
+        .set({ orderPosition: o.orderPosition })
+        .where(and(eq(meetingSlidesTable.id, o.id), eq(meetingSlidesTable.meetingId, meetingId)));
+    }
+  });
+  res.json({ ok: true });
+});
+
+// ── Template slide CRUD (same shape, different table) ───────────────
+
+router.get("/templates", async (_req: Request, res: Response) => {
+  const rows = await db.select().from(meetingTemplatesTable).orderBy(asc(meetingTemplatesTable.id));
+  res.json(rows);
+});
+
+router.get("/templates/:id/slides", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  const rows = await db
+    .select()
+    .from(templateSlidesTable)
+    .where(eq(templateSlidesTable.templateId, id))
+    .orderBy(asc(templateSlidesTable.orderPosition));
+  res.json(rows);
+});
+
+router.post("/templates/:id/slides", async (req: Request, res: Response) => {
+  const templateId = Number(req.params.id);
+  const { kind, title, contentMd, configJson, afterSlideId } = req.body as {
+    kind: string;
+    title: string;
+    contentMd?: string | null;
+    configJson?: Record<string, unknown> | null;
+    afterSlideId?: number;
+  };
+  if (!templateId || !kind || !title) { res.status(400).json({ error: "kind and title are required" }); return; }
+  const existing = await db
+    .select({ id: templateSlidesTable.id, orderPosition: templateSlidesTable.orderPosition })
+    .from(templateSlidesTable)
+    .where(eq(templateSlidesTable.templateId, templateId))
+    .orderBy(asc(templateSlidesTable.orderPosition));
+  let insertAt = existing.length;
+  if (afterSlideId) {
+    const idx = existing.findIndex(s => s.id === afterSlideId);
+    if (idx >= 0) insertAt = idx + 1;
+  }
+  for (let i = insertAt; i < existing.length; i++) {
+    await db.update(templateSlidesTable)
+      .set({ orderPosition: i + 1 })
+      .where(eq(templateSlidesTable.id, existing[i].id));
+  }
+  const [row] = await db.insert(templateSlidesTable).values({
+    templateId,
+    kind,
+    title,
+    orderPosition: insertAt,
+    contentMd: contentMd ?? null,
+    configJson: configJson ?? null,
+  }).returning();
+  res.status(201).json(row);
+});
+
+router.put("/template-slides/:slideId", async (req: Request, res: Response) => {
+  const slideId = Number(req.params.slideId);
+  const body = req.body as Partial<{
+    title: string;
+    contentMd: string | null;
+    configJson: Record<string, unknown> | null;
+  }>;
+  const [updated] = await db.update(templateSlidesTable)
+    .set({
+      ...(body.title !== undefined ? { title: body.title } : {}),
+      ...(body.contentMd !== undefined ? { contentMd: body.contentMd } : {}),
+      ...(body.configJson !== undefined ? { configJson: body.configJson } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(templateSlidesTable.id, slideId))
+    .returning();
+  if (!updated) { res.status(404).json({ error: "Slide not found" }); return; }
+  res.json(updated);
+});
+
+router.delete("/template-slides/:slideId", async (req: Request, res: Response) => {
+  const slideId = Number(req.params.slideId);
+  await db.delete(templateSlidesTable).where(eq(templateSlidesTable.id, slideId));
+  res.json({ ok: true });
+});
+
+router.put("/templates/:id/slides/reorder", async (req: Request, res: Response) => {
+  const templateId = Number(req.params.id);
+  const { order } = req.body as { order: Array<{ id: number; orderPosition: number }> };
+  if (!templateId || !Array.isArray(order)) { res.status(400).json({ error: "order required" }); return; }
+  await db.transaction(async (tx) => {
+    for (const o of order) {
+      await tx.update(templateSlidesTable)
+        .set({ orderPosition: o.orderPosition })
+        .where(and(eq(templateSlidesTable.id, o.id), eq(templateSlidesTable.templateId, templateId)));
+    }
+  });
+  res.json({ ok: true });
+});
+
+/** Schedule a meeting for a specific future date. Clones the default
+ *  template's slides immediately so the host can pre-edit. If a
+ *  meeting already exists for that date, returns it unchanged.
+ *  Body: { meetingDate: 'YYYY-MM-DD', hostName?: string } */
+router.post("/schedule", async (req: Request, res: Response) => {
+  const { meetingDate, hostName } = req.body as { meetingDate: string; hostName?: string };
+  if (!meetingDate || !/^\d{4}-\d{2}-\d{2}$/.test(meetingDate)) {
+    res.status(400).json({ error: "meetingDate (YYYY-MM-DD) is required" });
+    return;
+  }
+  const userId = (req.session as any)?.userId ?? null;
+  const [row] = await db
+    .insert(morningMeetingsTable)
+    .values({
+      meetingDate,
+      hostUserId: userId,
+      hostName: hostName?.trim() ?? null,
+    })
+    .onConflictDoNothing()
+    .returning();
+  let meetingId: number;
+  if (row) {
+    meetingId = row.id;
+  } else {
+    const [existing] = await db
+      .select({ id: morningMeetingsTable.id })
+      .from(morningMeetingsTable)
+      .where(eq(morningMeetingsTable.meetingDate, meetingDate));
+    meetingId = existing!.id;
+  }
+  await cloneTemplateSlidesIfEmpty(meetingId);
+  res.json({ id: meetingId, meetingDate });
+});
+
 export default router;
 
 // Silence unused-import warnings for filters that are exported but not

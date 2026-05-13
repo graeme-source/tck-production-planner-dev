@@ -16,13 +16,17 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useLocation, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { format } from "date-fns";
+import { format, addDays } from "date-fns";
 import {
   ArrowLeft, ArrowRight, ChevronLeft, ChevronRight, X, Play, Pause, RotateCcw,
   Sparkles, ChefHat, Truck, ShoppingBag, AlertCircle, FileText, MessageCircle,
   HeartHandshake, Activity, BookOpen, Award, Loader2, ClipboardCheck, Sun,
-  CheckCircle2, Heart,
+  CheckCircle2, Heart, Settings, Edit3, Calendar, GripVertical, Plus, Trash2, Save,
 } from "lucide-react";
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
+import type { DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
@@ -221,7 +225,7 @@ function metaForKind(kind: string) {
 }
 
 // ── Page ─────────────────────────────────────────────────────────────
-type Mode = "setup" | "prep" | "meeting" | "done";
+type Mode = "setup" | "prep" | "meeting" | "done" | "edit_today" | "edit_template";
 
 export default function MeetingPage() {
   const { state } = useAuth();
@@ -301,6 +305,8 @@ export default function MeetingPage() {
     );
   }
 
+  const isAdmin = state.status === "authenticated" && state.user.role === "admin";
+
   if (mode === "setup") {
     return <SetupScreen
       data={data}
@@ -310,6 +316,24 @@ export default function MeetingPage() {
       onStart={() => startMutation.mutate()}
       starting={startMutation.isPending}
       onExit={() => navigate("/")}
+      onEditToday={() => setMode("edit_today")}
+      onEditTemplate={() => setMode("edit_template")}
+      onScheduleTomorrow={async () => {
+        const tomorrow = format(addDays(new Date(), 1), "yyyy-MM-dd");
+        try {
+          const res = await fetch(`${BASE}/api/morning-meetings/schedule`, {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ meetingDate: tomorrow }),
+          });
+          if (!res.ok) throw new Error();
+          toast({ title: "Tomorrow's meeting scheduled", description: "Slides cloned from the master template — you can edit them below." });
+        } catch {
+          toast({ title: "Schedule failed", variant: "destructive" });
+        }
+      }}
+      isAdmin={isAdmin}
     />;
   }
 
@@ -319,6 +343,30 @@ export default function MeetingPage() {
 
   if (mode === "done") {
     return <DoneScreen data={data} onClose={() => navigate("/")} />;
+  }
+
+  if (mode === "edit_today") {
+    // Editing today's meeting requires the meeting to exist. Auto-start
+    // it (clones the template) if not, so the host can edit a fresh
+    // copy without having to click "Start" first.
+    if (!data.meeting) {
+      return <AutoStartGate hostName={hostName} onStart={() => startMutation.mutate()} starting={startMutation.isPending} />;
+    }
+    return <SlideEditor
+      mode="meeting"
+      id={data.meeting.id}
+      titleSuffix={format(new Date(data.today + "T00:00:00"), "EEEE d MMMM")}
+      onClose={() => { queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] }); setMode("setup"); }}
+    />;
+  }
+
+  if (mode === "edit_template") {
+    return <SlideEditor
+      mode="template"
+      id={null /* SlideEditor resolves the default template internally */}
+      titleSuffix="Master template"
+      onClose={() => { queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] }); setMode("setup"); }}
+    />;
   }
 
   if (slideCount === 0) {
@@ -416,6 +464,7 @@ export default function MeetingPage() {
 // ── Setup screen ────────────────────────────────────────────────────
 function SetupScreen({
   data, hostName, onHostNameChange, onReadBriefing, onStart, starting, onExit,
+  onEditToday, onEditTemplate, onScheduleTomorrow, isAdmin,
 }: {
   data: DashboardData;
   hostName: string;
@@ -424,6 +473,10 @@ function SetupScreen({
   onStart: () => void;
   starting: boolean;
   onExit: () => void;
+  onEditToday: () => void;
+  onEditTemplate: () => void;
+  onScheduleTomorrow: () => void;
+  isAdmin: boolean;
 }) {
   return (
     <div className="fixed inset-0 bg-background overflow-y-auto">
@@ -439,7 +492,35 @@ function SetupScreen({
           <Sparkles className="w-7 h-7 text-amber-500" />
           <h1 className="text-3xl font-display font-bold">Morning Meeting</h1>
         </div>
-        <p className="text-muted-foreground mb-8">Two Second Lean — 10 minutes. Safety, stretches, the plan, today's lesson, gratitude.</p>
+        <p className="text-muted-foreground mb-6">Two Second Lean — 10 minutes. Safety, stretches, the plan, today's lesson, gratitude.</p>
+
+        {/* Editor + scheduling row — sits above the host setup so the
+            host can see at a glance that today's meeting is editable. */}
+        <div className="flex flex-wrap items-center gap-2 mb-8">
+          <button
+            onClick={onEditToday}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40"
+          >
+            <Edit3 className="w-3.5 h-3.5" />
+            Edit today's meeting
+          </button>
+          <button
+            onClick={onScheduleTomorrow}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40"
+          >
+            <Calendar className="w-3.5 h-3.5" />
+            Schedule for tomorrow
+          </button>
+          {isAdmin && (
+            <button
+              onClick={onEditTemplate}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 text-muted-foreground"
+            >
+              <Settings className="w-3.5 h-3.5" />
+              Edit master template
+            </button>
+          )}
+        </div>
 
         <div className="glass-panel rounded-2xl p-6 mb-6">
           <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 block">Today's host</label>
@@ -1011,3 +1092,363 @@ function GratitudeSlide({ data, onRefresh, slide }: { data: DashboardData; onRef
 
 void Link;
 void ArrowRight;
+
+// ── Slide editor (Phase 2) ──────────────────────────────────────────
+// Same component edits either a meeting's slide list or the master
+// template — the only difference is which API endpoints it points at.
+
+const SLIDE_KIND_CATALOG: Array<{ kind: SlideKind; label: string; description: string }> = [
+  { kind: "special_prep",        label: "Special Prep",         description: "Today's current special" },
+  { kind: "stretches",           label: "Stretches",            description: "3 × 60s timer" },
+  { kind: "yesterday_kpis",      label: "Yesterday's Numbers",  description: "Building rate, packing rate, wonkies" },
+  { kind: "order_of_production", label: "Order of Production",  description: "Today's recipe order + batches" },
+  { kind: "local_delivery",      label: "Local Delivery",       description: "Today's purchase orders" },
+  { kind: "bag_orders",          label: "Bag Orders",           description: "Discussion prompt" },
+  { kind: "short_on_pack",       label: "Short on the Pack",    description: "Yesterday's shorts + leftover" },
+  { kind: "safety_issues",       label: "Safety Issues",        description: "Open andons + log new" },
+  { kind: "new_sops",            label: "New & Updated SOPs",   description: "SOPs touched in last 7 days" },
+  { kind: "struggles",           label: "Struggles",            description: "Open struggles + log new" },
+  { kind: "lesson",              label: "Lean Lesson",          description: "Today's principle + example" },
+  { kind: "gratitude",           label: "Gratitude",            description: "Capture shout-outs" },
+  { kind: "custom_markdown",     label: "Custom note",          description: "Freeform markdown slide" },
+];
+
+function AutoStartGate({ hostName, onStart, starting }: { hostName: string; onStart: () => void; starting: boolean }) {
+  return (
+    <div className="fixed inset-0 bg-background flex items-center justify-center px-6">
+      <div className="text-center max-w-md">
+        <p className="text-muted-foreground mb-4">Today's meeting hasn't been started yet.</p>
+        <button
+          onClick={onStart}
+          disabled={!hostName.trim() || starting}
+          className="px-5 py-2.5 rounded-xl bg-primary text-primary-foreground font-semibold disabled:opacity-50 inline-flex items-center gap-2"
+        >
+          {starting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+          Start it so you can edit
+        </button>
+      </div>
+    </div>
+  );
+}
+
+interface EditorSlide {
+  id: number;
+  kind: string;
+  title: string;
+  orderPosition: number;
+  contentMd: string | null;
+  configJson: Record<string, unknown> | null;
+}
+
+function SlideEditor({
+  mode, id, titleSuffix, onClose,
+}: {
+  mode: "meeting" | "template";
+  id: number | null;
+  titleSuffix: string;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  // For "template" mode the caller passed id=null because the default
+  // template's id isn't known upstream. Resolve it on mount and cache.
+  const [templateId, setTemplateId] = useState<number | null>(mode === "template" ? null : id);
+  useEffect(() => {
+    if (mode !== "template") return;
+    fetch(`${BASE}/api/morning-meetings/templates`, { credentials: "include" })
+      .then(r => r.json())
+      .then((rows: Array<{ id: number; isDefault: boolean }>) => {
+        const def = rows.find(r => r.isDefault) ?? rows[0];
+        if (def) setTemplateId(def.id);
+      });
+  }, [mode]);
+
+  const effectiveId = mode === "template" ? templateId : id;
+  const queryKey = mode === "template"
+    ? ["meeting-template-slides", effectiveId]
+    : ["meeting-slides", effectiveId];
+  const listUrl = mode === "template"
+    ? `${BASE}/api/morning-meetings/templates/${effectiveId}/slides`
+    : `${BASE}/api/morning-meetings/${effectiveId}/slides`;
+
+  const { data: slides = [], isLoading } = useQuery<EditorSlide[]>({
+    queryKey,
+    queryFn: async () => {
+      const res = await fetch(listUrl, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load slides");
+      return res.json();
+    },
+    enabled: effectiveId != null,
+  });
+
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [showCatalog, setShowCatalog] = useState(false);
+
+  const slideUrl = (sid: number) => mode === "template"
+    ? `${BASE}/api/morning-meetings/template-slides/${sid}`
+    : `${BASE}/api/morning-meetings/slides/${sid}`;
+  const reorderUrl = mode === "template"
+    ? `${BASE}/api/morning-meetings/templates/${effectiveId}/slides/reorder`
+    : `${BASE}/api/morning-meetings/${effectiveId}/slides/reorder`;
+  const addUrl = mode === "template"
+    ? `${BASE}/api/morning-meetings/templates/${effectiveId}/slides`
+    : `${BASE}/api/morning-meetings/${effectiveId}/slides`;
+
+  const reorder = useMutation({
+    mutationFn: async (order: Array<{ id: number; orderPosition: number }>) => {
+      await fetch(reorderUrl, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ order }),
+      });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
+  });
+
+  const updateSlide = useMutation({
+    mutationFn: async ({ sid, patch }: { sid: number; patch: Partial<EditorSlide> }) => {
+      await fetch(slideUrl(sid), {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
+  });
+
+  const removeSlide = useMutation({
+    mutationFn: async (sid: number) => {
+      await fetch(slideUrl(sid), { method: "DELETE", credentials: "include" });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
+  });
+
+  const addSlide = useMutation({
+    mutationFn: async (input: { kind: string; title: string }) => {
+      await fetch(addUrl, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey });
+      setShowCatalog(false);
+    },
+  });
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const ids = slides.map(s => s.id);
+    const oldIdx = ids.indexOf(Number(active.id));
+    const newIdx = ids.indexOf(Number(over.id));
+    if (oldIdx < 0 || newIdx < 0) return;
+    const reordered = arrayMove(slides, oldIdx, newIdx);
+    reorder.mutate(reordered.map((s, i) => ({ id: s.id, orderPosition: i })));
+  };
+
+  if (effectiveId == null || isLoading) {
+    return (
+      <div className="fixed inset-0 bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 bg-background overflow-y-auto">
+      <div className="max-w-3xl mx-auto px-6 py-8">
+        <div className="flex items-center justify-between mb-2">
+          <button onClick={onClose} className="flex items-center gap-2 text-muted-foreground hover:text-foreground">
+            <ArrowLeft className="w-4 h-4" /> Back to meeting
+          </button>
+          <span className="text-xs uppercase tracking-wide text-muted-foreground">
+            {mode === "template" ? "Master template" : "Today's meeting"}
+          </span>
+        </div>
+        <h1 className="text-2xl font-display font-bold mb-1 flex items-center gap-2">
+          {mode === "template" ? <Settings className="w-5 h-5 text-muted-foreground" /> : <Edit3 className="w-5 h-5 text-primary" />}
+          Edit slides
+        </h1>
+        <p className="text-sm text-muted-foreground mb-6">{titleSuffix}</p>
+
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={slides.map(s => s.id)} strategy={verticalListSortingStrategy}>
+            <div className="space-y-2">
+              {slides.map(s => (
+                <SortableSlideRow
+                  key={s.id}
+                  slide={s}
+                  expanded={expandedId === s.id}
+                  onToggle={() => setExpandedId(expandedId === s.id ? null : s.id)}
+                  onSave={(patch) => updateSlide.mutate({ sid: s.id, patch })}
+                  onRemove={() => {
+                    if (confirm(`Remove "${s.title}" from this list?`)) removeSlide.mutate(s.id);
+                  }}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
+
+        {/* Add slide */}
+        <div className="mt-4">
+          {!showCatalog ? (
+            <button
+              onClick={() => setShowCatalog(true)}
+              className="w-full px-4 py-3 rounded-xl border-2 border-dashed border-border text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-secondary/30 flex items-center justify-center gap-2"
+            >
+              <Plus className="w-4 h-4" /> Add a slide
+            </button>
+          ) : (
+            <div className="glass-panel rounded-2xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-semibold">Pick a slide type</p>
+                <button onClick={() => setShowCatalog(false)} className="text-muted-foreground hover:text-foreground">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {SLIDE_KIND_CATALOG.map(c => (
+                  <button
+                    key={c.kind}
+                    onClick={() => addSlide.mutate({ kind: c.kind, title: c.label })}
+                    disabled={addSlide.isPending}
+                    className="text-left px-4 py-3 rounded-xl border border-border hover:border-primary hover:bg-secondary/30 transition-colors disabled:opacity-50"
+                  >
+                    <p className="font-medium text-sm">{c.label}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{c.description}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-6 flex justify-end">
+          <button onClick={onClose} className="px-5 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 inline-flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4" /> Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SortableSlideRow({
+  slide, expanded, onToggle, onSave, onRemove,
+}: {
+  slide: EditorSlide;
+  expanded: boolean;
+  onToggle: () => void;
+  onSave: (patch: Partial<EditorSlide>) => void;
+  onRemove: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: slide.id });
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 };
+  const meta = SLIDE_KIND_META[slide.kind as SlideKind] ?? SLIDE_KIND_META.custom_markdown;
+  const SlideIcon = meta.icon;
+
+  const [title, setTitle] = useState(slide.title);
+  const [contentMd, setContentMd] = useState(slide.contentMd ?? "");
+  useEffect(() => { setTitle(slide.title); setContentMd(slide.contentMd ?? ""); }, [slide.id, slide.title, slide.contentMd]);
+  const dirty = title !== slide.title || contentMd !== (slide.contentMd ?? "");
+
+  // KPI selector for yesterday_kpis slide
+  const cfgKpis = slide.kind === "yesterday_kpis"
+    ? (Array.isArray(slide.configJson?.kpis) ? slide.configJson!.kpis as string[] : DEFAULT_KPIS as string[])
+    : null;
+  const toggleKpi = (key: string) => {
+    if (!cfgKpis) return;
+    const next = cfgKpis.includes(key) ? cfgKpis.filter(k => k !== key) : [...cfgKpis, key];
+    onSave({ configJson: { ...(slide.configJson ?? {}), kpis: next } });
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="border border-border rounded-xl bg-card">
+      <div className="flex items-center gap-2 px-3 py-2">
+        <button
+          {...attributes}
+          {...listeners}
+          className="p-1.5 text-muted-foreground hover:text-foreground cursor-grab active:cursor-grabbing touch-none"
+          aria-label="Drag to reorder"
+        >
+          <GripVertical className="w-4 h-4" />
+        </button>
+        <SlideIcon className={cn("w-4 h-4 shrink-0", meta.color)} />
+        <button onClick={onToggle} className="flex-1 text-left min-w-0">
+          <p className="text-sm font-medium truncate">{slide.title}</p>
+          <p className="text-xs text-muted-foreground">{meta.fallbackTitle === slide.title ? "" : meta.fallbackTitle}</p>
+        </button>
+        <button
+          onClick={onRemove}
+          className="p-1.5 text-muted-foreground hover:text-destructive"
+          aria-label="Remove slide"
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
+      </div>
+      {expanded && (
+        <div className="border-t border-border px-4 py-3 space-y-3">
+          <div>
+            <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5 block">Title shown to the team</label>
+            <input
+              value={title}
+              onChange={e => setTitle(e.target.value)}
+              className="w-full bg-background border border-border rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+          </div>
+          {(slide.kind === "custom_markdown" || slide.kind === "bag_orders" || slide.kind === "short_on_pack" || slide.kind === "special_prep") && (
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5 block">Note / discussion prompt (markdown, optional)</label>
+              <textarea
+                value={contentMd}
+                onChange={e => setContentMd(e.target.value)}
+                className="w-full min-h-[100px] bg-background border border-border rounded-lg p-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </div>
+          )}
+          {slide.kind === "yesterday_kpis" && cfgKpis && (
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5 block">KPI tiles to show</label>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(KPI_CATALOG).map(([key, def]) => {
+                  const on = cfgKpis.includes(key);
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => toggleKpi(key)}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg text-xs font-medium border",
+                        on ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {def.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          <div className="flex items-center justify-end gap-2">
+            <button
+              onClick={() => { setTitle(slide.title); setContentMd(slide.contentMd ?? ""); }}
+              disabled={!dirty}
+              className="text-sm text-muted-foreground hover:text-foreground disabled:opacity-30"
+            >
+              Reset
+            </button>
+            <button
+              onClick={() => onSave({ title, contentMd: contentMd || null })}
+              disabled={!dirty}
+              className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <Save className="w-3.5 h-3.5" /> Save
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
