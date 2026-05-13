@@ -35,21 +35,32 @@ import {
   morningMeetingsTable,
   meetingGratitudeTable,
   usersTable,
+  appSettingsTable,
 } from "@workspace/db";
 import { and, eq, gte, lte, desc, asc, sql, inArray, isNull, notInArray } from "drizzle-orm";
 import { londonDateString } from "../lib/london-time";
 
 const router: IRouter = Router();
 
-/** Picks this week's principle (rotates by week-of-year through every
- *  active row in lean_principles) and the default example for today
- *  within that principle (rotates by weekday). Host can override on
- *  the meeting slide via configJson.exampleId. */
+/** Picks this week's principle and the default example for today
+ *  within that principle (rotates by weekday). The week index is
+ *  computed from the curriculum anchor stored in app_settings
+ *  (`lean_curriculum_start_date`), so the rotation starts at
+ *  week 1 on the anchor date rather than being pinned to the
+ *  calendar week of the year. Host can override on the meeting
+ *  slide via configJson.exampleId. */
 async function getTodayPrincipleAndExample() {
   const now = new Date();
-  const start = new Date(now.getFullYear(), 0, 1);
-  const dayOfYear = Math.floor((now.getTime() - start.getTime()) / 86_400_000);
-  const weekOfYear = Math.floor(dayOfYear / 7) + 1;
+
+  const [anchorRow] = await db
+    .select({ value: appSettingsTable.value })
+    .from(appSettingsTable)
+    .where(eq(appSettingsTable.key, "lean_curriculum_start_date"))
+    .limit(1);
+  const anchorIso = anchorRow?.value ?? londonDateString();
+  const anchor = new Date(`${anchorIso}T00:00:00`);
+  const daysSinceAnchor = Math.max(0, Math.floor((now.getTime() - anchor.getTime()) / 86_400_000));
+  const weekIndex = Math.floor(daysSinceAnchor / 7);
 
   const principles = await db
     .select()
@@ -57,7 +68,7 @@ async function getTodayPrincipleAndExample() {
     .where(eq(leanPrinciplesTable.isActive, true))
     .orderBy(asc(leanPrinciplesTable.weekPosition));
   if (principles.length === 0) return { principle: null, example: null };
-  const principle = principles[(weekOfYear - 1) % principles.length];
+  const principle = principles[weekIndex % principles.length];
 
   const examples = await db
     .select()
@@ -148,6 +159,7 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
   try {
     const today = londonDateString();
     const yesterday = isoDateMinusDays(today, 1);
+    const tomorrow = isoDateMinusDays(today, -1);
 
     // ── Today's special ─────────────────────────────────────────────
     const [special] = await db
@@ -250,6 +262,35 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
           }
         }
       }
+    }
+
+    // ── Tomorrow's non-core production (Test Product Prep slide) ────
+    // Anything on tomorrow's plan that isn't a core menu item needs
+    // attention today — test boxes, one-off specials, R&D batches.
+    // Core items are routine and don't need calling out in the
+    // morning huddle.
+    const [tomorrowPlan] = await db
+      .select({ id: productionPlansTable.id })
+      .from(productionPlansTable)
+      .where(eq(productionPlansTable.planDate, tomorrow))
+      .limit(1);
+    let tomorrowNonCoreItems: Array<{ recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null }> = [];
+    if (tomorrowPlan) {
+      tomorrowNonCoreItems = await db
+        .select({
+          recipeId: productionPlanItemsTable.recipeId,
+          recipeName: recipesTable.name,
+          recipeColor: recipesTable.color,
+          batchesTarget: productionPlanItemsTable.batchesTarget,
+          recipeCategory: recipesTable.category,
+        })
+        .from(productionPlanItemsTable)
+        .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+        .where(and(
+          eq(productionPlanItemsTable.planId, tomorrowPlan.id),
+          eq(recipesTable.isCoreMenu, false),
+        ))
+        .orderBy(productionPlanItemsTable.orderPosition);
     }
 
     // ── Today's deliveries ─────────────────────────────────────────
@@ -395,6 +436,8 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
         packingBatchesPerHour,
         batchesTarget: yesterdayBatchesTotal,
       },
+      tomorrow,
+      tomorrowNonCoreItems,
       todayDeliveries,
       safetyIssues,
       struggles,

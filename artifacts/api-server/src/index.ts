@@ -1190,6 +1190,62 @@ async function runStartupMigrations() {
     // Recipe tags — see lib/db/migrations/0016_add_recipe_tags.sql
     await db.execute(sql`ALTER TABLE recipes ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT '{}'`);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS recipes_tags_gin_idx ON recipes USING GIN (tags)`);
+
+    // Lean curriculum anchor — start the rotation from week 1 on the
+    // day this seed first runs, instead of being pinned to the
+    // calendar week of the year (which dropped users mid-curriculum).
+    // Idempotent — only sets the date once.
+    await db.execute(sql`
+      INSERT INTO app_settings (key, value)
+      SELECT 'lean_curriculum_start_date', to_char(CURRENT_DATE, 'YYYY-MM-DD')
+      WHERE NOT EXISTS (SELECT 1 FROM app_settings WHERE key = 'lean_curriculum_start_date')
+    `);
+
+    // Morning meeting — reorder slides + rename "Special Prep" →
+    // "Test Product Prep" and "Local Delivery" → "Local Despatch" on
+    // the default template (and on any future cloned meetings that
+    // still carry the legacy titles). Idempotent.
+    await db.execute(sql`
+      UPDATE template_slides ts
+      SET order_position = m.new_pos, title = m.new_title
+      FROM (VALUES
+        ('stretches'::text, 0, 'Stretches'::text),
+        ('safety_issues', 1, 'Safety Issues'),
+        ('order_of_production', 2, 'Order of Production'),
+        ('special_prep', 3, 'Test Product Prep'),
+        ('short_on_pack', 4, 'Short on the Pack'),
+        ('local_delivery', 5, 'Local Despatch'),
+        ('bag_orders', 6, 'Bag Orders'),
+        ('yesterday_kpis', 7, 'Yesterday''s Numbers'),
+        ('new_sops', 8, 'New & Updated SOPs'),
+        ('struggles', 9, 'Struggles'),
+        ('lesson', 10, 'Today''s Lean Lesson'),
+        ('gratitude', 11, 'Gratitude')
+      ) AS m(kind, new_pos, new_title)
+      WHERE ts.kind = m.kind
+        AND ts.template_id IN (SELECT id FROM meeting_templates WHERE is_default = true)
+    `);
+    await db.execute(sql`
+      UPDATE meeting_slides ms
+      SET order_position = m.new_pos,
+          title = CASE WHEN ms.title IN ('Special Prep','Local Delivery') THEN m.new_title ELSE ms.title END
+      FROM (VALUES
+        ('stretches'::text, 0, 'Stretches'::text),
+        ('safety_issues', 1, 'Safety Issues'),
+        ('order_of_production', 2, 'Order of Production'),
+        ('special_prep', 3, 'Test Product Prep'),
+        ('short_on_pack', 4, 'Short on the Pack'),
+        ('local_delivery', 5, 'Local Despatch'),
+        ('bag_orders', 6, 'Bag Orders'),
+        ('yesterday_kpis', 7, 'Yesterday''s Numbers'),
+        ('new_sops', 8, 'New & Updated SOPs'),
+        ('struggles', 9, 'Struggles'),
+        ('lesson', 10, 'Today''s Lean Lesson'),
+        ('gratitude', 11, 'Gratitude')
+      ) AS m(kind, new_pos, new_title)
+      WHERE ms.kind = m.kind
+    `);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

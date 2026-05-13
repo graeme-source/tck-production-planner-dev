@@ -30,6 +30,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
+import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -45,7 +46,9 @@ interface MeetingSlide {
 interface DashboardData {
   today: string;
   yesterday: string;
+  tomorrow: string;
   special: { id: number; name: string } | null;
+  tomorrowNonCoreItems: Array<{ recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null }>;
   todayPlan: {
     id: number | null;
     items: Array<{ recipeId: number; recipeName: string; batchesTarget: number; recipeCategory: string | null }>;
@@ -81,26 +84,56 @@ async function fetchDashboard(): Promise<DashboardData> {
 }
 
 // ── Stretches slide ──────────────────────────────────────────────────
-// Three 60-second stretches. The slide auto-cycles between them when
-// the timer hits zero, so the host doesn't have to babysit it.
-const STRETCHES = [
-  { name: "Neck rolls", description: "Slow circles, both directions. Drop the shoulders." },
-  { name: "Shoulder + back stretch", description: "Reach overhead, then fold forward gently." },
-  { name: "Wrist + finger stretch", description: "Roll wrists, splay fingers, shake them out." },
+// Five stretches per session — bookended by a sky-reach, with three
+// rotating middle stretches picked at random per day so the routine
+// doesn't get stale. Each runs for STRETCH_SECONDS with no clicks
+// required; all five appear on screen and the active one is
+// highlighted, so the team sees what's coming and what just finished.
+const STRETCH_SECONDS = 10;
+const SKY_STRETCH = { name: "Reach for the sky", emoji: "🙆", description: "Big breath in, arms straight up." };
+const STRETCH_POOL: ReadonlyArray<{ name: string; emoji: string; description: string }> = [
+  { name: "Neck rolls",        emoji: "🦒", description: "Slow circles, both directions." },
+  { name: "Shoulder rolls",    emoji: "🤷", description: "Backwards then forwards." },
+  { name: "Side bend",         emoji: "🧍", description: "Lean to each side." },
+  { name: "Forward fold",      emoji: "🙇", description: "Soft knees, drop the head." },
+  { name: "Wrist + finger",    emoji: "👐", description: "Roll wrists, splay fingers." },
+  { name: "Calf stretch",      emoji: "🚶", description: "Push the back heel down." },
+  { name: "Torso twist",       emoji: "🌀", description: "Hands on hips, slow rotation." },
+  { name: "Chest opener",      emoji: "🫁", description: "Hands behind back, lift the chest." },
+  { name: "Hip circles",       emoji: "🕺", description: "Hands on hips, draw slow circles." },
+  { name: "Ankle rolls",       emoji: "🦶", description: "One foot at a time." },
 ];
+
+/** Deterministic shuffle so the same day shows the same stretches
+ *  for everyone on every device — important for a TV-mirrored meeting. */
+function pickStretchesForDay(dateIso: string) {
+  const seed = dateIso.split("-").reduce((acc, part) => acc * 31 + Number(part), 0);
+  let s = seed;
+  const rng = () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
+  const pool = [...STRETCH_POOL];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  const middle = pool.slice(0, 3);
+  return [SKY_STRETCH, ...middle, SKY_STRETCH];
+}
 
 function StretchesPanel() {
   const [index, setIndex] = useState(0);
-  const [secondsLeft, setSecondsLeft] = useState(60);
+  const [secondsLeft, setSecondsLeft] = useState(STRETCH_SECONDS);
   const [running, setRunning] = useState(false);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const stretches = pickStretchesForDay(todayIso);
+
   useEffect(() => {
     if (!running) return;
     const id = setInterval(() => {
       setSecondsLeft(s => {
         if (s <= 1) {
-          if (index < STRETCHES.length - 1) {
+          if (index < stretches.length - 1) {
             setIndex(i => i + 1);
-            return 60;
+            return STRETCH_SECONDS;
           }
           setRunning(false);
           return 0;
@@ -109,35 +142,66 @@ function StretchesPanel() {
       });
     }, 1000);
     return () => clearInterval(id);
-  }, [running, index]);
-  const current = STRETCHES[index];
+  }, [running, index, stretches.length]);
+
+  const allDone = !running && index === stretches.length - 1 && secondsLeft === 0;
+
   return (
-    <div className="flex flex-col items-center gap-6 max-w-2xl mx-auto">
-      <div className="text-xs uppercase tracking-widest text-muted-foreground">{index + 1} of {STRETCHES.length}</div>
-      <h2 className="text-4xl font-display font-bold text-center">{current.name}</h2>
-      <p className="text-xl text-muted-foreground text-center max-w-md">{current.description}</p>
-      <div className="text-7xl font-display font-bold tabular-nums">{secondsLeft}s</div>
+    <div className="flex flex-col items-center gap-6 w-full">
+      {/* Five stretch tiles — all visible at once. The active one
+          pulses + scales up; finished ones dim; upcoming ones sit
+          quiet. */}
+      <div className="grid grid-cols-5 gap-3 w-full max-w-4xl">
+        {stretches.map((st, i) => {
+          const isActive = i === index && running;
+          const isDone = i < index || (i === index && secondsLeft === 0 && !running && allDone);
+          return (
+            <div
+              key={i}
+              className={cn(
+                "rounded-2xl border p-4 flex flex-col items-center text-center gap-2 transition-all",
+                isActive && "border-emerald-500 bg-emerald-500/10 scale-105 shadow-lg shadow-emerald-500/20",
+                isDone && "opacity-40",
+                !isActive && !isDone && "border-border bg-card",
+              )}
+            >
+              <div className="text-5xl leading-none">{st.emoji}</div>
+              <p className="text-sm font-semibold leading-tight">{st.name}</p>
+              {isActive && (
+                <div className="text-3xl font-display font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{secondsLeft}s</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Active stretch description — big, central, only shows while running. */}
+      <div className="text-center min-h-[60px] flex items-center justify-center">
+        {running ? (
+          <p className="text-2xl text-muted-foreground max-w-2xl">{stretches[index].description}</p>
+        ) : allDone ? (
+          <p className="text-2xl font-display font-semibold text-emerald-600 dark:text-emerald-400">Nice work — let's get into the day.</p>
+        ) : (
+          <p className="text-lg text-muted-foreground">Press Start. {STRETCH_SECONDS}s per stretch, no clicking — just follow along.</p>
+        )}
+      </div>
+
       <div className="flex items-center gap-3">
         <button
-          onClick={() => setRunning(r => !r)}
-          className="px-5 py-2.5 rounded-xl bg-primary text-primary-foreground font-semibold flex items-center gap-2 hover:bg-primary/90"
+          onClick={() => {
+            if (allDone) { setIndex(0); setSecondsLeft(STRETCH_SECONDS); }
+            setRunning(r => !r);
+          }}
+          className="px-6 py-3 rounded-xl bg-primary text-primary-foreground font-semibold flex items-center gap-2 hover:bg-primary/90 text-base"
         >
-          {running ? <><Pause className="w-4 h-4" /> Pause</> : <><Play className="w-4 h-4" /> Start</>}
+          {running ? <><Pause className="w-5 h-5" /> Pause</> : <><Play className="w-5 h-5" /> {allDone ? "Restart" : "Start"}</>}
         </button>
         <button
-          onClick={() => { setSecondsLeft(60); setRunning(false); }}
-          className="px-4 py-2.5 rounded-xl border border-border text-muted-foreground hover:text-foreground flex items-center gap-2"
+          onClick={() => { setIndex(0); setSecondsLeft(STRETCH_SECONDS); setRunning(false); }}
+          className="px-5 py-3 rounded-xl border border-border text-muted-foreground hover:text-foreground flex items-center gap-2"
         >
           <RotateCcw className="w-4 h-4" /> Reset
         </button>
-        {index < STRETCHES.length - 1 && (
-          <button
-            onClick={() => { setIndex(i => i + 1); setSecondsLeft(60); setRunning(false); }}
-            className="px-4 py-2.5 rounded-xl border border-border text-muted-foreground hover:text-foreground flex items-center gap-2"
-          >
-            Next stretch <ChevronRight className="w-4 h-4" />
-          </button>
-        )}
       </div>
     </div>
   );
@@ -205,11 +269,11 @@ type SlideKind =
   | "custom_markdown";
 
 const SLIDE_KIND_META: Record<SlideKind, { icon: React.ElementType; color: string; fallbackTitle: string }> = {
-  special_prep:        { icon: Award,         color: "text-amber-500",   fallbackTitle: "Special Prep" },
+  special_prep:        { icon: Award,         color: "text-amber-500",   fallbackTitle: "Test Product Prep" },
   stretches:           { icon: Activity,      color: "text-emerald-500", fallbackTitle: "Stretches" },
   yesterday_kpis:      { icon: ChefHat,       color: "text-violet-500",  fallbackTitle: "Yesterday's Numbers" },
   order_of_production: { icon: ClipboardCheck,color: "text-primary",     fallbackTitle: "Order of Production" },
-  local_delivery:      { icon: Truck,         color: "text-blue-500",    fallbackTitle: "Local Delivery" },
+  local_delivery:      { icon: Truck,         color: "text-blue-500",    fallbackTitle: "Local Despatch" },
   bag_orders:          { icon: ShoppingBag,   color: "text-indigo-500",  fallbackTitle: "Bag Orders" },
   short_on_pack:       { icon: AlertCircle,   color: "text-orange-500",  fallbackTitle: "Short on the Pack" },
   safety_issues:       { icon: AlertCircle,   color: "text-red-500",     fallbackTitle: "Safety Issues" },
@@ -225,7 +289,7 @@ function metaForKind(kind: string) {
 }
 
 // ── Page ─────────────────────────────────────────────────────────────
-type Mode = "setup" | "prep" | "meeting" | "done" | "edit_today" | "edit_template" | "edit_curriculum";
+type Mode = "setup" | "prep" | "meeting" | "done" | "edit_today" | "edit_tomorrow" | "edit_template" | "edit_curriculum";
 
 export default function MeetingPage() {
   const { state } = useAuth();
@@ -236,6 +300,7 @@ export default function MeetingPage() {
   const [mode, setMode] = useState<Mode>("setup");
   const [hostName, setHostName] = useState(currentUserName);
   const [slideIndex, setSlideIndex] = useState(0);
+  const [tomorrowMeetingId, setTomorrowMeetingId] = useState<number | null>(null);
 
   useEffect(() => { if (!hostName && currentUserName) setHostName(currentUserName); }, [currentUserName, hostName]);
 
@@ -319,9 +384,11 @@ export default function MeetingPage() {
       onEditToday={() => setMode("edit_today")}
       onEditTemplate={() => setMode("edit_template")}
       onEditCurriculum={() => setMode("edit_curriculum")}
-      onScheduleTomorrow={async () => {
+      onEditTomorrow={async () => {
         const tomorrow = format(addDays(new Date(), 1), "yyyy-MM-dd");
         try {
+          // Idempotent — /schedule clones the template on first call,
+          // returns the existing meeting id on subsequent calls.
           const res = await fetch(`${BASE}/api/morning-meetings/schedule`, {
             method: "POST",
             credentials: "include",
@@ -329,9 +396,11 @@ export default function MeetingPage() {
             body: JSON.stringify({ meetingDate: tomorrow }),
           });
           if (!res.ok) throw new Error();
-          toast({ title: "Tomorrow's meeting scheduled", description: "Slides cloned from the master template — you can edit them below." });
+          const body = await res.json() as { id: number };
+          setTomorrowMeetingId(body.id);
+          setMode("edit_tomorrow");
         } catch {
-          toast({ title: "Schedule failed", variant: "destructive" });
+          toast({ title: "Couldn't open tomorrow's meeting", variant: "destructive" });
         }
       }}
       isAdmin={isAdmin}
@@ -357,6 +426,15 @@ export default function MeetingPage() {
       mode="meeting"
       id={data.meeting.id}
       titleSuffix={format(new Date(data.today + "T00:00:00"), "EEEE d MMMM")}
+      onClose={() => { queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] }); setMode("setup"); }}
+    />;
+  }
+
+  if (mode === "edit_tomorrow" && tomorrowMeetingId != null) {
+    return <SlideEditor
+      mode="meeting"
+      id={tomorrowMeetingId}
+      titleSuffix={`${format(new Date(data.tomorrow + "T00:00:00"), "EEEE d MMMM")} — Tomorrow`}
       onClose={() => { queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] }); setMode("setup"); }}
     />;
   }
@@ -469,7 +547,7 @@ export default function MeetingPage() {
 // ── Setup screen ────────────────────────────────────────────────────
 function SetupScreen({
   data, hostName, onHostNameChange, onReadBriefing, onStart, starting, onExit,
-  onEditToday, onEditTemplate, onEditCurriculum, onScheduleTomorrow, isAdmin,
+  onEditToday, onEditTemplate, onEditCurriculum, onEditTomorrow, isAdmin,
 }: {
   data: DashboardData;
   hostName: string;
@@ -481,7 +559,7 @@ function SetupScreen({
   onEditToday: () => void;
   onEditTemplate: () => void;
   onEditCurriculum: () => void;
-  onScheduleTomorrow: () => void;
+  onEditTomorrow: () => void;
   isAdmin: boolean;
 }) {
   return (
@@ -511,11 +589,11 @@ function SetupScreen({
             Edit today's meeting
           </button>
           <button
-            onClick={onScheduleTomorrow}
+            onClick={onEditTomorrow}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40"
           >
             <Calendar className="w-3.5 h-3.5" />
-            Schedule for tomorrow
+            Edit tomorrow's meeting
           </button>
           {isAdmin && (
             <>
@@ -772,20 +850,43 @@ function SectionLead({ children }: { children: React.ReactNode }) {
 }
 
 function SpecialPrepSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
+  const items = data.tomorrowNonCoreItems ?? [];
   return (
     <div>
-      <SectionTitle>{slide.title || "Special Prep"}</SectionTitle>
-      <SectionLead>What's on top of the usual today?</SectionLead>
-      <div className="glass-panel p-6 rounded-2xl">
-        {data.special ? (
-          <>
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Current special</p>
-            <h3 className="text-2xl font-display font-bold">{data.special.name}</h3>
-          </>
-        ) : (
-          <p className="text-muted-foreground">No special configured. Talk through any one-off prep needed today.</p>
-        )}
-      </div>
+      <SectionTitle>{slide.title || "Test Product Prep"}</SectionTitle>
+      <SectionLead>
+        Tomorrow's non-core items — anything that isn't part of the normal menu needs prep attention today.
+      </SectionLead>
+      {items.length === 0 ? (
+        <div className="glass-panel rounded-2xl p-6 text-muted-foreground">
+          No non-core items on tomorrow's plan — standard prep only.
+        </div>
+      ) : (
+        <div className="glass-panel rounded-2xl overflow-hidden">
+          {items.map((it, i) => (
+            <div
+              key={it.recipeId}
+              className={cn("flex items-center justify-between px-5 py-3", i > 0 && "border-t border-border/50")}
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                {it.recipeColor && (
+                  <span
+                    className="w-3 h-3 rounded-full shrink-0"
+                    style={{ backgroundColor: it.recipeColor }}
+                  />
+                )}
+                <span className="font-medium truncate">{it.recipeName}</span>
+                {it.recipeCategory === "Macaroni Cheese" && (
+                  <span className="text-[10px] uppercase tracking-wide bg-amber-500/10 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-full font-semibold">Mac</span>
+                )}
+              </div>
+              <span className="text-sm font-semibold tabular-nums">
+                {it.batchesTarget}{it.recipeCategory === "Macaroni Cheese" ? " packs" : " batches"}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -865,21 +966,41 @@ function OrderOfProductionSlide({ data, slide }: { data: DashboardData; slide: M
 
 function LocalDeliverySlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
   return (
-    <div>
-      <SectionTitle>{slide.title || "Local Delivery"}</SectionTitle>
-      <SectionLead>Anyone coming to the door today?</SectionLead>
-      {data.todayDeliveries.length === 0 ? (
-        <div className="glass-panel rounded-2xl p-6 text-muted-foreground">No deliveries scheduled for today.</div>
-      ) : (
-        <div className="glass-panel rounded-2xl overflow-hidden">
-          {data.todayDeliveries.map((d, i) => (
-            <div key={d.id} className={cn("flex items-center justify-between px-5 py-3", i > 0 && "border-t border-border/50")}>
-              <span className="font-medium">{d.supplierName}</span>
-              <span className="text-xs uppercase tracking-wide text-muted-foreground">{d.status}</span>
-            </div>
-          ))}
-        </div>
-      )}
+    <div className="space-y-5">
+      <SectionTitle>{slide.title || "Local Despatch"}</SectionTitle>
+      <SectionLead>Going out and coming in.</SectionLead>
+
+      {/* Static prompt — outbound local despatches via the butcher run.
+          No data wired for this yet; the host calls it out verbally. */}
+      <div className="glass-panel rounded-2xl p-6 border-2 border-blue-500/30 bg-blue-500/5">
+        <p className="text-xs font-semibold uppercase tracking-wide text-blue-700 dark:text-blue-300 mb-1">Outbound</p>
+        <p className="text-lg font-semibold">Any local despatches today?</p>
+        <p className="text-sm text-muted-foreground mt-1">Orders going out with the butcher.</p>
+      </div>
+
+      {/* Inbound — purchase orders arriving today, with their status. */}
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Deliveries coming in today</p>
+        {data.todayDeliveries.length === 0 ? (
+          <div className="glass-panel rounded-2xl p-6 text-muted-foreground">No deliveries scheduled for today.</div>
+        ) : (
+          <div className="glass-panel rounded-2xl overflow-hidden">
+            {data.todayDeliveries.map((d, i) => (
+              <div key={d.id} className={cn("flex items-center justify-between px-5 py-3", i > 0 && "border-t border-border/50")}>
+                <span className="font-medium">{d.supplierName}</span>
+                <span className={cn(
+                  "text-xs uppercase tracking-wide px-2 py-0.5 rounded-full font-semibold",
+                  d.status === "received"
+                    ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                    : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+                )}>
+                  {d.status}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -973,22 +1094,36 @@ function SafetyIssuesSlide({ data, onRefresh, slide }: { data: DashboardData; on
 }
 
 function NewSopsSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
+  const [openSopId, setOpenSopId] = useState<number | null>(null);
   return (
     <div>
       <SectionTitle>{slide.title || "New & Updated SOPs"}</SectionTitle>
-      <SectionLead>Anything changed in the last week that everyone should know about?</SectionLead>
+      <SectionLead>Touched in the last 7 days, most recent first. Tap to open.</SectionLead>
       {data.recentSops.length === 0 ? (
         <div className="glass-panel rounded-2xl p-6 text-muted-foreground">No SOP updates in the last 7 days.</div>
       ) : (
         <div className="glass-panel rounded-2xl overflow-hidden">
           {data.recentSops.map((s, i) => (
-            <div key={s.id} className={cn("flex items-center justify-between px-5 py-3", i > 0 && "border-t border-border/50")}>
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => setOpenSopId(s.id)}
+              className={cn(
+                "w-full flex items-center justify-between px-5 py-3 text-left hover:bg-secondary/40 transition-colors",
+                i > 0 && "border-t border-border/50",
+              )}
+            >
               <span className="font-medium">{s.title}</span>
               <span className="text-xs text-muted-foreground">{format(new Date(s.updatedAt), "EEE d MMM")}</span>
-            </div>
+            </button>
           ))}
         </div>
       )}
+      <StandardsSopsDialog
+        open={openSopId !== null}
+        onClose={() => setOpenSopId(null)}
+        initialSopId={openSopId ?? undefined}
+      />
     </div>
   );
 }
@@ -1131,77 +1266,48 @@ function LearningSlide({ data, slide }: { data: DashboardData; slide: MeetingSli
   );
 }
 
-function GratitudeSlide({ data, onRefresh, slide }: { data: DashboardData; onRefresh: () => void; slide: MeetingSlide }) {
+// A small rotating bank of gratitude prompts. The host doesn't log
+// anything — the slide is here to slow the room down for ten seconds
+// and remind everyone to notice one good thing. A different prompt
+// shows each day, picked deterministically from the date so the
+// rotation is the same on every device.
+const GRATITUDE_PROMPTS: ReadonlyArray<{ emoji: string; line: string; sub: string }> = [
+  { emoji: "🌅", line: "Take a breath. Notice one good thing.", sub: "Could be anything — coffee, the light, someone showing up early." },
+  { emoji: "💛", line: "Who made yesterday easier?", sub: "Picture the person. We'll say thanks later." },
+  { emoji: "🌱", line: "Something is growing here.", sub: "What's better this week than last?" },
+  { emoji: "🍞", line: "Be grateful for the work.", sub: "Real hands, real food, real customers." },
+  { emoji: "🤝", line: "We get to do this together.", sub: "Look around the room. We're not doing it alone." },
+  { emoji: "🌤️", line: "Right now, today, is enough.", sub: "Whatever yesterday was, today is fresh." },
+  { emoji: "🥖", line: "Someone, somewhere, will love what we make today.", sub: "That's not nothing." },
+  { emoji: "🕯️", line: "A tiny kindness counts.", sub: "Pass one to someone before lunch." },
+  { emoji: "🌞", line: "Notice the small wins.", sub: "Yesterday had some — name one." },
+  { emoji: "🎈", line: "Celebrate something small.", sub: "Birthdays, milestones, a clean station." },
+];
+
+function pickGratitudeForDay(dateIso: string) {
+  const seed = dateIso.split("-").reduce((acc, part) => acc * 31 + Number(part), 0);
+  return GRATITUDE_PROMPTS[seed % GRATITUDE_PROMPTS.length];
+}
+
+function GratitudeSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide; onRefresh: () => void }) {
   void slide;
-  const { state } = useAuth();
-  const defaultFrom = state.status === "authenticated" ? state.user.name : "";
-  const [fromName, setFromName] = useState(defaultFrom);
-  const [toName, setToName] = useState("");
-  const [content, setContent] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const meetingId = data.meeting?.id;
-  const submit = async () => {
-    if (!meetingId || !fromName.trim() || !content.trim()) return;
-    setSubmitting(true);
-    try {
-      const res = await fetch(`${BASE}/api/morning-meetings/${meetingId}/gratitude`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fromName, toName: toName.trim() || undefined, content }),
-      });
-      if (!res.ok) throw new Error("Failed");
-      setContent(""); setToName("");
-      onRefresh();
-      toast({ title: "Shout-out added" });
-    } catch {
-      toast({ title: "Failed to add", variant: "destructive" });
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  const todayIso = data.today || new Date().toISOString().slice(0, 10);
+  const prompt = pickGratitudeForDay(todayIso);
   return (
-    <div>
-      <SectionTitle>Gratitude</SectionTitle>
-      <SectionLead>Finish strong. Who helped you out? What went well?</SectionLead>
-      {data.gratitude.length > 0 && (
-        <div className="glass-panel rounded-2xl overflow-hidden mb-4">
-          {data.gratitude.map(g => (
-            <div key={g.id} className="px-5 py-3 border-b border-border/50 last:border-0 flex items-start gap-3">
-              <Heart className="w-4 h-4 text-rose-500 mt-1 shrink-0" />
-              <div>
-                <p className="text-sm">
-                  <span className="font-semibold">{g.fromName}</span>
-                  {g.toName ? <> → <span className="font-semibold">{g.toName}</span></> : null}
-                </p>
-                <p className="text-sm text-muted-foreground">{g.content}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-      {meetingId ? (
-        <div className="glass-panel rounded-2xl p-5">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Add a shout-out</p>
-          <div className="grid grid-cols-2 gap-2 mb-2">
-            <input value={fromName} onChange={e => setFromName(e.target.value)} placeholder="From" className="bg-background border border-border rounded-xl p-3 text-base focus:outline-none focus:ring-2 focus:ring-primary/30" />
-            <input value={toName} onChange={e => setToName(e.target.value)} placeholder="To (optional)" className="bg-background border border-border rounded-xl p-3 text-base focus:outline-none focus:ring-2 focus:ring-primary/30" />
-          </div>
-          <textarea
-            value={content}
-            onChange={e => setContent(e.target.value)}
-            placeholder="Thanks for…"
-            className="w-full min-h-[80px] bg-background border border-border rounded-xl p-3 text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
-          />
-          <div className="flex justify-end mt-3">
-            <button onClick={submit} disabled={!fromName.trim() || !content.trim() || submitting} className="px-4 py-2 rounded-xl bg-rose-500 text-white text-sm font-semibold hover:bg-rose-600 disabled:opacity-50">
-              {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add shout-out"}
-            </button>
-          </div>
-        </div>
-      ) : (
-        <p className="text-sm text-muted-foreground italic">Meeting not started yet — go back to setup and hit Start.</p>
-      )}
+    <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-rose-100 via-amber-50 to-emerald-100 dark:from-rose-900/30 dark:via-amber-900/20 dark:to-emerald-900/30 p-12 min-h-[420px] flex flex-col items-center justify-center text-center gap-6 shadow-inner">
+      {/* Soft floating shapes for a touch of motion / warmth */}
+      <div className="absolute -top-20 -left-20 w-72 h-72 rounded-full bg-rose-200/40 dark:bg-rose-500/10 blur-3xl" />
+      <div className="absolute -bottom-24 -right-16 w-80 h-80 rounded-full bg-amber-200/40 dark:bg-amber-500/10 blur-3xl" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full bg-emerald-200/30 dark:bg-emerald-500/10 blur-3xl" />
+
+      <div className="relative z-10 flex flex-col items-center gap-6">
+        <div className="text-8xl leading-none">{prompt.emoji}</div>
+        <h2 className="font-display text-4xl md:text-5xl font-bold text-foreground leading-tight max-w-3xl">
+          {prompt.line}
+        </h2>
+        <p className="text-xl text-muted-foreground max-w-xl">{prompt.sub}</p>
+        <p className="text-xs uppercase tracking-widest text-muted-foreground mt-4">Gratitude</p>
+      </div>
     </div>
   );
 }
@@ -1214,11 +1320,11 @@ void ArrowRight;
 // template — the only difference is which API endpoints it points at.
 
 const SLIDE_KIND_CATALOG: Array<{ kind: SlideKind; label: string; description: string }> = [
-  { kind: "special_prep",        label: "Special Prep",         description: "Today's current special" },
-  { kind: "stretches",           label: "Stretches",            description: "3 × 60s timer" },
+  { kind: "special_prep",        label: "Test Product Prep",    description: "Tomorrow's non-core items being prepped today" },
+  { kind: "stretches",           label: "Stretches",            description: "Daily-random stretches, auto-cycling 10s each" },
   { kind: "yesterday_kpis",      label: "Yesterday's Numbers",  description: "Building rate, packing rate, wonkies" },
   { kind: "order_of_production", label: "Order of Production",  description: "Today's recipe order + batches" },
-  { kind: "local_delivery",      label: "Local Delivery",       description: "Today's purchase orders" },
+  { kind: "local_delivery",      label: "Local Despatch",       description: "Any local despatches + today's deliveries in" },
   { kind: "bag_orders",          label: "Bag Orders",           description: "Discussion prompt" },
   { kind: "short_on_pack",       label: "Short on the Pack",    description: "Yesterday's shorts + leftover" },
   { kind: "safety_issues",       label: "Safety Issues",        description: "Open andons + log new" },

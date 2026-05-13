@@ -223,17 +223,24 @@ export function StandardsSopsDialog({
   open,
   onClose,
   currentStationType,
+  initialSopId,
 }: {
   open: boolean;
   onClose: () => void;
   currentStationType?: string | null;
+  /** When set, the dialog opens straight into the viewer for this SOP
+   *  instead of the library list. Used from the morning meeting's
+   *  "New & Updated SOPs" slide to deep-link into a specific SOP. */
+  initialSopId?: number;
 }) {
   type View = { kind: "library" } | { kind: "viewer"; sopId: number } | { kind: "editor"; sopId: number };
   const [view, setView] = useState<View>({ kind: "library" });
 
   useEffect(() => {
-    if (open) setView({ kind: "library" });
-  }, [open]);
+    if (open) {
+      setView(initialSopId ? { kind: "viewer", sopId: initialSopId } : { kind: "library" });
+    }
+  }, [open, initialSopId]);
 
   return (
     <AnimatePresence>
