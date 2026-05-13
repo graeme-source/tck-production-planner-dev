@@ -27,6 +27,7 @@ import Supplies from "@/pages/supplies";
 import Settings from "@/pages/settings";
 import LeanCave from "@/pages/lean-cave";
 import Reports from "@/pages/reports";
+import EmployeeHub from "@/pages/employee-hub";
 import Fulfilment from "@/pages/fulfilment";
 import Locations from "@/pages/locations";
 import Kanbans from "@/pages/kanbans";
@@ -139,6 +140,7 @@ function Router() {
               <Route path="/founder/pnl" component={FounderPnL} />
               <Route path="/reports">{() => <ProtectedRoute component={Reports} pageKey="/reports" />}</Route>
               <Route path="/lean-cave" component={LeanCave} />
+              <Route path="/hub" component={EmployeeHub} />
               <Route path="/settings" component={Settings} />
               <Route component={NotFound} />
             </Switch>

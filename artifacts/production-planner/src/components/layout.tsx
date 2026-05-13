@@ -34,6 +34,7 @@ import {
   LockKeyhole,
   Beaker,
   AlertTriangle,
+  FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/user-avatar";
@@ -129,6 +130,14 @@ export function AccountButton({
             transition={{ duration: 0.15 }}
             className="absolute bottom-full left-0 right-0 mb-2 bg-card border border-border rounded-xl shadow-lg overflow-hidden z-50"
           >
+            <Link
+              href="/hub"
+              onClick={() => { setOpen(false); onNavigate?.(); }}
+              className="flex items-center gap-3 px-4 py-3 text-sm text-foreground hover:bg-secondary/50 transition-colors"
+            >
+              <FileText className="w-4 h-4 text-muted-foreground" />
+              My Employee Hub
+            </Link>
             <Link
               href="/settings?tab=profile"
               onClick={() => { setOpen(false); onNavigate?.(); }}

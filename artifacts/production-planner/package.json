@@ -81,6 +81,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "html5-qrcode": "^2.3.8",
+    "jspdf": "^4.2.1",
     "papaparse": "^5.5.3"
   }
 }
