@@ -291,7 +291,7 @@ function metaForKind(kind: string) {
 }
 
 // ── Page ─────────────────────────────────────────────────────────────
-type Mode = "setup" | "prep" | "meeting" | "done" | "edit_today" | "edit_tomorrow" | "preview_tomorrow" | "edit_template" | "edit_curriculum";
+type Mode = "setup" | "prep" | "meeting" | "done" | "edit_today" | "edit_tomorrow" | "edit_template" | "edit_curriculum";
 
 export default function MeetingPage() {
   const { state } = useAuth();
@@ -303,6 +303,12 @@ export default function MeetingPage() {
   const [hostName, setHostName] = useState(currentUserName);
   const [slideIndex, setSlideIndex] = useState(0);
   const [tomorrowMeetingId, setTomorrowMeetingId] = useState<number | null>(null);
+  // When the host clicks "Preview tomorrow's meeting", we fetch
+  // tomorrow's meeting_slides and stash them here. The slideshow's
+  // `slides` memo picks them up via override, so the runner uses
+  // tomorrow's slide order/titles/content with today's dynamic data
+  // (deliveries, plan, KPIs etc) as a stand-in.
+  const [previewSlides, setPreviewSlides] = useState<MeetingSlide[] | null>(null);
 
   useEffect(() => { if (!hostName && currentUserName) setHostName(currentUserName); }, [currentUserName, hostName]);
 
@@ -345,8 +351,10 @@ export default function MeetingPage() {
   // The runner's slide list comes from meeting_slides in the DB. If
   // the meeting hasn't been started yet `data.slides` is empty and the
   // user is still on the setup screen, so this is only consulted in
-  // meeting mode.
-  const slides = useMemo<MeetingSlide[]>(() => data?.slides ?? [], [data?.slides]);
+  // meeting mode. When `previewSlides` is set we're previewing
+  // tomorrow's meeting, so those override today's slides.
+  const slides = useMemo<MeetingSlide[]>(() => previewSlides ?? data?.slides ?? [], [previewSlides, data?.slides]);
+  const isPreviewing = previewSlides !== null;
   const slideCount = slides.length;
 
   const advance = useCallback(() => setSlideIndex(i => Math.min(Math.max(0, slideCount - 1), i + 1)), [slideCount]);
@@ -408,16 +416,25 @@ export default function MeetingPage() {
       onPreviewTomorrow={async () => {
         const tomorrow = format(addDays(new Date(), 1), "yyyy-MM-dd");
         try {
-          const res = await fetch(`${BASE}/api/morning-meetings/schedule`, {
+          const schedRes = await fetch(`${BASE}/api/morning-meetings/schedule`, {
             method: "POST",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ meetingDate: tomorrow }),
           });
-          if (!res.ok) throw new Error();
-          const body = await res.json() as { id: number };
-          setTomorrowMeetingId(body.id);
-          setMode("preview_tomorrow");
+          if (!schedRes.ok) throw new Error();
+          const schedBody = await schedRes.json() as { id: number };
+          setTomorrowMeetingId(schedBody.id);
+          // Fetch tomorrow's slides and drop straight into the
+          // slideshow runner. The slides memo picks them up via the
+          // previewSlides override; dynamic data (deliveries, plan
+          // etc.) stays as today's snapshot — it'll refresh tomorrow.
+          const slidesRes = await fetch(`${BASE}/api/morning-meetings/${schedBody.id}/slides`, { credentials: "include" });
+          if (!slidesRes.ok) throw new Error();
+          const slidesBody = await slidesRes.json() as MeetingSlide[];
+          setPreviewSlides(slidesBody);
+          setSlideIndex(0);
+          setMode("meeting");
         } catch {
           toast({ title: "Couldn't open tomorrow's meeting", variant: "destructive" });
         }
@@ -458,14 +475,6 @@ export default function MeetingPage() {
     />;
   }
 
-  if (mode === "preview_tomorrow" && tomorrowMeetingId != null) {
-    return <PreviewTomorrowList
-      meetingId={tomorrowMeetingId}
-      tomorrowIso={data.tomorrow}
-      onClose={() => setMode("setup")}
-      onEditInstead={() => setMode("edit_tomorrow")}
-    />;
-  }
 
   if (mode === "edit_template") {
     return <SlideEditor
@@ -496,8 +505,24 @@ export default function MeetingPage() {
   const slide = slides[Math.min(slideIndex, slideCount - 1)];
   const meta = metaForKind(slide.kind);
   const SlideIcon = meta.icon;
+  const exitMeeting = () => {
+    if (isPreviewing) setPreviewSlides(null);
+    setMode("setup");
+  };
   return (
     <div className="fixed inset-0 bg-background flex flex-col">
+      {/* Preview banner — host knows they're walking through tomorrow's
+          deck with today's live data substituted in for anything
+          time-sensitive. */}
+      {isPreviewing && (
+        <div className="bg-purple-500/10 border-b border-purple-500/30 text-purple-700 dark:text-purple-300 px-6 py-2 text-sm flex items-center justify-between">
+          <span className="font-medium">
+            Preview — Tomorrow's meeting ({data.tomorrow ? format(new Date(data.tomorrow + "T00:00:00"), "EEEE d MMMM") : ""}). Slide layout is tomorrow's; data shown is today's snapshot.
+          </span>
+          <button onClick={exitMeeting} className="text-xs underline-offset-2 hover:underline">Exit preview</button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-3 border-b border-border bg-card">
         <div className="flex items-center gap-3 min-w-0">
@@ -506,10 +531,12 @@ export default function MeetingPage() {
         </div>
         <div className="flex items-center gap-3 text-sm">
           <span className="text-muted-foreground tabular-nums">{slideIndex + 1} / {slideCount}</span>
-          <button onClick={() => endMutation.mutate()} className="text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-1.5">
-            End meeting
-          </button>
-          <button onClick={() => setMode("setup")} className="text-muted-foreground hover:text-foreground">
+          {!isPreviewing && (
+            <button onClick={() => endMutation.mutate()} className="text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-1.5">
+              End meeting
+            </button>
+          )}
+          <button onClick={exitMeeting} className="text-muted-foreground hover:text-foreground">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -1651,89 +1678,6 @@ interface EditorSlide {
   orderPosition: number;
   contentMd: string | null;
   configJson: Record<string, unknown> | null;
-}
-
-/** Lightweight read-only preview of a future meeting — fetches the
- *  slides for the given meeting id and shows them as a stacked list
- *  with title, kind label and any custom markdown body. Lets the host
- *  sanity-check tomorrow's structure without firing up the slideshow
- *  (which would render against today's data anyway). One-tap edit
- *  jumps straight into the SlideEditor for the same meeting. */
-function PreviewTomorrowList({
-  meetingId, tomorrowIso, onClose, onEditInstead,
-}: {
-  meetingId: number;
-  tomorrowIso: string;
-  onClose: () => void;
-  onEditInstead: () => void;
-}) {
-  const { data: slides, isLoading } = useQuery<MeetingSlide[]>({
-    queryKey: ["meeting-slides", meetingId],
-    queryFn: async () => {
-      const res = await fetch(`${BASE}/api/morning-meetings/${meetingId}/slides`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed");
-      return res.json();
-    },
-  });
-
-  return (
-    <div className="fixed inset-0 bg-background overflow-y-auto">
-      <div className="max-w-3xl mx-auto px-6 py-10">
-        <button
-          onClick={onClose}
-          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-4"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back to meeting
-        </button>
-
-        <div className="flex items-start justify-between gap-4 mb-6">
-          <div>
-            <h1 className="font-display text-2xl font-bold">Preview — Tomorrow's meeting</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              {format(new Date(tomorrowIso + "T00:00:00"), "EEEE d MMMM yyyy")} · {slides?.length ?? 0} slide{(slides?.length ?? 0) === 1 ? "" : "s"}
-            </p>
-          </div>
-          <button
-            onClick={onEditInstead}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 shrink-0"
-          >
-            <Edit3 className="w-3.5 h-3.5" />
-            Edit
-          </button>
-        </div>
-
-        {isLoading ? (
-          <div className="flex justify-center py-12">
-            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-          </div>
-        ) : (slides ?? []).length === 0 ? (
-          <p className="text-sm text-muted-foreground italic">No slides on tomorrow's meeting yet.</p>
-        ) : (
-          <ol className="space-y-2">
-            {(slides ?? []).map((s, i) => {
-              const meta = metaForKind(s.kind);
-              const Icon = meta.icon;
-              const customBody = typeof s.contentMd === "string" ? s.contentMd.trim() : "";
-              return (
-                <li key={s.id} className="glass-panel rounded-2xl p-4 flex items-start gap-3">
-                  <span className="text-sm font-display font-bold text-muted-foreground tabular-nums w-6 shrink-0 pt-0.5">{i + 1}</span>
-                  <Icon className={cn("w-5 h-5 shrink-0 mt-0.5", meta.color)} />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold leading-tight">{s.title || meta.fallbackTitle}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5 uppercase tracking-wide">{s.kind.replace(/_/g, " ")}</p>
-                    {customBody && (
-                      <p className="text-sm text-muted-foreground mt-2 line-clamp-3 whitespace-pre-wrap">{customBody}</p>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ol>
-        )}
-      </div>
-    </div>
-  );
 }
 
 function SlideEditor({
