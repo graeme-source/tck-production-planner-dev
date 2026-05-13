@@ -368,7 +368,7 @@ export default function Dashboard() {
 
       {showIssueBanner && <AndonBanner userRole={userRole} />}
 
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <StatCard
           title="Total Batches Today"
           value={batchesLoading ? "…" : (totalBatches?.calzoneBatches ?? 0).toString()}
@@ -587,19 +587,15 @@ export default function Dashboard() {
 function StatCard({ title, value, subtitle, icon: Icon, color, bg, href }: any) {
   return (
     <Link href={href} className="h-full">
-      <div className="glass-panel p-6 rounded-2xl hover-lift cursor-pointer group h-full flex flex-col justify-between min-h-[110px]">
-        <div className="flex items-start gap-4">
-          <div className={`p-4 rounded-2xl ${bg} ${color} transition-transform group-hover:scale-110 shrink-0`}>
-            <Icon className="w-6 h-6" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-muted-foreground leading-snug mb-2">{title}</p>
-            <h3 className="text-3xl font-display font-bold">{value}</h3>
-            {subtitle && (
-              <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>
-            )}
-          </div>
+      <div className="glass-panel p-4 rounded-2xl hover-lift cursor-pointer group h-full flex flex-col items-center text-center gap-2 min-h-[140px]">
+        <div className={`p-3 rounded-2xl ${bg} ${color} transition-transform group-hover:scale-110`}>
+          <Icon className="w-6 h-6" />
         </div>
+        <p className="text-sm font-medium text-muted-foreground leading-snug">{title}</p>
+        <h3 className="text-3xl font-display font-bold leading-none">{value}</h3>
+        {subtitle && (
+          <p className="text-xs text-muted-foreground leading-snug">{subtitle}</p>
+        )}
       </div>
     </Link>
   );
