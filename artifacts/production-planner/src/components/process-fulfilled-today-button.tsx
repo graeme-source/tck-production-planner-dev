@@ -33,6 +33,16 @@ interface Props {
   /** Size preset. "md" matches the "Create Plan" button in the Production Plans header;
    *  "sm" matches the "Add Stock" / "Unlock" buttons on Stock Control. */
   size?: "sm" | "md";
+  /** Optional label override — use when the call-site needs more emphatic wording
+   *  than the default "Process Fulfilled Today" (e.g. the Update Factory Number prompt). */
+  label?: string;
+  /** Fires after the API call returns successfully. Lets the caller chain
+   *  follow-up actions (e.g. open the Update Factory Number diff modal). */
+  onSuccess?: () => void;
+  /** When true, render as a primary-coloured button instead of the neutral
+   *  secondary style. Used inside confirmation prompts where this is the
+   *  recommended next action. */
+  emphasis?: "primary" | "secondary";
 }
 
 /**
@@ -41,7 +51,7 @@ interface Props {
  * new fridge quantities. Used from the Production Plans page header AND the
  * Stock Control production-fridge panel — same behaviour in both places.
  */
-export function ProcessFulfilledTodayButton({ className, size = "md" }: Props) {
+export function ProcessFulfilledTodayButton({ className, size = "md", label, onSuccess, emphasis = "secondary" }: Props) {
   const queryClient = useQueryClient();
 
   const mutation = useMutation({
@@ -92,6 +102,8 @@ export function ProcessFulfilledTodayButton({ className, size = "md" }: Props) {
       queryClient.invalidateQueries({ queryKey: ["fridge-batches"] });
       queryClient.invalidateQueries({ queryKey: ["production-plan-calculate"] });
       queryClient.invalidateQueries({ queryKey: ["factory-numbers"] });
+
+      onSuccess?.();
     },
     onError: (err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
@@ -108,13 +120,17 @@ export function ProcessFulfilledTodayButton({ className, size = "md" }: Props) {
     : "text-sm px-5 py-2.5 rounded-xl gap-2 font-medium";
   const iconSize = size === "sm" ? "w-3.5 h-3.5" : "w-4 h-4";
 
+  const styleClasses = emphasis === "primary"
+    ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90 shadow-md shadow-primary/20"
+    : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary";
+
   return (
     <button
       onClick={() => mutation.mutate()}
       disabled={mutation.isPending}
       className={cn(
-        "flex items-center border transition-colors disabled:opacity-60",
-        "border-border text-muted-foreground hover:text-foreground hover:bg-secondary",
+        "flex items-center justify-center border transition-colors disabled:opacity-60",
+        styleClasses,
         sizeClasses,
         className,
       )}
@@ -124,7 +140,7 @@ export function ProcessFulfilledTodayButton({ className, size = "md" }: Props) {
         ? <Loader2 className={cn(iconSize, "animate-spin")} />
         : <PackageCheck className={iconSize} />
       }
-      {mutation.isPending ? "Processing…" : "Process Fulfilled Today"}
+      {mutation.isPending ? "Processing…" : (label ?? "Process Fulfilled Today")}
     </button>
   );
 }

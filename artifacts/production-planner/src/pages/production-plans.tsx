@@ -1955,15 +1955,17 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   }, [items, editAllocateBatches, editEffectiveTotalBatches]);
 
   // ── Update Factory Number (re-run DPT) state ────────────────────────────────
-  // Clicking the Update button runs /calculate for this plan's date and
-  // opens a diff modal. The user accepts/rejects per recipe, then the
-  // selected rows overwrite batchesTarget in the local items state.
+  // Clicking the Update button first opens a prompt asking the operator to
+  // process today's fulfillments — if they update before fulfillments are
+  // applied, the factory-number maths runs off stale fridge stock and the
+  // recommendations are wrong. They can skip with a small link.
+  const [fulfilPromptOpen, setFulfilPromptOpen] = useState(false);
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
   const [updateLoading, setUpdateLoading] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [updateCalcData, setUpdateCalcData] = useState<CalcResponse | null>(null);
 
-  async function handleUpdateFactoryNumber() {
+  async function runUpdateFactoryNumber() {
     setUpdateLoading(true);
     setUpdateError(null);
     try {
@@ -1975,6 +1977,10 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
     } finally {
       setUpdateLoading(false);
     }
+  }
+
+  function handleUpdateFactoryNumber() {
+    setFulfilPromptOpen(true);
   }
 
   function applyUpdatedBatches(selected: Array<{ recipeId: number; newBatches: number }>) {
@@ -2493,6 +2499,35 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
           onApply={applyUpdatedBatches}
           onCancel={() => { setUpdateModalOpen(false); setUpdateCalcData(null); }}
         />
+      )}
+      {fulfilPromptOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-card border border-border rounded-2xl shadow-xl max-w-md w-full p-6">
+            <h2 className="font-display text-lg font-bold mb-2">Process today's fulfillments first</h2>
+            <p className="text-sm text-muted-foreground mb-5">
+              Updating factory numbers before today's fulfilled orders are processed leaves the maths running off stale fridge stock — the recommendations will be wrong. Process fulfillments first, then we'll continue automatically.
+            </p>
+            <div className="flex flex-col gap-3">
+              <ProcessFulfilledTodayButton
+                size="md"
+                emphasis="primary"
+                label="Process today's fulfillments"
+                className="w-full text-base py-3 rounded-xl"
+                onSuccess={() => {
+                  setFulfilPromptOpen(false);
+                  runUpdateFactoryNumber();
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => { setFulfilPromptOpen(false); runUpdateFactoryNumber(); }}
+                className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline self-center"
+              >
+                Skip — I've already processed them
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </Dialog>
     <FactoryNumberAuditDialog
