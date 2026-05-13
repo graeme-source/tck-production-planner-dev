@@ -341,12 +341,16 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
       .limit(10);
 
     // ── SOPs updated in the last 7 days ────────────────────────────
+    // Reads from the new standards_sops table (the Standards & SOPs
+    // dialog writes here). The legacy risk_assessments table still
+    // exists but is no longer authored against, so checking it here
+    // missed every new SOP.
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     const recentSops = await db.execute<{ id: number; title: string; updated_at: Date }>(sql`
       SELECT id, title, updated_at
-      FROM risk_assessments
-      WHERE assessment_type = 'sop' AND updated_at >= ${sevenDaysAgo.toISOString()}
+      FROM standards_sops
+      WHERE updated_at >= ${sevenDaysAgo.toISOString()}
       ORDER BY updated_at DESC
       LIMIT 20
     `);

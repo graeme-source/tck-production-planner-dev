@@ -291,7 +291,7 @@ function metaForKind(kind: string) {
 }
 
 // ── Page ─────────────────────────────────────────────────────────────
-type Mode = "setup" | "prep" | "meeting" | "done" | "edit_today" | "edit_tomorrow" | "edit_template" | "edit_curriculum";
+type Mode = "setup" | "prep" | "meeting" | "done" | "edit_today" | "edit_tomorrow" | "preview_tomorrow" | "edit_template" | "edit_curriculum";
 
 export default function MeetingPage() {
   const { state } = useAuth();
@@ -405,6 +405,23 @@ export default function MeetingPage() {
           toast({ title: "Couldn't open tomorrow's meeting", variant: "destructive" });
         }
       }}
+      onPreviewTomorrow={async () => {
+        const tomorrow = format(addDays(new Date(), 1), "yyyy-MM-dd");
+        try {
+          const res = await fetch(`${BASE}/api/morning-meetings/schedule`, {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ meetingDate: tomorrow }),
+          });
+          if (!res.ok) throw new Error();
+          const body = await res.json() as { id: number };
+          setTomorrowMeetingId(body.id);
+          setMode("preview_tomorrow");
+        } catch {
+          toast({ title: "Couldn't open tomorrow's meeting", variant: "destructive" });
+        }
+      }}
       isAdmin={isAdmin}
     />;
   }
@@ -438,6 +455,15 @@ export default function MeetingPage() {
       id={tomorrowMeetingId}
       titleSuffix={`${format(new Date(data.tomorrow + "T00:00:00"), "EEEE d MMMM")} — Tomorrow`}
       onClose={() => { queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] }); setMode("setup"); }}
+    />;
+  }
+
+  if (mode === "preview_tomorrow" && tomorrowMeetingId != null) {
+    return <PreviewTomorrowList
+      meetingId={tomorrowMeetingId}
+      tomorrowIso={data.tomorrow}
+      onClose={() => setMode("setup")}
+      onEditInstead={() => setMode("edit_tomorrow")}
     />;
   }
 
@@ -549,7 +575,7 @@ export default function MeetingPage() {
 // ── Setup screen ────────────────────────────────────────────────────
 function SetupScreen({
   data, hostName, onHostNameChange, onReadBriefing, onStart, starting, onExit,
-  onEditToday, onEditTemplate, onEditCurriculum, onEditTomorrow, isAdmin,
+  onEditToday, onEditTemplate, onEditCurriculum, onEditTomorrow, onPreviewTomorrow, isAdmin,
 }: {
   data: DashboardData;
   hostName: string;
@@ -562,6 +588,7 @@ function SetupScreen({
   onEditTemplate: () => void;
   onEditCurriculum: () => void;
   onEditTomorrow: () => void;
+  onPreviewTomorrow: () => void;
   isAdmin: boolean;
 }) {
   return (
@@ -591,10 +618,17 @@ function SetupScreen({
             Edit today's meeting
           </button>
           <button
-            onClick={onEditTomorrow}
+            onClick={onPreviewTomorrow}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40"
           >
             <Calendar className="w-3.5 h-3.5" />
+            Preview tomorrow's meeting
+          </button>
+          <button
+            onClick={onEditTomorrow}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40"
+          >
+            <Edit3 className="w-3.5 h-3.5" />
             Edit tomorrow's meeting
           </button>
           {isAdmin && (
@@ -1617,6 +1651,89 @@ interface EditorSlide {
   orderPosition: number;
   contentMd: string | null;
   configJson: Record<string, unknown> | null;
+}
+
+/** Lightweight read-only preview of a future meeting — fetches the
+ *  slides for the given meeting id and shows them as a stacked list
+ *  with title, kind label and any custom markdown body. Lets the host
+ *  sanity-check tomorrow's structure without firing up the slideshow
+ *  (which would render against today's data anyway). One-tap edit
+ *  jumps straight into the SlideEditor for the same meeting. */
+function PreviewTomorrowList({
+  meetingId, tomorrowIso, onClose, onEditInstead,
+}: {
+  meetingId: number;
+  tomorrowIso: string;
+  onClose: () => void;
+  onEditInstead: () => void;
+}) {
+  const { data: slides, isLoading } = useQuery<MeetingSlide[]>({
+    queryKey: ["meeting-slides", meetingId],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/morning-meetings/${meetingId}/slides`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+  });
+
+  return (
+    <div className="fixed inset-0 bg-background overflow-y-auto">
+      <div className="max-w-3xl mx-auto px-6 py-10">
+        <button
+          onClick={onClose}
+          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-4"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to meeting
+        </button>
+
+        <div className="flex items-start justify-between gap-4 mb-6">
+          <div>
+            <h1 className="font-display text-2xl font-bold">Preview — Tomorrow's meeting</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              {format(new Date(tomorrowIso + "T00:00:00"), "EEEE d MMMM yyyy")} · {slides?.length ?? 0} slide{(slides?.length ?? 0) === 1 ? "" : "s"}
+            </p>
+          </div>
+          <button
+            onClick={onEditInstead}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 shrink-0"
+          >
+            <Edit3 className="w-3.5 h-3.5" />
+            Edit
+          </button>
+        </div>
+
+        {isLoading ? (
+          <div className="flex justify-center py-12">
+            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : (slides ?? []).length === 0 ? (
+          <p className="text-sm text-muted-foreground italic">No slides on tomorrow's meeting yet.</p>
+        ) : (
+          <ol className="space-y-2">
+            {(slides ?? []).map((s, i) => {
+              const meta = metaForKind(s.kind);
+              const Icon = meta.icon;
+              const customBody = typeof s.contentMd === "string" ? s.contentMd.trim() : "";
+              return (
+                <li key={s.id} className="glass-panel rounded-2xl p-4 flex items-start gap-3">
+                  <span className="text-sm font-display font-bold text-muted-foreground tabular-nums w-6 shrink-0 pt-0.5">{i + 1}</span>
+                  <Icon className={cn("w-5 h-5 shrink-0 mt-0.5", meta.color)} />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold leading-tight">{s.title || meta.fallbackTitle}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5 uppercase tracking-wide">{s.kind.replace(/_/g, " ")}</p>
+                    {customBody && (
+                      <p className="text-sm text-muted-foreground mt-2 line-clamp-3 whitespace-pre-wrap">{customBody}</p>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function SlideEditor({
