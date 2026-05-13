@@ -309,9 +309,48 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
     `);
 
     // ── Today's lean lesson — picks this week's principle + today's
-    //    example, with the legacy shape kept on `lesson` so existing
-    //    frontend code keeps working unchanged ───────────────────────
-    const lesson = await getTodayLessonLegacy();
+    //    example by default, but honors the per-meeting exampleId
+    //    override so the host can swap to a different example from the
+    //    Lesson slide without changing tomorrow's auto-rotation ──────
+    let lesson = await getTodayLessonLegacy();
+    const [maybeMeetingForLesson] = await db
+      .select({ exampleId: morningMeetingsTable.exampleId })
+      .from(morningMeetingsTable)
+      .where(eq(morningMeetingsTable.meetingDate, today))
+      .limit(1);
+    if (maybeMeetingForLesson?.exampleId) {
+      const [override] = await db
+        .select({
+          id: leanExamplesTable.id,
+          title: leanExamplesTable.title,
+          summary: leanExamplesTable.summary,
+          explanationMd: leanExamplesTable.explanationMd,
+          whatToShowMd: leanExamplesTable.whatToShowMd,
+          deliveryNotesMd: leanExamplesTable.deliveryNotesMd,
+          videoUrl: leanExamplesTable.videoUrl,
+          principleId: leanExamplesTable.principleId,
+          principleTitle: leanPrinciplesTable.title,
+          weekPosition: leanPrinciplesTable.weekPosition,
+        })
+        .from(leanExamplesTable)
+        .innerJoin(leanPrinciplesTable, eq(leanPrinciplesTable.id, leanExamplesTable.principleId))
+        .where(eq(leanExamplesTable.id, maybeMeetingForLesson.exampleId))
+        .limit(1);
+      if (override) {
+        lesson = {
+          id: override.id,
+          weekNumber: override.weekPosition,
+          title: override.title,
+          summary: override.summary,
+          explanationMd: override.explanationMd,
+          whatToShowMd: override.whatToShowMd,
+          deliveryNotesMd: override.deliveryNotesMd,
+          videoUrl: override.videoUrl,
+          principleId: override.principleId,
+          principleTitle: override.principleTitle,
+        };
+      }
+    }
 
     // ── Existing meeting record + its slide list. Slides live in DB
     //    now; the runner reads from `slides` instead of a hardcoded
@@ -749,6 +788,153 @@ router.post("/schedule", async (req: Request, res: Response) => {
   }
   await cloneTemplateSlidesIfEmpty(meetingId);
   res.json({ id: meetingId, meetingDate });
+});
+
+// ── Curriculum admin: principles + examples ─────────────────────────
+
+router.get("/principles", async (_req: Request, res: Response) => {
+  const rows = await db
+    .select()
+    .from(leanPrinciplesTable)
+    .orderBy(asc(leanPrinciplesTable.weekPosition));
+  res.json(rows);
+});
+
+router.get("/principles/today", async (_req: Request, res: Response) => {
+  const { principle, example } = await getTodayPrincipleAndExample();
+  res.json({ principle, example });
+});
+
+router.post("/principles", async (req: Request, res: Response) => {
+  const body = req.body as { title: string; summary: string; weekPosition?: number };
+  if (!body.title || !body.summary) {
+    res.status(400).json({ error: "title and summary are required" });
+    return;
+  }
+  // If no weekPosition given, place at the end.
+  let weekPosition = body.weekPosition;
+  if (!weekPosition) {
+    const [last] = await db
+      .select({ wp: leanPrinciplesTable.weekPosition })
+      .from(leanPrinciplesTable)
+      .orderBy(desc(leanPrinciplesTable.weekPosition))
+      .limit(1);
+    weekPosition = (last?.wp ?? 0) + 1;
+  }
+  const [row] = await db
+    .insert(leanPrinciplesTable)
+    .values({ weekPosition, title: body.title, summary: body.summary, isActive: true })
+    .returning();
+  res.status(201).json(row);
+});
+
+router.put("/principles/:id", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  const body = req.body as Partial<{ title: string; summary: string; isActive: boolean; weekPosition: number }>;
+  const [updated] = await db
+    .update(leanPrinciplesTable)
+    .set({
+      ...(body.title !== undefined ? { title: body.title } : {}),
+      ...(body.summary !== undefined ? { summary: body.summary } : {}),
+      ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
+      ...(body.weekPosition !== undefined ? { weekPosition: body.weekPosition } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(leanPrinciplesTable.id, id))
+    .returning();
+  if (!updated) { res.status(404).json({ error: "Principle not found" }); return; }
+  res.json(updated);
+});
+
+router.delete("/principles/:id", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  await db.delete(leanPrinciplesTable).where(eq(leanPrinciplesTable.id, id));
+  res.json({ ok: true });
+});
+
+router.get("/principles/:id/examples", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  const rows = await db
+    .select()
+    .from(leanExamplesTable)
+    .where(eq(leanExamplesTable.principleId, id))
+    .orderBy(asc(leanExamplesTable.orderPosition));
+  res.json(rows);
+});
+
+router.post("/principles/:id/examples", async (req: Request, res: Response) => {
+  const principleId = Number(req.params.id);
+  const body = req.body as Partial<{
+    title: string; summary: string; explanationMd: string; whatToShowMd: string;
+    deliveryNotesMd: string; videoUrl: string | null;
+  }>;
+  if (!body.title || !body.summary) { res.status(400).json({ error: "title and summary are required" }); return; }
+  const [last] = await db
+    .select({ op: leanExamplesTable.orderPosition })
+    .from(leanExamplesTable)
+    .where(eq(leanExamplesTable.principleId, principleId))
+    .orderBy(desc(leanExamplesTable.orderPosition))
+    .limit(1);
+  const nextPos = (last?.op ?? -1) + 1;
+  const [row] = await db
+    .insert(leanExamplesTable)
+    .values({
+      principleId,
+      orderPosition: nextPos,
+      title: body.title,
+      summary: body.summary,
+      explanationMd: body.explanationMd ?? "",
+      whatToShowMd: body.whatToShowMd ?? "",
+      deliveryNotesMd: body.deliveryNotesMd ?? "",
+      videoUrl: body.videoUrl ?? null,
+      isActive: true,
+    })
+    .returning();
+  res.status(201).json(row);
+});
+
+router.put("/examples/:id", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  const body = req.body as Partial<{
+    title: string; summary: string; explanationMd: string; whatToShowMd: string;
+    deliveryNotesMd: string; videoUrl: string | null; isActive: boolean; orderPosition: number;
+  }>;
+  const [updated] = await db
+    .update(leanExamplesTable)
+    .set({
+      ...(body.title !== undefined ? { title: body.title } : {}),
+      ...(body.summary !== undefined ? { summary: body.summary } : {}),
+      ...(body.explanationMd !== undefined ? { explanationMd: body.explanationMd } : {}),
+      ...(body.whatToShowMd !== undefined ? { whatToShowMd: body.whatToShowMd } : {}),
+      ...(body.deliveryNotesMd !== undefined ? { deliveryNotesMd: body.deliveryNotesMd } : {}),
+      ...(body.videoUrl !== undefined ? { videoUrl: body.videoUrl } : {}),
+      ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
+      ...(body.orderPosition !== undefined ? { orderPosition: body.orderPosition } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(leanExamplesTable.id, id))
+    .returning();
+  if (!updated) { res.status(404).json({ error: "Example not found" }); return; }
+  res.json(updated);
+});
+
+router.delete("/examples/:id", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  await db.delete(leanExamplesTable).where(eq(leanExamplesTable.id, id));
+  res.json({ ok: true });
+});
+
+/** Override the lesson example for a specific meeting — used by the
+ *  host on the Lesson slide if they want to swap to a different example
+ *  within the week's principle (or to a totally different principle). */
+router.put("/:id/example", async (req: Request, res: Response) => {
+  const meetingId = Number(req.params.id);
+  const { exampleId } = req.body as { exampleId: number | null };
+  await db
+    .update(morningMeetingsTable)
+    .set({ exampleId: exampleId ?? null })
+    .where(eq(morningMeetingsTable.id, meetingId));
+  res.json({ ok: true });
 });
 
 export default router;

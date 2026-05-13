@@ -225,7 +225,7 @@ function metaForKind(kind: string) {
 }
 
 // ── Page ─────────────────────────────────────────────────────────────
-type Mode = "setup" | "prep" | "meeting" | "done" | "edit_today" | "edit_template";
+type Mode = "setup" | "prep" | "meeting" | "done" | "edit_today" | "edit_template" | "edit_curriculum";
 
 export default function MeetingPage() {
   const { state } = useAuth();
@@ -318,6 +318,7 @@ export default function MeetingPage() {
       onExit={() => navigate("/")}
       onEditToday={() => setMode("edit_today")}
       onEditTemplate={() => setMode("edit_template")}
+      onEditCurriculum={() => setMode("edit_curriculum")}
       onScheduleTomorrow={async () => {
         const tomorrow = format(addDays(new Date(), 1), "yyyy-MM-dd");
         try {
@@ -367,6 +368,10 @@ export default function MeetingPage() {
       titleSuffix="Master template"
       onClose={() => { queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] }); setMode("setup"); }}
     />;
+  }
+
+  if (mode === "edit_curriculum") {
+    return <CurriculumEditor onClose={() => { queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] }); setMode("setup"); }} />;
   }
 
   if (slideCount === 0) {
@@ -464,7 +469,7 @@ export default function MeetingPage() {
 // ── Setup screen ────────────────────────────────────────────────────
 function SetupScreen({
   data, hostName, onHostNameChange, onReadBriefing, onStart, starting, onExit,
-  onEditToday, onEditTemplate, onScheduleTomorrow, isAdmin,
+  onEditToday, onEditTemplate, onEditCurriculum, onScheduleTomorrow, isAdmin,
 }: {
   data: DashboardData;
   hostName: string;
@@ -475,6 +480,7 @@ function SetupScreen({
   onExit: () => void;
   onEditToday: () => void;
   onEditTemplate: () => void;
+  onEditCurriculum: () => void;
   onScheduleTomorrow: () => void;
   isAdmin: boolean;
 }) {
@@ -512,13 +518,22 @@ function SetupScreen({
             Schedule for tomorrow
           </button>
           {isAdmin && (
-            <button
-              onClick={onEditTemplate}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 text-muted-foreground"
-            >
-              <Settings className="w-3.5 h-3.5" />
-              Edit master template
-            </button>
+            <>
+              <button
+                onClick={onEditTemplate}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 text-muted-foreground"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                Edit master template
+              </button>
+              <button
+                onClick={onEditCurriculum}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 text-muted-foreground"
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                Lean curriculum
+              </button>
+            </>
           )}
         </div>
 
@@ -990,6 +1005,38 @@ function StrugglesSlide({ data, onRefresh, slide }: { data: DashboardData; onRef
 
 function LearningSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
   void slide;
+  // Host can override which example shows by picking one from this
+  // week's principle (or any active principle if they want to skip
+  // around). The change is saved to meeting.exampleId so reloading
+  // doesn't reset it.
+  const queryClient = useQueryClient();
+  const meetingId = data.meeting?.id ?? null;
+  const principleId = data.lesson?.principleId ?? null;
+
+  const { data: examples = [] } = useQuery<Array<{ id: number; title: string; summary: string }>>({
+    queryKey: ["lesson-alts", principleId],
+    queryFn: async () => {
+      if (!principleId) return [];
+      const res = await fetch(`${BASE}/api/morning-meetings/principles/${principleId}/examples`, { credentials: "include" });
+      return res.ok ? res.json() : [];
+    },
+    enabled: !!principleId,
+  });
+
+  const setOverride = useMutation({
+    mutationFn: async (exampleId: number | null) => {
+      if (!meetingId) return;
+      await fetch(`${BASE}/api/morning-meetings/${meetingId}/example`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ exampleId }),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
+      toast({ title: "Lesson swapped" });
+    },
+  });
   if (!data.lesson) {
     return (
       <div>
@@ -1000,7 +1047,9 @@ function LearningSlide({ data, slide }: { data: DashboardData; slide: MeetingSli
   }
   return (
     <div>
-      <p className="text-xs font-semibold uppercase tracking-wide text-purple-500 mb-2">Lean Lesson — Week {data.lesson.weekNumber}</p>
+      <p className="text-xs font-semibold uppercase tracking-wide text-purple-500 mb-2">
+        Lean Lesson — {data.lesson.principleTitle ?? `Week ${data.lesson.weekNumber}`}
+      </p>
       <h2 className="text-3xl font-display font-bold mb-2">{data.lesson.title}</h2>
       <p className="text-lg text-muted-foreground mb-6">{data.lesson.summary}</p>
       <div className="glass-panel rounded-2xl p-6">
@@ -1010,6 +1059,20 @@ function LearningSlide({ data, slide }: { data: DashboardData; slide: MeetingSli
         <a href={data.lesson.videoUrl} target="_blank" rel="noopener" className="mt-4 inline-flex items-center gap-2 text-sm text-primary hover:underline">
           <Play className="w-4 h-4" /> Watch the related video
         </a>
+      )}
+      {meetingId && examples.length > 1 && (
+        <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
+          <span>Swap to a different example:</span>
+          <select
+            value={data.lesson.id}
+            onChange={e => setOverride.mutate(Number(e.target.value))}
+            className="bg-background border border-border rounded-lg px-2 py-1 text-xs"
+          >
+            {examples.map(ex => (
+              <option key={ex.id} value={ex.id}>{ex.title}</option>
+            ))}
+          </select>
+        </div>
       )}
     </div>
   );
@@ -1445,6 +1508,357 @@ function SortableSlideRow({
               className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
             >
               <Save className="w-3.5 h-3.5" /> Save
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Curriculum admin (Phase 3) ──────────────────────────────────────
+// Lists every principle (weekly theme) and lets the admin add/edit
+// examples under each one. The Morning Meeting's auto-rotation picks
+// the right principle for this week and the right example for today's
+// weekday from these tables.
+
+interface PrincipleRow {
+  id: number;
+  weekPosition: number;
+  title: string;
+  summary: string;
+  isActive: boolean;
+}
+interface ExampleRow {
+  id: number;
+  principleId: number;
+  orderPosition: number;
+  title: string;
+  summary: string;
+  explanationMd: string;
+  whatToShowMd: string;
+  deliveryNotesMd: string;
+  videoUrl: string | null;
+  isActive: boolean;
+}
+
+function CurriculumEditor({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [newTitle, setNewTitle] = useState("");
+  const [newSummary, setNewSummary] = useState("");
+
+  const { data: principles = [], isLoading } = useQuery<PrincipleRow[]>({
+    queryKey: ["lean-principles"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/morning-meetings/principles`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load principles");
+      return res.json();
+    },
+  });
+
+  const addPrinciple = useMutation({
+    mutationFn: async () => {
+      await fetch(`${BASE}/api/morning-meetings/principles`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: newTitle, summary: newSummary }),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["lean-principles"] });
+      setNewTitle(""); setNewSummary(""); setShowAdd(false);
+      toast({ title: "Principle added" });
+    },
+  });
+
+  return (
+    <div className="fixed inset-0 bg-background overflow-y-auto">
+      <div className="max-w-4xl mx-auto px-6 py-8">
+        <div className="flex items-center justify-between mb-2">
+          <button onClick={onClose} className="flex items-center gap-2 text-muted-foreground hover:text-foreground">
+            <ArrowLeft className="w-4 h-4" /> Back to meeting
+          </button>
+        </div>
+        <h1 className="text-2xl font-display font-bold mb-1 flex items-center gap-2">
+          <BookOpen className="w-5 h-5 text-purple-500" />
+          Lean Curriculum
+        </h1>
+        <p className="text-sm text-muted-foreground mb-6">
+          Weekly themes rotate through the year. Each theme has multiple daily examples — the Morning Meeting auto-picks today's based on weekday so the team gets a different angle on the same principle Mon-Fri.
+        </p>
+
+        {isLoading ? (
+          <div className="py-12 text-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground inline" /></div>
+        ) : (
+          <div className="space-y-2">
+            {principles.map(p => (
+              <PrincipleCard
+                key={p.id}
+                principle={p}
+                expanded={expandedId === p.id}
+                onToggle={() => setExpandedId(expandedId === p.id ? null : p.id)}
+              />
+            ))}
+          </div>
+        )}
+
+        <div className="mt-4">
+          {showAdd ? (
+            <div className="glass-panel rounded-2xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-semibold">Add a new principle</p>
+                <button onClick={() => setShowAdd(false)} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
+              </div>
+              <input
+                value={newTitle}
+                onChange={e => setNewTitle(e.target.value)}
+                placeholder="Title (e.g. Leave it better than you found it)"
+                className="w-full bg-background border border-border rounded-lg p-2.5 text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+              <input
+                value={newSummary}
+                onChange={e => setNewSummary(e.target.value)}
+                placeholder="One-line summary"
+                className="w-full bg-background border border-border rounded-lg p-2.5 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+              <div className="flex justify-end">
+                <button
+                  onClick={() => addPrinciple.mutate()}
+                  disabled={!newTitle.trim() || !newSummary.trim() || addPrinciple.isPending}
+                  className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {addPrinciple.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                  Add
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowAdd(true)}
+              className="w-full px-4 py-3 rounded-xl border-2 border-dashed border-border text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-secondary/30 flex items-center justify-center gap-2"
+            >
+              <Plus className="w-4 h-4" /> Add a new principle
+            </button>
+          )}
+        </div>
+
+        <div className="mt-6 flex justify-end">
+          <button onClick={onClose} className="px-5 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 inline-flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4" /> Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PrincipleCard({ principle, expanded, onToggle }: { principle: PrincipleRow; expanded: boolean; onToggle: () => void }) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(principle.title);
+  const [summary, setSummary] = useState(principle.summary);
+  useEffect(() => { setTitle(principle.title); setSummary(principle.summary); }, [principle.id, principle.title, principle.summary]);
+
+  const { data: examples = [], isLoading } = useQuery<ExampleRow[]>({
+    queryKey: ["lean-examples", principle.id],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/morning-meetings/principles/${principle.id}/examples`, { credentials: "include" });
+      if (!res.ok) throw new Error();
+      return res.json();
+    },
+    enabled: expanded,
+  });
+
+  const saveSummary = useMutation({
+    mutationFn: async () => {
+      await fetch(`${BASE}/api/morning-meetings/principles/${principle.id}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, summary }),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["lean-principles"] });
+      setEditing(false);
+      toast({ title: "Principle saved" });
+    },
+  });
+
+  const togglePrincipleActive = useMutation({
+    mutationFn: async () => {
+      await fetch(`${BASE}/api/morning-meetings/principles/${principle.id}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: !principle.isActive }),
+      });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["lean-principles"] }),
+  });
+
+  const [showAddExample, setShowAddExample] = useState(false);
+  const [exTitle, setExTitle] = useState("");
+  const [exSummary, setExSummary] = useState("");
+  const [exWhatToShow, setExWhatToShow] = useState("");
+  const addExample = useMutation({
+    mutationFn: async () => {
+      await fetch(`${BASE}/api/morning-meetings/principles/${principle.id}/examples`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: exTitle,
+          summary: exSummary,
+          explanationMd: "",
+          whatToShowMd: exWhatToShow,
+          deliveryNotesMd: "",
+        }),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["lean-examples", principle.id] });
+      setExTitle(""); setExSummary(""); setExWhatToShow(""); setShowAddExample(false);
+      toast({ title: "Example added" });
+    },
+  });
+
+  return (
+    <div className="border border-border rounded-xl bg-card">
+      <button onClick={onToggle} className="w-full flex items-center justify-between px-4 py-3 hover:bg-secondary/30">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="text-xs font-semibold text-muted-foreground tabular-nums w-12 shrink-0">Wk {principle.weekPosition}</span>
+          <div className="text-left min-w-0">
+            <p className={cn("font-medium truncate", !principle.isActive && "line-through text-muted-foreground")}>{principle.title}</p>
+            <p className="text-xs text-muted-foreground truncate">{principle.summary}</p>
+          </div>
+        </div>
+        <span className="text-xs text-muted-foreground shrink-0 ml-3">
+          {expanded ? "Hide" : `${examples.length || "?"} examples`}
+        </span>
+      </button>
+      {expanded && (
+        <div className="border-t border-border px-4 py-3 space-y-3">
+          {editing ? (
+            <div className="space-y-2">
+              <input value={title} onChange={e => setTitle(e.target.value)} className="w-full bg-background border border-border rounded-lg p-2 text-sm" />
+              <input value={summary} onChange={e => setSummary(e.target.value)} className="w-full bg-background border border-border rounded-lg p-2 text-sm" />
+              <div className="flex justify-end gap-2">
+                <button onClick={() => { setEditing(false); setTitle(principle.title); setSummary(principle.summary); }} className="text-sm text-muted-foreground hover:text-foreground">Cancel</button>
+                <button onClick={() => saveSummary.mutate()} className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold inline-flex items-center gap-1.5">
+                  <Save className="w-3.5 h-3.5" /> Save
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between text-xs">
+              <button onClick={() => setEditing(true)} className="text-primary hover:underline">Edit principle</button>
+              <button onClick={() => togglePrincipleActive.mutate()} className="text-muted-foreground hover:text-foreground">
+                {principle.isActive ? "Deactivate" : "Re-activate"}
+              </button>
+            </div>
+          )}
+
+          {/* Examples */}
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Examples</p>
+            {isLoading ? (
+              <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+            ) : examples.length === 0 ? (
+              <p className="text-xs text-muted-foreground italic">No examples yet — add one below.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {examples.map(ex => (
+                  <ExampleRowEdit key={ex.id} example={ex} principleId={principle.id} />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {showAddExample ? (
+            <div className="mt-2 border border-border rounded-xl p-3 space-y-2">
+              <input value={exTitle} onChange={e => setExTitle(e.target.value)} placeholder="Title (e.g. Sweep — daily reset of your station)" className="w-full bg-background border border-border rounded-lg p-2 text-sm" />
+              <input value={exSummary} onChange={e => setExSummary(e.target.value)} placeholder="One-line summary" className="w-full bg-background border border-border rounded-lg p-2 text-sm" />
+              <textarea value={exWhatToShow} onChange={e => setExWhatToShow(e.target.value)} placeholder="What the team will see (markdown)" className="w-full bg-background border border-border rounded-lg p-2 text-sm min-h-[80px] font-mono" />
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setShowAddExample(false)} className="text-sm text-muted-foreground hover:text-foreground">Cancel</button>
+                <button
+                  onClick={() => addExample.mutate()}
+                  disabled={!exTitle.trim() || !exSummary.trim()}
+                  className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Add example
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => setShowAddExample(true)} className="text-xs text-primary hover:underline flex items-center gap-1">
+              <Plus className="w-3 h-3" /> Add example
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExampleRowEdit({ example, principleId }: { example: ExampleRow; principleId: number }) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState(example.title);
+  const [summary, setSummary] = useState(example.summary);
+  const [explanation, setExplanation] = useState(example.explanationMd);
+  const [whatToShow, setWhatToShow] = useState(example.whatToShowMd);
+  const [deliveryNotes, setDeliveryNotes] = useState(example.deliveryNotesMd);
+  useEffect(() => {
+    setTitle(example.title); setSummary(example.summary);
+    setExplanation(example.explanationMd); setWhatToShow(example.whatToShowMd);
+    setDeliveryNotes(example.deliveryNotesMd);
+  }, [example.id, example.title, example.summary, example.explanationMd, example.whatToShowMd, example.deliveryNotesMd]);
+
+  const save = useMutation({
+    mutationFn: async () => {
+      await fetch(`${BASE}/api/morning-meetings/examples/${example.id}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, summary, explanationMd: explanation, whatToShowMd: whatToShow, deliveryNotesMd: deliveryNotes }),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["lean-examples", principleId] });
+      setOpen(false);
+      toast({ title: "Example saved" });
+    },
+  });
+
+  const remove = useMutation({
+    mutationFn: async () => {
+      await fetch(`${BASE}/api/morning-meetings/examples/${example.id}`, { method: "DELETE", credentials: "include" });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["lean-examples", principleId] }),
+  });
+
+  return (
+    <div className="border border-border rounded-lg">
+      <button onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-secondary/20">
+        <span className="text-sm font-medium">{example.title}</span>
+        <span className="text-xs text-muted-foreground">{open ? "Hide" : "Edit"}</span>
+      </button>
+      {open && (
+        <div className="border-t border-border p-3 space-y-2">
+          <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Title" className="w-full bg-background border border-border rounded-lg p-2 text-sm" />
+          <input value={summary} onChange={e => setSummary(e.target.value)} placeholder="Summary" className="w-full bg-background border border-border rounded-lg p-2 text-sm" />
+          <details className="text-xs">
+            <summary className="cursor-pointer text-muted-foreground">Host briefing (Markdown — optional)</summary>
+            <div className="mt-2 space-y-2">
+              <textarea value={explanation} onChange={e => setExplanation(e.target.value)} placeholder="What it means (Markdown)" className="w-full bg-background border border-border rounded-lg p-2 text-xs min-h-[80px] font-mono" />
+              <textarea value={whatToShow} onChange={e => setWhatToShow(e.target.value)} placeholder="What you'll show the team (Markdown)" className="w-full bg-background border border-border rounded-lg p-2 text-xs min-h-[80px] font-mono" />
+              <textarea value={deliveryNotes} onChange={e => setDeliveryNotes(e.target.value)} placeholder="How to deliver (talking points)" className="w-full bg-background border border-border rounded-lg p-2 text-xs min-h-[80px] font-mono" />
+            </div>
+          </details>
+          <div className="flex items-center justify-between">
+            <button onClick={() => { if (confirm("Delete this example?")) remove.mutate(); }} className="text-xs text-destructive hover:underline">Delete</button>
+            <button onClick={() => save.mutate()} className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold inline-flex items-center gap-1.5">
+              <Save className="w-3.5 h-3.5" /> Save example
             </button>
           </div>
         </div>
