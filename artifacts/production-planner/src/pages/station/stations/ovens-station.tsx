@@ -1112,31 +1112,54 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                       );
                     })()}
 
-                    {/* 8-Pack Bags */}
-                    <div className="flex items-center justify-between border-t border-border pt-3">
-                      <div>
-                        <p className="text-sm font-semibold text-muted-foreground">8-Pack Bags</p>
-                        <p className="text-xs text-muted-foreground">Uses 4 two-packs each</p>
+                    {/* 8-Pack Bags — each + click adds ONE bag. The
+                        derived "= N two-packs used" line below makes it
+                        unmistakable that the number is bags (not packs
+                        going into a bag). Previously the value was
+                        confused for the latter, leading to extra bags
+                        being assembled. */}
+                    <div className="border-t border-border pt-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <div>
+                          <p className="text-sm font-semibold text-foreground">8-Pack Bags assembled</p>
+                          <p className="text-xs text-muted-foreground">Each bag holds 4 × 2-packs</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); removeEightPackBag(item); }}
+                            disabled={(item.eightPackBagCount ?? 0) <= 0 || eightPackBusy || isOnBreak}
+                            className="w-10 h-10 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
+                            title="Remove a bag"
+                          >
+                            <Minus className="w-4 h-4" />
+                          </button>
+                          <div className="flex items-baseline gap-1 min-w-[64px] justify-center">
+                            <span className="text-2xl font-bold tabular-nums text-indigo-600 dark:text-indigo-400">
+                              {item.eightPackBagCount ?? 0}
+                            </span>
+                            <span className="text-xs text-muted-foreground">bag{(item.eightPackBagCount ?? 0) === 1 ? "" : "s"}</span>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); addEightPackBag(item); }}
+                            disabled={eightPackBusy || isOnBreak}
+                            className="w-10 h-10 flex items-center justify-center rounded-full bg-indigo-500 text-white hover:bg-indigo-600 disabled:opacity-50 transition-colors"
+                            title="Add a bag"
+                          >
+                            <Plus className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); removeEightPackBag(item); }}
-                          disabled={(item.eightPackBagCount ?? 0) <= 0 || eightPackBusy || isOnBreak}
-                          className="w-10 h-10 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
-                        >
-                          <Minus className="w-4 h-4" />
-                        </button>
-                        <span className="text-2xl font-bold tabular-nums w-9 text-center text-indigo-600 dark:text-indigo-400">
-                          {item.eightPackBagCount ?? 0}
-                        </span>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); addEightPackBag(item); }}
-                          disabled={eightPackBusy || isOnBreak}
-                          className="w-10 h-10 flex items-center justify-center rounded-full bg-indigo-500 text-white hover:bg-indigo-600 disabled:opacity-50 transition-colors"
-                        >
-                          <Plus className="w-4 h-4" />
-                        </button>
-                      </div>
+                      {(item.eightPackBagCount ?? 0) > 0 && (
+                        <div className="text-xs bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-200/60 dark:border-indigo-800/60 rounded-lg px-3 py-1.5 flex items-center justify-between">
+                          <span className="text-indigo-700 dark:text-indigo-300">
+                            <span className="font-bold tabular-nums">{item.eightPackBagCount ?? 0}</span> bag{(item.eightPackBagCount ?? 0) === 1 ? "" : "s"}
+                            <span className="mx-1.5 text-indigo-500/70">×</span>
+                            <span className="font-bold tabular-nums">4</span> 2-packs each
+                            <span className="mx-1.5 text-indigo-500/70">=</span>
+                            <span className="font-bold tabular-nums">{(item.eightPackBagCount ?? 0) * 4}</span> 2-packs used
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
