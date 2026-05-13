@@ -1091,6 +1091,38 @@ async function runStartupMigrations() {
         updated_at TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `);
+    // Phase-2 curriculum split: weekly principle → daily examples.
+    // Old `lean_lessons` rows are backfilled into these tables on
+    // startup (see seedLeanLessonsIfNeeded) and kept read-only for the
+    // migration window.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS lean_principles (
+        id SERIAL PRIMARY KEY,
+        week_position INTEGER NOT NULL UNIQUE,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS lean_examples (
+        id SERIAL PRIMARY KEY,
+        principle_id INTEGER NOT NULL REFERENCES lean_principles(id) ON DELETE CASCADE,
+        order_position INTEGER NOT NULL DEFAULT 0,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        explanation_md TEXT NOT NULL,
+        what_to_show_md TEXT NOT NULL,
+        delivery_notes_md TEXT NOT NULL,
+        video_url TEXT,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS lean_examples_principle_idx ON lean_examples (principle_id, order_position)`);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS morning_meetings (
         id SERIAL PRIMARY KEY,
@@ -1102,6 +1134,49 @@ async function runStartupMigrations() {
         ended_at TIMESTAMP
       )
     `);
+    // example_id added in Phase 2 — points at the picked lean_example
+    // for this meeting's lesson slide. Old lesson_id stays for now.
+    await db.execute(sql`ALTER TABLE morning_meetings ADD COLUMN IF NOT EXISTS example_id INTEGER REFERENCES lean_examples(id) ON DELETE SET NULL`);
+    // Templates + slides (Phase 2). The default template seeds the
+    // 12-slide morning meeting; meetings clone its slides on creation
+    // so per-day edits don't touch the master.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS meeting_templates (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        is_default BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS template_slides (
+        id SERIAL PRIMARY KEY,
+        template_id INTEGER NOT NULL REFERENCES meeting_templates(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL,
+        title TEXT NOT NULL,
+        order_position INTEGER NOT NULL DEFAULT 0,
+        content_md TEXT,
+        config_json JSONB,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS template_slides_template_idx ON template_slides (template_id, order_position)`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS meeting_slides (
+        id SERIAL PRIMARY KEY,
+        meeting_id INTEGER NOT NULL REFERENCES morning_meetings(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL,
+        title TEXT NOT NULL,
+        order_position INTEGER NOT NULL DEFAULT 0,
+        content_md TEXT,
+        config_json JSONB,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS meeting_slides_meeting_idx ON meeting_slides (meeting_id, order_position)`);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS meeting_gratitude (
         id SERIAL PRIMARY KEY,

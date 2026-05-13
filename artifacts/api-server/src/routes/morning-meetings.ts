@@ -27,6 +27,11 @@ import {
   improvementSubmissionsTable,
   andonIssuesTable,
   leanLessonsTable,
+  leanPrinciplesTable,
+  leanExamplesTable,
+  meetingTemplatesTable,
+  templateSlidesTable,
+  meetingSlidesTable,
   morningMeetingsTable,
   meetingGratitudeTable,
   usersTable,
@@ -36,34 +41,101 @@ import { londonDateString } from "../lib/london-time";
 
 const router: IRouter = Router();
 
-/** Today's lesson rotates through the 12-week curriculum based on
- *  ISO-week-of-year. Wraps automatically so it runs forever. Admin
- *  can deactivate a lesson and the next active one takes its slot. */
-async function getTodayLesson() {
+/** Picks this week's principle (rotates by week-of-year through every
+ *  active row in lean_principles) and the default example for today
+ *  within that principle (rotates by weekday). Host can override on
+ *  the meeting slide via configJson.exampleId. */
+async function getTodayPrincipleAndExample() {
   const now = new Date();
-  // ISO-week: first Thursday rule. Good enough for rotation purposes —
-  // we just need a stable integer that increments weekly.
   const start = new Date(now.getFullYear(), 0, 1);
   const dayOfYear = Math.floor((now.getTime() - start.getTime()) / 86_400_000);
   const weekOfYear = Math.floor(dayOfYear / 7) + 1;
-  const targetWeek = ((weekOfYear - 1) % 12) + 1;
 
-  // Try the targeted week; fall back to next active lesson if that one
-  // has been deactivated.
-  let [lesson] = await db
+  const principles = await db
     .select()
-    .from(leanLessonsTable)
-    .where(and(eq(leanLessonsTable.weekNumber, targetWeek), eq(leanLessonsTable.isActive, true)))
+    .from(leanPrinciplesTable)
+    .where(eq(leanPrinciplesTable.isActive, true))
+    .orderBy(asc(leanPrinciplesTable.weekPosition));
+  if (principles.length === 0) return { principle: null, example: null };
+  const principle = principles[(weekOfYear - 1) % principles.length];
+
+  const examples = await db
+    .select()
+    .from(leanExamplesTable)
+    .where(and(eq(leanExamplesTable.principleId, principle.id), eq(leanExamplesTable.isActive, true)))
+    .orderBy(asc(leanExamplesTable.orderPosition));
+  if (examples.length === 0) return { principle, example: null };
+  // Monday = 1 .. Sunday = 0 from Date.getDay(). Use weekday-1 so the
+  // first example shows Monday, second Tuesday, etc. Wraps on the
+  // weekend so weekend hosts still see an example.
+  const weekday = ((now.getDay() + 6) % 7);
+  const example = examples[weekday % examples.length];
+  return { principle, example };
+}
+
+/** Backwards-compat shim — returns the legacy lean_lessons-shaped row
+ *  the dashboard already exposes. New code reads principle/example
+ *  directly. */
+async function getTodayLessonLegacy() {
+  const { principle, example } = await getTodayPrincipleAndExample();
+  if (!principle || !example) return null;
+  return {
+    id: example.id,
+    weekNumber: principle.weekPosition,
+    title: example.title,
+    summary: example.summary,
+    explanationMd: example.explanationMd,
+    whatToShowMd: example.whatToShowMd,
+    deliveryNotesMd: example.deliveryNotesMd,
+    videoUrl: example.videoUrl,
+    principleId: principle.id,
+    principleTitle: principle.title,
+  };
+}
+
+/** Clones the default template's slide rows into a meeting. Idempotent:
+ *  no-op if the meeting already has any slides. Returns the resulting
+ *  slide list ordered by orderPosition. */
+async function cloneTemplateSlidesIfEmpty(meetingId: number) {
+  const existing = await db
+    .select({ id: meetingSlidesTable.id })
+    .from(meetingSlidesTable)
+    .where(eq(meetingSlidesTable.meetingId, meetingId))
     .limit(1);
-  if (!lesson) {
-    [lesson] = await db
-      .select()
-      .from(leanLessonsTable)
-      .where(eq(leanLessonsTable.isActive, true))
-      .orderBy(asc(leanLessonsTable.weekNumber))
-      .limit(1);
-  }
-  return lesson ?? null;
+  if (existing.length > 0) return;
+
+  const [defaultTpl] = await db
+    .select({ id: meetingTemplatesTable.id })
+    .from(meetingTemplatesTable)
+    .where(eq(meetingTemplatesTable.isDefault, true))
+    .limit(1);
+  if (!defaultTpl) return;
+
+  const tplSlides = await db
+    .select()
+    .from(templateSlidesTable)
+    .where(eq(templateSlidesTable.templateId, defaultTpl.id))
+    .orderBy(asc(templateSlidesTable.orderPosition));
+  if (tplSlides.length === 0) return;
+
+  await db.insert(meetingSlidesTable).values(
+    tplSlides.map((s) => ({
+      meetingId,
+      kind: s.kind,
+      title: s.title,
+      orderPosition: s.orderPosition,
+      contentMd: s.contentMd,
+      configJson: s.configJson,
+    })),
+  );
+}
+
+async function fetchMeetingSlides(meetingId: number) {
+  return db
+    .select()
+    .from(meetingSlidesTable)
+    .where(eq(meetingSlidesTable.meetingId, meetingId))
+    .orderBy(asc(meetingSlidesTable.orderPosition));
 }
 
 function isoDateMinusDays(iso: string, days: number): string {
@@ -236,10 +308,16 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
       LIMIT 20
     `);
 
-    // ── Today's lean lesson ─────────────────────────────────────────
-    const lesson = await getTodayLesson();
+    // ── Today's lean lesson — picks this week's principle + today's
+    //    example, with the legacy shape kept on `lesson` so existing
+    //    frontend code keeps working unchanged ───────────────────────
+    const lesson = await getTodayLessonLegacy();
 
-    // ── Existing meeting record (if one's been started today) ──────
+    // ── Existing meeting record + its slide list. Slides live in DB
+    //    now; the runner reads from `slides` instead of a hardcoded
+    //    array. Auto-clone the default template the first time anyone
+    //    interacts with today's meeting (handled by /start), so by the
+    //    time the slideshow opens this list is always populated ────
     const [meeting] = await db
       .select()
       .from(morningMeetingsTable)
@@ -247,7 +325,9 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
       .limit(1);
 
     let gratitude: Array<{ id: number; fromName: string; toName: string | null; content: string }> = [];
+    let slides: Awaited<ReturnType<typeof fetchMeetingSlides>> = [];
     if (meeting) {
+      slides = await fetchMeetingSlides(meeting.id);
       gratitude = await db
         .select({
           id: meetingGratitudeTable.id,
@@ -292,8 +372,17 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
             startedAt: meeting.startedAt.toISOString(),
             endedAt: meeting.endedAt?.toISOString() ?? null,
             lessonId: meeting.lessonId,
+            exampleId: meeting.exampleId ?? null,
           }
         : null,
+      slides: slides.map((s) => ({
+        id: s.id,
+        kind: s.kind,
+        title: s.title,
+        orderPosition: s.orderPosition,
+        contentMd: s.contentMd,
+        configJson: s.configJson,
+      })),
       gratitude,
     });
   } catch (err: any) {
@@ -336,6 +425,12 @@ router.post("/start", async (req: Request, res: Response) => {
         },
       })
       .returning();
+    // First time today's meeting is started → clone the default
+    // template's slides in. Reusing an existing meeting is a no-op
+    // (cloneTemplateSlidesIfEmpty short-circuits when slides exist),
+    // so this is also safe when a second person takes over the host
+    // role mid-meeting.
+    await cloneTemplateSlidesIfEmpty(row.id);
     res.json({ id: row.id, hostName: row.hostName, meetingDate: row.meetingDate });
   } catch (err: any) {
     console.error("[morning-meetings] start error:", err);
@@ -400,7 +495,7 @@ router.get("/lessons", async (_req: Request, res: Response) => {
 });
 
 router.get("/lessons/today", async (_req: Request, res: Response) => {
-  const lesson = await getTodayLesson();
+  const lesson = await getTodayLessonLegacy();
   res.json(lesson);
 });
 

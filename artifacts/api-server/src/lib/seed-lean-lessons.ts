@@ -351,12 +351,95 @@ A lean culture is a **safe-to-speak** culture.`,
   },
 ];
 
+/**
+ * The 12 seeded slide rows for the default Morning Meeting template.
+ * Matches the slide order the runner used to hardcode in the frontend.
+ * For yesterday_kpis the host's selected KPIs default to the three the
+ * kitchen actually cares about — building rate, packing rate, wonkies.
+ */
+const DEFAULT_TEMPLATE_SLIDES = [
+  { kind: "special_prep",        title: "Special Prep" },
+  { kind: "stretches",           title: "Stretches" },
+  { kind: "yesterday_kpis",      title: "Yesterday's Numbers", config: { kpis: ["builder_rate", "packing_rate", "wonkies"] } },
+  { kind: "order_of_production", title: "Order of Production" },
+  { kind: "local_delivery",      title: "Local Delivery" },
+  { kind: "bag_orders",          title: "Bag Orders" },
+  { kind: "short_on_pack",       title: "Short on the Pack" },
+  { kind: "safety_issues",       title: "Safety Issues" },
+  { kind: "new_sops",            title: "New & Updated SOPs" },
+  { kind: "struggles",           title: "Struggles" },
+  { kind: "lesson",              title: "Today's Lean Lesson" },
+  { kind: "gratitude",           title: "Gratitude" },
+] as const;
+
 export async function seedLeanLessonsIfNeeded() {
+  // Step 1: seed/update the legacy lean_lessons rows (kept for older code paths)
   for (const l of LESSONS) {
     await db.execute(sql`
       INSERT INTO lean_lessons (week_number, title, summary, explanation_md, what_to_show_md, delivery_notes_md, is_active)
       VALUES (${l.weekNumber}, ${l.title}, ${l.summary}, ${l.explanationMd}, ${l.whatToShowMd}, ${l.deliveryNotesMd}, TRUE)
       ON CONFLICT (week_number) DO NOTHING
     `);
+  }
+
+  // Step 2: mirror each legacy lesson into a (principle, example) pair.
+  // Principles match the lesson's week_number → week_position so today's
+  // lesson rotation lands on the same topic the old code did. Each
+  // principle starts with exactly one example carrying the lesson's
+  // body content; admins add more examples per principle over time.
+  for (const l of LESSONS) {
+    await db.execute(sql`
+      INSERT INTO lean_principles (week_position, title, summary, is_active)
+      VALUES (${l.weekNumber}, ${l.title}, ${l.summary}, TRUE)
+      ON CONFLICT (week_position) DO NOTHING
+    `);
+    // Look up the principle id we just ensured exists.
+    const principleRows = await db.execute<{ id: number }>(sql`
+      SELECT id FROM lean_principles WHERE week_position = ${l.weekNumber}
+    `);
+    const principleId = (principleRows.rows ?? principleRows)[0]?.id;
+    if (!principleId) continue;
+    // Only seed the starter example if no examples exist for this
+    // principle yet — preserves any examples an admin has added.
+    const existing = await db.execute<{ count: number }>(sql`
+      SELECT COUNT(*)::int AS count FROM lean_examples WHERE principle_id = ${principleId}
+    `);
+    const existingCount = Number((existing.rows ?? existing)[0]?.count ?? 0);
+    if (existingCount === 0) {
+      await db.execute(sql`
+        INSERT INTO lean_examples (principle_id, order_position, title, summary, explanation_md, what_to_show_md, delivery_notes_md, is_active)
+        VALUES (${principleId}, 0, ${l.title}, ${l.summary}, ${l.explanationMd}, ${l.whatToShowMd}, ${l.deliveryNotesMd}, TRUE)
+      `);
+    }
+  }
+
+  // Step 3: ensure there's a default meeting template with the 12
+  // slide rows. New meetings clone these into meeting_slides.
+  let templateId: number | null = null;
+  const existingTpl = await db.execute<{ id: number }>(sql`
+    SELECT id FROM meeting_templates WHERE is_default = TRUE LIMIT 1
+  `);
+  templateId = (existingTpl.rows ?? existingTpl)[0]?.id ?? null;
+  if (!templateId) {
+    const inserted = await db.execute<{ id: number }>(sql`
+      INSERT INTO meeting_templates (name, is_default) VALUES ('Default morning meeting', TRUE) RETURNING id
+    `);
+    templateId = (inserted.rows ?? inserted)[0]?.id ?? null;
+  }
+  if (templateId) {
+    const slideRows = await db.execute<{ count: number }>(sql`
+      SELECT COUNT(*)::int AS count FROM template_slides WHERE template_id = ${templateId}
+    `);
+    const slideCount = Number((slideRows.rows ?? slideRows)[0]?.count ?? 0);
+    if (slideCount === 0) {
+      for (let i = 0; i < DEFAULT_TEMPLATE_SLIDES.length; i++) {
+        const s = DEFAULT_TEMPLATE_SLIDES[i];
+        const cfg = "config" in s ? JSON.stringify(s.config) : null;
+        await db.execute(sql`
+          INSERT INTO template_slides (template_id, kind, title, order_position, config_json)
+          VALUES (${templateId}, ${s.kind}, ${s.title}, ${i}, ${cfg}::jsonb)
+        `);
+      }
+    }
   }
 }

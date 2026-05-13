@@ -29,6 +29,15 @@ import { useAuth } from "@/contexts/auth-context";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
+interface MeetingSlide {
+  id: number;
+  kind: string;
+  title: string;
+  orderPosition: number;
+  contentMd: string | null;
+  configJson: Record<string, unknown> | null;
+}
+
 interface DashboardData {
   today: string;
   yesterday: string;
@@ -53,8 +62,11 @@ interface DashboardData {
     id: number; weekNumber: number; title: string; summary: string;
     explanationMd: string; whatToShowMd: string; deliveryNotesMd: string;
     videoUrl: string | null;
+    principleId?: number;
+    principleTitle?: string;
   } | null;
-  meeting: { id: number; hostName: string | null; startedAt: string; endedAt: string | null; lessonId: number | null } | null;
+  meeting: { id: number; hostName: string | null; startedAt: string; endedAt: string | null; lessonId: number | null; exampleId: number | null } | null;
+  slides: MeetingSlide[];
   gratitude: Array<{ id: number; fromName: string; toName: string | null; content: string }>;
 }
 
@@ -169,8 +181,11 @@ function MarkdownBlock({ content }: { content: string }) {
   );
 }
 
-// ── Slide types & registry ───────────────────────────────────────────
-type SlideKey =
+// ── Slide kind registry ──────────────────────────────────────────────
+// Icon + colour per slide kind. The actual ordered list and per-slide
+// titles come from meeting_slides in the DB so admins can reorder
+// without touching this file.
+type SlideKind =
   | "special_prep"
   | "stretches"
   | "yesterday_kpis"
@@ -181,30 +196,29 @@ type SlideKey =
   | "safety_issues"
   | "new_sops"
   | "struggles"
-  | "learning"
-  | "gratitude";
+  | "lesson"
+  | "gratitude"
+  | "custom_markdown";
 
-interface SlideMeta {
-  key: SlideKey;
-  title: string;
-  icon: React.ElementType;
-  color: string;
+const SLIDE_KIND_META: Record<SlideKind, { icon: React.ElementType; color: string; fallbackTitle: string }> = {
+  special_prep:        { icon: Award,         color: "text-amber-500",   fallbackTitle: "Special Prep" },
+  stretches:           { icon: Activity,      color: "text-emerald-500", fallbackTitle: "Stretches" },
+  yesterday_kpis:      { icon: ChefHat,       color: "text-violet-500",  fallbackTitle: "Yesterday's Numbers" },
+  order_of_production: { icon: ClipboardCheck,color: "text-primary",     fallbackTitle: "Order of Production" },
+  local_delivery:      { icon: Truck,         color: "text-blue-500",    fallbackTitle: "Local Delivery" },
+  bag_orders:          { icon: ShoppingBag,   color: "text-indigo-500",  fallbackTitle: "Bag Orders" },
+  short_on_pack:       { icon: AlertCircle,   color: "text-orange-500",  fallbackTitle: "Short on the Pack" },
+  safety_issues:       { icon: AlertCircle,   color: "text-red-500",     fallbackTitle: "Safety Issues" },
+  new_sops:            { icon: FileText,      color: "text-cyan-500",    fallbackTitle: "New & Updated SOPs" },
+  struggles:           { icon: MessageCircle, color: "text-pink-500",    fallbackTitle: "Struggles" },
+  lesson:              { icon: BookOpen,      color: "text-purple-500",  fallbackTitle: "Today's Lean Lesson" },
+  gratitude:           { icon: Heart,         color: "text-rose-500",    fallbackTitle: "Gratitude" },
+  custom_markdown:     { icon: BookOpen,      color: "text-slate-500",   fallbackTitle: "Note" },
+};
+
+function metaForKind(kind: string) {
+  return SLIDE_KIND_META[kind as SlideKind] ?? SLIDE_KIND_META.custom_markdown;
 }
-
-const SLIDE_ORDER: SlideMeta[] = [
-  { key: "special_prep",       title: "Special Prep",         icon: Award,        color: "text-amber-500" },
-  { key: "stretches",          title: "Stretches",            icon: Activity,     color: "text-emerald-500" },
-  { key: "yesterday_kpis",     title: "Yesterday's Numbers",  icon: ChefHat,      color: "text-violet-500" },
-  { key: "order_of_production",title: "Order of Production",  icon: ClipboardCheck,color: "text-primary" },
-  { key: "local_delivery",     title: "Local Delivery",       icon: Truck,        color: "text-blue-500" },
-  { key: "bag_orders",         title: "Bag Orders",           icon: ShoppingBag,  color: "text-indigo-500" },
-  { key: "short_on_pack",      title: "Short on the Pack",    icon: AlertCircle,  color: "text-orange-500" },
-  { key: "safety_issues",      title: "Safety Issues",        icon: AlertCircle,  color: "text-red-500" },
-  { key: "new_sops",           title: "New & Updated SOPs",   icon: FileText,     color: "text-cyan-500" },
-  { key: "struggles",          title: "Struggles",            icon: MessageCircle,color: "text-pink-500" },
-  { key: "learning",           title: "Today's Lean Lesson",  icon: BookOpen,     color: "text-purple-500" },
-  { key: "gratitude",          title: "Gratitude",            icon: Heart,        color: "text-rose-500" },
-];
 
 // ── Page ─────────────────────────────────────────────────────────────
 type Mode = "setup" | "prep" | "meeting" | "done";
@@ -257,7 +271,14 @@ export default function MeetingPage() {
     },
   });
 
-  const advance = useCallback(() => setSlideIndex(i => Math.min(SLIDE_ORDER.length - 1, i + 1)), []);
+  // The runner's slide list comes from meeting_slides in the DB. If
+  // the meeting hasn't been started yet `data.slides` is empty and the
+  // user is still on the setup screen, so this is only consulted in
+  // meeting mode.
+  const slides = useMemo<MeetingSlide[]>(() => data?.slides ?? [], [data?.slides]);
+  const slideCount = slides.length;
+
+  const advance = useCallback(() => setSlideIndex(i => Math.min(Math.max(0, slideCount - 1), i + 1)), [slideCount]);
   const retreat = useCallback(() => setSlideIndex(i => Math.max(0, i - 1)), []);
 
   useEffect(() => {
@@ -300,17 +321,32 @@ export default function MeetingPage() {
     return <DoneScreen data={data} onClose={() => navigate("/")} />;
   }
 
-  const slide = SLIDE_ORDER[slideIndex];
+  if (slideCount === 0) {
+    // Meeting was started but has no slides — unusual (clone would
+    // normally have run), so kick the host back to setup so they can
+    // start fresh.
+    return (
+      <div className="fixed inset-0 bg-background flex items-center justify-center text-center px-6">
+        <div>
+          <p className="text-muted-foreground mb-4">This meeting has no slides yet.</p>
+          <button onClick={() => setMode("setup")} className="px-4 py-2 rounded-xl bg-primary text-primary-foreground font-semibold">Back to setup</button>
+        </div>
+      </div>
+    );
+  }
+  const slide = slides[Math.min(slideIndex, slideCount - 1)];
+  const meta = metaForKind(slide.kind);
+  const SlideIcon = meta.icon;
   return (
     <div className="fixed inset-0 bg-background flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-3 border-b border-border bg-card">
         <div className="flex items-center gap-3 min-w-0">
-          <slide.icon className={cn("w-5 h-5", slide.color)} />
-          <h1 className="text-lg font-semibold truncate">{slide.title}</h1>
+          <SlideIcon className={cn("w-5 h-5", meta.color)} />
+          <h1 className="text-lg font-semibold truncate">{slide.title || meta.fallbackTitle}</h1>
         </div>
         <div className="flex items-center gap-3 text-sm">
-          <span className="text-muted-foreground tabular-nums">{slideIndex + 1} / {SLIDE_ORDER.length}</span>
+          <span className="text-muted-foreground tabular-nums">{slideIndex + 1} / {slideCount}</span>
           <button onClick={() => endMutation.mutate()} className="text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-1.5">
             End meeting
           </button>
@@ -324,7 +360,7 @@ export default function MeetingPage() {
       <div className="h-1 bg-secondary">
         <div
           className="h-full bg-primary transition-all duration-300"
-          style={{ width: `${((slideIndex + 1) / SLIDE_ORDER.length) * 100}%` }}
+          style={{ width: `${((slideIndex + 1) / slideCount) * 100}%` }}
         />
       </div>
 
@@ -345,9 +381,9 @@ export default function MeetingPage() {
           <ChevronLeft className="w-4 h-4" /> Back
         </button>
         <div className="flex items-center gap-1">
-          {SLIDE_ORDER.map((s, i) => (
+          {slides.map((s, i) => (
             <button
-              key={s.key}
+              key={s.id}
               onClick={() => setSlideIndex(i)}
               className={cn(
                 "w-2 h-2 rounded-full transition-all",
@@ -357,7 +393,7 @@ export default function MeetingPage() {
             />
           ))}
         </div>
-        {slideIndex < SLIDE_ORDER.length - 1 ? (
+        {slideIndex < slideCount - 1 ? (
           <button
             onClick={advance}
             className="flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90"
@@ -546,21 +582,37 @@ function DoneScreen({ data, onClose }: { data: DashboardData; onClose: () => voi
 }
 
 // ── Slide body switcher ─────────────────────────────────────────────
-function SlideBody({ slide, data, onRefresh }: { slide: SlideMeta; data: DashboardData; onRefresh: () => void }) {
-  switch (slide.key) {
-    case "special_prep": return <SpecialPrepSlide data={data} />;
+function SlideBody({ slide, data, onRefresh }: { slide: MeetingSlide; data: DashboardData; onRefresh: () => void }) {
+  switch (slide.kind) {
+    case "special_prep": return <SpecialPrepSlide data={data} slide={slide} />;
     case "stretches": return <StretchesPanel />;
-    case "yesterday_kpis": return <YesterdayKpisSlide data={data} />;
-    case "order_of_production": return <OrderOfProductionSlide data={data} />;
-    case "local_delivery": return <LocalDeliverySlide data={data} />;
-    case "bag_orders": return <BagOrdersSlide />;
-    case "short_on_pack": return <ShortOnPackSlide data={data} />;
-    case "safety_issues": return <SafetyIssuesSlide data={data} onRefresh={onRefresh} />;
-    case "new_sops": return <NewSopsSlide data={data} />;
-    case "struggles": return <StrugglesSlide data={data} onRefresh={onRefresh} />;
-    case "learning": return <LearningSlide data={data} />;
-    case "gratitude": return <GratitudeSlide data={data} onRefresh={onRefresh} />;
+    case "yesterday_kpis": return <YesterdayKpisSlide data={data} slide={slide} />;
+    case "order_of_production": return <OrderOfProductionSlide data={data} slide={slide} />;
+    case "local_delivery": return <LocalDeliverySlide data={data} slide={slide} />;
+    case "bag_orders": return <BagOrdersSlide slide={slide} />;
+    case "short_on_pack": return <ShortOnPackSlide data={data} slide={slide} />;
+    case "safety_issues": return <SafetyIssuesSlide data={data} onRefresh={onRefresh} slide={slide} />;
+    case "new_sops": return <NewSopsSlide data={data} slide={slide} />;
+    case "struggles": return <StrugglesSlide data={data} onRefresh={onRefresh} slide={slide} />;
+    case "lesson":
+    case "learning": return <LearningSlide data={data} slide={slide} />;
+    case "gratitude": return <GratitudeSlide data={data} onRefresh={onRefresh} slide={slide} />;
+    case "custom_markdown": return <CustomMarkdownSlide slide={slide} />;
+    default: return <CustomMarkdownSlide slide={slide} />;
   }
+}
+
+function CustomMarkdownSlide({ slide }: { slide: MeetingSlide }) {
+  return (
+    <div>
+      <SectionTitle>{slide.title}</SectionTitle>
+      {slide.contentMd ? (
+        <div className="glass-panel rounded-2xl p-6"><MarkdownBlock content={slide.contentMd} /></div>
+      ) : (
+        <p className="text-muted-foreground italic">No content yet — open the editor to add some.</p>
+      )}
+    </div>
+  );
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
@@ -570,10 +622,10 @@ function SectionLead({ children }: { children: React.ReactNode }) {
   return <p className="text-lg text-muted-foreground mb-6">{children}</p>;
 }
 
-function SpecialPrepSlide({ data }: { data: DashboardData }) {
+function SpecialPrepSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
   return (
     <div>
-      <SectionTitle>Special Prep</SectionTitle>
+      <SectionTitle>{slide.title || "Special Prep"}</SectionTitle>
       <SectionLead>What's on top of the usual today?</SectionLead>
       <div className="glass-panel p-6 rounded-2xl">
         {data.special ? (
@@ -589,19 +641,40 @@ function SpecialPrepSlide({ data }: { data: DashboardData }) {
   );
 }
 
-function YesterdayKpisSlide({ data }: { data: DashboardData }) {
+/** Which KPI tiles a slide should render. Template/meeting-level
+ *  `configJson.kpis` overrides this; default matches the three the
+ *  kitchen actually tracks day-to-day. */
+const KPI_CATALOG = {
+  builder_rate: { label: "Builder batches/hr", get: (k: DashboardData["yesterdayKpis"]) => k.builderBatchesPerHour != null ? k.builderBatchesPerHour.toFixed(1) : "—", warn: () => false },
+  packing_rate: { label: "Packing boxes/hr",   get: (k: DashboardData["yesterdayKpis"]) => k.packingBatchesPerHour != null ? k.packingBatchesPerHour.toFixed(1) : "—", warn: () => false },
+  wonkies:      { label: "Wonkies",            get: (k: DashboardData["yesterdayKpis"]) => k.wonkyCount.toString(), warn: (k: DashboardData["yesterdayKpis"]) => k.wonkyCount > 20 },
+  batches:      { label: "Batches",            get: (k: DashboardData["yesterdayKpis"]) => k.batchesTarget.toString(), warn: () => false },
+  shorts:       { label: "Short on pack",      get: (k: DashboardData["yesterdayKpis"]) => k.shortCount.toString(), warn: (k: DashboardData["yesterdayKpis"]) => k.shortCount > 0 },
+  leftover:     { label: "Leftover filling (g)", get: (k: DashboardData["yesterdayKpis"]) => k.leftoverFillingGrams.toString(), warn: () => false },
+} as const;
+type KpiKey = keyof typeof KPI_CATALOG;
+const DEFAULT_KPIS: KpiKey[] = ["builder_rate", "packing_rate", "wonkies"];
+
+function YesterdayKpisSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
   const k = data.yesterdayKpis;
+  const configured = Array.isArray(slide.configJson?.kpis) ? (slide.configJson!.kpis as string[]) : null;
+  const kpiKeys: KpiKey[] = (configured ?? DEFAULT_KPIS).filter((key): key is KpiKey => key in KPI_CATALOG);
   return (
     <div>
-      <SectionTitle>Yesterday's Numbers</SectionTitle>
+      <SectionTitle>{slide.title || "Yesterday's Numbers"}</SectionTitle>
       <SectionLead>How did the last shift go?</SectionLead>
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-        <KpiTile label="Batches" value={k.batchesTarget.toString()} />
-        <KpiTile label="Wonkies" value={k.wonkyCount.toString()} tone={k.wonkyCount > 20 ? "warn" : "ok"} />
-        <KpiTile label="Builder batches/hr" value={k.builderBatchesPerHour != null ? k.builderBatchesPerHour.toFixed(1) : "—"} />
-        <KpiTile label="Packing batches/hr" value={k.packingBatchesPerHour != null ? k.packingBatchesPerHour.toFixed(1) : "—"} />
-        <KpiTile label="Short on pack" value={k.shortCount.toString()} tone={k.shortCount > 0 ? "warn" : "ok"} />
-        <KpiTile label="Leftover filling (g)" value={k.leftoverFillingGrams.toString()} />
+      <div className={cn("grid gap-4", kpiKeys.length <= 3 ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-2 sm:grid-cols-3")}>
+        {kpiKeys.map((key) => {
+          const def = KPI_CATALOG[key];
+          return (
+            <KpiTile
+              key={key}
+              label={def.label}
+              value={def.get(k)}
+              tone={def.warn(k) ? "warn" : "ok"}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -616,10 +689,10 @@ function KpiTile({ label, value, tone = "ok" }: { label: string; value: string; 
   );
 }
 
-function OrderOfProductionSlide({ data }: { data: DashboardData }) {
+function OrderOfProductionSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
   return (
     <div>
-      <SectionTitle>Order of Production</SectionTitle>
+      <SectionTitle>{slide.title || "Order of Production"}</SectionTitle>
       <SectionLead>Today's plan — Mac &amp; Cheese first, then through the calzones.</SectionLead>
       {data.todayPlan.items.length === 0 ? (
         <div className="glass-panel rounded-2xl p-6 text-muted-foreground">No plan published for today yet.</div>
@@ -641,10 +714,10 @@ function OrderOfProductionSlide({ data }: { data: DashboardData }) {
   );
 }
 
-function LocalDeliverySlide({ data }: { data: DashboardData }) {
+function LocalDeliverySlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
   return (
     <div>
-      <SectionTitle>Local Delivery</SectionTitle>
+      <SectionTitle>{slide.title || "Local Delivery"}</SectionTitle>
       <SectionLead>Anyone coming to the door today?</SectionLead>
       {data.todayDeliveries.length === 0 ? (
         <div className="glass-panel rounded-2xl p-6 text-muted-foreground">No deliveries scheduled for today.</div>
@@ -662,10 +735,10 @@ function LocalDeliverySlide({ data }: { data: DashboardData }) {
   );
 }
 
-function BagOrdersSlide() {
+function BagOrdersSlide({ slide }: { slide: MeetingSlide }) {
   return (
     <div>
-      <SectionTitle>Bag Orders</SectionTitle>
+      <SectionTitle>{slide.title || "Bag Orders"}</SectionTitle>
       <SectionLead>Anything special for bag customers today? Anyone missing from the dispatch list?</SectionLead>
       <div className="glass-panel rounded-2xl p-8 text-center text-muted-foreground">
         <ShoppingBag className="w-12 h-12 mx-auto mb-3 opacity-40" />
@@ -675,11 +748,11 @@ function BagOrdersSlide() {
   );
 }
 
-function ShortOnPackSlide({ data }: { data: DashboardData }) {
+function ShortOnPackSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
   const k = data.yesterdayKpis;
   return (
     <div>
-      <SectionTitle>Short on the Pack</SectionTitle>
+      <SectionTitle>{slide.title || "Short on the Pack"}</SectionTitle>
       <SectionLead>What didn't we have enough of yesterday? Where did we leave filling?</SectionLead>
       <div className="grid grid-cols-2 gap-4">
         <KpiTile label="Shorts yesterday" value={k.shortCount.toString()} tone={k.shortCount > 0 ? "warn" : "ok"} />
@@ -689,7 +762,7 @@ function ShortOnPackSlide({ data }: { data: DashboardData }) {
   );
 }
 
-function SafetyIssuesSlide({ data, onRefresh }: { data: DashboardData; onRefresh: () => void }) {
+function SafetyIssuesSlide({ data, onRefresh, slide }: { data: DashboardData; onRefresh: () => void; slide: MeetingSlide }) {
   const [description, setDescription] = useState("");
   const [severity, setSeverity] = useState<"yellow" | "red">("yellow");
   const [submitting, setSubmitting] = useState(false);
@@ -715,7 +788,7 @@ function SafetyIssuesSlide({ data, onRefresh }: { data: DashboardData; onRefresh
   };
   return (
     <div>
-      <SectionTitle>Safety Issues</SectionTitle>
+      <SectionTitle>{slide.title || "Safety Issues"}</SectionTitle>
       <SectionLead>Anyone got a safety concern? Speak up.</SectionLead>
       {data.safetyIssues.length > 0 && (
         <div className="glass-panel rounded-2xl overflow-hidden mb-4">
@@ -750,10 +823,10 @@ function SafetyIssuesSlide({ data, onRefresh }: { data: DashboardData; onRefresh
   );
 }
 
-function NewSopsSlide({ data }: { data: DashboardData }) {
+function NewSopsSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
   return (
     <div>
-      <SectionTitle>New &amp; Updated SOPs</SectionTitle>
+      <SectionTitle>{slide.title || "New & Updated SOPs"}</SectionTitle>
       <SectionLead>Anything changed in the last week that everyone should know about?</SectionLead>
       {data.recentSops.length === 0 ? (
         <div className="glass-panel rounded-2xl p-6 text-muted-foreground">No SOP updates in the last 7 days.</div>
@@ -771,7 +844,7 @@ function NewSopsSlide({ data }: { data: DashboardData }) {
   );
 }
 
-function StrugglesSlide({ data, onRefresh }: { data: DashboardData; onRefresh: () => void }) {
+function StrugglesSlide({ data, onRefresh, slide }: { data: DashboardData; onRefresh: () => void; slide: MeetingSlide }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -797,7 +870,7 @@ function StrugglesSlide({ data, onRefresh }: { data: DashboardData; onRefresh: (
   };
   return (
     <div>
-      <SectionTitle>Struggles</SectionTitle>
+      <SectionTitle>{slide.title || "Struggles"}</SectionTitle>
       <SectionLead>What's getting in the way? No blame — just name it. We'll action it from the kaizen board.</SectionLead>
       {data.struggles.length > 0 && (
         <div className="glass-panel rounded-2xl overflow-hidden mb-4">
@@ -834,7 +907,8 @@ function StrugglesSlide({ data, onRefresh }: { data: DashboardData; onRefresh: (
   );
 }
 
-function LearningSlide({ data }: { data: DashboardData }) {
+function LearningSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
+  void slide;
   if (!data.lesson) {
     return (
       <div>
@@ -860,7 +934,8 @@ function LearningSlide({ data }: { data: DashboardData }) {
   );
 }
 
-function GratitudeSlide({ data, onRefresh }: { data: DashboardData; onRefresh: () => void }) {
+function GratitudeSlide({ data, onRefresh, slide }: { data: DashboardData; onRefresh: () => void; slide: MeetingSlide }) {
+  void slide;
   const { state } = useAuth();
   const defaultFrom = state.status === "authenticated" ? state.user.name : "";
   const [fromName, setFromName] = useState(defaultFrom);
