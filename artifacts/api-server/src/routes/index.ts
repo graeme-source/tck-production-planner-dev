@@ -48,6 +48,7 @@ import aiRouter from "./ai";
 import recipeDesignerRouter from "./recipe-designer";
 import morningMeetingsRouter from "./morning-meetings";
 import ingredientScrapeRouter from "./ingredient-scrape";
+import formsRouter from "./forms";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -126,6 +127,7 @@ router.use("/compliance-actions", complianceActionsRouter);
 router.use("/standards", standardsRouter);
 router.use("/ai", aiRouter);
 router.use("/morning-meetings", morningMeetingsRouter);
+router.use("/forms", formsRouter);
 
 const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
 async function requireFounder(req: Request, res: Response, next: NextFunction) {

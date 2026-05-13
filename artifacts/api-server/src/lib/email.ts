@@ -1,10 +1,22 @@
 import { shouldSkipSideEffect, logSkippedSideEffect } from "./app-env";
 
+export interface EmailAttachment {
+  filename: string;
+  /** Base64-encoded file content. */
+  content: string;
+  /** Optional MIME type — Resend auto-detects from filename if omitted. */
+  contentType?: string;
+}
+
 export interface EmailPayload {
   to: string;
   subject: string;
   html: string;
   text: string;
+  /** Optional file attachments. Only honoured via Resend — if only
+   *  Klaviyo is configured the call falls through to Resend instead.
+   *  If neither provider is configured, the email is logged. */
+  attachments?: EmailAttachment[];
 }
 
 const APP_NAME = "TCK Production Planner";
@@ -21,8 +33,10 @@ export async function sendEmail(payload: EmailPayload): Promise<void> {
 
   const klaviyoKey = process.env["KLAVIYO_API_KEY"];
   const resendKey = process.env["RESEND_API_KEY"];
+  const hasAttachments = (payload.attachments?.length ?? 0) > 0;
 
-  if (klaviyoKey) {
+  // Attachments only flow through Resend — skip Klaviyo when present.
+  if (klaviyoKey && !hasAttachments) {
     const res = await fetch("https://a.klaviyo.com/api/emails/", {
       method: "POST",
       headers: {
@@ -64,6 +78,13 @@ export async function sendEmail(payload: EmailPayload): Promise<void> {
         subject: payload.subject,
         html: payload.html,
         text: payload.text,
+        ...(hasAttachments ? {
+          attachments: payload.attachments!.map(a => ({
+            filename: a.filename,
+            content: a.content,
+            ...(a.contentType ? { content_type: a.contentType } : {}),
+          })),
+        } : {}),
       }),
     });
 

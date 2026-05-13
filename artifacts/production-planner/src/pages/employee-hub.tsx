@@ -12,11 +12,13 @@
  * PDF in their email trail.
  */
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
-import { Car, Plus, Trash2, FileDown } from "lucide-react";
+import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, Flame, BookOpen, Loader2 } from "lucide-react";
 import { jsPDF } from "jspdf";
+import { toast } from "@/hooks/use-toast";
 
 // HMRC Approved Mileage Allowance Payment (AMAP) rates — cars and
 // vans. Unchanged since 2011 but stored in one place so updating
@@ -84,7 +86,10 @@ function calculate(trips: Trip[], priorMiles: number) {
   };
 }
 
-function generatePdf(form: FormValues) {
+/** Builds the mileage-claim PDF in memory. The "Download" path then
+ *  calls .save(); the "Email" path serialises it to a base64 string
+ *  and POSTs it to the server. */
+function buildMileagePdf(form: FormValues): { doc: jsPDF; filename: string; calc: ReturnType<typeof calculate> } {
   const calc = calculate(form.trips, form.priorMilesThisTaxYear);
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -199,6 +204,11 @@ function generatePdf(form: FormValues) {
   doc.text(AMAP.source, left, 815);
 
   const filename = `mileage-claim-${(form.employeeName || "employee").toLowerCase().replace(/\s+/g, "-")}-${form.periodEnd || todayIso()}.pdf`;
+  return { doc, filename, calc };
+}
+
+function downloadMileagePdf(form: FormValues) {
+  const { doc, filename } = buildMileagePdf(form);
   doc.save(filename);
 }
 
@@ -221,16 +231,66 @@ function MileageClaimForm() {
   const trips = watch("trips");
   const prior = Number(watch("priorMilesThisTaxYear")) || 0;
   const calc = calculate(trips ?? [], prior);
+  const [emailSending, setEmailSending] = useState(false);
+
+  const normalise = (data: FormValues): FormValues => ({
+    ...data,
+    priorMilesThisTaxYear: Number(data.priorMilesThisTaxYear) || 0,
+    trips: data.trips.map(t => ({ ...t, miles: Number(t.miles) || 0 })),
+  });
 
   const onSubmit = (data: FormValues) => {
     if (!data.employeeName?.trim()) return;
     if (!data.trips.length) return;
-    generatePdf({
-      ...data,
-      priorMilesThisTaxYear: Number(data.priorMilesThisTaxYear) || 0,
-      trips: data.trips.map(t => ({ ...t, miles: Number(t.miles) || 0 })),
-    });
+    downloadMileagePdf(normalise(data));
   };
+
+  const handleEmail = handleSubmit(async (data) => {
+    if (!data.employeeName?.trim() || !data.trips.length) return;
+    setEmailSending(true);
+    try {
+      const normalised = normalise(data);
+      const { doc, filename, calc: built } = buildMileagePdf(normalised);
+      // jsPDF returns base64 (without the data: prefix) via 'datauristring',
+      // but the safer cross-version path is to read the raw output and
+      // base64-encode it in the browser.
+      const ab = doc.output("arraybuffer");
+      const bytes = new Uint8Array(ab);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      const pdfBase64 = btoa(binary);
+      const res = await fetch("/api/forms/mileage-claim/email", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pdfBase64,
+          filename,
+          totalMiles: built.totalClaimMiles,
+          totalAmount: built.total,
+          periodStart: normalised.periodStart,
+          periodEnd: normalised.periodEnd,
+          employeeName: normalised.employeeName,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? `Request failed (${res.status})`);
+      }
+      toast({
+        title: "Email sent",
+        description: "Your mileage claim has been emailed to graeme@thecalzonekitchen.co.uk for review.",
+      });
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Couldn't send email",
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setEmailSending(false);
+    }
+  });
 
   const inputCls = "w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30";
 
@@ -346,38 +406,261 @@ function MileageClaimForm() {
         </div>
       </div>
 
-      <button
-        type="submit"
-        disabled={!trips?.some(t => (Number(t.miles) || 0) > 0)}
-        className="w-full md:w-auto px-6 py-2.5 bg-primary text-primary-foreground rounded-xl font-medium shadow-md shadow-primary/20 flex items-center justify-center gap-2 hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        <FileDown className="w-4 h-4" /> Download PDF
-      </button>
+      <div className="flex flex-col sm:flex-row gap-3">
+        <button
+          type="submit"
+          disabled={!trips?.some(t => (Number(t.miles) || 0) > 0) || emailSending}
+          className="flex-1 px-6 py-2.5 bg-secondary text-foreground border border-border rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-secondary/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <FileDown className="w-4 h-4" /> Download PDF
+        </button>
+        <button
+          type="button"
+          onClick={handleEmail}
+          disabled={!trips?.some(t => (Number(t.miles) || 0) > 0) || emailSending}
+          className="flex-1 px-6 py-2.5 bg-primary text-primary-foreground rounded-xl font-medium shadow-md shadow-primary/20 flex items-center justify-center gap-2 hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {emailSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+          {emailSending ? "Sending…" : "Email for review"}
+        </button>
+      </div>
+      <p className="text-xs text-muted-foreground -mt-2">
+        "Email for review" sends the same PDF as an attachment to graeme@thecalzonekitchen.co.uk with the subject "TCK Mileage claim form for review".
+      </p>
     </form>
   );
 }
 
+// ── "My …" sections ────────────────────────────────────────────────────────
+// All four read-only lists below are client-side filtered against the
+// authenticated user — there's no per-user endpoint today, and for the
+// volume of records on this system the simple fetch-then-filter is
+// fine. If the lists grow large we can move filtering to the server.
+
+interface ImprovementRow {
+  id: number;
+  title: string;
+  description: string;
+  station: string;
+  type: "improvement" | "struggle";
+  submittedBy: number | null;
+  submittedByName: string | null;
+  progressStatus: string | null;
+  createdAt: string;
+}
+
+interface AndonRow {
+  id: number;
+  category: string;
+  severity: "yellow" | "red" | "green";
+  description: string | null;
+  station: string;
+  reportedBy: number | null;
+  reportedByName: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+}
+
+interface SopRow {
+  id: number;
+  title: string;
+  stations: string[];
+  tags: string[];
+  authorId: number | null;
+  authorName: string | null;
+  stepCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function fmtRelative(iso: string): string {
+  if (!iso) return "";
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return iso;
+  const diff = Date.now() - t;
+  const day = 86400000;
+  if (diff < day) return "today";
+  if (diff < 2 * day) return "yesterday";
+  if (diff < 7 * day) return `${Math.floor(diff / day)} days ago`;
+  if (diff < 30 * day) return `${Math.floor(diff / (7 * day))} wk ago`;
+  return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function EmptyList({ label }: { label: string }) {
+  return (
+    <p className="text-sm text-muted-foreground italic py-6 text-center">
+      {label}
+    </p>
+  );
+}
+
+function MyImprovementsList({ userId, type }: { userId: number | null; type: "improvement" | "struggle" }) {
+  const { data, isLoading } = useQuery<ImprovementRow[]>({
+    queryKey: ["my-improvements"],
+    queryFn: async () => {
+      const res = await fetch("/api/improvements", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load");
+      return res.json();
+    },
+    enabled: userId != null,
+  });
+
+  if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
+  const rows = (data ?? []).filter(r => r.submittedBy === userId && r.type === type);
+  if (rows.length === 0) {
+    return <EmptyList label={type === "improvement" ? "You haven't logged any improvements yet." : "You haven't logged any struggles yet."} />;
+  }
+  return (
+    <ul className="divide-y divide-border border border-border rounded-xl overflow-hidden">
+      {rows.map(r => (
+        <li key={r.id} className="px-4 py-3 bg-card">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium truncate">{r.title}</p>
+              <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{r.description}</p>
+            </div>
+            <div className="text-right shrink-0">
+              <p className="text-xs text-muted-foreground">{fmtRelative(r.createdAt)}</p>
+              {r.progressStatus && (
+                <span className="inline-block mt-1 px-1.5 py-0.5 rounded-full bg-secondary text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+                  {r.progressStatus.replace(/_/g, " ")}
+                </span>
+              )}
+            </div>
+          </div>
+          {r.station && (
+            <p className="text-[10px] text-muted-foreground/70 mt-1.5 uppercase tracking-wide">{r.station.replace(/_/g, " ")}</p>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function MyIssuesList({ userId }: { userId: number | null }) {
+  const { data, isLoading } = useQuery<AndonRow[]>({
+    queryKey: ["my-andon"],
+    queryFn: async () => {
+      const res = await fetch("/api/andon", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load");
+      return res.json();
+    },
+    enabled: userId != null,
+  });
+
+  if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
+  const rows = (data ?? []).filter(r => r.reportedBy === userId);
+  if (rows.length === 0) return <EmptyList label="You haven't reported any issues yet." />;
+
+  const severityClass = (s: AndonRow["severity"]) => {
+    if (s === "red") return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300";
+    if (s === "yellow") return "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300";
+    return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300";
+  };
+
+  return (
+    <ul className="divide-y divide-border border border-border rounded-xl overflow-hidden">
+      {rows.map(r => (
+        <li key={r.id} className="px-4 py-3 bg-card">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wide ${severityClass(r.severity)}`}>
+                  {r.severity}
+                </span>
+                <p className="text-sm font-medium capitalize">{r.category}</p>
+              </div>
+              {r.description && (
+                <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{r.description}</p>
+              )}
+              <p className="text-[10px] text-muted-foreground/70 mt-1 uppercase tracking-wide">{r.station.replace(/_/g, " ")}</p>
+            </div>
+            <div className="text-right shrink-0">
+              <p className="text-xs text-muted-foreground">{fmtRelative(r.createdAt)}</p>
+              <span className={`inline-block mt-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wide ${r.resolvedAt ? "bg-secondary text-muted-foreground" : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"}`}>
+                {r.resolvedAt ? "Resolved" : "Open"}
+              </span>
+            </div>
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function MySopsList({ userId }: { userId: number | null }) {
+  const { data, isLoading } = useQuery<SopRow[]>({
+    queryKey: ["my-sops"],
+    queryFn: async () => {
+      const res = await fetch("/api/standards", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load");
+      return res.json();
+    },
+    enabled: userId != null,
+  });
+
+  if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
+  const rows = (data ?? []).filter(r => r.authorId === userId);
+  if (rows.length === 0) return <EmptyList label="You haven't created any SOPs yet." />;
+  return (
+    <ul className="divide-y divide-border border border-border rounded-xl overflow-hidden">
+      {rows.map(r => (
+        <li key={r.id} className="px-4 py-3 bg-card">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium truncate">{r.title}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{r.stepCount} step{r.stepCount === 1 ? "" : "s"}</p>
+              {r.stations.length > 0 && (
+                <p className="text-[10px] text-muted-foreground/70 mt-1 uppercase tracking-wide">{r.stations.join(" · ").replace(/_/g, " ")}</p>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground shrink-0">{fmtRelative(r.updatedAt)}</p>
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+type HubSection = "mileage" | "improvements" | "struggles" | "issues" | "sops";
+
 export default function EmployeeHub() {
-  const [active, setActive] = useState<"mileage" | null>("mileage");
+  const [active, setActive] = useState<HubSection>("mileage");
+  const { state } = useAuth();
+  const userId = state.status === "authenticated" ? state.user.id : null;
+
+  const sections: { key: HubSection; label: string; icon: typeof Car }[] = [
+    { key: "mileage", label: "Mileage Claim", icon: Car },
+    { key: "improvements", label: "My Improvements", icon: Lightbulb },
+    { key: "struggles", label: "My Struggles", icon: Flame },
+    { key: "issues", label: "My Issues", icon: AlertTriangle },
+    { key: "sops", label: "My SOPs", icon: BookOpen },
+  ];
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="My Employee Hub"
-        description="Your personal forms and downloads. Currently: mileage claim. More sections coming."
+        description="Your personal forms, downloads, and records. Currently: mileage claim and the improvements, struggles, issues and SOPs you've created."
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-6">
         <nav className="space-y-1">
-          <button
-            type="button"
-            onClick={() => setActive("mileage")}
-            className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors ${
-              active === "mileage" ? "bg-primary/10 text-primary font-medium" : "hover:bg-secondary/40 text-foreground"
-            }`}
-          >
-            <Car className="w-4 h-4" /> Mileage Claim
-          </button>
+          {sections.map(s => {
+            const Icon = s.icon;
+            return (
+              <button
+                key={s.key}
+                type="button"
+                onClick={() => setActive(s.key)}
+                className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors ${
+                  active === s.key ? "bg-primary/10 text-primary font-medium" : "hover:bg-secondary/40 text-foreground"
+                }`}
+              >
+                <Icon className="w-4 h-4" /> {s.label}
+              </button>
+            );
+          })}
         </nav>
 
         <div className="bg-card border border-border rounded-2xl p-5">
@@ -390,6 +673,50 @@ export default function EmployeeHub() {
                 </p>
               </div>
               <MileageClaimForm />
+            </>
+          )}
+          {active === "improvements" && (
+            <>
+              <div className="mb-4 pb-4 border-b border-border">
+                <h2 className="text-lg font-semibold">My Improvements</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Improvement ideas you've submitted. Add new ones from the report dialog on any station.
+                </p>
+              </div>
+              <MyImprovementsList userId={userId} type="improvement" />
+            </>
+          )}
+          {active === "struggles" && (
+            <>
+              <div className="mb-4 pb-4 border-b border-border">
+                <h2 className="text-lg font-semibold">My Struggles</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Struggles you've logged. Surfacing these helps the team know what to fix.
+                </p>
+              </div>
+              <MyImprovementsList userId={userId} type="struggle" />
+            </>
+          )}
+          {active === "issues" && (
+            <>
+              <div className="mb-4 pb-4 border-b border-border">
+                <h2 className="text-lg font-semibold">My Issues</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Andon issues you've raised, with current status.
+                </p>
+              </div>
+              <MyIssuesList userId={userId} />
+            </>
+          )}
+          {active === "sops" && (
+            <>
+              <div className="mb-4 pb-4 border-b border-border">
+                <h2 className="text-lg font-semibold">My SOPs</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Standards &amp; SOPs you've authored.
+                </p>
+              </div>
+              <MySopsList userId={userId} />
             </>
           )}
         </div>
