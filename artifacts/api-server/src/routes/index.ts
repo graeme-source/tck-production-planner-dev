@@ -47,6 +47,7 @@ import standardsRouter from "./standards";
 import aiRouter from "./ai";
 import recipeDesignerRouter from "./recipe-designer";
 import morningMeetingsRouter from "./morning-meetings";
+import ingredientScrapeRouter from "./ingredient-scrape";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -87,6 +88,7 @@ router.use("/users", usersRouter);
 router.use("/category-defaults", categoryDefaultsRouter);
 router.use("/suppliers", suppliersRouter);
 router.use("/ingredients", ingredientsRouter);
+router.use("/ingredients", ingredientScrapeRouter);
 router.use("/sub-recipes", subRecipesRouter);
 router.use("/recipes", recipesRouter);
 router.use("/production-plans", productionPlansRouter);

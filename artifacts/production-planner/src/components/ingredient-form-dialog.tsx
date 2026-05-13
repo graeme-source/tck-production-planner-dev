@@ -136,6 +136,125 @@ export function IngredientFormDialog({
   const inputClass = "w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30";
   const numInputClass = "w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30";
 
+  // Scrape panel — user pastes the product URL and we let Claude pull
+  // brand, pack size, price etc. out of the page. The preview lists
+  // each field with an apply checkbox so nothing overwrites
+  // already-typed values without the user OK'ing it.
+  const [scrapeLoading, setScrapeLoading] = useState(false);
+  const [scrapeError, setScrapeError] = useState<string | null>(null);
+  type ScrapedFields = {
+    name: string | null;
+    brand: string | null;
+    packSize: number | null;
+    packUnit: string | null;
+    costPerPack: number | null;
+    supplierPartNumber: string | null;
+    ingredients: string | null;
+    allergens: string[];
+    notes: string | null;
+  };
+  const [scraped, setScraped] = useState<ScrapedFields | null>(null);
+  const [applyFlags, setApplyFlags] = useState<Record<keyof ScrapedFields, boolean>>({
+    name: true, brand: true, packSize: true, packUnit: true, costPerPack: true,
+    supplierPartNumber: true, ingredients: false, allergens: true, notes: false,
+  });
+  const orderingUrlValue = watch("orderingUrl") ?? "";
+
+  const runScrape = async () => {
+    const url = (orderingUrlValue || "").trim();
+    if (!url) { setScrapeError("Paste a product URL above first."); return; }
+    setScrapeError(null);
+    setScrapeLoading(true);
+    setScraped(null);
+    try {
+      const res = await fetch("/api/ingredients/scrape-url", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
+      setScraped(data.extracted as ScrapedFields);
+    } catch (err) {
+      setScrapeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setScrapeLoading(false);
+    }
+  };
+
+  const applyScraped = () => {
+    if (!scraped) return;
+    if (applyFlags.name && scraped.name) setValue("name", scraped.name);
+    if (applyFlags.brand && scraped.brand) setValue("brand", scraped.brand);
+    if (applyFlags.packSize && scraped.packSize != null) setValue("packWeight", scraped.packSize);
+    if (applyFlags.packUnit && scraped.packUnit) setValue("unit", scraped.packUnit);
+    if (applyFlags.costPerPack && scraped.costPerPack != null) setValue("costPerPack", scraped.costPerPack);
+    if (applyFlags.supplierPartNumber && scraped.supplierPartNumber) setValue("supplierPartNumber", scraped.supplierPartNumber);
+    if (applyFlags.ingredients && scraped.ingredients) {
+      setValue("labelDeclaration", scraped.ingredients);
+    }
+    if (applyFlags.allergens && scraped.allergens.length > 0) {
+      // Map free-form allergen names to the UK14 codes the form uses.
+      // Anything unmatched stays out — the user can tick it manually.
+      const map: Record<string, string> = {
+        celery: "celery",
+        gluten: "cereals_containing_gluten",
+        wheat: "cereals_containing_gluten",
+        rye: "cereals_containing_gluten",
+        barley: "cereals_containing_gluten",
+        oats: "cereals_containing_gluten",
+        crustaceans: "crustaceans",
+        prawns: "crustaceans",
+        eggs: "eggs",
+        egg: "eggs",
+        fish: "fish",
+        lupin: "lupin",
+        milk: "milk",
+        dairy: "milk",
+        molluscs: "molluscs",
+        mustard: "mustard",
+        "tree nuts": "nuts",
+        nuts: "nuts",
+        peanuts: "peanuts",
+        sesame: "sesame",
+        soybeans: "soybeans",
+        soya: "soybeans",
+        soy: "soybeans",
+        "sulphur dioxide": "sulphur_dioxide",
+        sulphites: "sulphur_dioxide",
+        sulfites: "sulphur_dioxide",
+      };
+      const current = new Set(watchedAllergens);
+      for (const a of scraped.allergens) {
+        const code = map[a.toLowerCase().trim()];
+        if (code) current.add(code);
+      }
+      setValue("allergens", Array.from(current));
+    }
+    if (applyFlags.notes && scraped.notes) {
+      const existing = watch("notes") ?? "";
+      const next = existing ? `${existing}\n${scraped.notes}` : scraped.notes;
+      setValue("notes", next);
+    }
+    setScraped(null);
+  };
+
+  type PreviewRow = { key: keyof ScrapedFields; label: string; display: string };
+  const fieldRowsToPreview: PreviewRow[] = scraped
+    ? ([
+        { key: "name" as const, label: "Name", display: scraped.name ?? "—" },
+        { key: "brand" as const, label: "Brand", display: scraped.brand ?? "—" },
+        { key: "packSize" as const, label: "Pack size", display: scraped.packSize != null ? String(scraped.packSize) : "—" },
+        { key: "packUnit" as const, label: "Unit", display: scraped.packUnit ?? "—" },
+        { key: "costPerPack" as const, label: "Cost per pack", display: scraped.costPerPack != null ? `£${scraped.costPerPack.toFixed(2)}` : "—" },
+        { key: "supplierPartNumber" as const, label: "Supplier part no.", display: scraped.supplierPartNumber ?? "—" },
+        { key: "ingredients" as const, label: "Ingredient declaration", display: scraped.ingredients ?? "—" },
+        { key: "allergens" as const, label: "Allergens", display: scraped.allergens.length ? scraped.allergens.join(", ") : "—" },
+        { key: "notes" as const, label: "Notes", display: scraped.notes ?? "—" },
+      ] satisfies PreviewRow[]).filter(r => r.display !== "—")
+    : [];
+
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
       <DialogContent className="sm:max-w-[640px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto z-[200]">
@@ -180,6 +299,78 @@ export function IngredientFormDialog({
             </p>
           </>
         )}
+
+        {/* Scrape from URL — the user's first move when adding an
+            ingredient from a supplier site. Paste the product URL,
+            click Scrape, review the fields Claude extracted, then
+            apply. Anything not ticked stays untouched in the form. */}
+        <div className="mb-4 rounded-xl border border-primary/30 bg-primary/5 p-4">
+          <p className="text-sm font-semibold mb-1">Scrape from supplier page</p>
+          <p className="text-xs text-muted-foreground mb-3">
+            Paste a product URL (Brakes, Bidfood, supermarkets, anywhere) and we'll pull the name, brand, pack size, price and allergens out of the page.
+          </p>
+          <div className="flex gap-2">
+            <input
+              {...register("orderingUrl")}
+              type="url"
+              placeholder="https://www.brakes.co.uk/..."
+              className={cn(inputClass, "flex-1")}
+            />
+            <button
+              type="button"
+              onClick={runScrape}
+              disabled={scrapeLoading || !orderingUrlValue.trim()}
+              className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5 shrink-0"
+            >
+              {scrapeLoading ? <span className="inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" /> : null}
+              {scrapeLoading ? "Scraping…" : "Scrape"}
+            </button>
+          </div>
+          {scrapeError && <p className="text-xs text-destructive mt-2">{scrapeError}</p>}
+          {scraped && (
+            <div className="mt-3 rounded-lg border border-border bg-background p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Review &amp; apply</p>
+                <button
+                  type="button"
+                  onClick={() => setScraped(null)}
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                >
+                  Discard
+                </button>
+              </div>
+              {fieldRowsToPreview.length === 0 ? (
+                <p className="text-xs text-muted-foreground italic">No fields found on that page. Try a different URL or fill in manually.</p>
+              ) : (
+                <>
+                  <div className="space-y-1.5">
+                    {fieldRowsToPreview.map(row => (
+                      <label key={row.key} className="flex items-start gap-2 text-xs cursor-pointer hover:bg-secondary/30 rounded px-1.5 py-1">
+                        <input
+                          type="checkbox"
+                          checked={applyFlags[row.key]}
+                          onChange={e => setApplyFlags(prev => ({ ...prev, [row.key]: e.target.checked }))}
+                          className="mt-0.5 w-3.5 h-3.5 rounded border-border"
+                        />
+                        <span className="text-muted-foreground w-32 shrink-0">{row.label}</span>
+                        <span className="text-foreground flex-1 break-words">{row.display}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <div className="flex justify-end pt-1 border-t border-border">
+                    <button
+                      type="button"
+                      onClick={applyScraped}
+                      className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90"
+                    >
+                      Apply selected
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
 
