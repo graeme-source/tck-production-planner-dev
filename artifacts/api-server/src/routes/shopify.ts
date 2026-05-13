@@ -169,29 +169,16 @@ router.get("/weekly-orders", async (req, res) => {
       monday.setUTCDate(monday.getUTCDate() + diff);
     }
 
-    // Load the variant → pack-size map once. Restricted to the standard
-    // 2-pack SKU per recipe (2-pack calzones and 2-portion mac & cheese)
-    // — anything else (8-pack bundles, single items, gift sets, etc.)
-    // is excluded so the dashboard count reflects "how many standard
-    // packs are going out the door", not a mixed total inflated by
-    // bundle orders. Wonky variants share the recipe's pack_size so
-    // they're included automatically as long as the recipe is 2-pack.
-    const variantPackSize = new Map<string, number>();
-    try {
-      const mappings = await db.execute<{ shopify_variant_id: string | null; wonky_variant_id: string | null; pack_size: string }>(sql`
-        SELECT m.shopify_variant_id, m.wonky_variant_id, r.pack_size
-        FROM recipe_shopify_mappings m
-        INNER JOIN recipes r ON r.id = m.recipe_id
-        WHERE r.pack_size = 2
-      `);
-      for (const row of mappings.rows ?? mappings) {
-        const ps = Number(row.pack_size) || 1;
-        if (row.shopify_variant_id) variantPackSize.set(String(row.shopify_variant_id), ps);
-        if (row.wonky_variant_id) variantPackSize.set(String(row.wonky_variant_id), ps);
-      }
-    } catch (mapErr) {
-      console.warn("[Shopify] weekly-orders: variant→packSize map unavailable", mapErr);
-    }
+    // packCount = "packs going out the door". Mirrors the filters
+    // applied on the Dispatches page (include "2 Pack" variants,
+    // exclude "8 Pack Bag" variants and "F2F" products) and sums
+    // line-item quantities directly — so a calzone order of qty 3
+    // of a "2 Pack" variant counts as 3 packs, not 6 singles.
+    // Previously this multiplied quantity by recipe pack_size, which
+    // double-counted and disagreed with the Dispatches page total.
+    const INCLUDE_VARIANT = "2 pack";
+    const EXCLUDE_VARIANT = "8 pack bag";
+    const EXCLUDE_TITLE = "f2f";
 
     // Pull each day's orders with line_items so we can compute pack count
     // alongside the order count. getOrdersByTag is REST-paginated; the
@@ -216,9 +203,12 @@ router.get("/weekly-orders", async (req, res) => {
           orderCount += 1;
           if (o.fulfillment_status === "fulfilled") fulfilledCount += 1;
           for (const li of o.line_items ?? []) {
-            const variantKey = li.variant_id != null ? String(li.variant_id) : null;
-            const packSize = variantKey ? variantPackSize.get(variantKey) ?? 0 : 0;
-            packCount += (li.quantity || 0) * packSize;
+            const productTitle = (li.title ?? "").toLowerCase();
+            const variantTitle = (li.variant_title ?? "").toLowerCase();
+            if (EXCLUDE_TITLE && productTitle.includes(EXCLUDE_TITLE)) continue;
+            if (EXCLUDE_VARIANT && variantTitle.includes(EXCLUDE_VARIANT)) continue;
+            if (INCLUDE_VARIANT && !variantTitle.includes(INCLUDE_VARIANT)) continue;
+            packCount += li.quantity || 0;
           }
         }
 
