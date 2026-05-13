@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { motion, AnimatePresence } from "framer-motion";
 import {
   BookOpen, X, Loader2, Plus, Upload, Trash2, Filter, ChevronLeft, ChevronRight,
-  Edit2, ArrowUp, ArrowDown, FileText, Image as ImageIcon, Camera,
+  Edit2, ArrowUp, ArrowDown, FileText, Image as ImageIcon, Camera, CheckCircle2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -824,6 +824,22 @@ function Editor({
     }
   };
 
+  /** Closing the dialog by clicking X / Library / Save & Close used to
+   *  drop pending edits — the title onBlur and step-description onBlur
+   *  never fired if the user reached straight for the close button.
+   *  Blur the active element first so its onBlur autosave fires, then
+   *  flush any stale title before we tear the dialog down. */
+  const flushAndClose = (next: () => void) => {
+    const active = document.activeElement as HTMLElement | null;
+    active?.blur?.();
+    if (sop && title !== sop.title) {
+      // Fire-and-forget — the network request continues even after the
+      // dialog unmounts, so the title still lands server-side.
+      saveMeta({ title });
+    }
+    next();
+  };
+
   const togglePickerId = (id: string) => {
     setPickerIds(prev => {
       const next = new Set(prev);
@@ -909,11 +925,14 @@ function Editor({
     >
       <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-4xl max-h-[94vh] flex flex-col pointer-events-auto">
         <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
-          <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+          <button onClick={() => flushAndClose(onBack)} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
             <ChevronLeft className="w-4 h-4" /> Library
           </button>
-          <h2 className="font-display font-bold text-lg">Edit SOP</h2>
-          <button onClick={onClose} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary">
+          <div className="flex flex-col items-center">
+            <h2 className="font-display font-bold text-lg leading-none">Edit SOP</h2>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Autosaves as you go</p>
+          </div>
+          <button onClick={() => flushAndClose(onClose)} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -1035,6 +1054,24 @@ function Editor({
               </div>
             </>
           )}
+        </div>
+
+        {/* Sticky footer — explicit Save & Close so reaching for the
+            close button doesn't drop in-flight typing. Pairs with the
+            autosave hint in the header. */}
+        <div className="flex items-center justify-end gap-3 px-5 py-3 border-t border-border flex-shrink-0 bg-card/95">
+          <button
+            onClick={() => flushAndClose(onBack)}
+            className="px-4 py-2 rounded-xl border border-border text-sm font-medium hover:bg-secondary/50"
+          >
+            Back to library
+          </button>
+          <button
+            onClick={() => flushAndClose(onClose)}
+            className="px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 flex items-center gap-2"
+          >
+            <CheckCircle2 className="w-4 h-4" /> Save &amp; Close
+          </button>
         </div>
       </div>
     </motion.div>
