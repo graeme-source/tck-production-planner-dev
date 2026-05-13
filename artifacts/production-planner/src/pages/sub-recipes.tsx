@@ -5,6 +5,7 @@ import type { Ingredient, SubRecipeDetail, SubRecipe } from "@workspace/api-clie
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
+import { IngredientCombobox } from "@/components/ingredient-combobox";
 import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2, RotateCcw, FlaskConical, Info, Layers, Eye, Target, Minus, QrCode } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useForm, useFieldArray } from "react-hook-form";
@@ -501,15 +502,12 @@ function SubRecipeForm({
               return (
                 <div key={field.id}>
                   <div className="grid grid-cols-[1fr_120px_44px_44px] gap-2 items-center">
-                    <select
-                      {...register(`ingredients.${index}.ingredientId`)}
-                      className="px-2 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 truncate"
-                    >
-                      <option value={0} disabled>Select ingredient...</option>
-                      {localIngredients.map(i => (
-                        <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>
-                      ))}
-                    </select>
+                    <IngredientCombobox
+                      value={selectedId}
+                      onChange={(id) => setValue(`ingredients.${index}.ingredientId`, id, { shouldValidate: true })}
+                      options={localIngredients}
+                      placeholder="Select ingredient..."
+                    />
                     {(() => {
                       const isKg = unit === "kg";
                       const displayUnit = isKg ? (ingDisplayUnits[index] ?? "g") : null;

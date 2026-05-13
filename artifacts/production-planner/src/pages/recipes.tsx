@@ -5,6 +5,7 @@ import { useAppMutations } from "@/hooks/use-mutations";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
+import { IngredientCombobox } from "@/components/ingredient-combobox";
 import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, QrCode, Filter } from "lucide-react";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import * as z from "zod";
@@ -111,75 +112,6 @@ type SubRecipeOption = {
   yieldUnit: string;
   costPerYieldUnit: number;
 };
-
-function IngredientCombobox({ value, onChange, options }: { value: number; onChange: (id: number) => void; options: IngredientOption[] }) {
-  const [search, setSearch] = useState("");
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const selected = options.find(o => o.id === Number(value));
-  const filtered = options.filter(o => o.name.toLowerCase().includes(search.toLowerCase()));
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-        setSearch("");
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
-
-  useEffect(() => {
-    if (open) setTimeout(() => inputRef.current?.focus(), 0);
-  }, [open]);
-
-  return (
-    <div ref={ref} className="relative flex-1 min-w-0">
-      {open ? (
-        <input
-          ref={inputRef}
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="w-full px-2 py-1.5 bg-background border border-primary rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
-          placeholder="Type to search…"
-        />
-      ) : (
-        <button
-          type="button"
-          onClick={() => { setOpen(true); setSearch(""); }}
-          className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs text-left focus:outline-none focus:ring-2 focus:ring-primary/30 truncate"
-        >
-          {selected
-            ? <span>{selected.name} <span className="text-muted-foreground">({selected.unit})</span></span>
-            : <span className="text-muted-foreground">Select…</span>
-          }
-        </button>
-      )}
-
-      {open && (
-        <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-popover border border-border rounded-lg shadow-lg max-h-48 overflow-y-auto">
-          {filtered.length === 0
-            ? <p className="text-xs text-muted-foreground p-2 text-center italic">No ingredients found</p>
-            : filtered.map(o => (
-              <button
-                key={o.id}
-                type="button"
-                onMouseDown={e => { e.preventDefault(); onChange(o.id); setOpen(false); setSearch(""); }}
-                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-accent transition-colors ${Number(value) === o.id ? "bg-accent font-medium" : ""}`}
-              >
-                {o.name} <span className="text-muted-foreground">({o.unit})</span>
-              </button>
-            ))
-          }
-        </div>
-      )}
-    </div>
-  );
-}
 
 function RecipeForm({
   defaultValues,
@@ -660,10 +592,10 @@ function RecipeForm({
               {/* Sub-recipes section */}
               <div>
                 <div className="flex items-center justify-between py-1.5">
-                  <span className="text-xs font-semibold text-accent uppercase tracking-wide">Prep Items</span>
+                  <span className="text-xs font-semibold text-accent uppercase tracking-wide">Sub Recipes</span>
                   <button type="button" onClick={() => appendSub({ subRecipeId: 0, quantity: 0, marinadeForIngredientId: null, includeInFillingMix: false, isTopping: false, showInPrep: false, mixingOverage: 0 })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add</button>
                 </div>
-                {subFields.length === 0 && <p className="text-xs text-muted-foreground italic pl-1 pb-1">No prep items added</p>}
+                {subFields.length === 0 && <p className="text-xs text-muted-foreground italic pl-1 pb-1">No sub recipes added</p>}
                 <div className="space-y-1.5">
                   {subFields.map((field, index) => {
                     const cost = subLineCost(index);
