@@ -51,7 +51,7 @@ interface DashboardData {
   tomorrowNonCoreItems: Array<{ recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null }>;
   todayPlan: {
     id: number | null;
-    items: Array<{ recipeId: number; recipeName: string; batchesTarget: number; recipeCategory: string | null }>;
+    items: Array<{ recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null; eightPackBagCount: number }>;
   };
   yesterdayKpis: {
     wonkyCount: number;
@@ -765,7 +765,7 @@ function SlideBody({ slide, data, onRefresh }: { slide: MeetingSlide; data: Dash
     case "yesterday_kpis": return <YesterdayKpisSlide data={data} slide={slide} />;
     case "order_of_production": return <OrderOfProductionSlide data={data} slide={slide} />;
     case "local_delivery": return <LocalDeliverySlide data={data} slide={slide} />;
-    case "bag_orders": return <BagOrdersSlide slide={slide} />;
+    case "bag_orders": return <BagOrdersSlide data={data} slide={slide} />;
     case "short_on_pack": return <ShortOnPackSlide data={data} slide={slide} />;
     case "safety_issues": return <SafetyIssuesSlide data={data} onRefresh={onRefresh} slide={slide} />;
     case "system_updates": return <SystemUpdatesSlide slide={slide} />;
@@ -952,13 +952,35 @@ function OrderOfProductionSlide({ data, slide }: { data: DashboardData; slide: M
       ) : (
         <div className="glass-panel rounded-2xl overflow-hidden">
           {data.todayPlan.items.map((it, i) => (
-            <div key={it.recipeId} className={cn("flex items-center justify-between px-5 py-3", i > 0 && "border-t border-border/50")}>
-              <div className="flex items-center gap-3 min-w-0">
-                <span className="text-xs text-muted-foreground tabular-nums w-6">{i + 1}</span>
-                <span className="font-medium truncate">{it.recipeName}</span>
-                {it.recipeCategory === "Macaroni Cheese" && <span className="text-[10px] uppercase tracking-wide bg-amber-500/10 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-full font-semibold">Mac</span>}
+            <div
+              key={it.recipeId}
+              className={cn(
+                "flex items-stretch gap-4 px-6 py-4",
+                i > 0 && "border-t border-border/50",
+              )}
+            >
+              {/* Big colour bar — runs the full height of the row so
+                  it's the first thing the eye lands on from across
+                  the room. Falls back to a neutral chip if the recipe
+                  has no colour set. */}
+              <span
+                className="w-3 rounded-full shrink-0"
+                style={{ backgroundColor: it.recipeColor ?? "hsl(var(--muted))" }}
+                aria-hidden
+              />
+              <div className="flex items-center gap-4 min-w-0 flex-1">
+                <span className="text-3xl font-display font-bold tabular-nums text-muted-foreground w-10 shrink-0">{i + 1}</span>
+                <span className="text-3xl font-semibold leading-tight truncate">{it.recipeName}</span>
+                {it.recipeCategory === "Macaroni Cheese" && (
+                  <span className="text-sm uppercase tracking-wide bg-amber-500/10 text-amber-700 dark:text-amber-300 px-3 py-1 rounded-full font-bold shrink-0">Mac</span>
+                )}
               </div>
-              <span className="text-sm font-semibold tabular-nums">{it.batchesTarget}{it.recipeCategory === "Macaroni Cheese" ? " packs" : " batches"}</span>
+              <span className="text-3xl font-display font-bold tabular-nums whitespace-nowrap self-center">
+                {it.batchesTarget}
+                <span className="text-base font-medium text-muted-foreground ml-2">
+                  {it.recipeCategory === "Macaroni Cheese" ? "packs" : "batches"}
+                </span>
+              </span>
             </div>
           ))}
         </div>
@@ -1008,29 +1030,146 @@ function LocalDeliverySlide({ data, slide }: { data: DashboardData; slide: Meeti
   );
 }
 
-function BagOrdersSlide({ slide }: { slide: MeetingSlide }) {
+function BagOrdersSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
+  const bagRows = (data.todayPlan.items ?? [])
+    .filter(it => (it.eightPackBagCount ?? 0) > 0);
+  const totalBags = bagRows.reduce((s, r) => s + (r.eightPackBagCount ?? 0), 0);
+
   return (
     <div>
       <SectionTitle>{slide.title || "Bag Orders"}</SectionTitle>
-      <SectionLead>Anything special for bag customers today? Anyone missing from the dispatch list?</SectionLead>
-      <div className="glass-panel rounded-2xl p-8 text-center text-muted-foreground">
-        <ShoppingBag className="w-12 h-12 mx-auto mb-3 opacity-40" />
-        <p>Quick verbal check — host calls out any unusual bag orders or customer notes.</p>
-      </div>
+      <SectionLead>8-pack bags on today's production plan.</SectionLead>
+      {bagRows.length === 0 ? (
+        <div className="glass-panel rounded-2xl p-8 text-center text-muted-foreground">
+          <ShoppingBag className="w-12 h-12 mx-auto mb-3 opacity-40" />
+          <p>No 8-pack bags on today's plan.</p>
+        </div>
+      ) : (
+        <>
+          <div className="glass-panel rounded-2xl overflow-hidden">
+            {bagRows.map((it, i) => (
+              <div
+                key={it.recipeId}
+                className={cn("flex items-stretch gap-4 px-6 py-4", i > 0 && "border-t border-border/50")}
+              >
+                <span
+                  className="w-3 rounded-full shrink-0"
+                  style={{ backgroundColor: it.recipeColor ?? "hsl(var(--muted))" }}
+                  aria-hidden
+                />
+                <span className="text-2xl font-semibold flex-1 truncate self-center">{it.recipeName}</span>
+                <span className="text-2xl font-display font-bold tabular-nums self-center whitespace-nowrap">
+                  {it.eightPackBagCount}
+                  <span className="text-base font-medium text-muted-foreground ml-2">
+                    {it.eightPackBagCount === 1 ? "bag" : "bags"}
+                  </span>
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="text-sm text-muted-foreground mt-3 text-right">
+            <span className="font-semibold text-foreground">{totalBags}</span> total 8-pack bag{totalBags === 1 ? "" : "s"}
+          </p>
+        </>
+      )}
     </div>
   );
 }
 
+interface CalcRecipeRow {
+  recipeId: number;
+  recipeName: string;
+  color: string | null;
+  isCoreMenu: boolean;
+  fridgeStock: number;
+  dispatch1Qty: number;
+  deficit: number;
+}
+
 function ShortOnPackSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
-  const k = data.yesterdayKpis;
+  // Use the existing /api/production-plans/calculate endpoint as the
+  // single source of truth — same numbers the planner page shows for
+  // today, including fridge stock, today's despatch demand and the
+  // per-recipe deficit. Filter to core recipes only since the user
+  // wants the morning standard view.
+  const { data: calc, isLoading } = useQuery<{ recipes: CalcRecipeRow[] }>({
+    queryKey: ["short-on-pack-today", data.today],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/production-plans/calculate?planDate=${data.today}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+    staleTime: 60_000,
+  });
+
+  const rows = (calc?.recipes ?? [])
+    .filter(r => r.isCoreMenu)
+    .map(r => {
+      const have = r.fridgeStock;
+      const need = r.dispatch1Qty;
+      const surplus = have - need; // +ve = surplus, -ve = deficit
+      const tone: "ok" | "warn" | "bad" = surplus >= 0 ? "ok" : surplus > -need * 0.1 ? "warn" : "bad";
+      return { ...r, have, need, surplus, tone };
+    })
+    .sort((a, b) => a.surplus - b.surplus); // shortest first
+
   return (
     <div>
       <SectionTitle>{slide.title || "Short on the Pack"}</SectionTitle>
-      <SectionLead>What didn't we have enough of yesterday? Where did we leave filling?</SectionLead>
-      <div className="grid grid-cols-2 gap-4">
-        <KpiTile label="Shorts yesterday" value={k.shortCount.toString()} tone={k.shortCount > 0 ? "warn" : "ok"} />
-        <KpiTile label="Leftover filling" value={`${k.leftoverFillingGrams}g`} tone={k.leftoverFillingGrams > 500 ? "warn" : "ok"} />
-      </div>
+      <SectionLead>What recipes are we short on for today's pack?</SectionLead>
+
+      {isLoading ? (
+        <div className="glass-panel rounded-2xl p-6 flex justify-center">
+          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="glass-panel rounded-2xl p-6 text-muted-foreground">No core recipes on today's plan.</div>
+      ) : (
+        <div className="glass-panel rounded-2xl overflow-hidden">
+          {/* Header */}
+          <div className="grid grid-cols-[1fr_5rem_5rem_5rem] gap-3 px-5 py-2 bg-secondary/30 text-xs uppercase tracking-wide text-muted-foreground font-semibold">
+            <span>Recipe</span>
+            <span className="text-right">Have</span>
+            <span className="text-right">Need</span>
+            <span className="text-right">+/−</span>
+          </div>
+          {rows.map((r, i) => {
+            const toneClass =
+              r.tone === "ok"   ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/40" :
+              r.tone === "warn" ? "bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/40" :
+                                  "bg-red-500/15 text-red-700 dark:text-red-300 border-red-500/50";
+            return (
+              <div
+                key={r.recipeId}
+                className={cn(
+                  "grid grid-cols-[1fr_5rem_5rem_5rem] gap-3 items-center px-5 py-3 border-l-4",
+                  toneClass,
+                  i > 0 && "border-t border-border/50",
+                )}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: r.color ?? "hsl(var(--muted))" }} aria-hidden />
+                  <span className="text-xl font-semibold truncate">{r.recipeName}</span>
+                </div>
+                <span className="text-xl font-bold tabular-nums text-right">{r.have}</span>
+                <span className="text-xl font-bold tabular-nums text-right">{r.need}</span>
+                <span className="text-xl font-bold tabular-nums text-right">
+                  {r.surplus > 0 ? `+${r.surplus}` : r.surplus}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Legend */}
+      {rows.length > 0 && (
+        <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-emerald-500 inline-block" /> Enough</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-500 inline-block" /> Tight</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-red-500 inline-block" /> Short</span>
+        </div>
+      )}
     </div>
   );
 }

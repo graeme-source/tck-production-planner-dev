@@ -175,14 +175,16 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
       .from(productionPlansTable)
       .where(eq(productionPlansTable.planDate, today))
       .limit(1);
-    let todayPlanItems: Array<{ recipeId: number; recipeName: string; batchesTarget: number; recipeCategory: string | null }> = [];
+    let todayPlanItems: Array<{ recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null; eightPackBagCount: number }> = [];
     if (todayPlan) {
       todayPlanItems = await db
         .select({
           recipeId: productionPlanItemsTable.recipeId,
           recipeName: recipesTable.name,
+          recipeColor: recipesTable.color,
           batchesTarget: productionPlanItemsTable.batchesTarget,
           recipeCategory: recipesTable.category,
+          eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
         })
         .from(productionPlanItemsTable)
         .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
