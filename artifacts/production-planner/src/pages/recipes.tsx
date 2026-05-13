@@ -462,11 +462,10 @@ function RecipeForm({
 
               {/* Ingredients section */}
               <div className="mb-1">
-                <div className="flex items-center justify-between py-1.5">
+                <div className="py-1.5">
                   <span className="text-xs font-semibold text-primary uppercase tracking-wide">
                     Ingredients <span className="font-normal normal-case text-muted-foreground tracking-normal">(cooked qty)</span>
                   </span>
-                  <button type="button" onClick={() => appendIng({ ingredientId: 0, quantity: 0, marinadeForIngredientId: null, includeInFillingMix: false, isTopping: false, showInPrep: false, mixingOverage: 0 })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add</button>
                 </div>
                 {ingFields.length === 0 && <p className="text-xs text-muted-foreground italic pl-1 pb-1">No ingredients added</p>}
                 <div className="space-y-1.5">
@@ -479,20 +478,18 @@ function RecipeForm({
                     return (
                       <div key={field.id} className="space-y-0.5">
                         <div className="grid grid-cols-[1fr_6rem_3.5rem_2rem_2rem_2rem_4rem_1.25rem] gap-x-2 gap-y-0 items-center">
-                          <div className="flex gap-1 min-w-0">
-                            <Controller
-                              control={control}
-                              name={`ingredients.${index}.ingredientId`}
-                              render={({ field }) => (
-                                <IngredientCombobox
-                                  value={Number(field.value)}
-                                  onChange={id => field.onChange(id)}
-                                  options={localIngredients}
-                                />
-                              )}
-                            />
-                            <button type="button" title="Create a new ingredient" onClick={() => openQuickAdd(index)} className="flex-shrink-0 px-1.5 py-1.5 rounded-lg border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-colors text-xs font-bold leading-none">+</button>
-                          </div>
+                          <Controller
+                            control={control}
+                            name={`ingredients.${index}.ingredientId`}
+                            render={({ field }) => (
+                              <IngredientCombobox
+                                value={Number(field.value)}
+                                onChange={id => field.onChange(id)}
+                                options={localIngredients}
+                                onCreateNew={() => openQuickAdd(index)}
+                              />
+                            )}
+                          />
                           {(() => {
                             const isKg = thisIng?.unit === "kg";
                             const displayUnit = isKg ? (ingDisplayUnits[index] ?? "g") : null;
@@ -584,6 +581,13 @@ function RecipeForm({
                     );
                   })}
                 </div>
+                <button
+                  type="button"
+                  onClick={() => appendIng({ ingredientId: 0, quantity: 0, marinadeForIngredientId: null, includeInFillingMix: false, isTopping: false, showInPrep: false, mixingOverage: 0 })}
+                  className="mt-1.5 w-full px-2 py-1.5 rounded-lg border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-colors text-xs font-medium"
+                >
+                  + Add ingredient to recipe
+                </button>
               </div>
 
               {/* Divider */}
@@ -591,9 +595,8 @@ function RecipeForm({
 
               {/* Sub-recipes section */}
               <div>
-                <div className="flex items-center justify-between py-1.5">
+                <div className="py-1.5">
                   <span className="text-xs font-semibold text-accent uppercase tracking-wide">Sub Recipes</span>
-                  <button type="button" onClick={() => appendSub({ subRecipeId: 0, quantity: 0, marinadeForIngredientId: null, includeInFillingMix: false, isTopping: false, showInPrep: false, mixingOverage: 0 })} className="text-xs font-medium bg-secondary px-2 py-1 rounded-md hover:bg-secondary/80 transition-colors">+ Add</button>
                 </div>
                 {subFields.length === 0 && <p className="text-xs text-muted-foreground italic pl-1 pb-1">No sub recipes added</p>}
                 <div className="space-y-1.5">
@@ -698,6 +701,13 @@ function RecipeForm({
                     );
                   })}
                 </div>
+                <button
+                  type="button"
+                  onClick={() => appendSub({ subRecipeId: 0, quantity: 0, marinadeForIngredientId: null, includeInFillingMix: false, isTopping: false, showInPrep: false, mixingOverage: 0 })}
+                  className="mt-1.5 w-full px-2 py-1.5 rounded-lg border border-dashed border-accent/40 text-accent hover:bg-accent/10 transition-colors text-xs font-medium"
+                >
+                  + Add sub-recipe to recipe
+                </button>
               </div>
             </div>
           );

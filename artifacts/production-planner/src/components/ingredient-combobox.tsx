@@ -22,9 +22,11 @@ interface Props {
   options: IngredientComboboxOption[];
   placeholder?: string;
   className?: string;
+  /** Optional pinned footer action — typically "Add new ingredient to database". */
+  onCreateNew?: () => void;
 }
 
-export function IngredientCombobox({ value, onChange, options, placeholder, className }: Props) {
+export function IngredientCombobox({ value, onChange, options, placeholder, className, onCreateNew }: Props) {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -73,20 +75,31 @@ export function IngredientCombobox({ value, onChange, options, placeholder, clas
       )}
 
       {open && (
-        <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-popover border border-border rounded-lg shadow-lg max-h-48 overflow-y-auto">
-          {filtered.length === 0
-            ? <p className="text-xs text-muted-foreground p-2 text-center italic">No ingredients found</p>
-            : filtered.map(o => (
-              <button
-                key={o.id}
-                type="button"
-                onMouseDown={e => { e.preventDefault(); onChange(o.id); setOpen(false); setSearch(""); }}
-                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-accent transition-colors ${Number(value) === o.id ? "bg-accent font-medium" : ""}`}
-              >
-                {o.name} <span className="text-muted-foreground">({o.unit})</span>
-              </button>
-            ))
-          }
+        <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-popover border border-border rounded-lg shadow-lg max-h-56 overflow-hidden flex flex-col">
+          <div className="overflow-y-auto flex-1">
+            {filtered.length === 0
+              ? <p className="text-xs text-muted-foreground p-2 text-center italic">No ingredients found</p>
+              : filtered.map(o => (
+                <button
+                  key={o.id}
+                  type="button"
+                  onMouseDown={e => { e.preventDefault(); onChange(o.id); setOpen(false); setSearch(""); }}
+                  className={`w-full text-left px-3 py-1.5 text-xs hover:bg-accent transition-colors ${Number(value) === o.id ? "bg-accent font-medium" : ""}`}
+                >
+                  {o.name} <span className="text-muted-foreground">({o.unit})</span>
+                </button>
+              ))
+            }
+          </div>
+          {onCreateNew && (
+            <button
+              type="button"
+              onMouseDown={e => { e.preventDefault(); setOpen(false); setSearch(""); onCreateNew(); }}
+              className="w-full text-left px-3 py-1.5 text-xs font-medium text-primary border-t border-border hover:bg-primary/10 transition-colors"
+            >
+              + Add new ingredient to database
+            </button>
+          )}
         </div>
       )}
     </div>

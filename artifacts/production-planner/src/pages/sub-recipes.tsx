@@ -466,29 +466,21 @@ function SubRecipeForm({
         </div>
 
         <div className="border-t border-border pt-4">
-          <div className="flex items-center justify-between mb-3">
+          <div className="mb-3">
             <label className="text-sm font-bold">Ingredients</label>
-            <button
-              type="button"
-              onClick={() => appendIng({ ingredientId: 0, quantity: 1 })}
-              className="text-xs font-medium text-primary flex items-center gap-1 hover:underline"
-            >
-              <Plus className="w-3 h-3" /> Add Row
-            </button>
           </div>
           {errors.ingredients?.message && (
             <span className="text-destructive text-xs block mb-2">{errors.ingredients.message}</span>
           )}
 
           {ingFields.length === 0 && (
-            <p className="text-xs text-muted-foreground italic py-2">No raw ingredients — click "Add Row" to start.</p>
+            <p className="text-xs text-muted-foreground italic py-2">No raw ingredients added yet.</p>
           )}
 
           {ingFields.length > 0 && (
-            <div className="grid grid-cols-[1fr_120px_44px_44px] gap-2 mb-1 px-1">
+            <div className="grid grid-cols-[1fr_120px_44px] gap-2 mb-1 px-1">
               <span className="text-xs text-muted-foreground font-medium">Ingredient</span>
               <span className="text-xs text-muted-foreground font-medium text-center">Quantity</span>
-              <span />
               <span />
             </div>
           )}
@@ -501,12 +493,13 @@ function SubRecipeForm({
               const ratio = selectedIng?.processingRatio;
               return (
                 <div key={field.id}>
-                  <div className="grid grid-cols-[1fr_120px_44px_44px] gap-2 items-center">
+                  <div className="grid grid-cols-[1fr_120px_44px] gap-2 items-center">
                     <IngredientCombobox
                       value={selectedId}
                       onChange={(id) => setValue(`ingredients.${index}.ingredientId`, id, { shouldValidate: true })}
                       options={localIngredients}
                       placeholder="Select ingredient..."
+                      onCreateNew={() => openQuickAdd(index)}
                     />
                     {(() => {
                       const isKg = unit === "kg";
@@ -553,14 +546,6 @@ function SubRecipeForm({
                     })()}
                     <button
                       type="button"
-                      title="Add new ingredient"
-                      onClick={() => openQuickAdd(index)}
-                      className="px-1.5 py-2 rounded-lg border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-colors text-xs font-semibold"
-                    >
-                      +New
-                    </button>
-                    <button
-                      type="button"
                       onClick={() => removeIng(index)}
                       className="flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors"
                     >
@@ -589,6 +574,14 @@ function SubRecipeForm({
             })}
           </div>
 
+          <button
+            type="button"
+            onClick={() => appendIng({ ingredientId: 0, quantity: 1 })}
+            className="mt-2 w-full px-2 py-2 rounded-lg border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-colors text-xs font-medium flex items-center justify-center gap-1"
+          >
+            <Plus className="w-3 h-3" /> Add ingredient to sub-recipe
+          </button>
+
           {(ingFields.length > 0 || srFields.length > 0) && (
             <div className="mt-3">
               <YieldSanityCheck
@@ -604,25 +597,15 @@ function SubRecipeForm({
         </div>
 
         <div className="border-t border-border pt-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Layers className="w-4 h-4 text-muted-foreground" />
-              <label className="text-sm font-bold">Sub-recipe Components</label>
-            </div>
-            <button
-              type="button"
-              onClick={() => appendSr({ componentSubRecipeId: 0, quantity: 1 })}
-              className="text-xs font-medium text-primary flex items-center gap-1 hover:underline"
-              disabled={availableSubRecipes.length === 0}
-            >
-              <Plus className="w-3 h-3" /> Add Row
-            </button>
+          <div className="mb-3 flex items-center gap-2">
+            <Layers className="w-4 h-4 text-muted-foreground" />
+            <label className="text-sm font-bold">Sub-recipe Components</label>
           </div>
 
           {availableSubRecipes.length === 0 ? (
             <p className="text-xs text-muted-foreground italic py-2">No other sub-recipes available yet.</p>
           ) : srFields.length === 0 ? (
-            <p className="text-xs text-muted-foreground italic py-2">No nested sub-recipes — click "Add Row" to include a prepared component.</p>
+            <p className="text-xs text-muted-foreground italic py-2">No nested sub-recipes added yet.</p>
           ) : null}
 
           {srFields.length > 0 && (
@@ -703,6 +686,15 @@ function SubRecipeForm({
               );
             })}
           </div>
+
+          <button
+            type="button"
+            onClick={() => appendSr({ componentSubRecipeId: 0, quantity: 1 })}
+            disabled={availableSubRecipes.length === 0}
+            className="mt-2 w-full px-2 py-2 rounded-lg border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-colors text-xs font-medium flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+          >
+            <Plus className="w-3 h-3" /> Add sub-recipe component
+          </button>
         </div>
 
         <div>

@@ -152,13 +152,50 @@ export function IngredientFormDialog({
     ingredients: string | null;
     allergens: string[];
     notes: string | null;
+    supplierId: number | null;
+    supplierName: string | null;
   };
   const [scraped, setScraped] = useState<ScrapedFields | null>(null);
   const [applyFlags, setApplyFlags] = useState<Record<keyof ScrapedFields, boolean>>({
     name: true, brand: true, packSize: true, packUnit: true, costPerPack: true,
     supplierPartNumber: true, ingredients: false, allergens: true, notes: false,
+    supplierId: true, supplierName: true,
   });
   const orderingUrlValue = watch("orderingUrl") ?? "";
+
+  // Match a URL's hostname against the supplier list — "brakes.co.uk"
+  // → "Brakes Food Service" — by stripping common TLD parts and
+  // matching against the supplier's distinctive name token (longest
+  // non-stopword), so generic words like "food" don't cross-match
+  // suppliers (Bidfood vs Brakes Food Service).
+  const matchSupplierFromUrl = (url: string): { id: number; name: string } | null => {
+    const stopwords = new Set([
+      "the", "and", "ltd", "limited", "co", "company", "service", "services",
+      "food", "foods", "products", "supply", "supplies", "fine", "trading",
+    ]);
+    const distinctiveToken = (name: string): string | null => {
+      const toks = name.toLowerCase().split(/\W+/).filter(t => t && !stopwords.has(t));
+      if (toks.length === 0) return null;
+      return toks.reduce((a, b) => (b.length > a.length ? b : a));
+    };
+    try {
+      const host = new URL(url).hostname.toLowerCase();
+      const hostBase = host
+        .replace(/^www\./, "")
+        .replace(/\.(co\.uk|com|net|org|io|uk|eu)$/i, "")
+        .split(".")[0];
+      for (const s of suppliers) {
+        const tok = distinctiveToken(s.name);
+        if (!tok || tok.length < 3) continue;
+        if (hostBase === tok || hostBase.startsWith(tok) || tok.startsWith(hostBase)) {
+          return { id: s.id, name: s.name };
+        }
+      }
+    } catch {
+      // ignore malformed URL
+    }
+    return null;
+  };
 
   const runScrape = async () => {
     const url = (orderingUrlValue || "").trim();
@@ -175,7 +212,13 @@ export function IngredientFormDialog({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
-      setScraped(data.extracted as ScrapedFields);
+      const extracted = data.extracted as Omit<ScrapedFields, "supplierId" | "supplierName">;
+      const supplierMatch = matchSupplierFromUrl(url);
+      setScraped({
+        ...extracted,
+        supplierId: supplierMatch?.id ?? null,
+        supplierName: supplierMatch?.name ?? null,
+      });
     } catch (err) {
       setScrapeError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -237,12 +280,16 @@ export function IngredientFormDialog({
       const next = existing ? `${existing}\n${scraped.notes}` : scraped.notes;
       setValue("notes", next);
     }
+    if (applyFlags.supplierId && scraped.supplierId != null) {
+      setValue("supplierId", scraped.supplierId);
+    }
     setScraped(null);
   };
 
   type PreviewRow = { key: keyof ScrapedFields; label: string; display: string };
   const fieldRowsToPreview: PreviewRow[] = scraped
     ? ([
+        { key: "supplierId" as const, label: "Supplier", display: scraped.supplierName ?? "—" },
         { key: "name" as const, label: "Name", display: scraped.name ?? "—" },
         { key: "brand" as const, label: "Brand", display: scraped.brand ?? "—" },
         { key: "packSize" as const, label: "Pack size", display: scraped.packSize != null ? String(scraped.packSize) : "—" },
@@ -591,11 +638,6 @@ export function IngredientFormDialog({
                 {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
-          </div>
-
-          <div>
-            <label className="text-sm font-medium mb-1 block">Ordering URL</label>
-            <input {...register("orderingUrl")} className={inputClass} placeholder="https://..." />
           </div>
 
           <div className="flex items-center gap-3 py-1">
