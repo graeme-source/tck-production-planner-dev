@@ -1040,6 +1040,25 @@ async function runStartupMigrations() {
     // lib/db/migrations/0009_add_builder_marked_complete_at.sql
     await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS builder_marked_complete_at TIMESTAMP`);
 
+    // Race-safe building completion (see migrations/0017_…). Decouples
+    // partial-batch recording from recipe close, and gates the close on a
+    // live presence ping so one builder can't lock the recipe while the
+    // other is mid-batch. Also adds the admin "Add missed batch" audit
+    // columns on batch_completions.
+    await db.execute(sql`ALTER TABLE batch_completions ADD COLUMN IF NOT EXISTS partial_packs INTEGER`);
+    await db.execute(sql`ALTER TABLE batch_completions ADD COLUMN IF NOT EXISTS correction_by_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL`);
+    await db.execute(sql`ALTER TABLE batch_completions ADD COLUMN IF NOT EXISTS correction_note TEXT`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS builder_presence (
+        id SERIAL PRIMARY KEY,
+        plan_item_id INTEGER NOT NULL REFERENCES production_plan_items(id) ON DELETE CASCADE,
+        station_type TEXT NOT NULL,
+        user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        last_seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_builder_presence UNIQUE (plan_item_id, station_type)
+      )
+    `);
+
     // Oven-station batch weight records (HACCP cooling log + variance tracking).
     // Every oven batch gets a row with the actual pack weight, the computed
     // target (tray + pack_size × portion), and the variance. The final batch

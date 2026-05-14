@@ -67,7 +67,29 @@ export const batchCompletionsTable = pgTable("batch_completions", {
   userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
   startedAt: timestamp("started_at"),
   completedAt: timestamp("completed_at").notNull().defaultNow(),
+  // When the builder finished a batch short (e.g. ran out of filling for the
+  // very last batch), this records the actual pack count produced by THIS
+  // batch slot. Null = full batch contributing packsPerBatch packs.
+  partialPacks: integer("partial_packs"),
+  // Set when an admin retroactively logs a batch on an already-closed recipe
+  // to rectify a miscount on the floor. The accompanying audit row goes here
+  // so we can tell genuine production from corrections.
+  correctionByUserId: integer("correction_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  correctionNote: text("correction_note"),
 });
+
+// Live presence ping per (planItem, station). The building station upserts
+// while a builder is actively working on a recipe; the recipe-close action
+// reads this to reject a close when another builder is mid-batch.
+export const builderPresenceTable = pgTable("builder_presence", {
+  id: serial("id").primaryKey(),
+  planItemId: integer("plan_item_id").notNull().references(() => productionPlanItemsTable.id, { onDelete: "cascade" }),
+  stationType: text("station_type").notNull(),
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  lastSeenAt: timestamp("last_seen_at").notNull().defaultNow(),
+}, (table) => [
+  unique("uq_builder_presence").on(table.planItemId, table.stationType),
+]);
 
 export const stationChangeoversTable = pgTable("station_changeovers", {
   id: serial("id").primaryKey(),
@@ -254,6 +276,7 @@ export type InsertProductionPlan = z.infer<typeof insertProductionPlanSchema>;
 export type ProductionPlan = typeof productionPlansTable.$inferSelect;
 export type ProductionPlanItem = typeof productionPlanItemsTable.$inferSelect;
 export type BatchCompletion = typeof batchCompletionsTable.$inferSelect;
+export type BuilderPresence = typeof builderPresenceTable.$inferSelect;
 export type StationChangeover = typeof stationChangeoversTable.$inferSelect;
 export type StationBreak = typeof stationBreaksTable.$inferSelect;
 export type DptSetting = typeof dptSettingsTable.$inferSelect;
