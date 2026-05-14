@@ -111,10 +111,14 @@ def main():
                     if live_author_id is None:
                         authors_unmapped.append((s["id"], s["title"], name))
 
-            # Fetch local steps
+            # Fetch local steps — video_mime/video_data were added in the
+            # native-video-upload work and may not exist on very old DBs,
+            # but the api-server's startup migration adds them; assume
+            # both sides are current.
             lcur.execute(
                 """
-                SELECT position, description, image_mime, image_data
+                SELECT position, description, image_mime, image_data,
+                       video_mime, video_data
                 FROM sop_steps
                 WHERE sop_id = %s
                 ORDER BY position
@@ -142,10 +146,22 @@ def main():
             for st in steps:
                 tcur.execute(
                     """
-                    INSERT INTO sop_steps (sop_id, position, description, image_mime, image_data)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO sop_steps (
+                        sop_id, position, description,
+                        image_mime, image_data,
+                        video_mime, video_data
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (new_sop_id, st["position"], st["description"], st["image_mime"], bytes(st["image_data"]) if st["image_data"] else None),
+                    (
+                        new_sop_id,
+                        st["position"],
+                        st["description"],
+                        st["image_mime"],
+                        bytes(st["image_data"]) if st["image_data"] else None,
+                        st.get("video_mime"),
+                        bytes(st["video_data"]) if st.get("video_data") else None,
+                    ),
                 )
                 steps_inserted += 1
 

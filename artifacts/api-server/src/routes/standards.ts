@@ -15,6 +15,9 @@ import { sql } from "drizzle-orm";
 
 const router: IRouter = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+// Videos can run to a few minutes — bump the cap to 100MB so short demo
+// clips (mp4/webm/quicktime) fit without re-encoding.
+const videoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
 
 function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.session.userId) {
@@ -52,7 +55,7 @@ function shapeSop(row: SopRow) {
     stations: row.stations ?? [],
     tags: row.tags ?? [],
     authorId: row.author_id,
-    authorName: row.author_name,
+    authorName: row.author_name ?? "(imported)",
     createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
     updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
     stepCount: Number(row.step_count) || 0,
@@ -98,6 +101,8 @@ interface StepRow {
   position: number;
   description: string;
   has_image: boolean;
+  has_video: boolean;
+  video_mime: string | null;
 }
 
 // Get one SOP with its steps.
@@ -123,7 +128,9 @@ router.get("/:id", requireAuth, async (req, res) => {
   }
   const stepsRows = await db.execute<StepRow>(sql`
     SELECT id, sop_id, position, description,
-           (image_mime IS NOT NULL) AS has_image
+           (image_mime IS NOT NULL) AS has_image,
+           (video_mime IS NOT NULL) AS has_video,
+           video_mime
     FROM sop_steps
     WHERE sop_id = ${id}
     ORDER BY position ASC, id ASC
@@ -133,6 +140,8 @@ router.get("/:id", requireAuth, async (req, res) => {
     position: s.position,
     description: s.description,
     hasImage: s.has_image,
+    hasVideo: s.has_video,
+    videoMime: s.video_mime,
   }));
   res.json({ ...shapeSop(sop), steps });
 });
@@ -244,7 +253,7 @@ router.post("/:id/steps", requireAuth, requireEditor, async (req, res) => {
   `);
   await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = ${id}`);
   const newStep = ((inserted.rows ?? inserted) as { id: number }[])[0];
-  res.status(201).json({ id: newStep.id, position: nextPos, description, hasImage: false });
+  res.status(201).json({ id: newStep.id, position: nextPos, description, hasImage: false, hasVideo: false, videoMime: null });
 });
 
 // Update a step's description.
@@ -315,6 +324,72 @@ router.delete("/steps/:stepId/image", requireAuth, requireEditor, async (req, re
     WHERE id = ${stepId}
   `);
   res.json({ ok: true });
+});
+
+// Upload / replace the video on a step. Videos live in their own column
+// pair (video_mime + video_data) so a step can carry both a still and a
+// clip if useful. Allowed mime types are the formats every recent browser
+// can decode natively without us shipping ffmpeg in the container.
+router.post("/steps/:stepId/video", requireAuth, requireEditor, videoUpload.single("video"), async (req, res) => {
+  const stepId = Number(req.params.stepId);
+  if (!Number.isFinite(stepId)) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  if (!req.file) {
+    res.status(400).json({ error: "No video uploaded" });
+    return;
+  }
+  const allowedTypes = ["video/mp4", "video/webm", "video/quicktime", "video/ogg"];
+  if (!allowedTypes.includes(req.file.mimetype)) {
+    res.status(400).json({ error: "Invalid file type. Use MP4, WebM, MOV, or OGG." });
+    return;
+  }
+  await db.execute(sql`
+    UPDATE sop_steps
+    SET video_mime = ${req.file.mimetype}, video_data = ${req.file.buffer}, updated_at = NOW()
+    WHERE id = ${stepId}
+  `);
+  await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = (SELECT sop_id FROM sop_steps WHERE id = ${stepId})`);
+  res.json({ ok: true, hasVideo: true, videoMime: req.file.mimetype });
+});
+
+// Remove a step's video (but keep the step itself).
+router.delete("/steps/:stepId/video", requireAuth, requireEditor, async (req, res) => {
+  const stepId = Number(req.params.stepId);
+  if (!Number.isFinite(stepId)) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  await db.execute(sql`
+    UPDATE sop_steps
+    SET video_mime = NULL, video_data = NULL, updated_at = NOW()
+    WHERE id = ${stepId}
+  `);
+  res.json({ ok: true });
+});
+
+// Stream the video bytes. Uses the stored mime type so <video src="..."> works
+// directly. We don't currently honour Range requests — videos are <100MB so
+// the browser loading the full clip is acceptable for our scale.
+router.get("/steps/:stepId/video", requireAuth, async (req, res) => {
+  const stepId = Number(req.params.stepId);
+  if (!Number.isFinite(stepId)) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const rows = await db.execute<{ video_mime: string | null; video_data: Buffer | null }>(sql`
+    SELECT video_mime, video_data FROM sop_steps WHERE id = ${stepId}
+  `);
+  const row = ((rows.rows ?? rows) as { video_mime: string | null; video_data: Buffer | null }[])[0];
+  if (!row || !row.video_data || !row.video_mime) {
+    res.status(404).json({ error: "No video" });
+    return;
+  }
+  res.setHeader("Content-Type", row.video_mime);
+  res.setHeader("Cache-Control", "private, max-age=300");
+  res.setHeader("Accept-Ranges", "bytes");
+  res.send(row.video_data);
 });
 
 // Stream the image bytes for a step. Served as raw bytes with the stored

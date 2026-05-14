@@ -650,6 +650,10 @@ async function runStartupMigrations() {
       )
     `);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS sop_steps_sop_position_idx ON sop_steps (sop_id, position)`);
+    // Per-step video media. Independent of image_* so a step can carry both
+    // a still and a clip if useful; in practice it's usually one or the other.
+    await db.execute(sql`ALTER TABLE sop_steps ADD COLUMN IF NOT EXISTS video_mime TEXT`);
+    await db.execute(sql`ALTER TABLE sop_steps ADD COLUMN IF NOT EXISTS video_data BYTEA`);
 
     await seedStorageLocations();
 

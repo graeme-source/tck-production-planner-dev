@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   BookOpen, X, Loader2, Plus, Upload, Trash2, Filter, ChevronLeft, ChevronRight,
   Edit2, ArrowUp, ArrowDown, FileText, Image as ImageIcon, Camera, CheckCircle2,
+  Search, ChevronDown, Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -14,6 +15,7 @@ interface SopSummary {
   title: string;
   stations: string[];
   tags: string[];
+  authorId: number | null;
   authorName: string | null;
   stepCount: number;
   coverImageStepId: number | null;
@@ -25,6 +27,8 @@ interface SopStep {
   position: number;
   description: string;
   hasImage: boolean;
+  hasVideo: boolean;
+  videoMime: string | null;
 }
 
 interface SopDetail extends SopSummary {
@@ -106,110 +110,223 @@ function stepImageUrl(stepId: number, cacheBust?: number): string {
   return `/api/standards/steps/${stepId}/image${cacheBust ? `?v=${cacheBust}` : ""}`;
 }
 
-// Searchable tag filter — replaces the long wall of tag chips with a
-// combobox-style input. Selected tags appear as removable chips next to
-// the input; typing filters the dropdown.
-function TagFilterInput({
-  tagOptions,
-  tagFilter,
-  setTagFilter,
+function stepVideoUrl(stepId: number, cacheBust?: number): string {
+  return `/api/standards/steps/${stepId}/video${cacheBust ? `?v=${cacheBust}` : ""}`;
+}
+
+// Detect a video URL in a (possibly multi-line) step description and return
+// what we need to render it. Supports YouTube (watch / shorts / youtu.be /
+// embed forms), Vimeo, and direct mp4/webm/mov links. We only embed when the
+// URL is the *only* meaningful content of the description — when there's
+// surrounding text the user probably wants the link displayed as text.
+type EmbeddedVideo =
+  | { kind: "iframe"; src: string; title: string }
+  | { kind: "file"; src: string; mime?: string };
+
+function detectVideoEmbed(description: string): EmbeddedVideo | null {
+  const trimmed = description.trim();
+  // The entire description must be a single URL with optional surrounding
+  // whitespace. Multi-line / sentence-with-link descriptions fall through
+  // to the normal text renderer (which still linkifies the URL).
+  const match = trimmed.match(/^https?:\/\/\S+$/);
+  if (!match) return null;
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return null;
+  }
+
+  const host = url.hostname.replace(/^www\./, "");
+
+  // YouTube — three URL shapes we care about:
+  //   youtube.com/watch?v=ID
+  //   youtu.be/ID
+  //   youtube.com/shorts/ID
+  //   youtube.com/embed/ID (already embed-shaped, just keep)
+  if (host === "youtube.com" || host === "m.youtube.com" || host === "youtu.be") {
+    let videoId: string | null = null;
+    if (host === "youtu.be") {
+      videoId = url.pathname.split("/").filter(Boolean)[0] ?? null;
+    } else if (url.pathname === "/watch") {
+      videoId = url.searchParams.get("v");
+    } else if (url.pathname.startsWith("/shorts/")) {
+      videoId = url.pathname.split("/")[2] ?? null;
+    } else if (url.pathname.startsWith("/embed/")) {
+      videoId = url.pathname.split("/")[2] ?? null;
+    }
+    if (videoId) {
+      return {
+        kind: "iframe",
+        src: `https://www.youtube.com/embed/${videoId}`,
+        title: "YouTube video",
+      };
+    }
+  }
+
+  // Vimeo — vimeo.com/ID or player.vimeo.com/video/ID
+  if (host === "vimeo.com") {
+    const id = url.pathname.split("/").filter(Boolean).pop();
+    if (id && /^\d+$/.test(id)) {
+      return { kind: "iframe", src: `https://player.vimeo.com/video/${id}`, title: "Vimeo video" };
+    }
+  }
+  if (host === "player.vimeo.com") {
+    return { kind: "iframe", src: trimmed, title: "Vimeo video" };
+  }
+
+  // Direct file — extension hint only; the <video> element will refuse to
+  // play if the server actually serves something else.
+  if (/\.(mp4|webm|mov|m4v|ogg)(\?|$)/i.test(url.pathname)) {
+    return { kind: "file", src: trimmed };
+  }
+
+  return null;
+}
+
+// Internal tags used by the bulk importer / push-to-live script — kept on
+// the row for idempotency but hidden everywhere the user might see them.
+// Anything matching these prefixes is filtered out of the visible chips,
+// the filter dropdown options, and the free-text search corpus.
+const INTERNAL_TAG_PREFIXES = ["ref:", "imported:"];
+
+function isInternalTag(t: string): boolean {
+  return INTERNAL_TAG_PREFIXES.some(p => t.startsWith(p));
+}
+
+function visibleTags(tags: string[] | null | undefined): string[] {
+  if (!tags) return [];
+  return tags.filter(t => !isInternalTag(t));
+}
+
+// Reusable filter dropdown. Closes on outside click + Escape. Supports both
+// single-select (radio behaviour) and multi-select (checkbox behaviour) modes
+// from one component so the library row stays visually consistent.
+interface FilterDropdownOption {
+  value: string;
+  label: string;
+  /** Optional subtitle shown beneath the label, e.g. role/email. */
+  sub?: string;
+}
+function FilterDropdown({
+  label,
+  triggerLabel,
+  options,
+  selected,
+  onChange,
+  multi,
+  align = "left",
 }: {
-  tagOptions: string[];
-  tagFilter: Set<string>;
-  setTagFilter: React.Dispatch<React.SetStateAction<Set<string>>>;
+  /** Static label shown to the left of the trigger button. */
+  label: string;
+  /** Text shown inside the trigger button — caller renders a summary of the
+   *  current selection (e.g. "All stations" / "Ovens + 2 more"). */
+  triggerLabel: string;
+  options: FilterDropdownOption[];
+  /** Currently-selected option values. For single-select, expect 0 or 1. */
+  selected: Set<string>;
+  /** Receives the new selection set. For single-select, contains 0 or 1
+   *  entries (caller handles clearing externally). */
+  onChange: (next: Set<string>) => void;
+  multi: boolean;
+  /** Which edge of the trigger the panel anchors to. */
+  align?: "left" | "right";
 }) {
-  const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+    const onMouseDown = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [open]);
 
-  const filtered = useMemo(() => {
-    const q = search.toLowerCase();
-    return tagOptions.filter(t => !tagFilter.has(t) && (q === "" || t.toLowerCase().includes(q)));
-  }, [tagOptions, tagFilter, search]);
-
-  const selectedList = useMemo(() => Array.from(tagFilter).sort(), [tagFilter]);
+  const toggle = (value: string) => {
+    if (multi) {
+      const next = new Set(selected);
+      if (next.has(value)) next.delete(value); else next.add(value);
+      onChange(next);
+    } else {
+      // Single-select: clicking a selected item clears; clicking another
+      // replaces. The "All" pseudo-option is handled by the caller passing
+      // an empty options list, but we cover it here too.
+      const next = new Set<string>();
+      if (!selected.has(value)) next.add(value);
+      onChange(next);
+      setOpen(false);
+    }
+  };
 
   return (
-    <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
-      <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground flex-shrink-0">
-        <Filter className="w-3.5 h-3.5" />
-        Tags
-      </div>
-      {selectedList.map(t => (
-        <span
-          key={t}
-          className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-primary text-primary-foreground border border-primary"
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-border bg-background hover:border-primary/40 transition-colors min-w-[160px]"
+      >
+        <span className="text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">{label}</span>
+        <span className="text-foreground flex-1 text-left truncate">{triggerLabel}</span>
+        <ChevronDown className={cn("w-3.5 h-3.5 text-muted-foreground transition-transform", open && "rotate-180")} />
+      </button>
+      {open && (
+        <div
+          className={cn(
+            "absolute top-full mt-1 bg-card border border-border rounded-lg shadow-lg min-w-[220px] max-h-72 overflow-y-auto z-20 py-1",
+            align === "right" ? "right-0" : "left-0",
+          )}
         >
-          #{t}
-          <button
-            type="button"
-            onClick={() => setTagFilter(prev => {
-              const next = new Set(prev);
-              next.delete(t);
-              return next;
-            })}
-            className="hover:opacity-80"
-            aria-label={`Remove ${t}`}
-          >
-            <X className="w-3 h-3" />
-          </button>
-        </span>
-      ))}
-      <div ref={ref} className="relative flex-1 min-w-[180px] max-w-[280px]">
-        <input
-          type="text"
-          value={search}
-          onChange={e => { setSearch(e.target.value); setOpen(true); }}
-          onFocus={() => setOpen(true)}
-          placeholder="Search tags…"
-          className="w-full px-2.5 py-1 text-xs bg-background border border-border rounded-full focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
-        />
-        {open && filtered.length > 0 && (
-          <div className="absolute left-0 right-0 top-full mt-1 bg-card border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto z-10">
-            {filtered.slice(0, 50).map(t => (
+          {selected.size > 0 && (
+            <button
+              type="button"
+              onClick={() => { onChange(new Set()); if (!multi) setOpen(false); }}
+              className="w-full text-left px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary/60 border-b border-border"
+            >
+              Clear
+            </button>
+          )}
+          {options.map(opt => {
+            const isSelected = selected.has(opt.value);
+            return (
               <button
-                key={t}
+                key={opt.value}
                 type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => {
-                  setTagFilter(prev => {
-                    const next = new Set(prev);
-                    next.add(t);
-                    return next;
-                  });
-                  setSearch("");
-                }}
-                className="w-full text-left px-3 py-1.5 text-xs hover:bg-secondary/60"
+                onClick={() => toggle(opt.value)}
+                className={cn(
+                  "w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-secondary/60",
+                  isSelected && "bg-secondary/40",
+                )}
               >
-                #{t}
+                {multi ? (
+                  <span className={cn(
+                    "w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0",
+                    isSelected ? "bg-primary border-primary" : "border-border",
+                  )}>
+                    {isSelected && <Check className="w-2.5 h-2.5 text-primary-foreground" />}
+                  </span>
+                ) : (
+                  <span className={cn(
+                    "w-3.5 h-3.5 rounded-full border flex items-center justify-center flex-shrink-0",
+                    isSelected ? "border-primary" : "border-border",
+                  )}>
+                    {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-primary" />}
+                  </span>
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{opt.label}</span>
+                  {opt.sub && <span className="block text-[10px] text-muted-foreground truncate">{opt.sub}</span>}
+                </span>
               </button>
-            ))}
-            {filtered.length > 50 && (
-              <div className="px-3 py-1.5 text-[10px] text-muted-foreground">
-                +{filtered.length - 50} more — keep typing to narrow
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-      {tagFilter.size > 0 && (
-        <button
-          onClick={() => setTagFilter(new Set())}
-          className="text-xs px-2.5 py-1 rounded-full border border-transparent text-muted-foreground hover:text-foreground flex-shrink-0"
-        >
-          Clear
-        </button>
+            );
+          })}
+        </div>
       )}
     </div>
   );
@@ -302,24 +419,33 @@ function Library({
   const { state } = useAuth();
   const canEdit = state.status === "authenticated" && (state.user.role === "admin" || state.user.role === "manager");
 
-  // Station filter model — null means "all stations", any real key filters
-  // server-side. When the dialog opens from a station view we default to
-  // that station so the operator sees their relevant SOPs first; otherwise
-  // we default to "all". The user can switch freely regardless of entry
-  // point.
-  const [stationFilter, setStationFilter] = useState<string | null>(currentStationType ?? null);
-  const [tagFilter, setTagFilter] = useState<Set<string>>(new Set());
+  // Filter model — all three filters are applied client-side. We fetch
+  // every SOP once and slice it in the browser; cheap at this scale and
+  // means changing filters never re-hits the network.
+  //
+  // Stations: multi-select. Empty = no filter. When the dialog opens from
+  // a station page we pre-select that station so the operator sees their
+  // relevant SOPs first.
+  // Authors: single-select. null = all. "me" is a virtual key for the
+  // current user; otherwise the value is "id:<userId>" or
+  // "name:<authorName>" for imported (NULL-author) SOPs.
+  const initialStations = useMemo<Set<string>>(() => {
+    if (!currentStationType) return new Set();
+    return new Set([currentStationType]);
+  }, [currentStationType]);
+  const [stationFilters, setStationFilters] = useState<Set<string>>(initialStations);
+  const [authorFilter, setAuthorFilter] = useState<string | null>(null);
+  const [textSearch, setTextSearch] = useState("");
   const [items, setItems] = useState<SopSummary[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
 
-  const effectiveStationFilter = stationFilter;
+  const currentUserId = state.status === "authenticated" ? state.user.id : null;
 
   const fetchList = useCallback(async () => {
     setLoading(true);
     try {
-      const params = effectiveStationFilter ? `?station=${encodeURIComponent(effectiveStationFilter)}` : "";
-      const resp = await fetch(`/api/standards${params}`, { credentials: "include" });
+      const resp = await fetch(`/api/standards`, { credentials: "include" });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data: SopSummary[] = await resp.json();
       setItems(data);
@@ -330,7 +456,7 @@ function Library({
     } finally {
       setLoading(false);
     }
-  }, [effectiveStationFilter]);
+  }, []);
 
   useEffect(() => { fetchList(); }, [fetchList]);
 
@@ -400,81 +526,180 @@ function Library({
         </div>
 
         {(() => {
-          // Station filter options — if we're on a station, that station is
-          // offered as a quick pick alongside "All stations" at the front
-          // of the list. Whichever mode the user is in, they can flip to
-          // any other station via the same row.
+          // Build the full list of station options (always includes the 10
+          // primary stations + 3 prep sub-keys). The currentStationType
+          // doesn't get special placement any more — it's pre-selected
+          // in the multi-select instead, surfacing relevant SOPs first.
+          // The virtual "Uncategorised" entry surfaces SOPs that haven't
+          // been filed against any station yet — useful for triage.
           const seen = new Set<string>();
-          const stationOptions: Array<{ key: string | null; label: string }> = [];
-          stationOptions.push({ key: null, label: "All stations" });
-          if (currentStationType) {
-            stationOptions.push({ key: currentStationType, label: stationLabel(currentStationType) });
-            seen.add(currentStationType);
-          }
+          const stationOptions: FilterDropdownOption[] = [];
+          stationOptions.push({ value: "__uncategorised__", label: "Uncategorised" });
           for (const s of STATIONS) {
             if (seen.has(s.key)) continue;
             seen.add(s.key);
-            stationOptions.push({ key: s.key, label: s.label });
+            stationOptions.push({ value: s.key, label: s.label });
           }
           for (const k of ["main_prep", "prep_bases", "prep_meat"]) {
             if (seen.has(k)) continue;
             seen.add(k);
-            stationOptions.push({ key: k, label: stationLabel(k) });
+            stationOptions.push({ value: k, label: stationLabel(k) });
           }
 
-          // Tags we've actually seen across the loaded SOPs — the filter
-          // row populates from real usage, so there's nothing to choose
-          // from until the user has created tags via the editor.
-          const allTags = new Set<string>();
-          for (const it of items ?? []) for (const t of it.tags ?? []) allTags.add(t);
-          const tagOptions = Array.from(allTags).sort((a, b) => a.localeCompare(b));
+          // Distinct authors observed across loaded items. Two virtual keys:
+          //   "me"   → current user's authored SOPs (only offered when the
+          //            current user has authored at least one).
+          //   "id:N" → real user id N.
+          //   "name:X" → SOPs whose authorId is null (imports), grouped by
+          //            their stored authorName.
+          const authorOptions: FilterDropdownOption[] = [];
+          const seenAuthorIds = new Set<number>();
+          const seenAuthorNames = new Set<string>();
+          let currentUserAuthoredAny = false;
+          for (const it of items ?? []) {
+            if (it.authorId != null) {
+              if (it.authorId === currentUserId) currentUserAuthoredAny = true;
+              if (!seenAuthorIds.has(it.authorId)) {
+                seenAuthorIds.add(it.authorId);
+                authorOptions.push({
+                  value: `id:${it.authorId}`,
+                  label: it.authorName || `User #${it.authorId}`,
+                });
+              }
+            } else if (it.authorName) {
+              if (!seenAuthorNames.has(it.authorName)) {
+                seenAuthorNames.add(it.authorName);
+                authorOptions.push({
+                  value: `name:${it.authorName}`,
+                  label: it.authorName,
+                });
+              }
+            }
+          }
+          authorOptions.sort((a, b) => a.label.localeCompare(b.label));
+          if (currentUserAuthoredAny) {
+            authorOptions.unshift({ value: "me", label: "My SOPs" });
+          }
+
+          // Trigger summary lines — keep them compact and consistent
+          // ("All …" when nothing selected, "<one label>" for a single
+          // selection, "<n> stations" when more than one is selected).
+          const selectedStationLabels = Array.from(stationFilters)
+            .map(k => stationOptions.find(o => o.value === k)?.label ?? stationLabel(k));
+          const stationTrigger = stationFilters.size === 0
+            ? "All stations"
+            : stationFilters.size === 1
+              ? selectedStationLabels[0]
+              : `${stationFilters.size} stations`;
+
+          const authorTrigger = (() => {
+            if (!authorFilter) return "All authors";
+            if (authorFilter === "me") return "My SOPs";
+            const match = authorOptions.find(o => o.value === authorFilter);
+            return match ? match.label : "Author";
+          })();
 
           return (
             <div className="border-b border-border flex-shrink-0 px-5 py-3 space-y-2">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                <input
+                  type="text"
+                  value={textSearch}
+                  onChange={e => setTextSearch(e.target.value)}
+                  placeholder="Search title or tags…"
+                  className="w-full pl-9 pr-9 py-1.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                />
+                {textSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setTextSearch("")}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-muted-foreground hover:text-foreground"
+                    aria-label="Clear search"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
               <div className="flex items-center gap-2 flex-wrap">
                 <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   <Filter className="w-3.5 h-3.5" />
-                  Station
+                  Filter
                 </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {stationOptions.map(opt => {
-                    const active = stationFilter === opt.key;
-                    return (
-                      <button
-                        key={opt.key ?? "__all"}
-                        onClick={() => setStationFilter(opt.key)}
-                        className={cn(
-                          "text-xs px-2.5 py-1 rounded-full border transition-colors",
-                          active
-                            ? "bg-primary text-primary-foreground border-primary"
-                            : "bg-background text-muted-foreground border-border hover:text-foreground",
-                        )}
-                      >
-                        {opt.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              {tagOptions.length > 0 && (
-                <TagFilterInput
-                  tagOptions={tagOptions}
-                  tagFilter={tagFilter}
-                  setTagFilter={setTagFilter}
+                <FilterDropdown
+                  label="Station"
+                  triggerLabel={stationTrigger}
+                  options={stationOptions}
+                  selected={stationFilters}
+                  onChange={setStationFilters}
+                  multi
                 />
-              )}
+                {(authorOptions.length > 0) && (
+                  <FilterDropdown
+                    label="Author"
+                    triggerLabel={authorTrigger}
+                    options={authorOptions}
+                    selected={authorFilter ? new Set([authorFilter]) : new Set()}
+                    onChange={(next) => {
+                      const first = Array.from(next)[0];
+                      setAuthorFilter(first ?? null);
+                    }}
+                    multi={false}
+                  />
+                )}
+              </div>
             </div>
           );
         })()}
 
         <div className="flex-1 overflow-y-auto p-5">
           {(() => {
-            // Tag filter applied client-side (station filter is server-side).
-            // Match mode is AND: SOP must carry every selected tag.
+            // All three filters applied client-side (we fetch the full
+            // list once per dialog open). An SOP must satisfy every
+            // active filter to appear:
+            //  - Stations: when one or more stations are selected, the
+            //    SOP must have at least one of those stations in its
+            //    own list. The virtual "__uncategorised__" key matches
+            //    SOPs with no stations assigned — selecting it lets the
+            //    user surface SOPs that still need to be filed. SOPs
+            //    with no station are otherwise hidden whenever a real
+            //    station is selected (so "Building Table 1" doesn't
+            //    surface unassigned SOPs alongside real building ones).
+            //  - Author: exact authorId match for real users / "me", or
+            //    name match for imports (authorId === null).
+            //  - Text search: substring of title or any visible tag.
+            const q = textSearch.trim().toLowerCase();
             const filtered = (items ?? []).filter(it => {
-              if (tagFilter.size === 0) return true;
-              const tset = new Set(it.tags ?? []);
-              for (const t of tagFilter) if (!tset.has(t)) return false;
+              if (stationFilters.size > 0) {
+                const sopStations = it.stations ?? [];
+                let hit = false;
+                if (stationFilters.has("__uncategorised__") && sopStations.length === 0) {
+                  hit = true;
+                } else {
+                  for (const s of sopStations) {
+                    if (stationFilters.has(s)) { hit = true; break; }
+                  }
+                }
+                if (!hit) return false;
+              }
+              if (authorFilter) {
+                if (authorFilter === "me") {
+                  if (it.authorId !== currentUserId) return false;
+                } else if (authorFilter.startsWith("id:")) {
+                  const wantedId = Number(authorFilter.slice(3));
+                  if (it.authorId !== wantedId) return false;
+                } else if (authorFilter.startsWith("name:")) {
+                  const wantedName = authorFilter.slice(5);
+                  if (it.authorId != null || it.authorName !== wantedName) return false;
+                }
+              }
+              if (q) {
+                const haystack = [
+                  it.title ?? "",
+                  ...visibleTags(it.tags),
+                ].join(" ").toLowerCase();
+                if (!haystack.includes(q)) return false;
+              }
               return true;
             });
             if (loading) {
@@ -485,16 +710,17 @@ function Library({
               );
             }
             if (items && filtered.length === 0) {
-              const tagsActive = tagFilter.size > 0;
+              const searchActive = q.length > 0;
+              const anyFilterActive = searchActive || stationFilters.size > 0 || authorFilter != null;
               return (
                 <div className="flex flex-col items-center justify-center py-16 text-center">
                   <BookOpen className="w-12 h-12 text-muted-foreground/40 mb-3" />
-                  <p className="font-semibold">No SOPs yet</p>
+                  <p className="font-semibold">No SOPs match</p>
                   <p className="text-sm text-muted-foreground mt-1">
-                    {tagsActive
-                      ? "No SOPs match the selected tags."
-                      : stationFilter
-                        ? `Nothing is filed against ${stationLabel(stationFilter)} yet.`
+                    {searchActive
+                      ? `Nothing matches "${textSearch}".`
+                      : anyFilterActive
+                        ? "Nothing matches the current filters. Adjust station, author, or clear filters."
                         : "Tap \u201cNew SOP\u201d to create your first one."}
                   </p>
                 </div>
@@ -574,18 +800,22 @@ function SopCard({
               All stations
             </span>
           )}
-          {item.tags && item.tags.length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-1">
-              {item.tags.slice(0, 4).map(t => (
-                <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
-                  #{t}
-                </span>
-              ))}
-              {item.tags.length > 4 && (
-                <span className="text-[10px] text-muted-foreground">+{item.tags.length - 4}</span>
-              )}
-            </div>
-          )}
+          {(() => {
+            const shownTags = visibleTags(item.tags);
+            if (shownTags.length === 0) return null;
+            return (
+              <div className="flex flex-wrap gap-1 mt-1">
+                {shownTags.slice(0, 4).map(t => (
+                  <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                    #{t}
+                  </span>
+                ))}
+                {shownTags.length > 4 && (
+                  <span className="text-[10px] text-muted-foreground">+{shownTags.length - 4}</span>
+                )}
+              </div>
+            );
+          })()}
         </div>
         {canEdit && (
           <div className="flex flex-col gap-1 flex-shrink-0">
@@ -692,7 +922,9 @@ function Viewer({
               Edit
             </button>
           )}
-          <button onClick={onClose} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary">
+          {/* Match the editor: X returns to the library list. Use the
+              dialog backdrop / library X to close the whole thing. */}
+          <button onClick={onBack} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -709,32 +941,77 @@ function Viewer({
             <p>This SOP has no steps yet.</p>
           </div>
         )}
-        {!loading && step && (
-          <div className="flex-1 flex flex-col lg:flex-row">
-            {step.hasImage && (
-              <div className="lg:w-3/5 bg-secondary/30 flex items-center justify-center p-6 overflow-hidden">
-                <img
-                  src={stepImageUrl(step.id)}
-                  alt={`Step ${stepIndex + 1}`}
-                  className="max-w-full max-h-[60vh] lg:max-h-full object-contain rounded-lg"
-                />
-              </div>
-            )}
-            <div className={cn(
-              "flex-1 flex flex-col items-center justify-center p-8 overflow-y-auto",
-              !step.hasImage && "lg:items-center",
-            )}>
-              <div className="max-w-3xl w-full">
-                <div className="text-xs uppercase tracking-wider text-muted-foreground font-semibold mb-3">
-                  Step {stepIndex + 1}
+        {!loading && step && (() => {
+          // Media priority for the left pane:
+          //   1. Native uploaded video (highest fidelity)
+          //   2. URL detected in description (YouTube / Vimeo / direct file)
+          //   3. Uploaded image
+          //   4. Nothing (description occupies the full width)
+          //
+          // When a description-URL becomes the media, the text pane shows a
+          // friendly "Video step" label instead of the raw URL — the URL is
+          // now playing as a player, the user doesn't need the address bar.
+          const embeddedFromDescription = !step.hasVideo ? detectVideoEmbed(step.description) : null;
+          const hasMedia = step.hasVideo || embeddedFromDescription !== null || step.hasImage;
+          return (
+            <div className="flex-1 flex flex-col lg:flex-row">
+              {hasMedia && (
+                <div className="lg:w-3/5 bg-secondary/30 flex items-center justify-center p-6 overflow-hidden">
+                  {step.hasVideo ? (
+                    <video
+                      key={step.id}
+                      src={stepVideoUrl(step.id)}
+                      controls
+                      playsInline
+                      className="max-w-full max-h-[60vh] lg:max-h-full rounded-lg bg-black"
+                    />
+                  ) : embeddedFromDescription ? (
+                    embeddedFromDescription.kind === "iframe" ? (
+                      <div className="w-full aspect-video max-h-[70vh]">
+                        <iframe
+                          src={embeddedFromDescription.src}
+                          title={embeddedFromDescription.title}
+                          className="w-full h-full rounded-lg border-0"
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                          allowFullScreen
+                        />
+                      </div>
+                    ) : (
+                      <video
+                        key={step.id}
+                        src={embeddedFromDescription.src}
+                        controls
+                        playsInline
+                        className="max-w-full max-h-[60vh] lg:max-h-full rounded-lg bg-black"
+                      />
+                    )
+                  ) : (
+                    <img
+                      src={stepImageUrl(step.id)}
+                      alt={`Step ${stepIndex + 1}`}
+                      className="max-w-full max-h-[60vh] lg:max-h-full object-contain rounded-lg"
+                    />
+                  )}
                 </div>
-                <p className="text-2xl md:text-3xl lg:text-4xl leading-relaxed font-medium whitespace-pre-wrap">
-                  {step.description || <span className="text-muted-foreground italic">No description.</span>}
-                </p>
+              )}
+              <div className={cn(
+                "flex-1 flex flex-col items-center justify-center p-8 overflow-y-auto",
+                !hasMedia && "lg:items-center",
+              )}>
+                <div className="max-w-3xl w-full">
+                  <div className="text-xs uppercase tracking-wider text-muted-foreground font-semibold mb-3">
+                    Step {stepIndex + 1}
+                  </div>
+                  <p className="text-2xl md:text-3xl lg:text-4xl leading-relaxed font-medium whitespace-pre-wrap">
+                    {embeddedFromDescription
+                      ? <span className="text-muted-foreground italic">Video step — see player.</span>
+                      : (step.description || <span className="text-muted-foreground italic">No description.</span>)}
+                  </p>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {totalSteps > 1 && (
           <>
@@ -939,7 +1216,10 @@ function Editor({
             <h2 className="font-display font-bold text-lg leading-none">Edit SOP</h2>
             <p className="text-[10px] text-muted-foreground mt-0.5">Autosaves as you go</p>
           </div>
-          <button onClick={() => flushAndClose(onClose)} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary">
+          {/* X button returns to the library list rather than closing the
+              whole dialog — the close affordance for the entire library is
+              the X at the top of the library view. */}
+          <button onClick={() => flushAndClose(onBack)} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -995,40 +1275,48 @@ function Editor({
                     Free-form labels for grouping. Type a tag and press Enter to add it.
                     Use them for things like <em>rotation</em>, <em>safety</em>, or <em>changeover</em>.
                   </p>
-                  <div className="flex flex-wrap gap-1.5 items-center">
-                    {tags.map(t => (
-                      <span
-                        key={t}
-                        className="text-xs px-2.5 py-1 rounded-full border border-amber-300 bg-amber-50 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-800 flex items-center gap-1"
-                      >
-                        #{t}
-                        <button
-                          type="button"
-                          onClick={() => removeTag(t)}
-                          className="text-amber-700 hover:text-amber-900 dark:text-amber-300"
-                          title="Remove tag"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </span>
-                    ))}
-                    <input
-                      type="text"
-                      value={tagDraft}
-                      onChange={e => setTagDraft(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === "Enter" || e.key === ",") {
-                          e.preventDefault();
-                          addTag(tagDraft);
-                        } else if (e.key === "Backspace" && tagDraft === "" && tags.length > 0) {
-                          removeTag(tags[tags.length - 1]);
-                        }
-                      }}
-                      onBlur={() => { if (tagDraft.trim()) addTag(tagDraft); }}
-                      placeholder={tags.length === 0 ? "Add a tag…" : ""}
-                      className="flex-1 min-w-[120px] text-xs px-2.5 py-1 bg-background border border-border rounded-full focus:outline-none focus:ring-2 focus:ring-primary/30"
-                    />
-                  </div>
+                  {(() => {
+                    // Internal bookkeeping tags (ref:, imported:) live on the
+                    // row for backend idempotency but are hidden from the
+                    // editor — the user can only see/edit semantic tags.
+                    const editableTags = visibleTags(tags);
+                    return (
+                      <div className="flex flex-wrap gap-1.5 items-center">
+                        {editableTags.map(t => (
+                          <span
+                            key={t}
+                            className="text-xs px-2.5 py-1 rounded-full border border-amber-300 bg-amber-50 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-800 flex items-center gap-1"
+                          >
+                            #{t}
+                            <button
+                              type="button"
+                              onClick={() => removeTag(t)}
+                              className="text-amber-700 hover:text-amber-900 dark:text-amber-300"
+                              title="Remove tag"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </span>
+                        ))}
+                        <input
+                          type="text"
+                          value={tagDraft}
+                          onChange={e => setTagDraft(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === "Enter" || e.key === ",") {
+                              e.preventDefault();
+                              addTag(tagDraft);
+                            } else if (e.key === "Backspace" && tagDraft === "" && editableTags.length > 0) {
+                              removeTag(editableTags[editableTags.length - 1]);
+                            }
+                          }}
+                          onBlur={() => { if (tagDraft.trim()) addTag(tagDraft); }}
+                          placeholder={editableTags.length === 0 ? "Add a tag…" : ""}
+                          className="flex-1 min-w-[120px] text-xs px-2.5 py-1 bg-background border border-border rounded-full focus:outline-none focus:ring-2 focus:ring-primary/30"
+                        />
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -1104,6 +1392,9 @@ function StepRow({
   const [uploading, setUploading] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [imageBust, setImageBust] = useState(0);
+  const [uploadingVideo, setUploadingVideo] = useState(false);
+  const [removingVideo, setRemovingVideo] = useState(false);
+  const [videoBust, setVideoBust] = useState(0);
 
   useEffect(() => { setDescription(step.description); }, [step.description]);
 
@@ -1156,6 +1447,53 @@ function StepRow({
     }
   };
 
+  const uploadVideo = async (file: File) => {
+    // 100MB cap matches the backend videoUpload multer config. Surface a
+    // friendly toast rather than letting multer reject so the user knows
+    // why their drop didn't take.
+    const MAX_BYTES = 100 * 1024 * 1024;
+    if (file.size > MAX_BYTES) {
+      toast({
+        title: "Video too large",
+        description: `Max 100MB. This file is ${(file.size / 1024 / 1024).toFixed(0)}MB.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    setUploadingVideo(true);
+    try {
+      const form = new FormData();
+      form.append("video", file);
+      const resp = await fetch(`/api/standards/steps/${step.id}/video`, {
+        method: "POST",
+        credentials: "include",
+        body: form,
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.error ?? `HTTP ${resp.status}`);
+      }
+      setVideoBust(Date.now());
+      onChanged();
+    } catch (err) {
+      toast({ title: "Video upload failed", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+    } finally {
+      setUploadingVideo(false);
+    }
+  };
+
+  const removeVideo = async () => {
+    setRemovingVideo(true);
+    try {
+      await fetch(`/api/standards/steps/${step.id}/video`, { method: "DELETE", credentials: "include" });
+      onChanged();
+    } catch (err) {
+      toast({ title: "Remove failed", description: String(err), variant: "destructive" });
+    } finally {
+      setRemovingVideo(false);
+    }
+  };
+
   return (
     <div className="border border-border rounded-xl p-3 flex gap-3">
       <div className="flex-shrink-0 flex flex-col items-center gap-1 pt-1">
@@ -1190,7 +1528,18 @@ function StepRow({
           className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
         />
         <div className="flex items-start gap-3">
-          {step.hasImage ? (
+          {step.hasVideo ? (
+            // Native uploaded clip — show a small inline player so the user
+            // sees what they uploaded without having to open the viewer.
+            <video
+              key={videoBust}
+              src={stepVideoUrl(step.id, videoBust)}
+              controls
+              playsInline
+              muted
+              className="w-32 h-24 rounded-lg border border-border flex-shrink-0 bg-black object-cover"
+            />
+          ) : step.hasImage ? (
             <div className="relative w-24 h-24 rounded-lg overflow-hidden border border-border flex-shrink-0 bg-secondary/30">
               <img src={stepImageUrl(step.id, imageBust)} alt="" className="w-full h-full object-cover" />
             </div>
@@ -1240,6 +1589,32 @@ function StepRow({
                 className="text-xs px-3 py-1.5 rounded-lg border border-border text-muted-foreground hover:text-destructive disabled:opacity-50"
               >
                 Remove image
+              </button>
+            )}
+            {/* Native video upload — separate file slot from the image. The
+                viewer prefers a native video over a description-URL embed,
+                so uploading here overrides any link in the description. */}
+            <label className="text-xs px-3 py-1.5 rounded-lg border border-border bg-background hover:bg-secondary cursor-pointer flex items-center gap-1.5">
+              {uploadingVideo ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+              {step.hasVideo ? "Replace video" : "Upload video"}
+              <input
+                type="file"
+                accept="video/mp4,video/webm,video/quicktime,video/ogg"
+                className="hidden"
+                onChange={e => {
+                  const f = e.target.files?.[0];
+                  if (f) uploadVideo(f);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            {step.hasVideo && (
+              <button
+                onClick={removeVideo}
+                disabled={removingVideo}
+                className="text-xs px-3 py-1.5 rounded-lg border border-border text-muted-foreground hover:text-destructive disabled:opacity-50"
+              >
+                Remove video
               </button>
             )}
             <button
