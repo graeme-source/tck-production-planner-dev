@@ -20,7 +20,7 @@ const glossaryTerms = [
   {
     term: "5S / 3S",
     definition: "A system for organising your workspace: Sort (remove what you don't need), Set in order (a place for everything), Shine (keep it clean), Standardise, and Sustain. 3S focuses on the first three.",
-    videoId: "jPXYa3FQP8k",
+    videoId: "IhnAeRytLl0",
   },
   {
     term: "Kanban",
@@ -71,8 +71,8 @@ const videos = [
     description: "Why going to where the work happens is the most powerful thing a leader can do.",
   },
   {
-    id: "jPXYa3FQP8k",
-    title: "5S — Workplace Organisation",
+    id: "IhnAeRytLl0",
+    title: "3S — Workplace Organisation",
     description: "How to organise your workspace so everything has a place and nothing is wasted.",
   },
   {
