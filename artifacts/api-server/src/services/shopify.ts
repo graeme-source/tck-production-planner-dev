@@ -522,16 +522,24 @@ export async function fulfillOrder(
     throw new Error("No open fulfillment orders found for this order — it may already be fulfilled.");
   }
 
+  // When the APC integration is off, fulfilment runs with no tracking
+  // info — Shopify still marks the order shipped and emails the
+  // customer, but without an APC consignment to point at. Skip the
+  // tracking_info block entirely in that case so we don't ship a
+  // broken https://apc.co.uk/tracking/ URL.
+  const hasTracking = !!trackingNumber;
   await shopifyPost(`/fulfillments.json`, {
     fulfillment: {
       line_items_by_fulfillment_order: pendingFulfillmentOrders.map(fo => ({
         fulfillment_order_id: fo.id,
       })),
-      tracking_info: {
-        number: trackingNumber,
-        company: trackingCompany,
-        url: trackingUrl ?? `https://apc.co.uk/tracking/${trackingNumber}`,
-      },
+      ...(hasTracking ? {
+        tracking_info: {
+          number: trackingNumber,
+          company: trackingCompany,
+          url: trackingUrl ?? `https://apc.co.uk/tracking/${trackingNumber}`,
+        },
+      } : {}),
       notify_customer: true,
     },
   });

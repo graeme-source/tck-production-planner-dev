@@ -62,6 +62,7 @@ interface ShipmentResult {
 }
 
 interface ConfigStatus {
+  apcEnabled: boolean;
   apcCredentialsConfigured: boolean;
   serviceCodesConfigured: boolean;
   testMode: boolean;
@@ -226,12 +227,12 @@ async function cancelConsignment(waybill: string): Promise<void> {
   if (!res.ok) throw new Error(data.error ?? "Failed to cancel consignment");
 }
 
-async function completeOrder(orderId: number, consignmentNumber: string, trackingUrl?: string): Promise<void> {
+async function completeOrder(orderId: number, consignmentNumber: string | null, trackingUrl?: string): Promise<void> {
   const res = await fetch(`${BASE}/api/fulfilment/orders/${orderId}/complete`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ consignmentNumber, trackingUrl }),
+    body: JSON.stringify(consignmentNumber ? { consignmentNumber, trackingUrl } : {}),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Failed to complete order");
@@ -440,7 +441,9 @@ export default function Fulfilment() {
     queryKey: ["fulfilment-dispatch-tags"],
     queryFn: fetchDispatchTags,
     staleTime: 2 * 60 * 1000,
-    enabled: !!configStatus?.apcCredentialsConfigured && !!configStatus?.serviceCodesConfigured,
+    enabled: configStatus?.apcEnabled === false
+      ? true
+      : !!configStatus?.apcCredentialsConfigured && !!configStatus?.serviceCodesConfigured,
   });
 
   const { data: orders, isLoading, error, refetch } = useQuery({
@@ -542,6 +545,8 @@ export default function Fulfilment() {
   }
 
   function preQueueNextOrder(nextOrderId: number) {
+    // APC off → no shipment to pre-create, no label to pre-print.
+    if (!apcEnabled) return;
     if (preQueueRef.current.has(nextOrderId)) return;
     const promise = createShipment(nextOrderId, queryTag, queryTag)
       .then((result) => {
@@ -569,7 +574,10 @@ export default function Fulfilment() {
 
   function handleOrderSelect(order: ShopifyOrder) {
     clearPreQueue();
-    if (configStatus?.testMode) {
+    // Live-mode confirmation only matters when a real APC consignment
+    // is about to be created. With APC off there's no shipment, so we
+    // can go straight into picking.
+    if (configStatus?.testMode || !apcEnabled) {
       startPicking(order);
     } else {
       setPendingPickOrder(order);
@@ -589,6 +597,17 @@ export default function Fulfilment() {
     setShowAddBoxConfirm(false);
     setShowCancelConfirm(false);
     setView("picking");
+
+    // APC off → no shipment to create, no label to print. The picker
+    // just scans items and presses Complete; the backend fulfils
+    // Shopify without tracking and the existing fridge-decrement
+    // logic runs as normal.
+    if (!apcEnabled) {
+      setCreatingShipment(false);
+      setPrintStatus("done");
+      return;
+    }
+
     setCreatingShipment(true);
 
     try {
@@ -713,11 +732,19 @@ export default function Fulfilment() {
   }
 
   async function handleComplete() {
-    if (!activeOrder || !shipment) return;
+    if (!activeOrder) return;
+    // With APC disabled there's no shipment object — fulfilment runs
+    // without a tracking number. The barcode-driven decrement still
+    // fires inside the backend complete handler.
+    if (apcEnabled && !shipment) return;
     setCompleting(true);
     setCompletionError(null);
     try {
-      await completeOrder(activeOrder.id, shipment.consignmentNumber, shipment.trackingUrl);
+      if (apcEnabled && shipment) {
+        await completeOrder(activeOrder.id, shipment.consignmentNumber, shipment.trackingUrl);
+      } else {
+        await completeOrder(activeOrder.id, null);
+      }
       setView("confirm");
       refetch();
       refetchProgress();
@@ -858,7 +885,9 @@ export default function Fulfilment() {
     }
   }, [view]);
 
-  if (!configStatusLoading && (!configStatus?.apcCredentialsConfigured || !configStatus?.serviceCodesConfigured)) {
+  const apcEnabled = configStatus?.apcEnabled !== false;
+
+  if (apcEnabled && !configStatusLoading && (!configStatus?.apcCredentialsConfigured || !configStatus?.serviceCodesConfigured)) {
     return (
       <div className="space-y-6">
         {configStatus?.testMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}

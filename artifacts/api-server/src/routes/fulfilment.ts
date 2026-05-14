@@ -635,7 +635,9 @@ router.post("/postcode-validate-tag", requireManagerOrAdmin, async (req: Request
 const FACTORY_NUMBER_TAG = "factory-number-adjusted";
 
 const CompleteOrderBody = z.object({
-  consignmentNumber: z.string().min(1),
+  // Optional when apc_enabled = "false" in app_settings. We re-check
+  // the flag below and require a non-empty consignment when APC is on.
+  consignmentNumber: z.string().optional(),
   trackingUrl: z.string().optional(),
 });
 
@@ -648,11 +650,17 @@ router.post("/orders/:id/complete", requireManagerOrAdmin, async (req: Request, 
 
   const parsed = CompleteOrderBody.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "consignmentNumber is required" });
+    res.status(400).json({ error: "Invalid request body" });
     return;
   }
 
+  const apcEnabledSetting = await getAppSetting("apc_enabled");
+  const apcEnabled = apcEnabledSetting !== "false";
   const { consignmentNumber, trackingUrl } = parsed.data;
+  if (apcEnabled && !consignmentNumber) {
+    res.status(400).json({ error: "consignmentNumber is required when APC is enabled" });
+    return;
+  }
 
   // Factory-number accounting loop: decrement production_fridge stock
   // for the recipes in this order, BEFORE we call Shopify's fulfil
@@ -701,8 +709,15 @@ router.post("/orders/:id/complete", requireManagerOrAdmin, async (req: Request, 
   }
 
   try {
-    await fulfillOrder(orderId, consignmentNumber, "APC Overnight", trackingUrl);
-    res.json({ ok: true, orderId, consignmentNumber });
+    // When APC is disabled, fulfil without tracking. Shopify accepts
+    // empty strings for tracking_number / tracking_company.
+    await fulfillOrder(
+      orderId,
+      apcEnabled ? consignmentNumber! : "",
+      apcEnabled ? "APC Overnight" : "",
+      apcEnabled ? trackingUrl : undefined,
+    );
+    res.json({ ok: true, orderId, consignmentNumber: consignmentNumber ?? null });
   } catch (err: any) {
     console.error("[Fulfilment] completeOrder error:", err.message);
     res.status(502).json({ error: err.message });
@@ -1132,16 +1147,23 @@ router.get("/weekend-service-check", requireManagerOrAdmin, (req: Request, res: 
 
 router.get("/config-status", requireManagerOrAdmin, async (_req: Request, res: Response) => {
   try {
-    const [smallWeekday, largeWeekday, smallFriday, largeFriday, testModeSetting] = await Promise.all([
+    const [smallWeekday, largeWeekday, smallFriday, largeFriday, testModeSetting, apcEnabledSetting] = await Promise.all([
       getAppSetting("apc_service_code_small_weekday"),
       getAppSetting("apc_service_code_large_weekday"),
       getAppSetting("apc_service_code_small_friday"),
       getAppSetting("apc_service_code_large_friday"),
       getAppSetting("apc_test_mode"),
+      getAppSetting("apc_enabled"),
     ]);
 
     const isTestMode = testModeSetting === "true";
+    // apc_enabled: master kill-switch for the APC label-creation step.
+    // When false, fulfilment skips the createShipment call entirely
+    // and operators can mark orders fulfilled without a tracking
+    // number. Defaults to true to preserve historic behaviour.
+    const apcEnabled = apcEnabledSetting !== "false";
     res.json({
+      apcEnabled,
       apcCredentialsConfigured: isApcConfigured(),
       serviceCodesConfigured: !!(smallWeekday && largeWeekday && smallFriday && largeFriday),
       testMode: isTestMode,
