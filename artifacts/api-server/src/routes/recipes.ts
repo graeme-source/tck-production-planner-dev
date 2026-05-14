@@ -659,6 +659,19 @@ router.post("/:id/shopify-mapping", async (req, res) => {
         wonky_product_title   = EXCLUDED.wonky_product_title,
         wonky_variant_title   = EXCLUDED.wonky_variant_title
     `);
+    // Pull the SKU off Shopify and stash it on the mapping so the
+    // packing checklists can sort recipes in SKU order. Best-effort —
+    // network failures don't fail the mapping save.
+    try {
+      const { getVariantSkus } = await import("../services/shopify");
+      const skus = await getVariantSkus([shopifyVariantId]);
+      const sku = skus.get(shopifyVariantId);
+      if (sku) {
+        await db.execute(sql`UPDATE recipe_shopify_mappings SET shopify_sku = ${sku} WHERE shopify_variant_id = ${shopifyVariantId}`);
+      }
+    } catch (skuErr) {
+      console.warn("[recipes] shopify_sku sync failed:", skuErr instanceof Error ? skuErr.message : skuErr);
+    }
     const saved = await db.execute(sql`SELECT * FROM recipe_shopify_mappings WHERE recipe_id = ${recipeId} ORDER BY created_at`);
     res.json(saved.rows);
   } catch (err: unknown) {
@@ -692,6 +705,19 @@ router.put("/:id/shopify-mapping", async (req, res) => {
         wonky_product_title   = EXCLUDED.wonky_product_title,
         wonky_variant_title   = EXCLUDED.wonky_variant_title
     `);
+    // Pull the SKU off Shopify and stash it on the mapping so the
+    // packing checklists can sort recipes in SKU order. Best-effort —
+    // network failures don't fail the mapping save.
+    try {
+      const { getVariantSkus } = await import("../services/shopify");
+      const skus = await getVariantSkus([shopifyVariantId]);
+      const sku = skus.get(shopifyVariantId);
+      if (sku) {
+        await db.execute(sql`UPDATE recipe_shopify_mappings SET shopify_sku = ${sku} WHERE shopify_variant_id = ${shopifyVariantId}`);
+      }
+    } catch (skuErr) {
+      console.warn("[recipes] shopify_sku sync failed:", skuErr instanceof Error ? skuErr.message : skuErr);
+    }
     const saved = await db.execute(sql`SELECT * FROM recipe_shopify_mappings WHERE recipe_id = ${recipeId} ORDER BY created_at`);
     res.json(saved.rows);
   } catch (err: unknown) {

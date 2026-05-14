@@ -813,6 +813,13 @@ async function runStartupMigrations() {
     await db.execute(sql`ALTER TABLE recipe_shopify_mappings ADD COLUMN IF NOT EXISTS eight_pack_product_title TEXT`);
     await db.execute(sql`ALTER TABLE recipe_shopify_mappings ADD COLUMN IF NOT EXISTS eight_pack_variant_title TEXT`);
 
+    // Shopify SKU cache. Used to sort the packing checklists (opening
+    // batch numbers, closing batch numbers, batch entry rows) in SKU
+    // order so the kitchen scanner UI matches Easy Scan's ordering.
+    // Populated from Shopify on first run + when a mapping is saved.
+    await db.execute(sql`ALTER TABLE recipe_shopify_mappings ADD COLUMN IF NOT EXISTS shopify_sku TEXT`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS recipe_shopify_mappings_sku_idx ON recipe_shopify_mappings (shopify_sku)`);
+
     // Deduplicate station_breaks: old code created one row per station type per break.
     // Keep only the lowest id per (plan_id, user_id, break_type, started_at) group.
     await db.execute(sql`
@@ -1282,6 +1289,32 @@ async function runStartupMigrations() {
   }
 }
 
+/** Lazy backfill for recipe_shopify_mappings.shopify_sku. Runs in the
+ *  background on every startup but is a no-op once every row has a
+ *  SKU recorded, so it's cheap. Pulled out of runStartupMigrations
+ *  because it hits Shopify and we don't want migration errors to
+ *  cascade from network blips. */
+async function backfillShopifyMappingSkus() {
+  try {
+    const rows = await db.execute<{ shopify_variant_id: string }>(sql`
+      SELECT shopify_variant_id
+      FROM recipe_shopify_mappings
+      WHERE shopify_sku IS NULL AND shopify_variant_id IS NOT NULL
+    `);
+    const variantIds = (rows.rows ?? rows).map(r => r.shopify_variant_id).filter(Boolean);
+    if (variantIds.length === 0) return;
+    console.log(`[startup] backfilling shopify_sku for ${variantIds.length} mappings`);
+    const { getVariantSkus } = await import("./services/shopify");
+    const skuMap = await getVariantSkus(variantIds);
+    for (const [vid, sku] of skuMap) {
+      await db.execute(sql`UPDATE recipe_shopify_mappings SET shopify_sku = ${sku} WHERE shopify_variant_id = ${vid}`);
+    }
+    console.log(`[startup] populated shopify_sku for ${skuMap.size}/${variantIds.length} mappings`);
+  } catch (err) {
+    console.warn("[startup] shopify_sku backfill failed (non-fatal):", err instanceof Error ? err.message : err);
+  }
+}
+
 async function seedAdminIfNeeded() {
   try {
     const [{ value }] = await db.select({ value: count() }).from(usersTable);
@@ -1318,6 +1351,9 @@ async function startup() {
   try {
     await runStartupMigrations();
     await seedAdminIfNeeded();
+    // Fire-and-forget — runs against Shopify, can take a while on a
+    // cold cache, but the server doesn't need to wait for it.
+    void backfillShopifyMappingSkus();
     const { guardMarinadeSettings } = await import("./lib/seed-guard");
     await guardMarinadeSettings();
     const { seedRiskAssessmentsIfNeeded } = await import("./lib/seed-risk-assessments");

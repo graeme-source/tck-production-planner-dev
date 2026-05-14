@@ -750,23 +750,40 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
   // The frontend component switches its label, suggestion logic, and
   // which column it POSTs to based on the dynamic data type.
   if (type === "first_pack_batch_numbers" || type === "last_pack_batch_numbers") {
-    // Get ALL recipes currently in the production fridge from stock_entries
-    // (the aggregate stock table that always has data, unlike fridge_stock_batches
-    // which only populates from new wrapping going forward)
-    const fridgeStock = await db
-      .select({
-        recipeId: stockEntriesTable.recipeId,
-        recipeName: recipesTable.name,
-        quantity: stockEntriesTable.quantity,
-      })
-      .from(stockEntriesTable)
-      .leftJoin(recipesTable, eq(stockEntriesTable.recipeId, recipesTable.id))
-      .where(and(
-        eq(stockEntriesTable.itemType, "recipe"),
-        eq(stockEntriesTable.location, "production_fridge"),
-        gt(stockEntriesTable.quantity, "0"),
-      ))
-      .orderBy(asc(recipesTable.name));
+    // Order recipes by Shopify SKU (matches Easy Scan's ordering on
+    // the kitchen scanner), with recipe name as a tiebreaker for any
+    // recipe whose SKU hasn't been backfilled yet. The SKU lives on
+    // recipe_shopify_mappings (raw SQL table — no Drizzle schema),
+    // so we drop to a raw query for the join.
+    const fridgeRows = await db.execute<{
+      recipe_id: number;
+      recipe_name: string;
+      quantity: string;
+      shopify_sku: string | null;
+    }>(sql`
+      SELECT
+        se.recipe_id AS recipe_id,
+        r.name       AS recipe_name,
+        se.quantity  AS quantity,
+        (
+          SELECT m.shopify_sku
+          FROM recipe_shopify_mappings m
+          WHERE m.recipe_id = se.recipe_id AND m.shopify_sku IS NOT NULL
+          ORDER BY m.shopify_sku ASC
+          LIMIT 1
+        ) AS shopify_sku
+      FROM stock_entries se
+      LEFT JOIN recipes r ON r.id = se.recipe_id
+      WHERE se.item_type = 'recipe'
+        AND se.location  = 'production_fridge'
+        AND se.quantity::numeric > 0
+      ORDER BY shopify_sku NULLS LAST, r.name ASC
+    `);
+    const fridgeStock = (fridgeRows.rows ?? fridgeRows).map(r => ({
+      recipeId: r.recipe_id,
+      recipeName: r.recipe_name,
+      quantity: r.quantity,
+    }));
 
     // Deduplicate by recipeId (stock_entries may have multiple rows per recipe)
     const fridgeRecipes = new Map<number, { recipeName: string; qty: number }>();

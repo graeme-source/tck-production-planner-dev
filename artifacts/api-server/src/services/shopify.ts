@@ -687,6 +687,35 @@ const COST_CACHE_TTL = 60 * 60 * 1000; // 1 hour
  * Returns a Map of variant_id → cost (number in shop currency).
  * Results are cached for 1 hour.
  */
+/** Fetch the Shopify SKU for each variant ID. Returns an entry only
+ *  for variants Shopify accepted (silently drops 404s / errors).
+ *  Used by the recipe_shopify_mappings backfill so the packing
+ *  checklists can sort recipes in SKU order — the same order Easy
+ *  Scan uses on the kitchen scanner. Batched in groups of 10 with
+ *  a 250ms pause between batches to stay under Shopify's REST
+ *  leaky-bucket rate limit. */
+export async function getVariantSkus(variantIds: string[]): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  if (variantIds.length === 0) return result;
+
+  for (let i = 0; i < variantIds.length; i += 10) {
+    const batch = variantIds.slice(i, i + 10);
+    await Promise.all(batch.map(async (vid) => {
+      try {
+        const data = (await shopifyFetch(`/variants/${vid}.json`)) as { variant: { sku: string | null } };
+        const sku = (data.variant.sku ?? "").trim();
+        if (sku) result.set(vid, sku);
+      } catch (err) {
+        // 404 / network blip — leave the entry empty so the
+        // checklist falls back to name-sort for that recipe.
+        console.warn(`[shopify] getVariantSkus: failed to fetch variant ${vid}:`, err instanceof Error ? err.message : err);
+      }
+    }));
+    if (i + 10 < variantIds.length) await new Promise(r => setTimeout(r, 250));
+  }
+  return result;
+}
+
 export async function getVariantCosts(variantIds: string[]): Promise<Map<string, number>> {
   if (variantIds.length === 0) return new Map();
 
