@@ -1382,13 +1382,13 @@ interface SystemCommit {
 }
 
 function SystemUpdatesSlide({ slide }: { slide: MeetingSlide }) {
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [show7Days, setShow7Days] = useState(false);
 
   const { data, isLoading } = useQuery<{
     available: boolean;
     last24h: SystemCommit[];
     last7Days: SystemCommit[];
+    summary: string[] | null;
   }>({
     queryKey: ["system-updates"],
     queryFn: async () => {
@@ -1400,75 +1400,80 @@ function SystemUpdatesSlide({ slide }: { slide: MeetingSlide }) {
   });
 
   const last24 = data?.last24h ?? [];
-  const earlier = (data?.last7Days ?? []).filter(c => !last24.some(c24 => c24.sha === c.sha));
+  const summary = data?.summary ?? null;
+  const last7 = data?.last7Days ?? [];
 
   return (
     <div>
       <SectionTitle>{slide.title || "System Updates"}</SectionTitle>
-      <SectionLead>
-        What's changed in the planner — anything fixed, anything new. Pulled automatically from commits.
-      </SectionLead>
+      <SectionLead>What's changed in the planner — auto-summarised from the last 24 hours of deploys.</SectionLead>
 
       {isLoading ? (
         <div className="glass-panel rounded-2xl p-6 flex justify-center">
           <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
         </div>
       ) : !data?.available ? (
-        <div className="glass-panel rounded-2xl p-6 text-muted-foreground">
+        <div className="glass-panel rounded-2xl p-6 text-2xl text-muted-foreground">
           System update feed isn't available in this environment.
+        </div>
+      ) : last24.length === 0 ? (
+        <div className="glass-panel rounded-2xl p-8 text-3xl text-muted-foreground italic text-center">
+          No changes shipped in the last 24 hours.
         </div>
       ) : (
         <>
-          <p className="text-base font-semibold uppercase tracking-wide text-muted-foreground mb-3">Last 24 hours</p>
-          {last24.length === 0 ? (
-            <div className="glass-panel rounded-2xl p-6 text-2xl text-muted-foreground italic">
-              No changes shipped in the last 24 hours.
+          {/* Primary focus — the plain-English summary. Bullets are
+              big and unembellished so the host can read them out
+              from across the kitchen. */}
+          {summary && summary.length > 0 ? (
+            <div className="glass-panel rounded-2xl p-6 border-2 border-primary/30 bg-primary/5">
+              <ul className="space-y-3">
+                {summary.map((line, i) => (
+                  <li key={i} className="flex items-start gap-4 text-2xl leading-snug">
+                    <span className="text-primary font-bold shrink-0 mt-1">•</span>
+                    <span>{line}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           ) : (
+            // No AI summary available (Claude key missing on this
+            // env, or the summariser failed) — fall back to the raw
+            // commit subjects so the meeting still has content.
             <div className="glass-panel rounded-2xl overflow-hidden">
               {last24.map((c, i) => (
-                <div key={c.sha} className={cn("px-6 py-4", i > 0 && "border-t border-border/50")}>
-                  <button
-                    type="button"
-                    onClick={() => setExpanded(e => ({ ...e, [c.sha]: !e[c.sha] }))}
-                    className="w-full flex items-start justify-between gap-3 text-left"
-                  >
-                    <span className="text-xl font-semibold leading-snug flex-1">{c.subject}</span>
-                    <span className="text-base text-muted-foreground shrink-0 tabular-nums">
-                      {format(new Date(c.date), "EEE HH:mm")}
-                    </span>
-                  </button>
-                  {expanded[c.sha] && c.body && (
-                    <pre className="mt-3 text-base text-muted-foreground whitespace-pre-wrap font-sans leading-relaxed bg-secondary/30 rounded-lg p-4">{c.body}</pre>
-                  )}
+                <div key={c.sha} className={cn("px-6 py-4 text-2xl leading-snug", i > 0 && "border-t border-border/50")}>
+                  {c.subject}
                 </div>
               ))}
             </div>
           )}
 
-          {earlier.length > 0 && (
-            <div className="mt-4">
+          {/* Last 7 days — collapsible table for context, never the
+              focus. Click the header to expand. */}
+          {last7.length > 0 && (
+            <div className="mt-6">
               <button
                 type="button"
                 onClick={() => setShow7Days(s => !s)}
-                className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+                className="flex items-center gap-2 text-base font-medium text-muted-foreground hover:text-foreground"
               >
-                <ChevronRight className={cn("w-3.5 h-3.5 transition-transform", show7Days && "rotate-90")} />
-                {show7Days ? "Hide" : "Show"} earlier this week ({earlier.length})
+                <ChevronRight className={cn("w-4 h-4 transition-transform", show7Days && "rotate-90")} />
+                {show7Days ? "Hide" : "Show"} all changes this week ({last7.length})
               </button>
               {show7Days && (
                 <div className="glass-panel rounded-xl overflow-hidden mt-2">
-                  <table className="w-full text-sm">
+                  <table className="w-full text-base">
                     <thead>
                       <tr className="bg-secondary/40 border-b border-border/50">
-                        <th className="text-left px-4 py-2 text-xs font-medium text-muted-foreground">When</th>
-                        <th className="text-left px-4 py-2 text-xs font-medium text-muted-foreground">Change</th>
+                        <th className="text-left px-4 py-2 text-sm font-medium text-muted-foreground">When</th>
+                        <th className="text-left px-4 py-2 text-sm font-medium text-muted-foreground">Change</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {earlier.map((c, i) => (
+                      {last7.map((c, i) => (
                         <tr key={c.sha} className={cn(i > 0 && "border-t border-border/50")}>
-                          <td className="px-4 py-2 text-xs text-muted-foreground tabular-nums whitespace-nowrap align-top">
+                          <td className="px-4 py-2 text-sm text-muted-foreground tabular-nums whitespace-nowrap align-top">
                             {format(new Date(c.date), "EEE d MMM HH:mm")}
                           </td>
                           <td className="px-4 py-2">{c.subject}</td>
