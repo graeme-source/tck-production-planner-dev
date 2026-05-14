@@ -13,7 +13,8 @@
  * status reviews. Stretches and the lean lesson take the most time
  * because they're meant to.
  */
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import type React from "react";
 import { useLocation, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, addDays } from "date-fns";
@@ -150,8 +151,8 @@ function StretchesPanel() {
     <div className="flex flex-col items-center gap-6 w-full">
       {/* Five stretch tiles — all visible at once. The active one
           pulses + scales up; finished ones dim; upcoming ones sit
-          quiet. */}
-      <div className="grid grid-cols-5 gap-3 w-full max-w-4xl">
+          quiet. Sized for TV readability from across the kitchen. */}
+      <div className="grid grid-cols-5 gap-4 w-full">
         {stretches.map((st, i) => {
           const isActive = i === index && running;
           const isDone = i < index || (i === index && secondsLeft === 0 && !running && allDone);
@@ -159,16 +160,16 @@ function StretchesPanel() {
             <div
               key={i}
               className={cn(
-                "rounded-2xl border p-4 flex flex-col items-center text-center gap-2 transition-all",
+                "rounded-2xl border p-6 flex flex-col items-center text-center gap-4 transition-all min-h-[280px] justify-center",
                 isActive && "border-emerald-500 bg-emerald-500/10 scale-105 shadow-lg shadow-emerald-500/20",
                 isDone && "opacity-40",
                 !isActive && !isDone && "border-border bg-card",
               )}
             >
-              <div className="text-5xl leading-none">{st.emoji}</div>
-              <p className="text-sm font-semibold leading-tight">{st.name}</p>
+              <div className="text-8xl leading-none">{st.emoji}</div>
+              <p className="text-2xl font-semibold leading-tight">{st.name}</p>
               {isActive && (
-                <div className="text-3xl font-display font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{secondsLeft}s</div>
+                <div className="text-6xl font-display font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{secondsLeft}s</div>
               )}
             </div>
           );
@@ -176,13 +177,13 @@ function StretchesPanel() {
       </div>
 
       {/* Active stretch description — big, central, only shows while running. */}
-      <div className="text-center min-h-[60px] flex items-center justify-center">
+      <div className="text-center min-h-[80px] flex items-center justify-center">
         {running ? (
-          <p className="text-2xl text-muted-foreground max-w-2xl">{stretches[index].description}</p>
+          <p className="text-3xl text-muted-foreground max-w-3xl leading-snug">{stretches[index].description}</p>
         ) : allDone ? (
-          <p className="text-2xl font-display font-semibold text-emerald-600 dark:text-emerald-400">Nice work — let's get into the day.</p>
+          <p className="text-4xl font-display font-semibold text-emerald-600 dark:text-emerald-400">Nice work — let's get into the day.</p>
         ) : (
-          <p className="text-lg text-muted-foreground">Press Start. {STRETCH_SECONDS}s per stretch, no clicking — just follow along.</p>
+          <p className="text-2xl text-muted-foreground">Press Start. {STRETCH_SECONDS}s per stretch, no clicking — just follow along.</p>
         )}
       </div>
 
@@ -510,34 +511,118 @@ export default function MeetingPage() {
     setMode("setup");
   };
   return (
-    <div className="fixed inset-0 bg-background flex flex-col">
-      {/* Preview banner — host knows they're walking through tomorrow's
-          deck with today's live data substituted in for anything
-          time-sensitive. */}
+    <MeetingShell
+      slide={slide}
+      slides={slides}
+      slideIndex={slideIndex}
+      slideCount={slideCount}
+      meta={meta}
+      SlideIcon={SlideIcon}
+      isPreviewing={isPreviewing}
+      data={data}
+      onRefresh={() => refetch()}
+      advance={advance}
+      retreat={retreat}
+      setSlideIndex={setSlideIndex}
+      onEnd={() => endMutation.mutate()}
+      onExit={exitMeeting}
+    />
+  );
+}
+
+interface MeetingShellProps {
+  slide: MeetingSlide;
+  slides: MeetingSlide[];
+  slideIndex: number;
+  slideCount: number;
+  meta: { icon: React.ElementType; color: string; fallbackTitle: string };
+  SlideIcon: React.ElementType;
+  isPreviewing: boolean;
+  data: DashboardData;
+  onRefresh: () => void;
+  advance: () => void;
+  retreat: () => void;
+  setSlideIndex: (i: number) => void;
+  onEnd: () => void;
+  onExit: () => void;
+}
+
+/** Slideshow chrome: full-screen container, header with title + counter,
+ *  progress bar, slide body, and a slim footer with dot pagination only
+ *  (Next/Back are now swipe-driven so the team can see slide content
+ *  instead of buttons). Also disables pull-to-refresh while mounted so
+ *  the host can't accidentally reload the meeting by scrolling. */
+function MeetingShell({
+  slide, slides, slideIndex, slideCount, meta, SlideIcon, isPreviewing,
+  data, onRefresh, advance, retreat, setSlideIndex, onEnd, onExit,
+}: MeetingShellProps) {
+  // Suppress the global pull-to-refresh — the host has been accidentally
+  // reloading mid-meeting by scrolling on the iPad.
+  useEffect(() => {
+    const prev = document.body.dataset.suppressPullToRefresh ?? "";
+    document.body.dataset.suppressPullToRefresh = "1";
+    return () => {
+      if (prev) document.body.dataset.suppressPullToRefresh = prev;
+      else delete document.body.dataset.suppressPullToRefresh;
+    };
+  }, []);
+
+  // Swipe navigation: horizontal pan > 60px advances/retreats. We start
+  // tracking only when the touch begins outside an interactive element
+  // so taps on buttons / chips inside slides still work.
+  const touchStartRef = useRef<{ x: number; y: number; t: number } | null>(null);
+  const onTouchStart = (e: React.TouchEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.closest("button, a, input, textarea, select, [data-no-swipe]")) {
+      touchStartRef.current = null;
+      return;
+    }
+    const t = e.touches[0];
+    touchStartRef.current = { x: t.clientX, y: t.clientY, t: Date.now() };
+  };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!start) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    const elapsed = Date.now() - start.t;
+    // Mostly-horizontal, finger fast enough, distance over threshold.
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.2 || elapsed > 600) return;
+    if (dx < 0) advance(); else retreat();
+  };
+
+  return (
+    <div
+      className="fixed inset-0 bg-background flex flex-col"
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
+    >
       {isPreviewing && (
-        <div className="bg-purple-500/10 border-b border-purple-500/30 text-purple-700 dark:text-purple-300 px-6 py-2 text-sm flex items-center justify-between">
+        <div className="bg-purple-500/10 border-b border-purple-500/30 text-purple-700 dark:text-purple-300 px-6 py-2 text-base flex items-center justify-between">
           <span className="font-medium">
-            Preview — Tomorrow's meeting ({data.tomorrow ? format(new Date(data.tomorrow + "T00:00:00"), "EEEE d MMMM") : ""}). Slide layout is tomorrow's; data shown is today's snapshot.
+            Preview — Tomorrow's meeting ({data.tomorrow ? format(new Date(data.tomorrow + "T00:00:00"), "EEEE d MMMM") : ""})
           </span>
-          <button onClick={exitMeeting} className="text-xs underline-offset-2 hover:underline">Exit preview</button>
+          <button onClick={onExit} className="text-sm underline-offset-2 hover:underline">Exit preview</button>
         </div>
       )}
 
-      {/* Header */}
+      {/* Header — title big enough to read from across the room */}
       <div className="flex items-center justify-between px-6 py-3 border-b border-border bg-card">
         <div className="flex items-center gap-3 min-w-0">
-          <SlideIcon className={cn("w-5 h-5", meta.color)} />
-          <h1 className="text-lg font-semibold truncate">{slide.title || meta.fallbackTitle}</h1>
+          <SlideIcon className={cn("w-7 h-7 shrink-0", meta.color)} />
+          <h1 className="text-2xl font-display font-bold truncate">{slide.title || meta.fallbackTitle}</h1>
         </div>
-        <div className="flex items-center gap-3 text-sm">
-          <span className="text-muted-foreground tabular-nums">{slideIndex + 1} / {slideCount}</span>
+        <div className="flex items-center gap-4 text-base">
+          <span className="text-muted-foreground tabular-nums font-semibold">{slideIndex + 1} / {slideCount}</span>
           {!isPreviewing && (
-            <button onClick={() => endMutation.mutate()} className="text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-1.5">
+            <button onClick={onEnd} className="text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-1.5">
               End meeting
             </button>
           )}
-          <button onClick={exitMeeting} className="text-muted-foreground hover:text-foreground">
-            <X className="w-5 h-5" />
+          <button onClick={onExit} className="text-muted-foreground hover:text-foreground" aria-label="Close">
+            <X className="w-6 h-6" />
           </button>
         </div>
       </div>
@@ -550,48 +635,39 @@ export default function MeetingPage() {
         />
       </div>
 
-      {/* Slide body */}
-      <div className="flex-1 overflow-y-auto px-6 py-8">
-        <div className="max-w-4xl mx-auto">
-          <SlideBody slide={slide} data={data} onRefresh={() => refetch()} />
+      {/* Slide body — fills the screen vertically. Short slides centre
+          so the iPad/TV canvas isn't dominated by whitespace; long
+          slides (Order of Production, deliveries) overflow scroll. */}
+      <div className="flex-1 overflow-y-auto px-8 py-6 flex flex-col">
+        <div className="max-w-6xl mx-auto w-full my-auto">
+          <SlideBody slide={slide} data={data} onRefresh={onRefresh} />
         </div>
       </div>
 
-      {/* Footer nav */}
-      <div className="flex items-center justify-between px-6 py-3 border-t border-border bg-card">
-        <button
-          onClick={retreat}
-          disabled={slideIndex === 0}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium border border-border disabled:opacity-30 disabled:cursor-not-allowed hover:bg-secondary/50"
-        >
-          <ChevronLeft className="w-4 h-4" /> Back
-        </button>
-        <div className="flex items-center gap-1">
-          {slides.map((s, i) => (
-            <button
-              key={s.id}
-              onClick={() => setSlideIndex(i)}
-              className={cn(
-                "w-2 h-2 rounded-full transition-all",
-                i === slideIndex ? "bg-primary w-6" : i < slideIndex ? "bg-primary/40" : "bg-secondary",
-              )}
-              aria-label={`Go to slide ${i + 1}`}
-            />
-          ))}
-        </div>
-        {slideIndex < slideCount - 1 ? (
+      {/* Footer — dot pagination only. Navigation is swipe-driven so the
+          host can focus on the content. Tap a dot to jump. The Finish
+          button on the last slide stays so the host has a clear "we're
+          done" action. */}
+      <div className="flex items-center justify-center gap-2 px-6 py-3 border-t border-border bg-card">
+        {slides.map((s, i) => (
           <button
-            onClick={advance}
-            className="flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90"
-          >
-            Next <ChevronRight className="w-4 h-4" />
-          </button>
-        ) : (
+            key={s.id}
+            onClick={() => setSlideIndex(i)}
+            className={cn(
+              "h-2 rounded-full transition-all",
+              i === slideIndex ? "bg-primary w-8" : i < slideIndex ? "bg-primary/40 w-2.5" : "bg-secondary w-2.5",
+            )}
+            aria-label={`Go to slide ${i + 1}`}
+            data-no-swipe
+          />
+        ))}
+        {slideIndex === slideCount - 1 && (
           <button
-            onClick={() => endMutation.mutate()}
-            className="flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700"
+            onClick={onEnd}
+            className="ml-4 flex items-center gap-2 px-5 py-2 rounded-xl text-base font-semibold bg-emerald-600 text-white hover:bg-emerald-700"
+            data-no-swipe
           >
-            Finish <CheckCircle2 className="w-4 h-4" />
+            Finish <CheckCircle2 className="w-5 h-5" />
           </button>
         )}
       </div>
@@ -907,10 +983,10 @@ function YouTubeEmbed({ url }: { url: string }) {
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <h2 className="text-3xl font-display font-bold mb-4">{children}</h2>;
+  return <h2 className="text-5xl font-display font-bold mb-4 leading-tight">{children}</h2>;
 }
 function SectionLead({ children }: { children: React.ReactNode }) {
-  return <p className="text-lg text-muted-foreground mb-6">{children}</p>;
+  return <p className="text-2xl text-muted-foreground mb-6 leading-snug">{children}</p>;
 }
 
 function SpecialPrepSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
@@ -996,9 +1072,9 @@ function YesterdayKpisSlide({ data, slide }: { data: DashboardData; slide: Meeti
 
 function KpiTile({ label, value, tone = "ok" }: { label: string; value: string; tone?: "ok" | "warn" }) {
   return (
-    <div className={cn("glass-panel rounded-2xl p-5", tone === "warn" && "border-amber-300/60 dark:border-amber-700/40")}>
-      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">{label}</p>
-      <p className="text-3xl font-display font-bold tabular-nums">{value}</p>
+    <div className={cn("glass-panel rounded-2xl p-6", tone === "warn" && "border-amber-300/60 dark:border-amber-700/40")}>
+      <p className="text-base font-semibold uppercase tracking-wide text-muted-foreground mb-2">{label}</p>
+      <p className="text-6xl font-display font-bold tabular-nums">{value}</p>
     </div>
   );
 }
@@ -1058,24 +1134,24 @@ function LocalDeliverySlide({ data, slide }: { data: DashboardData; slide: Meeti
 
       {/* Static prompt — outbound local despatches via the butcher run.
           No data wired for this yet; the host calls it out verbally. */}
-      <div className="glass-panel rounded-2xl p-6 border-2 border-blue-500/30 bg-blue-500/5">
-        <p className="text-xs font-semibold uppercase tracking-wide text-blue-700 dark:text-blue-300 mb-1">Outbound</p>
-        <p className="text-lg font-semibold">Any local despatches today?</p>
-        <p className="text-sm text-muted-foreground mt-1">Orders going out with the butcher.</p>
+      <div className="glass-panel rounded-2xl p-8 border-2 border-blue-500/30 bg-blue-500/5">
+        <p className="text-base font-semibold uppercase tracking-wide text-blue-700 dark:text-blue-300 mb-2">Outbound</p>
+        <p className="text-4xl font-display font-bold leading-tight">Any local despatches today?</p>
+        <p className="text-xl text-muted-foreground mt-2">Orders going out with the butcher.</p>
       </div>
 
       {/* Inbound — purchase orders arriving today, with their status. */}
       <div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Deliveries coming in today</p>
+        <p className="text-base font-semibold uppercase tracking-wide text-muted-foreground mb-3">Deliveries coming in today</p>
         {data.todayDeliveries.length === 0 ? (
-          <div className="glass-panel rounded-2xl p-6 text-muted-foreground">No deliveries scheduled for today.</div>
+          <div className="glass-panel rounded-2xl p-6 text-2xl text-muted-foreground">No deliveries scheduled for today.</div>
         ) : (
           <div className="glass-panel rounded-2xl overflow-hidden">
             {data.todayDeliveries.map((d, i) => (
-              <div key={d.id} className={cn("flex items-center justify-between px-5 py-3", i > 0 && "border-t border-border/50")}>
-                <span className="font-medium">{d.supplierName}</span>
+              <div key={d.id} className={cn("flex items-center justify-between px-6 py-4", i > 0 && "border-t border-border/50")}>
+                <span className="text-2xl font-semibold">{d.supplierName}</span>
                 <span className={cn(
-                  "text-xs uppercase tracking-wide px-2 py-0.5 rounded-full font-semibold",
+                  "text-base uppercase tracking-wide px-3 py-1 rounded-full font-semibold",
                   d.status === "received"
                     ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
                     : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
@@ -1264,18 +1340,18 @@ function SafetyIssuesSlide({ data, onRefresh, slide }: { data: DashboardData; on
       <SectionTitle>{slide.title || "Safety Issues"}</SectionTitle>
       <SectionLead>Anyone got a safety concern? Speak up.</SectionLead>
       {data.safetyIssues.length > 0 && (
-        <div className="glass-panel rounded-2xl overflow-hidden mb-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground px-5 py-3 border-b border-border/50">Open safety items</p>
+        <div className="glass-panel rounded-2xl overflow-hidden mb-6">
+          <p className="text-base font-semibold uppercase tracking-wide text-muted-foreground px-6 py-3 border-b border-border/50">Open safety items</p>
           {data.safetyIssues.map(s => (
-            <div key={s.id} className="px-5 py-3 border-b border-border/50 last:border-0 flex items-start gap-3">
-              <span className={cn("w-2 h-2 rounded-full mt-2 shrink-0", s.severity === "red" ? "bg-red-500" : "bg-amber-500")} />
-              <p className="text-sm flex-1">{s.description ?? "(no description)"}</p>
+            <div key={s.id} className="px-6 py-4 border-b border-border/50 last:border-0 flex items-start gap-4">
+              <span className={cn("w-4 h-4 rounded-full mt-2 shrink-0", s.severity === "red" ? "bg-red-500" : "bg-amber-500")} />
+              <p className="text-2xl leading-snug flex-1">{s.description ?? "(no description)"}</p>
             </div>
           ))}
         </div>
       )}
-      <div className="glass-panel rounded-2xl p-5">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Log a new safety issue</p>
+      <div className="glass-panel rounded-2xl p-6">
+        <p className="text-base font-semibold uppercase tracking-wide text-muted-foreground mb-3">Log a new safety issue</p>
         <textarea
           value={description}
           onChange={e => setDescription(e.target.value)}
@@ -1284,10 +1360,10 @@ function SafetyIssuesSlide({ data, onRefresh, slide }: { data: DashboardData; on
         />
         <div className="flex items-center justify-between mt-3">
           <div className="flex items-center gap-2">
-            <button onClick={() => setSeverity("yellow")} className={cn("px-3 py-1.5 rounded-lg text-xs font-medium border", severity === "yellow" ? "bg-amber-500/20 border-amber-500/50 text-amber-700 dark:text-amber-300" : "border-border")}>Yellow</button>
-            <button onClick={() => setSeverity("red")} className={cn("px-3 py-1.5 rounded-lg text-xs font-medium border", severity === "red" ? "bg-red-500/20 border-red-500/50 text-red-700 dark:text-red-300" : "border-border")}>Red</button>
+            <button onClick={() => setSeverity("yellow")} className={cn("px-3 py-1.5 rounded-lg text-base font-medium border", severity === "yellow" ? "bg-amber-500/20 border-amber-500/50 text-amber-700 dark:text-amber-300" : "border-border")}>Yellow</button>
+            <button onClick={() => setSeverity("red")} className={cn("px-3 py-1.5 rounded-lg text-base font-medium border", severity === "red" ? "bg-red-500/20 border-red-500/50 text-red-700 dark:text-red-300" : "border-border")}>Red</button>
           </div>
-          <button onClick={submit} disabled={!description.trim() || submitting} className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 disabled:opacity-50">
+          <button onClick={submit} disabled={!description.trim() || submitting} className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-base font-semibold hover:bg-primary/90 disabled:opacity-50">
             {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Log issue"}
           </button>
         </div>
@@ -1343,27 +1419,27 @@ function SystemUpdatesSlide({ slide }: { slide: MeetingSlide }) {
         </div>
       ) : (
         <>
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Last 24 hours</p>
+          <p className="text-base font-semibold uppercase tracking-wide text-muted-foreground mb-3">Last 24 hours</p>
           {last24.length === 0 ? (
-            <div className="glass-panel rounded-2xl p-5 text-muted-foreground italic">
+            <div className="glass-panel rounded-2xl p-6 text-2xl text-muted-foreground italic">
               No changes shipped in the last 24 hours.
             </div>
           ) : (
             <div className="glass-panel rounded-2xl overflow-hidden">
               {last24.map((c, i) => (
-                <div key={c.sha} className={cn("px-5 py-3", i > 0 && "border-t border-border/50")}>
+                <div key={c.sha} className={cn("px-6 py-4", i > 0 && "border-t border-border/50")}>
                   <button
                     type="button"
                     onClick={() => setExpanded(e => ({ ...e, [c.sha]: !e[c.sha] }))}
                     className="w-full flex items-start justify-between gap-3 text-left"
                   >
-                    <span className="font-medium leading-snug flex-1">{c.subject}</span>
-                    <span className="text-xs text-muted-foreground shrink-0 tabular-nums">
+                    <span className="text-xl font-semibold leading-snug flex-1">{c.subject}</span>
+                    <span className="text-base text-muted-foreground shrink-0 tabular-nums">
                       {format(new Date(c.date), "EEE HH:mm")}
                     </span>
                   </button>
                   {expanded[c.sha] && c.body && (
-                    <pre className="mt-2 text-xs text-muted-foreground whitespace-pre-wrap font-sans leading-relaxed bg-secondary/30 rounded-lg p-3">{c.body}</pre>
+                    <pre className="mt-3 text-base text-muted-foreground whitespace-pre-wrap font-sans leading-relaxed bg-secondary/30 rounded-lg p-4">{c.body}</pre>
                   )}
                 </div>
               ))}
@@ -1417,7 +1493,7 @@ function NewSopsSlide({ data, slide }: { data: DashboardData; slide: MeetingSlid
       <SectionTitle>{slide.title || "New & Updated SOPs"}</SectionTitle>
       <SectionLead>Touched in the last 7 days, most recent first. Tap to open.</SectionLead>
       {data.recentSops.length === 0 ? (
-        <div className="glass-panel rounded-2xl p-6 text-muted-foreground">No SOP updates in the last 7 days.</div>
+        <div className="glass-panel rounded-2xl p-6 text-2xl text-muted-foreground">No SOP updates in the last 7 days.</div>
       ) : (
         <div className="glass-panel rounded-2xl overflow-hidden">
           {data.recentSops.map((s, i) => (
@@ -1426,12 +1502,12 @@ function NewSopsSlide({ data, slide }: { data: DashboardData; slide: MeetingSlid
               type="button"
               onClick={() => setOpenSopId(s.id)}
               className={cn(
-                "w-full flex items-center justify-between px-5 py-3 text-left hover:bg-secondary/40 transition-colors",
+                "w-full flex items-center justify-between px-6 py-4 text-left hover:bg-secondary/40 transition-colors",
                 i > 0 && "border-t border-border/50",
               )}
             >
-              <span className="font-medium">{s.title}</span>
-              <span className="text-xs text-muted-foreground">{format(new Date(s.updatedAt), "EEE d MMM")}</span>
+              <span className="text-2xl font-semibold">{s.title}</span>
+              <span className="text-base text-muted-foreground tabular-nums">{format(new Date(s.updatedAt), "EEE d MMM")}</span>
             </button>
           ))}
         </div>
@@ -1474,18 +1550,18 @@ function StrugglesSlide({ data, onRefresh, slide }: { data: DashboardData; onRef
       <SectionTitle>{slide.title || "Struggles"}</SectionTitle>
       <SectionLead>What's getting in the way? No blame — just name it. We'll action it from the kaizen board.</SectionLead>
       {data.struggles.length > 0 && (
-        <div className="glass-panel rounded-2xl overflow-hidden mb-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground px-5 py-3 border-b border-border/50">Open struggles</p>
+        <div className="glass-panel rounded-2xl overflow-hidden mb-6">
+          <p className="text-base font-semibold uppercase tracking-wide text-muted-foreground px-6 py-3 border-b border-border/50">Open struggles</p>
           {data.struggles.map(s => (
-            <div key={s.id} className="px-5 py-3 border-b border-border/50 last:border-0">
-              <p className="font-medium text-sm">{s.title}</p>
-              <p className="text-xs text-muted-foreground mt-1">{s.description}</p>
+            <div key={s.id} className="px-6 py-4 border-b border-border/50 last:border-0">
+              <p className="text-2xl font-semibold leading-tight">{s.title}</p>
+              <p className="text-lg text-muted-foreground mt-1 leading-snug">{s.description}</p>
             </div>
           ))}
         </div>
       )}
-      <div className="glass-panel rounded-2xl p-5">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Log a new struggle</p>
+      <div className="glass-panel rounded-2xl p-6">
+        <p className="text-base font-semibold uppercase tracking-wide text-muted-foreground mb-3">Log a new struggle</p>
         <input
           value={title}
           onChange={e => setTitle(e.target.value)}
