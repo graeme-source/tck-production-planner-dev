@@ -11,7 +11,7 @@ const glossaryTerms = [
   {
     term: "Gemba",
     definition: "\"The real place\" — going to where the work actually happens (the kitchen, the production line) to observe, learn, and understand problems first-hand instead of guessing from a desk.",
-    videoId: "2BjrzTmrp7U",
+    videoId: "3OEePS7Oh_g",
   },
   {
     term: "Muda",
@@ -56,8 +56,8 @@ const glossaryTerms = [
   },
 ];
 
-// Prefer 2 Second Lean / Paul Akers / Ryan Tierney (Lean Made Simple)
-// content over traditional academy-style training. Every ID has been
+// 2 Second Lean / Paul Akers / Ryan Tierney (Lean Made Simple) only —
+// every video uploaded by FastCap or Lean Made Simple. Each ID has been
 // verified embeddable via YouTube's oEmbed endpoint.
 const videos = [
   {
@@ -66,9 +66,9 @@ const videos = [
     description: "Paul Akers on the power of becoming a 2 Second Lean thinker — small daily improvements anyone on the team can make.",
   },
   {
-    id: "2BjrzTmrp7U",
-    title: "What is Gemba? — Go and See",
-    description: "Why going to where the work happens is the most powerful thing a leader can do.",
+    id: "3OEePS7Oh_g",
+    title: "Lean Improvement Walk — Going to the Gemba",
+    description: "Paul Akers walks his FastCap factory floor — what \"go and see\" actually looks like in practice.",
   },
   {
     id: "RbYj3gBYmo4",
@@ -81,9 +81,9 @@ const videos = [
     description: "Ryan Tierney walks through the 8 wastes inside a real factory transformation at Sperrin Metal.",
   },
   {
-    id: "P6tunvijynA",
-    title: "Standard Work — The Foundation",
-    description: "Why documenting the best way to do a task is the starting point for all improvement.",
+    id: "ObDEVyioZoE",
+    title: "Destroy Chaos With Standard Work",
+    description: "Ryan Tierney + Tom Hughes on why documenting how you do things is the foundation under everything else.",
   },
   {
     id: "ccaKcTKvQbg",
