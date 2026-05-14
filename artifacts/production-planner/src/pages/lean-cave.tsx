@@ -6,12 +6,12 @@ const glossaryTerms = [
   {
     term: "Kaizen",
     definition: "Continuous improvement — making small, daily changes that add up to big results over time. Everyone on the team looks for ways to do things better.",
-    videoId: "rGgOsgLRPKI",
+    videoId: "txOeJQCMT8s",
   },
   {
     term: "Gemba",
     definition: "\"The real place\" — going to where the work actually happens (the kitchen, the production line) to observe, learn, and understand problems first-hand instead of guessing from a desk.",
-    videoId: "oMGH14eSjss",
+    videoId: "2BjrzTmrp7U",
   },
   {
     term: "Muda",
@@ -20,7 +20,7 @@ const glossaryTerms = [
   {
     term: "5S / 3S",
     definition: "A system for organising your workspace: Sort (remove what you don't need), Set in order (a place for everything), Shine (keep it clean), Standardise, and Sustain. 3S focuses on the first three.",
-    videoId: "sLnKNG5FXMM",
+    videoId: "jPXYa3FQP8k",
   },
   {
     term: "Kanban",
@@ -56,36 +56,39 @@ const glossaryTerms = [
   },
 ];
 
+// Each ID has been verified embeddable via YouTube's oEmbed endpoint
+// (Gemba Academy's channel allows embedding; the previous Lean Made
+// Simple set was unembeddable / deleted).
 const videos = [
   {
-    id: "rGgOsgLRPKI",
-    title: "What is Lean? — Lean Made Simple",
+    id: "ZdHGTCXcJQU",
+    title: "Introduction to Lean Manufacturing",
     description: "A quick introduction to Lean thinking and why it matters for every team.",
   },
   {
-    id: "oMGH14eSjss",
-    title: "Gemba Walk — Go and See",
-    description: "Learn why going to where the work happens is the most powerful thing a leader can do.",
+    id: "2BjrzTmrp7U",
+    title: "What is Gemba? — Go and See",
+    description: "Why going to where the work happens is the most powerful thing a leader can do.",
   },
   {
-    id: "sLnKNG5FXMM",
-    title: "3S / 5S — Workplace Organisation",
+    id: "jPXYa3FQP8k",
+    title: "5S — Workplace Organisation",
     description: "How to organise your workspace so everything has a place and nothing is wasted.",
   },
   {
-    id: "GIb8HhBEpHE",
-    title: "The 8 Wastes of Lean",
-    description: "Understand the eight types of waste and how to spot them in your daily work.",
+    id: "SU01D-jTZcE",
+    title: "The 7 Deadly Wastes",
+    description: "Understand the seven types of waste and how to spot them in your daily work.",
   },
   {
-    id: "Owf9gNPMj_k",
+    id: "P6tunvijynA",
     title: "Standard Work — The Foundation",
     description: "Why documenting the best way to do a task is the starting point for all improvement.",
   },
   {
-    id: "wfsRAZUL1CE",
-    title: "Continuous Improvement Culture",
-    description: "How to build a culture where everyone feels empowered to fix what bugs them.",
+    id: "txOeJQCMT8s",
+    title: "Kaizen — The True Meaning",
+    description: "Brad Schmidt breaks down Kaizen: small, continuous improvements that build a culture.",
   },
 ];
 
