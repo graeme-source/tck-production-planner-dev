@@ -289,7 +289,7 @@ function formatChangeover(ms: number): string {
 }
 
 export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = false }: BuildingStationProps) {
-  const stationType = lineNumber === 1 ? "building_1" : "building_2";
+  const stationType: "building_1" | "building_2" = lineNumber === 1 ? "building_1" : "building_2";
   const queryClient = useQueryClient();
   const { state } = useAuth();
   const isAdmin = state.status === "authenticated" && state.user.role === "admin";
@@ -588,6 +588,41 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     return () => window.clearInterval(id);
   }, [changeoverStartedAt, changeoverActive, isOnBreak]);
 
+  // Builder presence heartbeat. While this builder is on a recipe (i.e.
+  // currentItem is set, builder isn't on break, recipe isn't closed), ping
+  // the server every 20s. The Mark Recipe Complete action on the OTHER
+  // building station consults these pings to refuse a close while we're
+  // mid-batch — fixing the race where a partial-complete used to lock the
+  // recipe before the other builder's penultimate batch landed.
+  const currentItemId = currentItem?.id ?? null;
+  const currentItemClosed = !!currentItem?.builderMarkedCompleteAt;
+  useEffect(() => {
+    if (!currentItemId || isOnBreak || currentItemClosed) return;
+    let cancelled = false;
+    const sendPing = () => {
+      if (cancelled) return;
+      fetch(`/api/production-plans/${plan.id}/items/${currentItemId}/presence`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stationType }),
+        keepalive: true,
+      }).catch(() => { /* heartbeat — best-effort */ });
+    };
+    sendPing();
+    const id = window.setInterval(sendPing, 20_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      // Best-effort clear so a close from the other station isn't blocked
+      // by stale presence for up to 60s after we leave.
+      fetch(
+        `/api/production-plans/${plan.id}/items/${currentItemId}/presence?stationType=${encodeURIComponent(stationType)}`,
+        { method: "DELETE", credentials: "include", keepalive: true },
+      ).catch(() => { /* heartbeat — best-effort */ });
+    };
+  }, [currentItemId, isOnBreak, currentItemClosed, plan.id, stationType]);
+
   // Auto-lock checklist when all items checked
   useEffect(() => {
     if (!currentItem || checklistLockedForItem === currentItem.id) return;
@@ -783,9 +818,23 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
 
   const handlePartialBatchComplete = () => {
     if (!currentItem || pendingTap || isOnBreak || checklistPending || partialCompletePending) return;
+    const partialPacks = currentItem.extraPacksBuilt ?? 0;
+    if (partialPacks <= 0) return;
+    const completingItemId = currentItem.id;
+    const wasLastBatchTap = remaining === 1;
     runPartialComplete((signal) =>
-      guardedFetch(`/api/production-plans/${plan.id}/items/${currentItem.id}/builder-complete`, {
+      guardedFetch(`/api/production-plans/${plan.id}/batch-completions`, {
         method: "POST", signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          planItemId: completingItemId,
+          stationType,
+          partialPacks,
+          completedAt: new Date().toISOString(),
+        }),
+      }).then(() => {
+        if (wasLastBatchTap) myLastBatchItemIdRef.current = completingItemId;
+        setSessionBatches(prev => prev + 1);
       })
     );
   };
@@ -1468,14 +1517,15 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                           {/* Pack adjustment */}
                           <PackAdjustment planId={plan.id} item={item} isOnBreak={isOnBreak} />
 
-                          {/* Builder override — mark recipe complete early when short on
-                              ingredients. Downstream stations pick up the truncated batch
-                              count as the new target. */}
+                          {/* Recipe-level close. Always available once a batch is in
+                              (short or full). Presence-guarded server-side: refuses if
+                              the other builder is mid-batch on this recipe. */}
                           <MarkCompleteButton
                             planId={plan.id}
                             item={item}
                             combinedCount={combinedCount}
                             isOnBreak={isOnBreak}
+                            stationType={stationType}
                             onMarked={() => setExtraPromptItemId(item.id)}
                           />
 
@@ -1562,6 +1612,9 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                           </div>
                         </div>
                         <PackAdjustment planId={plan.id} item={item} isOnBreak={isOnBreak} />
+                        {isAdmin && item.builderMarkedCompleteAt && (
+                          <AdminAddMissedBatch planId={plan.id} item={item} />
+                        )}
                       </div>
                     )}
                   </div>
@@ -1773,12 +1826,14 @@ function MarkCompleteButton({
   item,
   combinedCount,
   isOnBreak,
+  stationType,
   onMarked,
 }: {
   planId: number;
   item: ProductionPlanItem;
   combinedCount: number;
   isOnBreak: boolean;
+  stationType: "building_1" | "building_2";
   onMarked: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -1788,32 +1843,48 @@ function MarkCompleteButton({
 
   // Already marked → nothing to do here.
   if (item.builderMarkedCompleteAt) return null;
-  // Only expose the override once at least one batch is in.
+  // Only expose the close once at least one batch is in.
   if (combinedCount < 1) return null;
-  // If the recipe has already hit its plan target, the normal end-of-recipe
-  // prompt fires — no override needed.
-  const target = item.batchesTarget ?? 0;
-  if (combinedCount >= target) return null;
-  // Extras present → the primary button becomes PARTIAL BATCH COMPLETE and
-  // already drives recipe completion; skip this redundant amber override.
-  if ((item.extraPacksBuilt ?? 0) > 0) return null;
 
+  const target = item.batchesTarget ?? 0;
   const ppb = packsPerBatch(item);
   const extras = item.extraPacksBuilt ?? 0;
   const projectedPacks = combinedCount * ppb + extras;
+  const isShort = combinedCount < target;
 
   const handleClick = () => {
     if (isOnBreak || busy) return;
+    const heading = isShort
+      ? `Mark ${item.recipeName ?? "this recipe"} complete at ${combinedCount}/${target} batches?`
+      : `Mark ${item.recipeName ?? "this recipe"} complete (${combinedCount}/${target})?`;
     const msg =
-      `Mark ${item.recipeName ?? "this recipe"} complete at ${combinedCount}/${target} batches?\n\n` +
-      `Net output passed to ovens: ${projectedPacks} pack${projectedPacks === 1 ? "" : "s"} ` +
-      `(${combinedCount} × ${ppb}${extras > 0 ? ` + ${extras} extra` : ""}).`;
+      `${heading}\n\n` +
+      `Net output passed to ovens: ${projectedPacks} pack${projectedPacks === 1 ? "" : "s"}.`;
     if (!window.confirm(msg)) return;
-    runAction((signal) =>
-      guardedFetch(`/api/production-plans/${planId}/items/${item.id}/builder-complete`, {
-        method: "POST", signal,
-      }).then(() => onMarked())
-    );
+    runAction(async (signal) => {
+      try {
+        await guardedFetch(`/api/production-plans/${planId}/items/${item.id}/builder-complete`, {
+          method: "POST", signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ stationType }),
+        });
+        onMarked();
+      } catch (err: unknown) {
+        // The server returns 409 with code OTHER_BUILDER_ACTIVE when the other
+        // builder has a fresh presence ping on this recipe — they are mid-batch
+        // and a close would orphan their work.
+        const e = err as { response?: { status?: number; data?: { code?: string; error?: string } } };
+        if (e?.response?.status === 409 && e.response.data?.code === "OTHER_BUILDER_ACTIVE") {
+          toast({
+            title: "Wait for the other builder",
+            description: e.response.data.error ?? "Another builder is mid-batch on this recipe.",
+            variant: "destructive",
+          });
+          return;
+        }
+        throw err;
+      }
+    });
   };
 
   return (
@@ -1821,9 +1892,14 @@ function MarkCompleteButton({
       type="button"
       onClick={handleClick}
       disabled={busy || isOnBreak}
-      className="w-full mt-3 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold border-2 border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40 disabled:opacity-40 transition-colors"
+      className={cn(
+        "w-full mt-3 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold border-2 transition-colors disabled:opacity-40",
+        isShort
+          ? "border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+          : "border-emerald-400 dark:border-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100 dark:hover:bg-emerald-900/40",
+      )}
     >
-      <AlertTriangle className="w-4 h-4" />
+      {isShort ? <AlertTriangle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
       Mark Recipe Complete ({combinedCount}/{target})
     </button>
   );
@@ -1835,7 +1911,10 @@ function PackAdjustment({ planId, item, isOnBreak }: { planId: number; item: Pro
     onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(planId) }),
   });
 
-  const extraPacks = item.extraPacksBuilt ?? 0;
+  // extraPacksBuilt can be negative after a partial-batch commit (shortfall is
+  // recorded as a negative-going adjustment to extras). The on-screen tally
+  // only ever represents an in-progress partial batch, so clamp to ≥ 0.
+  const extraPacks = Math.max(0, item.extraPacksBuilt ?? 0);
 
   const addExtra = () => {
     if (isOnBreak) return;
@@ -1883,6 +1962,123 @@ function PackAdjustment({ planId, item, isOnBreak }: { planId: number; item: Pro
             + Extra Pack
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Admin-only rectification for recipes that were closed before all batches
+// landed (e.g. the historical race where a partial-complete locked out the
+// other builder's in-flight batch). Posts to /manual-batch, which bypasses
+// the builder-marked-complete cap.
+function AdminAddMissedBatch({ planId, item }: { planId: number; item: ProductionPlanItem }) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [station, setStation] = useState<"building_1" | "building_2">("building_1");
+  const [mode, setMode] = useState<"full" | "partial">("full");
+  const [packs, setPacks] = useState<string>("");
+  const [note, setNote] = useState<string>("");
+  const [runAction, busy] = useGuardedAction({
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(planId) });
+      setOpen(false);
+      setPacks("");
+      setNote("");
+      toast({ title: "Missed batch added" });
+    },
+  });
+
+  const submit = () => {
+    const body: Record<string, unknown> = { stationType: station };
+    if (mode === "partial") {
+      const n = Number(packs);
+      if (!Number.isInteger(n) || n < 1) {
+        toast({ title: "Enter a valid pack count", variant: "destructive" });
+        return;
+      }
+      body.partialPacks = n;
+    }
+    if (note.trim()) body.note = note.trim().slice(0, 500);
+    runAction((signal) =>
+      guardedFetch(`/api/production-plans/${planId}/items/${item.id}/manual-batch`, {
+        method: "POST", signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
+    );
+  };
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="w-full mt-2 flex items-center justify-center gap-2 py-2 text-xs font-semibold border border-dashed border-border rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/40 transition-colors"
+      >
+        <Plus className="w-3.5 h-3.5" />
+        Admin: add missed batch
+      </button>
+    );
+  }
+
+  return (
+    <div className="border border-amber-200 dark:border-amber-800 rounded-xl px-3 py-3 mt-2 bg-amber-50/40 dark:bg-amber-900/10 space-y-2">
+      <p className="text-xs font-semibold text-amber-800 dark:text-amber-200">Add missed batch</p>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => setStation("building_1")}
+          className={cn("flex-1 py-1.5 text-xs rounded-lg border", station === "building_1" ? "border-primary bg-primary/10 text-primary font-semibold" : "border-border text-muted-foreground")}
+        >Building 1</button>
+        <button
+          type="button"
+          onClick={() => setStation("building_2")}
+          className={cn("flex-1 py-1.5 text-xs rounded-lg border", station === "building_2" ? "border-primary bg-primary/10 text-primary font-semibold" : "border-border text-muted-foreground")}
+        >Building 2</button>
+      </div>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => setMode("full")}
+          className={cn("flex-1 py-1.5 text-xs rounded-lg border", mode === "full" ? "border-primary bg-primary/10 text-primary font-semibold" : "border-border text-muted-foreground")}
+        >Full batch</button>
+        <button
+          type="button"
+          onClick={() => setMode("partial")}
+          className={cn("flex-1 py-1.5 text-xs rounded-lg border", mode === "partial" ? "border-primary bg-primary/10 text-primary font-semibold" : "border-border text-muted-foreground")}
+        >Partial (packs)</button>
+      </div>
+      {mode === "partial" && (
+        <input
+          type="number"
+          min={1}
+          value={packs}
+          onChange={(e) => setPacks(e.target.value)}
+          placeholder="Packs in this partial batch"
+          className="w-full px-2 py-1.5 text-sm border border-border rounded-lg bg-background"
+        />
+      )}
+      <input
+        type="text"
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder="Note (optional)"
+        maxLength={500}
+        className="w-full px-2 py-1.5 text-sm border border-border rounded-lg bg-background"
+      />
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          disabled={busy}
+          className="flex-1 py-1.5 text-xs rounded-lg border border-border text-muted-foreground hover:text-foreground"
+        >Cancel</button>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={busy}
+          className="flex-1 py-1.5 text-xs rounded-lg bg-primary text-primary-foreground font-semibold hover:bg-primary/90 disabled:opacity-40"
+        >{busy ? "Adding…" : "Add batch"}</button>
       </div>
     </div>
   );

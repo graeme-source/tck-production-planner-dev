@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, stationChangeoversTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, prepTinOverridesTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, fridgeStockBatchesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable, batchWeightRecordsTable, temperatureRecordsTable } from "@workspace/db";
+import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, stationChangeoversTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, prepTinOverridesTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, fridgeStockBatchesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable, batchWeightRecordsTable, temperatureRecordsTable, builderPresenceTable } from "@workspace/db";
 import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as drizzleSum, ne, isNotNull, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
@@ -2051,8 +2051,27 @@ router.delete("/:id", async (req, res) => {
 // Batch completions sub-routes
 router.post("/:id/batch-completions", async (req, res) => {
   const planId = Number(req.params.id);
-  const { planItemId, stationType, startedAt, completedAt, actualWeightG } = req.body;
+  const { planItemId, stationType, startedAt, completedAt, actualWeightG, partialPacks } = req.body;
   const sessionUserId = (req.session as { userId?: number }).userId ?? null;
+
+  // Partial-batch path: building station only. The slot still counts (so the
+  // recipe's combined-batch ceiling shifts the same as a full batch), but
+  // pack-output for THIS slot is `partialPacks` instead of `packsPerBatch`.
+  // We model the shortfall by decrementing extra_packs_built by
+  // (packsPerBatch - partialPacks) — extras becomes negative, which the
+  // pack-total formulas handle naturally.
+  const isPartial = partialPacks != null;
+  if (isPartial) {
+    const n = Number(partialPacks);
+    if (!Number.isInteger(n) || n < 1) {
+      res.status(400).json({ error: "partialPacks must be a positive integer" });
+      return;
+    }
+    if (stationType !== "building_1" && stationType !== "building_2") {
+      res.status(400).json({ error: "partialPacks is only valid for building stations" });
+      return;
+    }
+  }
 
   if (await planDraftStatus(planId)) { res.status(409).json({ error: DRAFT_COMPLETION_ERROR }); return; }
 
@@ -2155,6 +2174,15 @@ router.post("/:id/batch-completions", async (req, res) => {
 
   const isBuilding = stationType === "building_1" || stationType === "building_2";
 
+  // packsPerBatch mirrors recipe-completion.ts: floor(portionsPerBatch / 2),
+  // min 1. On a partial-batch commit, we subtract ppb from extra_packs_built
+  // — i.e. record the slot's shortfall as a negative-going adjustment to
+  // extras — so the existing `combinedBuildCount × ppb + extras` totals
+  // throughout the codebase keep producing the correct pack count.
+  const ppb = Math.max(1, Math.floor((Number(planItem.portionsPerBatch) || 10) / 2));
+  const partialPacksValue = isPartial ? Number(partialPacks) : null;
+  const extrasDelta = isPartial ? -ppb : 0;
+
   const result = await db.execute(sql`
     WITH station_check AS (
       SELECT COUNT(*)::int as cnt FROM batch_completions
@@ -2170,19 +2198,21 @@ router.post("/:id/batch-completions", async (req, res) => {
       UPDATE production_plan_items
       SET
         batches_complete = CASE WHEN ${isWrapping}::boolean THEN batches_complete + 1 ELSE batches_complete END,
+        extra_packs_built = extra_packs_built + ${extrasDelta},
         status = 'in-progress'
       WHERE id = ${Number(planItemId)}
         AND (${target} = 0 OR (SELECT cnt FROM station_check) < ${target})
         AND (NOT ${isBuilding}::boolean OR ${target} = 0 OR (SELECT cnt FROM combined_check) < ${target})
       RETURNING id
     )
-    INSERT INTO batch_completions (plan_item_id, station_type, user_id, started_at, completed_at)
+    INSERT INTO batch_completions (plan_item_id, station_type, user_id, started_at, completed_at, partial_packs)
     SELECT
       ${Number(planItemId)},
       ${stationType ?? null},
       ${sessionUserId},
       ${startedAtDate}::timestamptz,
-      ${completedAtDate}::timestamptz
+      ${completedAtDate}::timestamptz,
+      ${partialPacksValue}::int
     FROM incremented
     RETURNING *
   `);
@@ -2219,7 +2249,10 @@ router.post("/:id/batch-completions", async (req, res) => {
       const ovenCount = (ovenCountRes.rows[0] as { cnt: number })?.cnt ?? 0;
 
       // Effective target mirrors effectiveBatchesTarget() on the client:
-      // if the builder marked complete, the ceiling is the combined building count.
+      // if the builder marked complete, the ceiling is the combined building
+      // count — which now includes any partial-batch slots, so the last oven
+      // batch (= last building slot, possibly partial) correctly gets flagged
+      // and carries the HACCP chill-start anchor.
       let effectiveTarget = planItem.batchesTarget ?? 0;
       if (planItem.builderMarkedCompleteAt) {
         const buildRes = await db.execute(sql`
@@ -4418,10 +4451,18 @@ router.delete("/:id/items/:itemId/wonly", async (req, res) => {
 // Once set, downstream stations (ovens, wrapping) use the builder's current
 // combined batch count as the effective target and pack output becomes
 // `batchesComplete × packsPerBatch + extraPacksBuilt`.
+//
+// Presence guard: refuses to set the flag while the OTHER building station
+// has a fresh (<60s) presence ping for this item — that means another
+// builder is mid-batch on this recipe and a close would orphan their work.
+// Returns 409 with code OTHER_BUILDER_ACTIVE in that case.
 // ──────────────────────────────────────────────────────────────────────────────
+const PRESENCE_FRESH_SECONDS = 60;
+
 router.post("/:id/items/:itemId/builder-complete", async (req, res) => {
   const planId = Number(req.params.id);
   const itemId = Number(req.params.itemId);
+  const fromStation: string | null = typeof req.body?.stationType === "string" ? req.body.stationType : null;
 
   const [item] = await db.select({
     id: productionPlanItemsTable.id,
@@ -4440,13 +4481,177 @@ router.post("/:id/items/:itemId/builder-complete", async (req, res) => {
     return;
   }
 
+  // Presence guard. Only enforce when the caller tells us which station
+  // they're on (clients are expected to send stationType); admins overriding
+  // via tools may omit it.
+  if (fromStation === "building_1" || fromStation === "building_2") {
+    const otherStation = fromStation === "building_1" ? "building_2" : "building_1";
+    const presenceRes = await db.execute(sql`
+      SELECT last_seen_at FROM builder_presence
+      WHERE plan_item_id = ${itemId}
+        AND station_type = ${otherStation}
+        AND last_seen_at > NOW() - (${PRESENCE_FRESH_SECONDS} || ' seconds')::interval
+      LIMIT 1
+    `);
+    if (presenceRes.rows.length > 0) {
+      res.status(409).json({
+        error: "Another builder is mid-batch on this recipe — wait for them to finish before marking it complete.",
+        code: "OTHER_BUILDER_ACTIVE",
+      });
+      return;
+    }
+  }
+
   const [updated] = await db
     .update(productionPlanItemsTable)
     .set({ builderMarkedCompleteAt: new Date() })
     .where(eq(productionPlanItemsTable.id, itemId))
     .returning({ builderMarkedCompleteAt: productionPlanItemsTable.builderMarkedCompleteAt });
 
+  // Clear stale presence rows for this item — recipe is closed, no one's
+  // working on it any more.
+  await db.execute(sql`DELETE FROM builder_presence WHERE plan_item_id = ${itemId}`);
+
   res.json({ itemId, builderMarkedCompleteAt: updated.builderMarkedCompleteAt });
+});
+
+// POST /:id/items/:itemId/presence — heartbeat from the building station while
+// a builder is actively on a recipe. Upserts (planItemId, stationType).
+router.post("/:id/items/:itemId/presence", async (req, res) => {
+  const planId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+  const stationType: string | null = typeof req.body?.stationType === "string" ? req.body.stationType : null;
+  const sessionUserId = (req.session as { userId?: number }).userId ?? null;
+
+  if (stationType !== "building_1" && stationType !== "building_2") {
+    res.status(400).json({ error: "stationType must be building_1 or building_2" });
+    return;
+  }
+
+  const [item] = await db.select({ id: productionPlanItemsTable.id })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
+  if (!item) {
+    res.status(404).json({ error: "Plan item not found" });
+    return;
+  }
+
+  await db.execute(sql`
+    INSERT INTO builder_presence (plan_item_id, station_type, user_id, last_seen_at)
+    VALUES (${itemId}, ${stationType}, ${sessionUserId}, NOW())
+    ON CONFLICT (plan_item_id, station_type)
+    DO UPDATE SET user_id = EXCLUDED.user_id, last_seen_at = NOW()
+  `);
+
+  res.status(204).end();
+});
+
+// DELETE /:id/items/:itemId/presence — explicit clear (builder moved off
+// this recipe). The 60-second TTL also makes this self-cleaning.
+router.delete("/:id/items/:itemId/presence", async (req, res) => {
+  const itemId = Number(req.params.itemId);
+  const stationType: string | null = typeof (req.query as { stationType?: unknown }).stationType === "string"
+    ? String((req.query as { stationType?: unknown }).stationType)
+    : null;
+  if (stationType !== "building_1" && stationType !== "building_2") {
+    res.status(400).json({ error: "stationType query param must be building_1 or building_2" });
+    return;
+  }
+  await db.execute(sql`
+    DELETE FROM builder_presence
+    WHERE plan_item_id = ${itemId} AND station_type = ${stationType}
+  `);
+  res.status(204).end();
+});
+
+// POST /:id/items/:itemId/manual-batch — admin rectification for a missed
+// batch on an already-closed (or in-progress) recipe. Inserts a
+// batch_completions row attributed to a correction, optionally as a partial
+// batch. Adjusts batches_complete (if wrapping) and extra_packs_built (if
+// partial) the same way the normal endpoint does, so downstream pack totals
+// remain consistent. Permitted even when builderMarkedCompleteAt is set.
+router.post("/:id/items/:itemId/manual-batch", async (req, res) => {
+  const planId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+
+  const admin = await isAdminUser(req);
+  if (!admin) {
+    res.status(403).json({ error: "Only admins can add a missed batch" });
+    return;
+  }
+
+  const { stationType, partialPacks, note, completedAt } = req.body ?? {};
+  if (typeof stationType !== "string" || !stationType) {
+    res.status(400).json({ error: "stationType is required" });
+    return;
+  }
+  const validStations = new Set(["building_1", "building_2", "ovens", "wrapping"]);
+  if (!validStations.has(stationType)) {
+    res.status(400).json({ error: "Invalid stationType" });
+    return;
+  }
+  const isPartial = partialPacks != null;
+  if (isPartial) {
+    const n = Number(partialPacks);
+    if (!Number.isInteger(n) || n < 1) {
+      res.status(400).json({ error: "partialPacks must be a positive integer" });
+      return;
+    }
+    if (stationType !== "building_1" && stationType !== "building_2") {
+      res.status(400).json({ error: "partialPacks is only valid for building stations" });
+      return;
+    }
+  }
+  const partialPacksValue = isPartial ? Number(partialPacks) : null;
+
+  const [planItem] = await db.select({
+    id: productionPlanItemsTable.id,
+    portionsPerBatch: recipesTable.portionsPerBatch,
+  })
+    .from(productionPlanItemsTable)
+    .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
+  if (!planItem) {
+    res.status(404).json({ error: "Plan item not found" });
+    return;
+  }
+
+  const sessionUserId = (req.session as { userId?: number }).userId ?? null;
+  const ppb = Math.max(1, Math.floor((Number(planItem.portionsPerBatch) || 10) / 2));
+  // Self-contained partial accounting: unlike the live builder flow (which
+  // pre-adds packs to extras via the +Extra Pack PATCH before tapping
+  // Complete Partial Batch), the admin form sends the pack count directly,
+  // so the extras delta has to fully express the slot's shortfall:
+  //   slot contributes `partialPacks` packs; formula counts the slot as ppb;
+  //   correction = partialPacks - ppb.
+  const extrasDelta = isPartial ? (Number(partialPacks) - ppb) : 0;
+  const isWrapping = stationType === "wrapping";
+  const completedAtDate = completedAt ? new Date(completedAt) : new Date();
+
+  await db.execute(sql`
+    UPDATE production_plan_items
+    SET
+      batches_complete = batches_complete + CASE WHEN ${isWrapping}::boolean THEN 1 ELSE 0 END,
+      extra_packs_built = extra_packs_built + ${extrasDelta}
+    WHERE id = ${itemId}
+  `);
+  const inserted = await db.execute(sql`
+    INSERT INTO batch_completions
+      (plan_item_id, station_type, user_id, started_at, completed_at, partial_packs, correction_by_user_id, correction_note)
+    VALUES
+      (${itemId}, ${stationType}, ${sessionUserId}, NULL, ${completedAtDate}::timestamptz, ${partialPacksValue}::int, ${sessionUserId}, ${typeof note === "string" ? note : null})
+    RETURNING *
+  `);
+  const row = inserted.rows[0] as Record<string, unknown>;
+  res.status(201).json({
+    ...row,
+    completedAt: row.completed_at instanceof Date ? (row.completed_at as Date).toISOString() : row.completed_at,
+    planItemId: row.plan_item_id,
+    stationType: row.station_type,
+    partialPacks: row.partial_packs ?? null,
+    correctionByUserId: row.correction_by_user_id ?? null,
+    correctionNote: row.correction_note ?? null,
+  });
 });
 
 // DELETE /:id/items/:itemId/builder-complete — admin-only undo.
