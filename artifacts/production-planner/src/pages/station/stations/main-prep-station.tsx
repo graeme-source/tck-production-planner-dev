@@ -42,6 +42,11 @@ export interface MainPrepIngredient {
     qtyPerTin: number;
     isOverridden?: boolean;
     isFillingMix?: boolean;
+    // Set when this entry was contributed by an expanded sub-recipe
+    // (e.g. cheddar coming in via Breadcrumb Topping vs Mac Cheese
+    // sauce). Two entries on the same parent recipe with different
+    // origins are rendered as separate cards with independent tin ticks.
+    subRecipeOriginId?: number | null;
   }>;
 }
 
@@ -49,6 +54,11 @@ interface PrepTinCompletion {
   id: number;
   ingredientId: number;
   isSubRecipe?: boolean;
+  // Mirrors the backend column — present on completions for ingredients
+  // contributed by an expanded sub-recipe. Used so the tick lights up the
+  // right card when multiple sub-recipes feed the same ingredient into the
+  // same parent recipe.
+  subRecipeOriginId?: number | null;
   recipeId: number;
   tinNumber: number;
   userId: number | null;
@@ -240,11 +250,28 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
   const completions = data?.completions ?? [];
   const linkedItems = data?.linkedItems ?? {};
 
-  const isCompleted = (ingredientId: number, recipeId: number, tinNumber: number, isSubRecipe?: boolean) =>
-    completions.some(c => c.ingredientId === ingredientId && c.recipeId === recipeId && c.tinNumber === tinNumber && !!c.isSubRecipe === !!isSubRecipe);
+  // subRecipeOriginId: when provided (including `null`), match the completion's
+  // origin marker exactly. When `undefined`, ignore origin entirely — used by
+  // summary counters that want to count ticks across all origins. Per-tin
+  // call sites must pass it so two cards on the same (ingredient, parent
+  // recipe) contributed by different sub-recipes don't share tick state.
+  const isCompleted = (ingredientId: number, recipeId: number, tinNumber: number, isSubRecipe?: boolean, subRecipeOriginId?: number | null) =>
+    completions.some(c =>
+      c.ingredientId === ingredientId
+      && c.recipeId === recipeId
+      && c.tinNumber === tinNumber
+      && !!c.isSubRecipe === !!isSubRecipe
+      && (subRecipeOriginId === undefined || (c.subRecipeOriginId ?? null) === (subRecipeOriginId ?? null))
+    );
 
-  const getCompletion = (ingredientId: number, recipeId: number, tinNumber: number, isSubRecipe?: boolean) =>
-    completions.find(c => c.ingredientId === ingredientId && c.recipeId === recipeId && c.tinNumber === tinNumber && !!c.isSubRecipe === !!isSubRecipe);
+  const getCompletion = (ingredientId: number, recipeId: number, tinNumber: number, isSubRecipe?: boolean, subRecipeOriginId?: number | null) =>
+    completions.find(c =>
+      c.ingredientId === ingredientId
+      && c.recipeId === recipeId
+      && c.tinNumber === tinNumber
+      && !!c.isSubRecipe === !!isSubRecipe
+      && (subRecipeOriginId === undefined || (c.subRecipeOriginId ?? null) === (subRecipeOriginId ?? null))
+    );
 
   const todayDayName = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date().getDay()];
 
@@ -260,7 +287,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
     for (const r of ing.recipes) {
       totalTinCount += r.tinCount;
       for (let tn = 1; tn <= r.tinCount; tn++) {
-        if (isCompleted(ing.ingredientId, r.recipeId, tn, ing.isSubRecipe)) completedTinCount++;
+        if (isCompleted(ing.ingredientId, r.recipeId, tn, ing.isSubRecipe, r.subRecipeOriginId ?? null)) completedTinCount++;
       }
     }
     const allTinsDone = totalTinCount > 0 && completedTinCount >= totalTinCount;
@@ -277,11 +304,22 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
   };
 
   const recipeIngredientStatus = (ing: MainPrepIngredient, recipeId: number) => {
-    const recipe = ing.recipes.find(r => r.recipeId === recipeId);
-    if (!recipe) return { completedTins: 0, totalTins: 0, allDone: false };
-    const totalTins = recipe.tinCount;
-    const completedTins = Array.from({ length: totalTins }, (_, i) => i + 1)
-      .filter(tn => isCompleted(ing.ingredientId, recipeId, tn, ing.isSubRecipe)).length;
+    // Sum tins + completions across every recipes[] entry with this parent
+    // recipeId. An ingredient that comes in via multiple sub-recipes of the
+    // same parent (e.g. cheddar via Breadcrumb Topping AND Macaroni Cheese
+    // sauce under Big Nanny's) has multiple entries here — the left-sidebar
+    // card should show the combined progress so the operator sees one
+    // collapsed status until they drill in.
+    const matching = ing.recipes.filter(r => r.recipeId === recipeId);
+    if (matching.length === 0) return { completedTins: 0, totalTins: 0, allDone: false };
+    let totalTins = 0;
+    let completedTins = 0;
+    for (const r of matching) {
+      totalTins += r.tinCount;
+      for (let tn = 1; tn <= r.tinCount; tn++) {
+        if (isCompleted(ing.ingredientId, recipeId, tn, ing.isSubRecipe, r.subRecipeOriginId ?? null)) completedTins++;
+      }
+    }
     return { completedTins, totalTins, allDone: totalTins > 0 && completedTins >= totalTins };
   };
 
@@ -367,25 +405,25 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
     onSuccess: () => refetch(),
   });
 
-  const toggleTin = async (ingredientId: number, recipeId: number, tinNumber: number, isSubRecipe?: boolean) => {
+  const toggleTin = async (ingredientId: number, recipeId: number, tinNumber: number, isSubRecipe?: boolean, subRecipeOriginId?: number | null) => {
     if (isOnBreak) return;
     if (isDraft) { toastDraftBlocked(); return; }
     activeIngIdRef.current = ingredientId;
     postPresence(ingredientId);
-    const existing = getCompletion(ingredientId, recipeId, tinNumber, isSubRecipe);
+    const existing = getCompletion(ingredientId, recipeId, tinNumber, isSubRecipe, subRecipeOriginId);
     await runTinAction(async (signal) => {
       if (existing) {
         await guardedFetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ingredientId, recipeId, tinNumber, isSubRecipe: !!isSubRecipe }),
+          body: JSON.stringify({ ingredientId, recipeId, tinNumber, isSubRecipe: !!isSubRecipe, subRecipeOriginId: subRecipeOriginId ?? null }),
           signal,
         });
       } else {
         await guardedFetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ingredientId, recipeId, tinNumber, isSubRecipe: !!isSubRecipe }),
+          body: JSON.stringify({ ingredientId, recipeId, tinNumber, isSubRecipe: !!isSubRecipe, subRecipeOriginId: subRecipeOriginId ?? null }),
           signal,
         });
       }
@@ -812,8 +850,8 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                       {ing.isBottle && ing.bottlesNeeded ? (() => {
                         const recipe = ing.recipes[0];
                         if (!recipe) return null;
-                        const done = isCompleted(ing.ingredientId, recipe.recipeId, 1, ing.isSubRecipe);
-                        const completion = getCompletion(ing.ingredientId, recipe.recipeId, 1, ing.isSubRecipe);
+                        const done = isCompleted(ing.ingredientId, recipe.recipeId, 1, ing.isSubRecipe, recipe.subRecipeOriginId ?? null);
+                        const completion = getCompletion(ing.ingredientId, recipe.recipeId, 1, ing.isSubRecipe, recipe.subRecipeOriginId ?? null);
                         return (
                           <div>
                             <div className={cn(
@@ -850,7 +888,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                             </div>
 
                             <button
-                              onClick={() => toggleTin(ing.ingredientId, recipe.recipeId, 1, ing.isSubRecipe)}
+                              onClick={() => toggleTin(ing.ingredientId, recipe.recipeId, 1, ing.isSubRecipe, recipe.subRecipeOriginId ?? null)}
                               disabled={isOnBreak}
                               className={cn(
                                 "mt-3 w-full flex items-center justify-center gap-2 border-2 rounded-2xl px-4 py-3.5 transition-all active:scale-95 text-base font-bold",
@@ -881,12 +919,14 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                         );
                       })() : ing.recipes.map((recipe, ri) => {
                         const rTins = Array.from({ length: recipe.tinCount }, (_, i) => i + 1);
-                        const rDone = rTins.filter(tn => isCompleted(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe)).length;
+                        const rDone = rTins.filter(tn => isCompleted(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe, recipe.subRecipeOriginId ?? null)).length;
                         const allRecipeDone = rTins.length > 0 && rDone >= rTins.length;
-                        const tinEditKey = `${ing.ingredientId}_${recipe.recipeId}`;
+                        // Include origin in the edit/key so two panels under
+                        // the same (ingredient, parent recipe) don't collide.
+                        const tinEditKey = `${ing.ingredientId}_${recipe.recipeId}_${recipe.subRecipeOriginId ?? "x"}`;
                         const isEditingTins = editingTinKey === tinEditKey;
                         return (
-                          <div key={recipe.recipeId} className={cn(ri > 0 && "mt-4")}>
+                          <div key={`${recipe.recipeId}_${recipe.subRecipeOriginId ?? "x"}_${ri}`} className={cn(ri > 0 && "mt-4")}>
                             <div className={cn(
                               "flex items-center justify-between px-3 py-2 rounded-lg mb-2",
                               allRecipeDone
@@ -974,12 +1014,12 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                             )}
                             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
                               {rTins.map(tn => {
-                                const done = isCompleted(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe);
-                                const completion = getCompletion(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe);
+                                const done = isCompleted(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe, recipe.subRecipeOriginId ?? null);
+                                const completion = getCompletion(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe, recipe.subRecipeOriginId ?? null);
                                 return (
                                   <button
                                     key={tn}
-                                    onClick={() => toggleTin(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe)}
+                                    onClick={() => toggleTin(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe, recipe.subRecipeOriginId ?? null)}
                                     disabled={isOnBreak}
                                     className={cn(
                                       "relative flex flex-col items-center border-2 rounded-2xl px-3 py-3.5 transition-all active:scale-95",

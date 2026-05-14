@@ -681,15 +681,33 @@ async function runStartupMigrations() {
     await db.execute(sql`
       DROP INDEX IF EXISTS uq_prep_completion_v3
     `);
+    // Two partial unique indexes:
+    //  - uq_prep_completion_ing:  ingredient completions, optionally tagged
+    //                              with the originating sub-recipe (sub_recipe_id
+    //                              column is reused as the origin marker). The
+    //                              COALESCE-with-0 makes NULL collapse to a
+    //                              single bucket so legacy "no origin" rows
+    //                              still dedupe correctly while origin-tagged
+    //                              rows (e.g. cheddar from Breadcrumb Topping
+    //                              vs from Macaroni Cheese sauce, both under
+    //                              the same parent recipe) live in their own
+    //                              buckets and can be ticked independently.
+    //  - uq_prep_completion_sub:  whole-sub-recipe completions where the
+    //                              operator ticks off "macaroni cheese sauce
+    //                              ready" as a unit rather than ingredient-by-
+    //                              ingredient. Unchanged from before.
+    await db.execute(sql`
+      DROP INDEX IF EXISTS uq_prep_completion_ing
+    `);
     await db.execute(sql`
       CREATE UNIQUE INDEX IF NOT EXISTS uq_prep_completion_ing
-      ON prep_completions (plan_id, ingredient_id, recipe_id, tin_number)
+      ON prep_completions (plan_id, ingredient_id, COALESCE(sub_recipe_id, 0), recipe_id, tin_number)
       WHERE ingredient_id IS NOT NULL
     `);
     await db.execute(sql`
       CREATE UNIQUE INDEX IF NOT EXISTS uq_prep_completion_sub
       ON prep_completions (plan_id, sub_recipe_id, recipe_id, tin_number)
-      WHERE sub_recipe_id IS NOT NULL
+      WHERE sub_recipe_id IS NOT NULL AND ingredient_id IS NULL
     `);
 
     await db.execute(sql`
