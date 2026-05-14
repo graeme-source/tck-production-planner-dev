@@ -1261,12 +1261,27 @@ function ShortOnPackSlide({ data, slide }: { data: DashboardData; slide: Meeting
     .filter(r => r.isCoreMenu)
     .map(r => {
       const have = r.fridgeStock;
-      const need = r.dispatch1Qty;
+      // NEED = today's pack (the dispatch we're about to load), not the
+      // previous pack that already went out. dispatch2Qty corresponds to
+      // orders tagged with planDate's delivery date (planDate + 1 day),
+      // which is what the morning standup is preparing for.
+      const need = r.dispatch2Qty;
       const surplus = have - need; // +ve = surplus, -ve = deficit
       const tone: "ok" | "warn" | "bad" = surplus >= 0 ? "ok" : surplus > -need * 0.1 ? "warn" : "bad";
       return { ...r, have, need, surplus, tone };
     })
     .sort((a, b) => a.surplus - b.surplus); // shortest first
+
+  // Dispatch + delivery dates for the table-header labels. planDate IS the
+  // dispatch day; APC is overnight, so delivery is the next calendar day.
+  // This doesn't skip weekends/bank holidays — the backend dispatch2 walk
+  // already lands on the planDate itself, so the labels just need
+  // planDate / planDate+1 for the user to sanity-check what data the slide
+  // is pulling from.
+  const dispatchDate = new Date(`${data.today}T00:00:00`);
+  const deliveryDate = addDays(dispatchDate, 1);
+  const dispatchLabel = format(dispatchDate, "EEE d MMM");
+  const deliveryLabel = format(deliveryDate, "EEE d MMM");
 
   return (
     <div>
@@ -1282,10 +1297,16 @@ function ShortOnPackSlide({ data, slide }: { data: DashboardData; slide: Meeting
       ) : (
         <div className="glass-panel rounded-2xl overflow-hidden">
           {/* Header */}
-          <div className="grid grid-cols-[1fr_5rem_5rem_5rem] gap-3 px-5 py-2 bg-secondary/30 text-xs uppercase tracking-wide text-muted-foreground font-semibold">
+          <div className="grid grid-cols-[1fr_8rem_12rem_5rem] gap-3 px-5 py-2 bg-secondary/30 text-xs uppercase tracking-wide text-muted-foreground font-semibold">
             <span>Recipe</span>
-            <span className="text-right">Have</span>
-            <span className="text-right">Need</span>
+            <span className="text-right leading-tight">
+              Have
+              <span className="block text-[10px] font-normal normal-case opacity-70">production fridge</span>
+            </span>
+            <span className="text-right leading-tight">
+              Need
+              <span className="block text-[10px] font-normal normal-case opacity-70">despatch {dispatchLabel} · delivery {deliveryLabel}</span>
+            </span>
             <span className="text-right">+/−</span>
           </div>
           {rows.map((r, i) => {
@@ -1297,7 +1318,7 @@ function ShortOnPackSlide({ data, slide }: { data: DashboardData; slide: Meeting
               <div
                 key={r.recipeId}
                 className={cn(
-                  "grid grid-cols-[1fr_5rem_5rem_5rem] gap-3 items-center px-5 py-3 border-l-4",
+                  "grid grid-cols-[1fr_8rem_12rem_5rem] gap-3 items-center px-5 py-3 border-l-4",
                   toneClass,
                   i > 0 && "border-t border-border/50",
                 )}
