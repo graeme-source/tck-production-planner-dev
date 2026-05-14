@@ -57,6 +57,18 @@ app.use(helmet({
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       imgSrc: ["'self'", "data:", "https:"],
       connectSrc: ["'self'", "https:"],
+      // Allow YouTube + Vimeo iframes — used by:
+      //   - Lean Cave "Video Learning" section (Lean Made Simple shorts)
+      //   - SOP step descriptions that contain a YouTube/Vimeo URL, which
+      //     the SOP viewer auto-embeds (see detectVideoEmbed in
+      //     standards-sops-dialog.tsx). Without this, both surfaces render
+      //     blocked-frame placeholders on production.
+      frameSrc: [
+        "'self'",
+        "https://www.youtube.com",
+        "https://www.youtube-nocookie.com",
+        "https://player.vimeo.com",
+      ],
     },
   },
 }));
