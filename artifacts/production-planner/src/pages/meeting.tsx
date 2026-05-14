@@ -640,7 +640,7 @@ function MeetingShell({
           slides (Order of Production, deliveries) overflow scroll. */}
       <div className="flex-1 overflow-y-auto px-8 py-6 flex flex-col">
         <div className="max-w-6xl mx-auto w-full my-auto">
-          <SlideBody slide={slide} data={data} onRefresh={onRefresh} />
+          <SlideBody slide={slide} data={data} onRefresh={onRefresh} isPreviewing={isPreviewing} />
         </div>
       </div>
 
@@ -913,7 +913,7 @@ function DoneScreen({ data, onClose }: { data: DashboardData; onClose: () => voi
 }
 
 // ── Slide body switcher ─────────────────────────────────────────────
-function SlideBody({ slide, data, onRefresh }: { slide: MeetingSlide; data: DashboardData; onRefresh: () => void }) {
+function SlideBody({ slide, data, onRefresh, isPreviewing }: { slide: MeetingSlide; data: DashboardData; onRefresh: () => void; isPreviewing: boolean }) {
   switch (slide.kind) {
     case "special_prep": return <SpecialPrepSlide data={data} slide={slide} />;
     case "stretches": return <StretchesPanel />;
@@ -921,7 +921,7 @@ function SlideBody({ slide, data, onRefresh }: { slide: MeetingSlide; data: Dash
     case "order_of_production": return <OrderOfProductionSlide data={data} slide={slide} />;
     case "local_delivery": return <LocalDeliverySlide data={data} slide={slide} />;
     case "bag_orders": return <BagOrdersSlide data={data} slide={slide} />;
-    case "short_on_pack": return <ShortOnPackSlide data={data} slide={slide} />;
+    case "short_on_pack": return <ShortOnPackSlide data={data} slide={slide} isPreviewing={isPreviewing} />;
     case "safety_issues": return <SafetyIssuesSlide data={data} onRefresh={onRefresh} slide={slide} />;
     case "system_updates": return <SystemUpdatesSlide slide={slide} />;
     case "new_sops": return <NewSopsSlide data={data} slide={slide} />;
@@ -1238,19 +1238,28 @@ interface CalcRecipeRow {
   isCoreMenu: boolean;
   fridgeStock: number;
   dispatch1Qty: number;
+  dispatch2Qty: number;
+  dispatch3Qty: number;
   deficit: number;
 }
 
-function ShortOnPackSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
+function ShortOnPackSlide({ data, slide, isPreviewing }: { data: DashboardData; slide: MeetingSlide; isPreviewing: boolean }) {
+  // The slide always describes "today's pack" from the perspective of the
+  // meeting it's running in. In a live meeting that's data.today; in a
+  // preview of tomorrow's meeting it's data.tomorrow. Without this shift
+  // the preview would silently show yesterday's pack from the host's
+  // perspective on the previewed day.
+  const effectivePlanDate = isPreviewing ? data.tomorrow : data.today;
+
   // Use the existing /api/production-plans/calculate endpoint as the
   // single source of truth — same numbers the planner page shows for
   // today, including fridge stock, today's despatch demand and the
   // per-recipe deficit. Filter to core recipes only since the user
   // wants the morning standard view.
   const { data: calc, isLoading } = useQuery<{ recipes: CalcRecipeRow[]; dispatchDates: string[]; deliveryDates: string[] }>({
-    queryKey: ["short-on-pack-today", data.today],
+    queryKey: ["short-on-pack-today", effectivePlanDate],
     queryFn: async () => {
-      const res = await fetch(`${BASE}/api/production-plans/calculate?planDate=${data.today}`, { credentials: "include" });
+      const res = await fetch(`${BASE}/api/production-plans/calculate?planDate=${effectivePlanDate}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
