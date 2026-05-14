@@ -6,7 +6,7 @@ const glossaryTerms = [
   {
     term: "Kaizen",
     definition: "Continuous improvement — making small, daily changes that add up to big results over time. Everyone on the team looks for ways to do things better.",
-    videoId: "txOeJQCMT8s",
+    videoId: "Vcvaxqsa80E",
   },
   {
     term: "Gemba",
@@ -20,7 +20,7 @@ const glossaryTerms = [
   {
     term: "5S / 3S",
     definition: "A system for organising your workspace: Sort (remove what you don't need), Set in order (a place for everything), Shine (keep it clean), Standardise, and Sustain. 3S focuses on the first three.",
-    videoId: "IhnAeRytLl0",
+    videoId: "RbYj3gBYmo4",
   },
   {
     term: "Kanban",
@@ -56,14 +56,14 @@ const glossaryTerms = [
   },
 ];
 
-// Each ID has been verified embeddable via YouTube's oEmbed endpoint
-// (Gemba Academy's channel allows embedding; the previous Lean Made
-// Simple set was unembeddable / deleted).
+// Prefer 2 Second Lean / Paul Akers / Ryan Tierney (Lean Made Simple)
+// content over traditional academy-style training. Every ID has been
+// verified embeddable via YouTube's oEmbed endpoint.
 const videos = [
   {
-    id: "ZdHGTCXcJQU",
-    title: "Introduction to Lean Manufacturing",
-    description: "A quick introduction to Lean thinking and why it matters for every team.",
+    id: "hlYvmkYvA8A",
+    title: "What is 2 Second Lean?",
+    description: "Paul Akers on the power of becoming a 2 Second Lean thinker — small daily improvements anyone on the team can make.",
   },
   {
     id: "2BjrzTmrp7U",
@@ -71,14 +71,14 @@ const videos = [
     description: "Why going to where the work happens is the most powerful thing a leader can do.",
   },
   {
-    id: "IhnAeRytLl0",
-    title: "3S — Workplace Organisation",
-    description: "How to organise your workspace so everything has a place and nothing is wasted.",
+    id: "RbYj3gBYmo4",
+    title: "3S — Sort, Sweep, Standardize",
+    description: "Ryan Tierney on the foundation of any lean workplace: sort it, sweep it, standardize it.",
   },
   {
-    id: "SU01D-jTZcE",
-    title: "The 7 Deadly Wastes",
-    description: "Understand the seven types of waste and how to spot them in your daily work.",
+    id: "VOkBhGgaO6Q",
+    title: "The 8 Wastes Draining Your Business",
+    description: "Ryan Tierney walks through the 8 wastes inside a real factory transformation at Sperrin Metal.",
   },
   {
     id: "P6tunvijynA",
@@ -86,9 +86,9 @@ const videos = [
     description: "Why documenting the best way to do a task is the starting point for all improvement.",
   },
   {
-    id: "txOeJQCMT8s",
-    title: "Kaizen — The True Meaning",
-    description: "Brad Schmidt breaks down Kaizen: small, continuous improvements that build a culture.",
+    id: "Vcvaxqsa80E",
+    title: "Kaizen — Steven Bartlett & Ryan Tierney",
+    description: "Ryan Tierney responds to Steven Bartlett's take on Kaizen — what small daily improvements really look like.",
   },
 ];
 
