@@ -644,30 +644,48 @@ function MeetingShell({
         </div>
       </div>
 
-      {/* Footer — dot pagination only. Navigation is swipe-driven so the
-          host can focus on the content. Tap a dot to jump. The Finish
-          button on the last slide stays so the host has a clear "we're
-          done" action. */}
-      <div className="flex items-center justify-center gap-2 px-6 py-3 border-t border-border bg-card">
-        {slides.map((s, i) => (
-          <button
-            key={s.id}
-            onClick={() => setSlideIndex(i)}
-            className={cn(
-              "h-2 rounded-full transition-all",
-              i === slideIndex ? "bg-primary w-8" : i < slideIndex ? "bg-primary/40 w-2.5" : "bg-secondary w-2.5",
-            )}
-            aria-label={`Go to slide ${i + 1}`}
-            data-no-swipe
-          />
-        ))}
-        {slideIndex === slideCount - 1 && (
+      {/* Footer — compact Back / Next buttons sit either side of the
+          dot pagination so a desktop host can click through. On iPad
+          the swipe gesture is still the main way to navigate. */}
+      <div className="flex items-center justify-center gap-3 px-6 py-3 border-t border-border bg-card">
+        <button
+          onClick={retreat}
+          disabled={slideIndex === 0}
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          aria-label="Previous slide"
+          data-no-swipe
+        >
+          <ChevronLeft className="w-4 h-4" /> Back
+        </button>
+        <div className="flex items-center gap-2" data-no-swipe>
+          {slides.map((s, i) => (
+            <button
+              key={s.id}
+              onClick={() => setSlideIndex(i)}
+              className={cn(
+                "h-2 rounded-full transition-all",
+                i === slideIndex ? "bg-primary w-8" : i < slideIndex ? "bg-primary/40 w-2.5" : "bg-secondary w-2.5",
+              )}
+              aria-label={`Go to slide ${i + 1}`}
+            />
+          ))}
+        </div>
+        {slideIndex === slideCount - 1 ? (
           <button
             onClick={onEnd}
-            className="ml-4 flex items-center gap-2 px-5 py-2 rounded-xl text-base font-semibold bg-emerald-600 text-white hover:bg-emerald-700"
+            className="flex items-center gap-2 px-5 py-2 rounded-xl text-base font-semibold bg-emerald-600 text-white hover:bg-emerald-700"
             data-no-swipe
           >
             Finish <CheckCircle2 className="w-5 h-5" />
+          </button>
+        ) : (
+          <button
+            onClick={advance}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors"
+            aria-label="Next slide"
+            data-no-swipe
+          >
+            Next <ChevronRight className="w-4 h-4" />
           </button>
         )}
       </div>
