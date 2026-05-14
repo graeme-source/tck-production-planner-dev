@@ -1,5 +1,6 @@
 import { Lightbulb, BookOpen, Play, ExternalLink, ArrowRight, TrendingUp } from "lucide-react";
 import { Link } from "wouter";
+import { SopsBrowser } from "@/components/standards-sops-dialog";
 
 const glossaryTerms = [
   {
@@ -90,7 +91,7 @@ const videos = [
 
 export default function LeanCave() {
   return (
-    <div className="space-y-10 max-w-4xl mx-auto">
+    <div className="space-y-10 max-w-5xl mx-auto">
       <div>
         <div className="flex items-center gap-3 mb-2">
           <div className="p-2.5 bg-amber-500/10 rounded-xl">
@@ -102,6 +103,17 @@ export default function LeanCave() {
           Your daily dose of Lean thinking. Browse key concepts, watch short videos, and build the mindset that drives continuous improvement.
         </p>
       </div>
+
+      {/* Standards & SOPs — full-page browser. Same component as the
+          global SOPs button overlay, just rendered inline so this is the
+          stable, bookmarkable home for SOPs. The overlay stays available
+          everywhere for quick reference; this page is for browse / train /
+          author sessions. The component renders its own "Standards & SOPs"
+          card header (library mode) and SOP-specific headers (viewer /
+          editor), so no outer section title is needed here. */}
+      <section>
+        <SopsBrowser />
+      </section>
 
       <Link href="/reports?tab=improvements">
         <div className="bg-gradient-to-r from-primary/10 to-amber-500/10 border border-primary/20 rounded-2xl p-6 cursor-pointer hover:from-primary/15 hover:to-amber-500/15 transition-all group">

@@ -402,19 +402,69 @@ export function StandardsSopsDialog({
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// SopsBrowser — inline version for hosting on a real page (Lean Cave etc.)
+// Same view state machine (library / viewer / editor) as the dialog, but
+// renders the components with mode="page" so they flow inside the host
+// layout instead of overlaying the screen.
+// ─────────────────────────────────────────────────────────────────────────
+export function SopsBrowser({ initialSopId }: { initialSopId?: number }) {
+  type View = { kind: "library" } | { kind: "viewer"; sopId: number } | { kind: "editor"; sopId: number };
+  const [view, setView] = useState<View>(initialSopId ? { kind: "viewer", sopId: initialSopId } : { kind: "library" });
+
+  if (view.kind === "viewer") {
+    return (
+      <Viewer
+        sopId={view.sopId}
+        onBack={() => setView({ kind: "library" })}
+        onEdit={() => setView({ kind: "editor", sopId: view.sopId })}
+        mode="page"
+      />
+    );
+  }
+  if (view.kind === "editor") {
+    return (
+      <Editor
+        sopId={view.sopId}
+        onBack={() => setView({ kind: "library" })}
+        defaultStation={null}
+        mode="page"
+      />
+    );
+  }
+  return (
+    <Library
+      currentStationType={null}
+      onOpenSop={(sopId) => setView({ kind: "viewer", sopId })}
+      onEditSop={(sopId) => setView({ kind: "editor", sopId })}
+      mode="page"
+    />
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Library
 // ─────────────────────────────────────────────────────────────────────────
+
+// "modal" renders the component as an overlaid dialog (existing behaviour
+// when launched from the global SOPs button). "page" strips the modal
+// chrome — fixed positioning, animations, backdrop X — and lets the
+// component flow inline inside a host page like Lean Cave.
+type FrameMode = "modal" | "page";
 
 function Library({
   currentStationType,
   onClose,
   onOpenSop,
   onEditSop,
+  mode = "modal",
 }: {
   currentStationType: string | null;
-  onClose: () => void;
+  /** Required in modal mode (X button closes the overlay). Optional in
+   *  page mode — the X button is hidden since there's nothing to close. */
+  onClose?: () => void;
   onOpenSop: (sopId: number) => void;
   onEditSop: (sopId: number) => void;
+  mode?: FrameMode;
 }) {
   const { state } = useAuth();
   const canEdit = state.status === "authenticated" && (state.user.role === "admin" || state.user.role === "manager");
@@ -494,36 +544,33 @@ function Library({
     }
   };
 
-  return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.97, y: 8 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.97, y: 8 }}
-      transition={{ duration: 0.18 }}
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none"
-    >
-      <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col pointer-events-auto">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <BookOpen className="w-5 h-5 text-primary flex-shrink-0" />
-            <h2 className="font-display font-bold text-xl truncate">Standards &amp; SOPs</h2>
-          </div>
-          <div className="flex items-center gap-2">
-            {canEdit && (
-              <button
-                onClick={handleCreate}
-                disabled={creating}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 disabled:opacity-60"
-              >
-                {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                New SOP
-              </button>
-            )}
+  const body = (
+    <>
+      <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <BookOpen className="w-5 h-5 text-primary flex-shrink-0" />
+          <h2 className="font-display font-bold text-xl truncate">Standards &amp; SOPs</h2>
+        </div>
+        <div className="flex items-center gap-2">
+          {canEdit && (
+            <button
+              onClick={handleCreate}
+              disabled={creating}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 disabled:opacity-60"
+            >
+              {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+              New SOP
+            </button>
+          )}
+          {/* Page mode has no overlay to dismiss; the host page provides
+              its own back / nav affordance, so the close X is hidden. */}
+          {mode === "modal" && onClose && (
             <button onClick={onClose} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary">
               <X className="w-5 h-5" />
             </button>
-          </div>
+          )}
         </div>
+      </div>
 
         {(() => {
           // Build the full list of station options (always includes the 10
@@ -742,6 +789,27 @@ function Library({
             );
           })()}
         </div>
+    </>
+  );
+
+  // Wrap shared body in either modal (overlay) or page (inline) chrome.
+  if (mode === "page") {
+    return (
+      <div className="bg-card border border-border rounded-2xl flex flex-col w-full h-[78vh] overflow-hidden">
+        {body}
+      </div>
+    );
+  }
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.97, y: 8 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.97, y: 8 }}
+      transition={{ duration: 0.18 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none"
+    >
+      <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col pointer-events-auto">
+        {body}
       </div>
     </motion.div>
   );
@@ -841,14 +909,18 @@ function Viewer({
   onBack,
   onEdit,
   onClose,
+  mode = "modal",
 }: {
   sopId: number;
   onBack: () => void;
   onEdit: () => void;
-  onClose: () => void;
+  /** Unused in page mode (no overlay to close). */
+  onClose?: () => void;
+  mode?: FrameMode;
 }) {
   const { state } = useAuth();
   const canEdit = state.status === "authenticated" && (state.user.role === "admin" || state.user.role === "manager");
+  void onClose; // kept for backwards-compatible prop signature
 
   const [sop, setSop] = useState<SopDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -895,12 +967,14 @@ function Viewer({
     if (dx < 0) goNext(); else goPrev();
   };
 
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex flex-col bg-card pointer-events-auto"
+  const viewerInner = (
+    <div
+      className={cn(
+        "flex flex-col bg-card w-full",
+        mode === "modal"
+          ? "fixed inset-0 z-50 pointer-events-auto"
+          : "rounded-2xl border border-border h-[78vh] overflow-hidden",
+      )}
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
     >
@@ -1047,6 +1121,17 @@ function Viewer({
           ))}
         </div>
       )}
+    </div>
+  );
+
+  if (mode === "page") return viewerInner;
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+    >
+      {viewerInner}
     </motion.div>
   );
 }
@@ -1060,11 +1145,16 @@ function Editor({
   onBack,
   onClose,
   defaultStation,
+  mode = "modal",
 }: {
   sopId: number;
   onBack: () => void;
-  onClose: () => void;
+  /** In modal mode this closes the whole dialog. In page mode it falls
+   *  back to onBack so the footer "Save & Close" button still has somewhere
+   *  to go (back to the library list, no overlay to dismiss). */
+  onClose?: () => void;
   defaultStation: string | null;
+  mode?: FrameMode;
 }) {
   const [sop, setSop] = useState<SopDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1199,15 +1289,8 @@ function Editor({
     }
   };
 
-  return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.97, y: 8 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.97, y: 8 }}
-      transition={{ duration: 0.18 }}
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none"
-    >
-      <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-4xl max-h-[94vh] flex flex-col pointer-events-auto">
+  const editorBody = (
+    <>
         <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
           <button onClick={() => flushAndClose(onBack)} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
             <ChevronLeft className="w-4 h-4" /> Library
@@ -1353,7 +1436,8 @@ function Editor({
 
         {/* Sticky footer — explicit Save & Close so reaching for the
             close button doesn't drop in-flight typing. Pairs with the
-            autosave hint in the header. */}
+            autosave hint in the header. In page mode there's no overlay
+            to close, so the primary action returns to the library list. */}
         <div className="flex items-center justify-end gap-3 px-5 py-3 border-t border-border flex-shrink-0 bg-card/95">
           <button
             onClick={() => flushAndClose(onBack)}
@@ -1362,12 +1446,32 @@ function Editor({
             Back to library
           </button>
           <button
-            onClick={() => flushAndClose(onClose)}
+            onClick={() => flushAndClose(mode === "modal" && onClose ? onClose : onBack)}
             className="px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 flex items-center gap-2"
           >
-            <CheckCircle2 className="w-4 h-4" /> Save &amp; Close
+            <CheckCircle2 className="w-4 h-4" /> {mode === "modal" ? "Save & Close" : "Save"}
           </button>
         </div>
+    </>
+  );
+
+  if (mode === "page") {
+    return (
+      <div className="bg-card border border-border rounded-2xl flex flex-col w-full h-[78vh] overflow-hidden">
+        {editorBody}
+      </div>
+    );
+  }
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.97, y: 8 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.97, y: 8 }}
+      transition={{ duration: 0.18 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none"
+    >
+      <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-4xl max-h-[94vh] flex flex-col pointer-events-auto">
+        {editorBody}
       </div>
     </motion.div>
   );
