@@ -20,7 +20,6 @@ import {
   db,
   productionPlansTable,
   productionPlanItemsTable,
-  batchCompletionsTable,
   recipesTable,
   purchaseOrdersTable,
   suppliersTable,
@@ -37,8 +36,12 @@ import {
   usersTable,
   appSettingsTable,
 } from "@workspace/db";
-import { and, eq, gte, lte, desc, asc, sql, inArray, isNull, notInArray } from "drizzle-orm";
+import { and, eq, gte, lte, desc, asc, sql, isNull, notInArray } from "drizzle-orm";
 import { londonDateString } from "../lib/london-time";
+import {
+  computeBuilderBatchesPerHourForDay,
+  computePackingOrdersPerHourForDay,
+} from "../lib/yesterday-kpis";
 
 const router: IRouter = Router();
 
@@ -221,50 +224,33 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
         .from(productionPlanItemsTable)
         .where(eq(productionPlanItemsTable.planId, yesterdayPlan.id));
 
-      const itemIds = items.map(it => it.id);
       for (const it of items) {
         wonkyCount += it.wonlyTotal ?? 0;
         shortCount += it.shortCount ?? 0;
         leftoverFillingGrams += it.leftoverFillingGrams ?? 0;
         yesterdayBatchesTotal += it.batchesTarget ?? 0;
       }
-
-      if (itemIds.length > 0) {
-        // Building rate: total batches completed in building stations,
-        // divided by the wall-clock span from first to last completion.
-        // Approximation — doesn't subtract breaks — but the spread of
-        // completions across the morning is what the team cares about.
-        const buildingRows = await db
-          .select({ completedAt: batchCompletionsTable.completedAt })
-          .from(batchCompletionsTable)
-          .where(and(
-            inArray(batchCompletionsTable.planItemId, itemIds),
-            sql`${batchCompletionsTable.stationType} IN ('building_1', 'building_2')`,
-          ));
-        if (buildingRows.length >= 2) {
-          const times = buildingRows.map(r => r.completedAt.getTime()).sort((a, b) => a - b);
-          const hours = (times[times.length - 1] - times[0]) / 3_600_000;
-          if (hours > 0) {
-            builderBatchesPerHour = Math.round((buildingRows.length / hours) * 10) / 10;
-          }
-        }
-
-        const packingRows = await db
-          .select({ completedAt: batchCompletionsTable.completedAt })
-          .from(batchCompletionsTable)
-          .where(and(
-            inArray(batchCompletionsTable.planItemId, itemIds),
-            eq(batchCompletionsTable.stationType, "packing"),
-          ));
-        if (packingRows.length >= 2) {
-          const times = packingRows.map(r => r.completedAt.getTime()).sort((a, b) => a - b);
-          const hours = (times[times.length - 1] - times[0]) / 3_600_000;
-          if (hours > 0) {
-            packingBatchesPerHour = Math.round((packingRows.length / hours) * 10) / 10;
-          }
-        }
-      }
     }
+
+    // Yesterday's builder + packing rates come from the same helpers
+    // /api/reports/production-kpis and /api/reports/packing-speed use,
+    // so the meeting reports the same numbers operators see on the
+    // Analytics page. Previously the meeting did simpler raw-wallclock
+    // maths (no break subtraction) for building, and read local
+    // batch_completions for packing — which is empty because packing
+    // is logged via Shopify fulfilment timestamps, not locally.
+    const [builderKpi, packingKpi] = await Promise.all([
+      computeBuilderBatchesPerHourForDay(yesterday).catch(err => {
+        console.warn("[morning-meeting] builder BPH calc failed:", err);
+        return { totalBatches: 0, activeMinutes: 0, batchesPerHour: null };
+      }),
+      computePackingOrdersPerHourForDay(yesterday).catch(err => {
+        console.warn("[morning-meeting] packing orders/hr calc failed:", err);
+        return { totalOrders: 0, activeMinutes: 0, ordersPerHour: null };
+      }),
+    ]);
+    builderBatchesPerHour = builderKpi.batchesPerHour;
+    packingBatchesPerHour = packingKpi.ordersPerHour;
 
     // ── Tomorrow's non-core production (Test Product Prep slide) ────
     // Anything on tomorrow's plan that isn't a core menu item needs
