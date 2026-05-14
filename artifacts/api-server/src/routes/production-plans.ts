@@ -5434,6 +5434,12 @@ router.get("/:id/main-prep", async (req, res) => {
       qtyPerTin: number;
       isOverridden: boolean;
       isFillingMix: boolean;
+      // When this entry was contributed by an expanded sub-recipe (e.g.
+      // cheddar coming in via Breadcrumb Topping under Big Nanny's), the
+      // sub-recipe's id is recorded here. Two entries on the same parent
+      // recipe with different subRecipeOriginIds remain distinct so their
+      // tin completions don't bleed across panels.
+      subRecipeOriginId?: number | null;
     }>;
   }>();
 
@@ -5493,6 +5499,11 @@ router.get("/:id/main-prep", async (req, res) => {
     // (plan_item_id, recipe_id) pair — previously we sent recipeId=0 which
     // the server rejects with 400.
     parentRecipeId: number;
+    // The sub-recipe this expansion came from. Propagates to the
+    // ingredient.recipes[] entry as subRecipeOriginId so tin completions
+    // can be keyed independently when the same ingredient (e.g. cheddar)
+    // comes in via multiple sub-recipes of the same parent.
+    subRecipeId: number;
   }>();
 
   for (const planItem of planItems) {
@@ -5768,6 +5779,7 @@ router.get("/:id/main-prep", async (req, res) => {
                 packWeight: compPackWeight,
                 subRecipeName: sr.subRecipeName ?? `Sub-recipe #${sr.subRecipeId}`,
                 parentRecipeId: planItem.recipeId!,
+                subRecipeId: sr.subRecipeId,
               });
             }
           }
@@ -5896,46 +5908,40 @@ router.get("/:id/main-prep", async (req, res) => {
     totalTinCount: sr.recipes.reduce((s, r) => s + r.tinCount, 0),
   }));
 
-  // Merge expanded sub-recipe ingredients into ingredientMap as single combined entries
+  // Merge expanded sub-recipe ingredients into ingredientMap.
+  //
+  // Each expansion entry contributes its own recipes[] item, tagged with the
+  // originating sub-recipe id (subRecipeOriginId). Two expansions of the
+  // same ingredient under the same parent recipe (e.g. cheddar in both
+  // Macaroni Cheese sauce AND Breadcrumb Topping under Big Nanny's) stay as
+  // SEPARATE entries so the prep UI shows two cards with split quantities
+  // and the operator can tick the topping cheddar independently of the
+  // sauce cheddar. Independence is guaranteed by the unique index
+  // uq_prep_completion_ing keying on COALESCE(sub_recipe_id, 0) — see
+  // index.ts startup migration. Previously this code folded same-parent
+  // expansions together, which avoided tin-tick bleed across panels at the
+  // cost of hiding the split — the new key removes the need to merge.
   for (const [, exp] of expandedIngMap) {
     const existing = ingredientMap.get(exp.ingredientId);
     if (existing) {
-      // Ingredient already exists from a direct recipe link OR a previous
-      // sub-recipe expansion. Fold this expansion's qty into the existing
-      // entry for the same parent recipe if one is present; otherwise
-      // push a new entry. Without this dedupe, an ingredient that appears
-      // in TWO sub-recipes of the same parent (e.g. Matture Cheddar in
-      // both Macaroni Cheese and Breadcrumb Topping under Big Nanny's)
-      // ends up with two recipe entries sharing the same recipeId, which
-      // makes the prep UI's tin completions collide — ticking one tin
-      // lights up the matching tin number in every duplicate panel.
       existing.totalQty += exp.totalQty;
-      const sameParent = existing.recipes.find(r => r.recipeId === exp.parentRecipeId);
-      if (sameParent) {
-        sameParent.qtyForRecipe += exp.totalQty;
-        sameParent.qtyPerTin = sameParent.tinCount > 0
-          ? ((existing.unit === "kg" || existing.unit === "l")
-              ? Math.round((sameParent.qtyForRecipe / sameParent.tinCount) * 1000) / 1000
-              : roundByUnit(sameParent.qtyForRecipe / sameParent.tinCount, existing.unit))
-          : sameParent.qtyForRecipe;
-      } else {
-        existing.recipes.push({
-          recipeId: exp.parentRecipeId,
-          recipeName: exp.subRecipeName,
-          batchesTarget: 0,
-          qtyForRecipe: exp.totalQty,
-          tinSize: null,
-          maxBatchesPerTin: null,
-          tinCount: 1,
-          qtyPerTin: exp.totalQty,
-          isOverridden: false,
-          isFillingMix: false,
-        });
-      }
+      existing.recipes.push({
+        recipeId: exp.parentRecipeId,
+        recipeName: exp.subRecipeName,
+        batchesTarget: 0,
+        qtyForRecipe: exp.totalQty,
+        tinSize: null,
+        maxBatchesPerTin: null,
+        tinCount: 1,
+        qtyPerTin: exp.totalQty,
+        isOverridden: false,
+        isFillingMix: false,
+        subRecipeOriginId: exp.subRecipeId,
+      });
     } else {
-      // Strip parentRecipeId from the spread — private marker, not response.
-      const { parentRecipeId: _pRid, ...expRest } = exp;
-      void _pRid;
+      // Strip parentRecipeId / subRecipeId from the spread — private markers, not response.
+      const { parentRecipeId: _pRid, subRecipeId: _sRid, ...expRest } = exp;
+      void _pRid; void _sRid;
       ingredientMap.set(exp.ingredientId, {
         ...expRest,
         recipes: [{
@@ -5949,6 +5955,7 @@ router.get("/:id/main-prep", async (req, res) => {
           qtyPerTin: exp.totalQty,
           isOverridden: false,
           isFillingMix: false,
+          subRecipeOriginId: exp.subRecipeId,
         }],
       });
     }
@@ -6152,6 +6159,13 @@ router.get("/:id/main-prep", async (req, res) => {
     FROM prep_completions
     WHERE plan_id = ${planId}
   `);
+  // Three shapes of completion row:
+  //   (1) ingredient_id set, sub_recipe_id NULL → legacy direct ingredient tick.
+  //   (2) ingredient_id NULL, sub_recipe_id set → whole-sub-recipe tick
+  //                                                (isSubRecipe=true).
+  //   (3) BOTH set → expanded ingredient tick tagged with its origin
+  //                  sub-recipe. The frontend uses subRecipeOriginId to
+  //                  match the tick against the correct recipes[] entry.
   const rawCompletions = (completionRows.rows as Array<{
     id: number;
     ingredientId: number | null;
@@ -6160,11 +6174,21 @@ router.get("/:id/main-prep", async (req, res) => {
     tinNumber: number;
     userId: number | null;
     completedAt: string;
-  }>).map(c => ({
-    ...c,
-    isSubRecipe: c.subRecipeId != null,
-    ingredientId: c.ingredientId ?? c.subRecipeId ?? 0,
-  }));
+  }>).map(c => {
+    const isSubRecipeTick = c.ingredientId == null && c.subRecipeId != null;
+    return {
+      ...c,
+      isSubRecipe: isSubRecipeTick,
+      // Keep the historical `ingredientId` field populated. For
+      // whole-sub-recipe ticks (case 2) it folds the sub_recipe_id in
+      // since the frontend treats those as ingredient-shaped rows.
+      ingredientId: c.ingredientId ?? c.subRecipeId ?? 0,
+      // Origin-tagged ticks (case 3) expose the sub-recipe id under
+      // its own field so the frontend can disambiguate two cards on
+      // the same parent recipe contributed by different sub-recipes.
+      subRecipeOriginId: !isSubRecipeTick && c.subRecipeId != null ? c.subRecipeId : null,
+    };
+  });
 
   const validItemKeys = new Set(
     allItems.map(item => `${item.ingredientId}_${!!item.isSubRecipe}`)
@@ -6240,7 +6264,18 @@ router.put("/:id/prep-tin-override", async (req, res) => {
 
 router.post("/:id/prep-completions", async (req, res) => {
   const planId = Number(req.params.id);
-  const { ingredientId, recipeId, tinNumber, isSubRecipe } = req.body;
+  const { ingredientId, recipeId, tinNumber, isSubRecipe, subRecipeOriginId } = req.body as {
+    ingredientId?: number;
+    recipeId?: number;
+    tinNumber?: number;
+    isSubRecipe?: boolean;
+    // When the ingredient was contributed by an expanded sub-recipe
+    // (e.g. Mature Cheddar coming in via Breadcrumb Topping), the
+    // origin sub-recipe id goes here so the completion row records
+    // which copy of the ingredient was ticked. Stored in
+    // prep_completions.sub_recipe_id alongside ingredient_id.
+    subRecipeOriginId?: number | null;
+  };
   if (!recipeId) { res.status(400).json({ error: "recipeId is required" }); return; }
   if (await planDraftStatus(planId)) { res.status(409).json({ error: DRAFT_COMPLETION_ERROR }); return; }
   const userId = (req.session as any)?.userId ?? null;
@@ -6260,14 +6295,20 @@ router.post("/:id/prep-completions", async (req, res) => {
       : null;
     res.status(201).json({ ...row, isSubRecipe: true, userName });
   } else {
-    const [row] = await db.insert(prepCompletionsTable).values({
-      planId,
-      ingredientId,
-      recipeId,
-      tinNumber,
-      userId,
-    }).onConflictDoNothing().returning();
-
+    // Raw SQL so we can populate sub_recipe_id alongside ingredient_id when
+    // an origin is provided. The unique index uq_prep_completion_ing keys on
+    // COALESCE(sub_recipe_id, 0) which lets two ticks for the same
+    // (plan, ingredient, parent recipe, tin) coexist as long as their
+    // origin sub-recipes differ.
+    const result = await db.execute(sql`
+      INSERT INTO prep_completions (plan_id, ingredient_id, sub_recipe_id, recipe_id, tin_number, user_id, completed_at)
+      VALUES (${planId}, ${ingredientId}, ${subRecipeOriginId ?? null}, ${recipeId}, ${tinNumber}, ${userId}, NOW())
+      ON CONFLICT DO NOTHING
+      RETURNING id, ingredient_id AS "ingredientId", sub_recipe_id AS "subRecipeOriginId",
+                recipe_id AS "recipeId", tin_number AS "tinNumber",
+                user_id AS "userId", completed_at AS "completedAt"
+    `);
+    const row = result.rows[0] as Record<string, unknown> | undefined;
     if (!row) { res.status(409).json({ error: "Already completed" }); return; }
 
     const userName = userId
@@ -6280,7 +6321,13 @@ router.post("/:id/prep-completions", async (req, res) => {
 
 router.delete("/:id/prep-completions/by-tin", async (req, res) => {
   const planId = Number(req.params.id);
-  const { ingredientId, recipeId, tinNumber, isSubRecipe } = req.body;
+  const { ingredientId, recipeId, tinNumber, isSubRecipe, subRecipeOriginId } = req.body as {
+    ingredientId?: number;
+    recipeId?: number;
+    tinNumber?: number;
+    isSubRecipe?: boolean;
+    subRecipeOriginId?: number | null;
+  };
   if (!recipeId) { res.status(400).json({ error: "recipeId is required" }); return; }
   if (await planDraftStatus(planId)) { res.status(409).json({ error: DRAFT_COMPLETION_ERROR }); return; }
   if (isSubRecipe) {
@@ -6288,17 +6335,23 @@ router.delete("/:id/prep-completions/by-tin", async (req, res) => {
       DELETE FROM prep_completions
       WHERE plan_id = ${planId}
         AND sub_recipe_id = ${ingredientId}
+        AND ingredient_id IS NULL
         AND recipe_id = ${recipeId}
         AND tin_number = ${tinNumber}
     `);
   } else {
-    await db.delete(prepCompletionsTable)
-      .where(and(
-        eq(prepCompletionsTable.planId, planId),
-        eq(prepCompletionsTable.ingredientId, ingredientId),
-        eq(prepCompletionsTable.recipeId, recipeId),
-        eq(prepCompletionsTable.tinNumber, tinNumber),
-      ));
+    // Match COALESCE-style on sub_recipe_id so a NULL origin (legacy tick)
+    // and an explicit origin (origin-tagged tick) don't accidentally
+    // delete each other — the two are distinct rows under the
+    // uq_prep_completion_ing unique key.
+    await db.execute(sql`
+      DELETE FROM prep_completions
+      WHERE plan_id = ${planId}
+        AND ingredient_id = ${ingredientId}
+        AND recipe_id = ${recipeId}
+        AND tin_number = ${tinNumber}
+        AND COALESCE(sub_recipe_id, 0) = COALESCE(${subRecipeOriginId ?? null}::int, 0)
+    `);
   }
   res.json({ ok: true });
 });
