@@ -1,7 +1,5 @@
 node_modules
-# .git intentionally NOT excluded — the System Updates slide reads
-# `git log` at runtime to surface recent deploys in the morning
-# meeting. The repo's .git is small relative to node_modules.
+.git
 .env
 .env.*
 .claude
