@@ -52,25 +52,39 @@ async function loadCommits(): Promise<CachedFeed> {
   const now = Date.now();
   if (cache && now - cache.fetchedAt < CACHE_TTL_MS) return cache;
 
-  // Walk up from this file to find the repo root (the directory that
-  // contains a .git folder). In dev this is the workspace root; in
-  // Railway it's the deploy directory. If we can't find one, treat
-  // the feature as unavailable.
-  const repoRoot = await findRepoRoot();
-  if (!repoRoot) {
-    const empty: CachedFeed = { fetchedAt: now, available: false, last24h: [], last7Days: [], summary: null };
-    cache = empty;
-    return empty;
+  // 1. Try local `git log` — works in dev where .git is on disk.
+  const local = await loadCommitsFromLocalGit();
+  if (local) {
+    const summary = await summariseLast24h(local.last24h);
+    const feed: CachedFeed = { fetchedAt: now, ...local, summary };
+    cache = feed;
+    return feed;
   }
 
+  // 2. Fall back to GitHub's REST API — works in production where
+  //    the runtime container doesn't ship .git. Reads from master
+  //    so the feed always reflects what's deployed.
+  const remote = await loadCommitsFromGithub();
+  if (remote) {
+    const summary = await summariseLast24h(remote.last24h);
+    const feed: CachedFeed = { fetchedAt: now, ...remote, summary };
+    cache = feed;
+    return feed;
+  }
+
+  // 3. Neither path worked. Cache the empty state briefly so we
+  //    don't hammer either source on every dashboard refresh.
+  const empty: CachedFeed = { fetchedAt: now, available: false, last24h: [], last7Days: [], summary: null };
+  cache = empty;
+  return empty;
+}
+
+async function loadCommitsFromLocalGit(): Promise<Omit<CachedFeed, "fetchedAt" | "summary"> | null> {
+  const repoRoot = await findRepoRoot();
+  if (!repoRoot) return null;
+
   try {
-    // `--no-merges` keeps the output focused on actual changes;
-    // pickaxe formatting via custom separators handles bodies that
-    // contain newlines.
     const format = `%H${FIELD_SEP}%aI${FIELD_SEP}%an${FIELD_SEP}%s${FIELD_SEP}%b${RECORD_SEP}`;
-    // Use HEAD instead of "master" so the endpoint works whether
-    // the deployment checked out the branch (Railway) or sits in
-    // detached-HEAD state.
     const { stdout } = await execFileP("git", [
       "log",
       "--no-merges",
@@ -95,19 +109,76 @@ async function loadCommits(): Promise<CachedFeed> {
         };
       });
 
-    const cutoff24h = now - 24 * 60 * 60_000;
+    const cutoff24h = Date.now() - 24 * 60 * 60_000;
     const last24h = all.filter(c => new Date(c.date).getTime() >= cutoff24h);
-
-    const summary = await summariseLast24h(last24h);
-
-    const feed: CachedFeed = { fetchedAt: now, available: true, last24h, last7Days: all, summary };
-    cache = feed;
-    return feed;
+    return { available: true, last24h, last7Days: all };
   } catch (err) {
-    console.warn("[system-updates] git log failed:", err instanceof Error ? err.message : err);
-    const empty: CachedFeed = { fetchedAt: now, available: false, last24h: [], last7Days: [], summary: null };
-    cache = empty;
-    return empty;
+    console.warn("[system-updates] local git log failed:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+/** Owner/repo for the GitHub fallback. Set via env var so the same
+ *  binary works for dev/staging/prod. Falls back to the repo this
+ *  was deployed from. */
+const GITHUB_REPO = process.env["GITHUB_REPO"] ?? "graeme-source/tck-production-planner-dev";
+const GITHUB_BRANCH = process.env["GITHUB_BRANCH"] ?? "master";
+const GITHUB_TOKEN = process.env["GITHUB_TOKEN"]; // optional, raises rate limit and unlocks private repos
+
+interface GithubCommitResponse {
+  sha: string;
+  commit: {
+    author: { name: string; date: string } | null;
+    message: string;
+  };
+}
+
+async function loadCommitsFromGithub(): Promise<Omit<CachedFeed, "fetchedAt" | "summary"> | null> {
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
+  const url = `https://api.github.com/repos/${GITHUB_REPO}/commits?sha=${encodeURIComponent(GITHUB_BRANCH)}&since=${encodeURIComponent(since)}&per_page=100`;
+
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "tck-production-planner",
+  };
+  if (GITHUB_TOKEN) headers.Authorization = `Bearer ${GITHUB_TOKEN}`;
+
+  try {
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+      console.warn(`[system-updates] github fetch ${res.status}:`, await res.text().catch(() => ""));
+      return null;
+    }
+    const rows = (await res.json()) as GithubCommitResponse[];
+
+    // GitHub returns merge commits too; filter them out by checking
+    // for the conventional double-newline-separated body. Easier:
+    // walk all commits and skip ones whose subject starts with
+    // "Merge ". Matches what `git log --no-merges` does.
+    const all: Commit[] = rows
+      .filter(r => !r.commit.message.startsWith("Merge "))
+      .map(r => {
+        const msg = r.commit.message;
+        const newlineIdx = msg.indexOf("\n");
+        const subject = newlineIdx === -1 ? msg : msg.slice(0, newlineIdx).trim();
+        const body = newlineIdx === -1 ? "" : msg.slice(newlineIdx + 1).trim();
+        return {
+          sha: r.sha,
+          shortSha: r.sha.slice(0, 7),
+          date: r.commit.author?.date ?? new Date().toISOString(),
+          author: r.commit.author?.name ?? "",
+          subject,
+          body,
+        };
+      });
+
+    const cutoff24h = Date.now() - 24 * 60 * 60_000;
+    const last24h = all.filter(c => new Date(c.date).getTime() >= cutoff24h);
+    return { available: true, last24h, last7Days: all };
+  } catch (err) {
+    console.warn("[system-updates] github fetch failed:", err instanceof Error ? err.message : err);
+    return null;
   }
 }
 
