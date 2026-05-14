@@ -1247,7 +1247,7 @@ function ShortOnPackSlide({ data, slide }: { data: DashboardData; slide: Meeting
   // today, including fridge stock, today's despatch demand and the
   // per-recipe deficit. Filter to core recipes only since the user
   // wants the morning standard view.
-  const { data: calc, isLoading } = useQuery<{ recipes: CalcRecipeRow[] }>({
+  const { data: calc, isLoading } = useQuery<{ recipes: CalcRecipeRow[]; dispatchDates: string[]; deliveryDates: string[] }>({
     queryKey: ["short-on-pack-today", data.today],
     queryFn: async () => {
       const res = await fetch(`${BASE}/api/production-plans/calculate?planDate=${data.today}`, { credentials: "include" });
@@ -1263,8 +1263,8 @@ function ShortOnPackSlide({ data, slide }: { data: DashboardData; slide: Meeting
       const have = r.fridgeStock;
       // NEED = today's pack (the dispatch we're about to load), not the
       // previous pack that already went out. dispatch2Qty corresponds to
-      // orders tagged with planDate's delivery date (planDate + 1 day),
-      // which is what the morning standup is preparing for.
+      // orders tagged with the delivery date paired with dispatchDates[1]
+      // — i.e. what the morning standup is preparing for.
       const need = r.dispatch2Qty;
       const surplus = have - need; // +ve = surplus, -ve = deficit
       const tone: "ok" | "warn" | "bad" = surplus >= 0 ? "ok" : surplus > -need * 0.1 ? "warn" : "bad";
@@ -1272,16 +1272,16 @@ function ShortOnPackSlide({ data, slide }: { data: DashboardData; slide: Meeting
     })
     .sort((a, b) => a.surplus - b.surplus); // shortest first
 
-  // Dispatch + delivery dates for the table-header labels. planDate IS the
-  // dispatch day; APC is overnight, so delivery is the next calendar day.
-  // This doesn't skip weekends/bank holidays — the backend dispatch2 walk
-  // already lands on the planDate itself, so the labels just need
-  // planDate / planDate+1 for the user to sanity-check what data the slide
-  // is pulling from.
-  const dispatchDate = new Date(`${data.today}T00:00:00`);
-  const deliveryDate = addDays(dispatchDate, 1);
-  const dispatchLabel = format(dispatchDate, "EEE d MMM");
-  const deliveryLabel = format(deliveryDate, "EEE d MMM");
+  // Dispatch + delivery labels come straight from the backend's
+  // dispatchDates / deliveryDates arrays. dispatchDates[1] is the
+  // planDate itself; deliveryDates[1] is its paired delivery date. The
+  // backend uses getNextDispatchDay / getPreviousDispatchDay to skip
+  // weekends and non-dispatch bank holidays, so these labels always
+  // reflect the actual despatch logic the rest of the planner uses —
+  // no client-side date maths.
+  const fmtDay = (iso?: string) => iso ? format(new Date(`${iso}T00:00:00`), "EEE d MMM") : "—";
+  const dispatchLabel = fmtDay(calc?.dispatchDates?.[1]);
+  const deliveryLabel = fmtDay(calc?.deliveryDates?.[1]);
 
   return (
     <div>
