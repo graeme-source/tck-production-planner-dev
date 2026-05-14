@@ -6,7 +6,7 @@ const glossaryTerms = [
   {
     term: "Kaizen",
     definition: "Continuous improvement — making small, daily changes that add up to big results over time. Everyone on the team looks for ways to do things better.",
-    videoId: "Vcvaxqsa80E",
+    videoId: "ccaKcTKvQbg",
   },
   {
     term: "Gemba",
@@ -86,9 +86,9 @@ const videos = [
     description: "Why documenting the best way to do a task is the starting point for all improvement.",
   },
   {
-    id: "Vcvaxqsa80E",
-    title: "Kaizen — Steven Bartlett & Ryan Tierney",
-    description: "Ryan Tierney responds to Steven Bartlett's take on Kaizen — what small daily improvements really look like.",
+    id: "ccaKcTKvQbg",
+    title: "The Power of Continuous Improvement",
+    description: "Ryan Tierney on why small, daily Kaizen — done by everyone — beats the big-bang rewrite every time.",
   },
 ];
 
