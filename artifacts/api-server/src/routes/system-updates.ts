@@ -68,12 +68,15 @@ async function loadCommits(): Promise<CachedFeed> {
     // pickaxe formatting via custom separators handles bodies that
     // contain newlines.
     const format = `%H${FIELD_SEP}%aI${FIELD_SEP}%an${FIELD_SEP}%s${FIELD_SEP}%b${RECORD_SEP}`;
+    // Use HEAD instead of "master" so the endpoint works whether
+    // the deployment checked out the branch (Railway) or sits in
+    // detached-HEAD state.
     const { stdout } = await execFileP("git", [
       "log",
       "--no-merges",
       "--since=7 days ago",
       `--pretty=format:${format}`,
-      "master",
+      "HEAD",
     ], { cwd: repoRoot, maxBuffer: 5 * 1024 * 1024 });
 
     const all: Commit[] = stdout

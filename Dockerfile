@@ -26,6 +26,13 @@ ENV PORT=5173
 ENV BASE_PATH=/
 RUN cd artifacts/production-planner && pnpm run build
 
+# Copy .git so the System Updates morning-meeting slide can run
+# `git log` at runtime. Placed late so commit-only changes don't
+# invalidate the pnpm install / frontend build cache layers above.
+# Also install git itself — node:22-slim doesn't include it.
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+COPY .git ./.git
+
 # Expose port and set production mode
 ENV PORT=3000
 ENV NODE_ENV=production
