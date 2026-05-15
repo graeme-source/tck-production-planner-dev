@@ -2602,7 +2602,27 @@ router.get("/:id/batch-completions", async (req, res) => {
     completions = completions.filter(c => c.stationType === stationType);
   }
 
-  res.json(completions.map(c => ({ ...c, completedAt: c.completedAt.toISOString(), startedAt: c.startedAt ? c.startedAt.toISOString() : null })));
+  // Look up usernames once for the whole batch and stamp each row.
+  // Without this the frontend renders "User · 14:00" for every tick on
+  // refetch, destroying floor-level traceability — we need to know who
+  // ticked which batch, especially when chasing a packing or quality
+  // issue back to the operator who touched it.
+  const userIds = Array.from(new Set(
+    completions.map(c => c.userId).filter((id): id is number => id != null)
+  ));
+  const userRows = userIds.length > 0
+    ? await db.select({ id: usersTable.id, name: usersTable.name })
+        .from(usersTable)
+        .where(inArray(usersTable.id, userIds))
+    : [];
+  const userNameMap = new Map(userRows.map(u => [u.id, u.name]));
+
+  res.json(completions.map(c => ({
+    ...c,
+    completedAt: c.completedAt.toISOString(),
+    startedAt: c.startedAt ? c.startedAt.toISOString() : null,
+    userName: c.userId != null ? (userNameMap.get(c.userId) ?? null) : null,
+  })));
 });
 
 // GET /:id/batch-completions/summary — aggregated batchesComplete per planItemId for polling
@@ -6357,12 +6377,19 @@ router.get("/:id/main-prep", async (req, res) => {
   const allItems = [...ingredients, ...subRecipeIngredients]
     .sort((a, b) => a.ingredientName.localeCompare(b.ingredientName));
 
+  // Join with app_users so each completion carries the prepper's name.
+  // Without this join the frontend falls back to "User" on every 5s
+  // refetch — the POST response includes userName but the subsequent
+  // refetch overwrites it with anonymous rows, destroying traceability
+  // for any tick older than a few seconds.
   const completionRows = await db.execute(sql`
-    SELECT id, ingredient_id AS "ingredientId", sub_recipe_id AS "subRecipeId",
-           recipe_id AS "recipeId", tin_number AS "tinNumber",
-           user_id AS "userId", completed_at AS "completedAt"
-    FROM prep_completions
-    WHERE plan_id = ${planId}
+    SELECT pc.id, pc.ingredient_id AS "ingredientId", pc.sub_recipe_id AS "subRecipeId",
+           pc.recipe_id AS "recipeId", pc.tin_number AS "tinNumber",
+           pc.user_id AS "userId", pc.completed_at AS "completedAt",
+           u.name AS "userName"
+    FROM prep_completions pc
+    LEFT JOIN app_users u ON u.id = pc.user_id
+    WHERE pc.plan_id = ${planId}
   `);
   // Three shapes of completion row:
   //   (1) ingredient_id set, sub_recipe_id NULL → legacy direct ingredient tick.
@@ -6379,6 +6406,7 @@ router.get("/:id/main-prep", async (req, res) => {
     tinNumber: number;
     userId: number | null;
     completedAt: string;
+    userName: string | null;
   }>).map(c => {
     const isSubRecipeTick = c.ingredientId == null && c.subRecipeId != null;
     return {
