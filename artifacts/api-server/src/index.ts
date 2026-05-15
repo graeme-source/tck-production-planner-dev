@@ -704,6 +704,19 @@ async function runStartupMigrations() {
       ON prep_completions (plan_id, ingredient_id, COALESCE(sub_recipe_id, 0), recipe_id, tin_number)
       WHERE ingredient_id IS NOT NULL
     `);
+    // Drop-before-recreate: an earlier version of this migration created
+    // uq_prep_completion_sub with predicate `WHERE sub_recipe_id IS NOT NULL`
+    // (no ingredient_id clause). CREATE UNIQUE INDEX IF NOT EXISTS treats a
+    // matching name as "already there" regardless of the predicate, so the
+    // tightened definition below silently failed to apply on any live system
+    // that ran the earlier version. Symptom: ticking a second expanded
+    // ingredient under the same (sub_recipe, parent recipe, tin) — e.g. the
+    // pasta after the cheddar inside Big Nanny's Macaroni Cheese sub-recipe
+    // on Main Prep — 409s because the old (looser) index treats both rows
+    // as duplicates even though they're different ingredients.
+    await db.execute(sql`
+      DROP INDEX IF EXISTS uq_prep_completion_sub
+    `);
     await db.execute(sql`
       CREATE UNIQUE INDEX IF NOT EXISTS uq_prep_completion_sub
       ON prep_completions (plan_id, sub_recipe_id, recipe_id, tin_number)
