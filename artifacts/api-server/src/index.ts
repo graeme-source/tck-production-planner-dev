@@ -449,10 +449,16 @@ async function runStartupMigrations() {
     await db.execute(sql`
       DROP INDEX IF EXISTS uq_prep_completion_v2
     `);
-    await db.execute(sql`
-      CREATE UNIQUE INDEX IF NOT EXISTS uq_prep_completion_v3
-      ON prep_completions (plan_id, ingredient_id, recipe_id, tin_number)
-    `);
+    // NB: the previous CREATE of uq_prep_completion_v3 here was removed in
+    // May 2026. v3's key (plan, ingredient, recipe, tin) doesn't include
+    // sub_recipe_id, which the origin-tagging schema (a9fa76c) legitimately
+    // varies — so reruns of this migration on systems that had v3 dropped
+    // by the later block (~700 lines down) hit "key is duplicated" when
+    // trying to recreate it, aborting startup before the new partial
+    // indexes get installed. The two new partial indexes installed below
+    // (uq_prep_completion_ing + uq_prep_completion_sub) supersede v3 and
+    // enforce uniqueness correctly. The DROP at line ~700 cleans up v3
+    // when migrating up from a pre-a9fa76c snapshot.
     // PIN login & avatar support (Task #36)
     await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS pin_hash TEXT`);
     await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS pin_attempts INTEGER NOT NULL DEFAULT 0`);
