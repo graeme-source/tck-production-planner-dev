@@ -752,9 +752,13 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
   if (type === "first_pack_batch_numbers" || type === "last_pack_batch_numbers") {
     // Order recipes by Shopify SKU (matches Easy Scan's ordering on
     // the kitchen scanner), with recipe name as a tiebreaker for any
-    // recipe whose SKU hasn't been backfilled yet. The SKU lives on
-    // recipe_shopify_mappings (raw SQL table — no Drizzle schema),
-    // so we drop to a raw query for the join.
+    // recipe whose SKU hasn't been backfilled yet. Filtered to core
+    // menu items only — discontinued recipes (e.g. New Yorker)
+    // shouldn't appear on the opening/closing pack-batch checks
+    // even if they still have residual stock in the production
+    // fridge. The SKU lives on recipe_shopify_mappings (raw SQL
+    // table — no Drizzle schema), so we drop to a raw query for the
+    // join.
     const fridgeRows = await db.execute<{
       recipe_id: number;
       recipe_name: string;
@@ -773,10 +777,11 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
           LIMIT 1
         ) AS shopify_sku
       FROM stock_entries se
-      LEFT JOIN recipes r ON r.id = se.recipe_id
+      INNER JOIN recipes r ON r.id = se.recipe_id
       WHERE se.item_type = 'recipe'
         AND se.location  = 'production_fridge'
         AND se.quantity::numeric > 0
+        AND r.is_core_menu = TRUE
       ORDER BY shopify_sku NULLS LAST, r.name ASC
     `);
     const fridgeStock = (fridgeRows.rows ?? fridgeRows).map(r => ({
