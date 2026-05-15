@@ -316,7 +316,10 @@ export interface ShopifyProduct {
     sku: string;
     price: string;
     inventory_quantity: number;
+    barcode: string | null;
+    image_id: number | null;
   }>;
+  images: Array<{ id: number; src: string }>;
   image: { src: string } | null;
 }
 
@@ -355,7 +358,7 @@ export async function getProducts(): Promise<ShopifyProduct[]> {
   while (true) {
     const params: Record<string, string> = {
       limit: "250",
-      fields: "id,title,status,variants,image",
+      fields: "id,title,status,variants,image,images",
     };
     if (pageInfo) params.page_info = pageInfo;
 
@@ -511,7 +514,7 @@ export async function fulfillOrder(
   }
 
   const fulfillmentsRes = (await shopifyFetch(`/orders/${orderId}/fulfillment_orders.json`)) as {
-    fulfillment_orders: Array<{ id: number; status: string; line_items: unknown[] }>;
+    fulfillment_orders: Array<{ id: number; status: string; request_status?: string; line_items: unknown[] }>;
   };
 
   const pendingFulfillmentOrders = fulfillmentsRes.fulfillment_orders.filter(
@@ -519,7 +522,31 @@ export async function fulfillOrder(
   );
 
   if (pendingFulfillmentOrders.length === 0) {
-    throw new Error("No open fulfillment orders found for this order — it may already be fulfilled.");
+    // No open fulfillment_orders — could be a genuine "already fulfilled"
+    // case, or could mean the order is in a state Shopify won't ship from
+    // (cancelled, closed, on_hold, scheduled, incomplete). Distinguish by
+    // re-fetching the order and checking its `fulfillment_status` directly:
+    //   - "fulfilled" → soft success, kitchen state matches Shopify state
+    //   - anything else → hard error with the FO statuses logged so the
+    //     packer can see what's wrong instead of being told it succeeded.
+    const orderRes = (await shopifyFetch(`/orders/${orderId}.json`, { fields: "id,name,fulfillment_status,cancelled_at" })) as {
+      order: { id: number; name: string; fulfillment_status: string | null; cancelled_at: string | null };
+    };
+    const order = orderRes.order;
+    const foSummary = fulfillmentsRes.fulfillment_orders
+      .map(fo => `${fo.id}=${fo.status}${fo.request_status ? `/${fo.request_status}` : ""}`)
+      .join(", ") || "(none)";
+
+    if (order.fulfillment_status === "fulfilled") {
+      console.warn(`[shopify.fulfillOrder] order ${orderId} (${order.name}) already fulfilled — skipping POST /fulfillments.json. FOs: ${foSummary}`);
+      return;
+    }
+
+    const detail = order.cancelled_at
+      ? `order is cancelled (cancelled_at=${order.cancelled_at})`
+      : `order.fulfillment_status=${order.fulfillment_status ?? "null"}, fulfillment_orders=[${foSummary}]`;
+    console.error(`[shopify.fulfillOrder] order ${orderId} (${order.name}) cannot be fulfilled — ${detail}`);
+    throw new Error(`Shopify won't accept fulfilment for ${order.name}: no open fulfillment orders. ${detail}. Open the order in Shopify Admin to inspect.`);
   }
 
   // When the APC integration is off, fulfilment runs with no tracking

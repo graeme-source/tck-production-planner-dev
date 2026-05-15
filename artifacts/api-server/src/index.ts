@@ -1239,6 +1239,19 @@ async function runStartupMigrations() {
     await db.execute(sql`ALTER TABLE recipes ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT '{}'`);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS recipes_tags_gin_idx ON recipes USING GIN (tags)`);
 
+    // SKU → barcode cache — see lib/db/migrations/0017_add_sku_barcodes.sql
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS sku_barcodes (
+        sku            text PRIMARY KEY,
+        barcode        text NOT NULL,
+        product_title  text,
+        variant_title  text,
+        updated_at     timestamp NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS sku_barcodes_barcode_idx ON sku_barcodes (barcode)`);
+    await db.execute(sql`ALTER TABLE sku_barcodes ADD COLUMN IF NOT EXISTS image_url text`);
+
     // Lean curriculum anchor — start the rotation from week 1 on the
     // day this seed first runs, instead of being pinned to the
     // calendar week of the year (which dropped users mid-curriculum).

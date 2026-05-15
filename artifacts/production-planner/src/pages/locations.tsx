@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
-import { MapPin, Plus, Edit2, Trash2, Loader2, AlertCircle, Save, X, RefreshCw, Search, PackageSearch } from "lucide-react";
+import { MapPin, Plus, Edit2, Trash2, Loader2, AlertCircle, Save, X, RefreshCw, Search, PackageSearch, Barcode } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -67,6 +67,37 @@ async function deleteLocation(sku: string): Promise<void> {
   if (!res.ok) throw new Error("Failed to delete location");
 }
 
+interface BarcodeRow {
+  sku: string;
+  barcode: string;
+  productTitle: string | null;
+  variantTitle: string | null;
+  updatedAt: string;
+}
+
+interface BarcodeSyncResult {
+  synced: number;
+  skippedNoBarcode: number;
+  skippedNoSku: number;
+  totalProducts: number;
+}
+
+async function fetchBarcodes(): Promise<BarcodeRow[]> {
+  const res = await fetch(`${BASE}/api/fulfilment/sku-barcodes`, { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to fetch barcodes");
+  return res.json();
+}
+
+async function syncBarcodes(): Promise<BarcodeSyncResult> {
+  const res = await fetch(`${BASE}/api/fulfilment/sync-barcodes`, {
+    method: "POST",
+    credentials: "include",
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? "Failed to sync barcodes");
+  return data;
+}
+
 export default function Locations() {
   const queryClient = useQueryClient();
   const [adding, setAdding] = useState(false);
@@ -92,6 +123,27 @@ export default function Locations() {
     queryKey: ["sku-locations-recent", tagFilterActive ? activeTag : null],
     queryFn: () => fetchRecentSkus(tagFilterActive && activeTag ? activeTag : undefined),
     staleTime: 2 * 60 * 1000,
+  });
+
+  const { data: barcodes } = useQuery({
+    queryKey: ["sku-barcodes"],
+    queryFn: fetchBarcodes,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const [syncResult, setSyncResult] = useState<BarcodeSyncResult | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const syncBarcodesMutation = useMutation({
+    mutationFn: syncBarcodes,
+    onSuccess: (data) => {
+      setSyncResult(data);
+      setSyncError(null);
+      queryClient.invalidateQueries({ queryKey: ["sku-barcodes"] });
+    },
+    onError: (err: Error) => {
+      setSyncError(err.message);
+      setSyncResult(null);
+    },
   });
 
   const upsertMutation = useMutation({
@@ -150,6 +202,45 @@ export default function Locations() {
         title="Bin Locations"
         description="Assign bin locations to product SKUs for the fulfilment picking list."
       />
+
+      {/* Shopify Barcode Sync */}
+      <div className="rounded-2xl border border-border bg-card p-5 space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold flex items-center gap-2">
+              <Barcode className="w-4 h-4 text-primary" /> Shopify Barcodes
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {barcodes?.length ?? 0} SKU{(barcodes?.length ?? 0) !== 1 ? "s" : ""} have a barcode synced from Shopify.
+              Re-run after editing variant barcodes in Shopify admin.
+            </p>
+          </div>
+          <button
+            onClick={() => syncBarcodesMutation.mutate()}
+            disabled={syncBarcodesMutation.isPending}
+            className="px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5 flex-shrink-0"
+          >
+            {syncBarcodesMutation.isPending
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <RefreshCw className="w-3.5 h-3.5" />}
+            Sync from Shopify
+          </button>
+        </div>
+        {syncResult && (
+          <div className="text-xs text-muted-foreground bg-secondary/30 rounded-lg p-2 border border-border">
+            Synced <b className="text-foreground">{syncResult.synced}</b> barcode{syncResult.synced !== 1 ? "s" : ""} from {syncResult.totalProducts} products.
+            {syncResult.skippedNoBarcode > 0 && (
+              <> {syncResult.skippedNoBarcode} variant{syncResult.skippedNoBarcode !== 1 ? "s" : ""} had no barcode set in Shopify.</>
+            )}
+          </div>
+        )}
+        {syncError && (
+          <div className="flex items-center gap-2 p-2 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-xs">
+            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+            {syncError}
+          </div>
+        )}
+      </div>
 
       {/* Recent Order SKU Inventory */}
       <div className="rounded-2xl border border-border bg-card p-5 space-y-4">

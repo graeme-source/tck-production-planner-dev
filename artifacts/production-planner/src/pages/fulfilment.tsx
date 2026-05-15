@@ -10,7 +10,7 @@ import { useLocation } from "wouter";
 import {
   Package, Scan, CheckCircle2, AlertCircle, ChevronRight, Printer,
   RefreshCw, MapPin, SkipForward, RotateCcw, XCircle, Loader2,
-  ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban,
+  ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -28,6 +28,9 @@ interface LineItem {
   quantity: number;
   sku: string;
   location: SkuLocation | null;
+  barcode: string | null;
+  imageUrl: string | null;
+  recipeColor: string | null;
 }
 
 interface ShopifyOrder {
@@ -89,6 +92,133 @@ interface PostcodeValidation {
   available: boolean;
   reason: string | null;
   checked_at: string;
+}
+
+// All audio cues for the picking flow. Web Audio API beeps so we don't ship
+// audio assets and they always play instantly even on the first scan.
+function playTone(opts: { frequency: number; duration: number; type?: OscillatorType; gain?: number; startAt?: number; ctx?: AudioContext }) {
+  const ctx = opts.ctx ?? new AudioContext();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.type = opts.type ?? "sine";
+  const start = ctx.currentTime + (opts.startAt ?? 0);
+  osc.frequency.setValueAtTime(opts.frequency, start);
+  const peak = opts.gain ?? 0.25;
+  gain.gain.setValueAtTime(peak, start);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + opts.duration);
+  osc.start(start);
+  osc.stop(start + opts.duration);
+  return ctx;
+}
+
+function playScanSuccess() {
+  try {
+    const ctx = playTone({ frequency: 880, duration: 0.15, type: "sine", gain: 0.2 });
+    setTimeout(() => ctx.close(), 200);
+  } catch (err) {
+    console.warn("[Fulfilment] AudioContext not available:", err);
+  }
+}
+
+// Loud, attention-grabbing low-frequency buzz for an unrecognised scan —
+// square wave rasps so a packer immediately knows to look at the screen.
+function playScanWrong() {
+  try {
+    const ctx = new AudioContext();
+    playTone({ ctx, frequency: 180, duration: 0.18, type: "square", gain: 0.5 });
+    playTone({ ctx, frequency: 130, duration: 0.25, type: "square", gain: 0.5, startAt: 0.18 });
+    setTimeout(() => ctx.close(), 600);
+  } catch (err) {
+    console.warn("[Fulfilment] AudioContext not available:", err);
+  }
+}
+
+// Reads the shipping name aloud when an order opens so the packer can
+// cross-check against the printed APC label. Browsers require a prior user
+// gesture before speech is allowed; the click on "Start Picking" satisfies
+// that, so this fires reliably for the second order onwards too. Cancels
+// any in-flight utterance first to handle rapid back-to-back orders.
+
+// Voice picker — prefer a natural-sounding English female voice (closest
+// match to the OpenAI "Nova" / ChatGPT voice on each platform). Voices load
+// asynchronously in some browsers, so we cache the choice once and re-evaluate
+// on the `voiceschanged` event. Picked once per page load.
+let cachedSpeechVoice: SpeechSynthesisVoice | null | undefined;
+function pickEnglishFemaleVoice(): SpeechSynthesisVoice | null {
+  if (cachedSpeechVoice !== undefined) return cachedSpeechVoice;
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+    cachedSpeechVoice = null;
+    return null;
+  }
+  const voices = window.speechSynthesis.getVoices();
+  if (voices.length === 0) return null; // wait for voiceschanged
+
+  // Priority order — most natural-sounding en-GB female voices first.
+  // Apple ships "Premium" and "Enhanced" tiers that sound noticeably better
+  // than the default; Chrome on macOS exposes the Google UK voices.
+  const preferredNames = [
+    /Google UK English Female/i,
+    /Microsoft Sonia/i,           // Edge / Windows en-GB neural
+    /Microsoft Libby/i,           // Edge / Windows en-GB neural
+    /Kate \(Premium\)/i, /Serena \(Premium\)/i, /Stephanie \(Premium\)/i,
+    /Kate \(Enhanced\)/i, /Serena \(Enhanced\)/i, /Stephanie \(Enhanced\)/i,
+    /^Kate$/i, /^Serena$/i, /^Stephanie$/i, /^Susan$/i, /^Fiona$/i,
+  ];
+  for (const pattern of preferredNames) {
+    const v = voices.find(v => pattern.test(v.name) && /^en[-_]GB/i.test(v.lang));
+    if (v) { cachedSpeechVoice = v; return v; }
+  }
+  // Fallback: any voice whose name contains "Female" and is en-GB
+  const femaleEnGB = voices.find(v => /female/i.test(v.name) && /^en[-_]GB/i.test(v.lang));
+  if (femaleEnGB) { cachedSpeechVoice = femaleEnGB; return femaleEnGB; }
+  // Last resort: first en-GB voice we find
+  const anyEnGB = voices.find(v => /^en[-_]GB/i.test(v.lang));
+  cachedSpeechVoice = anyEnGB ?? null;
+  return cachedSpeechVoice;
+}
+
+// Refresh the cached voice when the browser finishes loading them. Safari
+// and some Chrome builds deliver voices asynchronously after the first call
+// returns an empty list.
+if (typeof window !== "undefined" && "speechSynthesis" in window) {
+  window.speechSynthesis.onvoiceschanged = () => {
+    cachedSpeechVoice = undefined;
+    pickEnglishFemaleVoice();
+  };
+}
+
+function speakName(name: string) {
+  try {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(name);
+    const voice = pickEnglishFemaleVoice();
+    if (voice) utter.voice = voice;
+    utter.rate = 0.95;
+    utter.pitch = 1;
+    utter.volume = 1;
+    utter.lang = "en-GB";
+    window.speechSynthesis.speak(utter);
+  } catch (err) {
+    console.warn("[Fulfilment] speechSynthesis not available:", err);
+  }
+}
+
+// Triumphant rising arpeggio (C5 → E5 → G5 → C6) — clearly distinct from
+// the per-scan beep and audible across the kitchen.
+function playOrderComplete() {
+  try {
+    const ctx = new AudioContext();
+    const notes = [523.25, 659.25, 783.99, 1046.50];
+    notes.forEach((freq, i) => {
+      playTone({ ctx, frequency: freq, duration: 0.22, type: "triangle", gain: 0.45, startAt: i * 0.12 });
+    });
+    setTimeout(() => ctx.close(), 1200);
+  } catch (err) {
+    console.warn("[Fulfilment] AudioContext not available:", err);
+  }
 }
 
 async function fetchDispatchTags(): Promise<DispatchTagGroup[]> {
@@ -227,7 +357,14 @@ async function cancelConsignment(waybill: string): Promise<void> {
   if (!res.ok) throw new Error(data.error ?? "Failed to cancel consignment");
 }
 
-async function completeOrder(orderId: number, consignmentNumber: string | null, trackingUrl?: string): Promise<void> {
+interface CompleteOrderResult {
+  ok: true;
+  orderId: number;
+  consignmentNumber: string | null;
+  decrementError: string | null;
+}
+
+async function completeOrder(orderId: number, consignmentNumber: string | null, trackingUrl?: string): Promise<CompleteOrderResult> {
   const res = await fetch(`${BASE}/api/fulfilment/orders/${orderId}/complete`, {
     method: "POST",
     credentials: "include",
@@ -236,6 +373,7 @@ async function completeOrder(orderId: number, consignmentNumber: string | null, 
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Failed to complete order");
+  return data as CompleteOrderResult;
 }
 
 function TestModeBanner({ trainingCredentialsMissing }: { trainingCredentialsMissing?: boolean }) {
@@ -402,6 +540,175 @@ function DispatchProgressHeader({ progress }: { progress: DispatchProgress }) {
   );
 }
 
+// Modal showing background-completion failures for the current session.
+// Each failure can be dismissed individually after the operator has dealt
+// with it (e.g. retried in Shopify Admin or manually decremented stock).
+function FailuresModal({
+  failures,
+  onDismiss,
+  onClose,
+}: {
+  failures: Array<{ orderId: number; orderName: string; customerName: string; error: string; kind: "fulfilment" | "decrement"; at: Date }>;
+  onDismiss: (orderId: number) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-card border border-border rounded-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="p-5 border-b border-border flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">Background completion failures</h2>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              {failures.length} order{failures.length === 1 ? "" : "s"} did not finish completing in this session.
+            </p>
+          </div>
+          <button onClick={onClose} className="p-2 text-muted-foreground hover:text-foreground rounded-lg hover:bg-secondary/50">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="overflow-y-auto p-4 space-y-3">
+          {failures.length === 0 && (
+            <p className="text-center text-sm text-muted-foreground py-8">All cleared. Nothing to review.</p>
+          )}
+          {failures.map(f => (
+            <div key={f.orderId} className={`p-3 rounded-xl border ${f.kind === "fulfilment" ? "bg-destructive/5 border-destructive/30" : "bg-amber-50 dark:bg-amber-950/20 border-amber-300 dark:border-amber-800"}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold">{f.orderName} <span className="font-normal text-muted-foreground">— {f.customerName}</span></p>
+                  <p className={`text-xs font-medium mt-0.5 ${f.kind === "fulfilment" ? "text-destructive" : "text-amber-700 dark:text-amber-300"}`}>
+                    {f.kind === "fulfilment"
+                      ? "Shopify fulfilment failed — customer was NOT emailed; stock was NOT deducted."
+                      : "Shopify shipped + customer emailed, but local stock decrement failed — manually adjust the production fridge."}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1 break-words">{f.error}</p>
+                </div>
+                <button onClick={() => onDismiss(f.orderId)} className="text-xs px-2 py-1 border border-border rounded-lg hover:bg-secondary/50 flex-shrink-0">
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface DispatchAuditRow {
+  orderId: number;
+  orderName: string;
+  customerName: string | null;
+  cancelledAt: string | null;
+  shopifyFulfillmentStatus: string | null;
+  fulfilledByApp: boolean;
+  factoryAdjusted: boolean;
+  status: "ok" | "needs_decrement" | "needs_fulfilment" | "untouched" | "shopify_only";
+}
+
+interface DispatchAuditResponse {
+  tag: string;
+  summary: { total: number; ok: number; needsFulfilment: number; needsDecrement: number; shopifyOnly: number; untouched: number };
+  orders: DispatchAuditRow[];
+}
+
+// End-of-dispatch audit modal — calls /api/fulfilment/dispatch-audit which
+// cross-checks each order in the current dispatch tag against Shopify's
+// fulfillment_status and the two completion tags. Lets the operator close
+// out a packing session knowing exactly what (if anything) needs follow-up.
+function AuditModal({ tag, onClose }: { tag: string; onClose: () => void }) {
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ["dispatch-audit", tag],
+    queryFn: async (): Promise<DispatchAuditResponse> => {
+      const res = await fetch(`${BASE}/api/fulfilment/dispatch-audit?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
+      if (!res.ok) throw new Error((await res.json()).error ?? "Audit failed");
+      return res.json();
+    },
+    staleTime: 10_000,
+  });
+
+  const STATUS_LABEL: Record<DispatchAuditRow["status"], { label: string; color: string }> = {
+    ok: { label: "Fully complete", color: "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-200" },
+    needs_decrement: { label: "Stock not decremented", color: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200" },
+    needs_fulfilment: { label: "Not fulfilled", color: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200" },
+    shopify_only: { label: "Fulfilled outside app", color: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200" },
+    untouched: { label: "Untouched", color: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200" },
+  };
+
+  const problemRows = (data?.orders ?? []).filter(o => o.status !== "ok");
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-card border border-border rounded-2xl max-w-3xl w-full max-h-[85vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="p-5 border-b border-border flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">End-of-dispatch audit</h2>
+            <p className="text-sm text-muted-foreground mt-0.5">Tag: <span className="font-mono">{tag}</span></p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => refetch()} className="p-2 text-muted-foreground hover:text-foreground rounded-lg hover:bg-secondary/50" title="Refresh">
+              <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
+            </button>
+            <button onClick={onClose} className="p-2 text-muted-foreground hover:text-foreground rounded-lg hover:bg-secondary/50">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+        <div className="overflow-y-auto p-4 space-y-4">
+          {isLoading && (
+            <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+          )}
+          {error && (
+            <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive text-sm">{(error as Error).message}</div>
+          )}
+          {data && (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                <SummaryTile label="Total" value={data.summary.total} color="bg-secondary" />
+                <SummaryTile label="OK" value={data.summary.ok} color="bg-green-100 dark:bg-green-900/40" />
+                <SummaryTile label="Not fulfilled" value={data.summary.needsFulfilment} color="bg-red-100 dark:bg-red-900/40" />
+                <SummaryTile label="Stock missed" value={data.summary.needsDecrement} color="bg-amber-100 dark:bg-amber-900/40" />
+                <SummaryTile label="Outside app" value={data.summary.shopifyOnly} color="bg-blue-100 dark:bg-blue-900/40" />
+              </div>
+
+              {problemRows.length === 0 ? (
+                <div className="p-4 bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-xl text-sm text-green-700 dark:text-green-300 text-center">
+                  Everything on this dispatch tag is fully complete — Shopify shipped + stock decremented.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-muted-foreground">Needs attention ({problemRows.length})</p>
+                  {problemRows.map(o => (
+                    <div key={o.orderId} className="p-3 bg-secondary/20 border border-border rounded-xl flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold">{o.orderName} <span className="font-normal text-muted-foreground">— {o.customerName ?? "(no name)"}</span></p>
+                        <div className="flex items-center gap-2 mt-1 flex-wrap text-xs">
+                          <span className={`px-2 py-0.5 rounded ${STATUS_LABEL[o.status].color} font-medium`}>{STATUS_LABEL[o.status].label}</span>
+                          <span className="text-muted-foreground">Shopify: {o.shopifyFulfillmentStatus ?? "unfulfilled"}</span>
+                          <span className="text-muted-foreground">App-fulfilled: {o.fulfilledByApp ? "✓" : "✗"}</span>
+                          <span className="text-muted-foreground">Stock-decremented: {o.factoryAdjusted ? "✓" : "✗"}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SummaryTile({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <div className={`p-3 rounded-xl ${color}`}>
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-2xl font-bold leading-tight">{value}</p>
+    </div>
+  );
+}
+
 export default function Fulfilment() {
   const tagsRefresh = useRefreshSpin();
   const ordersRefresh = useRefreshSpin();
@@ -420,7 +727,25 @@ export default function Fulfilment() {
   const [creatingShipment, setCreatingShipment] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [completionError, setCompletionError] = useState<string | null>(null);
-  const [checkedItems, setCheckedItems] = useState<Set<string>>(new Set());
+  // Fire-and-forget completions that resolved with an error. Stored so the
+  // packer can audit them at the end of a dispatch session without having
+  // to scroll back through every order.
+  interface CompletionFailure {
+    orderId: number;
+    orderName: string;
+    customerName: string;
+    error: string;
+    kind: "fulfilment" | "decrement";
+    at: Date;
+  }
+  const [completionFailures, setCompletionFailures] = useState<CompletionFailure[]>([]);
+  const [pendingCompletions, setPendingCompletions] = useState(0);
+  const [showFailuresModal, setShowFailuresModal] = useState(false);
+  const [showAuditModal, setShowAuditModal] = useState(false);
+  // Per-row scanned count, keyed by the grouped item's `_groupKey` (SKU when
+  // present). Lets us collapse duplicate line items into a single row with
+  // an `×N` badge, then track scan progress within that row.
+  const [pickedCounts, setPickedCounts] = useState<Map<string, number>>(new Map());
   const [barcodeInput, setBarcodeInput] = useState("");
   const [flashItem, setFlashItem] = useState<string | null>(null);
   const [flashWrong, setFlashWrong] = useState(false);
@@ -430,12 +755,43 @@ export default function Fulfilment() {
   const itemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const preQueueRef = useRef<Map<number, Promise<ShipmentResult>>>(new Map());
   const prePrintRef = useRef<Map<number, PrintStatus>>(new Map());
+  // Tracks which order ids have been spoken aloud — prevents the picker
+  // from hearing the same name twice if the picking view re-mounts (e.g.
+  // after dismissing an error or scrolling back from pre-confirm).
+  const spokenOrderIdsRef = useRef<Set<number>>(new Set());
 
   const { data: configStatus, isLoading: configStatusLoading } = useQuery({
     queryKey: ["fulfilment-config-status"],
     queryFn: fetchConfigStatus,
     staleTime: 60_000,
   });
+
+  // Manual-tap kill switch — read from app_settings via /manual-tick-config.
+  // Defaults to enabled until the fetch resolves so we don't briefly look
+  // locked-down on a slow connection.
+  const { data: manualTickConfig } = useQuery({
+    queryKey: ["fulfilment-manual-tick-config"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/fulfilment/manual-tick-config`, { credentials: "include" });
+      if (!res.ok) return { enabled: true };
+      return (await res.json()) as { enabled: boolean };
+    },
+    staleTime: 60_000,
+  });
+  const manualTickEnabled = manualTickConfig?.enabled !== false;
+
+  // Speak-customer-name kill switch — same pattern as manual-tick. Default
+  // enabled so the spoken cross-check is on out of the box.
+  const { data: speakNameConfig } = useQuery({
+    queryKey: ["fulfilment-speak-name-config"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/fulfilment/speak-name-config`, { credentials: "include" });
+      if (!res.ok) return { enabled: true };
+      return (await res.json()) as { enabled: boolean };
+    },
+    staleTime: 60_000,
+  });
+  const speakNameEnabled = speakNameConfig?.enabled !== false;
 
   const { data: dispatchTags, isLoading: tagsLoading, error: tagsError, refetch: refetchTags } = useQuery({
     queryKey: ["fulfilment-dispatch-tags"],
@@ -586,7 +942,7 @@ export default function Fulfilment() {
 
   async function startPicking(order: ShopifyOrder) {
     setActiveOrder(order);
-    setCheckedItems(new Set());
+    setPickedCounts(new Map());
     setBarcodeInput("");
     setShipment(null);
     setShipmentError(null);
@@ -662,97 +1018,188 @@ export default function Fulfilment() {
   const sortedLineItems = activeOrder ? [...activeOrder.line_items].sort((a, b) => {
     const idxA = a.location ? ZONE_PICK_ORDER.indexOf(a.location.zone) : ZONE_PICK_ORDER.length;
     const idxB = b.location ? ZONE_PICK_ORDER.indexOf(b.location.zone) : ZONE_PICK_ORDER.length;
-    return (idxA - idxB) || a.title.localeCompare(b.title);
+    // Within a zone, sort by SKU (natural/numeric) so the pick list matches
+    // the kitchen's label numbering (1, 3c, 5b, 5c) instead of product-title
+    // alphabetical order. Items with no SKU sort last.
+    if (idxA !== idxB) return idxA - idxB;
+    if (a.sku && !b.sku) return -1;
+    if (!a.sku && b.sku) return 1;
+    if (a.sku && b.sku) return a.sku.localeCompare(b.sku, undefined, { numeric: true });
+    return a.title.localeCompare(b.title);
   }) : [];
 
-  const expandedItems = sortedLineItems.flatMap(item =>
-    Array.from({ length: item.quantity }, (_, i) => ({ ...item, _key: `${item.id}-${i}` }))
-  );
+  // Collapse multiple line items with the same SKU into one row so a packer
+  // sees "Chicken & Chorizo ×2" instead of two identical rows. Quantity adds
+  // up across the merged lines, and scans increment a per-row picked count
+  // until the row is full.
+  interface GroupedItem {
+    _groupKey: string;
+    title: string;
+    variant_title: string | null;
+    sku: string;
+    totalQty: number;
+    location: LineItem["location"];
+    barcode: string | null;
+    imageUrl: string | null;
+    recipeColor: string | null;
+  }
+  const groupedItems: GroupedItem[] = [];
+  {
+    const map = new Map<string, GroupedItem>();
+    for (const li of sortedLineItems) {
+      const key = li.sku || `__nosku_${li.id}`;
+      const existing = map.get(key);
+      if (existing) {
+        existing.totalQty += li.quantity;
+      } else {
+        const group: GroupedItem = {
+          _groupKey: key,
+          title: li.title,
+          variant_title: li.variant_title,
+          sku: li.sku,
+          totalQty: li.quantity,
+          location: li.location,
+          barcode: li.barcode,
+          imageUrl: li.imageUrl,
+          recipeColor: li.recipeColor,
+        };
+        map.set(key, group);
+        groupedItems.push(group);
+      }
+    }
+  }
 
-  const allChecked = expandedItems.length > 0 && checkedItems.size >= expandedItems.length;
+  const totalUnits = groupedItems.reduce((sum, g) => sum + g.totalQty, 0);
+  const pickedUnits = groupedItems.reduce((sum, g) => sum + Math.min(pickedCounts.get(g._groupKey) ?? 0, g.totalQty), 0);
+  const allChecked = totalUnits > 0 && pickedUnits >= totalUnits;
 
   function handleBarcodeSubmit(e: React.FormEvent) {
     e.preventDefault();
     const input = barcodeInput.trim().toLowerCase();
     if (!input) return;
 
-    const unchecked = expandedItems.filter(item => !checkedItems.has(item._key));
-    const match = unchecked.find(item =>
-      item.sku?.toLowerCase() === input ||
-      item.title?.toLowerCase().includes(input)
-    );
+    // Only rows that still need picks — once a row is fully picked, scanning
+    // its barcode again should be a no-match (flash red), not a silent ignore.
+    const remaining = groupedItems.filter(g => (pickedCounts.get(g._groupKey) ?? 0) < g.totalQty);
+    // Barcode is the primary match — scanners send a numeric GTIN/EAN that
+    // never appears in SKU or title. Fall back to SKU and title so picking
+    // still works when barcodes aren't synced or a packer types manually.
+    const match =
+      remaining.find(g => g.barcode && g.barcode.toLowerCase() === input) ??
+      remaining.find(g =>
+        g.sku?.toLowerCase() === input ||
+        g.title?.toLowerCase().includes(input)
+      );
 
     if (match) {
-      // Play a short success beep via Web Audio API
-      try {
-        const ctx = new AudioContext();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(880, ctx.currentTime);
-        gain.gain.setValueAtTime(0.2, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.15);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.15);
-        osc.onended = () => ctx.close();
-      } catch (err) {
-        console.warn("[Fulfilment] AudioContext not available:", err);
-      }
+      playScanSuccess();
 
-      setCheckedItems(prev => {
-        const next = new Set([...prev, match._key]);
-        // After state update, scroll to next unchecked item
+      setPickedCounts(prev => {
+        const next = new Map(prev);
+        const newCount = Math.min((prev.get(match._groupKey) ?? 0) + 1, match.totalQty);
+        next.set(match._groupKey, newCount);
+        // After update, scroll to the next row that still needs picks.
         setTimeout(() => {
-          const remaining = expandedItems.filter(item => !next.has(item._key));
-          const nextItem = remaining[0];
-          if (nextItem) {
-            itemRefs.current.get(nextItem._key)?.scrollIntoView({ behavior: "smooth", block: "center" });
+          const nextRow = groupedItems.find(g => (next.get(g._groupKey) ?? 0) < g.totalQty);
+          if (nextRow) {
+            itemRefs.current.get(nextRow._groupKey)?.scrollIntoView({ behavior: "smooth", block: "center" });
           }
         }, 100);
         return next;
       });
-      setFlashItem(match._key);
+      setFlashItem(match._groupKey);
       setTimeout(() => setFlashItem(null), 800);
       setBarcodeInput("");
     } else {
+      playScanWrong();
       setFlashWrong(true);
       setTimeout(() => setFlashWrong(false), 600);
       setBarcodeInput("");
     }
   }
 
-  function toggleItem(key: string) {
-    setCheckedItems(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
+  // Each tap adds one to that row, then wraps back to zero — same logic
+  // as scanning so the colour stages (white → yellow → green) are identical
+  // either way. Forces one explicit action per item the packer puts in
+  // the bag, even on a 4-pack.
+  function toggleItem(key: string, totalQty: number) {
+    setPickedCounts(prev => {
+      const next = new Map(prev);
+      const current = prev.get(key) ?? 0;
+      if (current >= totalQty) next.delete(key);
+      else next.set(key, current + 1);
       return next;
     });
   }
 
-  async function handleComplete() {
+  // Fires the actual Shopify fulfilment in the background and advances the
+  // UI to the next order immediately — the packer never waits on Shopify
+  // (which can take a couple of seconds per order). Failures are stashed
+  // in completionFailures so the operator can review them at end-of-dispatch
+  // via the alert badge near the top of the page. Two failure modes are
+  // tracked separately:
+  //   "fulfilment" → Shopify call rejected; nothing was deducted
+  //   "decrement" → Shopify shipped + customer was emailed, but the local
+  //                 stock decrement failed (rare; needs manual fix)
+  function handleComplete() {
     if (!activeOrder) return;
     // With APC disabled there's no shipment object — fulfilment runs
     // without a tracking number. The barcode-driven decrement still
     // fires inside the backend complete handler.
     if (apcEnabled && !shipment) return;
-    setCompleting(true);
+
+    // Snapshot what we need for the background call before we move on.
+    const snapshot = {
+      orderId: activeOrder.id,
+      orderName: activeOrder.name,
+      customerName: activeOrder.shipping_address?.name
+        ?? (`${activeOrder.customer?.first_name ?? ""} ${activeOrder.customer?.last_name ?? ""}`.trim() || "(no name)"),
+      consignmentNumber: shipment?.consignmentNumber ?? null,
+      trackingUrl: shipment?.trackingUrl,
+    };
+
+    // Optimistic UI: play sound, advance immediately. The actual Shopify
+    // call happens in the background.
     setCompletionError(null);
-    try {
-      if (apcEnabled && shipment) {
-        await completeOrder(activeOrder.id, shipment.consignmentNumber, shipment.trackingUrl);
-      } else {
-        await completeOrder(activeOrder.id, null);
-      }
-      setView("confirm");
-      refetch();
-      refetchProgress();
-    } catch (err: any) {
-      setCompletionError(err.message ?? "Failed to complete order");
-    } finally {
-      setCompleting(false);
-    }
+    playOrderComplete();
+    setView("confirm");
+    setPendingCompletions(c => c + 1);
+
+    completeOrder(snapshot.orderId, snapshot.consignmentNumber, snapshot.trackingUrl)
+      .then((result) => {
+        // Shopify shipped — refresh the orders list to drop this one.
+        refetch();
+        refetchProgress();
+        // Decrement may still have failed silently — surface it.
+        if (result.decrementError) {
+          setCompletionFailures(prev => [...prev, {
+            orderId: snapshot.orderId,
+            orderName: snapshot.orderName,
+            customerName: snapshot.customerName,
+            error: result.decrementError ?? "decrement failed",
+            kind: "decrement",
+            at: new Date(),
+          }]);
+        }
+      })
+      .catch((err) => {
+        // Shopify rejected the fulfilment. Stock was NOT decremented.
+        setCompletionFailures(prev => [...prev, {
+          orderId: snapshot.orderId,
+          orderName: snapshot.orderName,
+          customerName: snapshot.customerName,
+          error: err?.message ?? String(err),
+          kind: "fulfilment",
+          at: new Date(),
+        }]);
+        // Make sure we still refetch so the failed order shows up unfulfilled
+        // in the list — the packer can retry by selecting it again.
+        refetch();
+        refetchProgress();
+      })
+      .finally(() => {
+        setPendingCompletions(c => Math.max(0, c - 1));
+      });
   }
 
   function advanceToNext() {
@@ -862,19 +1309,29 @@ export default function Fulfilment() {
     }
   }
 
-  // When all items are picked and the APC shipment is ready, advance to pre-confirm step.
-  // The operator then explicitly taps "Confirm & Complete" to finalise on Shopify and trigger the dispatch email.
+  // Once every line is scanned, finalise the order automatically so the
+  // picker can keep scanning straight onto the next one. We wait for the
+  // pre-queued APC shipment to be ready (or skip that check when APC is
+  // disabled); `completing` prevents a re-entrant call while the request
+  // is in flight.
   useEffect(() => {
-    if (view === "picking" && allChecked && expandedItems.length > 0 && shipment && !completing) {
-      setView("pre-confirm");
+    if (
+      view === "picking" &&
+      allChecked &&
+      totalUnits > 0 &&
+      !completing &&
+      (!apcEnabled || shipment)
+    ) {
+      handleComplete();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allChecked, shipment, view]);
 
-  // Auto-advance after confirm is shown — give user 4 s to read consignment number
+  // Auto-advance after the confirm celebration — kept short so the picker
+  // flows straight into the next order without losing scanning rhythm.
   useEffect(() => {
     if (view !== "confirm") return;
-    const timer = setTimeout(() => advanceToNext(), 4000);
+    const timer = setTimeout(() => advanceToNext(), 1500);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
@@ -884,6 +1341,22 @@ export default function Fulfilment() {
       barcodeRef.current.focus();
     }
   }, [view]);
+
+  // Speak the customer's shipping name when an order opens. Gated by
+  // spokenOrderIdsRef so we say each order's name exactly once per page
+  // load — no repeats if the picking view re-mounts for the same order.
+  // Skipped entirely if the admin has muted speech in Settings.
+  useEffect(() => {
+    if (!speakNameEnabled) return;
+    if (view !== "picking" || !activeOrder) return;
+    if (spokenOrderIdsRef.current.has(activeOrder.id)) return;
+    const name = activeOrder.shipping_address?.name
+      ?? `${activeOrder.customer?.first_name ?? ""} ${activeOrder.customer?.last_name ?? ""}`.trim();
+    if (!name) return;
+    spokenOrderIdsRef.current.add(activeOrder.id);
+    speakName(name);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeOrder?.id, view, speakNameEnabled]);
 
   const apcEnabled = configStatus?.apcEnabled !== false;
 
@@ -1221,12 +1694,7 @@ export default function Fulfilment() {
           <button onClick={goBack} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <div className="flex-1">
-            <p className="text-sm text-muted-foreground">
-              {activeOrder.shipping_address?.name ?? `${activeOrder.customer?.first_name} ${activeOrder.customer?.last_name}`}
-              {activeOrder.shipping_address && ` — ${activeOrder.shipping_address.city}, ${activeOrder.shipping_address.zip}`}
-            </p>
-          </div>
+          <div className="flex-1" />
           <div className="flex items-center gap-2">
             {printStatus === "printing" && (
               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -1273,6 +1741,24 @@ export default function Fulfilment() {
                 <XCircle className="w-4 h-4" /> Print failed
               </span>
             )}
+          </div>
+        </div>
+
+        {/* Customer name banner — sized so a packer can read it from 8 yards across the kitchen. */}
+        <div className="px-1">
+          <p className="text-5xl md:text-7xl lg:text-8xl font-extrabold leading-none tracking-tight break-words">
+            {activeOrder.shipping_address?.name ?? `${activeOrder.customer?.first_name} ${activeOrder.customer?.last_name}`}
+          </p>
+          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mt-2">
+            {activeOrder.shipping_address && (
+              <p className="text-lg md:text-2xl text-muted-foreground">
+                {activeOrder.shipping_address.city}, {activeOrder.shipping_address.zip}
+              </p>
+            )}
+            <p className="text-xl md:text-3xl font-bold">
+              <span className="text-primary">{totalUnits}</span>
+              <span className="text-muted-foreground ml-2 font-semibold">item{totalUnits === 1 ? "" : "s"} to pack</span>
+            </p>
           </div>
         </div>
 
@@ -1445,50 +1931,80 @@ export default function Fulfilment() {
             <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-purple-400 inline-block" /> Freezer</span>
             <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-amber-400 inline-block" /> Ambient</span>
             <span className="ml-auto font-medium text-foreground">
-              {checkedItems.size} / {expandedItems.length} picked
+              {pickedUnits} / {totalUnits} picked
             </span>
           </div>
 
-          {expandedItems.map((item) => {
-            const checked = checkedItems.has(item._key);
+          {groupedItems.map((item) => {
+            const picked = Math.min(pickedCounts.get(item._groupKey) ?? 0, item.totalQty);
+            const isComplete = picked >= item.totalQty;
+            const isPartial = picked > 0 && !isComplete;
             const zone = item.location?.zone ?? null;
             const style = zone ? ZONE_STYLES[zone] : null;
-            const isFlashing = flashItem === item._key;
+            const isFlashing = flashItem === item._groupKey;
+
+            const rowClasses = isComplete
+              ? "bg-green-100 dark:bg-green-950/40 border-green-400 dark:border-green-700"
+              : isPartial
+                ? "bg-yellow-100 dark:bg-yellow-950/40 border-yellow-400 dark:border-yellow-600"
+                : style
+                  ? `${style.bg} ${style.border}`
+                  : "bg-card border-border";
 
             return (
               <button
-                key={item._key}
+                key={item._groupKey}
                 ref={el => {
-                  if (el) itemRefs.current.set(item._key, el);
-                  else itemRefs.current.delete(item._key);
+                  if (el) itemRefs.current.set(item._groupKey, el);
+                  else itemRefs.current.delete(item._groupKey);
                 }}
-                onClick={() => toggleItem(item._key)}
-                className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 text-left transition-all
-                  ${checked
-                    ? "bg-green-50 dark:bg-green-950/30 border-green-200 dark:border-green-800 opacity-60"
-                    : style
-                      ? `${style.bg} ${style.border}`
-                      : "bg-card border-border"
-                  }
-                  ${isFlashing ? "ring-2 ring-green-500 ring-offset-1" : ""}
+                onClick={manualTickEnabled ? () => toggleItem(item._groupKey, item.totalQty) : undefined}
+                disabled={!manualTickEnabled}
+                title={manualTickEnabled ? undefined : "Manual tap-to-pick is disabled — scan the barcode to mark this item picked."}
+                className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 text-left transition-all ${rowClasses}
+                  ${isFlashing ? "ring-4 ring-green-500 ring-offset-1" : ""}
+                  ${manualTickEnabled ? "cursor-pointer" : "cursor-default"}
                 `}
               >
-                <div className={`w-7 h-7 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors
-                  ${checked ? "border-green-500 bg-green-500" : "border-border"}`}
+                <div className={`w-10 h-10 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors
+                  ${isComplete ? "border-green-500 bg-green-500" : isPartial ? "border-yellow-500 bg-yellow-500" : "border-border"}`}
                 >
-                  {checked && <CheckCircle2 className="w-5 h-5 text-white" />}
+                  {isComplete
+                    ? <CheckCircle2 className="w-7 h-7 text-white" />
+                    : isPartial
+                      ? <span className="text-white font-bold text-base">{picked}</span>
+                      : null}
                 </div>
+                {item.imageUrl && (
+                  <img
+                    src={item.imageUrl}
+                    alt=""
+                    className={`w-16 h-16 md:w-20 md:h-20 rounded-lg object-cover flex-shrink-0 bg-secondary ${isComplete ? "opacity-50" : ""}`}
+                    loading="lazy"
+                  />
+                )}
                 <div className="flex-1 min-w-0">
-                  <p className={`font-semibold text-base ${checked ? "line-through text-muted-foreground" : ""}`}>
+                  <p
+                    className={`font-bold text-2xl md:text-3xl leading-tight ${isComplete ? "line-through text-muted-foreground" : ""}`}
+                    style={!isComplete && item.recipeColor ? { color: item.recipeColor } : undefined}
+                  >
                     {item.title}
                     {item.variant_title && (
-                      <span className="text-sm font-normal text-muted-foreground ml-2">— {item.variant_title}</span>
+                      <span className="font-semibold text-xl md:text-2xl text-muted-foreground ml-2">— {item.variant_title}</span>
                     )}
                   </p>
                   {item.sku && (
-                    <p className="text-xs font-mono text-muted-foreground mt-0.5">{item.sku}</p>
+                    <p className="text-sm font-mono text-muted-foreground mt-1">{item.sku}</p>
                   )}
                 </div>
+                {item.totalQty > 1 && (
+                  <div
+                    className="px-3 py-1 rounded-lg text-2xl md:text-3xl font-extrabold flex-shrink-0 bg-orange-500 text-white"
+                    aria-label={`Quantity ${item.totalQty}, ${picked} picked`}
+                  >
+                    {isPartial ? `${picked}/${item.totalQty}` : `×${item.totalQty}`}
+                  </div>
+                )}
                 {item.location ? (
                   <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium flex-shrink-0 ${style?.badge}`}>
                     <MapPin className="w-3 h-3" />
@@ -1524,14 +2040,14 @@ export default function Fulfilment() {
             <SkipForward className="w-4 h-4" /> Skip
           </button>
           <button
-            onClick={() => setView("pre-confirm")}
-            disabled={!allChecked || !shipment}
+            onClick={() => handleComplete()}
+            disabled={!allChecked || (apcEnabled && !shipment) || completing}
             className="flex-1 py-3 bg-primary text-primary-foreground rounded-xl font-semibold text-lg hover:bg-primary/90 transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
           >
             {allChecked ? (
-              <><CheckCircle2 className="w-5 h-5" /> Review &amp; Complete</>
+              <><CheckCircle2 className="w-5 h-5" /> {completing ? "Completing…" : "Complete"}</>
             ) : (
-              `${expandedItems.length - checkedItems.size} items remaining`
+              `${totalUnits - pickedUnits} items remaining`
             )}
           </button>
         </div>
@@ -1846,6 +2362,56 @@ export default function Fulfilment() {
           <AlertCircle className="w-5 h-5 flex-shrink-0" />
           <p className="text-sm">{(error as Error).message}</p>
         </div>
+      )}
+
+      {/* Background completion status — packer can keep scanning while
+          previous orders finish fulfilling. Failures persist here until
+          the packer reviews them. */}
+      {(pendingCompletions > 0 || completionFailures.length > 0) && (
+        <div className="flex items-center gap-3 flex-wrap">
+          {pendingCompletions > 0 && (
+            <div className="flex items-center gap-2 px-3 py-2 bg-secondary/40 border border-border rounded-lg text-sm">
+              <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+              <span className="text-muted-foreground">Fulfilling {pendingCompletions} order{pendingCompletions === 1 ? "" : "s"} in background…</span>
+            </div>
+          )}
+          {completionFailures.length > 0 && (
+            <button
+              onClick={() => setShowFailuresModal(true)}
+              className="flex items-center gap-2 px-3 py-2 bg-destructive/10 border border-destructive/30 rounded-lg text-sm text-destructive hover:bg-destructive/20 font-medium"
+            >
+              <AlertCircle className="w-4 h-4" />
+              {completionFailures.length} order{completionFailures.length === 1 ? "" : "s"} failed — review
+            </button>
+          )}
+          <button
+            onClick={() => setShowAuditModal(true)}
+            className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg text-sm text-muted-foreground hover:bg-secondary/50 ml-auto"
+          >
+            Run end-of-dispatch audit
+          </button>
+        </div>
+      )}
+      {pendingCompletions === 0 && completionFailures.length === 0 && (
+        <div className="flex justify-end">
+          <button
+            onClick={() => setShowAuditModal(true)}
+            className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg text-sm text-muted-foreground hover:bg-secondary/50"
+          >
+            Run end-of-dispatch audit
+          </button>
+        </div>
+      )}
+
+      {showFailuresModal && (
+        <FailuresModal
+          failures={completionFailures}
+          onDismiss={(orderId) => setCompletionFailures(prev => prev.filter(f => f.orderId !== orderId))}
+          onClose={() => setShowFailuresModal(false)}
+        />
+      )}
+      {showAuditModal && (
+        <AuditModal tag={queryTag} onClose={() => setShowAuditModal(false)} />
       )}
 
       {progress && (

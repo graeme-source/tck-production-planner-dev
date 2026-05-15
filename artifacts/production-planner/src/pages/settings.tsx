@@ -916,6 +916,8 @@ export default function Settings() {
               </div>
               {user?.role === "admin" && <FactoryNumberSection />}
               {user?.role === "admin" && <ShopifyFreezerSyncSection />}
+              {user?.role === "admin" && <FulfilmentManualTickSection />}
+              {user?.role === "admin" && <FulfilmentSpeakNameSection />}
               {(user?.role === "admin" || user?.role === "manager") && <BuildingTimerSection />}
               {user?.role === "admin" && <TimingStandardsSection />}
               {user?.role === "admin" && <MixerCapacitySection />}
@@ -2466,6 +2468,184 @@ function ShopifyFreezerSyncSection() {
           onCheckedChange={handleToggle}
           disabled={saving}
           aria-label="Toggle Shopify freezer stock sync"
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Lets the picker manually tick line items by tapping the row, in addition
+ * to scanning. Some sites want scan-only to enforce that every dispatched
+ * unit was physically present at packing time. Backed by the
+ * `fulfilment_manual_tick_enabled` row in app_settings.
+ */
+function FulfilmentManualTickSection() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/fulfilment/manual-tick-config", { credentials: "include" })
+      .then(r => r.ok ? r.json() : { enabled: true })
+      .then((d: { enabled: boolean }) => setEnabled(d.enabled))
+      .catch(() => setEnabled(true));
+  }, []);
+
+  async function handleToggle(next: boolean) {
+    setSaving(true);
+    setSavedMsg(null);
+    try {
+      const res = await fetch("/api/fulfilment/manual-tick-config", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      const data = (await res.json()) as { enabled: boolean };
+      setEnabled(data.enabled);
+      setSavedMsg("Saved");
+      setTimeout(() => setSavedMsg(null), 2000);
+    } catch {
+      setSavedMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (enabled === null) return null;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-base font-semibold flex items-center gap-2">
+          <Boxes className="w-4 h-4 text-primary" /> Fulfilment — Manual Tick
+        </h2>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          Controls whether the picking page lets a packer tap a row to mark
+          it picked. Turn off to lock the page to scan-only — every unit
+          must be scanned through the barcode reader before the order can
+          be completed.
+        </p>
+      </div>
+
+      <div className="bg-card border border-border rounded-xl p-4 flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <p className="text-sm font-medium">Allow manual tap to pick</p>
+            {saving && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+            {savedMsg && <span className="text-xs text-emerald-600 font-medium">{savedMsg}</span>}
+          </div>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            {enabled ? (
+              <>
+                <span className="font-medium text-foreground">Enabled.</span>{" "}
+                Tapping a row adds one to its picked count, same as a scan
+                (so a 2-pack still needs two taps before it turns green).
+              </>
+            ) : (
+              <>
+                <span className="font-medium text-foreground">Disabled.</span>{" "}
+                Rows are not tappable. Items can only be marked picked by
+                scanning a barcode through the reader.
+              </>
+            )}
+          </p>
+        </div>
+        <Switch
+          checked={enabled}
+          onCheckedChange={handleToggle}
+          disabled={saving}
+          aria-label="Toggle manual tap-to-pick on the fulfilment page"
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Mute switch for the spoken customer name on the picking page. Backed by
+ * the `fulfilment_speak_name_enabled` row in app_settings. When off, no
+ * speech is synthesised when an order opens.
+ */
+function FulfilmentSpeakNameSection() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/fulfilment/speak-name-config", { credentials: "include" })
+      .then(r => r.ok ? r.json() : { enabled: true })
+      .then((d: { enabled: boolean }) => setEnabled(d.enabled))
+      .catch(() => setEnabled(true));
+  }, []);
+
+  async function handleToggle(next: boolean) {
+    setSaving(true);
+    setSavedMsg(null);
+    try {
+      const res = await fetch("/api/fulfilment/speak-name-config", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      const data = (await res.json()) as { enabled: boolean };
+      setEnabled(data.enabled);
+      setSavedMsg("Saved");
+      setTimeout(() => setSavedMsg(null), 2000);
+    } catch {
+      setSavedMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (enabled === null) return null;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-base font-semibold flex items-center gap-2">
+          <Boxes className="w-4 h-4 text-primary" /> Fulfilment — Speak Customer Name
+        </h2>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          When enabled, the picking page reads the customer's shipping name
+          aloud the first time each order opens. Useful as a hands-free
+          cross-check against the printed label; turn off in a noisy kitchen.
+        </p>
+      </div>
+
+      <div className="bg-card border border-border rounded-xl p-4 flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <p className="text-sm font-medium">Read customer name aloud</p>
+            {saving && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+            {savedMsg && <span className="text-xs text-emerald-600 font-medium">{savedMsg}</span>}
+          </div>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            {enabled ? (
+              <>
+                <span className="font-medium text-foreground">Enabled.</span>{" "}
+                Each new order is read once in an English voice. Subsequent
+                taps on the same order do not repeat it.
+              </>
+            ) : (
+              <>
+                <span className="font-medium text-foreground">Disabled.</span>{" "}
+                The picking page is silent — no spoken name on order open.
+                Scan beeps and the order-complete chime are unaffected.
+              </>
+            )}
+          </p>
+        </div>
+        <Switch
+          checked={enabled}
+          onCheckedChange={handleToggle}
+          disabled={saving}
+          aria-label="Toggle reading the customer name aloud on the fulfilment page"
         />
       </div>
     </div>

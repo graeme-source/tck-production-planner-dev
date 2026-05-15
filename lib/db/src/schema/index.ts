@@ -11,6 +11,7 @@ export * from "./stock_items";
 export * from "./sales";
 export * from "./dispatches";
 export * from "./sku_locations";
+export * from "./sku_barcodes";
 export * from "./auth";
 export * from "./ordering";
 export * from "./improvements_and_andon";

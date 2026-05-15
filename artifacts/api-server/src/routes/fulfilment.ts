@@ -1,8 +1,8 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { db, skuLocationsTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable } from "@workspace/db";
+import { db, skuLocationsTable, skuBarcodesTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
-import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
+import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
 import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService } from "../services/apc";
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
 import { sql } from "drizzle-orm";
@@ -212,14 +212,46 @@ router.get("/orders", requireManagerOrAdmin, async (req: Request, res: Response)
       ? await getOrdersByTag(tag)
       : await getUnfulfilledOrdersByTag(tag);
 
-    const allLocations = await db.select().from(skuLocationsTable);
+    const [allLocations, allBarcodes, recipeMappings] = await Promise.all([
+      db.select().from(skuLocationsTable),
+      db.select().from(skuBarcodesTable),
+      // recipe_shopify_mappings has no Drizzle schema — raw SQL. Pull
+      // every mapping row joined to its recipe colour, then build lookup
+      // maps by both variant id and SKU so a line item can be coloured
+      // even when only one of those two is set.
+      db.execute<{ shopify_variant_id: string | null; shopify_sku: string | null; color: string | null }>(sql`
+        SELECT m.shopify_variant_id, m.shopify_sku, r.color
+        FROM recipe_shopify_mappings m
+        JOIN recipes r ON r.id = m.recipe_id
+        WHERE r.color IS NOT NULL
+      `),
+    ]);
     const locationBySku = new Map(allLocations.map(l => [l.sku, l]));
+    const barcodeBySku = new Map(allBarcodes.map(b => [b.sku, b.barcode]));
+    const imageBySku = new Map(allBarcodes.filter(b => b.imageUrl).map(b => [b.sku, b.imageUrl as string]));
+    const colorByVariantId = new Map<string, string>();
+    const colorBySku = new Map<string, string>();
+    for (const row of recipeMappings.rows as Array<{ shopify_variant_id: string | null; shopify_sku: string | null; color: string | null }>) {
+      if (!row.color) continue;
+      if (row.shopify_variant_id) colorByVariantId.set(row.shopify_variant_id, row.color);
+      if (row.shopify_sku) colorBySku.set(row.shopify_sku, row.color);
+    }
 
     const enriched = orders.map(order => {
-      const lineItems = order.line_items.map(item => ({
-        ...item,
-        location: item.sku ? (locationBySku.get(item.sku) ?? null) : null,
-      }));
+      const lineItems = order.line_items.map(item => {
+        const variantKey = item.variant_id != null ? String(item.variant_id) : null;
+        const recipeColor =
+          (variantKey && colorByVariantId.get(variantKey)) ??
+          (item.sku && colorBySku.get(item.sku)) ??
+          null;
+        return {
+          ...item,
+          location: item.sku ? (locationBySku.get(item.sku) ?? null) : null,
+          barcode: item.sku ? (barcodeBySku.get(item.sku) ?? null) : null,
+          imageUrl: item.sku ? (imageBySku.get(item.sku) ?? null) : null,
+          recipeColor,
+        };
+      });
       return { ...order, line_items: lineItems };
     });
 
@@ -767,6 +799,12 @@ router.post("/postcode-validate-tag", requireManagerOrAdmin, async (req: Request
 // would still be re-decremented on the next button click.
 const FACTORY_NUMBER_TAG = "factory-number-adjusted";
 
+// Marker tag we set after the in-app picker has successfully called Shopify's
+// fulfilOrder endpoint and Shopify confirmed the fulfilment. Lets the
+// end-of-dispatch audit answer "did the app actually fulfil this in Shopify,
+// or did Shopify silently reject it?" without re-querying Shopify per order.
+const FULFILLED_BY_APP_TAG = "fulfilled-by-app";
+
 const CompleteOrderBody = z.object({
   // Optional when apc_enabled = "false" in app_settings. We re-check
   // the flag below and require a non-empty consignment when APC is on.
@@ -795,21 +833,53 @@ router.post("/orders/:id/complete", requireManagerOrAdmin, async (req: Request, 
     return;
   }
 
-  // Factory-number accounting loop: decrement production_fridge stock
-  // for the recipes in this order, BEFORE we call Shopify's fulfil
-  // endpoint. If this step fails we log and keep going — the dispatch
-  // must not be blocked by an inventory bug. After a successful decrement
-  // we tag the order with FACTORY_NUMBER_TAG so the manual "Process
-  // Fulfilled Today" button skips it (it filters its GraphQL query by
-  // -tag:FACTORY_NUMBER_TAG). Without the tag, same-day clicks of the
-  // button after an in-app fulfil would re-decrement the same order.
+  // Order of operations is deliberate: Shopify fulfilment FIRST, stock
+  // decrement only after Shopify confirms. If Shopify rejects the order
+  // (no open fulfillment_orders, cancelled, etc.) we don't touch the
+  // factory number — better to leave stock untouched and surface the
+  // error than to deduct for an order that never shipped.
+  //
+  // Tags written after Shopify success let the end-of-dispatch audit
+  // distinguish three failure modes:
+  //   no tags        → app never tried this order
+  //   only fulfilled-by-app → Shopify shipped, but stock decrement failed
+  //   both tags      → fully successful
+
+  // 1. Shopify fulfilment — the slow, fragile, customer-facing call.
+  let order: Awaited<ReturnType<typeof getOrderById>> = null;
+  try {
+    await fulfillOrder(
+      orderId,
+      apcEnabled ? consignmentNumber! : "",
+      apcEnabled ? "APC Overnight" : "",
+      apcEnabled ? trackingUrl : undefined,
+    );
+  } catch (err: any) {
+    console.error(`[Fulfilment] completeOrder fulfilOrder FAILED for order ${orderId}:`, err.message);
+    res.status(502).json({ error: err.message });
+    return;
+  }
+
+  // 2. Tag the order so the audit can confirm we shipped it.
+  try {
+    order = await getOrderById(orderId);
+    await addTagToOrder(orderId, order?.tags ?? "", FULFILLED_BY_APP_TAG);
+  } catch (tagErr) {
+    const msg = tagErr instanceof Error ? tagErr.message : String(tagErr);
+    console.warn(`[Fulfilment] ${FULFILLED_BY_APP_TAG} tag write FAILED for order ${orderId} (Shopify fulfilment did succeed):`, msg);
+  }
+
+  // 3. Decrement production_fridge stock + add factory-number-adjusted tag.
+  // Idempotent via shopify_fulfilment_tracking — never double-decrements
+  // even if /complete is called twice for the same order.
+  let decrementError: string | null = null;
   try {
     const [existing] = await db
       .select({ shopifyOrderId: shopifyFulfilmentTrackingTable.shopifyOrderId })
       .from(shopifyFulfilmentTrackingTable)
       .where(eq(shopifyFulfilmentTrackingTable.shopifyOrderId, orderId));
     if (!existing) {
-      const order = await getOrderById(orderId);
+      if (!order) order = await getOrderById(orderId);
       if (order?.line_items && order.line_items.length > 0) {
         const result = await decrementFridgeForShopifyOrder(orderId, order.line_items);
         if (result.unmapped.length > 0) {
@@ -823,38 +893,28 @@ router.post("/orders/:id/complete", requireManagerOrAdmin, async (req: Request, 
           fulfilledAt: new Date(),
           source: "immediate",
         }).onConflictDoNothing();
-        // Tag the order so the Process Fulfilled Today button skips it.
-        // Tag-write failure is logged but non-fatal — the tracking table
-        // still dedupes a same-process retry, and the worst case is one
-        // extra warning the next time someone clicks the button (which
-        // will then double-decrement). We accept that small risk over
-        // failing the customer-facing dispatch.
         try {
           await addTagToOrder(orderId, order.tags ?? "", FACTORY_NUMBER_TAG);
         } catch (tagErr) {
           const msg = tagErr instanceof Error ? tagErr.message : String(tagErr);
-          console.warn(`[Fulfilment] FACTORY_NUMBER_TAG write FAILED for order ${orderId} — Process Fulfilled Today may re-decrement this order:`, msg);
+          console.warn(`[Fulfilment] ${FACTORY_NUMBER_TAG} tag write FAILED for order ${orderId}:`, msg);
         }
       }
     }
-  } catch (err) {
+  } catch (err: any) {
+    decrementError = err.message ?? String(err);
     console.error(`[Fulfilment] inventory decrement failed for order ${orderId}:`, err);
   }
 
-  try {
-    // When APC is disabled, fulfil without tracking. Shopify accepts
-    // empty strings for tracking_number / tracking_company.
-    await fulfillOrder(
-      orderId,
-      apcEnabled ? consignmentNumber! : "",
-      apcEnabled ? "APC Overnight" : "",
-      apcEnabled ? trackingUrl : undefined,
-    );
-    res.json({ ok: true, orderId, consignmentNumber: consignmentNumber ?? null });
-  } catch (err: any) {
-    console.error("[Fulfilment] completeOrder error:", err.message);
-    res.status(502).json({ error: err.message });
-  }
+  // Shopify is shipped, customer is emailed. Even if the decrement failed,
+  // we return 200 so the picker advances — the audit endpoint will surface
+  // the missing factory-number tag for the operator to follow up.
+  res.json({
+    ok: true,
+    orderId,
+    consignmentNumber: consignmentNumber ?? null,
+    decrementError,
+  });
 });
 
 // ── Manual "Process Fulfilled Today" button ────────────────────────────────
@@ -1130,6 +1190,223 @@ router.delete("/sku-locations/:sku", requireAdmin, async (req: Request, res: Res
     res.json({ ok: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Whether the picking page lets a packer mark items picked by tapping the
+// row (in addition to scanning). Some sites want to lock down to scan-only
+// to enforce the audit trail; others want manual tap as a fallback when a
+// barcode is missing/damaged. Defaults to enabled.
+const MANUAL_TICK_KEY = "fulfilment_manual_tick_enabled";
+
+router.get("/manual-tick-config", async (_req: Request, res: Response) => {
+  const value = await getAppSetting(MANUAL_TICK_KEY);
+  // Default true — preserves the existing behaviour for sites that haven't
+  // explicitly disabled tap-to-pick.
+  const enabled = value === null ? true : value !== "false";
+  res.json({ enabled });
+});
+
+router.put("/manual-tick-config", requireAdmin, async (req: Request, res: Response) => {
+  const raw = (req.body as { enabled?: unknown } | undefined)?.enabled;
+  if (typeof raw !== "boolean") {
+    res.status(400).json({ error: "enabled (boolean) is required" });
+    return;
+  }
+  await db
+    .insert(appSettingsTable)
+    .values({ key: MANUAL_TICK_KEY, value: String(raw) })
+    .onConflictDoUpdate({
+      target: appSettingsTable.key,
+      set: { value: String(raw), updatedAt: new Date() },
+    });
+  res.json({ enabled: raw });
+});
+
+// Whether the picking page reads the customer's name aloud when an order
+// opens. Defaults to enabled — the speech is a useful cross-check against
+// the APC label, but a noisy kitchen may want it off.
+const SPEAK_NAME_KEY = "fulfilment_speak_name_enabled";
+
+router.get("/speak-name-config", async (_req: Request, res: Response) => {
+  const value = await getAppSetting(SPEAK_NAME_KEY);
+  const enabled = value === null ? true : value !== "false";
+  res.json({ enabled });
+});
+
+router.put("/speak-name-config", requireAdmin, async (req: Request, res: Response) => {
+  const raw = (req.body as { enabled?: unknown } | undefined)?.enabled;
+  if (typeof raw !== "boolean") {
+    res.status(400).json({ error: "enabled (boolean) is required" });
+    return;
+  }
+  await db
+    .insert(appSettingsTable)
+    .values({ key: SPEAK_NAME_KEY, value: String(raw) })
+    .onConflictDoUpdate({
+      target: appSettingsTable.key,
+      set: { value: String(raw), updatedAt: new Date() },
+    });
+  res.json({ enabled: raw });
+});
+
+router.get("/sku-barcodes", requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const rows = await db.select().from(skuBarcodesTable).orderBy(skuBarcodesTable.sku);
+    res.json(rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Pulls every variant from Shopify and caches `(sku, barcode)` pairs. The
+// fulfilment scanner reads from this cache to translate a scanned barcode
+// back to a SKU on the open order. Safe to re-run — variants with empty
+// barcodes are skipped, variants with new/changed barcodes overwrite.
+router.post("/sync-barcodes", requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const products = await getProducts();
+
+    let synced = 0;
+    let skippedNoBarcode = 0;
+    let skippedNoSku = 0;
+
+    for (const product of products) {
+      // Variant.image_id points at one of product.images. Fall back to the
+      // featured product image if the variant has no specific image — the
+      // packing thumbnail just needs to look like the product on the label.
+      const imageById = new Map(product.images.map(img => [img.id, img.src]));
+      const fallbackImage = product.image?.src ?? null;
+      for (const variant of product.variants) {
+        if (!variant.sku) { skippedNoSku++; continue; }
+        const barcode = (variant.barcode ?? "").trim();
+        if (!barcode) { skippedNoBarcode++; continue; }
+
+        const imageUrl = (variant.image_id && imageById.get(variant.image_id)) || fallbackImage;
+
+        await db
+          .insert(skuBarcodesTable)
+          .values({
+            sku: variant.sku,
+            barcode,
+            productTitle: product.title,
+            variantTitle: variant.title,
+            imageUrl,
+          })
+          .onConflictDoUpdate({
+            target: skuBarcodesTable.sku,
+            set: {
+              barcode,
+              productTitle: product.title,
+              variantTitle: variant.title,
+              imageUrl,
+              updatedAt: new Date(),
+            },
+          });
+        synced++;
+      }
+    }
+
+    res.json({ synced, skippedNoBarcode, skippedNoSku, totalProducts: products.length });
+  } catch (err: any) {
+    console.error("[Fulfilment] sync-barcodes error:", err.message);
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// End-of-dispatch audit: for each order on this dispatch tag, report
+// whether Shopify shows it fulfilled and whether the app applied each of
+// its two completion tags. Lets the operator (or a future automated check)
+// answer "did everything I packed today actually ship + decrement stock?"
+// without manually opening each order in Shopify Admin.
+router.get("/dispatch-audit", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const { tag } = req.query as { tag?: string };
+  if (!tag) {
+    res.status(400).json({ error: "tag query param required" });
+    return;
+  }
+  try {
+    const orders = await getOrdersByTag(tag);
+    const rows = orders.map(o => {
+      const tags = (o.tags ?? "").split(",").map(t => t.trim().toLowerCase());
+      const fulfilledByApp = tags.includes(FULFILLED_BY_APP_TAG);
+      const factoryAdjusted = tags.includes(FACTORY_NUMBER_TAG);
+      const shopifyFulfilled = o.fulfillment_status === "fulfilled";
+      // Status precedence: any failure is more interesting than success.
+      let status: "ok" | "needs_decrement" | "needs_fulfilment" | "untouched" | "shopify_only";
+      if (shopifyFulfilled && fulfilledByApp && factoryAdjusted) status = "ok";
+      else if (shopifyFulfilled && !fulfilledByApp) status = "shopify_only";
+      else if (fulfilledByApp && !factoryAdjusted) status = "needs_decrement";
+      else if (!shopifyFulfilled && !fulfilledByApp) status = "needs_fulfilment";
+      else status = "untouched";
+      return {
+        orderId: o.id,
+        orderName: o.name,
+        customerName: o.shipping_address?.name
+          ?? (`${o.customer?.first_name ?? ""} ${o.customer?.last_name ?? ""}`.trim() || null),
+        cancelledAt: o.cancelled_at,
+        shopifyFulfillmentStatus: o.fulfillment_status,
+        fulfilledByApp,
+        factoryAdjusted,
+        status,
+      };
+    });
+    const summary = {
+      total: rows.length,
+      ok: rows.filter(r => r.status === "ok").length,
+      needsFulfilment: rows.filter(r => r.status === "needs_fulfilment").length,
+      needsDecrement: rows.filter(r => r.status === "needs_decrement").length,
+      shopifyOnly: rows.filter(r => r.status === "shopify_only").length,
+      untouched: rows.filter(r => r.status === "untouched").length,
+    };
+    res.json({ tag, summary, orders: rows });
+  } catch (err: any) {
+    console.error("[Fulfilment] dispatch-audit error:", err.message);
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// Diagnostic — only operates on the user-confirmed test order #126508. Pulls
+// the order + its fulfillment_orders via both REST and GraphQL so we can see
+// exactly why Shopify won't accept fulfilment for this specific order.
+// READ-ONLY — does not write to Shopify or to local DB.
+router.get("/diagnose-test-order", requireAdmin, async (_req: Request, res: Response) => {
+  const TEST_ORDER_ID = 13000825143670;
+  try {
+    // 1. REST endpoint we currently rely on
+    const restFulfillmentOrders = (await shopifyGraphQL(`{
+      order(id: "gid://shopify/Order/${TEST_ORDER_ID}") {
+        id
+        name
+        displayFulfillmentStatus
+        cancelledAt
+        lineItems(first: 50) {
+          edges { node {
+            id
+            title
+            quantity
+            requiresShipping
+            variant { id sku inventoryItem { id tracked requiresShipping } }
+            fulfillmentService { handle type }
+          } }
+        }
+        fulfillmentOrders(first: 20) {
+          edges { node {
+            id
+            status
+            requestStatus
+            assignedLocation { name location { id name } }
+            supportedActions { action }
+            lineItems(first: 50) {
+              edges { node { id totalQuantity remainingQuantity } }
+            }
+          } }
+        }
+      }
+    }`));
+    res.json(restFulfillmentOrders);
+  } catch (err: any) {
+    res.status(502).json({ error: err.message });
   }
 });
 
