@@ -10,6 +10,14 @@
       "autoPort": true
     },
     {
+      "name": "api-hotfix",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH pnpm run dev"],
+      "cwd": ".claude/worktrees/mac-cheese-split/artifacts/api-server",
+      "port": 3000,
+      "autoPort": true
+    },
+    {
       "name": "frontend",
       "runtimeExecutable": "/bin/bash",
       "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5273 --strictPort"],

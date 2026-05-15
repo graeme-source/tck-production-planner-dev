@@ -1,6 +1,19 @@
-import { Lightbulb, BookOpen, Play, ExternalLink, ArrowRight, TrendingUp } from "lucide-react";
+import { useState } from "react";
+import { Lightbulb, BookOpen, Play, ExternalLink, ArrowRight, TrendingUp, FileText, AlertCircle, type LucideIcon } from "lucide-react";
 import { Link } from "wouter";
+import { cn } from "@/lib/utils";
 import { SopsBrowser } from "@/components/standards-sops-dialog";
+
+// Left-nav model — same shape used in /settings and /reports so the
+// page feels native rather than bolted-on. Each entry corresponds to a
+// content block rendered to the right of the nav.
+type LeanCaveSection = "sops" | "lean-learning" | "improvements" | "struggles";
+const NAV_ITEMS: Array<{ id: LeanCaveSection; label: string; icon: LucideIcon }> = [
+  { id: "sops", label: "SOPs", icon: FileText },
+  { id: "lean-learning", label: "Lean Learning", icon: BookOpen },
+  { id: "improvements", label: "Improvements", icon: TrendingUp },
+  { id: "struggles", label: "Struggles", icon: AlertCircle },
+];
 
 const glossaryTerms = [
   {

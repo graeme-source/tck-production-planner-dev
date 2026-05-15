@@ -24,15 +24,25 @@ interface QrScannerProps {
   onScan: (data: string) => void;
   onError?: (error: string) => void;
   active?: boolean;
+  // When true, the scanner keeps running after each hit and dedupes
+  // identical codes seen within `dedupeMs` (default 1500). Used by the
+  // despatch packing-cycle view where the operator scans many items in
+  // sequence without unmounting/remounting the camera between scans.
+  continuous?: boolean;
+  dedupeMs?: number;
+  // Wider qrbox (300×120) suited to 1D barcodes (EAN/GTIN/Code-128) that
+  // are wider than tall. Defaults off → square 250×250 for QR codes.
+  wide?: boolean;
 }
 
-function QrScannerInner({ onScan, onError, active = true }: QrScannerProps) {
+function QrScannerInner({ onScan, onError, active = true, continuous = false, dedupeMs = 1500, wide = false }: QrScannerProps) {
   const reactId = useId();
   const elementId = useRef(`qr-reader-${reactId.replace(/:/g, "")}`).current;
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const [status, setStatus] = useState<"initializing" | "scanning" | "error">("initializing");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const hasScannedRef = useRef(false);
+  const lastScanRef = useRef<{ value: string; at: number } | null>(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -62,11 +72,20 @@ function QrScannerInner({ onScan, onError, active = true }: QrScannerProps) {
           { facingMode: "environment" },
           {
             fps: 10,
-            qrbox: { width: 250, height: 250 },
-            aspectRatio: 1,
+            qrbox: wide ? { width: 300, height: 120 } : { width: 250, height: 250 },
+            aspectRatio: wide ? 1.777 : 1,
           },
           (decodedText) => {
-            if (!hasScannedRef.current && mountedRef.current) {
+            if (!mountedRef.current) return;
+            if (continuous) {
+              const now = Date.now();
+              const last = lastScanRef.current;
+              if (last && last.value === decodedText && now - last.at < dedupeMs) return;
+              lastScanRef.current = { value: decodedText, at: now };
+              onScan(decodedText);
+              return;
+            }
+            if (!hasScannedRef.current) {
               hasScannedRef.current = true;
               onScan(decodedText);
             }
@@ -126,10 +145,18 @@ function QrScannerInner({ onScan, onError, active = true }: QrScannerProps) {
         { facingMode: "environment" },
         {
           fps: 10,
-          qrbox: { width: 250, height: 250 },
-          aspectRatio: 1,
+          qrbox: wide ? { width: 300, height: 120 } : { width: 250, height: 250 },
+          aspectRatio: wide ? 1.777 : 1,
         },
         (decodedText) => {
+          if (continuous) {
+            const now = Date.now();
+            const last = lastScanRef.current;
+            if (last && last.value === decodedText && now - last.at < dedupeMs) return;
+            lastScanRef.current = { value: decodedText, at: now };
+            onScan(decodedText);
+            return;
+          }
           if (!hasScannedRef.current) {
             hasScannedRef.current = true;
             onScan(decodedText);
@@ -159,7 +186,7 @@ function QrScannerInner({ onScan, onError, active = true }: QrScannerProps) {
 
       <div
         id={elementId}
-        className={`w-full max-w-[300px] rounded-xl overflow-hidden ${status === "error" ? "hidden" : ""}`}
+        className={`w-full ${wide ? "max-w-[480px]" : "max-w-[300px]"} rounded-xl overflow-hidden ${status === "error" ? "hidden" : ""}`}
       />
 
       {status === "scanning" && (

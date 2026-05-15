@@ -2,7 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { db, skuLocationsTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
-import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, shopifyGraphQL, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
+import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
 import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService } from "../services/apc";
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
 import { sql } from "drizzle-orm";
@@ -43,7 +43,7 @@ function pickServiceCode(
   order: ShopifyOrder,
   codes: { smallWeekday: string; largeWeekday: string; smallFriday: string; largeFriday: string },
   weightThresholdG: number,
-  dispatchDate?: Date,
+  deliveryDate?: Date,
 ): string {
   const tags = order.tags.split(",").map(t => t.trim().toLowerCase());
   const weightG = order.total_weight ?? 0;
@@ -54,17 +54,23 @@ function pickServiceCode(
   const hasSmallTag = tags.includes("small box");
   const isLargeBox = hasLargeTag || (!hasSmallTag && weightG >= weightThresholdG);
 
-  // Friday/weekend: use the Friday service codes for deliveries on
-  // Friday (5), Saturday (6), or Sunday (0). The settings label these as
-  // "Friday/weekend" codes — previously only day 5 matched, which meant
-  // Saturday deliveries incorrectly used weekday codes.
-  const refDate = dispatchDate ?? new Date();
-  const dow = refDate.getDay();
-  const isFriday = tags.includes("friday-delivery") || dow === 5 || dow === 6 || dow === 0;
+  // Service code is chosen by DISPATCH day, not delivery day. The date tag
+  // we receive is the delivery date; with overnight courier the parcel
+  // leaves us the day before. APC charges a premium "Friday/weekend"
+  // service when the parcel sits over the weekend in transit — which
+  // happens only when DISPATCH day is Friday (Sat delivery) or, in edge
+  // cases, Sat/Sun (Mon delivery routes).
+  //   Dispatch Mon–Thu → delivery Tue–Fri → weekday codes
+  //   Dispatch Fri/Sat/Sun → weekend codes
+  const delivery = deliveryDate ?? new Date();
+  const dispatch = new Date(delivery);
+  dispatch.setDate(dispatch.getDate() - 1);
+  const dispatchDow = dispatch.getDay();
+  const isWeekendDispatch = tags.includes("friday-delivery") || dispatchDow === 5 || dispatchDow === 6 || dispatchDow === 0;
 
-  if (isLargeBox && isFriday) return codes.largeFriday;
+  if (isLargeBox && isWeekendDispatch) return codes.largeFriday;
   if (isLargeBox) return codes.largeWeekday;
-  if (isFriday) return codes.smallFriday;
+  if (isWeekendDispatch) return codes.smallFriday;
   return codes.smallWeekday;
 }
 
@@ -221,6 +227,133 @@ router.get("/orders", requireManagerOrAdmin, async (req: Request, res: Response)
   } catch (err: any) {
     console.error("[Fulfilment] orders error:", err.message);
     res.status(502).json({ error: err.message });
+  }
+});
+
+// GET /scan-queue — returns dispatch-tagged unfulfilled orders for a date,
+// optionally filtered by box category, along with a variantId→barcode map
+// covering every line-item variant in the queue. The packing-cycle scan
+// view uses this to verify scans against the order without needing a local
+// barcode mapping table — Shopify variant.barcode is the source of truth.
+router.get("/scan-queue", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const { tag, category } = req.query as { tag?: string; category?: string };
+  if (!tag) {
+    res.status(400).json({ error: "tag query param required" });
+    return;
+  }
+
+  try {
+    const all = await getUnfulfilledOrdersByTag(tag);
+
+    // Only orders explicitly tagged for dispatch enter the packing queue.
+    let queue = all.filter(o =>
+      o.tags.split(",").map(t => t.trim()).includes("dispatch")
+    );
+
+    if (category && category !== "all") {
+      const wanted = category.toLowerCase();
+      queue = queue.filter(o => {
+        const tags = o.tags.split(",").map(t => t.trim().toLowerCase());
+        if (wanted === "small box") return tags.includes("small box");
+        if (wanted === "large box") return tags.includes("large box");
+        if (wanted === "wholesale") return tags.includes("wholesale");
+        if (wanted === "other") {
+          return !tags.includes("small box") && !tags.includes("large box") && !tags.includes("wholesale");
+        }
+        return true;
+      });
+    }
+
+    queue.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+    const variantIds = Array.from(new Set(
+      queue.flatMap(o => o.line_items.map(li => li.variant_id).filter((v): v is number => v != null))
+    )).map(String);
+
+    const barcodeMap = await getVariantBarcodes(variantIds);
+    const barcodes: Record<string, string> = {};
+    for (const [vid, bc] of barcodeMap) barcodes[vid] = bc;
+
+    res.json({ tag, orders: queue, barcodes });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Fulfilment] scan-queue error:", msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
+// POST /orders/:id/scan-complete — completes a packed order from the
+// scan-cycle view. Decrements production_fridge stock and fulfils on
+// Shopify. Unlike /orders/:id/complete this does NOT require an APC
+// consignment number: the scanner is a verification-only layer and
+// assumes the APC label (if any) was already produced via the existing
+// per-order shipment flow before scanning began. When a consignmentNumber
+// is supplied (e.g. from a label printed earlier in the same cycle) it
+// flows through to Shopify so the customer still gets tracking info.
+const ScanCompleteBody = z.object({
+  consignmentNumber: z.string().optional(),
+  trackingUrl: z.string().optional(),
+});
+
+router.post("/orders/:id/scan-complete", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const orderId = Number(req.params.id);
+  if (isNaN(orderId)) {
+    res.status(400).json({ error: "Invalid order ID" });
+    return;
+  }
+
+  const parsed = ScanCompleteBody.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid request body" });
+    return;
+  }
+  const { consignmentNumber, trackingUrl } = parsed.data;
+
+  try {
+    const [existing] = await db
+      .select({ shopifyOrderId: shopifyFulfilmentTrackingTable.shopifyOrderId })
+      .from(shopifyFulfilmentTrackingTable)
+      .where(eq(shopifyFulfilmentTrackingTable.shopifyOrderId, orderId));
+    if (!existing) {
+      const order = await getOrderById(orderId);
+      if (order?.line_items && order.line_items.length > 0) {
+        try {
+          const result = await decrementFridgeForShopifyOrder(orderId, order.line_items);
+          if (result.unmapped.length > 0) {
+            console.warn(`[scan-complete] order ${orderId} — unmapped variant ids:`, result.unmapped.join(", "));
+          }
+          await db.insert(shopifyFulfilmentTrackingTable).values({
+            shopifyOrderId: orderId,
+            fulfilledAt: new Date(),
+            source: "immediate",
+          }).onConflictDoNothing();
+          try {
+            await addTagToOrder(orderId, order.tags ?? "", FACTORY_NUMBER_TAG);
+          } catch (tagErr) {
+            console.warn(`[scan-complete] FACTORY_NUMBER_TAG write failed for order ${orderId}:`, tagErr instanceof Error ? tagErr.message : tagErr);
+          }
+        } catch (decErr) {
+          // Non-fatal: a stock-decrement bug must never block fulfilment.
+          console.error(`[scan-complete] inventory decrement failed for order ${orderId}:`, decErr);
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`[scan-complete] tracking-table lookup failed for order ${orderId}:`, err);
+  }
+
+  try {
+    await fulfillOrder(
+      orderId,
+      consignmentNumber ?? "",
+      consignmentNumber ? "APC Overnight" : "",
+      trackingUrl,
+    );
+    res.json({ ok: true, orderId });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[scan-complete] fulfillOrder error:", msg);
+    res.status(502).json({ error: msg });
   }
 });
 

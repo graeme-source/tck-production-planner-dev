@@ -716,6 +716,31 @@ export async function getVariantSkus(variantIds: string[]): Promise<Map<string, 
   return result;
 }
 
+/** Fetch the Shopify barcode (GTIN) for each variant ID. Same batched
+ *  pattern as getVariantSkus. Used by the despatch scanner to match
+ *  scanned barcodes against order line items without needing a local
+ *  barcode mapping table — Shopify is the source of truth. */
+export async function getVariantBarcodes(variantIds: string[]): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  if (variantIds.length === 0) return result;
+
+  const unique = Array.from(new Set(variantIds));
+  for (let i = 0; i < unique.length; i += 10) {
+    const batch = unique.slice(i, i + 10);
+    await Promise.all(batch.map(async (vid) => {
+      try {
+        const data = (await shopifyFetch(`/variants/${vid}.json`)) as { variant: { barcode: string | null } };
+        const barcode = (data.variant.barcode ?? "").trim();
+        if (barcode) result.set(vid, barcode);
+      } catch (err) {
+        console.warn(`[shopify] getVariantBarcodes: failed to fetch variant ${vid}:`, err instanceof Error ? err.message : err);
+      }
+    }));
+    if (i + 10 < unique.length) await new Promise(r => setTimeout(r, 250));
+  }
+  return result;
+}
+
 export async function getVariantCosts(variantIds: string[]): Promise<Map<string, number>> {
   if (variantIds.length === 0) return new Map();
 

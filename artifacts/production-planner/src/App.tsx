@@ -29,6 +29,7 @@ import LeanCave from "@/pages/lean-cave";
 import Reports from "@/pages/reports";
 import EmployeeHub from "@/pages/employee-hub";
 import Fulfilment from "@/pages/fulfilment";
+import FulfilmentPackCycle from "@/pages/fulfilment-pack-cycle";
 import Locations from "@/pages/locations";
 import Kanbans from "@/pages/kanbans";
 import Orders from "@/pages/orders";
@@ -107,6 +108,9 @@ function Router() {
 
       {/* Morning Meeting — full-screen slideshow */}
       <Route path="/meeting" component={MeetingPage} />
+
+      {/* Despatch packing cycle — full-screen scanning workflow */}
+      <Route path="/fulfilment/pack" component={FulfilmentPackCycle} />
 
       {/* Print / resource pages — full-screen, no sidebar, print-optimised */}
       <Route path="/print/fire-action-notice" component={FireActionNoticePrint} />

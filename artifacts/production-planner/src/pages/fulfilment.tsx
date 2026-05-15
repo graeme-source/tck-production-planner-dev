@@ -1969,6 +1969,30 @@ export default function Fulfilment() {
           )}
 
           {filteredUnfulfilled.length > 0 && (
+            <div className="glass-panel p-4 rounded-2xl border border-primary/30 bg-primary/5 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <Scan className="w-5 h-5 text-primary" />
+                <div>
+                  <p className="font-semibold text-sm">Scan to pack</p>
+                  <p className="text-xs text-muted-foreground">
+                    Walk through {filteredUnfulfilled.length} {boxFilter === "all" ? "" : boxFilter + " "}order{filteredUnfulfilled.length === 1 ? "" : "s"} one-by-one. Scan each item; orders auto-fulfil when complete.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  const params = new URLSearchParams({ tag: queryTag });
+                  if (boxFilter !== "all") params.set("category", boxFilter);
+                  navigate(`/fulfilment/pack?${params}`);
+                }}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:bg-primary/90 transition-colors flex items-center gap-2 flex-shrink-0"
+              >
+                <Scan className="w-4 h-4" /> Start Packing Cycle
+              </button>
+            </div>
+          )}
+
+          {filteredUnfulfilled.length > 0 && (
             <div className="space-y-1 mb-2">
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-1">Ready to Pack</p>
             </div>
