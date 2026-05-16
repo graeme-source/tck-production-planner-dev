@@ -4,11 +4,14 @@ import {
   useGetProductionPlan,
   useGetDptCalculator,
   useListRecipes,
+  useListDptSettings,
   useGetStationActivity,
   getGetStationActivityQueryKey,
   getGetDptCalculatorQueryKey,
   getListRecipesQueryKey,
   getListProductionPlansQueryKey,
+  getListDptSettingsQueryKey,
+  upsertDptSettingByRecipe,
 } from "@workspace/api-client-react";
 import type { DptSuggestion, ProductionPlanDetail, Recipe } from "@workspace/api-client-react";
 type PlanStatus = "draft" | "active" | "prep" | "building" | "complete";
@@ -23,7 +26,7 @@ import {
   Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef, UtensilsCrossed,
   ArrowRight, GripVertical, AlertTriangle, AlertCircle, BookmarkCheck, ShoppingCart,
   FlaskConical, Printer, X, ChevronDown, ChevronUp, PoundSterling, ShieldCheck, RotateCcw,
-  Menu, MoreHorizontal, Lock, Unlock,
+  Menu, MoreHorizontal, Lock, Unlock, SlidersHorizontal,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -395,6 +398,261 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// DPT (Daily Production Target) editor — popup opened from the Create Plan
+// dialog so the operator can adjust the single source of truth (total daily
+// batches + per-recipe packs-sold weights) without leaving the plan they're
+// building. Edits write to app_settings.total_daily_batches and dpt_settings
+// via the same endpoints as the Settings page, so changes take effect for
+// every plan created from this point onwards. After save we invalidate the
+// /calculate query so the parent dialog's sidebar refreshes with the new
+// numbers and the operator can immediately see the recalculated targets.
+// ──────────────────────────────────────────────────────────────────────────────
+function DptSettingsDialog({
+  open,
+  onClose,
+  onSaved,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSaved?: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const { data: dptSettings, isLoading: dptLoading } = useListDptSettings({ query: { queryKey: getListDptSettingsQueryKey(), enabled: open } });
+  const { data: recipes, isLoading: recipesLoading } = useListRecipes({ query: { queryKey: getListRecipesQueryKey(), enabled: open } });
+  const [totalDailyBatches, setTotalDailyBatches] = useState<number>(0);
+  const [totalBatchesLoaded, setTotalBatchesLoaded] = useState(false);
+  const [localPacksSold, setLocalPacksSold] = useState<Record<number, number>>({});
+  const [saving, setSaving] = useState(false);
+
+  // Load total_daily_batches when the dialog opens; reset on close so the
+  // next open re-pulls a fresh value (an admin on another iPad might have
+  // edited it via the Settings page in between).
+  useEffect(() => {
+    if (!open) {
+      setTotalBatchesLoaded(false);
+      return;
+    }
+    fetch("/api/app-settings/total_daily_batches", { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.value) setTotalDailyBatches(Number(d.value)); setTotalBatchesLoaded(true); })
+      .catch(() => setTotalBatchesLoaded(true));
+  }, [open]);
+
+  // Seed the per-recipe packsSold map from the DPT settings, defaulting
+  // missing rows to 0 so newly added recipes appear in the editor.
+  useEffect(() => {
+    if (!open || !recipes || !dptSettings) return;
+    const byRecipeId = new Map((dptSettings ?? []).map((d: any) => [d.recipeId, d]));
+    const map: Record<number, number> = {};
+    for (const r of recipes) {
+      const setting = byRecipeId.get(r.id);
+      map[r.id] = setting?.packsSold ?? 0;
+    }
+    setLocalPacksSold(map);
+  }, [open, recipes, dptSettings]);
+
+  const isLoading = !open || dptLoading || recipesLoading || !totalBatchesLoaded;
+  const allRecipes = useMemo(() => [...(recipes ?? [])].sort((a: any, b: any) => a.name.localeCompare(b.name)), [recipes]);
+
+  const totalPacksSold = useMemo(() => Object.values(localPacksSold).reduce((s, v) => s + v, 0), [localPacksSold]);
+  const getSalesPercent = (recipeId: number) => {
+    const sold = localPacksSold[recipeId] ?? 0;
+    return totalPacksSold > 0 ? (sold / totalPacksSold) * 100 : 0;
+  };
+
+  // Largest-remainder allocation: split totalDailyBatches across recipes
+  // weighted by sales %, then hand out the leftover batches one-by-one to
+  // the recipes with the highest fractional remainder. Identical to the
+  // Settings page so the previewed numbers match exactly.
+  const batchAllocation = useMemo(() => {
+    const map: Record<number, number> = {};
+    if (totalDailyBatches <= 0 || totalPacksSold <= 0) {
+      for (const r of allRecipes) map[r.id] = 0;
+      return map;
+    }
+    const items = allRecipes.map((r: any) => {
+      const exact = ((localPacksSold[r.id] ?? 0) / totalPacksSold) * totalDailyBatches;
+      return { id: r.id, floor: Math.floor(exact), remainder: exact - Math.floor(exact) };
+    });
+    let remaining = totalDailyBatches - items.reduce((s, i) => s + i.floor, 0);
+    const sorted = [...items].sort((a, b) => b.remainder - a.remainder);
+    const bonus = new Set<number>();
+    for (const it of sorted) {
+      if (remaining <= 0) break;
+      bonus.add(it.id);
+      remaining--;
+    }
+    for (const it of items) map[it.id] = it.floor + (bonus.has(it.id) ? 1 : 0);
+    return map;
+  }, [allRecipes, totalDailyBatches, totalPacksSold, localPacksSold]);
+
+  const totalDefaultBatches = useMemo(() => Object.values(batchAllocation).reduce((s, v) => s + v, 0), [batchAllocation]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      // 1. Total daily batches first — if this fails we don't want to half-
+      //    persist per-recipe changes against a stale capacity.
+      const settingsRes = await fetch("/api/app-settings/total_daily_batches", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ value: String(totalDailyBatches) }),
+      });
+      if (!settingsRes.ok) {
+        const msg = settingsRes.status === 403 ? "Admin access required to edit DPT settings." : "Failed to save total daily batches";
+        toast({ title: "Error", description: msg, variant: "destructive" });
+        return;
+      }
+      // 2. Per-recipe packsSold — upsert by recipe id so we don't need to
+      //    know whether a dpt_settings row already exists. Runs sequentially
+      //    rather than in parallel so a partial failure surfaces predictably.
+      for (const recipe of allRecipes) {
+        const sold = localPacksSold[recipe.id] ?? 0;
+        await upsertDptSettingByRecipe(recipe.id, { packsSold: sold, isActive: true });
+      }
+      // 3. Refresh both the DPT settings cache (Settings page + any other
+      //    DPT consumers) and the production-plan-calculate cache so the
+      //    Create Plan sidebar immediately reflects the new targets.
+      await queryClient.invalidateQueries({ queryKey: getListDptSettingsQueryKey() });
+      await queryClient.invalidateQueries({ queryKey: ["production-plan-calculate"] });
+      toast({ title: "DPT settings saved", description: "New plans (and this one, after refetch) will use the updated targets." });
+      onSaved?.();
+      onClose();
+    } catch (err: any) {
+      const msg = err?.status === 403 ? "Admin access required to edit DPT settings." : (err?.message ?? "Failed to save DPT settings");
+      toast({ title: "Error", description: msg, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v && !saving) onClose(); }}>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <SlidersHorizontal className="w-5 h-5 text-primary" />
+            Daily Production Target
+          </DialogTitle>
+        </DialogHeader>
+
+        <p className="text-sm text-muted-foreground">
+          Edits here update the <strong>single source of truth</strong> used by every plan from this point onwards.
+          The total batch budget is shared across recipes weighted by their packs sold.
+        </p>
+
+        {isLoading ? (
+          <div className="flex justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+        ) : !allRecipes.length ? (
+          <div className="text-center py-8 text-muted-foreground text-sm">No recipes in the library yet.</div>
+        ) : (
+          <>
+            <div className="bg-secondary/30 border border-border rounded-xl p-4 flex items-center gap-4">
+              <label className="text-sm font-medium whitespace-nowrap">Total Daily Batches</label>
+              <input
+                type="number"
+                min={0}
+                value={totalDailyBatches === 0 ? "" : totalDailyBatches}
+                onChange={e => setTotalDailyBatches(e.target.value === "" ? 0 : Math.max(0, Number(e.target.value) || 0))}
+                onFocus={e => e.currentTarget.select()}
+                onWheel={e => { if (document.activeElement === e.currentTarget) e.currentTarget.blur(); }}
+                placeholder="0"
+                className="w-24 px-3 py-2 bg-background border border-border rounded-lg text-sm text-right focus-ring font-mono"
+              />
+              <p className="text-xs text-muted-foreground flex-1">
+                Total batch budget per production day. Distributed across recipes by their sales share.
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-border bg-card overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-secondary/30 text-muted-foreground text-xs">
+                  <tr>
+                    <th className="px-4 py-2.5 font-medium text-left">Recipe</th>
+                    <th className="px-4 py-2.5 font-medium text-right">Packs Sold</th>
+                    <th className="px-4 py-2.5 font-medium text-right">Sales %</th>
+                    <th className="px-4 py-2.5 font-medium text-right">Default Batches</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/50">
+                  {allRecipes.map((recipe: any) => {
+                    const sold = localPacksSold[recipe.id] ?? 0;
+                    const pct = getSalesPercent(recipe.id);
+                    const batches = batchAllocation[recipe.id] ?? 0;
+                    return (
+                      <tr key={recipe.id} className="hover:bg-secondary/10 transition-colors">
+                        <td className="px-4 py-2.5 font-medium" style={recipe.color ? { color: recipe.color } : undefined}>{recipe.name}</td>
+                        <td className="px-4 py-2.5 text-right">
+                          <input
+                            type="number"
+                            min={0}
+                            value={sold === 0 ? "" : sold}
+                            onChange={e => setLocalPacksSold(prev => ({ ...prev, [recipe.id]: e.target.value === "" ? 0 : Math.max(0, Number(e.target.value) || 0) }))}
+                            onFocus={e => e.currentTarget.select()}
+                            onWheel={e => { if (document.activeElement === e.currentTarget) e.currentTarget.blur(); }}
+                            placeholder="0"
+                            className="w-24 px-2 py-1 border border-border rounded-lg text-sm text-right font-mono focus-ring"
+                          />
+                        </td>
+                        <td className="px-4 py-2.5 text-right">
+                          <span className={cn("font-mono", pct === 0 ? "text-muted-foreground" : "text-primary font-semibold")}>
+                            {pct.toFixed(1)}%
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-right">
+                          <span className={cn(
+                            "font-mono text-base font-bold",
+                            batches > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground",
+                          )}>
+                            {batches}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot className="bg-secondary/20 font-semibold border-t border-border">
+                  <tr>
+                    <td className="px-4 py-2.5">Totals</td>
+                    <td className="px-4 py-2.5 text-right font-mono">{totalPacksSold}</td>
+                    <td className="px-4 py-2.5 text-right text-muted-foreground">—</td>
+                    <td className={cn(
+                      "px-4 py-2.5 text-right font-mono",
+                      totalDefaultBatches === totalDailyBatches ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400",
+                    )}>
+                      {totalDefaultBatches} / {totalDailyBatches}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </>
+        )}
+
+        <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+          <button
+            onClick={onClose}
+            disabled={saving}
+            className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-secondary/60 disabled:opacity-50 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving || isLoading}
+            className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5 transition-colors"
+          >
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+            Save DPT
+          </button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Create Plan Dialog
 // ──────────────────────────────────────────────────────────────────────────────
 interface CreatePlanDialogProps {
@@ -635,6 +893,12 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   // on the next dialog open without a frontend rebuild.
   const [factoryConfig, setFactoryConfig] = useState<{ coreMenuOnly: boolean } | null>(null);
   const [auditOpen, setAuditOpen] = useState(false);
+  // Toggles the DPT (Daily Production Target) editor popup. Opened from the
+  // "Total batches" row in the sidebar so an admin can adjust the single
+  // source of truth (total_daily_batches + per-recipe packsSold) without
+  // leaving plan creation. After save we refetchCalc so this plan picks up
+  // the new defaults immediately.
+  const [dptDialogOpen, setDptDialogOpen] = useState(false);
   useEffect(() => {
     if (!open) return;
     fetch("/api/stock-entries/factory-number-config", { credentials: "include" })
@@ -1400,7 +1664,22 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                 </div>
                 {calcData && (
                   <div className="flex items-center justify-between gap-2">
-                    <span>Total batches</span>
+                    <span className="flex items-center gap-1.5">
+                      Total batches
+                      {/* Opens the DPT editor — same source of truth as the
+                          Settings page, kept inline so the operator doesn't
+                          lose their in-progress plan to navigate away. Styled
+                          as a small grey pill (rather than a bare icon) so
+                          it's discoverable at a glance on iPad. */}
+                      <button
+                        onClick={() => setDptDialogOpen(true)}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground text-[10px] font-medium uppercase tracking-wide hover:bg-secondary/70 transition-colors"
+                        title="Edit DPT settings — total daily batches and per-recipe packs sold"
+                      >
+                        <SlidersHorizontal className="w-2.5 h-2.5" />
+                        Edit DPT
+                      </button>
+                    </span>
                     <div className="flex items-center gap-1.5">
                       <input
                         type="number"
@@ -1531,16 +1810,18 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                   <p className="text-sm">No active DPT settings found.</p>
                   <p className="text-xs mt-1">
                     Add recipes below or{" "}
-                    <a
-                      href={`${BASE}/settings?section=production&sub=dpt`}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    {/* Inline DPT editor — avoids losing the in-progress plan
+                        to a new tab. Falls back to the old Settings link via
+                        a secondary action below for power users. */}
+                    <button
+                      type="button"
+                      onClick={() => setDptDialogOpen(true)}
                       className="text-primary hover:underline font-medium inline-flex items-center gap-0.5"
                     >
                       configure DPT settings
-                      <ExternalLink className="w-3 h-3 ml-0.5" />
-                    </a>
-                    {" "}in Production Settings.
+                      <SlidersHorizontal className="w-3 h-3 ml-0.5" />
+                    </button>
+                    {" "}now.
                   </p>
                 </div>
               ) : (
@@ -1770,6 +2051,19 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       recipes={calcData?.recipes ?? []}
       planDate={planDate}
       fulfilmentDiagnostics={calcData?.fulfilmentDiagnostics}
+    />
+    <DptSettingsDialog
+      open={dptDialogOpen}
+      onClose={() => setDptDialogOpen(false)}
+      // After saving, refetch /calculate so the sidebar's Total batches and
+      // each row's suggested batches reflect the new DPT immediately. Also
+      // clear any local override so the new server-calculated values show
+      // through — otherwise the operator would still see their previous
+      // typed-in capacity number ghosting on top of the fresh defaults.
+      onSaved={() => {
+        setTotalBatchesOverride(null);
+        refetchCalc();
+      }}
     />
     </>
   );
