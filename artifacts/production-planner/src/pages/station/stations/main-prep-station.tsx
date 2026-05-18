@@ -2,9 +2,9 @@ import React from "react";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import {
-  ClipboardList, Loader2, CheckCircle2, Package, Plus, Minus, Check, Salad, Pencil, RotateCcw,
+  ClipboardList, Loader2, CheckCircle2, Package, Plus, Minus, Check, Salad, Pencil, RotateCcw, MoreVertical, Clock3, X as XIcon,
 } from "lucide-react";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -13,6 +13,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { BreakTracker } from "../shared/break-tracker";
 import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtQty, toastDraftBlocked, StockCheckStatusPanel, nativeToPackCount, packsToNative, packNoun, packDescriptor, packsWeightHint, packSizeHint } from "../shared/prep-helpers";
 import type { NextActivePlan } from "../shared/prep-helpers";
+import { DeferredPrepBanner } from "../shared/deferred-prep-banner";
 import { PrepSubNav } from "./prep-hub";
 
 export interface MainPrepIngredient {
@@ -66,6 +67,24 @@ interface PrepTinCompletion {
   completedAt: string;
 }
 
+// Mirrors backend /main-prep response. A deferred tin is one that's been
+// pushed from this plan's pre-prep day to the production day itself (e.g.
+// milk for mac cheese sauce deferred from Friday prep → Monday morning).
+// The tin counts as resolved for the source-day % complete and shows an
+// amber "deferred" badge in place of the normal tick state.
+interface PrepTinDeferral {
+  id: number;
+  ingredientId: number;
+  isSubRecipe?: boolean;
+  subRecipeOriginId?: number | null;
+  recipeId: number;
+  tinNumber: number;
+  deferredToDate: string;
+  deferredAt: string;
+  userId: number | null;
+  userName: string | null;
+}
+
 type PrepPresenceData = Record<number, { userId: number; userName: string }[]>;
 
 interface StockCheckEntry {
@@ -92,7 +111,7 @@ export interface LinkedItem {
 }
 
 export function useMainPrepData(planId: number, station: string = "main_prep") {
-  const [data, setData] = useState<{ ingredients: MainPrepIngredient[]; completions: PrepTinCompletion[]; linkedItems?: Record<number, LinkedItem[]> } | null>(null);
+  const [data, setData] = useState<{ ingredients: MainPrepIngredient[]; completions: PrepTinCompletion[]; deferrals?: PrepTinDeferral[]; linkedItems?: Record<number, LinkedItem[]> } | null>(null);
   const [loading, setLoading] = useState(true);
   const initialLoadDone = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -248,6 +267,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
 
   const ingredients = data?.ingredients ?? [];
   const completions = data?.completions ?? [];
+  const deferrals = data?.deferrals ?? [];
   const linkedItems = data?.linkedItems ?? {};
 
   // subRecipeOriginId: when provided (including `null`), match the completion's
@@ -273,6 +293,29 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
       && (subRecipeOriginId === undefined || (c.subRecipeOriginId ?? null) === (subRecipeOriginId ?? null))
     );
 
+  // Same matching rules as isCompleted/getCompletion — a tin is "deferred"
+  // when there's a prep_deferrals row for the same (ingredient, recipe, tin,
+  // origin) tuple. The completion takes visual precedence: if a tin is both
+  // deferred AND completed (it was prepped on the deferred-to day), it
+  // renders as completed.
+  const isDeferred = (ingredientId: number, recipeId: number, tinNumber: number, isSubRecipe?: boolean, subRecipeOriginId?: number | null) =>
+    deferrals.some(d =>
+      d.ingredientId === ingredientId
+      && d.recipeId === recipeId
+      && d.tinNumber === tinNumber
+      && !!d.isSubRecipe === !!isSubRecipe
+      && (subRecipeOriginId === undefined || (d.subRecipeOriginId ?? null) === (subRecipeOriginId ?? null))
+    );
+
+  const getDeferral = (ingredientId: number, recipeId: number, tinNumber: number, isSubRecipe?: boolean, subRecipeOriginId?: number | null) =>
+    deferrals.find(d =>
+      d.ingredientId === ingredientId
+      && d.recipeId === recipeId
+      && d.tinNumber === tinNumber
+      && !!d.isSubRecipe === !!isSubRecipe
+      && (subRecipeOriginId === undefined || (d.subRecipeOriginId ?? null) === (subRecipeOriginId ?? null))
+    );
+
   const todayDayName = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date().getDay()];
 
   const stockCheckActiveToday = (ing: MainPrepIngredient): boolean => {
@@ -284,13 +327,26 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
   const ingredientDoneStatus = (ing: MainPrepIngredient) => {
     let totalTinCount = 0;
     let completedTinCount = 0;
+    let deferredTinCount = 0;
     for (const r of ing.recipes) {
       totalTinCount += r.tinCount;
       for (let tn = 1; tn <= r.tinCount; tn++) {
-        if (isCompleted(ing.ingredientId, r.recipeId, tn, ing.isSubRecipe, r.subRecipeOriginId ?? null)) completedTinCount++;
+        if (isCompleted(ing.ingredientId, r.recipeId, tn, ing.isSubRecipe, r.subRecipeOriginId ?? null)) {
+          completedTinCount++;
+        } else if (isDeferred(ing.ingredientId, r.recipeId, tn, ing.isSubRecipe, r.subRecipeOriginId ?? null)) {
+          // else-if so a deferred-then-completed tin counts as completed only
+          deferredTinCount++;
+        }
       }
     }
+    // resolvedTinCount = completed + deferred. Used by the overall % bar so
+    // Friday's view can hit 100% even if some items will actually be prepped
+    // on Monday. allTinsDone stays based on actually-completed tins so the
+    // forced stock-check modal (which assumes the ingredient has been used)
+    // doesn't fire for deferred-only items.
+    const resolvedTinCount = completedTinCount + deferredTinCount;
     const allTinsDone = totalTinCount > 0 && completedTinCount >= totalTinCount;
+    const allTinsResolved = totalTinCount > 0 && resolvedTinCount >= totalTinCount;
     // "Saved" means confirmed on the server, NOT just typed locally. If the
     // user is mid-type (dirty set has the id), don't treat the in-progress
     // value as saved — otherwise the forced modal closes the instant you
@@ -299,8 +355,14 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
     const stockSaved = hasValue && !dirtyStockIds.current.has(ing.ingredientId);
     const activeStockCheck = stockCheckActiveToday(ing);
     const needsStockCheck = activeStockCheck && allTinsDone;
-    const isFullyDone = allTinsDone && (!activeStockCheck || stockSaved);
-    return { allTinsDone, needsStockCheck, stockSaved, isFullyDone, totalTinCount, completedTinCount };
+    // isFullyDone drives the left-list line-through + dimmed styling. We use
+    // allTinsResolved so a row with all-deferred or all-mixed (some done +
+    // some deferred) tins also dims — otherwise people keep tapping items
+    // that have already been dealt with. Stock-check requirement only fires
+    // for actually-completed items though (the deferred items haven't been
+    // touched yet, so stock count is unchanged).
+    const isFullyDone = allTinsResolved && (allTinsDone ? (!activeStockCheck || stockSaved) : true);
+    return { allTinsDone, allTinsResolved, needsStockCheck, stockSaved, isFullyDone, totalTinCount, completedTinCount, deferredTinCount, resolvedTinCount };
   };
 
   const recipeIngredientStatus = (ing: MainPrepIngredient, recipeId: number) => {
@@ -311,16 +373,33 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
     // card should show the combined progress so the operator sees one
     // collapsed status until they drill in.
     const matching = ing.recipes.filter(r => r.recipeId === recipeId);
-    if (matching.length === 0) return { completedTins: 0, totalTins: 0, allDone: false };
+    if (matching.length === 0) return { completedTins: 0, deferredTins: 0, resolvedTins: 0, totalTins: 0, allDone: false, allResolved: false, anyDeferred: false };
     let totalTins = 0;
     let completedTins = 0;
+    let deferredTins = 0;
     for (const r of matching) {
       totalTins += r.tinCount;
       for (let tn = 1; tn <= r.tinCount; tn++) {
-        if (isCompleted(ing.ingredientId, recipeId, tn, ing.isSubRecipe, r.subRecipeOriginId ?? null)) completedTins++;
+        if (isCompleted(ing.ingredientId, recipeId, tn, ing.isSubRecipe, r.subRecipeOriginId ?? null)) {
+          completedTins++;
+        } else if (isDeferred(ing.ingredientId, recipeId, tn, ing.isSubRecipe, r.subRecipeOriginId ?? null)) {
+          deferredTins++;
+        }
       }
     }
-    return { completedTins, totalTins, allDone: totalTins > 0 && completedTins >= totalTins };
+    const resolvedTins = completedTins + deferredTins;
+    return {
+      completedTins,
+      deferredTins,
+      resolvedTins,
+      totalTins,
+      allDone: totalTins > 0 && completedTins >= totalTins,
+      // allResolved counts deferrals — used by the "hide completed" filter
+      // and by the left-list "row is done" styling so people don't keep
+      // re-clicking deferred items thinking they're outstanding.
+      allResolved: totalTins > 0 && resolvedTins >= totalTins,
+      anyDeferred: deferredTins > 0,
+    };
   };
 
   const getPreppedByInitials = (ingredientId: number, recipeId?: number, isSubRecipe?: boolean): { initials: string; fullName: string }[] => {
@@ -430,6 +509,53 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
     });
   };
 
+  // Per-tin defer/un-defer toggle. Source plan = targetPlanId (the plan being
+  // prepped for); deferred_to_date is resolved server-side to that plan's
+  // plan_date. The kebab popover above each tin tile calls this.
+  const toggleDeferral = async (ingredientId: number, recipeId: number, tinNumber: number, isSubRecipe?: boolean, subRecipeOriginId?: number | null) => {
+    if (isOnBreak) return;
+    if (isDraft) { toastDraftBlocked(); return; }
+    const existing = getDeferral(ingredientId, recipeId, tinNumber, isSubRecipe, subRecipeOriginId);
+    try {
+      if (existing) {
+        await guardedFetch(`/api/production-plans/${targetPlanId}/prep-deferrals/by-tin`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ingredientId, recipeId, tinNumber, isSubRecipe: !!isSubRecipe, subRecipeOriginId: subRecipeOriginId ?? null }),
+        });
+        toast({ title: "Deferral cancelled", description: "Tin is back on the normal prep list." });
+      } else {
+        await guardedFetch(`/api/production-plans/${targetPlanId}/prep-deferrals`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ingredientId, recipeId, tinNumber, isSubRecipe: !!isSubRecipe, subRecipeOriginId: subRecipeOriginId ?? null }),
+        });
+        toast({ title: "Deferred", description: "Will appear in the deferred-prep list on production day." });
+      }
+      refetch();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to update deferral";
+      toast({ title: "Couldn't defer", description: msg, variant: "destructive" });
+    }
+  };
+
+  // Which tin's kebab popover is open. Single string key so only one is
+  // open at a time and clicking another auto-closes the prior one.
+  const [openTinMenu, setOpenTinMenu] = useState<string | null>(null);
+  const tinMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!openTinMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (tinMenuRef.current && !tinMenuRef.current.contains(e.target as Node)) {
+        setOpenTinMenu(null);
+      }
+    };
+    // Defer attachment so the click that opened the menu doesn't immediately
+    // close it. setTimeout 0 puts us at the end of this event loop turn.
+    const t = setTimeout(() => document.addEventListener("mousedown", handler), 0);
+    return () => { clearTimeout(t); document.removeEventListener("mousedown", handler); };
+  }, [openTinMenu]);
+
   // Stock-check save: the single-guard useGuardedAction wrapper was silently
   // dropping concurrent saves across different ingredients (double-tap guard
   // is shared across all calls). Per-ingredient savingStock state already
@@ -464,10 +590,19 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
   };
 
   const totalTins = ingredients.reduce((s, ing) => s + ing.totalTinCount, 0);
-  const completedTins = ingredients.reduce((s, ing) => {
+  // resolvedTins includes deferred tins so the source-day view can show 100%
+  // — same logic as the backend /prep-progress endpoint. Kept actuallyDoneTins
+  // around in case any UI element later wants to distinguish.
+  const resolvedTins = ingredients.reduce((s, ing) => {
+    const status = ingredientDoneStatus(ing);
+    return s + status.resolvedTinCount;
+  }, 0);
+  const actuallyDoneTins = ingredients.reduce((s, ing) => {
     const status = ingredientDoneStatus(ing);
     return s + status.completedTinCount;
   }, 0);
+  const deferredTinsTotal = resolvedTins - actuallyDoneTins;
+  const completedTins = resolvedTins;
   const overallPct = totalTins > 0 ? Math.round((Math.min(completedTins, totalTins) / totalTins) * 100) : 0;
 
   if (loading || isNextPlanLoading) {
@@ -542,6 +677,12 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
 
       <PrepSubNav planId={plan.id} current="main_prep" />
 
+      {/* Deferred-prep banner — hidden when no items are owed today. Ticking
+          from here POSTs to the source plan's prep-completions endpoint, so
+          a refetch of this station's data picks up the new completion on
+          the next 5s poll (clearing the "deferred" badge from the tile). */}
+      <DeferredPrepBanner onResolved={refetch} />
+
       <StockCheckStatusPanel checkDate={checkDate} />
 
       {activeStockCheckModalIng && (() => {
@@ -590,7 +731,10 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
             <ClipboardList className="w-6 h-6 text-emerald-600" />
             <div>
               <h2 className="font-semibold text-lg">Main Prep</h2>
-              <p className="text-sm text-muted-foreground">{completedTins} of {totalTins} tins completed</p>
+              <p className="text-sm text-muted-foreground">
+                {completedTins} of {totalTins} tins resolved
+                {deferredTinsTotal > 0 ? ` (${actuallyDoneTins} done · ${deferredTinsTotal} deferred)` : ""}
+              </p>
             </div>
           </div>
           <span className="text-2xl font-bold font-display">{overallPct}%</span>
@@ -674,11 +818,20 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                           )}
                         >
                           <div className="flex-shrink-0">
-                            {ingStatus.isFullyDone ? (
+                            {ingStatus.isFullyDone && rStatus.allDone ? (
+                              // Truly done — green check.
                               <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                            ) : ingStatus.isFullyDone && rStatus.anyDeferred ? (
+                              // All resolved but some/all via deferral — amber
+                              // clock so the operator instantly sees the row
+                              // isn't actually prepped today.
+                              <Clock3 className="w-4 h-4 text-amber-500" />
                             ) : ingStatus.needsStockCheck ? (
                               <Package className="w-4 h-4 text-blue-500 animate-pulse" />
                             ) : rStatus.totalTins > 0 ? (
+                              // Two-segment progress ring: green = completed,
+                              // amber = deferred. They sit end-to-end on the
+                              // ring so the operator sees both at a glance.
                               <div className="relative w-4 h-4">
                                 <svg className="w-4 h-4 -rotate-90" viewBox="0 0 16 16">
                                   <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="2" className="text-border" />
@@ -686,6 +839,13 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                                     <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="2"
                                       className="text-emerald-500"
                                       strokeDasharray={`${(rStatus.completedTins / rStatus.totalTins) * 37.7} 37.7`}
+                                    />
+                                  )}
+                                  {rStatus.deferredTins > 0 && (
+                                    <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="2"
+                                      className="text-amber-500"
+                                      strokeDasharray={`${(rStatus.deferredTins / rStatus.totalTins) * 37.7} 37.7`}
+                                      strokeDashoffset={`-${(rStatus.completedTins / rStatus.totalTins) * 37.7}`}
                                     />
                                   )}
                                 </svg>
@@ -698,7 +858,12 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                             <p className={cn(
                               "text-lg font-medium truncate",
                               isSelected && "font-semibold",
-                              ingStatus.isFullyDone && "line-through text-muted-foreground"
+                              // Strike-through only when fully completed AND
+                              // no deferrals — purely deferred rows get a
+                              // softer dim + amber tint so it's obvious the
+                              // tin still needs prepping (just not today).
+                              ingStatus.isFullyDone && ingStatus.deferredTinCount === 0 && "line-through text-muted-foreground",
+                              ingStatus.isFullyDone && ingStatus.deferredTinCount > 0 && "text-amber-700 dark:text-amber-400"
                             )}>
                               {ing.ingredientName}
                               {presence.length > 0 && <span className="ml-1 text-sm text-blue-500">👁</span>}
@@ -729,10 +894,17 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                               </span>
                             ) : rStatus.totalTins > 0 ? (
                               <span className={cn(
-                                "text-sm tabular-nums",
-                                rStatus.allDone ? "text-emerald-600 font-semibold" : "text-muted-foreground"
+                                "text-sm tabular-nums flex items-baseline gap-1",
+                                rStatus.allDone
+                                  ? "text-emerald-600 font-semibold"
+                                  : rStatus.allResolved
+                                    ? "text-amber-600 font-semibold"
+                                    : "text-muted-foreground"
                               )}>
-                                {rStatus.completedTins}/{rStatus.totalTins}
+                                <span>{rStatus.resolvedTins}/{rStatus.totalTins}</span>
+                                {rStatus.deferredTins > 0 && (
+                                  <span className="text-[10px] text-amber-600 font-medium">+{rStatus.deferredTins} def</span>
+                                )}
                               </span>
                             ) : null}
                           </div>
@@ -920,7 +1092,14 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                       })() : ing.recipes.map((recipe, ri) => {
                         const rTins = Array.from({ length: recipe.tinCount }, (_, i) => i + 1);
                         const rDone = rTins.filter(tn => isCompleted(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe, recipe.subRecipeOriginId ?? null)).length;
-                        const allRecipeDone = rTins.length > 0 && rDone >= rTins.length;
+                        const rDeferred = rTins.filter(tn =>
+                          !isCompleted(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe, recipe.subRecipeOriginId ?? null)
+                          && isDeferred(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe, recipe.subRecipeOriginId ?? null)
+                        ).length;
+                        // Row goes "done" when every tin is either ticked off
+                        // OR deferred (deferred = accounted for, just not on
+                        // today's checklist).
+                        const allRecipeDone = rTins.length > 0 && (rDone + rDeferred) >= rTins.length;
                         // Include origin in the edit/key so two panels under
                         // the same (ingredient, parent recipe) don't collide.
                         const tinEditKey = `${ing.ingredientId}_${recipe.recipeId}_${recipe.subRecipeOriginId ?? "x"}`;
@@ -987,7 +1166,10 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                                       "text-sm font-semibold tabular-nums",
                                       recipe.isOverridden ? "text-blue-600" : (allRecipeDone ? "text-emerald-600" : "text-muted-foreground")
                                     )}>
-                                      {rDone}/{rTins.length}
+                                      {rDone + rDeferred}/{rTins.length}
+                                      {rDeferred > 0 && (
+                                        <span className="ml-1 text-xs text-amber-600 font-medium">({rDeferred} def)</span>
+                                      )}
                                     </span>
                                     {recipe.isOverridden && (
                                       <button
@@ -1016,36 +1198,123 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                               {rTins.map(tn => {
                                 const done = isCompleted(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe, recipe.subRecipeOriginId ?? null);
                                 const completion = getCompletion(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe, recipe.subRecipeOriginId ?? null);
+                                // A tin is shown as "deferred" only when it's
+                                // been deferred AND not yet completed. Once
+                                // it's completed (on the deferred-to day) the
+                                // green completion state wins so the source
+                                // plan's view can reflect 100%.
+                                const deferred = !done && isDeferred(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe, recipe.subRecipeOriginId ?? null);
+                                const deferral = deferred ? getDeferral(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe, recipe.subRecipeOriginId ?? null) : null;
+                                const tinKey = `${ing.ingredientId}_${recipe.recipeId}_${tn}_${recipe.subRecipeOriginId ?? "x"}_${ing.isSubRecipe ? "s" : "i"}`;
+                                const menuOpen = openTinMenu === tinKey;
+                                const targetDateLabel = nextPlan?.planDate
+                                  ? format(parseISO(nextPlan.planDate), "EEE d MMM")
+                                  : "production day";
                                 return (
-                                  <button
-                                    key={tn}
-                                    onClick={() => toggleTin(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe, recipe.subRecipeOriginId ?? null)}
-                                    disabled={isOnBreak}
-                                    className={cn(
-                                      "relative flex flex-col items-center border-2 rounded-2xl px-3 py-3.5 transition-all active:scale-95",
-                                      isOnBreak ? "opacity-50 cursor-not-allowed" : "",
-                                      done
-                                        ? "bg-emerald-50 dark:bg-emerald-900/30 border-emerald-400 dark:border-emerald-600 shadow-sm"
-                                        : "bg-background border-border hover:border-emerald-400 hover:shadow-md"
-                                    )}
-                                  >
-                                    <div className="flex items-center gap-1.5 mb-1.5">
-                                      {done ? (
-                                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                                      ) : (
-                                        <div className="w-4 h-4 rounded-full border-2 border-muted-foreground/40" />
+                                  <div key={tn} className="relative">
+                                    <button
+                                      onClick={() => toggleTin(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe, recipe.subRecipeOriginId ?? null)}
+                                      disabled={isOnBreak || deferred}
+                                      title={deferred ? "Deferred — use the menu to cancel" : undefined}
+                                      className={cn(
+                                        "w-full relative flex flex-col items-center border-2 rounded-2xl px-3 py-3.5 transition-all active:scale-95",
+                                        isOnBreak ? "opacity-50 cursor-not-allowed" : "",
+                                        done
+                                          ? "bg-emerald-50 dark:bg-emerald-900/30 border-emerald-400 dark:border-emerald-600 shadow-sm"
+                                          : deferred
+                                            ? "bg-amber-50 dark:bg-amber-900/20 border-amber-400 dark:border-amber-600 shadow-sm cursor-default"
+                                            : "bg-background border-border hover:border-emerald-400 hover:shadow-md"
                                       )}
-                                      <span className="text-base font-bold">Tin {tn}{recipe.tinSize ? ` (${recipe.tinSize})` : ""}</span>
-                                    </div>
-                                    <span className={cn("text-2xl font-bold tabular-nums", done ? "text-emerald-700 dark:text-emerald-300" : "text-foreground")}>
-                                      {fmtQty(recipe.qtyPerTin, ing.unit)}
-                                    </span>
-                                    {done && completion && (
-                                      <span className="text-xs text-emerald-600 dark:text-emerald-400 mt-1 leading-tight text-center">
-                                        {completion.userName ?? "User"} · {format(new Date(completion.completedAt), "HH:mm")}
+                                    >
+                                      <div className="flex items-center gap-1.5 mb-1.5">
+                                        {done ? (
+                                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                                        ) : deferred ? (
+                                          <Clock3 className="w-4 h-4 text-amber-600" />
+                                        ) : (
+                                          <div className="w-4 h-4 rounded-full border-2 border-muted-foreground/40" />
+                                        )}
+                                        <span className="text-base font-bold">Tin {tn}{recipe.tinSize ? ` (${recipe.tinSize})` : ""}</span>
+                                      </div>
+                                      <span className={cn(
+                                        "text-2xl font-bold tabular-nums",
+                                        done ? "text-emerald-700 dark:text-emerald-300"
+                                          : deferred ? "text-amber-700 dark:text-amber-300"
+                                          : "text-foreground"
+                                      )}>
+                                        {fmtQty(recipe.qtyPerTin, ing.unit)}
                                       </span>
+                                      {done && completion && (
+                                        <span className="text-xs text-emerald-600 dark:text-emerald-400 mt-1 leading-tight text-center">
+                                          {completion.userName ?? "User"} · {format(new Date(completion.completedAt), "HH:mm")}
+                                        </span>
+                                      )}
+                                      {deferred && deferral && (
+                                        <span className="text-xs text-amber-700 dark:text-amber-400 mt-1 leading-tight text-center font-semibold">
+                                          → {format(parseISO(deferral.deferredToDate), "EEE d MMM")}
+                                        </span>
+                                      )}
+                                    </button>
+                                    {/* Kebab menu trigger — sits outside the
+                                        main button to avoid nested-button HTML
+                                        violations. Opens a small popover with
+                                        defer / cancel-defer. Hidden when the
+                                        tin is already completed (defer makes
+                                        no sense for done items). */}
+                                    {!done && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setOpenTinMenu(menuOpen ? null : tinKey);
+                                        }}
+                                        className={cn(
+                                          "absolute top-1.5 right-1.5 p-1 rounded-md transition-colors",
+                                          menuOpen
+                                            ? "bg-secondary text-foreground"
+                                            : "text-muted-foreground/60 hover:text-foreground hover:bg-secondary/80"
+                                        )}
+                                        title="More options"
+                                      >
+                                        <MoreVertical className="w-3.5 h-3.5" />
+                                      </button>
                                     )}
-                                  </button>
+                                    {menuOpen && (
+                                      <div
+                                        ref={tinMenuRef}
+                                        className="absolute z-20 top-full right-0 mt-1 w-56 bg-popover border border-border rounded-lg shadow-lg overflow-hidden"
+                                      >
+                                        {deferred ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setOpenTinMenu(null);
+                                              toggleDeferral(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe, recipe.subRecipeOriginId ?? null);
+                                            }}
+                                            className="w-full text-left px-3 py-2.5 text-sm hover:bg-secondary flex items-center gap-2"
+                                          >
+                                            <XIcon className="w-4 h-4 text-muted-foreground" />
+                                            Cancel deferral
+                                          </button>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setOpenTinMenu(null);
+                                              toggleDeferral(ing.ingredientId, recipe.recipeId, tn, ing.isSubRecipe, recipe.subRecipeOriginId ?? null);
+                                            }}
+                                            className="w-full text-left px-3 py-2.5 text-sm hover:bg-secondary flex items-start gap-2"
+                                          >
+                                            <Clock3 className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                                            <span>
+                                              <span className="block font-medium">Defer to {targetDateLabel}</span>
+                                              <span className="block text-xs text-muted-foreground leading-snug">Prep this tin on production day instead</span>
+                                            </span>
+                                          </button>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
                                 );
                               })}
                             </div>

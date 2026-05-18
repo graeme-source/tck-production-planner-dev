@@ -160,6 +160,29 @@ export const prepCompletionsTable = pgTable("prep_completions", {
   unique("uq_prep_completion_v3").on(table.planId, table.ingredientId, table.recipeId, table.tinNumber),
 ]);
 
+// prep_deferrals — see lib/db/migrations/0018_add_prep_deferrals.sql for
+// the partial-unique indexes (drizzle-kit can't express them cleanly so the
+// migration file is the source of truth for the constraints).
+//
+// A row marks a prep tin as intentionally pushed from its source plan to a
+// later date (e.g. milk for mac cheese sauce deferred from Friday prep to
+// Monday morning so it isn't opened too early). The source-day view counts
+// deferred tins as resolved for % complete; the target-day "Deferred prep"
+// banner surfaces them as a tickable list. Ticking them creates a normal
+// prep_completions row via the existing endpoint — the deferral row stays
+// as audit trail.
+export const prepDeferralsTable = pgTable("prep_deferrals", {
+  id: serial("id").primaryKey(),
+  planId: integer("plan_id").notNull().references(() => productionPlansTable.id, { onDelete: "cascade" }),
+  ingredientId: integer("ingredient_id").references(() => ingredientsTable.id, { onDelete: "cascade" }),
+  subRecipeId: integer("sub_recipe_id"),
+  recipeId: integer("recipe_id").notNull().references(() => recipesTable.id, { onDelete: "cascade" }),
+  tinNumber: integer("tin_number").notNull(),
+  deferredToDate: date("deferred_to_date").notNull(),
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  deferredAt: timestamp("deferred_at").notNull().defaultNow(),
+});
+
 export const dailyStockChecksTable = pgTable("daily_stock_checks", {
   id: serial("id").primaryKey(),
   ingredientId: integer("ingredient_id").notNull().references(() => ingredientsTable.id, { onDelete: "cascade" }),
@@ -282,4 +305,5 @@ export type StationBreak = typeof stationBreaksTable.$inferSelect;
 export type DptSetting = typeof dptSettingsTable.$inferSelect;
 export type TimingStandard = typeof timingStandardsTable.$inferSelect;
 export type PrepCompletion = typeof prepCompletionsTable.$inferSelect;
+export type PrepDeferral = typeof prepDeferralsTable.$inferSelect;
 export type DailyStockCheck = typeof dailyStockChecksTable.$inferSelect;

@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, stationChangeoversTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, prepTinOverridesTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, fridgeStockBatchesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable, batchWeightRecordsTable, temperatureRecordsTable, builderPresenceTable } from "@workspace/db";
+import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, stationChangeoversTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, prepDeferralsTable, prepTinOverridesTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, fridgeStockBatchesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable, batchWeightRecordsTable, temperatureRecordsTable, builderPresenceTable } from "@workspace/db";
 import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as drizzleSum, ne, isNotNull, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
@@ -1715,6 +1715,214 @@ router.get("/next-active", async (req, res) => {
     status: plans[0].status,
     sameDayPlans: sameDayPlans.length > 1 ? sameDayPlans : [],
   });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Prep Deferrals — outstanding list (before /:id to avoid route shadowing)
+// ──────────────────────────────────────────────────────────────────────────────
+//
+// Returns deferred prep tins owed on or before a given date that have NOT
+// yet been completed. Used by the DeferredPrepBanner on the main prep page
+// and the mac cheese station — same query, optional category filter for the
+// mac-cheese-only view.
+//
+// A deferral is "outstanding" until a prep_completions row exists for the
+// same (plan_id, recipe_id, tin_number, ingredient_id, sub_recipe_id) tuple.
+// Ticking from the banner POSTs to the existing /:id/prep-completions
+// endpoint with the source plan id, which causes the deferral to drop off
+// this list naturally on the next refetch.
+router.get("/prep-deferrals/outstanding", async (req, res) => {
+  const onOrBefore = req.query.date && typeof req.query.date === "string"
+    ? req.query.date
+    : londonDateString();
+  const category = req.query.category && typeof req.query.category === "string"
+    ? req.query.category
+    : null;
+
+  // We left-join app_users for the deferrer's name (audit/trace) and
+  // production_plans for the source plan name/date (so the banner can show
+  // "from Friday's prep for Monday").
+  const rows = await db.execute(sql`
+    SELECT
+      d.id, d.plan_id AS "sourcePlanId",
+      d.ingredient_id AS "ingredientId",
+      d.sub_recipe_id AS "subRecipeId",
+      d.recipe_id AS "recipeId",
+      d.tin_number AS "tinNumber",
+      d.deferred_to_date AS "deferredToDate",
+      d.deferred_at AS "deferredAt",
+      d.user_id AS "userId",
+      u.name AS "userName",
+      p.plan_date AS "sourcePlanDate",
+      p.name AS "sourcePlanName",
+      r.name AS "recipeName",
+      r.category AS "recipeCategory",
+      r.color AS "recipeColor",
+      r.portions_per_batch AS "portionsPerBatch",
+      i.name AS "ingredientName",
+      i.unit AS "ingredientUnit",
+      sr.name AS "subRecipeName",
+      -- Fields needed to compute qty per tin server-side. Two paths:
+      --   1) Direct ingredient on parent recipe → recipe_ingredients row
+      --      gives quantity per parent-recipe batch.
+      --   2) Sub-recipe-origin ingredient (e.g. Double Cream on Big Nanny's
+      --      via the Mac Sauce sub-recipe) → sub_recipe_ingredients gives
+      --      qty per sub-recipe yield unit, scaled by how much sub-recipe
+      --      the parent uses per batch (recipe_sub_recipes.quantity) and
+      --      divided by the sub-recipe's total yield. We compute the final
+      --      qtyPerBatch in JS so the two paths share one tin-math block.
+      ri.quantity::numeric AS "directQtyPerBatch",
+      ri.include_in_filling_mix AS "directIsFillingMix",
+      sri.quantity::numeric AS "subQtyPerSubBatch",
+      -- sub_recipe_ingredients has no filling-mix concept (only recipe-level
+      -- ingredients can flag into the mixing tin). For sub-recipe-origin
+      -- deferrals we just treat isFillingMix as false.
+      sr_origin.yield::numeric AS "subRecipeYield",
+      rsr.quantity::numeric AS "parentUsesSubQty",
+      ppi.batches_target AS "batchesTarget",
+      ppi.max_batches_per_tin AS "maxBatchesPerTin",
+      ppi.mixing_tin_override AS "mixingTinOverride",
+      pto.tin_count AS "tinOverride"
+    FROM prep_deferrals d
+    LEFT JOIN app_users u ON u.id = d.user_id
+    LEFT JOIN production_plans p ON p.id = d.plan_id
+    LEFT JOIN recipes r ON r.id = d.recipe_id
+    LEFT JOIN ingredients i ON i.id = d.ingredient_id
+    LEFT JOIN sub_recipes sr ON sr.id = d.sub_recipe_id
+    -- Path 1: ingredient lives directly on the parent recipe.
+    LEFT JOIN recipe_ingredients ri ON ri.recipe_id = d.recipe_id AND ri.ingredient_id = d.ingredient_id AND ri.marinade_for_ingredient_id IS NULL
+    -- Path 2: ingredient comes in via a sub-recipe. d.sub_recipe_id holds the
+    -- ORIGIN sub-recipe for origin-tagged deferrals (alongside ingredient_id).
+    LEFT JOIN sub_recipe_ingredients sri ON sri.sub_recipe_id = d.sub_recipe_id AND sri.ingredient_id = d.ingredient_id
+    LEFT JOIN sub_recipes sr_origin ON sr_origin.id = d.sub_recipe_id
+    LEFT JOIN recipe_sub_recipes rsr ON rsr.recipe_id = d.recipe_id AND rsr.sub_recipe_id = d.sub_recipe_id
+    LEFT JOIN production_plan_items ppi ON ppi.plan_id = d.plan_id AND ppi.recipe_id = d.recipe_id
+    LEFT JOIN prep_tin_overrides pto ON pto.plan_id = d.plan_id AND pto.recipe_id = d.recipe_id AND pto.ingredient_id = d.ingredient_id
+    WHERE d.deferred_to_date <= ${onOrBefore}
+      AND NOT EXISTS (
+        SELECT 1 FROM prep_completions pc
+        WHERE pc.plan_id = d.plan_id
+          AND pc.recipe_id = d.recipe_id
+          AND pc.tin_number = d.tin_number
+          AND COALESCE(pc.ingredient_id, 0) = COALESCE(d.ingredient_id, 0)
+          AND COALESCE(pc.sub_recipe_id, 0) = COALESCE(d.sub_recipe_id, 0)
+      )
+      ${category ? sql`AND r.category = ${category}` : sql``}
+    ORDER BY d.deferred_to_date ASC, r.name ASC, d.tin_number ASC
+  `);
+
+  // Shape the rows so each item matches the conventions the prep card
+  // component already understands (isSubRecipe flag + subRecipeOriginId).
+  const items = (rows.rows as Array<{
+    id: number;
+    sourcePlanId: number;
+    ingredientId: number | null;
+    subRecipeId: number | null;
+    recipeId: number;
+    tinNumber: number;
+    deferredToDate: string;
+    deferredAt: string;
+    userId: number | null;
+    userName: string | null;
+    sourcePlanDate: string;
+    sourcePlanName: string | null;
+    recipeName: string | null;
+    recipeCategory: string | null;
+    recipeColor: string | null;
+    portionsPerBatch: number | null;
+    ingredientName: string | null;
+    ingredientUnit: string | null;
+    subRecipeName: string | null;
+    directQtyPerBatch: string | null;
+    directIsFillingMix: boolean | null;
+    subQtyPerSubBatch: string | null;
+    subRecipeYield: string | null;
+    parentUsesSubQty: string | null;
+    batchesTarget: string | null;
+    maxBatchesPerTin: number | null;
+    mixingTinOverride: number | null;
+    tinOverride: number | null;
+  }>).map(d => {
+    const isSubRecipeTick = d.ingredientId == null && d.subRecipeId != null;
+
+    // Resolve qty per parent-recipe batch using whichever path applies:
+    //   - Direct ingredient → recipe_ingredients.quantity
+    //   - Sub-recipe-origin → (sub_recipe_ingredients.quantity / sub_yield)
+    //                          × recipe_sub_recipes.quantity
+    // Falls through to null when neither row exists (e.g. whole-sub-recipe
+    // ticks), in which case the banner just shows the tin number.
+    let qtyPerBatch: number | null = null;
+    let isFillingMix: boolean | null = null;
+    if (d.directQtyPerBatch != null) {
+      qtyPerBatch = Number(d.directQtyPerBatch);
+      isFillingMix = d.directIsFillingMix;
+    } else if (
+      d.subQtyPerSubBatch != null
+      && d.subRecipeYield != null
+      && d.parentUsesSubQty != null
+      && Number(d.subRecipeYield) > 0
+    ) {
+      // recipe_sub_recipes.quantity is stored per-portion (see comment in
+      // ingredient-resolver.ts:193). scalePerBatch = parentUsesSubQty ×
+      // portionsPerBatch, then divided by the sub-recipe yield gives the
+      // fraction of one sub-recipe batch consumed per parent batch.
+      const portions = d.portionsPerBatch && d.portionsPerBatch > 0 ? d.portionsPerBatch : 1;
+      const scalePerBatch = Number(d.parentUsesSubQty) * portions;
+      const effectiveScale = scalePerBatch / Number(d.subRecipeYield);
+      qtyPerBatch = Number(d.subQtyPerSubBatch) * effectiveScale;
+      // Sub-recipe ingredients never feed the filling mix directly.
+      isFillingMix = false;
+    }
+
+    // Compute qty per tin using the same tin-count rules as /:id/main-prep
+    // so the banner shows a "make this much" number identical to the source
+    // plan's prep tile.
+    let qtyPerTin: number | null = null;
+    let tinCount: number | null = null;
+    const batchesTarget = d.batchesTarget != null ? Number(d.batchesTarget) : null;
+    if (qtyPerBatch != null && batchesTarget != null && batchesTarget > 0) {
+      const qtyForRecipe = qtyPerBatch * batchesTarget;
+      if (d.tinOverride != null) {
+        tinCount = d.tinOverride;
+      } else if (isFillingMix && d.mixingTinOverride != null) {
+        tinCount = d.mixingTinOverride;
+      } else if (d.maxBatchesPerTin) {
+        tinCount = calcTinCount(batchesTarget, d.maxBatchesPerTin) ?? 1;
+      } else {
+        tinCount = 1;
+      }
+      if (tinCount > 0) qtyPerTin = qtyForRecipe / tinCount;
+    }
+
+    return {
+      id: d.id,
+      sourcePlanId: d.sourcePlanId,
+      sourcePlanDate: d.sourcePlanDate,
+      sourcePlanName: d.sourcePlanName,
+      // Folded id so the frontend can use the same value it would for a
+      // direct ingredient tick — matches prep_completions response shape.
+      ingredientId: d.ingredientId ?? d.subRecipeId ?? 0,
+      isSubRecipe: isSubRecipeTick,
+      subRecipeOriginId: !isSubRecipeTick && d.subRecipeId != null ? d.subRecipeId : null,
+      recipeId: d.recipeId,
+      recipeName: d.recipeName,
+      recipeCategory: d.recipeCategory,
+      recipeColor: d.recipeColor,
+      tinNumber: d.tinNumber,
+      tinCount,
+      qtyPerTin,
+      deferredToDate: d.deferredToDate,
+      deferredAt: d.deferredAt,
+      deferredByUserId: d.userId,
+      deferredByUserName: d.userName,
+      // Friendly display name — uses the sub-recipe name when this is a
+      // whole-sub-recipe deferral, otherwise the ingredient name.
+      itemName: isSubRecipeTick ? d.subRecipeName : d.ingredientName,
+      itemUnit: d.ingredientUnit,
+    };
+  });
+
+  res.json({ items });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -6430,7 +6638,43 @@ router.get("/:id/main-prep", async (req, res) => {
     validItemKeys.has(`${c.ingredientId}_${c.isSubRecipe}`)
   );
 
-  res.json({ ingredients: allItems, completions, linkedItems: linkedItemsMap });
+  // Deferrals on this plan — same shape conventions as completions so the
+  // frontend can render a "deferred" badge per tin using identical key
+  // logic. Same three-shape mapping (direct ingredient, whole sub-recipe,
+  // origin-tagged) so the prep card's badge predicate is straightforward.
+  const deferralRows = await db.execute(sql`
+    SELECT d.id, d.ingredient_id AS "ingredientId", d.sub_recipe_id AS "subRecipeId",
+           d.recipe_id AS "recipeId", d.tin_number AS "tinNumber",
+           d.deferred_to_date AS "deferredToDate", d.deferred_at AS "deferredAt",
+           d.user_id AS "userId", u.name AS "userName"
+    FROM prep_deferrals d
+    LEFT JOIN app_users u ON u.id = d.user_id
+    WHERE d.plan_id = ${planId}
+  `);
+  const rawDeferrals = (deferralRows.rows as Array<{
+    id: number;
+    ingredientId: number | null;
+    subRecipeId: number | null;
+    recipeId: number;
+    tinNumber: number;
+    deferredToDate: string;
+    deferredAt: string;
+    userId: number | null;
+    userName: string | null;
+  }>).map(d => {
+    const isSubRecipeTick = d.ingredientId == null && d.subRecipeId != null;
+    return {
+      ...d,
+      isSubRecipe: isSubRecipeTick,
+      ingredientId: d.ingredientId ?? d.subRecipeId ?? 0,
+      subRecipeOriginId: !isSubRecipeTick && d.subRecipeId != null ? d.subRecipeId : null,
+    };
+  });
+  const deferrals = rawDeferrals.filter(d =>
+    validItemKeys.has(`${d.ingredientId}_${d.isSubRecipe}`)
+  );
+
+  res.json({ ingredients: allItems, completions, deferrals, linkedItems: linkedItemsMap });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -6601,6 +6845,110 @@ router.delete("/:id/prep-completions/:completionId", async (req, res) => {
   res.json({ ok: true });
 });
 
+// ──────────────────────────────────────────────────────────────────────────────
+// POST /:id/prep-deferrals — mark a prep tin as deferred to the plan's
+// production day (the source plan's plan_date). Used when something can't be
+// prepped on the scheduled prep day because of short post-open shelf life
+// (e.g. milk/cream for mac cheese sauce on a Fri prep for Mon production).
+//
+// The deferred tin counts as resolved for the source-day % complete, and
+// surfaces in the DeferredPrepBanner on the target date. The actual tick-off
+// on the target day uses the existing /:id/prep-completions endpoint — this
+// row is just the audit record that the tin was deferred.
+// ──────────────────────────────────────────────────────────────────────────────
+router.post("/:id/prep-deferrals", async (req, res) => {
+  const planId = Number(req.params.id);
+  const { ingredientId, recipeId, tinNumber, isSubRecipe, subRecipeOriginId } = req.body as {
+    ingredientId?: number;
+    recipeId?: number;
+    tinNumber?: number;
+    isSubRecipe?: boolean;
+    subRecipeOriginId?: number | null;
+  };
+  if (!recipeId) { res.status(400).json({ error: "recipeId is required" }); return; }
+  if (await planDraftStatus(planId)) { res.status(409).json({ error: DRAFT_COMPLETION_ERROR }); return; }
+
+  // Resolve deferred_to_date = the source plan's plan_date. The user is
+  // saying "do this on the production day itself, not on the pre-prep day."
+  const plan = await db.select({ planDate: productionPlansTable.planDate })
+    .from(productionPlansTable)
+    .where(eq(productionPlansTable.id, planId))
+    .limit(1);
+  if (!plan[0]) { res.status(404).json({ error: "Plan not found" }); return; }
+  const deferredToDate = plan[0].planDate;
+
+  const userId = (req.session as any)?.userId ?? null;
+
+  if (isSubRecipe) {
+    const result = await db.execute(sql`
+      INSERT INTO prep_deferrals (plan_id, sub_recipe_id, recipe_id, tin_number, deferred_to_date, user_id)
+      VALUES (${planId}, ${ingredientId}, ${recipeId}, ${tinNumber}, ${deferredToDate}, ${userId})
+      ON CONFLICT DO NOTHING
+      RETURNING id, sub_recipe_id AS "ingredientId", recipe_id AS "recipeId",
+                tin_number AS "tinNumber", deferred_to_date AS "deferredToDate",
+                user_id AS "userId", deferred_at AS "deferredAt"
+    `);
+    const row = result.rows[0] as Record<string, unknown> | undefined;
+    if (!row) { res.status(409).json({ error: "Already deferred" }); return; }
+    const userName = userId
+      ? (await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId)))?.[0]?.name ?? null
+      : null;
+    res.status(201).json({ ...row, isSubRecipe: true, userName });
+  } else {
+    const result = await db.execute(sql`
+      INSERT INTO prep_deferrals (plan_id, ingredient_id, sub_recipe_id, recipe_id, tin_number, deferred_to_date, user_id)
+      VALUES (${planId}, ${ingredientId}, ${subRecipeOriginId ?? null}, ${recipeId}, ${tinNumber}, ${deferredToDate}, ${userId})
+      ON CONFLICT DO NOTHING
+      RETURNING id, ingredient_id AS "ingredientId", sub_recipe_id AS "subRecipeOriginId",
+                recipe_id AS "recipeId", tin_number AS "tinNumber",
+                deferred_to_date AS "deferredToDate",
+                user_id AS "userId", deferred_at AS "deferredAt"
+    `);
+    const row = result.rows[0] as Record<string, unknown> | undefined;
+    if (!row) { res.status(409).json({ error: "Already deferred" }); return; }
+    const userName = userId
+      ? (await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId)))?.[0]?.name ?? null
+      : null;
+    res.status(201).json({ ...row, isSubRecipe: false, userName });
+  }
+});
+
+// DELETE /:id/prep-deferrals/by-tin — cancel a deferral. Matches the same
+// (plan, ingredient/sub, recipe, tin) tuple as the POST. Used by the kebab
+// menu's "Cancel deferral" action.
+router.delete("/:id/prep-deferrals/by-tin", async (req, res) => {
+  const planId = Number(req.params.id);
+  const { ingredientId, recipeId, tinNumber, isSubRecipe, subRecipeOriginId } = req.body as {
+    ingredientId?: number;
+    recipeId?: number;
+    tinNumber?: number;
+    isSubRecipe?: boolean;
+    subRecipeOriginId?: number | null;
+  };
+  if (!recipeId) { res.status(400).json({ error: "recipeId is required" }); return; }
+  if (await planDraftStatus(planId)) { res.status(409).json({ error: DRAFT_COMPLETION_ERROR }); return; }
+  if (isSubRecipe) {
+    await db.execute(sql`
+      DELETE FROM prep_deferrals
+      WHERE plan_id = ${planId}
+        AND sub_recipe_id = ${ingredientId}
+        AND ingredient_id IS NULL
+        AND recipe_id = ${recipeId}
+        AND tin_number = ${tinNumber}
+    `);
+  } else {
+    await db.execute(sql`
+      DELETE FROM prep_deferrals
+      WHERE plan_id = ${planId}
+        AND ingredient_id = ${ingredientId}
+        AND recipe_id = ${recipeId}
+        AND tin_number = ${tinNumber}
+        AND COALESCE(sub_recipe_id, 0) = COALESCE(${subRecipeOriginId ?? null}::int, 0)
+    `);
+  }
+  res.json({ ok: true });
+});
+
 // --- In-memory prep presence (ephemeral, no DB needed) ---
 type PresenceEntry = { userId: number; userName: string; ingredientId: number; updatedAt: number };
 const prepPresenceStore = new Map<string, PresenceEntry>(); // key = `${planId}-${userId}`
@@ -6684,17 +7032,25 @@ router.get("/:id/prep-progress", async (req, res) => {
 
     // Count ticked-off tins, ignoring stale completions that point at a tin
     // number beyond the current tinCount (e.g. after an override shrank it).
+    // A deferred tin counts as resolved for the source-day % complete (so
+    // Friday can hit 100% even if some items will be prepped on Monday) —
+    // we dedupe via a Set so a tin that's both deferred AND completed
+    // doesn't get counted twice.
     const completionRows = await db.execute(sql`
       SELECT ingredient_id, recipe_id, tin_number FROM prep_completions WHERE plan_id = ${planId}
     `);
-    let completedTins = 0;
-    for (const c of completionRows.rows as any[]) {
+    const deferralRows = await db.execute(sql`
+      SELECT ingredient_id, recipe_id, tin_number FROM prep_deferrals WHERE plan_id = ${planId}
+    `);
+    const resolvedKeys = new Set<string>();
+    for (const c of [...completionRows.rows, ...deferralRows.rows] as any[]) {
       const key = `${c.ingredient_id}_${c.recipe_id}`;
       const tinCount = tinMap.get(key);
       if (tinCount != null && c.tin_number >= 1 && c.tin_number <= tinCount) {
-        completedTins += 1;
+        resolvedKeys.add(`${c.ingredient_id}_${c.recipe_id}_${c.tin_number}`);
       }
     }
+    const completedTins = resolvedKeys.size;
 
     const pct = totalTins > 0 ? Math.round((Math.min(completedTins, totalTins) / totalTins) * 100) : 0;
     res.json({ totalTins, completedTins, pct });

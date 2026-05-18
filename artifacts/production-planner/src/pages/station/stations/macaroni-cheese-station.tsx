@@ -10,8 +10,9 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { useAuth } from "@/contexts/auth-context";
-import { isMacCheese } from "../shared/constants";
+import { isMacCheese, MAC_CHEESE_CATEGORY } from "../shared/constants";
 import { NumberInput } from "@/components/ui/number-input";
+import { DeferredPrepBanner } from "../shared/deferred-prep-banner";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Macaroni Cheese Station
@@ -216,9 +217,9 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
   return (
     <div className="space-y-4">
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full text-base">
           <thead>
-            <tr className="text-left text-xs text-muted-foreground uppercase tracking-wider">
+            <tr className="text-left text-sm text-muted-foreground uppercase tracking-wider">
               <th className="pb-2 pr-3">Recipe</th>
               <th className="pb-2 px-2 text-right">Stock</th>
               <th className="pb-2 px-2 text-right">Sales D1</th>
@@ -312,7 +313,7 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
         </table>
       </div>
 
-      <p className="text-xs text-muted-foreground">
+      <p className="text-sm text-muted-foreground">
         Stock = current fridge packs. Sales D1/D2/D3 = next 3 dispatch days from Shopify. Deficit = max(0, D1 − Stock). Extra = additional packs. <strong>To Make is rounded up to whole batches</strong> — you can't produce partial batches, so target + rounding-up is what you'll actually make.
       </p>
 
@@ -320,7 +321,7 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
         <button
           onClick={handleSubmit}
           disabled={saving || recipes.every(r => getToMake(r) === 0)}
-          className="px-5 py-2.5 bg-yellow-600 text-white rounded-lg text-sm font-medium hover:bg-yellow-700 disabled:opacity-50 flex items-center gap-2"
+          className="px-5 py-3 bg-yellow-600 text-white rounded-lg text-base font-semibold hover:bg-yellow-700 disabled:opacity-50 flex items-center gap-2"
         >
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
           Add to Plan
@@ -432,6 +433,11 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
   if (macItems.length === 0 || editing) {
     return (
       <div className="space-y-6">
+        {/* Deferred-prep banner — only shows when there are mac-cheese
+            items owed today (e.g. milk/cream deferred from Friday for
+            Monday's sauce). Same single-source-of-truth list as the
+            main prep banner, just filtered to mac cheese recipes. */}
+        <DeferredPrepBanner category={MAC_CHEESE_CATEGORY} />
         <div className="bg-card border border-yellow-200 dark:border-yellow-800 rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold text-lg flex items-center gap-2">
@@ -473,20 +479,21 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
 
   return (
     <div className="space-y-6">
+      <DeferredPrepBanner category={MAC_CHEESE_CATEGORY} />
       {/* Summary — recipe breakdown with packs, no batch buttons */}
-      <div className="bg-card border border-border rounded-xl p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="font-semibold text-lg flex items-center gap-2">
-            <UtensilsCrossed className="w-5 h-5 text-yellow-600" />
+      <div className="bg-card border border-border rounded-xl p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-semibold text-2xl flex items-center gap-2">
+            <UtensilsCrossed className="w-6 h-6 text-yellow-600" />
             Macaroni Cheese
           </h2>
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 px-3 py-1 rounded-full">
+            <span className="text-base font-semibold bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 px-3.5 py-1.5 rounded-full">
               {Math.round(totalPacks)} packs total
             </span>
             <button
               onClick={() => setEditing(true)}
-              className="px-3 py-1.5 text-sm border border-yellow-300 dark:border-yellow-700 text-yellow-700 dark:text-yellow-400 rounded-lg hover:bg-yellow-50 dark:hover:bg-yellow-900/20 flex items-center gap-1.5"
+              className="px-3.5 py-2 text-base border border-yellow-300 dark:border-yellow-700 text-yellow-700 dark:text-yellow-400 rounded-lg hover:bg-yellow-50 dark:hover:bg-yellow-900/20 flex items-center gap-1.5"
             >
               Edit
             </button>
@@ -494,16 +501,16 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
         </div>
 
         {/* Recipe breakdown — just name and packs */}
-        <div className="space-y-2">
+        <div className="space-y-2.5">
           {macItems.map(item => {
             const packs = (item.batchesTarget ?? 0) * ((item.portionsPerBatch ?? 10) / (item.packSize ?? 2));
             return (
-              <div key={item.id} className="flex items-center justify-between p-3 rounded-lg border bg-background border-border">
+              <div key={item.id} className="flex items-center justify-between p-4 rounded-lg border bg-background border-border">
                 <div className="flex items-center gap-3">
-                  {item.recipeColor && <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: item.recipeColor ?? undefined }} />}
-                  <span className="font-medium">{item.recipeName}</span>
+                  {item.recipeColor && <span className="w-3.5 h-3.5 rounded-full flex-shrink-0" style={{ backgroundColor: item.recipeColor ?? undefined }} />}
+                  <span className="text-xl font-semibold">{item.recipeName}</span>
                 </div>
-                <span className="text-lg font-bold tabular-nums">{Math.round(packs)} packs</span>
+                <span className="text-2xl font-bold tabular-nums">{Math.round(packs)} packs</span>
               </div>
             );
           })}
@@ -511,12 +518,12 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
       </div>
 
       {/* Temperature Records */}
-      <div className="bg-card border border-border rounded-xl p-4">
-        <h3 className="font-semibold text-sm flex items-center gap-2 mb-4">
-          <Thermometer className="w-4 h-4 text-red-500" />
+      <div className="bg-card border border-border rounded-xl p-5">
+        <h3 className="font-semibold text-lg flex items-center gap-2 mb-3">
+          <Thermometer className="w-5 h-5 text-red-500" />
           Cheese Sauce Temperature Record
         </h3>
-        <p className="text-xs text-muted-foreground mb-4">
+        <p className="text-sm text-muted-foreground mb-4">
           Check 1: 75°C prior to adding cheese. Check 2: 75°C after adding and melting cheese.
         </p>
 
@@ -552,12 +559,12 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
           sausage is a raw meat product and must hit 75°C core before
           being added to the sauce (CCP per HACCP). */}
       {hasPigsInBlankets && (
-        <div className="bg-card border border-border rounded-xl p-4">
-          <h3 className="font-semibold text-sm flex items-center gap-2 mb-4">
-            <Thermometer className="w-4 h-4 text-red-500" />
+        <div className="bg-card border border-border rounded-xl p-5">
+          <h3 className="font-semibold text-lg flex items-center gap-2 mb-3">
+            <Thermometer className="w-5 h-5 text-red-500" />
             Pigs in Blankets Cook Temperature
           </h3>
-          <p className="text-xs text-muted-foreground mb-4">
+          <p className="text-sm text-muted-foreground mb-4">
             Record core temperature of the cooked sausage before adding to the mac cheese. Target: <strong>≥75°C</strong>.
           </p>
 
@@ -596,22 +603,22 @@ function TempCheckRow({ label, targetTemp, recordType, records, inputValue, onIn
 
   return (
     <div className={cn(
-      "p-3 rounded-lg border",
+      "p-4 rounded-lg border",
       hasRecord && isAboveTarget ? "bg-emerald-50 dark:bg-emerald-900/10 border-emerald-200" :
       hasRecord && !isAboveTarget ? "bg-amber-50 dark:bg-amber-900/10 border-amber-200" :
       "border-border",
     )}>
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-sm font-medium">{label}</span>
+      <div className="flex items-center justify-between mb-2 gap-3">
+        <span className="text-base font-semibold">{label}</span>
         {hasRecord && (
-          <span className={cn("text-sm font-bold", isAboveTarget ? "text-emerald-600" : "text-amber-600")}>
+          <span className={cn("text-lg font-bold tabular-nums flex-shrink-0", isAboveTarget ? "text-emerald-600" : "text-amber-600")}>
             {lastTemp}°C {isAboveTarget ? "✓" : `(target: ${targetTemp}°C)`}
           </span>
         )}
       </div>
       {hasRecord ? (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Clock className="w-3 h-3" />
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Clock className="w-4 h-4" />
           Recorded at {new Date(lastRecord.recordedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
           {lastRecord.userName && <span>by {lastRecord.userName}</span>}
         </div>
@@ -623,14 +630,14 @@ function TempCheckRow({ label, targetTemp, recordType, records, inputValue, onIn
             value={inputValue}
             onChange={e => onInputChange(e.target.value)}
             placeholder={`${targetTemp}°C`}
-            className="w-24 px-3 py-1.5 bg-background border border-border rounded text-sm"
+            className="w-28 px-3 py-2 bg-background border border-border rounded text-base"
           />
           <button
             onClick={onRecord}
             disabled={saving || !inputValue}
-            className="px-3 py-1.5 bg-red-500 text-white rounded text-sm font-medium hover:bg-red-600 disabled:opacity-50 flex items-center gap-1.5"
+            className="px-4 py-2 bg-red-500 text-white rounded text-base font-semibold hover:bg-red-600 disabled:opacity-50 flex items-center gap-1.5"
           >
-            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Thermometer className="w-3.5 h-3.5" />}
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Thermometer className="w-4 h-4" />}
             Record
           </button>
         </div>
