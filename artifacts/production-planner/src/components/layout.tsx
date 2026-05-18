@@ -35,6 +35,7 @@ import {
   Beaker,
   AlertTriangle,
   FileText,
+  Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/user-avatar";
@@ -61,9 +62,15 @@ export const inventorySubItems: NavItem[] = [
   { name: "Kanbans", href: "/kanbans", icon: ArrowDownCircle },
   { name: "Orders", href: "/orders", icon: ShoppingCart },
   { name: "Deliveries", href: "/deliveries", icon: PackageCheck },
+  { name: "Tools", href: "/inventory/tools", icon: Wrench },
 ];
 
 const INVENTORY_PATHS = ["/inventory", "/kanbans", "/orders", "/deliveries", "/stock-control"];
+// Routes that count as "inside Inventory" for the auto-expand logic. Anything
+// under /inventory/... (e.g. /inventory/tools, /inventory/tools/label-stock-check)
+// should keep the sidebar group expanded.
+const isInventoryRoute = (loc: string) =>
+  INVENTORY_PATHS.includes(loc) || loc.startsWith("/inventory/");
 
 export const productNavItems: NavItem[] = [
   { name: "Recipes", href: "/recipes", icon: ChefHat },
@@ -197,7 +204,7 @@ export function NavLinks({
   const fullPath = location + (search ? search : "");
   const isOnProductPage = PRODUCT_PATHS.includes(location);
   const isOnDispatchPage = DISPATCH_PATHS.includes(location);
-  const isOnInventoryPage = INVENTORY_PATHS.includes(location);
+  const isOnInventoryPage = isInventoryRoute(location);
   const [productOpen, setProductOpen] = useState(isOnProductPage);
   const [dispatchOpen, setDispatchOpen] = useState(isOnDispatchPage);
   const [inventoryOpen, setInventoryOpen] = useState(isOnInventoryPage);

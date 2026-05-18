@@ -15,6 +15,8 @@ import Dashboard from "@/pages/dashboard";
 import MeetingPage from "@/pages/meeting";
 import Ingredients from "@/pages/ingredients";
 import Inventory from "@/pages/inventory";
+import ToolsPage from "@/pages/tools";
+import LabelStockCheck from "@/pages/label-stock-check";
 import SubRecipes from "@/pages/sub-recipes";
 import Recipes from "@/pages/recipes";
 import ProductionPlans from "@/pages/production-plans";
@@ -124,6 +126,8 @@ function Router() {
             <Switch>
               <Route path="/" component={Dashboard} />
               <Route path="/inventory" component={Inventory} />
+              <Route path="/inventory/tools" component={ToolsPage} />
+              <Route path="/inventory/tools/label-stock-check" component={LabelStockCheck} />
               <Route path="/ingredients">{() => <Redirect to="/inventory?tab=ingredients" />}</Route>
               <Route path="/sub-recipes" component={SubRecipes} />
               <Route path="/recipes" component={Recipes} />

@@ -307,3 +307,46 @@ export type TimingStandard = typeof timingStandardsTable.$inferSelect;
 export type PrepCompletion = typeof prepCompletionsTable.$inferSelect;
 export type PrepDeferral = typeof prepDeferralsTable.$inferSelect;
 export type DailyStockCheck = typeof dailyStockChecksTable.$inferSelect;
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Label stock check tool — see lib/db/migrations/0019_add_label_stock.sql
+// for the partial-unique indexes and CHECK constraint (drizzle-kit can't
+// express either cleanly so the migration file is the source of truth).
+// ──────────────────────────────────────────────────────────────────────────────
+export const labelRecipesTable = pgTable("label_recipes", {
+  id: serial("id").primaryKey(),
+  // Real-recipe rows reference recipes; misc rows leave this null and
+  // carry misc_name + misc_dpt_pct. Enforced by CHECK in the migration.
+  recipeId: integer("recipe_id").references(() => recipesTable.id, { onDelete: "cascade" }),
+  miscName: text("misc_name"),
+  miscDptPct: numeric("misc_dpt_pct", { precision: 6, scale: 3 }),
+  // Once a misc entry is mapped to a real recipe (because the recipe
+  // finally got added to the system), the calculator switches to using
+  // the real DPT weight automatically.
+  mappedRecipeId: integer("mapped_recipe_id").references(() => recipesTable.id, { onDelete: "set null" }),
+  // Soft-delete for real-recipe rows: hides them from the calculator
+  // without removing the row (so the auto-populate INSERT in
+  // buildEffectiveRecipes doesn't immediately re-add them on the next
+  // GET). Misc rows just actual-delete.
+  hidden: boolean("hidden").notNull().default(false),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const labelStockChecksTable = pgTable("label_stock_checks", {
+  id: serial("id").primaryKey(),
+  labelRecipeId: integer("label_recipe_id").notNull().references(() => labelRecipesTable.id, { onDelete: "cascade" }),
+  numRolls: integer("num_rolls").notNull(),
+  totalWeightG: numeric("total_weight_g", { precision: 12, scale: 3 }).notNull(),
+  // Snapshots of the global weights used at the time of this check — so
+  // historical counts don't shift if the operator later recalibrates.
+  emptyRollWeightGUsed: numeric("empty_roll_weight_g_used", { precision: 10, scale: 3 }).notNull(),
+  labelWeightGUsed: numeric("label_weight_g_used", { precision: 10, scale: 4 }).notNull(),
+  computedCount: integer("computed_count").notNull(),
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  checkedAt: timestamp("checked_at").notNull().defaultNow(),
+});
+
+export type LabelRecipe = typeof labelRecipesTable.$inferSelect;
+export type LabelStockCheck = typeof labelStockChecksTable.$inferSelect;

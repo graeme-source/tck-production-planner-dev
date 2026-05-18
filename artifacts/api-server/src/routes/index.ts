@@ -50,6 +50,7 @@ import morningMeetingsRouter from "./morning-meetings";
 import ingredientScrapeRouter from "./ingredient-scrape";
 import formsRouter from "./forms";
 import systemUpdatesRouter from "./system-updates";
+import labelStockRouter from "./label-stock";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -130,6 +131,7 @@ router.use("/ai", aiRouter);
 router.use("/morning-meetings", morningMeetingsRouter);
 router.use("/forms", formsRouter);
 router.use("/system-updates", systemUpdatesRouter);
+router.use("/label-stock", labelStockRouter);
 
 const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
 async function requireFounder(req: Request, res: Response, next: NextFunction) {
