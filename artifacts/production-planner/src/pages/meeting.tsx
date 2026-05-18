@@ -19,7 +19,7 @@ import { useLocation, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, addDays } from "date-fns";
 import {
-  ArrowLeft, ArrowRight, ChevronLeft, ChevronRight, X, Play, Pause, RotateCcw,
+  ArrowLeft, ArrowRight, ChevronLeft, ChevronRight, X, Play,
   Sparkles, ChefHat, Truck, ShoppingBag, AlertCircle, FileText, MessageCircle,
   HeartHandshake, Activity, BookOpen, Award, Loader2, ClipboardCheck, Sun,
   CheckCircle2, Heart, Settings, Edit3, Calendar, GripVertical, Plus, Trash2, Save,
@@ -87,10 +87,9 @@ async function fetchDashboard(): Promise<DashboardData> {
 // ── Stretches slide ──────────────────────────────────────────────────
 // Five stretches per session — bookended by a sky-reach, with three
 // rotating middle stretches picked at random per day so the routine
-// doesn't get stale. Each runs for STRETCH_SECONDS with no clicks
-// required; all five appear on screen and the active one is
-// highlighted, so the team sees what's coming and what just finished.
-const STRETCH_SECONDS = 10;
+// doesn't get stale. The team self-paces; the slide is a static
+// reference of "here's what we're doing" rather than a controlled
+// player — no countdown, no Start button, just the stretches.
 const SKY_STRETCH = { name: "Reach for the sky", emoji: "🙆", description: "Big breath in, arms straight up." };
 const STRETCH_POOL: ReadonlyArray<{ name: string; emoji: string; description: string }> = [
   { name: "Neck rolls",        emoji: "🦒", description: "Slow circles, both directions." },
@@ -121,88 +120,37 @@ function pickStretchesForDay(dateIso: string) {
 }
 
 function StretchesPanel() {
-  const [index, setIndex] = useState(0);
-  const [secondsLeft, setSecondsLeft] = useState(STRETCH_SECONDS);
-  const [running, setRunning] = useState(false);
   const todayIso = new Date().toISOString().slice(0, 10);
   const stretches = pickStretchesForDay(todayIso);
 
-  useEffect(() => {
-    if (!running) return;
-    const id = setInterval(() => {
-      setSecondsLeft(s => {
-        if (s <= 1) {
-          if (index < stretches.length - 1) {
-            setIndex(i => i + 1);
-            return STRETCH_SECONDS;
-          }
-          setRunning(false);
-          return 0;
-        }
-        return s - 1;
-      });
-    }, 1000);
-    return () => clearInterval(id);
-  }, [running, index, stretches.length]);
-
-  const allDone = !running && index === stretches.length - 1 && secondsLeft === 0;
-
   return (
-    <div className="flex flex-col items-center gap-6 w-full">
-      {/* Five stretch tiles — all visible at once. The active one
-          pulses + scales up; finished ones dim; upcoming ones sit
-          quiet. Sized for TV readability from across the kitchen. */}
+    <div className="flex flex-col items-center gap-10 w-full">
+      {/* Greeting header — TCK logo + "Good morning" — sets the tone
+          for the meeting and gives the room something warm to start on
+          before the stretches. Logo is dark on the light meeting bg. */}
+      <div className="flex flex-col items-center gap-4 pt-4">
+        <img
+          src={`${import.meta.env.BASE_URL}tck-logo-dark.png`}
+          alt="TCK"
+          className="h-32 sm:h-40 w-auto object-contain dark:invert dark:brightness-200"
+        />
+        <p className="text-5xl sm:text-6xl font-display font-semibold tracking-tight">
+          Good morning, team
+        </p>
+      </div>
+
+      {/* Five stretch tiles — all visible, equal weight. The team
+          self-paces; this is just the menu of what we're doing today. */}
       <div className="grid grid-cols-5 gap-4 w-full">
-        {stretches.map((st, i) => {
-          const isActive = i === index && running;
-          const isDone = i < index || (i === index && secondsLeft === 0 && !running && allDone);
-          return (
-            <div
-              key={i}
-              className={cn(
-                "rounded-2xl border p-6 flex flex-col items-center text-center gap-4 transition-all min-h-[280px] justify-center",
-                isActive && "border-emerald-500 bg-emerald-500/10 scale-105 shadow-lg shadow-emerald-500/20",
-                isDone && "opacity-40",
-                !isActive && !isDone && "border-border bg-card",
-              )}
-            >
-              <div className="text-8xl leading-none">{st.emoji}</div>
-              <p className="text-2xl font-semibold leading-tight">{st.name}</p>
-              {isActive && (
-                <div className="text-6xl font-display font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{secondsLeft}s</div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Active stretch description — big, central, only shows while running. */}
-      <div className="text-center min-h-[80px] flex items-center justify-center">
-        {running ? (
-          <p className="text-3xl text-muted-foreground max-w-3xl leading-snug">{stretches[index].description}</p>
-        ) : allDone ? (
-          <p className="text-4xl font-display font-semibold text-emerald-600 dark:text-emerald-400">Nice work — let's get into the day.</p>
-        ) : (
-          <p className="text-2xl text-muted-foreground">Press Start. {STRETCH_SECONDS}s per stretch, no clicking — just follow along.</p>
-        )}
-      </div>
-
-      <div className="flex items-center gap-3">
-        <button
-          onClick={() => {
-            if (allDone) { setIndex(0); setSecondsLeft(STRETCH_SECONDS); }
-            setRunning(r => !r);
-          }}
-          className="px-6 py-3 rounded-xl bg-primary text-primary-foreground font-semibold flex items-center gap-2 hover:bg-primary/90 text-base"
-        >
-          {running ? <><Pause className="w-5 h-5" /> Pause</> : <><Play className="w-5 h-5" /> {allDone ? "Restart" : "Start"}</>}
-        </button>
-        <button
-          onClick={() => { setIndex(0); setSecondsLeft(STRETCH_SECONDS); setRunning(false); }}
-          className="px-5 py-3 rounded-xl border border-border text-muted-foreground hover:text-foreground flex items-center gap-2"
-        >
-          <RotateCcw className="w-4 h-4" /> Reset
-        </button>
+        {stretches.map((st, i) => (
+          <div
+            key={i}
+            className="rounded-2xl border border-border bg-card p-6 flex flex-col items-center text-center gap-4 min-h-[260px] justify-center"
+          >
+            <div className="text-8xl leading-none">{st.emoji}</div>
+            <p className="text-2xl font-semibold leading-tight">{st.name}</p>
+          </div>
+        ))}
       </div>
     </div>
   );
