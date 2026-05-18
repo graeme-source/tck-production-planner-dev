@@ -155,12 +155,12 @@ interface PackingSpeedData {
 // Packing-speed is now a subsection inside the Production KPIs view, so it's
 // no longer a top-level tab. The URL ?tab=packing-speed redirects to ?tab=kpis
 // for backward compat.
-type TabId = "kpis" | "breaks" | "temperature" | "haccp" | "risk-assessments" | "improvements" | "issues" | "leftover-filling" | "employees" | "printables";
+type TabId = "kpis" | "breaks" | "haccp" | "risk-assessments" | "improvements" | "issues" | "leftover-filling" | "employees" | "printables";
 
 // HACCP is being built out into a full food-safety system, so it gets its
-// own sub-navigation. Start with the existing Evidence Log and the moved-in
-// Cooling & Weights tab; new HACCP areas slot in alongside them.
-type HaccpSubTabId = "evidence" | "cooling-weights";
+// own sub-navigation. Temperature Log lives here too — fridge, freezer, and
+// cooked-core readings are all food-safety evidence.
+type HaccpSubTabId = "evidence" | "temperatures" | "cooling-weights";
 
 interface ImprovementRecord {
   id: number;
@@ -252,8 +252,8 @@ function DateShortcutsDropdown({ onSelect }: { onSelect: (from: string, to: stri
   );
 }
 
-const VALID_TABS: TabId[] = ["kpis", "breaks", "temperature", "haccp", "risk-assessments", "improvements", "issues", "leftover-filling", "employees", "printables"];
-const VALID_HACCP_SUBTABS: HaccpSubTabId[] = ["evidence", "cooling-weights"];
+const VALID_TABS: TabId[] = ["kpis", "breaks", "haccp", "risk-assessments", "improvements", "issues", "leftover-filling", "employees", "printables"];
+const VALID_HACCP_SUBTABS: HaccpSubTabId[] = ["evidence", "temperatures", "cooling-weights"];
 
 interface ReportsNavItem {
   id: TabId;
@@ -264,7 +264,6 @@ interface ReportsNavItem {
 const REPORTS_NAV_ITEMS: ReportsNavItem[] = [
   { id: "kpis", label: "Production KPIs", icon: TrendingUp },
   { id: "breaks", label: "Breaks & Lunches", icon: Coffee },
-  { id: "temperature", label: "Temperature Log", icon: Thermometer },
   { id: "haccp", label: "HACCP", icon: ShieldCheck },
   { id: "risk-assessments", label: "Documents", icon: ClipboardList },
   { id: "improvements", label: "Improvements & Struggles", icon: Lightbulb },
@@ -282,6 +281,7 @@ interface HaccpSubNavItem {
 
 const HACCP_SUB_NAV_ITEMS: HaccpSubNavItem[] = [
   { id: "evidence", label: "Evidence Log", icon: ShieldCheck },
+  { id: "temperatures", label: "Temperature Log", icon: Thermometer },
   { id: "cooling-weights", label: "Cooling & Weights", icon: Hourglass },
 ];
 
@@ -311,14 +311,19 @@ export default function Reports() {
   const rawHaccpSub = new URLSearchParams(search).get("haccp");
   const issueIdParam = new URLSearchParams(search).get("issueId");
   // Backward compat: legacy "andon" redirects to "issues", "packing-speed"
-  // redirects to "kpis" (now a subsection there), and the old top-level
-  // "batch-weights" tab now lives under HACCP → Cooling & Weights.
+  // redirects to "kpis" (now a subsection there), the old top-level
+  // "batch-weights" tab now lives under HACCP → Cooling & Weights, and
+  // the old top-level "temperature" tab now lives under HACCP → Temperature Log.
   const normalisedTab =
     rawTab === "andon" ? "issues"
       : rawTab === "packing-speed" ? "kpis"
       : rawTab === "batch-weights" ? "haccp"
+      : rawTab === "temperature" ? "haccp"
       : rawTab;
-  const normalisedHaccpSub = rawTab === "batch-weights" ? "cooling-weights" : rawHaccpSub;
+  const normalisedHaccpSub =
+    rawTab === "batch-weights" ? "cooling-weights"
+      : rawTab === "temperature" ? "temperatures"
+      : rawHaccpSub;
   const queryTab = normalisedTab as TabId | null;
   const initialTab: TabId = queryTab && allowedTabIds.includes(queryTab) ? queryTab : allowedTabIds[0];
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);
@@ -483,7 +488,6 @@ export default function Reports() {
 
           {activeTab === "kpis" && <ProductionKpisTab fromDate={fromDate} toDate={toDate} />}
           {activeTab === "breaks" && <BreaksTab fromDate={fromDate} toDate={toDate} />}
-          {activeTab === "temperature" && <TemperatureRecordsTab fromDate={fromDate} toDate={toDate} />}
           {activeTab === "haccp" && (
             <>
               {/* Mobile HACCP sub-nav — desktop sub-nav lives in the sidebar. */}
@@ -512,6 +516,7 @@ export default function Reports() {
                 </ul>
               </nav>
               {haccpSubTab === "evidence" && <HaccpTab fromDate={fromDate} toDate={toDate} />}
+              {haccpSubTab === "temperatures" && <TemperatureRecordsTab fromDate={fromDate} toDate={toDate} />}
               {haccpSubTab === "cooling-weights" && <BatchWeightsTab fromDate={fromDate} toDate={toDate} />}
             </>
           )}
@@ -1035,27 +1040,47 @@ function BreaksTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
   );
 }
 
+// Unified temperature record returned by GET /api/temperature-records.
+// `category` is the coarse type used by the Temperature Log UI filter;
+// `recordType` is the granular value (e.g. "fridge_opening", "cooked_core").
 interface TemperatureRecord {
-  id: number;
-  planId: number;
-  recipeId: number;
-  ingredientId: number;
-  trayIndex: number;
-  temperatureC: string;
+  id: string;
+  category: "cooked" | "fridge" | "freezer";
   recordType: string;
+  recordedAt: string;
+  temperatureC: string;
   userId: number | null;
   userName: string | null;
-  recordedAt: string;
-  planName?: string;
-  recipeName?: string;
-  ingredientName?: string;
+  planId: number;
+  planName: string | null;
+  recipeId: number | null;
+  recipeName: string | null;
+  ingredientId: number | null;
+  ingredientName: string | null;
+  trayIndex: number | null;
+  locationName: string | null;
 }
+
+type TemperatureCategoryFilter = "all" | "cooked" | "fridge" | "freezer" | "fridge_freezer";
+
+const RECORD_TYPE_LABEL: Record<string, string> = {
+  cooked_core: "Cooked core",
+  fridge_opening: "Fridge — opening",
+  fridge_closing: "Fridge — closing",
+  freezer_opening: "Freezer — opening",
+  freezer_closing: "Freezer — closing",
+};
 
 function TemperatureRecordsTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
   const [records, setRecords] = useState<TemperatureRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState<TemperatureCategoryFilter>("all");
+  const [singleDate, setSingleDate] = useState<string>("");
 
+  // Always fetch the full set for the page-level date range; the category and
+  // single-day filters narrow client-side so toggling them is instant and the
+  // summary counts stay consistent across filter changes.
   useEffect(() => {
     setLoading(true);
     setError(null);
@@ -1065,11 +1090,37 @@ function TemperatureRecordsTab({ fromDate, toDate }: { fromDate: string; toDate:
       .catch((err: Error) => { setError(err.message); setLoading(false); });
   }, [fromDate, toDate]);
 
-  const passed = records.filter(r => parseFloat(r.temperatureC) >= 75);
-  const failed = records.filter(r => parseFloat(r.temperatureC) < 75);
-  const avgTemp = records.length > 0
-    ? (records.reduce((s, r) => s + parseFloat(r.temperatureC), 0) / records.length).toFixed(1)
-    : "—";
+  // Clear single-day filter if it falls outside the page-level range so the
+  // user doesn't get a confusing empty table.
+  useEffect(() => {
+    if (!singleDate) return;
+    if (singleDate < fromDate || singleDate > toDate) setSingleDate("");
+  }, [fromDate, toDate, singleDate]);
+
+  const filtered = records.filter(r => {
+    if (categoryFilter === "fridge_freezer") {
+      if (r.category !== "fridge" && r.category !== "freezer") return false;
+    } else if (categoryFilter !== "all" && r.category !== categoryFilter) {
+      return false;
+    }
+    if (singleDate) {
+      // Compare the YYYY-MM-DD prefix in local time. The recordedAt is an
+      // ISO string in UTC; for the UK this is fine all year (within the
+      // 1-hour BST shift it still falls on the same calendar day for any
+      // reading taken during operating hours).
+      const day = format(new Date(r.recordedAt), "yyyy-MM-dd");
+      if (day !== singleDate) return false;
+    }
+    return true;
+  });
+
+  // Pass/fail is only meaningful for cooked-core readings (75°C threshold).
+  // Fridge/freezer have their own safe ranges so the summary just shows counts.
+  const cookedRows = filtered.filter(r => r.category === "cooked");
+  const passed = cookedRows.filter(r => parseFloat(r.temperatureC) >= 75);
+  const failed = cookedRows.filter(r => parseFloat(r.temperatureC) < 75);
+  const fridgeRows = filtered.filter(r => r.category === "fridge");
+  const freezerRows = filtered.filter(r => r.category === "freezer");
 
   if (loading) return (
     <div className="flex items-center justify-center py-16 text-muted-foreground gap-2">
@@ -1083,15 +1134,61 @@ function TemperatureRecordsTab({ fromDate, toDate }: { fromDate: string; toDate:
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <SummaryCard icon={<Thermometer className="w-4 h-4 text-blue-500" />} label="Total Readings" value={String(records.length)} />
-        <SummaryCard icon={<ShieldCheck className="w-4 h-4 text-green-600" />} label="Above 75°C" value={String(passed.length)} sub={records.length ? `${Math.round((passed.length / records.length) * 100)}% pass rate` : undefined} highlight="green" />
-        <SummaryCard icon={<Thermometer className="w-4 h-4 text-red-500" />} label="Below 75°C" value={String(failed.length)} sub={failed.length > 0 ? "Requires attention" : "None"} highlight={failed.length > 0 ? "red" : undefined} />
-        <SummaryCard icon={<Activity className="w-4 h-4 text-amber-500" />} label="Average Temp" value={avgTemp === "—" ? "—" : `${avgTemp}°C`} />
+        <SummaryCard icon={<Thermometer className="w-4 h-4 text-blue-500" />} label="Total Readings" value={String(filtered.length)} sub={`${cookedRows.length} cooked · ${fridgeRows.length} fridge · ${freezerRows.length} freezer`} />
+        <SummaryCard icon={<ShieldCheck className="w-4 h-4 text-green-600" />} label="Cooked ≥75°C" value={String(passed.length)} sub={cookedRows.length ? `${Math.round((passed.length / cookedRows.length) * 100)}% pass rate` : "No cooked readings"} highlight={cookedRows.length ? "green" : undefined} />
+        <SummaryCard icon={<Thermometer className="w-4 h-4 text-red-500" />} label="Cooked <75°C" value={String(failed.length)} sub={failed.length > 0 ? "Requires attention" : "None"} highlight={failed.length > 0 ? "red" : undefined} />
+        <SummaryCard icon={<Activity className="w-4 h-4 text-amber-500" />} label="Fridge / Freezer" value={`${fridgeRows.length} / ${freezerRows.length}`} sub="Opening + closing checks" />
       </div>
 
-      {records.length === 0 ? (
+      {/* Filter bar — category + single-day date filter */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card px-3 py-2">
+        <Filter className="w-4 h-4 text-muted-foreground" />
+        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mr-1">Filter</span>
+        <select
+          value={categoryFilter}
+          onChange={e => setCategoryFilter(e.target.value as TemperatureCategoryFilter)}
+          className="px-2.5 py-1.5 border border-border rounded-lg text-sm bg-background"
+          title="Record type"
+        >
+          <option value="all">All records</option>
+          <option value="cooked">Cooked-core only</option>
+          <option value="fridge">Fridge only</option>
+          <option value="freezer">Freezer only</option>
+          <option value="fridge_freezer">Fridge &amp; freezer</option>
+        </select>
+        <div className="flex items-center gap-2">
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Day</label>
+          <input
+            type="date"
+            value={singleDate}
+            min={fromDate}
+            max={toDate}
+            onChange={e => setSingleDate(e.target.value)}
+            className="px-2.5 py-1.5 border border-border rounded-lg text-sm bg-background"
+            title="Filter to a single day"
+          />
+          {singleDate && (
+            <button
+              onClick={() => setSingleDate("")}
+              className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
+            >
+              Clear day
+            </button>
+          )}
+        </div>
+        {(categoryFilter !== "all" || singleDate) && (
+          <button
+            onClick={() => { setCategoryFilter("all"); setSingleDate(""); }}
+            className="ml-auto text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
+          >
+            Clear filters
+          </button>
+        )}
+      </div>
+
+      {filtered.length === 0 ? (
         <div className="rounded-xl border border-border bg-card p-8 text-center text-muted-foreground text-sm">
-          No temperature records found for this date range.
+          No temperature records found for these filters.
         </div>
       ) : (
         <div className="rounded-xl border border-border bg-card overflow-hidden">
@@ -1100,39 +1197,66 @@ function TemperatureRecordsTab({ fromDate, toDate }: { fromDate: string; toDate:
               <thead>
                 <tr className="border-b border-border bg-secondary/20">
                   <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Recorded At</th>
-                  <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Recipe</th>
-                  <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Ingredient</th>
-                  <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Tray</th>
+                  <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Type</th>
+                  <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Source</th>
                   <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Temp</th>
                   <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Status</th>
                   <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Recorded By</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {records.map(rec => {
+                {filtered.map(rec => {
                   const temp = parseFloat(rec.temperatureC);
-                  const safe = temp >= 75;
+                  // Pass/fail is category-specific. Cooked uses the legal
+                  // 75°C floor. Fridge ≤8°C and freezer ≤−15°C are the
+                  // documented warning thresholds in the checklist UI.
+                  let safe: boolean | null = null;
+                  let statusLabel = "";
+                  if (rec.category === "cooked") {
+                    safe = temp >= 75;
+                    statusLabel = safe ? "Safe" : "Low";
+                  } else if (rec.category === "fridge") {
+                    safe = temp <= 8;
+                    statusLabel = safe ? "OK" : "High";
+                  } else if (rec.category === "freezer") {
+                    safe = temp <= -15;
+                    statusLabel = safe ? "OK" : "Warm";
+                  }
+                  const typeLabel = RECORD_TYPE_LABEL[rec.recordType] ?? rec.recordType;
+                  const source = rec.category === "cooked"
+                    ? `${rec.recipeName ?? (rec.recipeId ? `Recipe #${rec.recipeId}` : "—")}${rec.ingredientName ? ` · ${rec.ingredientName}` : ""}${rec.trayIndex != null ? ` · Tray ${rec.trayIndex + 1}` : ""}`
+                    : (rec.locationName ?? "—");
                   return (
-                    <tr key={rec.id} className={cn("hover:bg-secondary/10 transition-colors", !safe && "bg-red-50/60 dark:bg-red-950/20")}>
+                    <tr key={rec.id} className={cn("hover:bg-secondary/10 transition-colors", safe === false && "bg-red-50/60 dark:bg-red-950/20")}>
                       <td className="px-4 py-3 tabular-nums text-muted-foreground whitespace-nowrap">
                         {format(new Date(rec.recordedAt), "dd MMM yyyy, HH:mm")}
                       </td>
-                      <td className="px-4 py-3 font-medium">{rec.recipeName ?? `Recipe #${rec.recipeId}`}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{rec.ingredientName ?? `Ingredient #${rec.ingredientId}`}</td>
-                      <td className="px-4 py-3 text-center tabular-nums">{rec.trayIndex + 1}</td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span className={cn(
+                          "inline-block px-2 py-0.5 rounded-full text-xs font-semibold",
+                          rec.category === "cooked" && "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
+                          rec.category === "fridge" && "bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300",
+                          rec.category === "freezer" && "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300",
+                        )}>
+                          {typeLabel}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{source}</td>
                       <td className="px-4 py-3 text-center">
-                        <span className={cn("font-bold tabular-nums", safe ? "text-green-700 dark:text-green-400" : "text-red-600")}>
+                        <span className={cn("font-bold tabular-nums", safe === false ? "text-red-600" : "text-foreground")}>
                           {temp.toFixed(1)}°C
                         </span>
                       </td>
                       <td className="px-4 py-3 text-center">
-                        {safe ? (
+                        {safe === null ? (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        ) : safe ? (
                           <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 dark:text-green-400 bg-green-100 dark:bg-green-900/30 rounded-full px-2 py-0.5">
-                            <ShieldCheck className="w-3 h-3" /> Safe
+                            <ShieldCheck className="w-3 h-3" /> {statusLabel}
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-100 dark:bg-red-900/30 rounded-full px-2 py-0.5">
-                            <Thermometer className="w-3 h-3" /> Low
+                            <Thermometer className="w-3 h-3" /> {statusLabel}
                           </span>
                         )}
                       </td>
@@ -1474,25 +1598,21 @@ function BatchWeightsTab({ fromDate, toDate }: { fromDate: string; toDate: strin
 function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
   const [checklists, setChecklists] = useState<HaccpChecklistRow[]>([]);
   const [missing, setMissing] = useState<HaccpMissingRow[]>([]);
-  const [temps, setTemps] = useState<TemperatureRecord[]>([]);
   const [users, setUsers] = useState<UserLite[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Filters
+  // Filters — temperatures moved to their own HACCP sub-tab, so this view
+  // only deals with checklist completions and outstanding items.
   const [stationFilter, setStationFilter] = useState("");
   const [userFilter, setUserFilter] = useState("");
-  // "all" = completed + outstanding + temperatures
-  // "outstanding" = only expected-but-not-completed checklist items
-  const [kindFilter, setKindFilter] = useState<"all" | "checklists" | "outstanding" | "temperatures">("all");
+  const [kindFilter, setKindFilter] = useState<"all" | "checklists" | "outstanding">("all");
   const [categoryFilter, setCategoryFilter] = useState<"" | HaccpChecklistRow["category"]>("");
 
-  // Collapsible sections — default both the completed and outstanding
-  // sections to collapsed so the page is glanceable and the user opens the
-  // one they care about.
+  // Collapsible sections — outstanding open by default so the page surfaces
+  // gaps; completed list defaults closed so the page is glanceable.
   const [outstandingOpen, setOutstandingOpen] = useState(true);
   const [completedOpen, setCompletedOpen] = useState(false);
-  const [tempsOpen, setTempsOpen] = useState(false);
 
   // Load users once (for filter dropdown)
   useEffect(() => {
@@ -1514,8 +1634,6 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
     if (userFilter) params.set("userId", userFilter);
 
     const checklistUrl = `${BASE}/api/checklists/completions?${params.toString()}`;
-    const tempParams = new URLSearchParams({ from: fromDate, to: toDate });
-    const tempUrl = `${BASE}/api/temperature-records?${tempParams.toString()}`;
 
     // The /missing endpoint does not take userId (un-done items have no
     // user), but it does honour stationType.
@@ -1525,25 +1643,15 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
 
     Promise.all([
       fetch(checklistUrl, { credentials: "include" }).then(r => r.ok ? r.json() : []),
-      fetch(tempUrl, { credentials: "include" }).then(r => r.ok ? r.json() : []),
       fetch(missingUrl, { credentials: "include" }).then(r => r.ok ? r.json() : []),
     ])
-      .then(([c, t, m]: [HaccpChecklistRow[], TemperatureRecord[], HaccpMissingRow[]]) => {
+      .then(([c, m]: [HaccpChecklistRow[], HaccpMissingRow[]]) => {
         setChecklists(c);
-        setTemps(t);
         setMissing(m);
         setLoading(false);
       })
       .catch((err: Error) => { setError(err.message); setLoading(false); });
   }, [fromDate, toDate, stationFilter, userFilter]);
-
-  // Temperature records have no station column in the schema (they're tied
-  // to a plan), so station filter is only applied to the checklist dataset.
-  // User filter for temps uses the user_id from the record.
-  const filteredTemps = temps.filter(t => {
-    if (userFilter && String(t.userId ?? "") !== userFilter) return false;
-    return true;
-  });
 
   const filteredChecklists = checklists.filter(c => {
     if (categoryFilter && c.category !== categoryFilter) return false;
@@ -1555,15 +1663,11 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
     return true;
   });
 
-  // Pre-compute summary stats (no pass/fail split on temperatures since
-  // readings span cooked-core, fridge, and delivery checks with different
-  // thresholds).
   const uniqueCheckUsers = new Set(filteredChecklists.map(c => c.completedByName ?? "").filter(Boolean)).size;
   const uniqueStations = new Set(filteredChecklists.map(c => c.stationType)).size;
 
   const showChecks = kindFilter === "all" || kindFilter === "checklists";
   const showMissing = kindFilter === "all" || kindFilter === "outstanding";
-  const showTemps = kindFilter === "all" || kindFilter === "temperatures";
   // When the user explicitly filters to Outstanding, hide the other
   // sections so the list is unambiguous.
   const outstandingOnly = kindFilter === "outstanding";
@@ -1594,16 +1698,13 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
         <div className="text-sm">
           <p className="font-semibold text-blue-800 dark:text-blue-300">HACCP Evidence Log</p>
           <p className="text-blue-700/80 dark:text-blue-300/80 mt-0.5">
-            Daily opening/cleaning/closing checks and cooked-core temperature readings for EHO inspections.
-            Use the filters below to narrow by date, station, or team member.
+            Daily opening/cleaning/closing checks for EHO inspections. Temperature readings have moved to
+            the Temperature Log sub-tab. Use the filters below to narrow by date, station, or team member.
           </p>
         </div>
       </div>
 
-      {/* Summary cards — 75°C pass/fail is no longer shown because not all
-          readings are cooked-core (fridge, delivery, and ambient readings
-          also land in this log). */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <SummaryCard icon={<ClipboardCheck className="w-4 h-4 text-emerald-600" />} label="Checks Completed" value={String(filteredChecklists.length)} sub={`${uniqueCheckUsers} team member${uniqueCheckUsers !== 1 ? "s" : ""}, ${uniqueStations} station${uniqueStations !== 1 ? "s" : ""}`} />
         <SummaryCard
           icon={<AlertTriangle className={cn("w-4 h-4", filteredMissing.length > 0 ? "text-red-500" : "text-muted-foreground")} />}
@@ -1612,7 +1713,6 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
           sub={filteredMissing.length > 0 ? "Expected but not completed" : "All checks accounted for"}
           highlight={filteredMissing.length > 0 ? "red" : undefined}
         />
-        <SummaryCard icon={<Thermometer className="w-4 h-4 text-blue-500" />} label="Temp Readings" value={String(filteredTemps.length)} sub={`${fromDate} → ${toDate}`} />
       </div>
 
       {/* Filter bar */}
@@ -1628,7 +1728,6 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
           <option value="all">All records</option>
           <option value="checklists">Checklists only</option>
           <option value="outstanding">Outstanding only</option>
-          <option value="temperatures">Temperatures only</option>
         </select>
         <select
           value={stationFilter}
@@ -1811,65 +1910,6 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
         </div>
       )}
 
-      {/* Temperature records table — no pass/fail column since readings
-          include cooked-core (≥75°C), fridge, delivery, and ambient
-          values with different thresholds. */}
-      {showTemps && !outstandingOnly && (
-        <div className="rounded-xl border border-border bg-card overflow-hidden">
-          <button
-            type="button"
-            onClick={() => setTempsOpen(v => !v)}
-            className="w-full px-4 py-2.5 border-b border-border bg-secondary/20 flex items-center gap-2 text-left hover:bg-secondary/40 transition-colors"
-            aria-expanded={tempsOpen}
-          >
-            <Thermometer className="w-4 h-4 text-blue-600 flex-shrink-0" />
-            <h3 className="text-sm font-semibold">Temperature Readings ({filteredTemps.length})</h3>
-            {tempsOpen
-              ? <ChevronUp className="w-4 h-4 text-muted-foreground ml-auto flex-shrink-0" />
-              : <ChevronDown className="w-4 h-4 text-muted-foreground ml-auto flex-shrink-0" />}
-          </button>
-          {tempsOpen && (
-            filteredTemps.length === 0 ? (
-              <div className="p-8 text-center text-sm text-muted-foreground">
-                No temperature records for the selected filters.
-              </div>
-            ) : (
-              <div className="overflow-x-auto max-h-[560px] overflow-y-auto">
-                <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-secondary/40 backdrop-blur-sm">
-                    <tr className="border-b border-border">
-                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Recorded</th>
-                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Recipe</th>
-                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Ingredient</th>
-                      <th className="text-center px-4 py-2.5 font-semibold text-muted-foreground">Tray</th>
-                      <th className="text-center px-4 py-2.5 font-semibold text-muted-foreground">Temp</th>
-                      <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">By</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {filteredTemps.map(rec => (
-                      <tr key={rec.id} className="hover:bg-secondary/10 transition-colors">
-                        <td className="px-4 py-2.5 tabular-nums text-muted-foreground whitespace-nowrap text-xs">
-                          {format(new Date(rec.recordedAt), "dd MMM, HH:mm")}
-                        </td>
-                        <td className="px-4 py-2.5 font-medium">{rec.recipeName ?? `Recipe #${rec.recipeId}`}</td>
-                        <td className="px-4 py-2.5 text-muted-foreground">{rec.ingredientName ?? `Ingredient #${rec.ingredientId}`}</td>
-                        <td className="px-4 py-2.5 text-center tabular-nums">{rec.trayIndex + 1}</td>
-                        <td className="px-4 py-2.5 text-center">
-                          <span className="font-bold tabular-nums text-foreground">
-                            {parseFloat(rec.temperatureC).toFixed(1)}°C
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{rec.userName ?? "Unknown"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )
-          )}
-        </div>
-      )}
     </div>
   );
 }
