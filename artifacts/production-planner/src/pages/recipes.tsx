@@ -247,14 +247,19 @@ function RecipeForm({
   const watchedIngredients = watch("ingredients");
   const watchedSubRecipes = watch("subRecipes");
   const watchedCookingLoss = watch("cookingLossPercent");
-  const watchedPortionsPerBatch = watch("portionsPerBatch");
   const watchedPackSize = watch("packSize");
 
   // Live declared-weight calculator — runs on every keystroke so the user
   // sees portion and pack weight update like a spreadsheet as they edit
-  // ingredients, sub-recipes, cooking-loss %, portions per batch, or pack
-  // size. Quantities are stored in the ingredient's native unit (kg or g);
+  // ingredients, sub-recipes, cooking-loss %, recipe size, or pack size.
+  // Quantities are stored in the ingredient's native unit (kg or g);
   // we normalise to grams here.
+  //
+  // Divisor is `servings` (the recipe's "Output / Recipe Size"), NOT
+  // portionsPerBatch. Ingredient quantities in the form are entered for
+  // whatever amount the recipe produces — typically 1 portion. portionsPerBatch
+  // is a separate production-batching number (how many portions get made in
+  // one cook) and has no bearing on the per-portion weight.
   const liveWeights = useMemo(() => {
     let rawG = 0;
     for (const row of watchedIngredients ?? []) {
@@ -273,12 +278,12 @@ function RecipeForm({
     }
     const lossPct = Math.max(0, Math.min(50, Number(watchedCookingLoss ?? 3) || 0));
     const cookedG = rawG * (1 - lossPct / 100);
-    const ppb = Math.max(1, Number(watchedPortionsPerBatch) || 1);
-    const portionG = cookedG / ppb;
+    const recipeServings = Math.max(0.0001, Number(watchedServings) || 1);
+    const portionG = cookedG / recipeServings;
     const ps = Math.max(1, Number(watchedPackSize) || 1);
     const packG = portionG * ps;
-    return { rawG, cookedG, portionG, packG, lossPct, ppb, ps };
-  }, [watchedIngredients, watchedSubRecipes, watchedCookingLoss, watchedPortionsPerBatch, watchedPackSize, localIngredients, subRecipes]);
+    return { rawG, cookedG, portionG, packG, lossPct, servings: recipeServings, ps };
+  }, [watchedIngredients, watchedSubRecipes, watchedCookingLoss, watchedServings, watchedPackSize, localIngredients, subRecipes]);
 
   const [addingCategory, setAddingCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
@@ -585,7 +590,7 @@ function RecipeForm({
             <div className="bg-emerald-100/70 dark:bg-emerald-900/30 rounded-lg p-2.5 border border-emerald-300/70 dark:border-emerald-700/60">
               <p className="text-[10px] uppercase tracking-wide text-emerald-800 dark:text-emerald-300 font-semibold">Portion weight</p>
               <p className="font-bold tabular-nums text-base mt-0.5 text-emerald-900 dark:text-emerald-100">{liveWeights.portionG > 0 ? `${Math.round(liveWeights.portionG)} g` : "—"}</p>
-              <p className="text-[10px] text-emerald-800/70 dark:text-emerald-300/70">÷ {liveWeights.ppb} portion{liveWeights.ppb !== 1 ? "s" : ""}/batch</p>
+              <p className="text-[10px] text-emerald-800/70 dark:text-emerald-300/70">{liveWeights.servings === 1 ? "1 portion recipe" : `÷ ${liveWeights.servings} portions`}</p>
             </div>
             <div className="bg-emerald-100/70 dark:bg-emerald-900/30 rounded-lg p-2.5 border border-emerald-300/70 dark:border-emerald-700/60">
               <p className="text-[10px] uppercase tracking-wide text-emerald-800 dark:text-emerald-300 font-semibold">Pack weight</p>
@@ -1483,6 +1488,7 @@ interface NutritionalsData {
   cookingLossPercent: number;
   cookedWeightG: number;
   portionsPerBatch: number;
+  servings: number;
   portionWeightG: number;
   packSize: number;
   declaredPackWeightG: number;
@@ -1546,7 +1552,7 @@ function RecipeNutritionalsDialog({ id, open, onOpenChange }: { id: number; open
               <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200/60 dark:border-emerald-800/40 rounded-lg p-3 text-center">
                 <p className="text-xs text-emerald-800 dark:text-emerald-300">Portion Weight</p>
                 <p className="font-bold text-emerald-900 dark:text-emerald-100">{data.portionWeightG}g</p>
-                <p className="text-[10px] text-emerald-700/70 dark:text-emerald-400/70">÷ {data.portionsPerBatch} portions</p>
+                <p className="text-[10px] text-emerald-700/70 dark:text-emerald-400/70">{data.servings === 1 ? "1 portion recipe" : `÷ ${data.servings} portions`}</p>
               </div>
               <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200/60 dark:border-emerald-800/40 rounded-lg p-3 text-center">
                 <p className="text-xs text-emerald-800 dark:text-emerald-300">Pack Weight</p>

@@ -823,6 +823,12 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
   totalWeightG: number;
   cookingLossPercent: number;
   portionsPerBatch: number;
+  // `servings` is the recipe's "Output / Recipe Size" — i.e. how many
+  // portions the ingredient quantities in this recipe add up to.
+  // Typically 1 (one calzone = one portion). It is the correct divisor
+  // for per-portion weight and nutrition, NOT portionsPerBatch (which is
+  // a separate production-batching figure).
+  servings: number;
   packSize: number;
   missingNutritionals: string[];
   missingDeclarations: string[];
@@ -832,6 +838,7 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
 
   const cookingLossPercent = Number(recipe.cookingLossPercent) || 3;
   const portionsPerBatch = recipe.portionsPerBatch ?? 10;
+  const servings = Number(recipe.servings) || 1;
   const packSize = Number(recipe.packSize) || 1;
 
   const directIngs = await db
@@ -951,7 +958,7 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
     .filter(i => !i.labelDeclaration)
     .map(i => i.name);
 
-  return { items, totalWeightG, cookingLossPercent, portionsPerBatch, packSize, missingNutritionals, missingDeclarations };
+  return { items, totalWeightG, cookingLossPercent, portionsPerBatch, servings, packSize, missingNutritionals, missingDeclarations };
 }
 
 router.get("/:id/nutritionals", async (req, res) => {
@@ -959,11 +966,14 @@ router.get("/:id/nutritionals", async (req, res) => {
   if (!parsed.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
 
   try {
-    const { items, totalWeightG, cookingLossPercent, portionsPerBatch, packSize, missingNutritionals, missingDeclarations } =
+    const { items, totalWeightG, cookingLossPercent, portionsPerBatch, servings, packSize, missingNutritionals, missingDeclarations } =
       await gatherRecipeIngredients(parsed.data.id);
 
     const cookedWeightG = totalWeightG * (1 - cookingLossPercent / 100);
-    const portionWeightG = Math.round(cookedWeightG / portionsPerBatch);
+    // Ingredient quantities sum to the recipe-size weight (servings portions),
+    // not a per-batch weight, so divide by servings — not portionsPerBatch.
+    const portionDivisor = servings > 0 ? servings : 1;
+    const portionWeightG = Math.round(cookedWeightG / portionDivisor);
     const declaredPackWeightG = Math.round(portionWeightG * packSize);
 
     const per100g: Record<NutrientKey, number | null> = {
@@ -1002,6 +1012,7 @@ router.get("/:id/nutritionals", async (req, res) => {
       cookingLossPercent,
       cookedWeightG: Math.round(cookedWeightG),
       portionsPerBatch,
+      servings,
       portionWeightG,
       packSize,
       declaredPackWeightG,
