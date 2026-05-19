@@ -964,6 +964,38 @@ async function runStartupMigrations() {
       )
     `);
 
+    // Prep deferrals — see lib/db/migrations/0018_add_prep_deferrals.sql.
+    // /main-prep and /prep-progress query this table unconditionally, so it
+    // must exist on every environment or those endpoints 500 and the Main
+    // Prep / Bases stations render empty.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS prep_deferrals (
+        id SERIAL PRIMARY KEY,
+        plan_id INTEGER NOT NULL REFERENCES production_plans(id) ON DELETE CASCADE,
+        ingredient_id INTEGER REFERENCES ingredients(id) ON DELETE CASCADE,
+        sub_recipe_id INTEGER REFERENCES sub_recipes(id),
+        recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+        tin_number INTEGER NOT NULL,
+        deferred_to_date DATE NOT NULL,
+        user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        deferred_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_prep_deferral_ing
+        ON prep_deferrals (plan_id, ingredient_id, COALESCE(sub_recipe_id, 0), recipe_id, tin_number)
+        WHERE ingredient_id IS NOT NULL
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_prep_deferral_sub
+        ON prep_deferrals (plan_id, sub_recipe_id, recipe_id, tin_number)
+        WHERE sub_recipe_id IS NOT NULL AND ingredient_id IS NULL
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS ix_prep_deferral_target
+        ON prep_deferrals (deferred_to_date)
+    `);
+
     // Leftover filling weight tracking
     await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS leftover_filling_grams INTEGER`);
     await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS leftover_filling_comment TEXT`);
