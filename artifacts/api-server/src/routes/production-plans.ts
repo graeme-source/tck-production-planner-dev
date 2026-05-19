@@ -4383,16 +4383,17 @@ router.get("/:id/kpi", async (req, res) => {
     const hasSnackBreak = breaksRows.some(b => b.breakType !== "lunch" && b.endedAt);
     const breakMinutes = (hasLunch ? configuredLunchMins : 0) + (hasSnackBreak ? configuredBreakMins : 0);
 
-    // Shared denominator: earliest completion across both categories — same team
-    // is working the line regardless of what's being built. When every planned
-    // batch is done, freeze the clock at the last completion so the KPI locks
-    // in and doesn't keep decaying while staff tidy up or move on.
+    // Shared denominator: time between the first and last batch *completion* —
+    // matches the on-floor mental model ("we made 10 batches between 9am and
+    // 10am"). startedAt was previously used here but inflated the window by
+    // the time spent building the first batch. When every planned batch is
+    // done, freeze the clock at the last completion so the KPI locks in and
+    // doesn't keep decaying while staff tidy up or move on.
     let activeMinutes = 0;
-    if (completions.length > 0) {
-      const earliest = completions.reduce((min, c) => {
-        const ts = c.startedAt ?? c.completedAt;
-        return ts < min ? ts : min;
-      }, completions[0].startedAt ?? completions[0].completedAt);
+    if (completions.length > 1) {
+      const earliest = completions.reduce((min, c) => (
+        c.completedAt < min ? c.completedAt : min
+      ), completions[0].completedAt);
       const latest = completions.reduce((max, c) => (
         c.completedAt > max ? c.completedAt : max
       ), completions[0].completedAt);

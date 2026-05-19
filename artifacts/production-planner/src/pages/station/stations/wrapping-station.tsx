@@ -1,8 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
-  useListTimingStandards,
-  useGetStationKpi,
-  getGetStationKpiQueryKey,
   getGetProductionPlanQueryKey,
 } from "@workspace/api-client-react";
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
@@ -15,7 +12,6 @@ import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 import { BreakTracker } from "../shared/break-tracker";
-import { KpiBar } from "../shared/kpi-bar";
 import { getStationCount, getAvailableFromPrev, compareItemsForDisplay } from "../shared/constants";
 import { netTwoPacks as computeNetTwoPacks, effectiveBatchesTarget } from "../shared/recipe-completion";
 

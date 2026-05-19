@@ -1000,6 +1000,15 @@ async function runStartupMigrations() {
     await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS leftover_filling_grams INTEGER`);
     await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS leftover_filling_comment TEXT`);
 
+    // Batches/hour KPI is now builders-only — drop legacy timing_standards rows
+    // for stations we no longer track (mixing, dough_prep, dough_sheeting,
+    // ovens, wrapping, packing). The Settings → Station Timing Standards
+    // table will only show building_1 and building_2 going forward.
+    await db.execute(sql`
+      DELETE FROM timing_standards
+      WHERE station_type NOT IN ('building_1', 'building_2')
+    `);
+
     // Risk assessments feature
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS risk_assessments (

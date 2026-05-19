@@ -223,6 +223,10 @@ router.get("/production-kpis", async (req, res) => {
   }>();
 
   for (const c of completions) {
+    // Builders-only BPH: skip everything except the two building lines so the
+    // Daily Detail table doesn't show fake throughput for stations we no
+    // longer track (mixing, dough_sheeting, ovens, wrapping, packing, etc.).
+    if (c.stationType !== "building_1" && c.stationType !== "building_2") continue;
     const date = c.planDate ?? c.completedAt.toISOString().slice(0, 10);
     const station = effectiveStation(c);
     const key = makeKey(date, station, c.userId, c.planId);
@@ -243,8 +247,10 @@ router.get("/production-kpis", async (req, res) => {
     }
     const s = sessionMap.get(key)!;
     s.batchCount++;
-    const ts = c.startedAt ?? c.completedAt;
-    if (ts < s.earliestAt) s.earliestAt = ts;
+    // Window = first to last *completion*. Matches the on-floor mental model
+    // ("we made 10 batches between 9am and 10am") instead of including the
+    // build time of the first batch.
+    if (c.completedAt < s.earliestAt) s.earliestAt = c.completedAt;
     if (c.completedAt > s.latestAt) s.latestAt = c.completedAt;
     s.recipes.set(c.recipeName, (s.recipes.get(c.recipeName) ?? 0) + 1);
   }
@@ -283,7 +289,11 @@ router.get("/production-kpis", async (req, res) => {
   }> = [];
 
   for (const s of sessionMap.values()) {
-    const totalElapsed = Math.max(0, (s.latestAt.getTime() - s.earliestAt.getTime()) / 60000);
+    // Need at least two completions to span a window. A single completion has
+    // no first-to-last gap so it can't produce a meaningful BPH.
+    const totalElapsed = s.batchCount > 1
+      ? Math.max(0, (s.latestAt.getTime() - s.earliestAt.getTime()) / 60000)
+      : 0;
     const activeMinutes = Math.max(0, totalElapsed - s.breakMinutes);
     const bph = activeMinutes > 0 ? s.batchCount / (activeMinutes / 60) : 0;
     const standard = standardsMap.get(s.station);

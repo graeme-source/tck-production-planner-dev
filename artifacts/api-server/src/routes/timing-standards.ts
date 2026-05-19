@@ -31,15 +31,10 @@ const CreateTimingStandardBody = z.object({
 });
 
 const REQUIRED_STATIONS = [
-  { stationType: "mixing", stationLabel: "Mixing & Cooking" },
-  { stationType: "dough_prep", stationLabel: "Dough Prep" },
-  { stationType: "dough_sheeting", stationLabel: "Dough Sheeting" },
   { stationType: "building_1", stationLabel: "Building Line 1" },
   { stationType: "building_2", stationLabel: "Building Line 2" },
-  { stationType: "ovens", stationLabel: "Ovens" },
-  { stationType: "wrapping", stationLabel: "Wrapping" },
-  { stationType: "packing", stationLabel: "Packing" },
 ] as const;
+const ALLOWED_STATION_TYPES = new Set(REQUIRED_STATIONS.map(s => s.stationType));
 
 router.get("/", async (_req, res) => {
   let rows = await db.select().from(timingStandardsTable).orderBy(timingStandardsTable.stationLabel);
@@ -51,7 +46,7 @@ router.get("/", async (_req, res) => {
     );
     rows = await db.select().from(timingStandardsTable).orderBy(timingStandardsTable.stationLabel);
   }
-  res.json(rows.map(mapRow));
+  res.json(rows.filter(r => ALLOWED_STATION_TYPES.has(r.stationType as typeof REQUIRED_STATIONS[number]["stationType"])).map(mapRow));
 });
 
 router.post("/", requireAdmin, validate(CreateTimingStandardBody), async (req, res) => {
