@@ -9,6 +9,7 @@ import {
   usersTable,
 } from "@workspace/db";
 import { eq, and, desc, sql } from "drizzle-orm";
+import { sendEmail } from "../lib/email";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Label Stock Check tool
@@ -33,7 +34,25 @@ const SETTINGS_KEYS = {
   emptyRollWeight: "label_empty_roll_weight_g",
   labelWeight: "label_label_weight_g",
   defaultOrderQty: "label_default_order_qty",
+  labelSpec: "label_order_spec",
+  orderingEmail: "label_ordering_email",
 } as const;
+
+async function readSettingText(key: string): Promise<string> {
+  const [row] = await db.select({ value: appSettingsTable.value })
+    .from(appSettingsTable)
+    .where(eq(appSettingsTable.key, key))
+    .limit(1);
+  return row?.value ?? "";
+}
+
+async function writeSettingText(key: string, value: string): Promise<void> {
+  await db.execute(sql`
+    INSERT INTO app_settings (key, value, updated_at)
+    VALUES (${key}, ${value}, now())
+    ON CONFLICT (key) DO UPDATE SET value = ${value}, updated_at = now()
+  `);
+}
 
 async function readSetting(key: string, fallback: number): Promise<number> {
   const [row] = await db.select({ value: appSettingsTable.value })
@@ -52,19 +71,27 @@ async function writeSetting(key: string, value: number): Promise<void> {
   `);
 }
 
-// GET /settings — read the three globals.
+// GET /settings — read the globals.
 router.get("/settings", async (_req, res) => {
-  const [emptyRollWeight, labelWeight, defaultOrderQty] = await Promise.all([
+  const [emptyRollWeight, labelWeight, defaultOrderQty, labelSpec, orderingEmail] = await Promise.all([
     readSetting(SETTINGS_KEYS.emptyRollWeight, 0),
     readSetting(SETTINGS_KEYS.labelWeight, 0),
     readSetting(SETTINGS_KEYS.defaultOrderQty, 30000),
+    readSettingText(SETTINGS_KEYS.labelSpec),
+    readSettingText(SETTINGS_KEYS.orderingEmail),
   ]);
-  res.json({ emptyRollWeight, labelWeight, defaultOrderQty });
+  res.json({ emptyRollWeight, labelWeight, defaultOrderQty, labelSpec, orderingEmail });
 });
 
-// PUT /settings — patch any subset of the three globals.
+// PUT /settings — patch any subset of the globals.
 router.put("/settings", async (req, res) => {
-  const body = req.body as Partial<{ emptyRollWeight: number; labelWeight: number; defaultOrderQty: number }>;
+  const body = req.body as Partial<{
+    emptyRollWeight: number;
+    labelWeight: number;
+    defaultOrderQty: number;
+    labelSpec: string;
+    orderingEmail: string;
+  }>;
   if (body.emptyRollWeight !== undefined) {
     if (typeof body.emptyRollWeight !== "number" || body.emptyRollWeight < 0) {
       res.status(400).json({ error: "emptyRollWeight must be a non-negative number" }); return;
@@ -82,6 +109,22 @@ router.put("/settings", async (req, res) => {
       res.status(400).json({ error: "defaultOrderQty must be a non-negative integer" }); return;
     }
     await writeSetting(SETTINGS_KEYS.defaultOrderQty, body.defaultOrderQty);
+  }
+  if (body.labelSpec !== undefined) {
+    if (typeof body.labelSpec !== "string") {
+      res.status(400).json({ error: "labelSpec must be a string" }); return;
+    }
+    await writeSettingText(SETTINGS_KEYS.labelSpec, body.labelSpec);
+  }
+  if (body.orderingEmail !== undefined) {
+    if (typeof body.orderingEmail !== "string") {
+      res.status(400).json({ error: "orderingEmail must be a string" }); return;
+    }
+    const trimmed = body.orderingEmail.trim();
+    if (trimmed !== "" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      res.status(400).json({ error: "orderingEmail must be a valid email address" }); return;
+    }
+    await writeSettingText(SETTINGS_KEYS.orderingEmail, trimmed);
   }
   res.json({ ok: true });
 });
@@ -552,5 +595,76 @@ router.post("/calculate-order", async (req, res) => {
     })),
   });
 });
+
+// POST /send-order — emails the current order quantities to the configured
+// supplier address. Body: { items: [{ recipeName, orderQty }], labelSpec?,
+// orderingEmail? }. If labelSpec/orderingEmail aren't supplied, the saved
+// settings are used. Only rows with orderQty > 0 are included.
+router.post("/send-order", async (req, res) => {
+  const body = req.body as {
+    items?: Array<{ recipeName?: string; orderQty?: number }>;
+    labelSpec?: string;
+    orderingEmail?: string;
+  };
+
+  const items = (body.items ?? [])
+    .map(it => ({
+      recipeName: typeof it.recipeName === "string" ? it.recipeName.trim() : "",
+      orderQty: Number(it.orderQty) || 0,
+    }))
+    .filter(it => it.recipeName !== "" && it.orderQty > 0);
+  if (items.length === 0) {
+    res.status(400).json({ error: "No order rows with a quantity > 0 to send" });
+    return;
+  }
+
+  const labelSpec = (body.labelSpec ?? await readSettingText(SETTINGS_KEYS.labelSpec)).trim();
+  const to = (body.orderingEmail ?? await readSettingText(SETTINGS_KEYS.orderingEmail)).trim();
+  if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+    res.status(400).json({ error: "Set a valid ordering email address first" });
+    return;
+  }
+
+  const totalQty = items.reduce((s, it) => s + it.orderQty, 0);
+  const textLines = items.map(it => `${it.recipeName} — ${it.orderQty.toLocaleString()}`);
+  const text = [
+    labelSpec || "Please can you produce the following label quantities:",
+    "",
+    ...textLines,
+    "",
+    `Total: ${totalQty.toLocaleString()} labels`,
+  ].join("\n");
+
+  const htmlRows = items
+    .map(it => `<tr><td style="padding:4px 12px 4px 0;">${escapeHtml(it.recipeName)}</td><td style="padding:4px 0;text-align:right;font-variant-numeric:tabular-nums;">${it.orderQty.toLocaleString()}</td></tr>`)
+    .join("");
+  const html = `<!DOCTYPE html>
+<html><body style="font-family:sans-serif;max-width:560px;margin:24px auto;color:#222;">
+${labelSpec ? `<div style="white-space:pre-wrap;margin-bottom:16px;">${escapeHtml(labelSpec)}</div>` : ""}
+<table style="border-collapse:collapse;">${htmlRows}</table>
+<p style="margin-top:16px;font-weight:600;">Total: ${totalQty.toLocaleString()} labels</p>
+</body></html>`;
+
+  try {
+    await sendEmail({
+      to,
+      subject: `Label order — ${totalQty.toLocaleString()} labels`,
+      text,
+      html,
+    });
+    res.json({ ok: true, to, totalQty, itemCount: items.length });
+  } catch (err) {
+    console.error("[label-stock] send-order failed:", err);
+    res.status(502).json({ error: "Failed to send email", detail: String(err) });
+  }
+});
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
 
 export default router;

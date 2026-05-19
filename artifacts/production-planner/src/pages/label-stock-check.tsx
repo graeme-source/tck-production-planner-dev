@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, type ReactNode } from "react";
 import { Link } from "wouter";
 import { PageHeader } from "@/components/page-header";
-import { Loader2, Plus, Trash2, RefreshCw, ChevronLeft, Tag, Scale, Save, Search, Pencil, X as XIcon } from "lucide-react";
+import { Loader2, Plus, Trash2, RefreshCw, ChevronLeft, Tag, Scale, Save, Search, Pencil, X as XIcon, Mail, Send } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 
@@ -23,6 +23,8 @@ interface Settings {
   emptyRollWeight: number;
   labelWeight: number;
   defaultOrderQty: number;
+  labelSpec: string;
+  orderingEmail: string;
 }
 
 interface LatestCheck {
@@ -79,6 +81,7 @@ export default function LabelStockCheckPage() {
   const [overrideDraft, setOverrideDraft] = useState("");
   const [savingSettings, setSavingSettings] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [sendingOrder, setSendingOrder] = useState(false);
 
   // ── Initial load ────────────────────────────────────────────────────────────
   const fetchAll = useCallback(async () => {
@@ -152,6 +155,42 @@ export default function LabelStockCheckPage() {
       setSavingSettings(false);
     }
   };
+
+  // ── Send order email ────────────────────────────────────────────────────────
+  // POSTs the current `orderResult` items (only those with orderQty > 0) to
+  // the backend, which assembles the email using the saved labelSpec as the
+  // body intro and the orderingEmail as the recipient.
+  const sendOrderEmail = useCallback(async () => {
+    if (!orderResult || !settings) return;
+    const items = orderResult
+      .filter(o => o.orderQty > 0)
+      .map(o => ({ recipeName: o.recipeName, orderQty: o.orderQty }));
+    if (items.length === 0) {
+      toast({ title: "Nothing to send", description: "No order quantities are above zero.", variant: "destructive" });
+      return;
+    }
+    if (!settings.orderingEmail.trim()) {
+      toast({ title: "Set an ordering email first", description: "Fill in the Ordering email field above.", variant: "destructive" });
+      return;
+    }
+    if (!confirm(`Send this label order to ${settings.orderingEmail}?`)) return;
+    setSendingOrder(true);
+    try {
+      const res = await fetch("/api/label-stock/send-order", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Send failed");
+      toast({ title: "Order email sent", description: `${data.itemCount} lines to ${data.to}` });
+    } catch (err) {
+      toast({ title: "Couldn't send", description: String(err), variant: "destructive" });
+    } finally {
+      setSendingOrder(false);
+    }
+  }, [orderResult, settings]);
 
   // ── Per-row stock check save ────────────────────────────────────────────────
   // `silent` skips the success toast — used by auto-save-on-blur so the
@@ -313,6 +352,27 @@ export default function LabelStockCheckPage() {
             hint="Used as the starting point for the rebalance."
           />
         </div>
+
+        {/* Email-the-order settings — spec text appears in the email body
+            above the recipe/quantity list, and orderingEmail is the supplier
+            address the email gets sent to. Both are saved on blur. */}
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_18rem] gap-4 mt-5 pt-5 border-t border-border">
+          <SettingsTextArea
+            label="Label specification (email body)"
+            value={settings.labelSpec}
+            onCommit={v => saveSettings({ labelSpec: v })}
+            placeholder="Paste the supplier-facing spec / body copy here — e.g. label dimensions, paper, finish, lead time…"
+            hint="Goes into the order email above the recipe + quantity list."
+          />
+          <SettingsTextInput
+            label="Ordering email"
+            value={settings.orderingEmail}
+            onCommit={v => saveSettings({ orderingEmail: v })}
+            placeholder="orders@supplier.com"
+            hint="Recipient when you press Send order email."
+            icon={<Mail className="w-3.5 h-3.5" />}
+          />
+        </div>
       </div>
 
       {/* ── Order summary + total input ───────────────────────────────────── */}
@@ -350,6 +410,24 @@ export default function LabelStockCheckPage() {
                 summaryTotal === (totalToOrder ?? 0) ? "text-emerald-600" : "text-amber-600"
               )}>{summaryTotal.toLocaleString()}</span>
             </div>
+            <button
+              onClick={sendOrderEmail}
+              disabled={
+                sendingOrder
+                || !orderResult
+                || orderResult.filter(o => o.orderQty > 0).length === 0
+                || !settings.orderingEmail.trim()
+              }
+              className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+              title={
+                !settings.orderingEmail.trim()
+                  ? "Set the Ordering email in Global Settings first"
+                  : `Email the order to ${settings.orderingEmail}`
+              }
+            >
+              {sendingOrder ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              Send order email
+            </button>
           </div>
         </div>
       </div>
@@ -658,6 +736,62 @@ function SettingsNumberInput({ label, unit, value, step, hint, onCommit }: {
         />
         <span className="text-sm text-muted-foreground">{unit}</span>
       </div>
+      {hint && <p className="text-xs text-muted-foreground mt-1">{hint}</p>}
+    </label>
+  );
+}
+
+function SettingsTextArea({ label, value, hint, placeholder, onCommit }: {
+  label: string;
+  value: string;
+  hint?: string;
+  placeholder?: string;
+  onCommit: (v: string) => void;
+}) {
+  const [text, setText] = useState(value);
+  useEffect(() => { setText(value); }, [value]);
+  const commit = () => { if (text !== value) onCommit(text); };
+  return (
+    <label className="block">
+      <span className="block text-xs text-muted-foreground uppercase tracking-wider mb-1">{label}</span>
+      <textarea
+        value={text}
+        onChange={e => setText(e.target.value)}
+        onBlur={commit}
+        placeholder={placeholder}
+        rows={4}
+        className="w-full px-3 py-2 text-sm bg-background border border-border rounded-lg resize-y min-h-[6rem]"
+      />
+      {hint && <p className="text-xs text-muted-foreground mt-1">{hint}</p>}
+    </label>
+  );
+}
+
+function SettingsTextInput({ label, value, hint, placeholder, icon, onCommit }: {
+  label: string;
+  value: string;
+  hint?: string;
+  placeholder?: string;
+  icon?: ReactNode;
+  onCommit: (v: string) => void;
+}) {
+  const [text, setText] = useState(value);
+  useEffect(() => { setText(value); }, [value]);
+  const commit = () => { if (text.trim() !== value.trim()) onCommit(text.trim()); };
+  return (
+    <label className="block">
+      <span className="block text-xs text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-1">
+        {icon}{label}
+      </span>
+      <input
+        type="email"
+        value={text}
+        onChange={e => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+        placeholder={placeholder}
+        className="w-full px-3 py-2 text-sm bg-background border border-border rounded-lg"
+      />
       {hint && <p className="text-xs text-muted-foreground mt-1">{hint}</p>}
     </label>
   );

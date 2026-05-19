@@ -1000,6 +1000,57 @@ async function runStartupMigrations() {
     await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS leftover_filling_grams INTEGER`);
     await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS leftover_filling_comment TEXT`);
 
+    // Label Stock Check tool — see lib/db/migrations/0019 + 0020. Without
+    // these tables, /api/label-stock/ 500s and the page fires its red
+    // "Failed to load" toast on every page open.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS label_recipes (
+        id serial PRIMARY KEY,
+        recipe_id integer REFERENCES recipes(id) ON DELETE CASCADE,
+        misc_name text,
+        misc_dpt_pct numeric(6,3),
+        mapped_recipe_id integer REFERENCES recipes(id) ON DELETE SET NULL,
+        hidden boolean NOT NULL DEFAULT false,
+        notes text,
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now(),
+        CONSTRAINT label_recipes_kind_check CHECK (
+          (recipe_id IS NOT NULL AND misc_name IS NULL)
+          OR (recipe_id IS NULL AND misc_name IS NOT NULL)
+        )
+      )
+    `);
+    await db.execute(sql`ALTER TABLE label_recipes ADD COLUMN IF NOT EXISTS hidden boolean NOT NULL DEFAULT false`);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_label_recipe_real
+        ON label_recipes (recipe_id) WHERE recipe_id IS NOT NULL
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_label_recipe_misc
+        ON label_recipes (misc_name) WHERE misc_name IS NOT NULL
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_label_recipes_hidden ON label_recipes (hidden)`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS label_stock_checks (
+        id serial PRIMARY KEY,
+        label_recipe_id integer NOT NULL REFERENCES label_recipes(id) ON DELETE CASCADE,
+        num_rolls integer NOT NULL,
+        total_weight_g numeric(12,3) NOT NULL,
+        empty_roll_weight_g_used numeric(10,3) NOT NULL,
+        label_weight_g_used numeric(10,4) NOT NULL,
+        computed_count integer NOT NULL,
+        user_id integer REFERENCES app_users(id) ON DELETE SET NULL,
+        checked_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS ix_label_stock_check_recipe_time
+        ON label_stock_checks (label_recipe_id, checked_at DESC)
+    `);
+    await db.execute(sql`INSERT INTO app_settings (key, value, updated_at) VALUES ('label_empty_roll_weight_g', '0', now()) ON CONFLICT (key) DO NOTHING`);
+    await db.execute(sql`INSERT INTO app_settings (key, value, updated_at) VALUES ('label_label_weight_g', '0', now()) ON CONFLICT (key) DO NOTHING`);
+    await db.execute(sql`INSERT INTO app_settings (key, value, updated_at) VALUES ('label_default_order_qty', '30000', now()) ON CONFLICT (key) DO NOTHING`);
+
     // Batches/hour KPI is now builders-only — drop legacy timing_standards rows
     // for stations we no longer track (mixing, dough_prep, dough_sheeting,
     // ovens, wrapping, packing). The Settings → Station Timing Standards
