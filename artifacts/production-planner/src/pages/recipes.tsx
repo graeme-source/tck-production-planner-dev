@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useListRecipes, useListIngredients, useListSubRecipes, useGetRecipe, useListCategoryDefaults } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
@@ -6,7 +6,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
 import { IngredientCombobox } from "@/components/ingredient-combobox";
-import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, QrCode, Filter } from "lucide-react";
+import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, QrCode, Filter, Scale } from "lucide-react";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -246,6 +246,39 @@ function RecipeForm({
   const watchedServings = watch("servings");
   const watchedIngredients = watch("ingredients");
   const watchedSubRecipes = watch("subRecipes");
+  const watchedCookingLoss = watch("cookingLossPercent");
+  const watchedPortionsPerBatch = watch("portionsPerBatch");
+  const watchedPackSize = watch("packSize");
+
+  // Live declared-weight calculator — runs on every keystroke so the user
+  // sees portion and pack weight update like a spreadsheet as they edit
+  // ingredients, sub-recipes, cooking-loss %, portions per batch, or pack
+  // size. Quantities are stored in the ingredient's native unit (kg or g);
+  // we normalise to grams here.
+  const liveWeights = useMemo(() => {
+    let rawG = 0;
+    for (const row of watchedIngredients ?? []) {
+      if (!row) continue;
+      const ing = localIngredients.find(i => i.id === Number(row.ingredientId));
+      if (!ing) continue;
+      const qty = Number(row.quantity) || 0;
+      rawG += ing.unit === "kg" ? qty * 1000 : qty;
+    }
+    for (const row of watchedSubRecipes ?? []) {
+      if (!row) continue;
+      const sub = subRecipes.find(s => s.id === Number(row.subRecipeId));
+      if (!sub) continue;
+      const qty = Number(row.quantity) || 0;
+      rawG += sub.yieldUnit === "kg" ? qty * 1000 : qty;
+    }
+    const lossPct = Math.max(0, Math.min(50, Number(watchedCookingLoss ?? 3) || 0));
+    const cookedG = rawG * (1 - lossPct / 100);
+    const ppb = Math.max(1, Number(watchedPortionsPerBatch) || 1);
+    const portionG = cookedG / ppb;
+    const ps = Math.max(1, Number(watchedPackSize) || 1);
+    const packG = portionG * ps;
+    return { rawG, cookedG, portionG, packG, lossPct, ppb, ps };
+  }, [watchedIngredients, watchedSubRecipes, watchedCookingLoss, watchedPortionsPerBatch, watchedPackSize, localIngredients, subRecipes]);
 
   const [addingCategory, setAddingCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
@@ -519,6 +552,49 @@ function RecipeForm({
               Pack overhead (packaging + labour): <strong className="text-foreground">£{fmt(overhead)}</strong>.
               Ingredient costs are calculated automatically from the recipe ingredients below.
             </p>
+          )}
+        </div>
+
+        {/* Declared Weights — live spreadsheet-style calculation. Sums every
+            ingredient + sub-recipe in grams, applies the recipe's cooking-loss
+            %, then divides by portions-per-batch and multiplies by pack size.
+            Updates instantly while editing the recipe so the label weight is
+            visible without saving. */}
+        <div className="bg-emerald-50/40 dark:bg-emerald-950/10 rounded-xl p-4 space-y-2 border border-emerald-200/60 dark:border-emerald-900/40">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <h4 className="text-sm font-semibold flex items-center gap-2 text-emerald-900 dark:text-emerald-200">
+              <Scale className="w-4 h-4" /> Declared Weights
+              <span className="text-xs font-normal text-emerald-700/70 dark:text-emerald-300/70">live · for labelling</span>
+            </h4>
+            <span className="text-[11px] text-muted-foreground">
+              {((watchedIngredients?.length ?? 0))} ingredient{(watchedIngredients?.length ?? 0) !== 1 ? "s" : ""}
+              {(watchedSubRecipes?.length ?? 0) > 0 ? ` + ${watchedSubRecipes?.length} sub-recipe${(watchedSubRecipes?.length ?? 0) !== 1 ? "s" : ""}` : ""}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+            <div className="bg-card/60 rounded-lg p-2.5 border border-border/50">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Total raw</p>
+              <p className="font-bold tabular-nums text-base mt-0.5">{liveWeights.rawG > 0 ? `${Math.round(liveWeights.rawG)} g` : "—"}</p>
+              <p className="text-[10px] text-muted-foreground">Sum of ingredients</p>
+            </div>
+            <div className="bg-card/60 rounded-lg p-2.5 border border-border/50">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">After cooking</p>
+              <p className="font-bold tabular-nums text-base mt-0.5">{liveWeights.cookedG > 0 ? `${Math.round(liveWeights.cookedG)} g` : "—"}</p>
+              <p className="text-[10px] text-muted-foreground">−{liveWeights.lossPct}% loss</p>
+            </div>
+            <div className="bg-emerald-100/70 dark:bg-emerald-900/30 rounded-lg p-2.5 border border-emerald-300/70 dark:border-emerald-700/60">
+              <p className="text-[10px] uppercase tracking-wide text-emerald-800 dark:text-emerald-300 font-semibold">Portion weight</p>
+              <p className="font-bold tabular-nums text-base mt-0.5 text-emerald-900 dark:text-emerald-100">{liveWeights.portionG > 0 ? `${Math.round(liveWeights.portionG)} g` : "—"}</p>
+              <p className="text-[10px] text-emerald-800/70 dark:text-emerald-300/70">÷ {liveWeights.ppb} portion{liveWeights.ppb !== 1 ? "s" : ""}/batch</p>
+            </div>
+            <div className="bg-emerald-100/70 dark:bg-emerald-900/30 rounded-lg p-2.5 border border-emerald-300/70 dark:border-emerald-700/60">
+              <p className="text-[10px] uppercase tracking-wide text-emerald-800 dark:text-emerald-300 font-semibold">Pack weight</p>
+              <p className="font-bold tabular-nums text-base mt-0.5 text-emerald-900 dark:text-emerald-100">{liveWeights.packG > 0 ? `${Math.round(liveWeights.packG)} g` : "—"}</p>
+              <p className="text-[10px] text-emerald-800/70 dark:text-emerald-300/70">× {liveWeights.ps} portion{liveWeights.ps !== 1 ? "s" : ""}/pack</p>
+            </div>
+          </div>
+          {liveWeights.rawG === 0 && (
+            <p className="text-[11px] text-muted-foreground italic">Add ingredients below to see the declared weights.</p>
           )}
         </div>
 
@@ -1408,6 +1484,8 @@ interface NutritionalsData {
   cookedWeightG: number;
   portionsPerBatch: number;
   portionWeightG: number;
+  packSize: number;
+  declaredPackWeightG: number;
   per100g: Record<string, number | null>;
   perPortion: Record<string, number | null>;
   completeness: { totalIngredients: number; missingNutritionals: string[]; missingDeclarations: string[]; isComplete: boolean };
@@ -1455,7 +1533,7 @@ function RecipeNutritionalsDialog({ id, open, onOpenChange }: { id: number; open
         {error && <p className="text-destructive text-sm py-4">{error}</p>}
         {data && (
           <div className="space-y-4 mt-2">
-            <div className="grid grid-cols-3 gap-3 text-sm">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
               <div className="bg-secondary/30 rounded-lg p-3 text-center">
                 <p className="text-xs text-muted-foreground">Raw Weight</p>
                 <p className="font-bold">{data.totalRawWeightG}g</p>
@@ -1465,10 +1543,15 @@ function RecipeNutritionalsDialog({ id, open, onOpenChange }: { id: number; open
                 <p className="font-bold">{data.cookedWeightG}g</p>
                 <p className="text-[10px] text-muted-foreground">(-{data.cookingLossPercent}% loss)</p>
               </div>
-              <div className="bg-secondary/30 rounded-lg p-3 text-center">
-                <p className="text-xs text-muted-foreground">Portion Weight</p>
-                <p className="font-bold">{data.portionWeightG}g</p>
-                <p className="text-[10px] text-muted-foreground">({data.portionsPerBatch} portions)</p>
+              <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200/60 dark:border-emerald-800/40 rounded-lg p-3 text-center">
+                <p className="text-xs text-emerald-800 dark:text-emerald-300">Portion Weight</p>
+                <p className="font-bold text-emerald-900 dark:text-emerald-100">{data.portionWeightG}g</p>
+                <p className="text-[10px] text-emerald-700/70 dark:text-emerald-400/70">÷ {data.portionsPerBatch} portions</p>
+              </div>
+              <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200/60 dark:border-emerald-800/40 rounded-lg p-3 text-center">
+                <p className="text-xs text-emerald-800 dark:text-emerald-300">Pack Weight</p>
+                <p className="font-bold text-emerald-900 dark:text-emerald-100">{data.declaredPackWeightG}g</p>
+                <p className="text-[10px] text-emerald-700/70 dark:text-emerald-400/70">× {data.packSize} portion{data.packSize !== 1 ? "s" : ""}/pack</p>
               </div>
             </div>
 

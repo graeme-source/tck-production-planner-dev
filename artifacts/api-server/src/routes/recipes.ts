@@ -823,6 +823,7 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
   totalWeightG: number;
   cookingLossPercent: number;
   portionsPerBatch: number;
+  packSize: number;
   missingNutritionals: string[];
   missingDeclarations: string[];
 }> {
@@ -831,6 +832,7 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
 
   const cookingLossPercent = Number(recipe.cookingLossPercent) || 3;
   const portionsPerBatch = recipe.portionsPerBatch ?? 10;
+  const packSize = Number(recipe.packSize) || 1;
 
   const directIngs = await db
     .select({
@@ -949,7 +951,7 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
     .filter(i => !i.labelDeclaration)
     .map(i => i.name);
 
-  return { items, totalWeightG, cookingLossPercent, portionsPerBatch, missingNutritionals, missingDeclarations };
+  return { items, totalWeightG, cookingLossPercent, portionsPerBatch, packSize, missingNutritionals, missingDeclarations };
 }
 
 router.get("/:id/nutritionals", async (req, res) => {
@@ -957,11 +959,12 @@ router.get("/:id/nutritionals", async (req, res) => {
   if (!parsed.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
 
   try {
-    const { items, totalWeightG, cookingLossPercent, portionsPerBatch, missingNutritionals, missingDeclarations } =
+    const { items, totalWeightG, cookingLossPercent, portionsPerBatch, packSize, missingNutritionals, missingDeclarations } =
       await gatherRecipeIngredients(parsed.data.id);
 
     const cookedWeightG = totalWeightG * (1 - cookingLossPercent / 100);
     const portionWeightG = Math.round(cookedWeightG / portionsPerBatch);
+    const declaredPackWeightG = Math.round(portionWeightG * packSize);
 
     const per100g: Record<NutrientKey, number | null> = {
       energyKj: null, energyKcal: null, fat: null, saturates: null,
@@ -1000,6 +1003,8 @@ router.get("/:id/nutritionals", async (req, res) => {
       cookedWeightG: Math.round(cookedWeightG),
       portionsPerBatch,
       portionWeightG,
+      packSize,
+      declaredPackWeightG,
       per100g,
       perPortion,
       completeness: {
