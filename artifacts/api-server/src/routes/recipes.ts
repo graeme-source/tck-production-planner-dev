@@ -358,6 +358,43 @@ router.get("/:id", async (req, res) => {
     };
   });
 
+  const subIngredientsBySubId: Record<number, Array<{
+    ingredientName: string | null;
+    unit: string | null;
+    quantity: number;
+    processingRatio: number;
+    costPerUnit: number;
+  }>> = {};
+  if (subRecipeIds.length > 0) {
+    const subIngRows = await db
+      .select({
+        subRecipeId: subRecipeIngredientsTable.subRecipeId,
+        ingredientName: ingredientsTable.name,
+        unit: ingredientsTable.unit,
+        quantity: subRecipeIngredientsTable.quantity,
+        packWeight: ingredientsTable.packWeight,
+        costPerPack: ingredientsTable.costPerPack,
+        processingRatio: ingredientsTable.processingRatio,
+      })
+      .from(subRecipeIngredientsTable)
+      .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
+      .where(inArray(subRecipeIngredientsTable.subRecipeId, subRecipeIds));
+    for (const r of subIngRows) {
+      const pw = Number(r.packWeight);
+      const cpp = Number(r.costPerPack);
+      const costPerUnit = pw > 0 ? cpp / pw : 0;
+      const entry = {
+        ingredientName: r.ingredientName,
+        unit: r.unit,
+        quantity: Number(r.quantity),
+        processingRatio: Number(r.processingRatio) || 1,
+        costPerUnit,
+      };
+      if (!subIngredientsBySubId[r.subRecipeId]) subIngredientsBySubId[r.subRecipeId] = [];
+      subIngredientsBySubId[r.subRecipeId].push(entry);
+    }
+  }
+
   const enrichedSubRecipes = subRows.map(s => {
     const qty = Number(s.quantity);
     const subYield = Number(s.subYield);
@@ -365,6 +402,21 @@ router.get("/:id", async (req, res) => {
     const subBatchCost = subYield > 0 ? subCostPerUnitVal * subYield : 0;
     const lineCostBatch = qty * subCostPerUnitVal;
     const lineCostPortion = servings > 0 ? lineCostBatch / servings : 0;
+
+    const portionFraction = subYield > 0 && servings > 0 ? (qty / subYield) / servings : 0;
+    const breakdown = (subIngredientsBySubId[s.subRecipeId!] ?? []).map(ing => {
+      const cookedQtyPerPortion = ing.quantity * portionFraction;
+      const rawQtyPerPortion = cookedQtyPerPortion / ing.processingRatio;
+      const allocatedCostPortion = rawQtyPerPortion * ing.costPerUnit;
+      return {
+        ingredientName: ing.ingredientName,
+        unit: ing.unit,
+        quantity: cookedQtyPerPortion,
+        costPerUnit: ing.costPerUnit,
+        allocatedCostBatch: allocatedCostPortion * servings,
+        allocatedCostPortion,
+      };
+    });
 
     return {
       id: s.id,
@@ -377,6 +429,7 @@ router.get("/:id", async (req, res) => {
       subCostPerUnit: subCostPerUnitVal,
       lineCostBatch,
       lineCostPortion,
+      breakdown,
       marinadeForIngredientId: s.marinadeForIngredientId ?? null,
       includeInFillingMix: s.includeInFillingMix,
       quid: s.quid ?? false,
