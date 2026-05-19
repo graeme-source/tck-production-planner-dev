@@ -3,17 +3,17 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useSearch, useLocation } from "wouter";
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
-import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, subWeeks, subMonths, isToday, isYesterday, differenceInCalendarDays } from "date-fns";
+import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, subWeeks, subMonths, isToday, isYesterday, isSameDay, addDays, addWeeks, differenceInCalendarDays } from "date-fns";
 import {
   Loader2, Coffee, Utensils, Clock, Users,
   ArrowUp, ArrowDown, Minus as MinusIcon,
   TrendingUp, TrendingDown, Activity, Layers, Target, Timer,
-  ChevronDown, ChevronUp, ChevronRight, Thermometer, ShieldCheck,
-  Package, Zap, CalendarDays, Trophy, Snail, Hourglass,
+  ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Thermometer, ShieldCheck,
+  Package, Zap, Calendar as CalendarIcon, CalendarDays, Trophy, Snail, Hourglass,
   Lightbulb, AlertTriangle, CheckCircle, Filter, Play, Square,
   MessageSquare, Send, ClipboardCheck, FileText, Eye, EyeOff,
   Droplets, UserCog, ClipboardList, Flame, HardHat, Printer, Check, Pencil, Plus,
-  PoundSterling,
+  PoundSterling, Sunrise, Sunset,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
@@ -357,7 +357,10 @@ export default function Reports() {
   const [fromDate, setFromDate] = useState(todayStr);
   const [toDate, setToDate] = useState(todayStr);
 
-  const showDatePicker = activeTab !== "improvements" && activeTab !== "issues";
+  // Temperature Log drives its own week-by-week navigation, so the global
+  // From/To picker is hidden when that sub-tab is active.
+  const onTemperatureSubTab = activeTab === "haccp" && haccpSubTab === "temperatures";
+  const showDatePicker = activeTab !== "improvements" && activeTab !== "issues" && !onTemperatureSubTab;
 
   // Default range for employees tab: last 30 days (only applied once when tab first opened).
   const [employeesRangeInit, setEmployeesRangeInit] = useState(false);
@@ -516,7 +519,7 @@ export default function Reports() {
                 </ul>
               </nav>
               {haccpSubTab === "evidence" && <HaccpTab fromDate={fromDate} toDate={toDate} />}
-              {haccpSubTab === "temperatures" && <TemperatureRecordsTab fromDate={fromDate} toDate={toDate} />}
+              {haccpSubTab === "temperatures" && <TemperatureRecordsTab />}
               {haccpSubTab === "cooling-weights" && <BatchWeightsTab fromDate={fromDate} toDate={toDate} />}
             </>
           )}
@@ -1058,71 +1061,135 @@ interface TemperatureRecord {
   ingredientId: number | null;
   ingredientName: string | null;
   trayIndex: number | null;
+  locationId: number | null;
   locationName: string | null;
 }
 
-type TemperatureCategoryFilter = "all" | "cooked" | "fridge" | "freezer" | "fridge_freezer";
+interface StorageLocationLite {
+  id: number;
+  name: string;
+  zone: "fridge" | "freezer" | "ambient";
+}
 
-const RECORD_TYPE_LABEL: Record<string, string> = {
-  cooked_core: "Cooked core",
-  fridge_opening: "Fridge — opening",
-  fridge_closing: "Fridge — closing",
-  freezer_opening: "Freezer — opening",
-  freezer_closing: "Freezer — closing",
-};
+// Slot value used by the calendar detail view. AM = opening check, PM =
+// closing check. A missing slot is a non-completion which we want to flag
+// visually.
+interface SlotReading {
+  temperatureC: number;
+  recordedAt: string;
+  userName: string | null;
+  safe: boolean;
+}
 
-function TemperatureRecordsTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
+const TEMP_THRESHOLDS = {
+  fridge: { maxSafe: 8 },
+  freezer: { maxSafe: -15 },
+} as const;
+
+function isReadingSafe(zone: "fridge" | "freezer", temp: number): boolean {
+  if (zone === "fridge") return temp <= TEMP_THRESHOLDS.fridge.maxSafe;
+  return temp <= TEMP_THRESHOLDS.freezer.maxSafe;
+}
+
+// Calendar-based Temperature Log. Mirrors the production-plan weekly
+// calendar so spotting missing readings is glanceable: each fridge/freezer
+// gets an AM (opening) and PM (closing) slot per day. Cooked-core readings
+// sit in a collapsible section below the day detail.
+function TemperatureRecordsTab() {
   const [records, setRecords] = useState<TemperatureRecord[]>([]);
+  const [locations, setLocations] = useState<StorageLocationLite[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [categoryFilter, setCategoryFilter] = useState<TemperatureCategoryFilter>("all");
-  const [singleDate, setSingleDate] = useState<string>("");
+  const [selectedDate, setSelectedDate] = useState(() => new Date());
+  const [cookedOpen, setCookedOpen] = useState(false);
 
-  // Always fetch the full set for the page-level date range; the category and
-  // single-day filters narrow client-side so toggling them is instant and the
-  // summary counts stay consistent across filter changes.
+  const weekStart = startOfWeek(selectedDate, { weekStartsOn: 1 });
+  const weekEnd = endOfWeek(selectedDate, { weekStartsOn: 1 });
+  const weekDays = [0, 1, 2, 3, 4, 5, 6].map(i => addDays(weekStart, i));
+  const fromStr = format(weekStart, "yyyy-MM-dd");
+  const toStr = format(weekEnd, "yyyy-MM-dd");
+  const selectedKey = format(selectedDate, "yyyy-MM-dd");
+
+  // Pull the canonical fridge/freezer list once. Records alone aren't enough —
+  // if no operator recorded a reading for "Walk-in Fridge" this week, we still
+  // want that location to appear in the grid as a missing slot.
+  useEffect(() => {
+    fetch(`${BASE}/api/storage-locations`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : [])
+      .then((rows: { id: number; name: string; zone: string }[]) => {
+        const filtered = rows
+          .filter(l => l.zone === "fridge" || l.zone === "freezer")
+          .map(l => ({ id: l.id, name: l.name, zone: l.zone as "fridge" | "freezer" }));
+        setLocations(filtered);
+      })
+      .catch(() => setLocations([]));
+  }, []);
+
   useEffect(() => {
     setLoading(true);
     setError(null);
-    fetch(`${BASE}/api/temperature-records?from=${fromDate}&to=${toDate}`, { credentials: "include" })
+    fetch(`${BASE}/api/temperature-records?from=${fromStr}&to=${toStr}`, { credentials: "include" })
       .then(r => r.ok ? r.json() : r.json().then((d: { error?: string }) => { throw new Error(d.error || "Failed to load"); }))
       .then((data: TemperatureRecord[]) => { setRecords(data); setLoading(false); })
       .catch((err: Error) => { setError(err.message); setLoading(false); });
-  }, [fromDate, toDate]);
+  }, [fromStr, toStr]);
 
-  // Clear single-day filter if it falls outside the page-level range so the
-  // user doesn't get a confusing empty table.
-  useEffect(() => {
-    if (!singleDate) return;
-    if (singleDate < fromDate || singleDate > toDate) setSingleDate("");
-  }, [fromDate, toDate, singleDate]);
+  function selectDay(day: Date) { setSelectedDate(day); }
+  function prevWeek() { setSelectedDate(d => addWeeks(d, -1)); }
+  function nextWeek() { setSelectedDate(d => addWeeks(d, 1)); }
+  function jumpToDate(e: React.ChangeEvent<HTMLInputElement>) {
+    if (e.target.value) setSelectedDate(new Date(`${e.target.value}T12:00:00`));
+  }
 
-  const filtered = records.filter(r => {
-    if (categoryFilter === "fridge_freezer") {
-      if (r.category !== "fridge" && r.category !== "freezer") return false;
-    } else if (categoryFilter !== "all" && r.category !== categoryFilter) {
-      return false;
+  // Pre-compute a per-day, per-location AM/PM index. Map key: `${dayKey}|${locationId}|${slot}`.
+  // Slot = "am" (opening) | "pm" (closing). Stored alongside the source record
+  // so the detail panel can show time and recorder.
+  const slotIndex = new Map<string, SlotReading>();
+  for (const r of records) {
+    if (r.category !== "fridge" && r.category !== "freezer") continue;
+    if (r.locationId == null) continue;
+    const slot = r.recordType.endsWith("_closing") ? "pm" : "am";
+    const dayKey = format(new Date(r.recordedAt), "yyyy-MM-dd");
+    const temp = parseFloat(r.temperatureC);
+    slotIndex.set(`${dayKey}|${r.locationId}|${slot}`, {
+      temperatureC: temp,
+      recordedAt: r.recordedAt,
+      userName: r.userName,
+      safe: isReadingSafe(r.category, temp),
+    });
+  }
+
+  // Per-day status: examines all configured fridges/freezers for that day and
+  // classifies overall completion. Used to colour the calendar dots.
+  function statusForDay(day: Date): "empty" | "complete" | "partial" | "warn" {
+    const dayKey = format(day, "yyyy-MM-dd");
+    let hasAny = false;
+    let missing = 0;
+    let warn = 0;
+    for (const loc of locations) {
+      for (const slot of ["am", "pm"] as const) {
+        const r = slotIndex.get(`${dayKey}|${loc.id}|${slot}`);
+        if (r) {
+          hasAny = true;
+          if (!r.safe) warn += 1;
+        } else {
+          missing += 1;
+        }
+      }
     }
-    if (singleDate) {
-      // Compare the YYYY-MM-DD prefix in local time. The recordedAt is an
-      // ISO string in UTC; for the UK this is fine all year (within the
-      // 1-hour BST shift it still falls on the same calendar day for any
-      // reading taken during operating hours).
-      const day = format(new Date(r.recordedAt), "yyyy-MM-dd");
-      if (day !== singleDate) return false;
-    }
-    return true;
+    if (!hasAny) return "empty";
+    if (warn > 0) return "warn";
+    if (missing > 0) return "partial";
+    return "complete";
+  }
+
+  // Cooked-core records for the selected day.
+  const cookedToday = records.filter(r => {
+    if (r.category !== "cooked") return false;
+    return format(new Date(r.recordedAt), "yyyy-MM-dd") === selectedKey;
   });
 
-  // Pass/fail is only meaningful for cooked-core readings (75°C threshold).
-  // Fridge/freezer have their own safe ranges so the summary just shows counts.
-  const cookedRows = filtered.filter(r => r.category === "cooked");
-  const passed = cookedRows.filter(r => parseFloat(r.temperatureC) >= 75);
-  const failed = cookedRows.filter(r => parseFloat(r.temperatureC) < 75);
-  const fridgeRows = filtered.filter(r => r.category === "fridge");
-  const freezerRows = filtered.filter(r => r.category === "freezer");
-
-  if (loading) return (
+  if (loading && records.length === 0) return (
     <div className="flex items-center justify-center py-16 text-muted-foreground gap-2">
       <Loader2 className="w-5 h-5 animate-spin" /> Loading temperature records…
     </div>
@@ -1131,144 +1198,283 @@ function TemperatureRecordsTab({ fromDate, toDate }: { fromDate: string; toDate:
     <div className="rounded-xl border border-red-200 bg-red-50 dark:bg-red-900/20 p-4 text-red-700 dark:text-red-400 text-sm">{error}</div>
   );
 
+  const fridges = locations.filter(l => l.zone === "fridge");
+  const freezers = locations.filter(l => l.zone === "freezer");
+
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <SummaryCard icon={<Thermometer className="w-4 h-4 text-blue-500" />} label="Total Readings" value={String(filtered.length)} sub={`${cookedRows.length} cooked · ${fridgeRows.length} fridge · ${freezerRows.length} freezer`} />
-        <SummaryCard icon={<ShieldCheck className="w-4 h-4 text-green-600" />} label="Cooked ≥75°C" value={String(passed.length)} sub={cookedRows.length ? `${Math.round((passed.length / cookedRows.length) * 100)}% pass rate` : "No cooked readings"} highlight={cookedRows.length ? "green" : undefined} />
-        <SummaryCard icon={<Thermometer className="w-4 h-4 text-red-500" />} label="Cooked <75°C" value={String(failed.length)} sub={failed.length > 0 ? "Requires attention" : "None"} highlight={failed.length > 0 ? "red" : undefined} />
-        <SummaryCard icon={<Activity className="w-4 h-4 text-amber-500" />} label="Fridge / Freezer" value={`${fridgeRows.length} / ${freezerRows.length}`} sub="Opening + closing checks" />
-      </div>
-
-      {/* Filter bar — category + single-day date filter */}
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card px-3 py-2">
-        <Filter className="w-4 h-4 text-muted-foreground" />
-        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mr-1">Filter</span>
-        <select
-          value={categoryFilter}
-          onChange={e => setCategoryFilter(e.target.value as TemperatureCategoryFilter)}
-          className="px-2.5 py-1.5 border border-border rounded-lg text-sm bg-background"
-          title="Record type"
-        >
-          <option value="all">All records</option>
-          <option value="cooked">Cooked-core only</option>
-          <option value="fridge">Fridge only</option>
-          <option value="freezer">Freezer only</option>
-          <option value="fridge_freezer">Fridge &amp; freezer</option>
-        </select>
-        <div className="flex items-center gap-2">
-          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Day</label>
-          <input
-            type="date"
-            value={singleDate}
-            min={fromDate}
-            max={toDate}
-            onChange={e => setSingleDate(e.target.value)}
-            className="px-2.5 py-1.5 border border-border rounded-lg text-sm bg-background"
-            title="Filter to a single day"
-          />
-          {singleDate && (
+      {/* Weekly calendar — mirrors the Production Plans calendar style so
+          the page feels familiar. */}
+      <div className="glass-panel rounded-2xl p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <button onClick={prevWeek} className="p-2 rounded-lg hover:bg-secondary/50 transition-colors" aria-label="Previous week">
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-semibold text-muted-foreground">
+              {format(weekStart, "d MMM")} — {format(weekEnd, "d MMM yyyy")}
+            </span>
+            <label className="relative cursor-pointer flex items-center" title="Jump to date">
+              <CalendarIcon className="w-4 h-4 text-muted-foreground hover:text-foreground transition-colors" />
+              <input
+                type="date"
+                value={selectedKey}
+                onChange={jumpToDate}
+                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+              />
+            </label>
             <button
-              onClick={() => setSingleDate("")}
+              onClick={() => setSelectedDate(new Date())}
               className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
             >
-              Clear day
+              Today
             </button>
-          )}
-        </div>
-        {(categoryFilter !== "all" || singleDate) && (
-          <button
-            onClick={() => { setCategoryFilter("all"); setSingleDate(""); }}
-            className="ml-auto text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
-          >
-            Clear filters
+          </div>
+          <button onClick={nextWeek} className="p-2 rounded-lg hover:bg-secondary/50 transition-colors" aria-label="Next week">
+            <ChevronRight className="w-5 h-5" />
           </button>
-        )}
+        </div>
+
+        <div className="grid grid-cols-7 gap-2">
+          {weekDays.map(day => {
+            const status = statusForDay(day);
+            const today = isToday(day);
+            const selected = isSameDay(day, selectedDate);
+            return (
+              <button
+                key={format(day, "yyyy-MM-dd")}
+                onClick={() => selectDay(day)}
+                className={cn(
+                  "flex flex-col items-center gap-1 rounded-xl py-3 px-1 transition-all border",
+                  selected
+                    ? "bg-primary text-primary-foreground border-primary shadow-md"
+                    : today
+                    ? "border-primary/40 bg-primary/5 hover:bg-primary/10"
+                    : "border-border hover:bg-secondary/50"
+                )}
+              >
+                <span className={cn(
+                  "text-xs font-medium uppercase tracking-wide",
+                  selected ? "text-primary-foreground/70" : today ? "text-primary" : "text-muted-foreground"
+                )}>
+                  {format(day, "EEE")}
+                </span>
+                <span className={cn(
+                  "text-lg font-bold leading-none",
+                  selected ? "text-primary-foreground" : today ? "text-primary" : "text-foreground"
+                )}>
+                  {format(day, "d")}
+                </span>
+                {status === "empty" ? (
+                  <span className="h-2" />
+                ) : (
+                  <span className={cn(
+                    "w-2 h-2 rounded-full",
+                    selected
+                      ? "bg-white/70"
+                      : status === "complete"
+                      ? "bg-emerald-500"
+                      : status === "warn"
+                      ? "bg-red-500"
+                      : "bg-amber-500"
+                  )} />
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="flex items-center gap-4 pt-1 border-t border-border/50 flex-wrap">
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="w-2 h-2 rounded-full bg-emerald-500" /> All readings logged & safe
+          </span>
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="w-2 h-2 rounded-full bg-amber-500" /> Some readings missing
+          </span>
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="w-2 h-2 rounded-full bg-red-500" /> Out-of-range reading
+          </span>
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="w-2 h-2 rounded-full bg-border border border-border" /> No readings
+          </span>
+        </div>
       </div>
 
-      {filtered.length === 0 ? (
-        <div className="rounded-xl border border-border bg-card p-8 text-center text-muted-foreground text-sm">
-          No temperature records found for these filters.
+      {/* Selected day header */}
+      <div className="flex items-baseline gap-3 flex-wrap">
+        <h2 className="text-lg font-semibold">
+          {isToday(selectedDate) ? "Today" : isYesterday(selectedDate) ? "Yesterday" : format(selectedDate, "EEEE, d MMMM yyyy")}
+        </h2>
+        <span className="text-sm text-muted-foreground">
+          {fridges.length} fridge{fridges.length !== 1 ? "s" : ""} · {freezers.length} freezer{freezers.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+
+      {/* Per-day fridge/freezer grid. Each row = one location, two slots = AM/PM. */}
+      {locations.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
+          No fridges or freezers configured. Add them in Settings → Storage Locations.
         </div>
       ) : (
-        <div className="rounded-xl border border-border bg-card overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border bg-secondary/20">
-                  <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Recorded At</th>
-                  <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Type</th>
-                  <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Source</th>
-                  <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Temp</th>
-                  <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Status</th>
-                  <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Recorded By</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {filtered.map(rec => {
-                  const temp = parseFloat(rec.temperatureC);
-                  // Pass/fail is category-specific. Cooked uses the legal
-                  // 75°C floor. Fridge ≤8°C and freezer ≤−15°C are the
-                  // documented warning thresholds in the checklist UI.
-                  let safe: boolean | null = null;
-                  let statusLabel = "";
-                  if (rec.category === "cooked") {
-                    safe = temp >= 75;
-                    statusLabel = safe ? "Safe" : "Low";
-                  } else if (rec.category === "fridge") {
-                    safe = temp <= 8;
-                    statusLabel = safe ? "OK" : "High";
-                  } else if (rec.category === "freezer") {
-                    safe = temp <= -15;
-                    statusLabel = safe ? "OK" : "Warm";
-                  }
-                  const typeLabel = RECORD_TYPE_LABEL[rec.recordType] ?? rec.recordType;
-                  const source = rec.category === "cooked"
-                    ? `${rec.recipeName ?? (rec.recipeId ? `Recipe #${rec.recipeId}` : "—")}${rec.ingredientName ? ` · ${rec.ingredientName}` : ""}${rec.trayIndex != null ? ` · Tray ${rec.trayIndex + 1}` : ""}`
-                    : (rec.locationName ?? "—");
-                  return (
-                    <tr key={rec.id} className={cn("hover:bg-secondary/10 transition-colors", safe === false && "bg-red-50/60 dark:bg-red-950/20")}>
-                      <td className="px-4 py-3 tabular-nums text-muted-foreground whitespace-nowrap">
-                        {format(new Date(rec.recordedAt), "dd MMM yyyy, HH:mm")}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <span className={cn(
-                          "inline-block px-2 py-0.5 rounded-full text-xs font-semibold",
-                          rec.category === "cooked" && "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
-                          rec.category === "fridge" && "bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300",
-                          rec.category === "freezer" && "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300",
-                        )}>
-                          {typeLabel}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground">{source}</td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={cn("font-bold tabular-nums", safe === false ? "text-red-600" : "text-foreground")}>
-                          {temp.toFixed(1)}°C
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        {safe === null ? (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        ) : safe ? (
-                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 dark:text-green-400 bg-green-100 dark:bg-green-900/30 rounded-full px-2 py-0.5">
-                            <ShieldCheck className="w-3 h-3" /> {statusLabel}
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-100 dark:bg-red-900/30 rounded-full px-2 py-0.5">
-                            <Thermometer className="w-3 h-3" /> {statusLabel}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground">{rec.userName ?? "Unknown"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+        <div className="space-y-4">
+          {fridges.length > 0 && (
+            <LocationSlotGrid
+              title="Fridges"
+              zone="fridge"
+              locations={fridges}
+              dayKey={selectedKey}
+              slotIndex={slotIndex}
+            />
+          )}
+          {freezers.length > 0 && (
+            <LocationSlotGrid
+              title="Freezers"
+              zone="freezer"
+              locations={freezers}
+              dayKey={selectedKey}
+              slotIndex={slotIndex}
+            />
+          )}
         </div>
       )}
+
+      {/* Cooked-core readings for the selected day — collapsible, separate
+          from the AM/PM grid because they don't fit that mental model. */}
+      <div className="rounded-xl border border-border bg-card overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setCookedOpen(v => !v)}
+          className="w-full px-4 py-2.5 border-b border-border bg-secondary/20 flex items-center gap-2 text-left hover:bg-secondary/40 transition-colors"
+          aria-expanded={cookedOpen}
+        >
+          <Flame className="w-4 h-4 text-amber-600 flex-shrink-0" />
+          <h3 className="text-sm font-semibold">Cooked-core readings ({cookedToday.length})</h3>
+          {cookedOpen
+            ? <ChevronUp className="w-4 h-4 text-muted-foreground ml-auto flex-shrink-0" />
+            : <ChevronDown className="w-4 h-4 text-muted-foreground ml-auto flex-shrink-0" />}
+        </button>
+        {cookedOpen && (
+          cookedToday.length === 0 ? (
+            <div className="p-6 text-center text-sm text-muted-foreground">No cooked-core readings recorded on this day.</div>
+          ) : (
+            <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-secondary/40 backdrop-blur-sm">
+                  <tr className="border-b border-border">
+                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Time</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Recipe</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Ingredient</th>
+                    <th className="text-center px-4 py-2.5 font-semibold text-muted-foreground">Tray</th>
+                    <th className="text-center px-4 py-2.5 font-semibold text-muted-foreground">Temp</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">By</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {cookedToday.map(rec => {
+                    const temp = parseFloat(rec.temperatureC);
+                    const safe = temp >= 75;
+                    return (
+                      <tr key={rec.id} className={cn("hover:bg-secondary/10", !safe && "bg-red-50/60 dark:bg-red-950/20")}>
+                        <td className="px-4 py-2.5 tabular-nums text-muted-foreground whitespace-nowrap text-xs">
+                          {format(new Date(rec.recordedAt), "HH:mm")}
+                        </td>
+                        <td className="px-4 py-2.5 font-medium">{rec.recipeName ?? (rec.recipeId ? `Recipe #${rec.recipeId}` : "—")}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{rec.ingredientName ?? "—"}</td>
+                        <td className="px-4 py-2.5 text-center tabular-nums">{rec.trayIndex != null ? rec.trayIndex + 1 : "—"}</td>
+                        <td className="px-4 py-2.5 text-center">
+                          <span className={cn("font-bold tabular-nums", safe ? "text-emerald-700 dark:text-emerald-400" : "text-red-600")}>
+                            {temp.toFixed(1)}°C
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{rec.userName ?? "Unknown"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Renders one zone's locations as a 2-column slot grid: AM (Sunrise) and
+// PM (Sunset). Missing readings show as a dashed "Not recorded" pill so
+// the gap is obvious at a glance.
+function LocationSlotGrid({ title, zone, locations, dayKey, slotIndex }: {
+  title: string;
+  zone: "fridge" | "freezer";
+  locations: StorageLocationLite[];
+  dayKey: string;
+  slotIndex: Map<string, SlotReading>;
+}) {
+  return (
+    <div className="rounded-2xl border border-border bg-card overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-border bg-secondary/20 flex items-center gap-2">
+        <Thermometer className={cn("w-4 h-4 flex-shrink-0", zone === "fridge" ? "text-sky-600" : "text-indigo-600")} />
+        <h3 className="text-sm font-semibold">{title}</h3>
+        <span className="text-xs text-muted-foreground ml-1">{locations.length}</span>
+      </div>
+      <ul className="divide-y divide-border">
+        {locations.map(loc => {
+          const am = slotIndex.get(`${dayKey}|${loc.id}|am`);
+          const pm = slotIndex.get(`${dayKey}|${loc.id}|pm`);
+          return (
+            <li key={loc.id} className="grid grid-cols-[1fr_auto_auto] sm:grid-cols-[1fr_minmax(160px,200px)_minmax(160px,200px)] gap-3 items-center px-4 py-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold truncate">{loc.name}</p>
+                <p className="text-xs text-muted-foreground capitalize">{loc.zone}</p>
+              </div>
+              <SlotCell label="AM" icon={<Sunrise className="w-3.5 h-3.5" />} reading={am} zone={zone} />
+              <SlotCell label="PM" icon={<Sunset className="w-3.5 h-3.5" />} reading={pm} zone={zone} />
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+function SlotCell({ label, icon, reading, zone }: {
+  label: string;
+  icon: React.ReactNode;
+  reading: SlotReading | undefined;
+  zone: "fridge" | "freezer";
+}) {
+  if (!reading) {
+    return (
+      <div className="rounded-xl border border-dashed border-border bg-secondary/10 px-3 py-2 flex items-center gap-2 text-muted-foreground">
+        <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide">
+          {icon}{label}
+        </span>
+        <span className="text-xs italic">Not recorded</span>
+      </div>
+    );
+  }
+  const safe = reading.safe;
+  return (
+    <div className={cn(
+      "rounded-xl border px-3 py-2 transition-colors",
+      safe
+        ? zone === "fridge"
+          ? "border-sky-200 bg-sky-50/60 dark:border-sky-800 dark:bg-sky-950/20"
+          : "border-indigo-200 bg-indigo-50/60 dark:border-indigo-800 dark:bg-indigo-950/20"
+        : "border-red-300 bg-red-50/70 dark:border-red-800 dark:bg-red-950/30"
+    )}>
+      <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {icon}{label}
+        <span className="ml-auto tabular-nums normal-case">{format(new Date(reading.recordedAt), "HH:mm")}</span>
+      </div>
+      <div className="flex items-baseline justify-between gap-2 mt-0.5">
+        <span className={cn("font-bold tabular-nums text-base", safe ? "text-foreground" : "text-red-700 dark:text-red-300")}>
+          {reading.temperatureC.toFixed(1)}°C
+        </span>
+        <span className="text-[11px] text-muted-foreground truncate" title={reading.userName ?? "Unknown"}>
+          {reading.userName ?? "Unknown"}
+        </span>
+      </div>
     </div>
   );
 }

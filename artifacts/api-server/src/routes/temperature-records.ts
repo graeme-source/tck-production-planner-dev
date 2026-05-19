@@ -118,6 +118,7 @@ interface UnifiedTempRecord {
   ingredientId: number | null;
   ingredientName: string | null;
   trayIndex: number | null;
+  locationId: number | null;
   locationName: string | null;
 }
 
@@ -167,6 +168,7 @@ router.get("/", async (req, res) => {
         ingredientId: r.ingredientId,
         ingredientName: r.ingredientName,
         trayIndex: r.trayIndex,
+        locationId: null,
         locationName: null,
       });
     }
@@ -191,6 +193,7 @@ router.get("/", async (req, res) => {
         temperatureC: locationTemperatureRecordsTable.openingTemperatureC,
         recordedAt: locationTemperatureRecordsTable.openingRecordedAt,
         userId: locationTemperatureRecordsTable.openingUserId,
+        locationId: storageLocationsTable.id,
         locationName: storageLocationsTable.name,
         zone: storageLocationsTable.zone,
         userName: usersTable.name,
@@ -220,6 +223,7 @@ router.get("/", async (req, res) => {
         ingredientId: null,
         ingredientName: null,
         trayIndex: null,
+        locationId: r.locationId,
         locationName: r.locationName,
       });
     }
@@ -235,6 +239,7 @@ router.get("/", async (req, res) => {
         temperatureC: locationTemperatureRecordsTable.closingTemperatureC,
         recordedAt: locationTemperatureRecordsTable.closingRecordedAt,
         userId: locationTemperatureRecordsTable.closingUserId,
+        locationId: storageLocationsTable.id,
         locationName: storageLocationsTable.name,
         zone: storageLocationsTable.zone,
         userName: usersTable.name,
@@ -264,6 +269,7 @@ router.get("/", async (req, res) => {
         ingredientId: null,
         ingredientName: null,
         trayIndex: null,
+        locationId: r.locationId,
         locationName: r.locationName,
       });
     }
