@@ -1372,9 +1372,11 @@ function TemperatureRecordsTab() {
                 <tbody className="divide-y divide-border">
                   {cookedToday.map(rec => {
                     const temp = parseFloat(rec.temperatureC);
-                    const safe = temp >= 75;
+                    // Cooked-core has no single safe threshold — it depends on
+                    // the raw meat type and cooking setting per recipe. Display
+                    // the reading neutrally and let the reviewer judge.
                     return (
-                      <tr key={rec.id} className={cn("hover:bg-secondary/10", !safe && "bg-red-50/60 dark:bg-red-950/20")}>
+                      <tr key={rec.id} className="hover:bg-secondary/10">
                         <td className="px-4 py-2.5 tabular-nums text-muted-foreground whitespace-nowrap text-xs">
                           {format(new Date(rec.recordedAt), "HH:mm")}
                         </td>
@@ -1382,7 +1384,7 @@ function TemperatureRecordsTab() {
                         <td className="px-4 py-2.5 text-muted-foreground">{rec.ingredientName ?? "—"}</td>
                         <td className="px-4 py-2.5 text-center tabular-nums">{rec.trayIndex != null ? rec.trayIndex + 1 : "—"}</td>
                         <td className="px-4 py-2.5 text-center">
-                          <span className={cn("font-bold tabular-nums", safe ? "text-emerald-700 dark:text-emerald-400" : "text-red-600")}>
+                          <span className="font-bold tabular-nums text-foreground">
                             {temp.toFixed(1)}°C
                           </span>
                         </td>
