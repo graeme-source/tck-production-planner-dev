@@ -8,7 +8,7 @@ import {
 } from "@workspace/db";
 import { eq, desc, and, gte, lte, isNotNull } from "drizzle-orm";
 import * as z from "zod";
-import { londonEndOfDay } from "../lib/london-time";
+import { londonEndOfDay, londonStartOfDay } from "../lib/london-time";
 
 const router: IRouter = Router();
 
@@ -128,8 +128,13 @@ router.get("/", async (req, res) => {
   const wantsFridge = categoryStr === "all" || categoryStr === "fridge";
   const wantsFreezer = categoryStr === "all" || categoryStr === "freezer";
 
-  const fromDate = from ? new Date(String(from)) : null;
-  const toDate = to ? londonEndOfDay(new Date(String(to))) : null;
+  // Use London-time day boundaries on BOTH ends. Naively parsing
+  // `new Date("2026-05-18")` returns UTC midnight, which is 01:00 BST in
+  // London — so any record made between 23:00 BST and midnight London
+  // (i.e. 22:00–23:00 UTC) would fall outside both that day's filter and
+  // the next day's, silently vanishing from the report.
+  const fromDate = from ? londonStartOfDay(new Date(`${String(from)}T12:00:00Z`)) : null;
+  const toDate = to ? londonEndOfDay(new Date(`${String(to)}T12:00:00Z`)) : null;
 
   const results: UnifiedTempRecord[] = [];
 
