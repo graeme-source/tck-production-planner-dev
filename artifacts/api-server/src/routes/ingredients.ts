@@ -65,10 +65,17 @@ function validateStockInPacks(stockInPacks: unknown, packWeight: unknown): strin
 
 router.get("/", async (req, res) => {
   const { perishable } = req.query;
-  let query = db.select().from(ingredientsTable).orderBy(ingredientsTable.name).$dynamic();
+  let query = db
+    .select({ ing: ingredientsTable, supplierName: suppliersTable.name })
+    .from(ingredientsTable)
+    .leftJoin(suppliersTable, eq(ingredientsTable.supplierId, suppliersTable.id))
+    .orderBy(ingredientsTable.name)
+    .$dynamic();
   if (perishable === "true") query = query.where(eq(ingredientsTable.perishable, true));
   else if (perishable === "false") query = query.where(eq(ingredientsTable.perishable, false));
-  const rows = await query;
+  const joined = await query;
+  const rows = joined.map(j => j.ing);
+  const supplierNameById = new Map(joined.map(j => [j.ing.id, j.supplierName ?? null]));
 
   const recipeUsage = await db
     .select({ ingredientId: recipeIngredientsTable.ingredientId, cnt: sql<number>`count(distinct ${recipeIngredientsTable.recipeId})` })
@@ -93,6 +100,7 @@ router.get("/", async (req, res) => {
     const usage = usageMap[r.id];
     return {
       ...mapRow(r),
+      supplierName: supplierNameById.get(r.id) ?? null,
       usedInRecipes: usage ? usage.recipes : 0,
       usedInSubRecipes: usage ? usage.subRecipes : 0,
     };
