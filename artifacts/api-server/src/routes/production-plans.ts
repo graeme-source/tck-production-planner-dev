@@ -8,6 +8,7 @@ import { resolveRecipeIngredients, resolveSubRecipeIngredients, aggregateIngredi
 import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag } from "../services/shopify";
 import { getFactoryNumberCoreMenuOnly, getShopifyFreezerSyncEnabled } from "../lib/inventory-sync";
 import { londonDateString, londonStartOfDay } from "../lib/london-time";
+import { renderProductionPlanPdf, type ProductionPlanPdfData } from "../pdf/production-plan-pdf";
 
 /** Recipe category name for macaroni cheese products. Used to split calzone
  *  vs mac cheese metrics (mac cheese is tracked in packs, calzones in batches). */
@@ -127,20 +128,9 @@ async function isAdminUser(req: import("express").Request): Promise<boolean> {
   return role === "admin";
 }
 
-/** Returns true if `planDateStr` is at least 2 working days from today (London). */
-function isAtLeast2WorkingDaysAhead(planDateStr: string): boolean {
-  const todayStr = londonDateString();
-  const todayUTC = new Date(`${todayStr}T00:00:00Z`);
-  const planUTC = new Date(`${planDateStr}T00:00:00Z`);
-  let workingDays = 0;
-  const cursor = new Date(todayUTC);
-  cursor.setUTCDate(cursor.getUTCDate() + 1); // start from tomorrow
-  while (cursor <= planUTC) {
-    const dow = cursor.getUTCDay();
-    if (dow !== 0 && dow !== 6) workingDays++;
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-  return workingDays >= 2;
+/** Returns true if `planDateStr` is today or later (London time). */
+function isTodayOrFuture(planDateStr: string): boolean {
+  return planDateStr >= londonDateString();
 }
 
 function mapPlan(p: typeof productionPlansTable.$inferSelect) {
@@ -422,17 +412,10 @@ router.post("/", validate(CreatePlanBody), async (req, res) => {
     res.status(400).json({ error: "Production plans can only be scheduled on weekdays (Monday–Friday)." });
     return;
   }
-  // Enforce 2 working-day minimum lead time (admins exempt)
-  if (!isAtLeast2WorkingDaysAhead(planDate)) {
-    let role = req.session.userRole;
-    if (!role && req.session.userId) {
-      const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
-      if (user) { role = user.role as "admin" | "manager" | "viewer"; req.session.userRole = role; }
-    }
-    if (role !== "admin") {
-      res.status(400).json({ error: "Production plans must be scheduled at least 2 working days in advance." });
-      return;
-    }
+  // Disallow scheduling production plans in the past
+  if (!isTodayOrFuture(planDate)) {
+    res.status(400).json({ error: "Production plans cannot be scheduled for past dates." });
+    return;
   }
   const batchNumber = julianBatchNumber(dateObj);
 
@@ -485,16 +468,9 @@ router.get("/calculate", async (req, res) => {
     return;
   }
 
-  if (!isAtLeast2WorkingDaysAhead(planDate)) {
-    let role = req.session.userRole;
-    if (!role && req.session.userId) {
-      const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
-      if (user) { role = user.role as "admin" | "manager" | "viewer"; req.session.userRole = role; }
-    }
-    if (role !== "admin") {
-      res.status(400).json({ error: "Production plans must be scheduled at least 2 working days in advance." });
-      return;
-    }
+  if (!isTodayOrFuture(planDate)) {
+    res.status(400).json({ error: "Production plans cannot be scheduled for past dates." });
+    return;
   }
 
   // Holiday-aware dispatch-day helpers. Bank holidays / factory shutdowns
@@ -2094,6 +2070,133 @@ router.get("/:id", async (req, res) => {
   res.json({ ...mapPlan(plan), items: items.map(it => mapItem(it, completionsByItem[it.id] ?? {})) });
 });
 
+// GET /:id/lock-pdf — Render a printable PDF snapshot of a plan's core
+// information (recipe batches, prep totals, mixing/filling per tin,
+// building-station weights). Designed to be downloaded when the plan
+// is locked so the team has an off-app fallback if the planner becomes
+// unavailable. Pulls data from the existing per-section endpoints over
+// loopback so this stays in sync with whatever the app shows.
+router.get("/:id/lock-pdf", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "Invalid plan id" });
+    return;
+  }
+
+  const port = process.env["PORT"];
+  if (!port) {
+    res.status(500).json({ error: "PORT env var not set; cannot loopback for PDF data" });
+    return;
+  }
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const cookie = req.headers.cookie ?? "";
+
+  const fetchJson = async <T>(path: string): Promise<T | null> => {
+    try {
+      const resp = await fetch(`${baseUrl}${path}`, { headers: { cookie } });
+      if (!resp.ok) return null;
+      return (await resp.json()) as T;
+    } catch {
+      return null;
+    }
+  };
+
+  type PlanApiResp = {
+    id: number;
+    planDate: string;
+    prepDate: string | null;
+    doughDate: string | null;
+    name: string | null;
+    batchNumber: number | null;
+    notes: string | null;
+    items: Array<{
+      id: number;
+      recipeName: string;
+      recipeCategory: string | null;
+      batchesTarget: number;
+      portionsPerBatch: number | null;
+      packSize: number | null;
+      tinSize: string | null;
+      maxBatchesPerTin: number | null;
+    }>;
+  };
+
+  const [planResp, subRecipesResp, fillingMixResp, assemblyResp] = await Promise.all([
+    fetchJson<PlanApiResp>(`/api/production-plans/${id}`),
+    fetchJson<{ subRecipes: ProductionPlanPdfData["subRecipes"] }>(`/api/production-plans/${id}/sub-recipe-requirements`),
+    fetchJson<{ items: Array<{
+      recipeName: string;
+      tinSize: string | null;
+      tinsTarget: number;
+      batchesPerTin: number;
+      servingsPerTin: number;
+      fillingIngredients: Array<{ name: string; unit: string; qtyPerTin: number }>;
+      fillingSubRecipes: Array<{ name: string; unit: string; qtyPerTin: number }>;
+    }> }>(`/api/production-plans/${id}/filling-mix`),
+    fetchJson<{ items: Array<{
+      recipeName: string;
+      fillingWeightPerBatch: number;
+      assemblyItems: Array<{ name: string; unit: string; weightPerBatch: number; isTopping: boolean }>;
+      postOvenItems: Array<{ name: string; unit: string; weightPerBatch: number }>;
+    }> }>(`/api/production-plans/${id}/assembly-items`),
+  ]);
+
+  if (!planResp) {
+    res.status(404).json({ error: "Plan not found or could not be loaded" });
+    return;
+  }
+
+  const data: ProductionPlanPdfData = {
+    plan: {
+      id: planResp.id,
+      planDate: planResp.planDate,
+      prepDate: planResp.prepDate,
+      doughDate: planResp.doughDate,
+      name: planResp.name,
+      batchNumber: planResp.batchNumber,
+      notes: planResp.notes,
+    },
+    items: (planResp.items ?? []).map(it => ({
+      id: it.id,
+      recipeName: it.recipeName,
+      category: it.recipeCategory,
+      batchesTarget: Number(it.batchesTarget) || 0,
+      portionsPerBatch: it.portionsPerBatch,
+      packSize: it.packSize,
+      tinSize: it.tinSize,
+      maxBatchesPerTin: it.maxBatchesPerTin,
+    })),
+    subRecipes: subRecipesResp?.subRecipes ?? [],
+    fillingMix: (fillingMixResp?.items ?? []).map(item => ({
+      recipeName: item.recipeName,
+      tinSize: item.tinSize,
+      tinsTarget: item.tinsTarget,
+      batchesPerTin: item.batchesPerTin,
+      servingsPerTin: item.servingsPerTin,
+      ingredients: item.fillingIngredients ?? [],
+      subRecipes: item.fillingSubRecipes ?? [],
+    })),
+    assembly: (assemblyResp?.items ?? []).map(item => ({
+      recipeName: item.recipeName,
+      fillingWeightPerBatch: item.fillingWeightPerBatch,
+      items: item.assemblyItems ?? [],
+      postOvenItems: item.postOvenItems ?? [],
+    })),
+    generatedAt: new Date().toISOString(),
+  };
+
+  try {
+    const pdf = await renderProductionPlanPdf(data);
+    const filename = `tck-production-plan-${data.plan.planDate}.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(pdf);
+  } catch (err) {
+    console.error("lock-pdf render error:", err);
+    res.status(500).json({ error: "Failed to render PDF" });
+  }
+});
+
 // Statuses that lock structural plan edits (date, name, items)
 const LOCKED_STATUSES: PlanStatus[] = ["active", "prep", "building", "complete"];
 
@@ -2121,12 +2224,9 @@ router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
       res.status(400).json({ error: "Production plans can only be scheduled on weekdays (Monday–Friday)." });
       return;
     }
-    if (!isAtLeast2WorkingDaysAhead(planDate)) {
-      const admin = await isAdminUser(req);
-      if (!admin) {
-        res.status(400).json({ error: "Production plans must be scheduled at least 2 working days in advance." });
-        return;
-      }
+    if (!isTodayOrFuture(planDate)) {
+      res.status(400).json({ error: "Production plans cannot be scheduled for past dates." });
+      return;
     }
   }
 

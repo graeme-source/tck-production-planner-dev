@@ -63,6 +63,18 @@ const STATUS_CONFIG = {
   completed: { label: "Complete", color: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400", icon: CheckCircle2 },
 } as const;
 
+// Triggers a browser download of the plan's emergency-fallback PDF.
+// The endpoint sets Content-Disposition: attachment so the browser
+// saves the file with the server-provided filename.
+function downloadLockPdf(planId: number) {
+  const a = document.createElement("a");
+  a.href = `/api/production-plans/${planId}/lock-pdf`;
+  a.rel = "noopener noreferrer";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
 function getNextWorkingDay(from: Date): Date {
   let d = addDays(from, 1);
   while (isWeekend(d)) d = addDays(d, 1);
@@ -80,9 +92,11 @@ function addWorkingDays(from: Date, n: number): Date {
   return d;
 }
 
-/** Minimum allowed plan date: 2 working days from today */
+/** Minimum allowed plan date: today (in local time) */
 function getMinPlanDate(): Date {
-  return addWorkingDays(new Date(), 2);
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
 }
 
 function toNextWeekdayIfWeekend(dateStr: string): string {
@@ -1043,12 +1057,10 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     let fixed = toNextWeekdayIfWeekend(raw);
     const warnings: string[] = [];
     if (fixed !== raw) warnings.push("Weekends are not production days — date moved to the next Monday.");
-    if (!isAdmin) {
-      const min = getMinPlanDate();
-      if (parseISO(fixed) < min) {
-        fixed = toLocalDateStr(min);
-        warnings.push("Plans must be created at least 2 working days in advance.");
-      }
+    const min = getMinPlanDate();
+    if (parseISO(fixed) < min) {
+      fixed = toLocalDateStr(min);
+      warnings.push("Plans cannot be created for past dates.");
     }
     setDateWarning(warnings.length ? warnings.join(" ") : null);
     setPlanDate(fixed);
@@ -1511,6 +1523,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
               autoSavedPlanId.current = null;
               onClose();
               onCreated?.(plan.id);
+              if (targetStatus === "active") downloadLockPdf(plan.id);
             },
             onSettled: () => setIsSubmitting(false),
           }
@@ -1522,6 +1535,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
             onSuccess: (plan) => {
               onClose();
               onCreated?.(plan.id);
+              if (targetStatus === "active") downloadLockPdf(plan.id);
             },
             onSettled: () => setIsSubmitting(false),
           }
@@ -2521,7 +2535,11 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
         },
       },
       {
-        onSuccess: () => { onSaved(); onClose(); },
+        onSuccess: () => {
+          onSaved();
+          onClose();
+          if (targetStatus === "active") downloadLockPdf(plan.id);
+        },
         onSettled: () => setIsSubmitting(false),
       }
     );
@@ -3479,6 +3497,9 @@ function PlanDetailHeader({
   if (plan.status === "active") {
     actions.push({ key: "complete", label: "Mark Complete", icon: <CheckCircle2 className="w-4 h-4" />, onClick: () => onStatusChange("complete"), className: actionBtnClass });
   }
+  if (plan.status !== "draft") {
+    actions.push({ key: "lock-pdf", label: "Download Lock PDF", icon: <Printer className="w-4 h-4" />, onClick: () => downloadLockPdf(plan.id), className: actionBtnClass });
+  }
   actions.push({ key: "materials", label: "Raw Materials", icon: <FlaskConical className="w-4 h-4" />, onClick: onShowManifest, className: actionBtnClass });
   actions.push({ key: "orders", label: "View Orders", icon: <ClipboardList className="w-4 h-4" />, onClick: onViewOrders, className: actionBtnClass });
   if (canManageOrders) {
@@ -3977,7 +3998,14 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   };
 
   const handleStatusChange = (newStatus: string) => {
-    updatePlan.mutate({ id: planId, data: { status: newStatus as PlanStatus } });
+    updatePlan.mutate(
+      { id: planId, data: { status: newStatus as PlanStatus } },
+      {
+        onSuccess: () => {
+          if (newStatus === "active") downloadLockPdf(planId);
+        },
+      }
+    );
   };
 
   const handleResync = async () => {
@@ -4936,6 +4964,16 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
                       </div>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
+                      {plan.status !== "draft" && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); downloadLockPdf(plan.id); }}
+                          className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary transition-colors"
+                          aria-label="Download lock PDF"
+                          title="Download lock PDF — printable snapshot of this plan"
+                        >
+                          <Printer className="w-4 h-4" />
+                        </button>
+                      )}
                       <ArrowRight className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
                     </div>
                   </div>
