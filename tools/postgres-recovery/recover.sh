@@ -189,20 +189,50 @@ done
 # Optional auto-restore. Gated by AUTO_RESTORE=yes so this doesn't
 # accidentally clobber the live DB on every redeploy. Includes a size
 # guard: refuses if the dump is suspiciously small.
-# Upload the dump to transfer.sh for retrieval from outside Railway.
-# Compresses first so a 258MB dump becomes ~30-50MB to upload.
-banner "Compress + upload dump for external retrieval"
+# Compress + ship the dump out via multiple methods (any one working is enough).
+banner "Compress + ship dump for external retrieval"
 gzip -c "$DUMPFILE" > "$DUMPFILE.gz"
 GZSIZE=$(stat -c%s "$DUMPFILE.gz" 2>/dev/null || echo 0)
 echo "Compressed dump: $DUMPFILE.gz ($GZSIZE bytes)"
-echo "Uploading to transfer.sh..."
-UPLOAD_URL=$(curl --max-time 120 --silent --upload-file "$DUMPFILE.gz" \
-  "https://transfer.sh/recovered.sql.gz" 2>&1)
 echo ""
+
+echo "--- Method 1: transfer.sh ---"
+URL1=$(curl --max-time 180 --silent --show-error --upload-file "$DUMPFILE.gz" \
+  "https://transfer.sh/recovered.sql.gz" 2>&1) || true
+echo "transfer.sh response: $URL1"
+echo ""
+
+echo "--- Method 2: 0x0.st ---"
+URL2=$(curl --max-time 180 --silent --show-error -F "file=@$DUMPFILE.gz" \
+  "https://0x0.st" 2>&1) || true
+echo "0x0.st response: $URL2"
+echo ""
+
+echo "--- Method 3: tmpfiles.org ---"
+URL3=$(curl --max-time 180 --silent --show-error -F "file=@$DUMPFILE.gz" \
+  "https://tmpfiles.org/api/v1/upload" 2>&1) || true
+echo "tmpfiles.org response: $URL3"
+echo ""
+
 echo "=================================================="
-echo "DUMP DOWNLOAD URL:"
-echo "$UPLOAD_URL"
+echo "DUMP DOWNLOAD URLS (try whichever works):"
+echo "  1. $URL1"
+echo "  2. $URL2"
+echo "  3. $URL3"
 echo "=================================================="
+echo ""
+
+# Method 4: serve the file via HTTP on port 8000. If the user exposes
+# this service publicly on Railway, the operator can curl the file
+# directly. This runs in the background and keeps serving until the
+# container is removed.
+banner "Starting HTTP server on port 8000 as a final fallback"
+cd /tmp && python3 -m http.server 8000 &
+HTTP_PID=$!
+echo "HTTP server PID: $HTTP_PID"
+echo "If the upload URLs above don't work, expose port 8000 publicly on"
+echo "this Railway service and download from:"
+echo "  https://<your-postgres-recovery-domain>/recovered.sql.gz"
 echo ""
 
 if [ "${AUTO_RESTORE:-}" = "yes" ]; then

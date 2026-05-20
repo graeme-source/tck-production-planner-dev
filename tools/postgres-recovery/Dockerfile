@@ -10,6 +10,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         less \
         ca-certificates \
+        curl \
+        wget \
+        python3 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY recover.sh /usr/local/bin/recover.sh
