@@ -157,31 +157,64 @@ else
   echo "Partial dump may still be usable — continuing."
 fi
 
-echo ""
-echo "Dump file stats:"
+banner "Dump file stats"
+DUMP_SIZE=$(stat -c%s "$DUMPFILE" 2>/dev/null || echo 0)
+DUMP_LINES=$(wc -l < "$DUMPFILE" 2>/dev/null || echo 0)
+DUMP_COPY_BLOCKS=$(grep -c "^COPY " "$DUMPFILE" 2>/dev/null || echo 0)
+DUMP_TABLES=$(grep -c "^CREATE TABLE " "$DUMPFILE" 2>/dev/null || echo 0)
+echo "Path:        $DUMPFILE"
 ls -lah "$DUMPFILE"
-echo "Line count: $(wc -l < "$DUMPFILE")"
-echo "First 30 lines:"
-head -30 "$DUMPFILE"
-echo "..."
-echo "Last 10 lines:"
-tail -10 "$DUMPFILE"
-
-# Per-table row counts so we know what's salvageable.
-banner "Row counts in 'railway' database (truncated to 60 tables)"
-su -p postgres -c "psql -p $PORT -d railway -c \"
-  SELECT relname, n_live_tup AS approx_rows
-  FROM pg_stat_user_tables
-  ORDER BY n_live_tup DESC NULLS LAST
-  LIMIT 60;\"" 2>&1 || true
-
-# We DELIBERATELY do not auto-restore into DATABASE_URL. If the kitchen
-# is currently using Postgres-lYTL, blowing that away mid-day would be
-# worse than waiting. A human reviews the dump and runs the restore.
-banner "NEXT STEP — restore into the live DB (manual, requires confirmation)"
-echo "The dump is at $DUMPFILE inside this container."
-echo "To download it, use Railway's shell:  cat $DUMPFILE  (or scp via base64)."
-echo "To restore: psql \"\$DATABASE_URL\" < $DUMPFILE"
+echo "Size:        $DUMP_SIZE bytes (~$(echo "$DUMP_SIZE/1024/1024" | bc 2>/dev/null) MB)"
+echo "Lines:       $DUMP_LINES"
+echo "CREATE TABLE blocks: $DUMP_TABLES"
+echo "COPY data blocks:    $DUMP_COPY_BLOCKS"
 echo ""
-echo "Sleeping 24h so the dump can be retrieved."
+echo "Per-table row counts in the dump (real numbers, parsed from COPY blocks):"
+awk '/^COPY [^ ]+ /{tbl=$2; n=0; next} /^\\\.$/{print tbl, n; tbl=""; next} tbl!=""{n++}' "$DUMPFILE" | sort -k2 -n -r | head -40 || true
+
+# Live-cluster stats too, for sanity. n_live_tup may be 0 because the
+# server only just started — don't trust them, but they're a cheap
+# second opinion.
+banner "Live-cluster row counts via SELECT count(*) (slower but accurate)"
+for t in app_users recipes ingredients sub_recipes storage_locations suppliers checklist_templates risk_assessments production_plans temperature_records batch_weight_records; do
+  CNT=$(su -p postgres -c "psql -p $PORT -d railway -tAc 'SELECT count(*) FROM $t' 2>/dev/null" || echo "ERR")
+  printf "  %-30s %s\n" "$t" "$CNT"
+done
+
+# Optional auto-restore. Gated by AUTO_RESTORE=yes so this doesn't
+# accidentally clobber the live DB on every redeploy. Includes a size
+# guard: refuses if the dump is suspiciously small.
+if [ "${AUTO_RESTORE:-}" = "yes" ]; then
+  banner "AUTO_RESTORE=yes — restoring into \$DATABASE_URL"
+  if [ -z "${DATABASE_URL:-}" ]; then
+    echo "DATABASE_URL not set — aborting restore."
+  elif [ "$DUMP_SIZE" -lt 100000 ]; then
+    echo "Dump is only $DUMP_SIZE bytes — refusing to restore (likely empty/broken)."
+  else
+    echo "Target: $DATABASE_URL"
+    echo "Restoring ($DUMP_SIZE bytes)..."
+    psql "$DATABASE_URL" -v ON_ERROR_STOP=0 < "$DUMPFILE" > /tmp/restore.stdout 2> /tmp/restore.stderr
+    RESTORE_EXIT=$?
+    echo "psql exited with $RESTORE_EXIT"
+    echo ""
+    echo "stderr tail (errors during restore — some are expected from --clean):"
+    tail -40 /tmp/restore.stderr
+    echo ""
+    banner "Post-restore verification — row counts in live DB"
+    for t in app_users recipes ingredients sub_recipes storage_locations suppliers checklist_templates risk_assessments production_plans temperature_records batch_weight_records; do
+      CNT=$(psql "$DATABASE_URL" -tAc "SELECT count(*) FROM $t" 2>/dev/null || echo "ERR")
+      printf "  %-30s %s\n" "$t" "$CNT"
+    done
+    echo ""
+    echo "If row counts look right, the live app should now show real data."
+    echo "Kitchen may need to refresh / re-login."
+  fi
+else
+  banner "AUTO_RESTORE not set — no restore performed"
+  echo "Dump is sitting at $DUMPFILE inside this container."
+  echo "To restore: set Variable AUTO_RESTORE=yes on this service then Redeploy."
+fi
+
+echo ""
+echo "Sleeping 24h so this container can be inspected later."
 sleep 86400
