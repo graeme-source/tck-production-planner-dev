@@ -55,6 +55,34 @@ chmod 700 "$WORK"
 echo "Copy complete. Size:"
 du -sh "$WORK"
 
+# The Railway-managed postgres-ssl image referenced SSL certs at a path
+# that doesn't exist in the official postgres image. Strip those config
+# lines so the server can actually start. Also clear postgresql.auto.conf
+# in case Railway's auto-tuner left similar references.
+banner "Strip Railway-image-specific SSL references from postgresql.conf"
+for f in "$WORK/postgresql.conf" "$WORK/postgresql.auto.conf"; do
+  if [ -f "$f" ]; then
+    echo "Before (ssl / cert lines in $f):"
+    grep -nE '^\s*(ssl|ssl_cert_file|ssl_key_file|ssl_ca_file)\b' "$f" || echo "(none)"
+    # Comment out any SSL-related directive so the defaults (ssl=off) apply.
+    sed -i -E 's/^(\s*)(ssl[^=]*=)/\1# disabled-by-recovery \2/' "$f"
+    echo "After:"
+    grep -nE '^\s*(ssl|ssl_cert_file|ssl_key_file|ssl_ca_file)\b' "$f" || echo "(none — clean)"
+  fi
+done
+
+# Some earlier recovery attempt dropped a recovery.signal file into the
+# old data dir. That puts Postgres into archive-recovery mode on start,
+# which we don't want; we just want a normal start on the live data.
+if [ -f "$WORK/recovery.signal" ]; then
+  echo "Removing leftover recovery.signal (was forcing archive recovery)."
+  rm -f "$WORK/recovery.signal"
+fi
+
+# Re-apply ownership in case our edits touched root-owned files.
+chown -R postgres:postgres "$WORK"
+chmod 700 "$WORK"
+
 # Pre-flight: ensure pg_control is readable.
 banner "pg_controldata"
 if su -p postgres -c "pg_controldata $WORK" 2>&1; then
@@ -66,7 +94,7 @@ fi
 # Attempt 1: start as-is.
 banner "Attempt 1 — start Postgres on the copy AS-IS"
 rm -f "$LOGFILE"
-if su -p postgres -c "pg_ctl -D $WORK -l $LOGFILE -o \"-p $PORT -c listen_addresses=127.0.0.1\" -w -t 30 start" 2>&1; then
+if su -p postgres -c "pg_ctl -D $WORK -l $LOGFILE -o \"-p $PORT -c listen_addresses=127.0.0.1 -c ssl=off\" -w -t 30 start" 2>&1; then
   echo "✓ Postgres started without intervention."
   SERVER_UP=1
 else
@@ -82,7 +110,7 @@ if [ "${SERVER_UP:-0}" -ne 1 ]; then
   su -p postgres -c "pg_resetwal -f $WORK" 2>&1 || echo "(pg_resetwal returned non-zero; continuing anyway)"
 
   rm -f "$LOGFILE"
-  if su -p postgres -c "pg_ctl -D $WORK -l $LOGFILE -o \"-p $PORT -c listen_addresses=127.0.0.1\" -w -t 30 start" 2>&1; then
+  if su -p postgres -c "pg_ctl -D $WORK -l $LOGFILE -o \"-p $PORT -c listen_addresses=127.0.0.1 -c ssl=off\" -w -t 30 start" 2>&1; then
     echo "✓ Postgres started after pg_resetwal."
     SERVER_UP=1
   else
@@ -95,7 +123,7 @@ fi
 if [ "${SERVER_UP:-0}" -ne 1 ]; then
   banner "Attempt 3 — start with zero_damaged_pages=on and ignore_system_indexes=on"
   rm -f "$LOGFILE"
-  if su -p postgres -c "pg_ctl -D $WORK -l $LOGFILE -o \"-p $PORT -c listen_addresses=127.0.0.1 -c zero_damaged_pages=on -c ignore_system_indexes=on\" -w -t 30 start" 2>&1; then
+  if su -p postgres -c "pg_ctl -D $WORK -l $LOGFILE -o \"-p $PORT -c listen_addresses=127.0.0.1 -c ssl=off -c zero_damaged_pages=on -c ignore_system_indexes=on\" -w -t 30 start" 2>&1; then
     echo "✓ Postgres started in tolerant mode."
     SERVER_UP=1
   else
