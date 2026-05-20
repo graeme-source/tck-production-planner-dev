@@ -1,13 +1,13 @@
 # Recovery image: official Postgres 18 (matches the corrupt data's major
-# version exactly) + pg_filedump as a fallback if standard tools can't
-# read the cluster. Runs a script that tries the cheap fixes first
-# (start as-is, then pg_resetwal) and only escalates to forensic tools
-# if those fail.
+# version exactly). Built-in tools — pg_ctl, postgres, pg_resetwal,
+# pg_dumpall, pg_controldata — handle the cases we expect. pg_filedump
+# would be a last-resort forensic tool, but its apt package isn't
+# available for PG18 on bookworm yet, so we skip it. If we need it
+# later we'll build from source in a follow-up image.
 FROM postgres:18-bookworm
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        postgresql-18-pg-filedump \
         less \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
