@@ -147,11 +147,16 @@ fi
 banner "Postgres is up — listing databases"
 su -p postgres -c "psql -p $PORT -l" 2>&1 || true
 
-banner "Dump every database with pg_dumpall"
-if su -p postgres -c "pg_dumpall -p $PORT --clean --if-exists" > "$DUMPFILE" 2>/tmp/dump.err; then
-  echo "✓ pg_dumpall succeeded."
+banner "Dump the railway database with pg_dump (single-connection, no \\connect)"
+# Using pg_dump on the single 'railway' database (not pg_dumpall) so the
+# output has zero \connect statements. That avoids the entire class of
+# auth-on-reconnect failures that's been blocking the restore.
+# --no-owner / --no-acl strips ownership commands that referenced the
+# OLD cluster's roles (and would fail on the new one).
+if su -p postgres -c "pg_dump -p $PORT -d railway --clean --if-exists --no-owner --no-acl" > "$DUMPFILE" 2>/tmp/dump.err; then
+  echo "✓ pg_dump succeeded."
 else
-  echo "✗ pg_dumpall returned non-zero. Errors:"
+  echo "✗ pg_dump returned non-zero. Errors:"
   cat /tmp/dump.err
   echo ""
   echo "Partial dump may still be usable — continuing."
@@ -191,23 +196,12 @@ if [ "${AUTO_RESTORE:-}" = "yes" ]; then
   elif [ "$DUMP_SIZE" -lt 100000 ]; then
     echo "Dump is only $DUMP_SIZE bytes — refusing to restore (likely empty/broken)."
   else
-    # pg_dumpall output uses \connect to switch databases mid-restore.
-    # psql does NOT carry the URL password through to \connect; we have
-    # to export PGPASSWORD so the reconnect can authenticate. Also point
-    # the initial connection at the `postgres` admin DB so the
-    # DROP DATABASE/CREATE DATABASE statements in the dump can actually
-    # run (you can't drop the DB you're currently connected to).
-    PGPASS_PARSED=$(printf '%s' "$DATABASE_URL" | sed -nE 's|^postgresql://[^:]+:([^@]+)@.*$|\1|p')
-    ADMIN_URL=$(printf '%s' "$DATABASE_URL" | sed -E 's|/railway(\?|$)|/postgres\1|')
-    if [ -z "$ADMIN_URL" ] || [ "$ADMIN_URL" = "$DATABASE_URL" ]; then
-      # If sed substitution didn't change anything (e.g. DB name isn't
-      # /railway), fall back to the original URL.
-      ADMIN_URL="$DATABASE_URL"
-    fi
-    echo "Restore target (initial connect): $ADMIN_URL"
-    echo "PGPASSWORD parsed from URL: ${PGPASS_PARSED:+[non-empty, ${#PGPASS_PARSED} chars]}"
+    # Single-connection restore. The dump came from pg_dump on a single
+    # database, so it has no \connect commands and no DROP/CREATE
+    # DATABASE statements. We just connect to railway and replay.
+    echo "Restore target: $DATABASE_URL"
     echo "Restoring ($DUMP_SIZE bytes)..."
-    PGPASSWORD="$PGPASS_PARSED" psql "$ADMIN_URL" -v ON_ERROR_STOP=0 < "$DUMPFILE" > /tmp/restore.stdout 2> /tmp/restore.stderr
+    psql "$DATABASE_URL" -v ON_ERROR_STOP=0 < "$DUMPFILE" > /tmp/restore.stdout 2> /tmp/restore.stderr
     RESTORE_EXIT=$?
     echo "psql exited with $RESTORE_EXIT"
     echo ""
@@ -216,7 +210,7 @@ if [ "${AUTO_RESTORE:-}" = "yes" ]; then
     echo ""
     banner "Post-restore verification — row counts in live DB"
     for t in app_users recipes ingredients sub_recipes storage_locations suppliers checklist_templates risk_assessments production_plans temperature_records batch_weight_records; do
-      CNT=$(PGPASSWORD="$PGPASS_PARSED" psql "$DATABASE_URL" -tAc "SELECT count(*) FROM $t" 2>/dev/null || echo "ERR")
+      CNT=$(psql "$DATABASE_URL" -tAc "SELECT count(*) FROM $t" 2>/dev/null || echo "ERR")
       printf "  %-30s %s\n" "$t" "$CNT"
     done
     echo ""
