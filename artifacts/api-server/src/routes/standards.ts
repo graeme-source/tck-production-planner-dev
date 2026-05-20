@@ -27,14 +27,6 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-function requireEditor(req: Request, res: Response, next: NextFunction) {
-  if (req.session.userRole === "admin" || req.session.userRole === "manager") {
-    next();
-    return;
-  }
-  res.status(403).json({ error: "Manager access required" });
-}
-
 interface SopRow {
   id: number;
   title: string;
@@ -177,7 +169,7 @@ function parseTagList(raw: unknown): string[] {
 }
 
 // Create empty SOP.
-router.post("/", requireAuth, requireEditor, async (req, res) => {
+router.post("/", requireAuth, async (req, res) => {
   try {
     const title = String(req.body?.title ?? "").trim();
     const stationsRaw = req.body?.stations;
@@ -199,7 +191,7 @@ router.post("/", requireAuth, requireEditor, async (req, res) => {
 });
 
 // Update SOP metadata (title, stations).
-router.put("/:id", requireAuth, requireEditor, async (req, res) => {
+router.put("/:id", requireAuth, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) {
     res.status(400).json({ error: "Invalid id" });
@@ -223,7 +215,7 @@ router.put("/:id", requireAuth, requireEditor, async (req, res) => {
   res.json({ ok: true });
 });
 
-router.delete("/:id", requireAuth, requireEditor, async (req, res) => {
+router.delete("/:id", requireAuth, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) {
     res.status(400).json({ error: "Invalid id" });
@@ -234,7 +226,7 @@ router.delete("/:id", requireAuth, requireEditor, async (req, res) => {
 });
 
 // Add a step to an SOP. Returns the new step id; position is appended.
-router.post("/:id/steps", requireAuth, requireEditor, async (req, res) => {
+router.post("/:id/steps", requireAuth, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) {
     res.status(400).json({ error: "Invalid id" });
@@ -257,7 +249,7 @@ router.post("/:id/steps", requireAuth, requireEditor, async (req, res) => {
 });
 
 // Update a step's description.
-router.put("/steps/:stepId", requireAuth, requireEditor, async (req, res) => {
+router.put("/steps/:stepId", requireAuth, async (req, res) => {
   const stepId = Number(req.params.stepId);
   if (!Number.isFinite(stepId)) {
     res.status(400).json({ error: "Invalid id" });
@@ -273,7 +265,7 @@ router.put("/steps/:stepId", requireAuth, requireEditor, async (req, res) => {
   res.json({ ok: true });
 });
 
-router.delete("/steps/:stepId", requireAuth, requireEditor, async (req, res) => {
+router.delete("/steps/:stepId", requireAuth, async (req, res) => {
   const stepId = Number(req.params.stepId);
   if (!Number.isFinite(stepId)) {
     res.status(400).json({ error: "Invalid id" });
@@ -287,7 +279,7 @@ router.delete("/steps/:stepId", requireAuth, requireEditor, async (req, res) => 
 });
 
 // Upload / replace the image on a step.
-router.post("/steps/:stepId/image", requireAuth, requireEditor, upload.single("image"), async (req, res) => {
+router.post("/steps/:stepId/image", requireAuth, upload.single("image"), async (req, res) => {
   const stepId = Number(req.params.stepId);
   if (!Number.isFinite(stepId)) {
     res.status(400).json({ error: "Invalid id" });
@@ -312,7 +304,7 @@ router.post("/steps/:stepId/image", requireAuth, requireEditor, upload.single("i
 });
 
 // Remove a step's image (but keep the step itself).
-router.delete("/steps/:stepId/image", requireAuth, requireEditor, async (req, res) => {
+router.delete("/steps/:stepId/image", requireAuth, async (req, res) => {
   const stepId = Number(req.params.stepId);
   if (!Number.isFinite(stepId)) {
     res.status(400).json({ error: "Invalid id" });
@@ -330,7 +322,7 @@ router.delete("/steps/:stepId/image", requireAuth, requireEditor, async (req, re
 // pair (video_mime + video_data) so a step can carry both a still and a
 // clip if useful. Allowed mime types are the formats every recent browser
 // can decode natively without us shipping ffmpeg in the container.
-router.post("/steps/:stepId/video", requireAuth, requireEditor, videoUpload.single("video"), async (req, res) => {
+router.post("/steps/:stepId/video", requireAuth, videoUpload.single("video"), async (req, res) => {
   const stepId = Number(req.params.stepId);
   if (!Number.isFinite(stepId)) {
     res.status(400).json({ error: "Invalid id" });
@@ -355,7 +347,7 @@ router.post("/steps/:stepId/video", requireAuth, requireEditor, videoUpload.sing
 });
 
 // Remove a step's video (but keep the step itself).
-router.delete("/steps/:stepId/video", requireAuth, requireEditor, async (req, res) => {
+router.delete("/steps/:stepId/video", requireAuth, async (req, res) => {
   const stepId = Number(req.params.stepId);
   if (!Number.isFinite(stepId)) {
     res.status(400).json({ error: "Invalid id" });
@@ -416,7 +408,7 @@ router.get("/steps/:stepId/image", requireAuth, async (req, res) => {
 // Reorder steps. Body: { stepIds: [id1, id2, ...] } — positions assigned
 // in the given order. Rows not in the list are left alone (shouldn't happen
 // in practice, but harmless).
-router.patch("/:id/reorder", requireAuth, requireEditor, async (req, res) => {
+router.patch("/:id/reorder", requireAuth, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) {
     res.status(400).json({ error: "Invalid id" });

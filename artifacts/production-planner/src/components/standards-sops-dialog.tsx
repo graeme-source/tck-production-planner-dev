@@ -467,7 +467,7 @@ function Library({
   mode?: FrameMode;
 }) {
   const { state } = useAuth();
-  const canEdit = state.status === "authenticated" && (state.user.role === "admin" || state.user.role === "manager");
+  const canEdit = state.status === "authenticated";
 
   // Filter model — all three filters are applied client-side. We fetch
   // every SOP once and slice it in the browser; cheap at this scale and
@@ -919,7 +919,7 @@ function Viewer({
   mode?: FrameMode;
 }) {
   const { state } = useAuth();
-  const canEdit = state.status === "authenticated" && (state.user.role === "admin" || state.user.role === "manager");
+  const canEdit = state.status === "authenticated";
   void onClose; // kept for backwards-compatible prop signature
 
   const [sop, setSop] = useState<SopDetail | null>(null);

@@ -7,6 +7,7 @@ import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
 const router: IRouter = Router();
 
 const STATION_KEY_PREFIXES = ["mozz_load_confirmed_", "checklist_done_", "station_assignment_"];
+const MANAGER_KEY_PREFIXES = ["mac_cheese_extra_packs_"];
 
 async function requireAuthForWrite(req: Request, res: Response, next: NextFunction) {
   if (req.method === "GET") { next(); return; }
@@ -14,11 +15,14 @@ async function requireAuthForWrite(req: Request, res: Response, next: NextFuncti
   const isStationKey = STATION_KEY_PREFIXES.some(p => key.startsWith(p));
   if (isStationKey && req.session.userId) { next(); return; }
   if (req.session.userRole === "admin") { next(); return; }
+  const isManagerKey = MANAGER_KEY_PREFIXES.some(p => key.startsWith(p));
+  if (isManagerKey && req.session.userRole === "manager") { next(); return; }
   if (req.session.userId && !req.session.userRole) {
     const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
     if (user) {
       req.session.userRole = user.role as "admin" | "manager" | "viewer";
       if (user.role === "admin") { next(); return; }
+      if (isManagerKey && user.role === "manager") { next(); return; }
     }
   }
   res.status(403).json({ error: "Admin access required" });

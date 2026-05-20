@@ -86,6 +86,21 @@ async function requireAdmin(req: Request, res: Response, next: NextFunction) {
   res.status(403).json({ error: "Admin access required" });
 }
 
+async function requireAdminOrManager(req: Request, res: Response, next: NextFunction) {
+  if (req.session.userRole === "admin" || req.session.userRole === "manager") {
+    next();
+    return;
+  }
+  if (req.session.userId && !req.session.userRole) {
+    const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
+    if (user) {
+      req.session.userRole = user.role as "admin" | "manager" | "viewer";
+      if (user.role === "admin" || user.role === "manager") { next(); return; }
+    }
+  }
+  res.status(403).json({ error: "Manager access required" });
+}
+
 // Protected routes
 router.use("/users", usersRouter);
 router.use("/category-defaults", categoryDefaultsRouter);
@@ -95,7 +110,7 @@ router.use("/ingredients", ingredientScrapeRouter);
 router.use("/sub-recipes", subRecipesRouter);
 router.use("/recipes", recipesRouter);
 router.use("/production-plans", productionPlansRouter);
-router.use("/dpt-settings", requireAdmin, dptSettingsRouter);
+router.use("/dpt-settings", requireAdminOrManager, dptSettingsRouter);
 router.use("/timing-standards", timingStandardsRouter);
 router.use("/dpt-calculator", dptCalculatorRouter);
 router.use("/stock-entries", stockRouter);

@@ -911,8 +911,8 @@ export default function Settings() {
               {user?.role === "admin" && <NonDispatchDatesSection />}
               {user?.role === "admin" && <PrepDoughScheduleSection />}
               <div ref={dptRef}>
-                {user?.role === "admin" && <DptSettingsSection />}
-                {user?.role === "admin" && <MacCheeseSettingsSection />}
+                {(user?.role === "admin" || user?.role === "manager") && <DptSettingsSection />}
+                {(user?.role === "admin" || user?.role === "manager") && <MacCheeseSettingsSection />}
               </div>
               {user?.role === "admin" && <FactoryNumberSection />}
               {user?.role === "admin" && <ShopifyFreezerSyncSection />}
