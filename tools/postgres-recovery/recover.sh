@@ -189,6 +189,22 @@ done
 # Optional auto-restore. Gated by AUTO_RESTORE=yes so this doesn't
 # accidentally clobber the live DB on every redeploy. Includes a size
 # guard: refuses if the dump is suspiciously small.
+# Upload the dump to transfer.sh for retrieval from outside Railway.
+# Compresses first so a 258MB dump becomes ~30-50MB to upload.
+banner "Compress + upload dump for external retrieval"
+gzip -c "$DUMPFILE" > "$DUMPFILE.gz"
+GZSIZE=$(stat -c%s "$DUMPFILE.gz" 2>/dev/null || echo 0)
+echo "Compressed dump: $DUMPFILE.gz ($GZSIZE bytes)"
+echo "Uploading to transfer.sh..."
+UPLOAD_URL=$(curl --max-time 120 --silent --upload-file "$DUMPFILE.gz" \
+  "https://transfer.sh/recovered.sql.gz" 2>&1)
+echo ""
+echo "=================================================="
+echo "DUMP DOWNLOAD URL:"
+echo "$UPLOAD_URL"
+echo "=================================================="
+echo ""
+
 if [ "${AUTO_RESTORE:-}" = "yes" ]; then
   banner "AUTO_RESTORE=yes — restoring into \$DATABASE_URL"
   if [ -z "${DATABASE_URL:-}" ]; then
