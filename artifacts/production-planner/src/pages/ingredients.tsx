@@ -27,7 +27,7 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const UK14_ALLERGENS = [
   { value: "celery", label: "Celery" },
-  { value: "cereals_containing_gluten", label: "Cereals containing Gluten" },
+  { value: "cereals_containing_gluten", label: "Wheat" },
   { value: "crustaceans", label: "Crustaceans" },
   { value: "eggs", label: "Eggs" },
   { value: "fish", label: "Fish" },
@@ -420,6 +420,7 @@ export default function Ingredients() {
   const [filterStockCheck, setFilterStockCheck] = useState("all");
   const [filterKanban, setFilterKanban] = useState("all");
   const [filterSupplier, setFilterSupplier] = useState("all");
+  const [filterDeclaration, setFilterDeclaration] = useState("all");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -443,7 +444,17 @@ export default function Ingredients() {
     const matchesSupplier =
       filterSupplier === "all" ||
       (filterSupplier === "none" ? !i.supplierId : String(i.supplierId) === filterSupplier);
-    return matchesSearch && matchesCategory && matchesStockCheck && matchesKanban && matchesSupplier;
+    const rec = i as Record<string, unknown>;
+    const usedInRecipes = (rec.usedInRecipes as number) ?? 0;
+    const usedInSubRecipes = (rec.usedInSubRecipes as number) ?? 0;
+    const inUse = usedInRecipes > 0 || usedInSubRecipes > 0;
+    const declaration = rec.labelDeclaration as string | null | undefined;
+    const hasDeclaration = !!(declaration && declaration.trim());
+    const matchesDeclaration =
+      filterDeclaration === "all" ||
+      (filterDeclaration === "missing" && !hasDeclaration) ||
+      (filterDeclaration === "missing-in-use" && !hasDeclaration && inUse);
+    return matchesSearch && matchesCategory && matchesStockCheck && matchesKanban && matchesSupplier && matchesDeclaration;
   });
 
   const supplierMap = Object.fromEntries((suppliers ?? []).map(s => [s.id, s.name]));
@@ -1395,9 +1406,19 @@ export default function Ingredients() {
             <option value="none">No Supplier</option>
           </select>
 
-          {(filterCategory !== "all" || filterStockCheck !== "all" || filterKanban !== "all" || filterSupplier !== "all" || search) && (
+          <select
+            value={filterDeclaration}
+            onChange={e => setFilterDeclaration(e.target.value)}
+            className="px-3 py-2 bg-background border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 appearance-none pr-8 cursor-pointer"
+          >
+            <option value="all">All declarations</option>
+            <option value="missing">Missing declaration</option>
+            <option value="missing-in-use">Missing declaration (in use only)</option>
+          </select>
+
+          {(filterCategory !== "all" || filterStockCheck !== "all" || filterKanban !== "all" || filterSupplier !== "all" || filterDeclaration !== "all" || search) && (
             <button
-              onClick={() => { setFilterCategory("all"); setFilterStockCheck("all"); setFilterKanban("all"); setFilterSupplier("all"); setSearch(""); }}
+              onClick={() => { setFilterCategory("all"); setFilterStockCheck("all"); setFilterKanban("all"); setFilterSupplier("all"); setFilterDeclaration("all"); setSearch(""); }}
               className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 whitespace-nowrap"
             >
               Clear filters

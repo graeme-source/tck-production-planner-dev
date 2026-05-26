@@ -141,6 +141,17 @@ interface ScrapedFields {
   ingredients: string | null;  // raw text, multi-line
   allergens: string[];         // free-form labels Claude finds
   notes: string | null;        // anything useful it picks up that doesn't fit elsewhere
+  // Per-100g nutritional values — null when not stated on the page or when
+  // only per-portion values are given (we don't try to back-calculate).
+  energyKj: number | null;
+  energyKcal: number | null;
+  fat: number | null;
+  saturates: number | null;
+  carbohydrate: number | null;
+  sugars: number | null;
+  protein: number | null;
+  fibre: number | null;
+  salt: number | null;
 }
 
 router.post("/scrape-url", async (req: Request, res: Response) => {
@@ -176,11 +187,11 @@ router.post("/scrape-url", async (req: Request, res: Response) => {
     // to parse free-form text. Returns a single tool_use block.
     const response = await client.messages.create({
       model: CLAUDE_MODELS.haiku,
-      max_tokens: 1024,
+      max_tokens: 1536,
       tool_choice: { type: "tool", name: "extract_ingredient_fields" },
       tools: [{
         name: "extract_ingredient_fields",
-        description: "Extract structured ingredient/product data from a product page.",
+        description: "Extract structured ingredient/product data from a product page, including the per-100g nutritional values when present.",
         input_schema: {
           type: "object",
           properties: {
@@ -193,13 +204,31 @@ router.post("/scrape-url", async (req: Request, res: Response) => {
             ingredients: { type: ["string", "null"], description: "Ingredient declaration as written on the label." },
             allergens: { type: "array", items: { type: "string" }, description: "Allergen names (e.g. 'wheat', 'eggs'). Empty if none stated." },
             notes: { type: ["string", "null"], description: "Anything useful that doesn't fit the other fields — storage, shelf life hint, certifications. One short line max." },
+            energyKj:     { type: ["number", "null"], description: "Energy per 100g/100ml in kJ. Null if only per-portion is shown." },
+            energyKcal:   { type: ["number", "null"], description: "Energy per 100g/100ml in kcal. Null if only per-portion is shown." },
+            fat:          { type: ["number", "null"], description: "Total fat per 100g/100ml in grams." },
+            saturates:    { type: ["number", "null"], description: "Saturated fat (of which saturates) per 100g/100ml in grams." },
+            carbohydrate: { type: ["number", "null"], description: "Total carbohydrate per 100g/100ml in grams." },
+            sugars:       { type: ["number", "null"], description: "Sugars (of which sugars) per 100g/100ml in grams." },
+            protein:      { type: ["number", "null"], description: "Protein per 100g/100ml in grams." },
+            fibre:        { type: ["number", "null"], description: "Fibre per 100g/100ml in grams." },
+            salt:         { type: ["number", "null"], description: "Salt per 100g/100ml in grams. If only sodium is given, convert to salt by multiplying sodium (g) by 2.5." },
           },
-          required: ["name", "brand", "packSize", "packUnit", "costPerPack", "supplierPartNumber", "ingredients", "allergens", "notes"],
+          required: [
+            "name", "brand", "packSize", "packUnit", "costPerPack",
+            "supplierPartNumber", "ingredients", "allergens", "notes",
+            "energyKj", "energyKcal", "fat", "saturates", "carbohydrate",
+            "sugars", "protein", "fibre", "salt",
+          ],
         },
       }],
       messages: [{
         role: "user",
-        content: `Extract the ingredient fields for the form. Source URL: ${check.url.toString()}\n\n${distilled}`,
+        content: `Extract the ingredient fields for the form. Source URL: ${check.url.toString()}
+
+Nutritional values: use the per-100g column on supplier pages (Brakes, Bidfood, supermarkets typically show a Nutrition tab with a table). Leave a nutritional field null if only per-portion values are stated — do NOT back-calculate.
+
+${distilled}`,
       }],
     });
 

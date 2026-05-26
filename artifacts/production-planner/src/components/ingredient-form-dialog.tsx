@@ -53,7 +53,7 @@ export const SUPPLY_CATEGORIES = [
 
 export const UK14_ALLERGENS = [
   { value: "celery", label: "Celery" },
-  { value: "cereals_containing_gluten", label: "Cereals containing Gluten" },
+  { value: "cereals_containing_gluten", label: "Wheat" },
   { value: "crustaceans", label: "Crustaceans" },
   { value: "eggs", label: "Eggs" },
   { value: "fish", label: "Fish" },
@@ -154,12 +154,23 @@ export function IngredientFormDialog({
     notes: string | null;
     supplierId: number | null;
     supplierName: string | null;
+    energyKj: number | null;
+    energyKcal: number | null;
+    fat: number | null;
+    saturates: number | null;
+    carbohydrate: number | null;
+    sugars: number | null;
+    protein: number | null;
+    fibre: number | null;
+    salt: number | null;
   };
   const [scraped, setScraped] = useState<ScrapedFields | null>(null);
   const [applyFlags, setApplyFlags] = useState<Record<keyof ScrapedFields, boolean>>({
     name: true, brand: true, packSize: true, packUnit: true, costPerPack: true,
     supplierPartNumber: true, ingredients: false, allergens: true, notes: false,
     supplierId: true, supplierName: true,
+    energyKj: true, energyKcal: true, fat: true, saturates: true,
+    carbohydrate: true, sugars: true, protein: true, fibre: true, salt: true,
   });
   const orderingUrlValue = watch("orderingUrl") ?? "";
 
@@ -283,6 +294,15 @@ export function IngredientFormDialog({
     if (applyFlags.supplierId && scraped.supplierId != null) {
       setValue("supplierId", scraped.supplierId);
     }
+    // Per-100g nutritionals — only set the ones the user left ticked and that
+    // actually came back with a value, so a partial nutrition table doesn't
+    // wipe fields the operator already typed.
+    const nutriKeys = ["energyKj", "energyKcal", "fat", "saturates", "carbohydrate", "sugars", "protein", "fibre", "salt"] as const;
+    for (const key of nutriKeys) {
+      if (applyFlags[key] && scraped[key] != null) {
+        setValue(key, scraped[key]);
+      }
+    }
     setScraped(null);
   };
 
@@ -299,6 +319,15 @@ export function IngredientFormDialog({
         { key: "ingredients" as const, label: "Ingredient declaration", display: scraped.ingredients ?? "—" },
         { key: "allergens" as const, label: "Allergens", display: scraped.allergens.length ? scraped.allergens.join(", ") : "—" },
         { key: "notes" as const, label: "Notes", display: scraped.notes ?? "—" },
+        { key: "energyKj" as const, label: "Energy (kJ/100g)", display: scraped.energyKj != null ? String(scraped.energyKj) : "—" },
+        { key: "energyKcal" as const, label: "Energy (kcal/100g)", display: scraped.energyKcal != null ? String(scraped.energyKcal) : "—" },
+        { key: "fat" as const, label: "Fat (g/100g)", display: scraped.fat != null ? String(scraped.fat) : "—" },
+        { key: "saturates" as const, label: "Saturates (g/100g)", display: scraped.saturates != null ? String(scraped.saturates) : "—" },
+        { key: "carbohydrate" as const, label: "Carbs (g/100g)", display: scraped.carbohydrate != null ? String(scraped.carbohydrate) : "—" },
+        { key: "sugars" as const, label: "Sugars (g/100g)", display: scraped.sugars != null ? String(scraped.sugars) : "—" },
+        { key: "protein" as const, label: "Protein (g/100g)", display: scraped.protein != null ? String(scraped.protein) : "—" },
+        { key: "fibre" as const, label: "Fibre (g/100g)", display: scraped.fibre != null ? String(scraped.fibre) : "—" },
+        { key: "salt" as const, label: "Salt (g/100g)", display: scraped.salt != null ? String(scraped.salt) : "—" },
       ] satisfies PreviewRow[]).filter(r => r.display !== "—")
     : [];
 

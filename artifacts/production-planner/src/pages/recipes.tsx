@@ -1262,6 +1262,17 @@ function EditRecipeDialog({
                 )}
                 {shopifyError && <p className="text-xs text-destructive mt-1">{shopifyError}</p>}
               </div>
+
+              {/* Live ingredient deck — reflects the currently SAVED recipe.
+                  Unsaved ingredient edits show after you Save and reopen. */}
+              <div className="mt-4 border-t border-border pt-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <ClipboardList className="w-4 h-4 text-[#919b5f]" />
+                  <h4 className="text-sm font-semibold">Ingredient Deck</h4>
+                </div>
+                <p className="text-xs text-muted-foreground mb-2">Generated from the saved recipe. Save and reopen to see edits reflected.</p>
+                <RecipeIngredientDeckPanel id={id} active={open && !isLoading && !isFetching} refreshKey={detail?.ingredients?.length} />
+              </div>
             </>
           )}
         </DialogContent>
@@ -1472,6 +1483,15 @@ function RecipeCostBreakdownDialog({ id, open, onOpenChange }: { id: number; ope
                 </>}
               </tbody>
             </table>
+
+            {/* Live ingredient deck — what's in it, as it appears on the label */}
+            <div className="border-t border-border pt-4">
+              <div className="flex items-center gap-2 mb-1">
+                <ClipboardList className="w-4 h-4 text-[#919b5f]" />
+                <h4 className="text-sm font-semibold">Ingredient Deck</h4>
+              </div>
+              <RecipeIngredientDeckPanel id={id} active={open && !isLoading} />
+            </div>
           </div>
         )}
       </DialogContent>
@@ -1604,13 +1624,18 @@ function RecipeNutritionalsDialog({ id, open, onOpenChange }: { id: number; open
   );
 }
 
-function RecipeIngredientDeckDialog({ id, open, onOpenChange }: { id: number; open: boolean; onOpenChange: (v: boolean) => void }) {
+// Shared deck renderer — fetches the live-generated ingredient deck for a
+// recipe and renders it. Used standalone inside the edit + cost-breakdown
+// views and wrapped by RecipeIngredientDeckDialog for the card pop-out.
+// `active` gates the fetch (so it doesn't run while a parent dialog is shut);
+// bump `refreshKey` to force a re-fetch (e.g. after a save).
+function RecipeIngredientDeckPanel({ id, active = true, refreshKey }: { id: number; active?: boolean; refreshKey?: number | string }) {
   const [data, setData] = useState<DeckData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!active) return;
     setLoading(true);
     setError(null);
     fetch(`${BASE_URL}/api/recipes/${id}/ingredient-deck`, { credentials: "include" })
@@ -1618,7 +1643,7 @@ function RecipeIngredientDeckDialog({ id, open, onOpenChange }: { id: number; op
       .then(d => { if (d.error) throw new Error(d.error); setData(d); })
       .catch(e => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
-  }, [open, id]);
+  }, [active, id, refreshKey]);
 
   const copyDeck = () => {
     if (!data) return;
@@ -1626,70 +1651,76 @@ function RecipeIngredientDeckDialog({ id, open, onOpenChange }: { id: number; op
     navigator.clipboard.writeText(plain);
   };
 
+  if (loading) return <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+  if (error) return <p className="text-destructive text-sm py-4">{error}</p>;
+  if (!data) return null;
+
+  return (
+    <div className="space-y-4 mt-2">
+      <div className="bg-secondary/20 rounded-lg p-4 border border-border">
+        <p className="text-sm leading-relaxed" dangerouslySetInnerHTML={{
+          __html: data.deckText.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+        }} />
+        <button type="button" onClick={copyDeck} className="mt-2 text-xs text-primary hover:underline">Copy to clipboard</button>
+      </div>
+
+      {data.allergens.length > 0 && (
+        <div>
+          <p className="text-sm font-semibold mb-1">Allergens Present</p>
+          <div className="flex flex-wrap gap-1.5">
+            {data.allergens.map(a => (
+              <span key={a} className="px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300">{a}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {data.mayContainStatement && (
+        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
+          <p className="text-xs font-medium text-amber-800 dark:text-amber-200">{data.mayContainStatement}</p>
+        </div>
+      )}
+
+      <div>
+        <p className="text-sm font-semibold mb-1">Breakdown by Weight</p>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border">
+              <th className="text-left py-1">Ingredient</th>
+              <th className="text-right py-1">%</th>
+              <th className="text-right py-1">Allergens</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.ingredients.map((ing, idx) => (
+              <tr key={idx} className="border-b border-border/30">
+                <td className="py-1">{ing.name}</td>
+                <td className="text-right py-1 font-medium">{ing.percentage}%</td>
+                <td className="text-right py-1 text-xs">{ing.allergens.length > 0 ? ing.allergens.join(", ") : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {!data.isComplete && (
+        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
+          <p className="text-sm font-medium text-amber-800 dark:text-amber-200 flex items-center gap-1"><AlertTriangle className="w-4 h-4" /> Missing Declarations</p>
+          <p className="text-xs text-amber-700 dark:text-amber-300">{data.missingDeclarations.join(", ")}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RecipeIngredientDeckDialog({ id, open, onOpenChange }: { id: number; open: boolean; onOpenChange: (v: boolean) => void }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[560px] bg-card border-border rounded-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display text-xl flex items-center gap-2"><ClipboardList className="w-5 h-5" /> Ingredient Deck</DialogTitle>
         </DialogHeader>
-        {loading && <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>}
-        {error && <p className="text-destructive text-sm py-4">{error}</p>}
-        {data && (
-          <div className="space-y-4 mt-2">
-            <div className="bg-secondary/20 rounded-lg p-4 border border-border">
-              <p className="text-sm leading-relaxed" dangerouslySetInnerHTML={{
-                __html: data.deckText.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-              }} />
-              <button onClick={copyDeck} className="mt-2 text-xs text-primary hover:underline">Copy to clipboard</button>
-            </div>
-
-            {data.allergens.length > 0 && (
-              <div>
-                <p className="text-sm font-semibold mb-1">Allergens Present</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {data.allergens.map(a => (
-                    <span key={a} className="px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300">{a}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {data.mayContainStatement && (
-              <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
-                <p className="text-xs font-medium text-amber-800 dark:text-amber-200">{data.mayContainStatement}</p>
-              </div>
-            )}
-
-            <div>
-              <p className="text-sm font-semibold mb-1">Breakdown by Weight</p>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="text-left py-1">Ingredient</th>
-                    <th className="text-right py-1">%</th>
-                    <th className="text-right py-1">Allergens</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.ingredients.map((ing, idx) => (
-                    <tr key={idx} className="border-b border-border/30">
-                      <td className="py-1">{ing.name}</td>
-                      <td className="text-right py-1 font-medium">{ing.percentage}%</td>
-                      <td className="text-right py-1 text-xs">{ing.allergens.length > 0 ? ing.allergens.join(", ") : "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {!data.isComplete && (
-              <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
-                <p className="text-sm font-medium text-amber-800 dark:text-amber-200 flex items-center gap-1"><AlertTriangle className="w-4 h-4" /> Missing Declarations</p>
-                <p className="text-xs text-amber-700 dark:text-amber-300">{data.missingDeclarations.join(", ")}</p>
-              </div>
-            )}
-          </div>
-        )}
+        <RecipeIngredientDeckPanel id={id} active={open} />
       </DialogContent>
     </Dialog>
   );

@@ -1034,7 +1034,7 @@ router.get("/:id/nutritionals", async (req, res) => {
 
 const ALLERGEN_DISPLAY: Record<string, string> = {
   celery: "Celery",
-  cereals_containing_gluten: "Cereals containing Gluten",
+  cereals_containing_gluten: "Wheat",
   crustaceans: "Crustaceans",
   eggs: "Eggs",
   fish: "Fish",
