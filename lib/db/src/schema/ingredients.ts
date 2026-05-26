@@ -52,6 +52,11 @@ export const ingredientsTable = pgTable("ingredients", {
   salt: numeric("salt", { precision: 10, scale: 2 }),
   labelDeclaration: text("label_declaration"),
   allergens: jsonb("allergens").$type<string[]>().default([]),
+  // True when any of the per-100g nutritional values came from the
+  // name-only AI estimate flow (no supplier URL, Claude guessed from the
+  // name + category). Surfaced as a ✨ chip in the form so operators know
+  // to verify before printing on packaging.
+  nutritionalsAiEstimated: boolean("nutritionals_ai_estimated").notNull().default(false),
   qrCodeUrl: text("qr_code_url"),
   isBottle: boolean("is_bottle").notNull().default(false),
   bottleSize: numeric("bottle_size", { precision: 10, scale: 4 }),

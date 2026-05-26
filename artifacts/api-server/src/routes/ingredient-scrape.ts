@@ -250,4 +250,118 @@ ${distilled}`,
   });
 });
 
+interface EstimatedNutrition {
+  energyKj: number | null;
+  energyKcal: number | null;
+  fat: number | null;
+  saturates: number | null;
+  carbohydrate: number | null;
+  sugars: number | null;
+  protein: number | null;
+  fibre: number | null;
+  salt: number | null;
+  allergens: string[];
+  confidence: "high" | "medium" | "low";
+  notes: string | null;
+}
+
+/** Name-only AI estimate of per-100g nutritionals + UK14 allergens for
+ *  ingredients with no supplier URL (e.g. "grated mozzarella"). Lower
+ *  confidence than scraping a labelled product page — the operator is
+ *  expected to verify before relying on the numbers for printed
+ *  packaging. The route returns the estimate; the frontend sets the
+ *  `nutritionalsAiEstimated` flag on save so the badge can show. */
+router.post("/ai-nutrition", async (req: Request, res: Response) => {
+  if (!isClaudeConfigured()) {
+    res.status(503).json({ error: "AI estimate requires the Anthropic API key. Ask an admin to set ANTHROPIC_API_KEY." });
+    return;
+  }
+  const name = String(req.body?.name ?? "").trim();
+  const brand = String(req.body?.brand ?? "").trim();
+  const category = String(req.body?.category ?? "").trim();
+  if (!name) { res.status(400).json({ error: "name is required" }); return; }
+
+  // Build a compact context block — name first, then brand/category as
+  // hints. Brand and category narrow the estimate (e.g. "Galbani" is
+  // a specific dairy brand; category=cheese rules out cooked-meat
+  // confusion on ambiguous names).
+  const contextLines = [`Ingredient name: ${name}`];
+  if (brand) contextLines.push(`Brand: ${brand}`);
+  if (category) contextLines.push(`Category: ${category}`);
+  const context = contextLines.join("\n");
+
+  const client = getClaudeClient();
+  let estimate: EstimatedNutrition;
+  try {
+    const response = await client.messages.create({
+      model: CLAUDE_MODELS.haiku,
+      max_tokens: 1024,
+      tool_choice: { type: "tool", name: "estimate_nutrition" },
+      tools: [{
+        name: "estimate_nutrition",
+        description: "Estimate per-100g nutritional values and UK14 allergens for a generic ingredient from its name alone, with a confidence rating.",
+        input_schema: {
+          type: "object",
+          properties: {
+            energyKj:     { type: ["number", "null"], description: "Energy per 100g/100ml in kJ. Typical range 0-3700." },
+            energyKcal:   { type: ["number", "null"], description: "Energy per 100g/100ml in kcal. Typical range 0-900." },
+            fat:          { type: ["number", "null"], description: "Total fat per 100g/100ml in grams." },
+            saturates:    { type: ["number", "null"], description: "Saturated fat per 100g/100ml in grams. Must be ≤ fat." },
+            carbohydrate: { type: ["number", "null"], description: "Total carbohydrate per 100g/100ml in grams." },
+            sugars:       { type: ["number", "null"], description: "Sugars per 100g/100ml in grams. Must be ≤ carbohydrate." },
+            protein:      { type: ["number", "null"], description: "Protein per 100g/100ml in grams." },
+            fibre:        { type: ["number", "null"], description: "Fibre per 100g/100ml in grams." },
+            salt:         { type: ["number", "null"], description: "Salt per 100g/100ml in grams. NOT sodium." },
+            allergens:    {
+              type: "array",
+              items: { type: "string", enum: [
+                "celery", "cereals_containing_gluten", "crustaceans", "eggs",
+                "fish", "lupin", "milk", "molluscs", "mustard", "nuts",
+                "peanuts", "sesame", "soybeans", "sulphur_dioxide",
+              ] },
+              description: "UK14 allergen codes definitely present. Be conservative — only include allergens you're certain the ingredient contains. Do NOT include 'may contain' / cross-contamination allergens.",
+            },
+            confidence: {
+              type: "string",
+              enum: ["high", "medium", "low"],
+              description: "high = generic well-known ingredient (e.g. plain flour, olive oil, grated mozzarella); medium = branded or processed item where you're estimating an average; low = composite/prepared item where you're back-calculating from a guessed recipe.",
+            },
+            notes: { type: ["string", "null"], description: "One short line on what you assumed (e.g. 'generic full-fat cow's milk mozzarella') or null." },
+          },
+          required: [
+            "energyKj", "energyKcal", "fat", "saturates", "carbohydrate",
+            "sugars", "protein", "fibre", "salt", "allergens",
+            "confidence", "notes",
+          ],
+        },
+      }],
+      messages: [{
+        role: "user",
+        content: `You are estimating per-100g nutritional values for an ingredient on a food production database. The operator has not supplied a product URL — they want a reasonable estimate from the name alone, which they'll review before saving.
+
+${context}
+
+Give your best estimate of the per-100g nutritional values as they'd appear on a typical supermarket / wholesale supplier label for this ingredient. Use generic values where the brand isn't specified. If the ingredient is too vague to estimate confidently (e.g. just "sauce"), return null for the numeric fields and confidence: "low".
+
+Allergens: only include UK14 allergen codes you're certain are present in this ingredient. For example, mozzarella → milk; soy sauce → soybeans + cereals_containing_gluten (most contain wheat); plain rice → no allergens.
+
+Salt is in grams. If you're thinking in sodium, multiply by 2.5 to get salt.`,
+      }],
+    });
+
+    const toolUse = response.content.find(b => b.type === "tool_use");
+    if (!toolUse || toolUse.type !== "tool_use") {
+      throw new Error("Claude did not return a tool_use block");
+    }
+    estimate = toolUse.input as EstimatedNutrition;
+  } catch (err) {
+    console.error("[ingredient-scrape] AI estimate failed:", err);
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(502).json({ error: `Estimate failed: ${msg}` });
+    return;
+  }
+
+  res.json({ estimate });
+});
+
 export default router;
