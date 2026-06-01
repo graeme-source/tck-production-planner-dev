@@ -745,6 +745,12 @@ async function runStartupMigrations() {
     await db.execute(sql`
       ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS is_pasta BOOLEAN NOT NULL DEFAULT FALSE
     `);
+    // True when per-100g nutritionals were filled by the name-only AI
+    // estimate flow. Surfaces in the form as a ✨ chip so operators know
+    // to verify before relying on the numbers for printed packaging.
+    await db.execute(sql`
+      ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS nutritionals_ai_estimated BOOLEAN NOT NULL DEFAULT FALSE
+    `);
     // Hide a sub-recipe component from the prep-station expansion while
     // keeping it in the data for ratio/cost maths.
     await db.execute(sql`

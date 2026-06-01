@@ -13,7 +13,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Carrot, Box, ChevronDown } from "lucide-react";
+import { Carrot, Box, ChevronDown, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Ingredient } from "@workspace/api-client-react";
 import {
@@ -235,6 +235,93 @@ export function IngredientFormDialog({
     } finally {
       setScrapeLoading(false);
     }
+  };
+
+  // AI-only nutrition estimate. Mirrors the scrape preview pattern but
+  // sourced from the ingredient name (+ brand + category) alone, with
+  // no supplier URL. Result is per-100g nutritionals and UK14
+  // allergens; saving with these applied flips the
+  // `nutritionalsAiEstimated` flag so the ✨ chip shows.
+  type AiEstimate = {
+    energyKj: number | null;
+    energyKcal: number | null;
+    fat: number | null;
+    saturates: number | null;
+    carbohydrate: number | null;
+    sugars: number | null;
+    protein: number | null;
+    fibre: number | null;
+    salt: number | null;
+    allergens: string[];
+    confidence: "high" | "medium" | "low";
+    notes: string | null;
+  };
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiEstimate, setAiEstimate] = useState<AiEstimate | null>(null);
+  type AiApplyKey = Exclude<keyof AiEstimate, "confidence" | "notes">;
+  const [aiApplyFlags, setAiApplyFlags] = useState<Record<AiApplyKey, boolean>>({
+    energyKj: true, energyKcal: true, fat: true, saturates: true,
+    carbohydrate: true, sugars: true, protein: true, fibre: true, salt: true,
+    allergens: true,
+  });
+
+  const runAiEstimate = async () => {
+    const nameValue = (watch("name") ?? "").trim();
+    if (!nameValue) { setAiError("Set the ingredient name above first."); return; }
+    setAiError(null);
+    setAiLoading(true);
+    setAiEstimate(null);
+    try {
+      const res = await fetch("/api/ingredients/ai-nutrition", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: nameValue,
+          brand: watch("brand") ?? "",
+          category: watch("category") ?? "",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
+      setAiEstimate(data.estimate as AiEstimate);
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const applyAiEstimate = () => {
+    if (!aiEstimate) return;
+    const numericKeys: AiApplyKey[] = ["energyKj", "energyKcal", "fat", "saturates", "carbohydrate", "sugars", "protein", "fibre", "salt"];
+    let appliedAny = false;
+    for (const key of numericKeys) {
+      if (aiApplyFlags[key] && aiEstimate[key] != null) {
+        setValue(key, aiEstimate[key] as number);
+        appliedAny = true;
+      }
+    }
+    if (aiApplyFlags.allergens && aiEstimate.allergens.length > 0) {
+      // AI returns canonical UK14 codes already, but union into existing
+      // so an operator who'd manually ticked something doesn't lose it.
+      const current = new Set(watchedAllergens);
+      for (const code of aiEstimate.allergens) current.add(code);
+      setValue("allergens", Array.from(current));
+      appliedAny = true;
+    }
+    if (appliedAny) {
+      setValue("nutritionalsAiEstimated", true);
+    }
+    setAiEstimate(null);
+  };
+
+  // Any manual edit to a nutritional field clears the AI-estimated flag —
+  // operators who type a real supplier value over the estimate shouldn't
+  // keep the ✨ "needs verifying" chip. Allergens follow the same rule.
+  const clearAiEstimatedFlag = () => {
+    if (watch("nutritionalsAiEstimated")) setValue("nutritionalsAiEstimated", false);
   };
 
   const applyScraped = () => {
@@ -752,11 +839,105 @@ export function IngredientFormDialog({
                 onClick={() => setNutritionOpen(!nutritionOpen)}
                 className="w-full flex items-center justify-between px-4 py-3 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors"
               >
-                <span className="text-sm font-semibold text-amber-800 dark:text-amber-300">Nutritionals &amp; Labelling</span>
+                <span className="text-sm font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-2">
+                  Nutritionals &amp; Labelling
+                  {watch("nutritionalsAiEstimated") && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                      <Sparkles className="w-3 h-3" /> AI-estimated
+                    </span>
+                  )}
+                </span>
                 <ChevronDown className={cn("w-4 h-4 text-amber-600 transition-transform", nutritionOpen && "rotate-180")} />
               </button>
               {nutritionOpen && (
                 <div className="px-4 py-4 space-y-4 bg-card">
+                  {/* AI estimate panel — name-only Claude estimate of per-100g
+                      values and UK14 allergens. Same review/apply pattern as
+                      the URL scrape, but only the nutritional fields are
+                      offered. Applying sets the nutritionalsAiEstimated flag;
+                      any subsequent manual edit clears it. */}
+                  <div className="rounded-lg border border-purple-200 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-950/20 p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                        <span className="text-xs font-semibold text-purple-800 dark:text-purple-200">AI estimate from name</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={runAiEstimate}
+                        disabled={aiLoading || !(watch("name") ?? "").trim()}
+                        className="px-3 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700 disabled:opacity-50 flex items-center gap-1.5"
+                      >
+                        {aiLoading ? <span className="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                        {aiLoading ? "Estimating…" : "AI estimate"}
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-purple-700 dark:text-purple-300">
+                      No supplier URL? Get a per-100g estimate from the ingredient name. Verify before printing on packaging — accuracy varies (±5–10% for generics, more for branded or composite items).
+                    </p>
+                    {aiError && <p className="text-xs text-destructive">{aiError}</p>}
+                    {aiEstimate && (
+                      <div className="rounded-md border border-purple-200 dark:border-purple-800 bg-background p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Review &amp; apply</span>
+                            <span className={cn(
+                              "text-[10px] font-medium px-1.5 py-0.5 rounded-full",
+                              aiEstimate.confidence === "high" && "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300",
+                              aiEstimate.confidence === "medium" && "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
+                              aiEstimate.confidence === "low" && "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300",
+                            )}>
+                              {aiEstimate.confidence} confidence
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setAiEstimate(null)}
+                            className="text-xs text-muted-foreground hover:text-foreground"
+                          >
+                            Discard
+                          </button>
+                        </div>
+                        {aiEstimate.notes && (
+                          <p className="text-[11px] italic text-muted-foreground">{aiEstimate.notes}</p>
+                        )}
+                        <div className="space-y-1">
+                          {([
+                            { key: "energyKj" as const, label: "Energy (kJ/100g)", val: aiEstimate.energyKj },
+                            { key: "energyKcal" as const, label: "Energy (kcal/100g)", val: aiEstimate.energyKcal },
+                            { key: "fat" as const, label: "Fat (g)", val: aiEstimate.fat },
+                            { key: "saturates" as const, label: "Saturates (g)", val: aiEstimate.saturates },
+                            { key: "carbohydrate" as const, label: "Carbs (g)", val: aiEstimate.carbohydrate },
+                            { key: "sugars" as const, label: "Sugars (g)", val: aiEstimate.sugars },
+                            { key: "protein" as const, label: "Protein (g)", val: aiEstimate.protein },
+                            { key: "fibre" as const, label: "Fibre (g)", val: aiEstimate.fibre },
+                            { key: "salt" as const, label: "Salt (g)", val: aiEstimate.salt },
+                            { key: "allergens" as const, label: "Allergens", val: aiEstimate.allergens.length ? aiEstimate.allergens.join(", ") : null },
+                          ]).filter(r => r.val != null && r.val !== "").map(row => (
+                            <label key={row.key} className="flex items-start gap-2 text-xs cursor-pointer hover:bg-secondary/30 rounded px-1.5 py-1">
+                              <input
+                                type="checkbox"
+                                checked={aiApplyFlags[row.key]}
+                                onChange={e => setAiApplyFlags(prev => ({ ...prev, [row.key]: e.target.checked }))}
+                                className="mt-0.5 w-3.5 h-3.5 rounded border-border"
+                              />
+                              <span className="text-muted-foreground w-32 shrink-0">{row.label}</span>
+                              <span className="text-foreground flex-1 break-words">{String(row.val)}</span>
+                            </label>
+                          ))}
+                        </div>
+                        <div className="flex justify-end pt-1 border-t border-border">
+                          <button
+                            type="button"
+                            onClick={applyAiEstimate}
+                            className="px-3 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700"
+                          >
+                            Apply selected
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <p className="text-xs text-muted-foreground">All values per 100 g as supplied.</p>
                   <div className="grid grid-cols-4 gap-3">
                     {([
@@ -772,7 +953,14 @@ export function IngredientFormDialog({
                     ] as const).map(({ field, label }) => (
                       <div key={field}>
                         <label className="text-xs font-medium mb-1 block">{label}</label>
-                        <input type="number" step="0.01" min="0" {...register(field)} className={numInputClass} placeholder="0.00" />
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          {...register(field, { onChange: clearAiEstimatedFlag })}
+                          className={numInputClass}
+                          placeholder="0.00"
+                        />
                       </div>
                     ))}
                   </div>

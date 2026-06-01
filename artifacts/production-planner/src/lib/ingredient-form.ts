@@ -84,6 +84,10 @@ export const ingredientFormSchema = z.object({
   salt: nullableNumber((n) => n.min(0)),
   labelDeclaration: z.string().optional(),
   allergens: z.array(z.string()).optional(),
+  // True when per-100g values came from the AI estimate flow. Cleared
+  // back to false when the operator manually edits a nutritional field
+  // after the AI fill (handled in the dialog layer).
+  nutritionalsAiEstimated: z.boolean().optional(),
 }).superRefine((val, ctx) => {
   // Ingredient-mode entries must use a native weight/volume/count unit.
   // Supplies can use packaging-style units.
@@ -160,6 +164,7 @@ export function emptyIngredientFormDefaults(
     salt: null,
     labelDeclaration: "",
     allergens: [],
+    nutritionalsAiEstimated: false,
   };
 }
 
@@ -235,6 +240,7 @@ export function ingredientToFormValues(
     salt: num(it.salt),
     labelDeclaration: str(it.labelDeclaration),
     allergens: (it.allergens as string[] | null | undefined) ?? [],
+    nutritionalsAiEstimated: bool(it.nutritionalsAiEstimated),
   };
 }
 
@@ -295,5 +301,6 @@ export function buildIngredientPayload(data: IngredientFormValues) {
     salt: data.salt ?? null,
     labelDeclaration: data.labelDeclaration || null,
     allergens: data.allergens ?? [],
+    nutritionalsAiEstimated: data.nutritionalsAiEstimated ?? false,
   };
 }
