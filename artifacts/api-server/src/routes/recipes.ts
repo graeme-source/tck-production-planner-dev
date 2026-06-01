@@ -1118,6 +1118,102 @@ router.get("/:id/ingredient-deck", async (req, res) => {
       return qty;
     }
 
+    type FlatSubIng = {
+      ingredientId: number;
+      name: string;
+      quantityG: number;
+      labelDeclaration: string | null;
+      allergens: string[];
+    };
+
+    // Recursively flatten a sub-recipe's ingredients (including any nested
+    // sub-recipes — e.g. a "dry mix" sub-recipe placed inside a "dough"
+    // sub-recipe). Returns ingredient weights in grams scaled to one full
+    // batch of the sub-recipe (i.e. summing to roughly the sub-recipe's
+    // yield, under the same weight-in == weight-out assumption used by the
+    // rest of this endpoint). The caller normalises to actual used weight.
+    //
+    // `ancestorPath` is mutated to detect cycles (sub-recipe A → B → A).
+    async function flattenSubRecipeIngredients(
+      subRecipeId: number,
+      ancestorPath: Set<number>,
+    ): Promise<FlatSubIng[]> {
+      if (ancestorPath.has(subRecipeId)) return [];
+      ancestorPath.add(subRecipeId);
+
+      const direct = await db
+        .select({
+          ingredientId: subRecipeIngredientsTable.ingredientId,
+          quantity: subRecipeIngredientsTable.quantity,
+          name: ingredientsTable.name,
+          unit: ingredientsTable.unit,
+          labelDeclaration: ingredientsTable.labelDeclaration,
+          allergens: ingredientsTable.allergens,
+        })
+        .from(subRecipeIngredientsTable)
+        .innerJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
+        .where(eq(subRecipeIngredientsTable.subRecipeId, subRecipeId));
+
+      const out: FlatSubIng[] = direct.map(si => ({
+        ingredientId: si.ingredientId,
+        name: si.name,
+        quantityG: toGrams(Number(si.quantity), si.unit ?? "g"),
+        labelDeclaration: si.labelDeclaration,
+        allergens: (si.allergens as string[] | null) ?? [],
+      }));
+
+      const nestedLinks = await db
+        .select({
+          componentSubRecipeId: subRecipeSubRecipesTable.componentSubRecipeId,
+          quantity: subRecipeSubRecipesTable.quantity,
+        })
+        .from(subRecipeSubRecipesTable)
+        .where(eq(subRecipeSubRecipesTable.subRecipeId, subRecipeId));
+
+      for (const nl of nestedLinks) {
+        const [nestedSr] = await db
+          .select()
+          .from(subRecipesTable)
+          .where(eq(subRecipesTable.id, nl.componentSubRecipeId));
+        if (!nestedSr) continue;
+
+        const nestedFlat = await flattenSubRecipeIngredients(nl.componentSubRecipeId, ancestorPath);
+        const nestedTotalG = nestedFlat.reduce((s, i) => s + i.quantityG, 0);
+        if (nestedTotalG <= 0) continue;
+
+        // nl.quantity is expressed in the nested sub-recipe's yieldUnit and
+        // represents the amount used per one full batch of the *parent*.
+        const nestedUsedG = toGrams(Number(nl.quantity), nestedSr.yieldUnit ?? "g");
+        const scaleFactor = nestedUsedG / nestedTotalG;
+
+        for (const ing of nestedFlat) {
+          out.push({
+            ...ing,
+            quantityG: ing.quantityG * scaleFactor,
+          });
+        }
+      }
+
+      ancestorPath.delete(subRecipeId);
+
+      // Merge duplicate ingredients — e.g. salt appears in both the parent
+      // sub-recipe's direct ingredients and a nested dry-mix. Without this
+      // the same raw ingredient would be listed twice inside a compound
+      // bracket on the deck.
+      const merged = new Map<number, FlatSubIng>();
+      for (const ing of out) {
+        const existing = merged.get(ing.ingredientId);
+        if (existing) {
+          existing.quantityG += ing.quantityG;
+          // Union allergens, in case one row's ingredient row was missing them.
+          existing.allergens = [...new Set([...existing.allergens, ...ing.allergens])];
+        } else {
+          merged.set(ing.ingredientId, { ...ing });
+        }
+      }
+      return [...merged.values()];
+    }
+
     const directItems: Array<{
       ingredientId: number;
       name: string;
@@ -1140,13 +1236,7 @@ router.get("/:id/ingredient-deck", async (req, res) => {
       labelDeclaration: string | null;
       totalQuantityG: number;
       isQuid: boolean;
-      ingredients: Array<{
-        ingredientId: number;
-        name: string;
-        quantityG: number;
-        labelDeclaration: string | null;
-        allergens: string[];
-      }>;
+      ingredients: FlatSubIng[];
     }
 
     const subRecipeGroups: SubRecipeGroup[] = [];
@@ -1157,26 +1247,13 @@ router.get("/:id/ingredient-deck", async (req, res) => {
 
       const srUsedG = toGrams(Number(sr.quantity), subRecipe.yieldUnit ?? "g");
 
-      const srIngs = await db
-        .select({
-          ingredientId: subRecipeIngredientsTable.ingredientId,
-          quantity: subRecipeIngredientsTable.quantity,
-          name: ingredientsTable.name,
-          unit: ingredientsTable.unit,
-          labelDeclaration: ingredientsTable.labelDeclaration,
-          allergens: ingredientsTable.allergens,
-        })
-        .from(subRecipeIngredientsTable)
-        .innerJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
-        .where(eq(subRecipeIngredientsTable.subRecipeId, sr.subRecipeId));
-
-      const srIngNormalized = srIngs.map(si => ({
-        ingredientId: si.ingredientId,
-        name: si.name,
-        quantityG: toGrams(Number(si.quantity), si.unit ?? "g"),
-        labelDeclaration: si.labelDeclaration,
-        allergens: (si.allergens as string[] | null) ?? [],
-      }));
+      // Flatten this sub-recipe's ingredients, recursing through any nested
+      // sub-recipes (e.g. dough → dry-mix). Cycle detection is per top-level
+      // sub-recipe call, so two siblings can share the same nested mix.
+      const srIngNormalized = await flattenSubRecipeIngredients(
+        sr.subRecipeId,
+        new Set<number>(),
+      );
 
       const srTotalIngWeightG = srIngNormalized.reduce((s, i) => s + i.quantityG, 0);
 
