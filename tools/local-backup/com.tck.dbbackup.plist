@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tck.dbbackup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/graemecarter/Dev Projects/tck-production-planner-main/tools/local-backup/backup.sh</string>
+    </array>
+
+    <!-- Run daily at 16:45 (Europe/London — end of kitchen day). If the
+         Mac is asleep at that time, launchd will run it as soon as the
+         Mac wakes up. For lid-closed reliability, pair this with:
+           sudo pmset repeat wakeorpoweron MTWRFSU 16:40:00
+         which wakes the Mac 5 minutes before this fires. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>16</integer>
+        <key>Minute</key>
+        <integer>45</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/graemecarter/TCK-Backups/launchd.out</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/graemecarter/TCK-Backups/launchd.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
