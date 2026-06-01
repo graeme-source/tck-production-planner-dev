@@ -5933,6 +5933,13 @@ router.get("/:id/main-prep", async (req, res) => {
     // (plan_item_id, recipe_id) pair — previously we sent recipeId=0 which
     // the server rejects with 400.
     parentRecipeId: number;
+    // The top-level recipe's display name. Carried alongside parentRecipeId
+    // so the prep UI groups expanded sub-recipe ingredients under the parent
+    // recipe (e.g. "Chilli Con Carnage") rather than under the intermediate
+    // sub-recipe's name (e.g. "Beef Chilli"). Without this the frontend
+    // ingredients-by-recipe panel was creating phantom sections labelled
+    // with the sub-recipe name.
+    parentRecipeName: string;
     // The sub-recipe this expansion came from. Propagates to the
     // ingredient.recipes[] entry as subRecipeOriginId so tin completions
     // can be keyed independently when the same ingredient (e.g. cheddar)
@@ -6213,6 +6220,7 @@ router.get("/:id/main-prep", async (req, res) => {
                 packWeight: compPackWeight,
                 subRecipeName: sr.subRecipeName ?? `Sub-recipe #${sr.subRecipeId}`,
                 parentRecipeId: planItem.recipeId!,
+                parentRecipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
                 subRecipeId: sr.subRecipeId,
               });
             }
@@ -6272,7 +6280,12 @@ router.get("/:id/main-prep", async (req, res) => {
                 totalQty: nestedRounded,
                 recipes: [{
                   recipeId: planItem.recipeId!,
-                  recipeName: nestedName,
+                  // Group this nested sub-recipe prep task under the
+                  // top-level recipe (e.g. "Chilli Con Carnage"), not under
+                  // the sub-recipe's own name (e.g. "Beef Chilli Dry Mix").
+                  // The card's ingredientName above still shows the nested
+                  // sub-recipe's name so the prep team knows what to make.
+                  recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
                   batchesTarget: 0,
                   qtyForRecipe: nestedRounded,
                   tinSize: null,
@@ -6361,7 +6374,12 @@ router.get("/:id/main-prep", async (req, res) => {
       existing.totalQty += exp.totalQty;
       existing.recipes.push({
         recipeId: exp.parentRecipeId,
-        recipeName: exp.subRecipeName,
+        // Use the top-level recipe's name (e.g. "Chilli Con Carnage") so the
+        // ingredients-by-recipe left panel groups under the real recipe and
+        // not the intermediate sub-recipe (e.g. "Beef Chilli"). The
+        // sub-recipe origin is still tracked via subRecipeOriginId so tin
+        // completions stay independent per origin.
+        recipeName: exp.parentRecipeName,
         batchesTarget: 0,
         qtyForRecipe: exp.totalQty,
         tinSize: null,
@@ -6373,14 +6391,19 @@ router.get("/:id/main-prep", async (req, res) => {
         subRecipeOriginId: exp.subRecipeId,
       });
     } else {
-      // Strip parentRecipeId / subRecipeId from the spread — private markers, not response.
-      const { parentRecipeId: _pRid, subRecipeId: _sRid, ...expRest } = exp;
-      void _pRid; void _sRid;
+      // Strip parent/sub markers from the spread — private fields, not response.
+      const {
+        parentRecipeId: _pRid,
+        parentRecipeName: _pRn,
+        subRecipeId: _sRid,
+        ...expRest
+      } = exp;
+      void _pRid; void _pRn; void _sRid;
       ingredientMap.set(exp.ingredientId, {
         ...expRest,
         recipes: [{
           recipeId: exp.parentRecipeId,
-          recipeName: exp.subRecipeName,
+          recipeName: exp.parentRecipeName,
           batchesTarget: 0,
           qtyForRecipe: exp.totalQty,
           tinSize: null,
@@ -6632,12 +6655,24 @@ router.get("/:id/main-prep", async (req, res) => {
     };
   });
 
+  // Only main_prep has a fully materialised allItems (the station === "main_prep"
+  // branch above expands sub-recipes into individual ingredient rows). For
+  // prep_meat / prep_veg / prep_bases, allItems is built from direct
+  // recipe_ingredients only, so ingredients reachable only via a sub-recipe
+  // (e.g. Minced Burger Beef pulled in through Beef Chilli → Beef Chilli Dry Mix
+  // under Chilli Con Carnage) never appear in validItemKeys. Filtering
+  // completions against that set silently strips legitimate ticks and makes
+  // the tray buttons on the Raw Meat station appear untickable. The other
+  // prep stations render trays from /prep-requirements-by-recipe (recursive)
+  // and match completions by (ingredientId, recipeId, tinNumber) on the
+  // client, so unmatched rows simply get ignored — no harm in passing the
+  // full set through.
   const validItemKeys = new Set(
     allItems.map(item => `${item.ingredientId}_${!!item.isSubRecipe}`)
   );
-  const completions = rawCompletions.filter(c =>
-    validItemKeys.has(`${c.ingredientId}_${c.isSubRecipe}`)
-  );
+  const completions = station === "main_prep"
+    ? rawCompletions.filter(c => validItemKeys.has(`${c.ingredientId}_${c.isSubRecipe}`))
+    : rawCompletions;
 
   // Deferrals on this plan — same shape conventions as completions so the
   // frontend can render a "deferred" badge per tin using identical key
@@ -6671,9 +6706,11 @@ router.get("/:id/main-prep", async (req, res) => {
       subRecipeOriginId: !isSubRecipeTick && d.subRecipeId != null ? d.subRecipeId : null,
     };
   });
-  const deferrals = rawDeferrals.filter(d =>
-    validItemKeys.has(`${d.ingredientId}_${d.isSubRecipe}`)
-  );
+  // Same reasoning as for completions above — only main_prep has a fully
+  // materialised allItems, so only main_prep should apply the filter.
+  const deferrals = station === "main_prep"
+    ? rawDeferrals.filter(d => validItemKeys.has(`${d.ingredientId}_${d.isSubRecipe}`))
+    : rawDeferrals;
 
   res.json({ ingredients: allItems, completions, deferrals, linkedItems: linkedItemsMap });
 });
