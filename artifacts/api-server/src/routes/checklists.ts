@@ -657,7 +657,31 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
   }
 
   if (type === "mozzarella_load") {
-    // Calculate mozzarella load for the plan (same logic as production-plans mozzarella-load endpoint)
+    // Mozzarella is loaded into the building fridges at end of day for the
+    // NEXT production day's build — so this (closing-checklist) figure must
+    // reflect the next plan's requirement, not the current/today's plan.
+    const [currentPlan] = await db
+      .select({ planDate: productionPlansTable.planDate })
+      .from(productionPlansTable)
+      .where(eq(productionPlansTable.id, planId))
+      .limit(1);
+
+    let targetPlanId = planId;
+    let targetPlanDate: string | null = currentPlan?.planDate ?? null;
+    if (currentPlan) {
+      const [nextPlan] = await db
+        .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate })
+        .from(productionPlansTable)
+        .where(gt(productionPlansTable.planDate, currentPlan.planDate))
+        .orderBy(asc(productionPlansTable.planDate))
+        .limit(1);
+      if (!nextPlan) { res.json([]); return; } // no upcoming plan → nothing to load yet
+      targetPlanId = nextPlan.id;
+      targetPlanDate = nextPlan.planDate;
+    }
+
+    // Calculate mozzarella load for the next plan (same logic as the
+    // production-plans mozzarella-load endpoint).
     const planItems = await db
       .select({
         recipeId: productionPlanItemsTable.recipeId,
@@ -666,7 +690,7 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
       })
       .from(productionPlanItemsTable)
       .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
-      .where(eq(productionPlanItemsTable.planId, planId));
+      .where(eq(productionPlanItemsTable.planId, targetPlanId));
 
     let totalQty = 0;
     let mozzMeta: { name: string; unit: string } | null = null;
@@ -697,7 +721,7 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
     if (totalQty === 0 || !mozzMeta) { res.json([]); return; }
     const bagWeight = mozzMeta.unit === "kg" ? 2 : 2000;
     const bags = Math.ceil(totalQty / bagWeight);
-    res.json([{ name: mozzMeta.name, unit: mozzMeta.unit, totalQty, bagWeight, bags }]);
+    res.json([{ name: mozzMeta.name, unit: mozzMeta.unit, totalQty, bagWeight, bags, planDate: targetPlanDate }]);
     return;
   }
 
