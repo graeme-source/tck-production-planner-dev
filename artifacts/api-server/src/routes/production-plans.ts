@@ -5991,6 +5991,11 @@ router.get("/:id/main-prep", async (req, res) => {
       // recipe with different subRecipeOriginIds remain distinct so their
       // tin completions don't bleed across panels.
       subRecipeOriginId?: number | null;
+      // Display name of the originating sub-recipe (e.g. "Macaroni Cheese
+      // Sauce", "Breadcrumb Topping"). Lets the prep UI label expanded
+      // entries by what they're for, instead of repeating the parent
+      // recipe name on every split.
+      subRecipeOriginName?: string | null;
     }>;
   }>();
 
@@ -6506,6 +6511,7 @@ router.get("/:id/main-prep", async (req, res) => {
         isOverridden: false,
         isFillingMix: false,
         subRecipeOriginId: exp.subRecipeId,
+        subRecipeOriginName: exp.subRecipeName,
       });
     } else {
       // Strip parent/sub markers from the spread — private fields, not response.
@@ -6530,6 +6536,7 @@ router.get("/:id/main-prep", async (req, res) => {
           isOverridden: false,
           isFillingMix: false,
           subRecipeOriginId: exp.subRecipeId,
+          subRecipeOriginName: exp.subRecipeName,
         }],
       });
     }

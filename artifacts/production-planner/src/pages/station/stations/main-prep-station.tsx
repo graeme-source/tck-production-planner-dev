@@ -48,6 +48,10 @@ export interface MainPrepIngredient {
     // sauce). Two entries on the same parent recipe with different
     // origins are rendered as separate cards with independent tin ticks.
     subRecipeOriginId?: number | null;
+    // Name of that originating sub-recipe — used as the row label so split
+    // entries read "Macaroni Cheese Sauce" / "Breadcrumb Topping" rather
+    // than the parent recipe name repeated.
+    subRecipeOriginName?: string | null;
   }>;
 }
 
@@ -977,7 +981,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                           {isShared && (
                             <p className="text-sm text-amber-600 dark:text-amber-400 mt-1">
                               <span className="font-medium">Shared —</span>
-                              {" in: "}{ing.recipes.map(r => r.recipeName).join(", ")}
+                              {" in: "}{[...new Set(ing.recipes.map(r => r.subRecipeOriginName ?? r.recipeName))].join(", ")}
                             </p>
                           )}
                           {presence.length > 0 && (
@@ -1036,7 +1040,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                                   "text-sm font-semibold truncate",
                                   done ? "text-emerald-700 dark:text-emerald-300" : "text-muted-foreground"
                                 )}>
-                                  {recipe.recipeName}
+                                  {recipe.subRecipeOriginName ?? recipe.recipeName}
                                 </p>
                               </div>
                               <span className="text-sm text-muted-foreground tabular-nums ml-2 flex-shrink-0">
@@ -1118,7 +1122,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                                   "text-sm font-semibold truncate",
                                   allRecipeDone ? "text-emerald-700 dark:text-emerald-300" : "text-muted-foreground"
                                 )}>
-                                  {recipe.recipeName}
+                                  {recipe.subRecipeOriginName ?? recipe.recipeName}
                                 </p>
                               </div>
                               <div className="flex items-center gap-2 flex-shrink-0 ml-2">
