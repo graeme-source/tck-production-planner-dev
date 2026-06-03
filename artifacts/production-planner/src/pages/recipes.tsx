@@ -6,7 +6,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
 import { IngredientCombobox } from "@/components/ingredient-combobox";
-import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, QrCode, Filter, Scale } from "lucide-react";
+import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, QrCode, Filter, Scale, LayoutGrid, Table2, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -1844,6 +1844,10 @@ export default function Recipes() {
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [viewMode, setViewMode] = useState<"cards" | "table">("cards");
+  type SortKey = "name" | "category" | "rrp" | "packCost" | "grossProfit" | "gpm";
+  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const { data: duplicateDetail } = useGetRecipe(duplicatingId!, { query: { enabled: duplicatingId !== null } });
 
   // Union of every tag currently in use across recipes — drives both
@@ -1925,6 +1929,61 @@ export default function Recipes() {
     tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", cookingLossPercent: 3, dietaryCategory: null, tags: [], ingredients: [], subRecipes: [],
   };
 
+  // Shared filter for both card and table views.
+  const filteredRecipes = (recipes ?? []).filter(r => {
+    if (categoryFilter !== "all" && r.category !== categoryFilter) return false;
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      if (!r.name.toLowerCase().includes(q)) return false;
+    }
+    if (selectedTags.length > 0) {
+      const rTags = ((r as Record<string, unknown>).tags as string[] | undefined) ?? [];
+      const rLower = new Set(rTags.map(t => t.toLowerCase()));
+      for (const sel of selectedTags) if (!rLower.has(sel.toLowerCase())) return false;
+    }
+    return true;
+  });
+
+  // Table sort. Recipes with no RRP set (no margin) sort to the bottom on
+  // the money columns regardless of direction's natural ordering.
+  const sortValue = (r: RecipeItem, key: SortKey): number | string => {
+    const rrp = Number(r.rrp) || 0;
+    switch (key) {
+      case "name": return r.name.toLowerCase();
+      case "category": return (r.category ?? "").toLowerCase();
+      case "rrp": return rrp;
+      case "packCost": return Number(r.totalPackCost) || 0;
+      case "grossProfit": return rrp > 0 ? rrp - (Number(r.totalPackCost) || 0) : Number.NEGATIVE_INFINITY;
+      case "gpm": return r.grossMargin == null ? Number.NEGATIVE_INFINITY : Number(r.grossMargin);
+    }
+  };
+  const sortedRecipes = [...filteredRecipes].sort((a, b) => {
+    const av = sortValue(a as RecipeItem, sortKey);
+    const bv = sortValue(b as RecipeItem, sortKey);
+    const cmp = (typeof av === "string" || typeof bv === "string")
+      ? String(av).localeCompare(String(bv))
+      : av - bv;
+    return sortDir === "asc" ? cmp : -cmp;
+  });
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) { setSortDir(d => (d === "asc" ? "desc" : "asc")); }
+    else { setSortKey(key); setSortDir(key === "name" || key === "category" ? "asc" : "desc"); }
+  };
+  // Sortable <th>. Numeric columns right-align and default to descending.
+  const sortTh = (label: string, key: SortKey, align: "left" | "right" = "left") => (
+    <th
+      onClick={() => toggleSort(key)}
+      className={cn("py-2.5 px-3 font-semibold select-none cursor-pointer hover:text-foreground transition-colors", align === "right" ? "text-right" : "text-left")}
+    >
+      <span className={cn("inline-flex items-center gap-1", align === "right" && "flex-row-reverse")}>
+        {label}
+        {sortKey === key
+          ? (sortDir === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />)
+          : <ArrowUpDown className="w-3 h-3 opacity-40" />}
+      </span>
+    </th>
+  );
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -1945,6 +2004,26 @@ export default function Recipes() {
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-red-500 inline-block" /> &lt;75% — Review</span>
         </div>
         <div className="flex items-center gap-2">
+          <div className="inline-flex rounded-lg border border-border overflow-hidden mr-1">
+            <button
+              type="button"
+              onClick={() => setViewMode("cards")}
+              className={cn("px-2.5 py-1.5 flex items-center", viewMode === "cards" ? "bg-primary text-primary-foreground" : "bg-card text-muted-foreground hover:text-foreground")}
+              title="Card view"
+              aria-pressed={viewMode === "cards"}
+            >
+              <LayoutGrid className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("table")}
+              className={cn("px-2.5 py-1.5 flex items-center border-l border-border", viewMode === "table" ? "bg-primary text-primary-foreground" : "bg-card text-muted-foreground hover:text-foreground")}
+              title="Table view"
+              aria-pressed={viewMode === "table"}
+            >
+              <Table2 className="w-4 h-4" />
+            </button>
+          </div>
           <Filter className="w-4 h-4 text-muted-foreground" />
           <select
             value={categoryFilter}
@@ -2074,32 +2153,79 @@ export default function Recipes() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {recipes?.filter(r => {
-          if (categoryFilter !== "all" && r.category !== categoryFilter) return false;
-          if (searchQuery.trim()) {
-            const q = searchQuery.trim().toLowerCase();
-            if (!r.name.toLowerCase().includes(q)) return false;
-          }
-          if (selectedTags.length > 0) {
-            const rTags = ((r as Record<string, unknown>).tags as string[] | undefined) ?? [];
-            const rLower = new Set(rTags.map(t => t.toLowerCase()));
-            for (const sel of selectedTags) {
-              if (!rLower.has(sel.toLowerCase())) return false;
-            }
-          }
-          return true;
-        }).map((recipe) => (
-          <RecipeCard
-            key={recipe.id}
-            recipe={recipe as RecipeItem}
-            onEdit={() => setEditingId(recipe.id)}
-            onDelete={() => { if (confirm(`Delete "${recipe.name}"?`)) deleteRecipe.mutate({ id: recipe.id }); }}
-            onBreakdown={() => setBreakdownId(recipe.id)}
-            onDuplicate={() => setDuplicatingId(recipe.id)}
-          />
-        ))}
-      </div>
+      {viewMode === "cards" ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {filteredRecipes.map((recipe) => (
+            <RecipeCard
+              key={recipe.id}
+              recipe={recipe as RecipeItem}
+              onEdit={() => setEditingId(recipe.id)}
+              onDelete={() => { if (confirm(`Delete "${recipe.name}"?`)) deleteRecipe.mutate({ id: recipe.id }); }}
+              onBreakdown={() => setBreakdownId(recipe.id)}
+              onDuplicate={() => setDuplicatingId(recipe.id)}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="overflow-x-auto glass-panel rounded-2xl">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+                {sortTh("Recipe", "name")}
+                {sortTh("Category", "category")}
+                {sortTh("RRP", "rrp", "right")}
+                {sortTh("Total pack cost", "packCost", "right")}
+                {sortTh("Gross profit", "grossProfit", "right")}
+                {sortTh("GP margin", "gpm", "right")}
+                <th className="w-10" />
+              </tr>
+            </thead>
+            <tbody>
+              {sortedRecipes.map((r0) => {
+                const r = r0 as RecipeItem;
+                const rrp = Number(r.rrp) || 0;
+                const hasRrp = rrp > 0;
+                const gp = rrp - (Number(r.totalPackCost) || 0);
+                const m = r.grossMargin;
+                const mColor = m == null ? "text-muted-foreground" : m >= 80 ? "text-green-600" : m >= 75 ? "text-amber-600" : "text-red-600";
+                const color = (r as Record<string, unknown>).color as string | undefined;
+                return (
+                  <tr
+                    key={r.id}
+                    onClick={() => setEditingId(r.id)}
+                    className="border-b border-border/50 hover:bg-secondary/40 cursor-pointer"
+                  >
+                    <td className="py-2.5 px-3 font-medium">
+                      <span className="inline-flex items-center gap-2">
+                        {color && <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />}
+                        {r.name}
+                      </span>
+                    </td>
+                    <td className="py-2.5 px-3 text-muted-foreground">{r.category ?? "—"}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums">{hasRrp ? `£${fmt(rrp)}` : "—"}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums">£{fmt(r.totalPackCost)}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums">{hasRrp ? `£${fmt(gp)}` : "—"}</td>
+                    <td className={cn("py-2.5 px-3 text-right tabular-nums font-semibold", mColor)}>{m == null ? "—" : `${m.toFixed(1)}%`}</td>
+                    <td className="py-2.5 px-2 text-right" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => setBreakdownId(r.id)}
+                        title="Cost breakdown"
+                        className="text-muted-foreground hover:text-foreground p-1"
+                      >
+                        <BarChart2 className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+              {sortedRecipes.length === 0 && (
+                <tr><td colSpan={7} className="py-8 text-center text-muted-foreground text-sm">No recipes match your filters.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
