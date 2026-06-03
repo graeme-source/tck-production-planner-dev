@@ -267,6 +267,142 @@ async function fetchTodayDeliveriesCount(): Promise<number> {
 
 const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
 
+type UpcomingPlan = {
+  id: number;
+  planDate: string;
+  name: string;
+  status: "draft" | "active" | "prep" | "building" | "complete";
+  items?: Array<{ recipeCategory?: string | null; batchesTarget?: number | null }>;
+};
+
+const PLAN_STATUS_STYLE: Record<string, string> = {
+  draft:    "bg-muted text-muted-foreground",
+  active:   "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+  prep:     "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+  building: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+  complete: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+};
+
+/** Forward look at scheduled production: a bar chart of calzone batches per
+ *  upcoming day plus a table of the plans — so the team can always see
+ *  what's coming. Calzone batches are split from mac cheese (1 mac batch =
+ *  1 pack), matching the unit convention everywhere else. */
+function UpcomingProductionPanel() {
+  const { data: plans, isLoading, error } = useQuery<UpcomingPlan[]>({
+    queryKey: ["dashboard-upcoming-plans"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/production-plans`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load production plans");
+      return res.json();
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const todayStr = format(new Date(), "yyyy-MM-dd");
+  const rows = (plans ?? [])
+    .filter(p => p.planDate >= todayStr)
+    .sort((a, b) => a.planDate.localeCompare(b.planDate))
+    .slice(0, 8)
+    .map(p => {
+      const items = p.items ?? [];
+      const calzoneBatches = items
+        .filter(it => (it.recipeCategory ?? "") !== MAC_CHEESE_CATEGORY)
+        .reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
+      const macPacks = items
+        .filter(it => (it.recipeCategory ?? "") === MAC_CHEESE_CATEGORY)
+        .reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
+      const d = new Date(`${p.planDate}T00:00:00`);
+      return {
+        ...p,
+        calzoneBatches,
+        macPacks,
+        isToday: p.planDate === todayStr,
+        longLabel: format(d, "EEE d MMM"),
+        shortLabel: format(d, "EEE d"),
+      };
+    });
+
+  return (
+    <div className="glass-panel p-6 rounded-2xl mt-6">
+      <div className="flex items-center justify-between mb-1">
+        <Link href="/plans" className="group inline-flex items-center gap-1.5 hover:text-primary transition-colors">
+          <h3 className="font-display font-bold text-lg group-hover:text-primary transition-colors">Upcoming Production</h3>
+          <ArrowRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+        </Link>
+      </div>
+      <p className="text-xs text-muted-foreground mb-4">Calzone batches scheduled on each production day. Mac cheese shown separately (packs).</p>
+
+      {isLoading ? (
+        <div className="flex items-center justify-center h-[200px] text-muted-foreground">
+          <RefreshCw className="w-6 h-6 animate-spin mr-2" /><span className="text-sm">Loading plans…</span>
+        </div>
+      ) : error ? (
+        <div className="flex items-center justify-center h-[200px] text-destructive text-sm">Could not load production plans.</div>
+      ) : rows.length === 0 ? (
+        <div className="flex flex-col items-center justify-center h-[200px] text-muted-foreground">
+          <Package className="w-10 h-10 mb-2 opacity-20" /><p className="text-sm">No upcoming production plans.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+          {/* Bar chart — calzone batches per day */}
+          <div className="h-[260px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={rows} barSize={32}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                <XAxis dataKey="shortLabel" stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} interval={0} />
+                <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} allowDecimals={false} width={28} />
+                <Tooltip
+                  cursor={{ fill: "hsl(var(--secondary))" }}
+                  formatter={(v: number) => [`${v} batches`, "Calzones"]}
+                  labelFormatter={(l: string) => rows.find(r => r.shortLabel === l)?.longLabel ?? l}
+                  contentStyle={{ background: "hsl(var(--popover))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }}
+                />
+                <Bar dataKey="calzoneBatches" radius={[6, 6, 0, 0]}>
+                  {rows.map(r => (
+                    <Cell key={r.id} fill={r.isToday ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.35)"} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Table — the plans themselves */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs uppercase tracking-wide text-muted-foreground border-b border-border">
+                  <th className="text-left font-semibold py-2 pr-2">Day</th>
+                  <th className="text-left font-semibold py-2 pr-2">Plan</th>
+                  <th className="text-center font-semibold py-2 px-2">Status</th>
+                  <th className="text-right font-semibold py-2 pl-2">Calzones</th>
+                  <th className="text-right font-semibold py-2 pl-3">Mac</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(r => (
+                  <tr key={r.id} className={cn("border-b border-border/50", r.isToday && "bg-primary/5")}>
+                    <td className="py-2 pr-2 whitespace-nowrap font-medium">
+                      <Link href={`/plans?planId=${r.id}`} className="hover:text-primary transition-colors">
+                        {r.longLabel}{r.isToday && <span className="ml-1.5 text-[10px] uppercase text-primary font-bold">today</span>}
+                      </Link>
+                    </td>
+                    <td className="py-2 pr-2 text-muted-foreground truncate max-w-[10rem]">{r.name}</td>
+                    <td className="py-2 px-2 text-center">
+                      <span className={cn("text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full", PLAN_STATUS_STYLE[r.status] ?? "bg-muted text-muted-foreground")}>{r.status}</span>
+                    </td>
+                    <td className="py-2 pl-2 text-right font-bold tabular-nums">{r.calzoneBatches}</td>
+                    <td className="py-2 pl-3 text-right tabular-nums text-muted-foreground">{r.macPacks || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const dashRefresh = useRefreshSpin();
   const { state } = useAuth();
@@ -580,6 +716,8 @@ export default function Dashboard() {
         </div>
 
       </div>
+
+      <UpcomingProductionPanel />
     </div>
   );
 }
