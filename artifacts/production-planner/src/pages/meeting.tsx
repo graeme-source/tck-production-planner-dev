@@ -1087,7 +1087,9 @@ function ProductionPlanSlide({ data, slide, isPreviewing }: { data: DashboardDat
     const have = r.fridgeStock;
     const need = r.dispatch2Qty;
     const surplus = have - need;
-    const tone: "ok" | "warn" | "bad" = surplus >= 0 ? "ok" : surplus > -need * 0.1 ? "warn" : "bad";
+    // Red when short (negative spare); amber when only 0–10 spare;
+    // uncoloured once we have more than 10 to spare.
+    const tone: "ok" | "warn" | "bad" = surplus < 0 ? "bad" : surplus <= 10 ? "warn" : "ok";
     calcById.set(r.recipeId, { have, need, surplus, tone });
   }
 
@@ -1135,7 +1137,7 @@ function ProductionPlanSlide({ data, slide, isPreviewing }: { data: DashboardDat
   return (
     <div>
       <SectionTitle>{slide.title || "Order of Production"}</SectionTitle>
-      <SectionLead>Today's order — Mac &amp; Cheese first, then the calzones. Red = short for today's pack.</SectionLead>
+      <SectionLead>Today's order — Mac &amp; Cheese first, then the calzones. Red = short · amber = within 10 spare.</SectionLead>
 
       {isLoading && data.todayPlan.items.length === 0 ? (
         <div className="glass-panel rounded-2xl p-6 flex justify-center">
@@ -1163,7 +1165,6 @@ function ProductionPlanSlide({ data, slide, isPreviewing }: { data: DashboardDat
           {rows.map((r, i) => {
             const tone = r.stock?.tone;
             const toneClass =
-              tone === "ok"   ? "border-emerald-500/40" :
               tone === "warn" ? "bg-amber-500/10 border-amber-500/40" :
               tone === "bad"  ? "bg-red-500/10 border-red-500/50" :
                                 "border-transparent";
