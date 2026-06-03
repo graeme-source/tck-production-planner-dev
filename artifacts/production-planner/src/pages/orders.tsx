@@ -26,6 +26,7 @@ import {
   RefreshCw,
   Clock,
   Trash2,
+  Mail,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -157,6 +158,37 @@ type KanbanIngredient = {
   supplierName: string | null;
   secondarySupplierId: number | null;
 };
+
+// How many to order for a line, in the same unit shown on screen (packs /
+// bottles / base unit). Mirrors the order-quantity cell in the table.
+function lineOrderQty(line: EditableLine): string {
+  if (line.stockInPacks || line.unit === "packs" || line.unit === "bottles") {
+    return `${line.editedPacks} ${line.stockInPacks ? packNoun(line.unit, line.editedPacks) : line.unit}`;
+  }
+  return `${(line.editedPacks * line.packWeight).toLocaleString()} ${line.unit}`;
+}
+
+// Build a mailto: link that pre-fills an order email to the supplier — opens
+// in whatever mail client the operator's machine uses. Body lists each item
+// with its order quantity and the required delivery date.
+function buildOrderMailto(supplierName: string, email: string, lines: EditableLine[], deliveryDateText: string): string {
+  const itemLines = lines.map(l => {
+    const part = l.supplierPartNumber ? ` [${l.supplierPartNumber}]` : "";
+    return `- ${lineOrderQty(l)} × ${l.ingredientName}${part}`;
+  }).join("\n");
+  const subject = `Order from The Calzone Kitchen — delivery ${deliveryDateText}`;
+  const body = [
+    `Hi ${supplierName},`,
+    ``,
+    `Please could we order the following for delivery on ${deliveryDateText}:`,
+    ``,
+    itemLines,
+    ``,
+    `Many thanks,`,
+    `The Calzone Kitchen`,
+  ].join("\n");
+  return `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
 
 export default function Orders() {
   const queryClient = useQueryClient();
@@ -1592,6 +1624,21 @@ export default function Orders() {
                         <Trash2 className="w-4 h-4" />
                         Delete order
                       </button>
+                    )}
+                    {so.supplier.email && orderableLines.length > 0 && (
+                      <a
+                        href={buildOrderMailto(
+                          so.supplier.name,
+                          so.supplier.email,
+                          orderableLines,
+                          formatDeliveryDate(getDeliveryDateForSupplier(so.supplier.id, so.supplier.leadTimeDays, so.supplier.cutoffTime)),
+                        )}
+                        className="px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-border hover:bg-secondary text-foreground"
+                        title={`Draft an order email to ${so.supplier.email}`}
+                      >
+                        <Mail className="w-4 h-4" />
+                        Email order
+                      </a>
                     )}
                     <button
                       onClick={() => handlePlaceOrder(so.supplier.id, so.supplier.name, so.supplier.leadTimeDays, so.supplier.cutoffTime)}
