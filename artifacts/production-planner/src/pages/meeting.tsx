@@ -23,6 +23,7 @@ import {
   Sparkles, ChefHat, Truck, ShoppingBag, AlertCircle, FileText, MessageCircle,
   HeartHandshake, Activity, BookOpen, Award, Loader2, ClipboardCheck, Sun,
   CheckCircle2, Heart, Settings, Edit3, Calendar, GripVertical, Plus, Trash2, Save,
+  Shuffle,
 } from "lucide-react";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import type { DragEndEvent } from "@dnd-kit/core";
@@ -70,6 +71,8 @@ interface DashboardData {
     id: number; weekNumber: number; title: string; summary: string;
     explanationMd: string; whatToShowMd: string; deliveryNotesMd: string;
     videoUrl: string | null;
+    diagram?: string | null;
+    imageUrl?: string | null;
     principleId?: number;
     principleTitle?: string;
   } | null;
@@ -952,6 +955,122 @@ function YouTubeEmbed({ url }: { url: string }) {
   );
 }
 
+// ── Lesson diagrams ─────────────────────────────────────────────────
+// Code-drawn visuals for the Lean curriculum, keyed by
+// lean_examples.diagram. Self-contained SVG/markup — crisp on the iPad,
+// no external assets, works offline. Add a new `case` + a matching
+// diagram key in the seed (seed-lean-lessons.ts) to extend the bank.
+function LessonDiagram({ id }: { id: string }) {
+  switch (id) {
+    case "compound-growth": return <CompoundGrowthDiagram />;
+    case "eight-wastes":    return <EightWastesDiagram />;
+    case "3s-cycle":        return <ThreeSCycleDiagram />;
+    default:                return null;
+  }
+}
+
+// The hero: 1% better every day compounds to ~37.8× in a year; 1% worse
+// decays to ~0.03×. Plotted on a linear axis so the late "explosion" of
+// compounding reads instantly.
+function CompoundGrowthDiagram() {
+  const x0 = 56, x1 = 466, y0 = 30, y1 = 232, maxV = 38, days = 365;
+  const sx = (d: number) => x0 + (d / days) * (x1 - x0);
+  const sy = (v: number) => y1 - (Math.min(v, maxV) / maxV) * (y1 - y0);
+  const ds: number[] = [];
+  for (let d = 0; d <= days; d += 5) ds.push(d);
+  if (ds[ds.length - 1] !== days) ds.push(days);
+  const up = ds.map(d => `${sx(d).toFixed(1)},${sy(Math.pow(1.01, d)).toFixed(1)}`).join(" ");
+  const down = ds.map(d => `${sx(d).toFixed(1)},${sy(Math.pow(0.99, d)).toFixed(1)}`).join(" ");
+  const flatY = sy(1);
+  const upEndY = sy(Math.pow(1.01, days));
+  const downEndY = sy(Math.pow(0.99, days));
+  return (
+    <figure className="glass-panel rounded-2xl p-5">
+      <svg viewBox="0 0 500 268" className="w-full" role="img"
+        aria-label="Compound growth: improving 1% a day reaches about 37 times in a year, while declining 1% a day falls to almost nothing.">
+        <line x1={x0} y1={y1} x2={x1} y2={y1} stroke="#94a3b8" strokeWidth="1" />
+        <line x1={x0} y1={y0} x2={x0} y2={y1} stroke="#94a3b8" strokeWidth="1" />
+        <line x1={x0} y1={flatY} x2={x1} y2={flatY} stroke="#94a3b8" strokeWidth="1" strokeDasharray="4 4" />
+        <text x={x1} y={flatY - 6} textAnchor="end" fontSize="12" fill="#94a3b8">no change · 1×</text>
+        <polyline points={down} fill="none" stroke="#ef4444" strokeWidth="2.5" />
+        <polyline points={up} fill="none" stroke="#10b981" strokeWidth="3" />
+        <circle cx={sx(days)} cy={upEndY} r="4.5" fill="#10b981" />
+        <text x={sx(days) - 8} y={upEndY + 5} textAnchor="end" fontSize="16" fontWeight="700" fill="#10b981">37.8×</text>
+        <circle cx={sx(days)} cy={downEndY} r="4.5" fill="#ef4444" />
+        <text x={sx(days)} y={downEndY + 19} textAnchor="end" fontSize="13" fontWeight="700" fill="#ef4444">0.03×</text>
+        <text x={x0} y={y1 + 18} fontSize="12" fill="#94a3b8">Day 0</text>
+        <text x={x1} y={y1 + 18} textAnchor="end" fontSize="12" fill="#94a3b8">1 year</text>
+        <text x={x0 + 10} y={y0 + 12} fontSize="13" fontWeight="600" fill="#10b981">▲ 1% better / day</text>
+        <text x={x0 + 10} y={y0 + 30} fontSize="13" fontWeight="600" fill="#ef4444">▼ 1% worse / day</text>
+      </svg>
+      <figcaption className="text-center text-sm text-muted-foreground mt-2">
+        1.01³⁶⁵ ≈ 37.8 &nbsp;·&nbsp; 0.99³⁶⁵ ≈ 0.03
+      </figcaption>
+    </figure>
+  );
+}
+
+// The 8 wastes as the DOWNTIME acronym — a scannable 2-column grid.
+function EightWastesDiagram() {
+  const items: Array<[string, string, string]> = [
+    ["D", "Defects", "making it wrong"],
+    ["O", "Overproduction", "more than ordered"],
+    ["W", "Waiting", "staff or product idle"],
+    ["N", "Non-utilised talent", "ideas not used"],
+    ["T", "Transportation", "moving product"],
+    ["I", "Inventory", "too much sitting"],
+    ["M", "Motion", "unnecessary steps"],
+    ["E", "Excess processing", "more than needed"],
+  ];
+  return (
+    <div className="glass-panel rounded-2xl p-5">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+        {items.map(([l, w, d]) => (
+          <div key={l} className="flex items-center gap-3">
+            <span className="flex items-center justify-center w-10 h-10 rounded-xl bg-purple-500/15 text-purple-600 dark:text-purple-300 font-display font-bold text-2xl shrink-0">{l}</span>
+            <div className="min-w-0">
+              <div className="font-semibold leading-tight truncate">{w}</div>
+              <div className="text-xs text-muted-foreground truncate">{d}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Sweep → Sort → Standardise as a repeating cycle.
+function ThreeSCycleDiagram() {
+  const nodes = [
+    { x: 150, y: 56, t: "Sweep", s: "daily reset" },
+    { x: 248, y: 196, t: "Standardise", s: "the best way" },
+    { x: 52, y: 196, t: "Sort", s: "a home for all" },
+  ];
+  return (
+    <div className="glass-panel rounded-2xl p-5">
+      <svg viewBox="0 0 300 256" className="w-full max-w-md mx-auto" role="img"
+        aria-label="The 3S cycle: Sweep, then Sort, then Standardise, repeating.">
+        <defs>
+          <marker id="lean3sArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#a855f7" />
+          </marker>
+        </defs>
+        {/* cycle arrows (Sweep → Sort → Standardise → Sweep) */}
+        <path d="M120,78 A 110 110 0 0 0 72,168" fill="none" stroke="#a855f7" strokeWidth="2.5" markerEnd="url(#lean3sArrow)" />
+        <path d="M92,210 A 110 110 0 0 0 208,210" fill="none" stroke="#a855f7" strokeWidth="2.5" markerEnd="url(#lean3sArrow)" />
+        <path d="M228,168 A 110 110 0 0 0 180,78" fill="none" stroke="#a855f7" strokeWidth="2.5" markerEnd="url(#lean3sArrow)" />
+        {nodes.map(n => (
+          <g key={n.t}>
+            <circle cx={n.x} cy={n.y} r="40" fill="#a855f7" fillOpacity="0.12" stroke="#a855f7" strokeWidth="2" />
+            <text x={n.x} y={n.y - 2} textAnchor="middle" fontSize="15" fontWeight="700" fill="#7c3aed">{n.t}</text>
+            <text x={n.x} y={n.y + 15} textAnchor="middle" fontSize="10" fill="#94a3b8">{n.s}</text>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="text-5xl font-display font-bold mb-4 leading-tight">{children}</h2>;
 }
@@ -1661,6 +1780,23 @@ function LearningSlide({ data, slide }: { data: DashboardData; slide: MeetingSli
       toast({ title: "Lesson swapped" });
     },
   });
+
+  // Every active example across all weeks — powers one-tap Shuffle.
+  const { data: allExamples = [] } = useQuery<Array<{ id: number; title: string; principleTitle: string }>>({
+    queryKey: ["lesson-all-examples"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/morning-meetings/examples`, { credentials: "include" });
+      return res.ok ? res.json() : [];
+    },
+  });
+
+  const shuffle = () => {
+    const pool = allExamples.filter(ex => ex.id !== data.lesson?.id);
+    if (pool.length === 0) return;
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    setOverride.mutate(pick.id);
+  };
+
   if (!data.lesson) {
     return (
       <div>
@@ -1676,26 +1812,51 @@ function LearningSlide({ data, slide }: { data: DashboardData; slide: MeetingSli
       </p>
       <h2 className="text-3xl font-display font-bold mb-2">{data.lesson.title}</h2>
       <p className="text-lg text-muted-foreground mb-6">{data.lesson.summary}</p>
-      <div className="glass-panel rounded-2xl p-6">
-        <MarkdownBlock content={data.lesson.whatToShowMd} />
-      </div>
+      {data.lesson.diagram ? (
+        <div className="grid gap-4 md:grid-cols-2 items-start">
+          <div className="glass-panel rounded-2xl p-6">
+            <MarkdownBlock content={data.lesson.whatToShowMd} />
+          </div>
+          <LessonDiagram id={data.lesson.diagram} />
+        </div>
+      ) : (
+        <div className="glass-panel rounded-2xl p-6">
+          <MarkdownBlock content={data.lesson.whatToShowMd} />
+        </div>
+      )}
+      {data.lesson.imageUrl && (
+        <div className="mt-4">
+          <img src={data.lesson.imageUrl} alt="" className="w-full max-h-80 object-contain rounded-2xl bg-black/5" />
+        </div>
+      )}
       {data.lesson.videoUrl && (
         <div className="mt-4">
           <YouTubeEmbed url={data.lesson.videoUrl} />
         </div>
       )}
-      {meetingId && examples.length > 1 && (
-        <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
-          <span>Swap to a different example:</span>
-          <select
-            value={data.lesson.id}
-            onChange={e => setOverride.mutate(Number(e.target.value))}
-            className="bg-background border border-border rounded-lg px-2 py-1 text-xs"
+      {meetingId && (
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <button
+            onClick={shuffle}
+            disabled={setOverride.isPending || allExamples.length < 2}
+            className="inline-flex items-center gap-2 rounded-xl bg-purple-500/15 text-purple-700 dark:text-purple-300 px-4 py-2 text-sm font-semibold hover:bg-purple-500/25 disabled:opacity-50"
           >
-            {examples.map(ex => (
-              <option key={ex.id} value={ex.id}>{ex.title}</option>
-            ))}
-          </select>
+            <Shuffle className="w-4 h-4" /> Shuffle lesson
+          </button>
+          {examples.length > 1 && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>or pick from this week:</span>
+              <select
+                value={data.lesson.id}
+                onChange={e => setOverride.mutate(Number(e.target.value))}
+                className="bg-background border border-border rounded-lg px-2 py-1 text-xs"
+              >
+                {examples.map(ex => (
+                  <option key={ex.id} value={ex.id}>{ex.title}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       )}
     </div>

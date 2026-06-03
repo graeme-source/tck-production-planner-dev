@@ -592,6 +592,74 @@ export async function seedLeanLessonsIfNeeded() {
     }
   }
 
+  // Step 2c: attach code-drawn diagrams to the examples where a visual
+  // lands harder than text. Keys map to the LessonDiagram bank on the
+  // frontend. Guarded by `diagram IS NULL` so admin choices are kept and
+  // re-runs are no-ops.
+  await db.execute(sql`
+    UPDATE lean_examples SET diagram = 'eight-wastes'
+    WHERE diagram IS NULL
+      AND principle_id = (SELECT id FROM lean_principles WHERE week_position = 2)
+  `);
+  await db.execute(sql`
+    UPDATE lean_examples SET diagram = '3s-cycle'
+    WHERE diagram IS NULL
+      AND principle_id = (SELECT id FROM lean_principles WHERE week_position = 3)
+  `);
+  await db.execute(sql`
+    UPDATE lean_examples SET diagram = 'compound-growth'
+    WHERE diagram IS NULL
+      AND principle_id = (SELECT id FROM lean_principles WHERE week_position = 7)
+  `);
+
+  // Step 2d: the headline "Power of Compound Improvements" lesson, with
+  // the compound-growth chart. Lives at week_position 13 so it joins the
+  // rotation and the shuffle pool. Idempotent.
+  await db.execute(sql`
+    INSERT INTO lean_principles (week_position, title, summary, is_active)
+    VALUES (13, 'The Power of Compound Improvements', '1% better every day compounds to ~37× in a year. Tiny daily fixes win.', TRUE)
+    ON CONFLICT (week_position) DO NOTHING
+  `);
+  const compoundRows = await db.execute<{ id: number }>(sql`
+    SELECT id FROM lean_principles WHERE week_position = 13
+  `);
+  const compoundId = (compoundRows.rows ?? compoundRows)[0]?.id;
+  if (compoundId) {
+    const explanationMd = `Small improvements feel pointless in the moment. The maths says otherwise.
+
+If you get **1% better every day**, you don't end the year 365% better — you end up **~37× better**, because each day's gain builds on the last. That's *compounding*.
+
+The flip side is brutal: **1% worse every day** leaves you at about **3% of where you started** — basically nothing.
+
+- 1.01³⁶⁵ ≈ **37.8**
+- 0.99³⁶⁵ ≈ **0.03**
+
+A calzone made two seconds faster, a tool given a home, one less walk to the fridge — on their own, nothing. Compounded across every person, every shift, every day — a different kitchen by Christmas.`;
+    const whatToShowMd = `**1% better every day = ~37× in a year**
+
+- Tiny gains *compound* — each one builds on the last
+- 1% better/day → **37.8×**
+- 1% worse/day → **0.03×** (almost nothing)
+- The win is the **daily habit**, not the size of any single fix
+
+**Today:** one 1% improvement, from every station.`;
+    const deliveryNotesMd = `**Talking points:**
+- Point at the curve: flat for weeks, then it explodes. Improvements feel slow — until they don't.
+- The gap between the green and the red line is the difference between improving and drifting.
+- It only works if it's *everyone, every day* — twelve people × one tiny fix per shift.
+
+**Prompt:** "What's one 1% fix you could make at your station today?"`;
+    await db.execute(sql`
+      INSERT INTO lean_examples (principle_id, order_position, title, summary, explanation_md, what_to_show_md, delivery_notes_md, diagram, is_active)
+      SELECT ${compoundId}, 0, 'The Power of Compound Improvements',
+             '1% better every day = ~37× in a year. 1% worse = nearly nothing.',
+             ${explanationMd}, ${whatToShowMd}, ${deliveryNotesMd}, 'compound-growth', TRUE
+      WHERE NOT EXISTS (
+        SELECT 1 FROM lean_examples WHERE principle_id = ${compoundId} AND title = 'The Power of Compound Improvements'
+      )
+    `);
+  }
+
   // Step 3: ensure there's a default meeting template with the 12
   // slide rows. New meetings clone these into meeting_slides.
   let templateId: number | null = null;

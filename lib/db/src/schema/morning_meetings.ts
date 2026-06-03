@@ -53,6 +53,11 @@ export const leanExamplesTable = pgTable("lean_examples", {
   whatToShowMd: text("what_to_show_md").notNull(),
   deliveryNotesMd: text("delivery_notes_md").notNull(),
   videoUrl: text("video_url"),
+  // Optional engagement media for the slide. `diagram` is a key into a
+  // bank of code-drawn SVG visuals (e.g. "compound-growth", "eight-wastes",
+  // "3s-cycle"); `imageUrl` is an optional photograph to show alongside.
+  diagram: text("diagram"),
+  imageUrl: text("image_url"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

@@ -1456,6 +1456,11 @@ async function runStartupMigrations() {
     await db.execute(sql`DELETE FROM template_slides WHERE kind = 'short_on_pack'`);
     await db.execute(sql`DELETE FROM meeting_slides WHERE kind = 'short_on_pack'`);
 
+    // Engagement media for Lean lesson examples: a code-diagram key and an
+    // optional photo URL. Idempotent ADD COLUMN IF NOT EXISTS.
+    await db.execute(sql`ALTER TABLE lean_examples ADD COLUMN IF NOT EXISTS diagram text`);
+    await db.execute(sql`ALTER TABLE lean_examples ADD COLUMN IF NOT EXISTS image_url text`);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

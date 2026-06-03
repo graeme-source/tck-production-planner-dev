@@ -102,6 +102,8 @@ async function getTodayLessonLegacy() {
     whatToShowMd: example.whatToShowMd,
     deliveryNotesMd: example.deliveryNotesMd,
     videoUrl: example.videoUrl,
+    diagram: example.diagram ?? null,
+    imageUrl: example.imageUrl ?? null,
     principleId: principle.id,
     principleTitle: principle.title,
   };
@@ -361,6 +363,8 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
           whatToShowMd: leanExamplesTable.whatToShowMd,
           deliveryNotesMd: leanExamplesTable.deliveryNotesMd,
           videoUrl: leanExamplesTable.videoUrl,
+          diagram: leanExamplesTable.diagram,
+          imageUrl: leanExamplesTable.imageUrl,
           principleId: leanExamplesTable.principleId,
           principleTitle: leanPrinciplesTable.title,
           weekPosition: leanPrinciplesTable.weekPosition,
@@ -379,6 +383,8 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
           whatToShowMd: override.whatToShowMd,
           deliveryNotesMd: override.deliveryNotesMd,
           videoUrl: override.videoUrl,
+          diagram: override.diagram ?? null,
+          imageUrl: override.imageUrl ?? null,
           principleId: override.principleId,
           principleTitle: override.principleTitle,
         };
@@ -887,6 +893,25 @@ router.delete("/principles/:id", async (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
+// All active examples across every active principle — powers the
+// "Shuffle" control on the Lesson slide (pick any lesson, any week).
+router.get("/examples", async (_req: Request, res: Response) => {
+  const rows = await db
+    .select({
+      id: leanExamplesTable.id,
+      title: leanExamplesTable.title,
+      summary: leanExamplesTable.summary,
+      principleId: leanExamplesTable.principleId,
+      principleTitle: leanPrinciplesTable.title,
+      weekPosition: leanPrinciplesTable.weekPosition,
+    })
+    .from(leanExamplesTable)
+    .innerJoin(leanPrinciplesTable, eq(leanPrinciplesTable.id, leanExamplesTable.principleId))
+    .where(and(eq(leanExamplesTable.isActive, true), eq(leanPrinciplesTable.isActive, true)))
+    .orderBy(asc(leanPrinciplesTable.weekPosition), asc(leanExamplesTable.orderPosition));
+  res.json(rows);
+});
+
 router.get("/principles/:id/examples", async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   const rows = await db
@@ -901,7 +926,7 @@ router.post("/principles/:id/examples", async (req: Request, res: Response) => {
   const principleId = Number(req.params.id);
   const body = req.body as Partial<{
     title: string; summary: string; explanationMd: string; whatToShowMd: string;
-    deliveryNotesMd: string; videoUrl: string | null;
+    deliveryNotesMd: string; videoUrl: string | null; diagram: string | null; imageUrl: string | null;
   }>;
   if (!body.title || !body.summary) { res.status(400).json({ error: "title and summary are required" }); return; }
   const [last] = await db
@@ -922,6 +947,8 @@ router.post("/principles/:id/examples", async (req: Request, res: Response) => {
       whatToShowMd: body.whatToShowMd ?? "",
       deliveryNotesMd: body.deliveryNotesMd ?? "",
       videoUrl: body.videoUrl ?? null,
+      diagram: body.diagram ?? null,
+      imageUrl: body.imageUrl ?? null,
       isActive: true,
     })
     .returning();
@@ -932,7 +959,8 @@ router.put("/examples/:id", async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   const body = req.body as Partial<{
     title: string; summary: string; explanationMd: string; whatToShowMd: string;
-    deliveryNotesMd: string; videoUrl: string | null; isActive: boolean; orderPosition: number;
+    deliveryNotesMd: string; videoUrl: string | null; diagram: string | null; imageUrl: string | null;
+    isActive: boolean; orderPosition: number;
   }>;
   const [updated] = await db
     .update(leanExamplesTable)
@@ -943,6 +971,8 @@ router.put("/examples/:id", async (req: Request, res: Response) => {
       ...(body.whatToShowMd !== undefined ? { whatToShowMd: body.whatToShowMd } : {}),
       ...(body.deliveryNotesMd !== undefined ? { deliveryNotesMd: body.deliveryNotesMd } : {}),
       ...(body.videoUrl !== undefined ? { videoUrl: body.videoUrl } : {}),
+      ...(body.diagram !== undefined ? { diagram: body.diagram } : {}),
+      ...(body.imageUrl !== undefined ? { imageUrl: body.imageUrl } : {}),
       ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
       ...(body.orderPosition !== undefined ? { orderPosition: body.orderPosition } : {}),
       updatedAt: new Date(),
