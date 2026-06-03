@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/page-header";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { format, isToday, startOfWeek, addWeeks } from "date-fns";
 import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X, Sparkles } from "lucide-react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useAuth } from "@/contexts/auth-context";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { compareItemsForDisplay } from "@/pages/station/shared/constants";
@@ -288,6 +288,7 @@ const PLAN_STATUS_STYLE: Record<string, string> = {
  *  what's coming. Calzone batches are split from mac cheese (1 mac batch =
  *  1 pack), matching the unit convention everywhere else. */
 function UpcomingProductionPanel() {
+  const [, setLocation] = useLocation();
   const { data: plans, isLoading, error } = useQuery<UpcomingPlan[]>({
     queryKey: ["dashboard-upcoming-plans"],
     queryFn: async () => {
@@ -357,9 +358,14 @@ function UpcomingProductionPanel() {
                   labelFormatter={(l: string) => rows.find(r => r.shortLabel === l)?.longLabel ?? l}
                   contentStyle={{ background: "hsl(var(--popover))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }}
                 />
-                <Bar dataKey="calzoneBatches" radius={[6, 6, 0, 0]}>
+                <Bar
+                  dataKey="calzoneBatches"
+                  radius={[6, 6, 0, 0]}
+                  cursor="pointer"
+                  onClick={(data: { id?: number }) => { if (data?.id != null) setLocation(`/plans?planId=${data.id}`); }}
+                >
                   {rows.map(r => (
-                    <Cell key={r.id} fill={r.isToday ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.35)"} />
+                    <Cell key={r.id} fill={r.isToday ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.35)"} style={{ cursor: "pointer" }} />
                   ))}
                 </Bar>
               </BarChart>
