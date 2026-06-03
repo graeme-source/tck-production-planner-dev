@@ -470,7 +470,7 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
  *  person can take over mid-meeting. */
 router.post("/start", async (req: Request, res: Response) => {
   try {
-    const { hostName, lessonId } = req.body as { hostName?: string; lessonId?: number };
+    const { hostName, exampleId } = req.body as { hostName?: string; exampleId?: number };
     const today = londonDateString();
     const userId = (req.session as any)?.userId ?? null;
     let resolvedName = hostName?.trim();
@@ -488,14 +488,14 @@ router.post("/start", async (req: Request, res: Response) => {
         meetingDate: today,
         hostUserId: userId,
         hostName: resolvedName,
-        lessonId: lessonId ?? null,
+        exampleId: exampleId ?? null,
       })
       .onConflictDoUpdate({
         target: morningMeetingsTable.meetingDate,
         set: {
           hostUserId: userId,
           hostName: resolvedName,
-          lessonId: lessonId ?? null,
+          exampleId: exampleId ?? null,
         },
       })
       .returning();

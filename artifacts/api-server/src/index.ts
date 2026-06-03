@@ -1415,7 +1415,6 @@ async function runStartupMigrations() {
         ('safety_issues', 1, 'Safety Issues'),
         ('order_of_production', 2, 'Order of Production'),
         ('special_prep', 3, 'Test Product Prep'),
-        ('short_on_pack', 4, 'Short on the Pack'),
         ('local_delivery', 5, 'Local Despatch'),
         ('bag_orders', 6, 'Bag Orders'),
         ('system_updates', 7, 'System Updates'),
@@ -1437,7 +1436,6 @@ async function runStartupMigrations() {
         ('safety_issues', 1, 'Safety Issues'),
         ('order_of_production', 2, 'Order of Production'),
         ('special_prep', 3, 'Test Product Prep'),
-        ('short_on_pack', 4, 'Short on the Pack'),
         ('local_delivery', 5, 'Local Despatch'),
         ('bag_orders', 6, 'Bag Orders'),
         ('system_updates', 7, 'System Updates'),
@@ -1449,6 +1447,14 @@ async function runStartupMigrations() {
       ) AS m(kind, new_pos, new_title)
       WHERE ms.kind = m.kind
     `);
+
+    // Retire the standalone "Short on the Pack" slide — its stock data is
+    // now folded into the Order of Production slide (colour-coded Have/Need
+    // columns). Drop any lingering short_on_pack slides from the default
+    // template and from existing meetings so the merged slide is the single
+    // source of truth. Idempotent.
+    await db.execute(sql`DELETE FROM template_slides WHERE kind = 'short_on_pack'`);
+    await db.execute(sql`DELETE FROM meeting_slides WHERE kind = 'short_on_pack'`);
 
     console.log("Startup migrations OK");
   } catch (err) {

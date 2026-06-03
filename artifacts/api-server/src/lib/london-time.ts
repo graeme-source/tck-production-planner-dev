@@ -32,6 +32,17 @@ export function londonWeekdayName(date: Date = new Date()): string {
   return WEEKDAY_FORMATTER.format(date);
 }
 
+const HOUR_FORMATTER = new Intl.DateTimeFormat("en-GB", {
+  timeZone: LONDON_TZ,
+  hour: "2-digit",
+  hourCycle: "h23",
+});
+
+/** Hour-of-day (0-23) of the given instant, in London time. */
+export function londonHour(date: Date = new Date()): number {
+  return Number.parseInt(HOUR_FORMATTER.format(date), 10);
+}
+
 /** UTC instant equal to 00:00:00 London on the given date. */
 export function londonStartOfDay(date: Date = new Date()): Date {
   return londonDayBoundary(date, 0);

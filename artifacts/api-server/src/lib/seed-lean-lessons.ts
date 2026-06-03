@@ -351,6 +351,145 @@ A lean culture is a **safe-to-speak** culture.`,
   },
 ];
 
+interface ExampleSeed {
+  orderPosition: number;
+  title: string;
+  summary: string;
+  explanationMd: string;
+  whatToShowMd: string;
+  deliveryNotesMd: string;
+}
+
+/**
+ * Five daily angles on the same weekly subject — 3S (Sweep, Sort,
+ * Standardise). The Learning slide rotates these by weekday
+ * (Mon→order 0 … Fri→order 4), so the subject is held for a full week
+ * but each calendar day gets fresh content. Days 1–3 are the three Ss;
+ * days 4–5 zoom out to why 3S works and how to make it a daily habit.
+ */
+const THREE_S_EXAMPLES: ExampleSeed[] = [
+  {
+    orderPosition: 0,
+    title: "Monday — Sweep: the daily reset",
+    summary: "Clean-as-you-go, every shift. A clean bench makes the abnormal obvious.",
+    explanationMd: `**Sweep** is the first S — and it's *daily*, not weekly.
+
+A clean workspace makes abnormal jump out. If the bench is always clean and one day there's flour on it, you investigate. If the bench is always grubby, you can't see anything.
+
+Sweep is not deep-cleaning. It's the **two-minute reset** at the end of every task — the wipe between batches, the broom-pass when you finish your shift.`,
+    whatToShowMd: `**Sweep — first S of 3S**
+
+- Daily, not weekly
+- 2-minute reset after each task
+- Clean = abnormal stands out
+- Not the same as deep clean — that's separate
+
+**Today's question:** when did you last sweep your station?`,
+    deliveryNotesMd: `**Talking points:**
+- Sweep is between tasks; deep clean is separate.
+- A messy station hides every problem.
+- We should never end a shift on a dirty bench.
+
+**Prompt:** "Walk to your station after this meeting. What needs sweeping right now?"`,
+  },
+  {
+    orderPosition: 1,
+    title: "Tuesday — Sort: a home for everything",
+    summary: "A clearly-marked home for every tool, and nothing without a home.",
+    explanationMd: `**Sort** = a clearly-marked home for everything, and nothing without a home.
+
+If a tool doesn't have a labelled spot, it floats around. Floating tools are lost tools — that's motion waste, frustration, and sometimes a safety risk.
+
+The acid test: **can a new starter find any tool in 30 seconds without asking?** If not, you haven't Sorted. Shadow boards, labelled drawers, colour-coded bins — all the same idea: visible, unambiguous, obvious.`,
+    whatToShowMd: `**Sort — second S of 3S**
+
+- One home for every tool
+- Labelled, visible, obvious
+- New starter finds anything in 30 seconds
+- No home → it floats and gets lost
+
+**Today's question:** what tool did you hunt for yesterday?`,
+    deliveryNotesMd: `**Talking points:**
+- Ask: which tool do you hunt for most?
+- Shadow boards work because empty silhouettes shout "missing!"
+- Sort applies to ingredients too — same shelf, same place, same time.
+
+**Prompt:** "One thing today — give one tool its proper home."`,
+  },
+  {
+    orderPosition: 2,
+    title: "Wednesday — Standardise: the best-known way",
+    summary: "Capture the current best way so everyone does it the same.",
+    explanationMd: `**Standardise** = the current best-known way to do something, captured so everyone does it the same.
+
+Without a standard, every operator invents their own method. Variation creeps in, quality wobbles, and new starters don't know what "good" looks like.
+
+A standard isn't a rule for life — it's the **floor for improvement**. You can only improve from a known starting point. In the kitchen this is the SOP: read it, follow it, and if you find a better way, change the SOP — don't just freelance.`,
+    whatToShowMd: `**Standardise — third S of 3S**
+
+- The current best way
+- Captured (SOP, video, photo)
+- Followed by everyone the same
+- The floor for the next improvement
+
+**Today's question:** when did you last read the SOP for your station?`,
+    deliveryNotesMd: `**Talking points:**
+- A standard isn't permanent — it's the baseline.
+- Improving means changing the standard, not ignoring it.
+- The worst case is "everyone does it slightly differently."
+
+**Prompt:** "Pick the SOP that's most out of date. Tell me which one — I'll get it updated."`,
+  },
+  {
+    orderPosition: 3,
+    title: "Thursday — Why 3S, not 5S",
+    summary: "Two Second Lean drops the last two Ss. Make problems visible, fast.",
+    explanationMd: `Traditional lean teaches **5S**. Two Second Lean deliberately uses **3S** — Sweep, Sort, Standardise — and drops the last two, because they add bureaucracy that slows a small team down.
+
+The whole point of 3S is **visual control**: a workspace so clean and organised that anything out of place screams at you. You don't need a clipboard audit to spot a problem — you can *see* it.
+
+3S isn't about tidiness for its own sake. It's about making waste and abnormality impossible to miss, so they get fixed in seconds.`,
+    whatToShowMd: `**Why 3S, not 5S?**
+
+- Sweep · Sort · Standardise — that's it
+- The last two Ss add bureaucracy
+- Goal = make problems *visible*, not paperwork
+- See the problem → fix it in seconds
+
+**Today's question:** what could you *see* go wrong faster if your area was cleaner?`,
+    deliveryNotesMd: `**Talking points:**
+- 3S is about visual control, not just tidiness.
+- A clean, sorted area is a problem-detector.
+- Keep it light — no audits, no clipboards.
+
+**Prompt:** "Name one spot in the kitchen where a problem could hide today. What would make it obvious?"`,
+  },
+  {
+    orderPosition: 4,
+    title: "Friday — 3S as a daily habit",
+    summary: "3S only works if it's a rhythm, not a one-off blitz.",
+    explanationMd: `3S fails when it's a one-off spring clean. It works when it's a **daily rhythm** woven into normal work.
+
+Sweep between tasks. Return every tool to its home before you move on. Follow the standard, and tweak it the moment you find better. None of these are extra jobs — they're *how* the job is done.
+
+The test of a 3S culture isn't how it looks right after a deep clean. It's how it looks at 2pm on a busy Wednesday. If it still holds, the habit is real.`,
+    whatToShowMd: `**3S as a daily habit**
+
+- Not a one-off blitz — a daily rhythm
+- Sweep between tasks, sort as you go, follow the standard
+- It's *how* we work, not extra work
+- The real test: how does it look mid-shift on a busy day?
+
+**Today's question:** which of the 3 Ss slips first when we get busy?`,
+    deliveryNotesMd: `**Talking points:**
+- Pull this week together — Sweep, Sort, Standardise as one habit.
+- Busy days are the real test, not deep-clean days.
+- Small and constant beats big and occasional.
+
+**Prompt:** "Pick the one S you'll personally hold this week even when it's busy."`,
+  },
+];
+
 /**
  * The 12 seeded slide rows for the default Morning Meeting template.
  * Matches the slide order the runner used to hardcode in the frontend.
@@ -364,7 +503,6 @@ const DEFAULT_TEMPLATE_SLIDES = [
   { kind: "order_of_production", title: "Order of Production" },
   { kind: "local_delivery",      title: "Local Delivery" },
   { kind: "bag_orders",          title: "Bag Orders" },
-  { kind: "short_on_pack",       title: "Short on the Pack" },
   { kind: "safety_issues",       title: "Safety Issues" },
   { kind: "new_sops",            title: "New & Updated SOPs" },
   { kind: "struggles",           title: "Struggles" },
@@ -409,6 +547,47 @@ export async function seedLeanLessonsIfNeeded() {
       await db.execute(sql`
         INSERT INTO lean_examples (principle_id, order_position, title, summary, explanation_md, what_to_show_md, delivery_notes_md, is_active)
         VALUES (${principleId}, 0, ${l.title}, ${l.summary}, ${l.explanationMd}, ${l.whatToShowMd}, ${l.deliveryNotesMd}, TRUE)
+      `);
+    }
+  }
+
+  // Step 2b: consolidate 3S into a single week with one fresh example
+  // per weekday. The curriculum originally split 3S across three
+  // single-example weeks (Sweep / Sort / Standardise), so the slide
+  // showed the same content every day of a week. The team wants one
+  // subject held for a full week with a different angle each calendar
+  // day. We keep week 3 as the "3S" week, give it five daily examples
+  // (the selector rotates by weekday), and retire the now-duplicate
+  // standalone Sort/Standardise weeks. Idempotent: the rename is a
+  // straight UPDATE, examples are only inserted when missing by title,
+  // and the original auto-seeded starter is removed once.
+  await db.execute(sql`
+    UPDATE lean_principles
+    SET title = '3S', summary = 'Sweep, Sort, Standardise — the daily habits that make problems visible.'
+    WHERE week_position = 3
+  `);
+  await db.execute(sql`
+    UPDATE lean_principles SET is_active = FALSE WHERE week_position IN (4, 5)
+  `);
+  const threeSRows = await db.execute<{ id: number }>(sql`
+    SELECT id FROM lean_principles WHERE week_position = 3
+  `);
+  const threeSId = (threeSRows.rows ?? threeSRows)[0]?.id;
+  if (threeSId) {
+    // Remove the lone auto-seeded starter ("3S — Sweep") so the five
+    // daily examples below become the full set. Only touches the exact
+    // seeded row, so any admin-added example is left alone.
+    await db.execute(sql`
+      DELETE FROM lean_examples
+      WHERE principle_id = ${threeSId} AND order_position = 0 AND title = '3S — Sweep'
+    `);
+    for (const ex of THREE_S_EXAMPLES) {
+      await db.execute(sql`
+        INSERT INTO lean_examples (principle_id, order_position, title, summary, explanation_md, what_to_show_md, delivery_notes_md, is_active)
+        SELECT ${threeSId}, ${ex.orderPosition}, ${ex.title}, ${ex.summary}, ${ex.explanationMd}, ${ex.whatToShowMd}, ${ex.deliveryNotesMd}, TRUE
+        WHERE NOT EXISTS (
+          SELECT 1 FROM lean_examples WHERE principle_id = ${threeSId} AND title = ${ex.title}
+        )
       `);
     }
   }

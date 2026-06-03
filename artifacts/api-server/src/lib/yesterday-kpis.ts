@@ -19,11 +19,10 @@ import {
   productionPlanItemsTable,
   productionPlansTable,
   recipesTable,
-  stationBreaksTable,
   appSettingsTable,
 } from "@workspace/db";
 import { and, eq, gte, lte, sql, inArray } from "drizzle-orm";
-import { londonEndOfDay } from "./london-time";
+import { londonEndOfDay, londonHour } from "./london-time";
 import { getOrdersByTag } from "../services/shopify";
 
 const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
@@ -33,9 +32,10 @@ const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
  * the Analytics page uses on /api/reports/production-kpis.
  *
  * Active minutes = wallclock from earliest to latest building
- * completion minus configured break + lunch minutes (per break
- * type taken, regardless of logged duration — keeps the KPI
- * predictable).
+ * completion minus a fixed break allowance. The morning break is
+ * always deducted; the lunch break is only deducted when production
+ * ran past 13:00 London — most days the team finishes before lunch
+ * and never stops for it, so deducting it would understate the rate.
  *
  * Total batches = sum of building completions per plan item, each
  * capped at the plan item's batchesTarget. Mac & cheese packs are
@@ -97,8 +97,9 @@ export async function computeBuilderBatchesPerHourForDay(dateIso: string): Promi
   const latest = Math.max(...times);
   const wallClockMinutes = Math.round((latest - earliest) / 60_000);
 
-  // Subtract configured break/lunch minutes if those breaks were
-  // taken — matches the analytics behaviour exactly.
+  // Fixed break allowance: morning break always comes off; lunch only
+  // when the last batch finished after 13:00 London (otherwise the team
+  // wrapped up before lunch and never took it).
   const [breakSetting, lunchSetting] = await Promise.all([
     db.select({ value: appSettingsTable.value }).from(appSettingsTable).where(eq(appSettingsTable.key, "default_break_minutes")).limit(1),
     db.select({ value: appSettingsTable.value }).from(appSettingsTable).where(eq(appSettingsTable.key, "default_lunch_minutes")).limit(1),
@@ -106,18 +107,8 @@ export async function computeBuilderBatchesPerHourForDay(dateIso: string): Promi
   const configuredBreakMins = breakSetting[0]?.value ? Number(breakSetting[0].value) : 15;
   const configuredLunchMins = lunchSetting[0]?.value ? Number(lunchSetting[0].value) : 45;
 
-  const breaks = await db
-    .select({ stationType: stationBreaksTable.stationType, breakType: stationBreaksTable.breakType, endedAt: stationBreaksTable.endedAt })
-    .from(stationBreaksTable)
-    .where(and(
-      gte(stationBreaksTable.startedAt, dayStart),
-      lte(stationBreaksTable.startedAt, dayEnd),
-      sql`${stationBreaksTable.endedAt} IS NOT NULL`,
-      sql`${stationBreaksTable.stationType} IN ('building_1','building_2')`,
-    ));
-  const hasLunch = breaks.some(b => b.breakType === "lunch");
-  const hasSnackBreak = breaks.some(b => b.breakType !== "lunch");
-  const totalBreakMins = (hasLunch ? configuredLunchMins : 0) + (hasSnackBreak ? configuredBreakMins : 0);
+  const finishedAfterLunch = londonHour(new Date(latest)) >= 13;
+  const totalBreakMins = configuredBreakMins + (finishedAfterLunch ? configuredLunchMins : 0);
 
   const activeMinutes = Math.max(0, wallClockMinutes - totalBreakMins);
   if (activeMinutes < 1) {

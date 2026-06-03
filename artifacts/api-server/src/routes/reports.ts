@@ -13,7 +13,7 @@ import {
 } from "@workspace/db";
 import { eq, and, gte, lte, sql, isNotNull, inArray } from "drizzle-orm";
 import { getOrdersByTag } from "../services/shopify";
-import { londonDateString, londonEndOfDay } from "../lib/london-time";
+import { londonDateString, londonEndOfDay, londonHour } from "../lib/london-time";
 
 // Recipe category name for macaroni cheese products. Mac cheese completions are
 // split out from calzone completions in KPI reports (1 mac batch_completion
@@ -450,10 +450,10 @@ router.get("/production-kpis", async (req, res) => {
     productionFinishTime = latest.toISOString();
     wallClockMinutes = Math.round((latest.getTime() - earliest.getTime()) / 60000);
 
-    // Deduct the admin-configured break durations (Settings → Break / Lunch minutes)
-    // for each break type that was recorded, regardless of logged duration. This keeps
-    // the KPI predictable: if a lunch break was taken, we subtract the planned lunch
-    // minutes, never the actual logged minutes.
+    // Fixed break allowance (Settings → Break / Lunch minutes): the morning
+    // break always comes off; lunch only when production ran past 13:00 London.
+    // Most days the team finishes before lunch and never stops for it, so
+    // deducting it would understate the rate. Matches the morning-meeting calc.
     const [breakSetting] = await db
       .select({ value: appSettingsTable.value })
       .from(appSettingsTable)
@@ -465,12 +465,8 @@ router.get("/production-kpis", async (req, res) => {
     const configuredBreakMins = breakSetting ? Number(breakSetting.value) : 15;
     const configuredLunchMins = lunchSetting ? Number(lunchSetting.value) : 45;
 
-    const buildingBreaks = breaks.filter(
-      b => (b.stationType === "building_1" || b.stationType === "building_2") && b.endedAt
-    );
-    const hasLunch = buildingBreaks.some(b => b.breakType === "lunch");
-    const hasSnackBreak = buildingBreaks.some(b => b.breakType !== "lunch");
-    const totalBreakMins = (hasLunch ? configuredLunchMins : 0) + (hasSnackBreak ? configuredBreakMins : 0);
+    const finishedAfterLunch = londonHour(latest) >= 13;
+    const totalBreakMins = configuredBreakMins + (finishedAfterLunch ? configuredLunchMins : 0);
     productionActiveMinutes = Math.round(Math.max(0, wallClockMinutes - totalBreakMins));
   }
 

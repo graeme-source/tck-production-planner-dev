@@ -85,12 +85,13 @@ async function fetchDashboard(): Promise<DashboardData> {
 }
 
 // ── Stretches slide ──────────────────────────────────────────────────
-// Five stretches per session — bookended by a sky-reach, with three
-// rotating middle stretches picked at random per day so the routine
-// doesn't get stale. The team self-paces; the slide is a static
+// Five stretches per session — opens with a sky-reach, three rotating
+// middle stretches picked at random per day so the routine doesn't get
+// stale, and closes on a free choice. The team self-paces; the slide is a static
 // reference of "here's what we're doing" rather than a controlled
 // player — no countdown, no Start button, just the stretches.
 const SKY_STRETCH = { name: "Reach for the sky", emoji: "🙆", description: "Big breath in, arms straight up." };
+const CHOICE_STRETCH = { name: "Choose one of your own", emoji: "🤸", description: "Pick a stretch of your own every day." };
 const STRETCH_POOL: ReadonlyArray<{ name: string; emoji: string; description: string }> = [
   { name: "Neck rolls",        emoji: "🦒", description: "Slow circles, both directions." },
   { name: "Shoulder rolls",    emoji: "🤷", description: "Backwards then forwards." },
@@ -116,7 +117,7 @@ function pickStretchesForDay(dateIso: string) {
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
   const middle = pool.slice(0, 3);
-  return [SKY_STRETCH, ...middle, SKY_STRETCH];
+  return [SKY_STRETCH, ...middle, CHOICE_STRETCH];
 }
 
 function StretchesPanel() {
@@ -273,7 +274,7 @@ export default function MeetingPage() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hostName, lessonId: data?.lesson?.id ?? null }),
+        body: JSON.stringify({ hostName, exampleId: data?.lesson?.id ?? null }),
       });
       if (!res.ok) throw new Error("Failed to start meeting");
       return res.json();
@@ -282,6 +283,9 @@ export default function MeetingPage() {
       queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
       setMode("meeting");
       setSlideIndex(0);
+    },
+    onError: () => {
+      toast({ title: "Couldn't start the meeting", description: "Please try again.", variant: "destructive" });
     },
   });
 
@@ -866,10 +870,10 @@ function SlideBody({ slide, data, onRefresh, isPreviewing }: { slide: MeetingSli
     case "special_prep": return <SpecialPrepSlide data={data} slide={slide} />;
     case "stretches": return <StretchesPanel />;
     case "yesterday_kpis": return <YesterdayKpisSlide data={data} slide={slide} />;
-    case "order_of_production": return <OrderOfProductionSlide data={data} slide={slide} />;
+    case "order_of_production": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} />;
     case "local_delivery": return <LocalDeliverySlide data={data} slide={slide} />;
     case "bag_orders": return <BagOrdersSlide data={data} slide={slide} />;
-    case "short_on_pack": return <ShortOnPackSlide data={data} slide={slide} isPreviewing={isPreviewing} />;
+    case "short_on_pack": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} />;
     case "safety_issues": return <SafetyIssuesSlide data={data} onRefresh={onRefresh} slide={slide} />;
     case "system_updates": return <SystemUpdatesSlide slide={slide} />;
     case "new_sops": return <NewSopsSlide data={data} slide={slide} />;
@@ -1045,47 +1049,174 @@ function KpiTile({ label, value, tone = "ok" }: { label: string; value: string; 
   );
 }
 
-function OrderOfProductionSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
+// Combined production + shortage slide. One table that lists everything
+// we're making today in production order, with each recipe's stock
+// position (Have / Need / +-) in the trailing columns, colour-coded so
+// shortages jump out. Any core recipe we're short on but NOT making
+// today is appended underneath so nothing short slips through unseen.
+type ProductionPlanRow = {
+  recipeId: number;
+  recipeName: string;
+  color: string | null;
+  category: string | null;
+  seq: number | null;            // production order number; null when not in today's plan
+  target: number | null;         // batches/packs target; null when not in today's plan
+  unit: "batches" | "packs";
+  stock: { have: number; need: number; surplus: number; tone: "ok" | "warn" | "bad" } | null;
+};
+
+function ProductionPlanSlide({ data, slide, isPreviewing }: { data: DashboardData; slide: MeetingSlide; isPreviewing: boolean }) {
+  // In a live meeting the pack is today's; in a preview of tomorrow's
+  // meeting it's tomorrow's. Matches the old Short-on-pack behaviour.
+  const effectivePlanDate = isPreviewing ? data.tomorrow : data.today;
+
+  const { data: calc, isLoading } = useQuery<{ recipes: CalcRecipeRow[]; dispatchDates: string[]; deliveryDates: string[] }>({
+    queryKey: ["production-plan-calc", effectivePlanDate],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/production-plans/calculate?planDate=${effectivePlanDate}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+    staleTime: 60_000,
+  });
+
+  // Stock position per recipe. NEED = today's pack (dispatch2Qty); surplus
+  // +ve = enough, -ve = short. Same maths the Short-on-pack slide used.
+  const calcById = new Map<number, { have: number; need: number; surplus: number; tone: "ok" | "warn" | "bad" }>();
+  for (const r of calc?.recipes ?? []) {
+    const have = r.fridgeStock;
+    const need = r.dispatch2Qty;
+    const surplus = have - need;
+    const tone: "ok" | "warn" | "bad" = surplus >= 0 ? "ok" : surplus > -need * 0.1 ? "warn" : "bad";
+    calcById.set(r.recipeId, { have, need, surplus, tone });
+  }
+
+  const plannedIds = new Set(data.todayPlan.items.map(it => it.recipeId));
+
+  // 1) Everything being made today, in production order.
+  const plannedRows: ProductionPlanRow[] = data.todayPlan.items.map((it, i) => {
+    const c = calcById.get(it.recipeId);
+    return {
+      recipeId: it.recipeId,
+      recipeName: it.recipeName,
+      color: it.recipeColor,
+      category: it.recipeCategory,
+      seq: i + 1,
+      target: it.batchesTarget,
+      unit: it.recipeCategory === "Macaroni Cheese" ? "packs" : "batches",
+      stock: c ?? null,
+    };
+  });
+
+  // 2) Core recipes we're short on but NOT making today.
+  const shortNotPlanned: ProductionPlanRow[] = (calc?.recipes ?? [])
+    .filter(r => r.isCoreMenu && !plannedIds.has(r.recipeId))
+    .map(r => ({
+      recipeId: r.recipeId,
+      recipeName: r.recipeName,
+      color: r.color,
+      category: null,
+      seq: null,
+      target: null,
+      unit: "batches" as const,
+      stock: calcById.get(r.recipeId) ?? null,
+    }))
+    .filter(r => r.stock !== null && r.stock.surplus < 0)
+    .sort((a, b) => (a.stock!.surplus) - (b.stock!.surplus));
+
+  const rows = [...plannedRows, ...shortNotPlanned];
+
+  const fmtDay = (iso?: string) => iso ? format(new Date(`${iso}T00:00:00`), "EEE d MMM") : "—";
+  const dispatchLabel = fmtDay(calc?.dispatchDates?.[1]);
+  const deliveryLabel = fmtDay(calc?.deliveryDates?.[1]);
+
+  const cols = "grid-cols-[2.5rem_1fr_7rem_4.5rem_4.5rem_4.5rem]";
+
   return (
     <div>
       <SectionTitle>{slide.title || "Order of Production"}</SectionTitle>
-      <SectionLead>Today's plan — Mac &amp; Cheese first, then through the calzones.</SectionLead>
-      {data.todayPlan.items.length === 0 ? (
+      <SectionLead>Today's order — Mac &amp; Cheese first, then the calzones. Red = short for today's pack.</SectionLead>
+
+      {isLoading && data.todayPlan.items.length === 0 ? (
+        <div className="glass-panel rounded-2xl p-6 flex justify-center">
+          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : rows.length === 0 ? (
         <div className="glass-panel rounded-2xl p-6 text-muted-foreground">No plan published for today yet.</div>
       ) : (
         <div className="glass-panel rounded-2xl overflow-hidden">
-          {data.todayPlan.items.map((it, i) => (
-            <div
-              key={it.recipeId}
-              className={cn(
-                "flex items-stretch gap-4 px-6 py-4",
-                i > 0 && "border-t border-border/50",
-              )}
-            >
-              {/* Big colour bar — runs the full height of the row so
-                  it's the first thing the eye lands on from across
-                  the room. Falls back to a neutral chip if the recipe
-                  has no colour set. */}
-              <span
-                className="w-3 rounded-full shrink-0"
-                style={{ backgroundColor: it.recipeColor ?? "hsl(var(--muted))" }}
-                aria-hidden
-              />
-              <div className="flex items-center gap-4 min-w-0 flex-1">
-                <span className="text-3xl font-display font-bold tabular-nums text-muted-foreground w-10 shrink-0">{i + 1}</span>
-                <span className="text-3xl font-semibold leading-tight truncate">{it.recipeName}</span>
-                {it.recipeCategory === "Macaroni Cheese" && (
-                  <span className="text-sm uppercase tracking-wide bg-amber-500/10 text-amber-700 dark:text-amber-300 px-3 py-1 rounded-full font-bold shrink-0">Mac</span>
+          {/* Header */}
+          <div className={cn("grid gap-3 px-5 py-2 bg-secondary/30 text-xs uppercase tracking-wide text-muted-foreground font-semibold", cols)}>
+            <span>#</span>
+            <span>Recipe</span>
+            <span className="text-right">Make</span>
+            <span className="text-right leading-tight">
+              Have
+              <span className="block text-[10px] font-normal normal-case opacity-70">fridge</span>
+            </span>
+            <span className="text-right leading-tight">
+              Need
+              <span className="block text-[10px] font-normal normal-case opacity-70">{dispatchLabel} · {deliveryLabel}</span>
+            </span>
+            <span className="text-right">+/−</span>
+          </div>
+          {rows.map((r, i) => {
+            const tone = r.stock?.tone;
+            const toneClass =
+              tone === "ok"   ? "border-emerald-500/40" :
+              tone === "warn" ? "bg-amber-500/10 border-amber-500/40" :
+              tone === "bad"  ? "bg-red-500/10 border-red-500/50" :
+                                "border-transparent";
+            const numClass =
+              tone === "bad"  ? "text-red-700 dark:text-red-300" :
+              tone === "warn" ? "text-amber-800 dark:text-amber-300" :
+                                "";
+            const firstUnplanned = r.seq === null && (i === 0 || rows[i - 1].seq !== null);
+            return (
+              <div key={r.recipeId}>
+                {firstUnplanned && (
+                  <div className="px-5 py-1.5 bg-secondary/40 text-[11px] uppercase tracking-wide text-muted-foreground font-semibold border-t border-border/50">
+                    Short, but not on today's plan
+                  </div>
                 )}
+                <div
+                  className={cn(
+                    "grid gap-3 items-center px-5 py-3 border-l-4",
+                    cols,
+                    toneClass,
+                    i > 0 && !firstUnplanned && "border-t border-border/50",
+                  )}
+                >
+                  <span className="text-2xl font-display font-bold tabular-nums text-muted-foreground">{r.seq ?? "–"}</span>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: r.color ?? "hsl(var(--muted))" }} aria-hidden />
+                    <span className="text-2xl font-semibold truncate">{r.recipeName}</span>
+                    {r.category === "Macaroni Cheese" && (
+                      <span className="text-xs uppercase tracking-wide bg-amber-500/10 text-amber-700 dark:text-amber-300 px-2.5 py-0.5 rounded-full font-bold shrink-0">Mac</span>
+                    )}
+                  </div>
+                  <span className="text-2xl font-bold tabular-nums text-right whitespace-nowrap">
+                    {r.target ?? "—"}
+                    {r.target !== null && <span className="text-xs font-medium text-muted-foreground ml-1">{r.unit === "packs" ? "pk" : "bt"}</span>}
+                  </span>
+                  <span className="text-2xl font-bold tabular-nums text-right">{r.stock ? r.stock.have : "—"}</span>
+                  <span className="text-2xl font-bold tabular-nums text-right">{r.stock ? r.stock.need : "—"}</span>
+                  <span className={cn("text-2xl font-bold tabular-nums text-right", numClass)}>
+                    {r.stock ? (r.stock.surplus > 0 ? `+${r.stock.surplus}` : r.stock.surplus) : "—"}
+                  </span>
+                </div>
               </div>
-              <span className="text-3xl font-display font-bold tabular-nums whitespace-nowrap self-center">
-                {it.batchesTarget}
-                <span className="text-base font-medium text-muted-foreground ml-2">
-                  {it.recipeCategory === "Macaroni Cheese" ? "packs" : "batches"}
-                </span>
-              </span>
-            </div>
-          ))}
+            );
+          })}
+        </div>
+      )}
+
+      {/* Legend */}
+      {rows.length > 0 && (
+        <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-emerald-500 inline-block" /> Enough</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-500 inline-block" /> Tight</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-red-500 inline-block" /> Short</span>
         </div>
       )}
     </div>
@@ -1191,126 +1322,27 @@ interface CalcRecipeRow {
   deficit: number;
 }
 
-function ShortOnPackSlide({ data, slide, isPreviewing }: { data: DashboardData; slide: MeetingSlide; isPreviewing: boolean }) {
-  // The slide always describes "today's pack" from the perspective of the
-  // meeting it's running in. In a live meeting that's data.today; in a
-  // preview of tomorrow's meeting it's data.tomorrow. Without this shift
-  // the preview would silently show yesterday's pack from the host's
-  // perspective on the previewed day.
-  const effectivePlanDate = isPreviewing ? data.tomorrow : data.today;
-
-  // Use the existing /api/production-plans/calculate endpoint as the
-  // single source of truth — same numbers the planner page shows for
-  // today, including fridge stock, today's despatch demand and the
-  // per-recipe deficit. Filter to core recipes only since the user
-  // wants the morning standard view.
-  const { data: calc, isLoading } = useQuery<{ recipes: CalcRecipeRow[]; dispatchDates: string[]; deliveryDates: string[] }>({
-    queryKey: ["short-on-pack-today", effectivePlanDate],
-    queryFn: async () => {
-      const res = await fetch(`${BASE}/api/production-plans/calculate?planDate=${effectivePlanDate}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed");
-      return res.json();
-    },
-    staleTime: 60_000,
-  });
-
-  const rows = (calc?.recipes ?? [])
-    .filter(r => r.isCoreMenu)
-    .map(r => {
-      const have = r.fridgeStock;
-      // NEED = today's pack (the dispatch we're about to load), not the
-      // previous pack that already went out. dispatch2Qty corresponds to
-      // orders tagged with the delivery date paired with dispatchDates[1]
-      // — i.e. what the morning standup is preparing for.
-      const need = r.dispatch2Qty;
-      const surplus = have - need; // +ve = surplus, -ve = deficit
-      const tone: "ok" | "warn" | "bad" = surplus >= 0 ? "ok" : surplus > -need * 0.1 ? "warn" : "bad";
-      return { ...r, have, need, surplus, tone };
-    })
-    .sort((a, b) => a.surplus - b.surplus); // shortest first
-
-  // Dispatch + delivery labels come straight from the backend's
-  // dispatchDates / deliveryDates arrays. dispatchDates[1] is the
-  // planDate itself; deliveryDates[1] is its paired delivery date. The
-  // backend uses getNextDispatchDay / getPreviousDispatchDay to skip
-  // weekends and non-dispatch bank holidays, so these labels always
-  // reflect the actual despatch logic the rest of the planner uses —
-  // no client-side date maths.
-  const fmtDay = (iso?: string) => iso ? format(new Date(`${iso}T00:00:00`), "EEE d MMM") : "—";
-  const dispatchLabel = fmtDay(calc?.dispatchDates?.[1]);
-  const deliveryLabel = fmtDay(calc?.deliveryDates?.[1]);
-
-  return (
-    <div>
-      <SectionTitle>{slide.title || "Short on the Pack"}</SectionTitle>
-      <SectionLead>What recipes are we short on for today's pack?</SectionLead>
-
-      {isLoading ? (
-        <div className="glass-panel rounded-2xl p-6 flex justify-center">
-          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-        </div>
-      ) : rows.length === 0 ? (
-        <div className="glass-panel rounded-2xl p-6 text-muted-foreground">No core recipes on today's plan.</div>
-      ) : (
-        <div className="glass-panel rounded-2xl overflow-hidden">
-          {/* Header */}
-          <div className="grid grid-cols-[1fr_8rem_12rem_5rem] gap-3 px-5 py-2 bg-secondary/30 text-xs uppercase tracking-wide text-muted-foreground font-semibold">
-            <span>Recipe</span>
-            <span className="text-right leading-tight">
-              Have
-              <span className="block text-[10px] font-normal normal-case opacity-70">production fridge</span>
-            </span>
-            <span className="text-right leading-tight">
-              Need
-              <span className="block text-[10px] font-normal normal-case opacity-70">despatch {dispatchLabel} · delivery {deliveryLabel}</span>
-            </span>
-            <span className="text-right">+/−</span>
-          </div>
-          {rows.map((r, i) => {
-            const toneClass =
-              r.tone === "ok"   ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/40" :
-              r.tone === "warn" ? "bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/40" :
-                                  "bg-red-500/15 text-red-700 dark:text-red-300 border-red-500/50";
-            return (
-              <div
-                key={r.recipeId}
-                className={cn(
-                  "grid grid-cols-[1fr_8rem_12rem_5rem] gap-3 items-center px-5 py-3 border-l-4",
-                  toneClass,
-                  i > 0 && "border-t border-border/50",
-                )}
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: r.color ?? "hsl(var(--muted))" }} aria-hidden />
-                  <span className="text-xl font-semibold truncate">{r.recipeName}</span>
-                </div>
-                <span className="text-xl font-bold tabular-nums text-right">{r.have}</span>
-                <span className="text-xl font-bold tabular-nums text-right">{r.need}</span>
-                <span className="text-xl font-bold tabular-nums text-right">
-                  {r.surplus > 0 ? `+${r.surplus}` : r.surplus}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Legend */}
-      {rows.length > 0 && (
-        <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-emerald-500 inline-block" /> Enough</span>
-          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-500 inline-block" /> Tight</span>
-          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-red-500 inline-block" /> Short</span>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function SafetyIssuesSlide({ data, onRefresh, slide }: { data: DashboardData; onRefresh: () => void; slide: MeetingSlide }) {
   const [description, setDescription] = useState("");
   const [severity, setSeverity] = useState<"yellow" | "red">("yellow");
   const [submitting, setSubmitting] = useState(false);
+  const [resolvingId, setResolvingId] = useState<number | null>(null);
+  const resolve = async (id: number) => {
+    setResolvingId(id);
+    try {
+      const res = await fetch(`${BASE}/api/andon/${id}/resolve`, {
+        method: "PATCH",
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed");
+      onRefresh();
+      toast({ title: "Safety issue cleared" });
+    } catch {
+      toast({ title: "Couldn't clear issue", variant: "destructive" });
+    } finally {
+      setResolvingId(null);
+    }
+  };
   const submit = async () => {
     if (!description.trim()) return;
     setSubmitting(true);
@@ -1342,6 +1374,15 @@ function SafetyIssuesSlide({ data, onRefresh, slide }: { data: DashboardData; on
             <div key={s.id} className="px-6 py-4 border-b border-border/50 last:border-0 flex items-start gap-4">
               <span className={cn("w-4 h-4 rounded-full mt-2 shrink-0", s.severity === "red" ? "bg-red-500" : "bg-amber-500")} />
               <p className="text-2xl leading-snug flex-1">{s.description ?? "(no description)"}</p>
+              <button
+                onClick={() => resolve(s.id)}
+                disabled={resolvingId === s.id}
+                title="Mark as done"
+                className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl border border-border text-base font-medium text-muted-foreground hover:bg-emerald-500/10 hover:text-emerald-700 hover:border-emerald-500/40 disabled:opacity-50"
+              >
+                {resolvingId === s.id ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
+                Done
+              </button>
             </div>
           ))}
         </div>
@@ -1717,10 +1758,9 @@ const SLIDE_KIND_CATALOG: Array<{ kind: SlideKind; label: string; description: s
   { kind: "special_prep",        label: "Test Product Prep",    description: "Tomorrow's non-core items being prepped today" },
   { kind: "stretches",           label: "Stretches",            description: "Daily-random stretches, auto-cycling 10s each" },
   { kind: "yesterday_kpis",      label: "Yesterday's Numbers",  description: "Building rate, packing rate, wonkies" },
-  { kind: "order_of_production", label: "Order of Production",  description: "Today's recipe order + batches" },
+  { kind: "order_of_production", label: "Order of Production",  description: "Today's recipe order + batches, with shortages colour-coded" },
   { kind: "local_delivery",      label: "Local Despatch",       description: "Any local despatches + today's deliveries in" },
   { kind: "bag_orders",          label: "Bag Orders",           description: "Discussion prompt" },
-  { kind: "short_on_pack",       label: "Short on the Pack",    description: "Yesterday's shorts + leftover" },
   { kind: "safety_issues",       label: "Safety Issues",        description: "Open andons + log new" },
   { kind: "system_updates",      label: "System Updates",       description: "Auto-pulls recent commits to the planner" },
   { kind: "new_sops",            label: "New & Updated SOPs",   description: "SOPs touched in last 7 days" },
