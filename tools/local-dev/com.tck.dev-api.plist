@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tck.dev-api</string>
+
+    <!-- Run the API dev server (port 3000) and keep it alive across
+         crashes, Mac sleep/wake, and logins. Independent of any Claude
+         session, so it doesn't drop when a session ends. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-lc</string>
+        <string>cd "/Users/graemecarter/Dev Projects/tck-production-planner-main/artifacts/api-server" &amp;&amp; exec pnpm run dev</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/graemecarter/Library/Logs/tck-dev-api.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/graemecarter/Library/Logs/tck-dev-api.log</string>
+</dict>
+</plist>
