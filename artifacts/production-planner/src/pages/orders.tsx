@@ -27,6 +27,7 @@ import {
   Clock,
   Trash2,
   Mail,
+  MessageCircle,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -80,6 +81,7 @@ type SupplierOrder = {
     contactName: string | null;
     email: string | null;
     phone: string | null;
+    orderingPhone: string | null;
     website: string | null;
     leadTimeDays?: number;
     cutoffTime?: string;
@@ -168,16 +170,14 @@ function lineOrderQty(line: EditableLine): string {
   return `${(line.editedPacks * line.packWeight).toLocaleString()} ${line.unit}`;
 }
 
-// Build a mailto: link that pre-fills an order email to the supplier — opens
-// in whatever mail client the operator's machine uses. Body lists each item
-// with its order quantity and the required delivery date.
-function buildOrderMailto(supplierName: string, email: string, lines: EditableLine[], deliveryDateText: string): string {
+// The shared plain-text order message used by both the email and WhatsApp
+// buttons — lists each item with its order quantity and the delivery date.
+function buildOrderMessage(supplierName: string, lines: EditableLine[], deliveryDateText: string): string {
   const itemLines = lines.map(l => {
     const part = l.supplierPartNumber ? ` [${l.supplierPartNumber}]` : "";
     return `- ${lineOrderQty(l)} × ${l.ingredientName}${part}`;
   }).join("\n");
-  const subject = `Order from The Calzone Kitchen — delivery ${deliveryDateText}`;
-  const body = [
+  return [
     `Hi ${supplierName},`,
     ``,
     `Please could we order the following for delivery on ${deliveryDateText}:`,
@@ -187,7 +187,24 @@ function buildOrderMailto(supplierName: string, email: string, lines: EditableLi
     `Many thanks,`,
     `The Calzone Kitchen`,
   ].join("\n");
+}
+
+// Build a mailto: link that pre-fills an order email to the supplier — opens
+// in whatever mail client the operator's machine uses.
+function buildOrderMailto(supplierName: string, email: string, lines: EditableLine[], deliveryDateText: string): string {
+  const subject = `Order from The Calzone Kitchen — delivery ${deliveryDateText}`;
+  const body = buildOrderMessage(supplierName, lines, deliveryDateText);
   return `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+// Build a wa.me WhatsApp link with the same order message. The number is
+// stripped to digits only (international format, no +); returns null if there
+// aren't enough digits to be a usable number.
+function buildOrderWhatsApp(orderingPhone: string, supplierName: string, lines: EditableLine[], deliveryDateText: string): string | null {
+  const digits = orderingPhone.replace(/\D/g, "");
+  if (digits.length < 7) return null;
+  const text = buildOrderMessage(supplierName, lines, deliveryDateText);
+  return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
 }
 
 export default function Orders() {
@@ -1012,7 +1029,7 @@ export default function Orders() {
   const dptPendingSuppliersAll = suppliers.filter(s => !placedSupplierIds.has(s.supplier.id) || reopenedSupplierIds.has(s.supplier.id));
   const kanbanOnlyPendingAll = Object.values(kanbanOnlySupplierInfo)
     .filter(s => (!placedSupplierIds.has(s.id) || reopenedSupplierIds.has(s.id)) && !suppliers.some(ds => ds.supplier.id === s.id))
-    .map(s => ({ supplier: { id: s.id, name: s.name, contactName: null, email: null, phone: null, website: null }, lines: [] as OrderLine[] }));
+    .map(s => ({ supplier: { id: s.id, name: s.name, contactName: null, email: null, phone: null, orderingPhone: null, website: null }, lines: [] as OrderLine[] }));
   const allPendingSuppliers = [...dptPendingSuppliersAll, ...kanbanOnlyPendingAll];
   // Operator-dismissed cards drop out of the pending list but stay tracked so
   // a "Show N dismissed" link can restore them. Reopened POs always render
@@ -1312,6 +1329,16 @@ export default function Orders() {
         const cost = estimatedCost(orderableLines);
         const reopenedPOId = reopenedPlacedOrders[so.supplier.id];
         const isReopened = !!reopenedPOId;
+
+        // Pre-filled order message links — shown only when the supplier has
+        // the relevant contact set and there are items to order.
+        const orderDeliveryText = formatDeliveryDate(getDeliveryDateForSupplier(so.supplier.id, so.supplier.leadTimeDays, so.supplier.cutoffTime));
+        const emailHref = so.supplier.email && orderableLines.length > 0
+          ? buildOrderMailto(so.supplier.name, so.supplier.email, orderableLines, orderDeliveryText)
+          : null;
+        const whatsAppHref = so.supplier.orderingPhone && orderableLines.length > 0
+          ? buildOrderWhatsApp(so.supplier.orderingPhone, so.supplier.name, orderableLines, orderDeliveryText)
+          : null;
 
         return (
           <div key={so.supplier.id} className={cn(
@@ -1625,19 +1652,26 @@ export default function Orders() {
                         Delete order
                       </button>
                     )}
-                    {so.supplier.email && orderableLines.length > 0 && (
+                    {emailHref && (
                       <a
-                        href={buildOrderMailto(
-                          so.supplier.name,
-                          so.supplier.email,
-                          orderableLines,
-                          formatDeliveryDate(getDeliveryDateForSupplier(so.supplier.id, so.supplier.leadTimeDays, so.supplier.cutoffTime)),
-                        )}
+                        href={emailHref}
                         className="px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-border hover:bg-secondary text-foreground"
                         title={`Draft an order email to ${so.supplier.email}`}
                       >
                         <Mail className="w-4 h-4" />
                         Email order
+                      </a>
+                    )}
+                    {whatsAppHref && (
+                      <a
+                        href={whatsAppHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-green-600/40 text-green-700 dark:text-green-400 hover:bg-green-600/10"
+                        title={`Draft a WhatsApp order to ${so.supplier.orderingPhone}`}
+                      >
+                        <MessageCircle className="w-4 h-4" />
+                        WhatsApp
                       </a>
                     )}
                     <button

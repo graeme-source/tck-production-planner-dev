@@ -20,6 +20,7 @@ const schema = z.object({
   contactName: z.string().optional(),
   email: z.string().email("Invalid email").optional().or(z.literal("")),
   phone: z.string().optional(),
+  orderingPhone: z.string().optional(),
   website: z.string().optional(),
   address: z.string().optional(),
   notes: z.string().optional(),
@@ -37,6 +38,7 @@ type SupplierItem = {
   contactName?: string | null;
   email?: string | null;
   phone?: string | null;
+  orderingPhone?: string | null;
   website?: string | null;
   address?: string | null;
   notes?: string | null;
@@ -48,7 +50,7 @@ type SupplierItem = {
 };
 
 const defaultValues: FormValues = {
-  name: "", contactName: "", email: "", phone: "", website: "", address: "", notes: "", orderFrequency: "daily", orderDays: "", leadTimeDays: 1, cutoffTime: "17:00",
+  name: "", contactName: "", email: "", phone: "", orderingPhone: "", website: "", address: "", notes: "", orderFrequency: "daily", orderDays: "", leadTimeDays: 1, cutoffTime: "17:00",
 };
 
 function SupplierForm({
@@ -118,6 +120,16 @@ function SupplierForm({
           placeholder="orders@supplier.co.uk"
         />
         {errors.email && <span className="text-destructive text-xs">{errors.email.message}</span>}
+      </div>
+
+      <div>
+        <label className="text-sm font-medium mb-1 block">Ordering Phone (WhatsApp)</label>
+        <input
+          {...register("orderingPhone")}
+          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          placeholder="+44 7123 456789"
+        />
+        <span className="text-xs text-muted-foreground">International format (with country code) so the WhatsApp order button works.</span>
       </div>
 
       <div>
@@ -445,6 +457,7 @@ export default function Suppliers() {
                 contactName: editingItem.contactName ?? "",
                 email: editingItem.email ?? "",
                 phone: editingItem.phone ?? "",
+                orderingPhone: editingItem.orderingPhone ?? "",
                 website: editingItem.website ?? "",
                 address: editingItem.address ?? "",
                 notes: editingItem.notes ?? "",

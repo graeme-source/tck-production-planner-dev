@@ -1461,6 +1461,9 @@ async function runStartupMigrations() {
     await db.execute(sql`ALTER TABLE lean_examples ADD COLUMN IF NOT EXISTS diagram text`);
     await db.execute(sql`ALTER TABLE lean_examples ADD COLUMN IF NOT EXISTS image_url text`);
 
+    // Dedicated supplier ordering phone (WhatsApp) — separate from `phone`.
+    await db.execute(sql`ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS ordering_phone text`);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

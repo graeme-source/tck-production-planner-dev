@@ -271,7 +271,7 @@ router.get("/calculate", async (req, res) => {
   const kanbanIngredientIds = new Set(pulledKanbans.map(k => k.ingredientId));
 
   const supplierOrderMap: Record<number, {
-    supplier: { id: number; name: string; contactName: string | null; email: string | null; phone: string | null; website: string | null };
+    supplier: { id: number; name: string; contactName: string | null; email: string | null; phone: string | null; orderingPhone: string | null; website: string | null };
     lines: Array<{
       ingredientId: number;
       ingredientName: string;
@@ -370,6 +370,7 @@ router.get("/calculate", async (req, res) => {
           contactName: supplier?.contactName ?? null,
           email: supplier?.email ?? null,
           phone: supplier?.phone ?? null,
+          orderingPhone: supplier?.orderingPhone ?? null,
           website: supplier?.website ?? null,
           leadTimeDays: supplier?.leadTimeDays ?? 1,
           cutoffTime: supplier?.cutoffTime ?? "17:00",
@@ -444,6 +445,7 @@ router.get("/calculate", async (req, res) => {
             contactName: supplier?.contactName ?? null,
             email: supplier?.email ?? null,
             phone: supplier?.phone ?? null,
+            orderingPhone: supplier?.orderingPhone ?? null,
             website: supplier?.website ?? null,
             leadTimeDays: supplier?.leadTimeDays ?? 1,
             cutoffTime: supplier?.cutoffTime ?? "17:00",

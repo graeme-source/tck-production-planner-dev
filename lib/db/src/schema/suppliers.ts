@@ -8,6 +8,10 @@ export const suppliersTable = pgTable("suppliers", {
   contactName: text("contact_name"),
   email: text("email"),
   phone: text("phone"),
+  // Dedicated number for placing orders (WhatsApp). Kept separate from the
+  // general `phone` so ops can route orders to a specific line. Stored in
+  // international format (e.g. +44…) for wa.me links.
+  orderingPhone: text("ordering_phone"),
   website: text("website"),
   address: text("address"),
   notes: text("notes"),
