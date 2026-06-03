@@ -1005,9 +1005,21 @@ router.get("/calculate", async (req, res) => {
 
     const shopifyMatch = matchShopifySalesCombined(recipeName, recipeId);
     const hasRecipeMatch = shopifyMatch.matchedProduct !== null;
+    // A recipe mapped to Shopify variant(s) has an AUTHORITATIVE order count:
+    // zero orders means zero demand (e.g. a discontinued line that's still
+    // flagged active in DPT), NOT "no data — estimate from the DPT forecast".
+    // Previously any recipe with zero current sales fell through to
+    // dptDailyPacks, which invented phantom demand for products we've stopped
+    // selling (e.g. Pepperoni & Mushroom showing NEED 33 with no live orders).
+    const hasVariantMapping = recipeId != null && recipeToVariantIds.has(recipeId);
 
     function resolveDispatchQty(date: string): number {
+      // Shopify genuinely unavailable for this date → DPT estimate is the
+      // best we can do.
       if (!shopifyDatesLoaded.has(date)) return dptDailyPacks;
+      // Mapped recipe + Shopify loaded → trust the real count, even if it's 0.
+      if (hasVariantMapping) return matchShopifySalesForDate(recipeName, date, recipeId);
+      // Unmapped recipe with no name match → fall back to the DPT estimate.
       if (!hasRecipeMatch) return dptDailyPacks;
       return matchShopifySalesForDate(recipeName, date, recipeId);
     }
