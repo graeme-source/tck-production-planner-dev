@@ -1204,6 +1204,7 @@ router.get("/calculate-mac-cheese", async (req, res) => {
       maxBatchesPerTin: recipesTable.maxBatchesPerTin,
       sopUrl: recipesTable.sopUrl,
       color: recipesTable.color,
+      isCoreMenu: recipesTable.isCoreMenu,
     })
     .from(recipesTable)
     .where(eq(recipesTable.category, "Macaroni Cheese"));
@@ -1343,10 +1344,6 @@ router.get("/calculate-mac-cheese", async (req, res) => {
     if (match) extraMap[Number(match[1])] = Number(s.value) || 0;
   }
 
-  // Thursday = 4 (day of week). On Thursday, default extra to 0 (last prod day before weekend)
-  const planDayOfWeek = new Date(`${planDate}T12:00:00Z`).getUTCDay();
-  const isThursday = planDayOfWeek === 4;
-
   const recipes = macRecipes.map(r => {
     const portionsPerBatch = Number(r.portionsPerBatch) || 10;
     const packSize = Number(r.packSize) || 1;
@@ -1358,8 +1355,9 @@ router.get("/calculate-mac-cheese", async (req, res) => {
     const salesNextDayPlus2 = matchSalesForDate(r.recipeId, r.recipeName ?? "", deliveryDates[2]);
 
     const neededForDispatch = Math.max(0, salesNextDay - leftOverStock);
-    const defaultExtra = extraMap[r.recipeId] ?? 5;
-    const extraToMake = isThursday ? 0 : defaultExtra;
+    // Pre-populate from the per-recipe default in Settings (mac_cheese_extra_
+    // packs_<id>), fallback 5. The operator can still edit the Extra column.
+    const extraToMake = extraMap[r.recipeId] ?? 5;
 
     const toMakePacks = neededForDispatch + salesNextDayPlus1 + salesNextDayPlus2 + extraToMake;
     const toMakeBatches = packsPerBatch > 0 ? Math.ceil(toMakePacks / packsPerBatch) : 0;
@@ -1368,6 +1366,7 @@ router.get("/calculate-mac-cheese", async (req, res) => {
       recipeId: r.recipeId,
       recipeName: r.recipeName ?? "",
       color: r.color ?? null,
+      isCoreMenu: r.isCoreMenu ?? false,
       portionsPerBatch,
       packSize,
       packsPerBatch,

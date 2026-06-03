@@ -681,6 +681,7 @@ interface CalcRecipe {
   recipeName: string;
   color: string | null;
   isCoreMenu: boolean;
+  recipeCategory?: string | null;
   portionsPerBatch: number;
   packSize: number;
   packsPerBatch: number;
@@ -1162,7 +1163,11 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     // available through the "Add Recipe" dropdown below the table for
     // manual inclusion — but the initial table is focused on the core
     // menu so operators aren't distracted by one-off items.
-    const coreRecipes = calcData.recipes.filter((r: CalcRecipe) => r.isCoreMenu);
+    // Macaroni Cheese is excluded entirely: it's planned through its own
+    // "Add Macaroni Cheese" flow, so it must never be pre-populated here
+    // even when a mac recipe is flagged core menu (calzones vs mac are
+    // kept split in every view).
+    const coreRecipes = calcData.recipes.filter((r: CalcRecipe) => r.isCoreMenu && (r.recipeCategory ?? "") !== "Macaroni Cheese");
     const capacity = calcData.totalDailyBatches;
     // `salesPercent` was computed by the backend against the full recipe set,
     // so after filtering to core-only the percentages no longer sum to 100 —

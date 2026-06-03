@@ -30,6 +30,7 @@ interface MacCheeseCalcRecipe {
   recipeId: number;
   recipeName: string;
   color: string | null;
+  isCoreMenu: boolean;
   packsPerBatch: number;
   leftOverStock: number;
   salesNextDay: number;
@@ -63,6 +64,10 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [recipes, setRecipes] = useState<MacCheeseCalcRecipe[]>([]);
+  // Full mac-cheese list from the endpoint; `recipes` above is the working
+  // set shown in the table (core menu only by default). Non-core recipes
+  // live here until the operator adds them via the picker.
+  const [allRecipes, setAllRecipes] = useState<MacCheeseCalcRecipe[]>([]);
   const [extraOverrides, setExtraOverrides] = useState<Record<number, number>>({});
   const [stockOverrides, setStockOverrides] = useState<Record<number, number>>({});
   const [zeroedDays, setZeroedDays] = useState<{ d1: boolean; d2: boolean; d3: boolean }>({ d1: false, d2: false, d3: false });
@@ -118,6 +123,7 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
           recipeId: r.recipeId,
           recipeName: r.recipeName,
           color: r.color ?? null,
+          isCoreMenu: !!r.isCoreMenu,
           packsPerBatch: r.packsPerBatch ?? 5,
           leftOverStock: Math.round(r.leftOverStock ?? 0),
           salesNextDay: r.salesNextDay ?? 0,
@@ -133,7 +139,11 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
         const overrides: Record<number, number> = {};
         for (const r of mapped) overrides[r.recipeId] = r.extraToMake;
         setExtraOverrides(overrides);
-        setRecipes(mapped);
+        setAllRecipes(mapped);
+        // Default the table to core-menu mac recipes only. If none are
+        // flagged core, fall back to showing all so the panel isn't empty.
+        const core = mapped.filter(r => r.isCoreMenu);
+        setRecipes(core.length > 0 ? core : mapped);
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -205,7 +215,7 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
     );
   }
 
-  if (recipes.length === 0) {
+  if (allRecipes.length === 0) {
     return (
       <div className="text-center py-12 text-muted-foreground">
         <p className="font-medium">No Macaroni Cheese recipes found.</p>
@@ -213,6 +223,8 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
       </div>
     );
   }
+
+  const addableRecipes = allRecipes.filter(r => !recipes.some(x => x.recipeId === r.recipeId));
 
   return (
     <div className="space-y-4">
@@ -317,7 +329,27 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
         Stock = current fridge packs. Sales D1/D2/D3 = next 3 dispatch days from Shopify. Deficit = max(0, D1 − Stock). Extra = additional packs. <strong>To Make is rounded up to whole batches</strong> — you can't produce partial batches, so target + rounding-up is what you'll actually make.
       </p>
 
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {addableRecipes.length > 0 ? (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">Add another recipe:</span>
+            <select
+              value=""
+              onChange={e => {
+                const id = Number(e.target.value);
+                if (!id) return;
+                const rec = allRecipes.find(x => x.recipeId === id);
+                if (rec) setRecipes(prev => [...prev, rec]);
+              }}
+              className="bg-background border border-border rounded-lg px-3 py-2 text-sm"
+            >
+              <option value="">Select a recipe…</option>
+              {addableRecipes.map(r => (
+                <option key={r.recipeId} value={r.recipeId}>{r.recipeName}</option>
+              ))}
+            </select>
+          </div>
+        ) : <span />}
         <button
           onClick={handleSubmit}
           disabled={saving || recipes.every(r => getToMake(r) === 0)}
