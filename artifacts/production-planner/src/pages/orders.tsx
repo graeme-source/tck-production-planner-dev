@@ -28,6 +28,7 @@ import {
   Trash2,
   Mail,
   MessageCircle,
+  Users,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -205,6 +206,16 @@ function buildOrderWhatsApp(orderingPhone: string, supplierName: string, lines: 
   if (digits.length < 7) return null;
   const text = buildOrderMessage(supplierName, lines, deliveryDateText);
   return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
+}
+
+// "Share" link with no number — opens WhatsApp with the order pre-filled and
+// lets the operator pick the chat (including a group) before sending.
+// WhatsApp has no way to pre-target a specific group, so this is the closest
+// option: one extra tap to choose the group. (Most reliable in the WhatsApp
+// mobile/desktop app; the contact picker can be flaky on WhatsApp Web.)
+function buildOrderWhatsAppShare(supplierName: string, lines: EditableLine[], deliveryDateText: string): string {
+  const text = buildOrderMessage(supplierName, lines, deliveryDateText);
+  return `https://wa.me/?text=${encodeURIComponent(text)}`;
 }
 
 export default function Orders() {
@@ -1339,6 +1350,11 @@ export default function Orders() {
         const whatsAppHref = so.supplier.orderingPhone && orderableLines.length > 0
           ? buildOrderWhatsApp(so.supplier.orderingPhone, so.supplier.name, orderableLines, orderDeliveryText)
           : null;
+        // No-number share so the order can go to a WhatsApp group (operator
+        // picks the chat). Available whenever there are items to order.
+        const whatsAppShareHref = orderableLines.length > 0
+          ? buildOrderWhatsAppShare(so.supplier.name, orderableLines, orderDeliveryText)
+          : null;
 
         return (
           <div key={so.supplier.id} className={cn(
@@ -1672,6 +1688,18 @@ export default function Orders() {
                       >
                         <MessageCircle className="w-4 h-4" />
                         WhatsApp
+                      </a>
+                    )}
+                    {whatsAppShareHref && (
+                      <a
+                        href={whatsAppShareHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-green-600/40 text-green-700 dark:text-green-400 hover:bg-green-600/10"
+                        title="Opens WhatsApp — pick the group (or any chat) to send the order to"
+                      >
+                        <Users className="w-4 h-4" />
+                        WhatsApp group
                       </a>
                     )}
                     <button
