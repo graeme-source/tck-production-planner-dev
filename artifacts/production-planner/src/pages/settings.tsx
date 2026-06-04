@@ -925,6 +925,7 @@ export default function Settings() {
               {user?.role === "admin" && <WeightChillSettingsSection />}
               {user?.role === "admin" && <OvenDefaultsSection />}
               {user?.role === "admin" && <ExtraTomatoBaseSection />}
+              {user?.role === "admin" && <IcePackSettingsSection />}
               {user?.role === "admin" && <PastaCookingSection />}
               {user?.role === "admin" && <BreakDefaultsSection />}
               {user?.role === "admin" && <ApcServiceCodesSection />}
@@ -1862,6 +1863,205 @@ function ExtraTomatoBaseSection() {
             placeholder="e.g. 2"
             className="w-28 px-3 py-2 border border-border rounded-lg text-sm text-right"
           />
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface IcePackTier { maxTempBelow: number | null; packs: number; }
+interface IcePackRules {
+  enabled: boolean;
+  location: { name: string; latitude: number; longitude: number };
+  largeBoxExtra: number;
+  tiers: IcePackTier[];
+}
+const DEFAULT_ICE_PACK_RULES: IcePackRules = {
+  enabled: true,
+  location: { name: "Heathrow", latitude: 51.47, longitude: -0.45 },
+  largeBoxExtra: 1,
+  tiers: [
+    { maxTempBelow: 10, packs: 1 },
+    { maxTempBelow: 25, packs: 2 },
+    { maxTempBelow: null, packs: 3 },
+  ],
+};
+
+function IcePackSettingsSection() {
+  const [rules, setRules] = useState<IcePackRules>(DEFAULT_ICE_PACK_RULES);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{ highTemp: number | null; smallBoxPacks?: number; largeBoxPacks?: number; forecastSource?: string; location?: { name: string } } | null>(null);
+
+  const loadPreview = () => {
+    fetch("/api/ice-packs/today", { credentials: "include" })
+      .then(r => r.json())
+      .then(setPreview)
+      .catch(() => setPreview(null));
+  };
+
+  useEffect(() => {
+    fetch("/api/app-settings/ice_pack_rules", { credentials: "include" })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d?.value) { try { setRules({ ...DEFAULT_ICE_PACK_RULES, ...JSON.parse(d.value) }); } catch { /* keep defaults */ } } })
+      .catch(() => { /* keep defaults */ });
+    loadPreview();
+  }, []);
+
+  // Keep tiers ordered with the open-ended ("and above") tier last.
+  const orderedTiers = [...rules.tiers].sort((a, b) => {
+    if (a.maxTempBelow === null) return 1;
+    if (b.maxTempBelow === null) return -1;
+    return a.maxTempBelow - b.maxTempBelow;
+  });
+
+  const updateTier = (idx: number, patch: Partial<IcePackTier>) => {
+    setRules(r => ({ ...r, tiers: orderedTiers.map((t, i) => (i === idx ? { ...t, ...patch } : t)) }));
+  };
+  const addTier = () => {
+    // Insert a new threshold just below the open-ended tier.
+    const bounded = orderedTiers.filter(t => t.maxTempBelow !== null);
+    const lastBound = bounded.length ? bounded[bounded.length - 1].maxTempBelow! : 10;
+    const open = orderedTiers.find(t => t.maxTempBelow === null) ?? { maxTempBelow: null, packs: 3 };
+    setRules(r => ({ ...r, tiers: [...bounded, { maxTempBelow: lastBound + 5, packs: open.packs - 1 }, open] }));
+  };
+  const removeTier = (idx: number) => {
+    if (orderedTiers[idx].maxTempBelow === null) return; // never remove the open-ended tier
+    setRules(r => ({ ...r, tiers: orderedTiers.filter((_, i) => i !== idx) }));
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/app-settings/ice_pack_rules", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: JSON.stringify(rules) }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      setSavedMsg("Saved"); setTimeout(() => setSavedMsg(null), 2000);
+      loadPreview();
+    } catch {
+      setSavedMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <ThermometerSnowflake className="w-4 h-4 text-cyan-500" /> Despatch Ice Packs
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            How many ice packs to put in each box, set from the forecast high temperature over the despatch window (today + tomorrow) at one fixed location. Large boxes always get the small-box count plus the extra below.
+          </p>
+        </div>
+        {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
+      </div>
+
+      <div className="rounded-2xl border border-border bg-card p-5 space-y-5">
+        {/* Enabled toggle */}
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input type="checkbox" checked={rules.enabled} onChange={e => setRules(r => ({ ...r, enabled: e.target.checked }))} className="w-4 h-4" />
+          <span className="text-sm font-medium">Show ice-pack instruction on the packing station &amp; scanning app</span>
+        </label>
+
+        {/* Today's preview */}
+        {preview && preview.highTemp != null && (
+          <div className="rounded-lg bg-cyan-50 dark:bg-cyan-950/20 border border-cyan-200 dark:border-cyan-800 px-4 py-3 text-sm">
+            <span className="font-medium">Today: </span>
+            high {preview.highTemp}°C{preview.location?.name ? ` at ${preview.location.name}` : ""} →{" "}
+            <span className="font-bold tabular-nums">{preview.smallBoxPacks}</span> small box,{" "}
+            <span className="font-bold tabular-nums">{preview.largeBoxPacks}</span> large box
+            {preview.forecastSource && preview.forecastSource !== "live" ? ` (${preview.forecastSource})` : ""}
+          </div>
+        )}
+
+        {/* Tiers */}
+        <div>
+          <div className="text-sm font-medium mb-2">Small-box rule (by forecast high temperature)</div>
+          <div className="space-y-2">
+            {orderedTiers.map((tier, idx) => (
+              <div key={idx} className="flex items-center gap-2 text-sm">
+                {tier.maxTempBelow === null ? (
+                  <span className="w-44">Otherwise (and above)</span>
+                ) : (
+                  <span className="w-44 flex items-center gap-1">
+                    Below
+                    <input
+                      type="number" step="1"
+                      value={tier.maxTempBelow}
+                      onChange={e => updateTier(idx, { maxTempBelow: Number(e.target.value) })}
+                      className="w-16 px-2 py-1 border border-border rounded-md text-right"
+                    />
+                    °C
+                  </span>
+                )}
+                <span className="text-muted-foreground">→</span>
+                <input
+                  type="number" min="0" step="1"
+                  value={tier.packs}
+                  onChange={e => updateTier(idx, { packs: Number(e.target.value) })}
+                  className="w-16 px-2 py-1 border border-border rounded-md text-right"
+                />
+                <span>ice pack{tier.packs === 1 ? "" : "s"}</span>
+                {tier.maxTempBelow !== null && (
+                  <button onClick={() => removeTier(idx)} className="ml-1 text-muted-foreground hover:text-destructive" title="Remove this band">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          <button onClick={addTier} className="mt-2 inline-flex items-center gap-1 text-sm text-primary hover:underline">
+            <Plus className="w-3.5 h-3.5" /> Add temperature band
+          </button>
+        </div>
+
+        {/* Large box extra */}
+        <div className="flex items-center gap-3 text-sm">
+          <label className="font-medium w-44">Large box adds</label>
+          <input
+            type="number" min="0" step="1"
+            value={rules.largeBoxExtra}
+            onChange={e => setRules(r => ({ ...r, largeBoxExtra: Number(e.target.value) }))}
+            className="w-16 px-2 py-1 border border-border rounded-md text-right"
+          />
+          <span>extra ice pack{rules.largeBoxExtra === 1 ? "" : "s"} vs small box</span>
+        </div>
+
+        {/* Location */}
+        <div className="space-y-2 pt-2 border-t border-border">
+          <div className="text-sm font-medium">Forecast location</div>
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <label className="flex items-center gap-2">
+              <span className="text-muted-foreground">Name</span>
+              <input value={rules.location.name} onChange={e => setRules(r => ({ ...r, location: { ...r.location, name: e.target.value } }))} className="w-32 px-2 py-1 border border-border rounded-md" />
+            </label>
+            <label className="flex items-center gap-2">
+              <span className="text-muted-foreground">Lat</span>
+              <input type="number" step="0.001" value={rules.location.latitude} onChange={e => setRules(r => ({ ...r, location: { ...r.location, latitude: Number(e.target.value) } }))} className="w-24 px-2 py-1 border border-border rounded-md text-right" />
+            </label>
+            <label className="flex items-center gap-2">
+              <span className="text-muted-foreground">Long</span>
+              <input type="number" step="0.001" value={rules.location.longitude} onChange={e => setRules(r => ({ ...r, location: { ...r.location, longitude: Number(e.target.value) } }))} className="w-24 px-2 py-1 border border-border rounded-md text-right" />
+            </label>
+          </div>
+        </div>
+
+        <div className="pt-1">
           <button
             onClick={handleSave}
             disabled={saving}

@@ -5,6 +5,7 @@ import { toast } from "@/hooks/use-toast";
 import { QrScanner } from "@/components/qr-scanner";
 import { CheckCircle2, AlertCircle, ArrowLeft, Loader2, PackageCheck, ScanLine, SkipForward } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { IcePackBadge } from "@/components/ice-pack-callout";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -317,6 +318,10 @@ export default function FulfilmentPackCycle() {
           >
             <SkipForward className="w-4 h-4" /> Skip
           </button>
+        </div>
+
+        <div className="flex justify-center">
+          <IcePackBadge />
         </div>
 
         <div className="glass-panel rounded-2xl border-2 border-primary/40 bg-primary/5 p-6 text-center">

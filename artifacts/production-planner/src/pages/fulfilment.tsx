@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
+import { IcePackBadge } from "@/components/ice-pack-callout";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 import { format, addDays, parseISO } from "date-fns";
@@ -2088,6 +2089,8 @@ export default function Fulfilment() {
             </button>
           }
         />
+
+        <IcePackBadge />
 
         {tagsError && (
           <div className="flex items-center gap-3 p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive">

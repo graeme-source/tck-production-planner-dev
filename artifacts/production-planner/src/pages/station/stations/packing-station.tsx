@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { BreakTracker } from "../shared/break-tracker";
+import { IcePackBanner } from "@/components/ice-pack-callout";
 
 // ──────────────────────────────────────────────────────────────────────────────
 interface PackingData {
@@ -229,6 +230,9 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
 
   return (
     <div className="space-y-4">
+      {/* Despatch ice-pack instruction — weather-driven, first thing the team sees */}
+      <IcePackBanner />
+
       {/* Header — single source of date truth */}
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
