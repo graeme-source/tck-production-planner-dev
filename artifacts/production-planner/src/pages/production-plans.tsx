@@ -28,6 +28,7 @@ import {
   FlaskConical, Printer, X, ChevronDown, ChevronUp, PoundSterling, ShieldCheck, RotateCcw,
   Menu, MoreHorizontal, Lock, Unlock, SlidersHorizontal,
 } from "lucide-react";
+import { AddRecipeToPlanDialog } from "@/components/add-recipe-to-plan-dialog";
 import { toast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, addDays, parseISO, isWeekend, isToday, startOfWeek, isSameDay, formatDistanceToNow } from "date-fns";
@@ -881,6 +882,9 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   const { state: authState } = useAuth();
   const userRole = authState.status === "authenticated" ? authState.user.role : undefined;
   const isAdmin = userRole === "admin";
+  // Managers and admins can schedule a plan for any date — any day of the week,
+  // past, today or future. Everyone else is held to weekdays, no past dates.
+  const canPickAnyDate = userRole === "admin" || userRole === "manager";
   const minPlanDate = getMinPlanDate();
   const defaultDate = initialDate ?? (isAdmin ? new Date() : minPlanDate);
   const [planDate, setPlanDate] = useState(toLocalDateStr(defaultDate));
@@ -1055,13 +1059,16 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   const handleDateChange = (raw: string) => {
     if (!raw) return;
     isDirty.current = true;
-    let fixed = toNextWeekdayIfWeekend(raw);
+    let fixed = raw;
     const warnings: string[] = [];
-    if (fixed !== raw) warnings.push("Weekends are not production days — date moved to the next Monday.");
-    const min = getMinPlanDate();
-    if (parseISO(fixed) < min) {
-      fixed = toLocalDateStr(min);
-      warnings.push("Plans cannot be created for past dates.");
+    if (!canPickAnyDate) {
+      fixed = toNextWeekdayIfWeekend(raw);
+      if (fixed !== raw) warnings.push("Weekends are not production days — date moved to the next Monday.");
+      const min = getMinPlanDate();
+      if (parseISO(fixed) < min) {
+        fixed = toLocalDateStr(min);
+        warnings.push("Plans cannot be created for past dates.");
+      }
     }
     setDateWarning(warnings.length ? warnings.join(" ") : null);
     setPlanDate(fixed);
@@ -1615,7 +1622,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                 <input
                   type="date"
                   value={planDate}
-                  min={isAdmin ? undefined : toLocalDateStr(minPlanDate)}
+                  min={canPickAnyDate ? undefined : toLocalDateStr(minPlanDate)}
                   onChange={e => handleDateChange(e.target.value)}
                   className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
                 />
@@ -2102,6 +2109,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const { state: editAuthState } = useAuth();
   const editUserRole = editAuthState.status === "authenticated" ? editAuthState.user.role : undefined;
   const editIsAdmin = editUserRole === "admin";
+  const editCanPickAnyDate = editUserRole === "admin" || editUserRole === "manager";
   const [planDate, setPlanDate] = useState(plan.planDate);
   const [prepDate, setPrepDate] = useState((plan as any).prepDate ?? "");
   const [doughDate, setDoughDate] = useState((plan as any).doughDate ?? "");
@@ -2388,10 +2396,11 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const handleDateChange = (raw: string) => {
     if (!raw) return;
     isDirty.current = true;
-    let fixed = toNextWeekdayIfWeekend(raw);
+    let fixed = raw;
     const warnings: string[] = [];
-    if (fixed !== raw) warnings.push("Weekends are not production days — date moved to the next Monday.");
-    if (!editIsAdmin) {
+    if (!editCanPickAnyDate) {
+      fixed = toNextWeekdayIfWeekend(raw);
+      if (fixed !== raw) warnings.push("Weekends are not production days — date moved to the next Monday.");
       if (parseISO(fixed) < editMinPlanDate) {
         fixed = toLocalDateStr(editMinPlanDate);
         warnings.push("Plans must be created at least 2 working days in advance.");
@@ -2571,7 +2580,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
               <input
                 type="date"
                 value={planDate}
-                min={editIsAdmin ? undefined : toLocalDateStr(editMinPlanDate)}
+                min={editCanPickAnyDate ? undefined : toLocalDateStr(editMinPlanDate)}
                 onChange={e => handleDateChange(e.target.value)}
                 className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
               />
@@ -3819,6 +3828,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   // Production Items table is locked by default — managers/admins can unlock to
   // adjust batches and 8-pack bag counts on an active plan without resetting it.
   const [itemsTableUnlocked, setItemsTableUnlocked] = useState(false);
+  const [addRecipeOpen, setAddRecipeOpen] = useState(false);
   const itemsEditable = canEditPlan && itemsTableUnlocked;
   const [, navigate] = useLocation();
   const { data: stationActivity } = useGetStationActivity(planId, {
@@ -4292,6 +4302,24 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
               {macPacksTarget > 0 && <> + {macPacksTarget} mac packs</>}
               {" · "}{totalPacks.toLocaleString()} packs
             </span>
+            {canEditPlan && plan.status !== "complete" && (
+              <button
+                onClick={() => setAddRecipeOpen(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:bg-secondary/50 transition-colors"
+                title="Add a recipe to this plan without resetting it"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add recipe
+              </button>
+            )}
+            {canEditPlan && (
+              <AddRecipeToPlanDialog
+                planId={plan.id}
+                open={addRecipeOpen}
+                onClose={() => setAddRecipeOpen(false)}
+                onAdded={refetch}
+                existingRecipeIds={(plan.items ?? []).map(i => i.recipeId)}
+              />
+            )}
             {canEditPlan && (
               <button
                 onClick={() => setItemsTableUnlocked(v => !v)}

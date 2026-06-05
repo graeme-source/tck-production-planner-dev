@@ -410,17 +410,31 @@ router.get("/default-dates", async (req, res) => {
 
 router.post("/", validate(CreatePlanBody), async (req, res) => {
   const { planDate, prepDate, doughDate, name, notes, status, items } = req.body;
-  // Enforce Mon–Fri only — parse at noon UTC to avoid timezone edge cases
   const dateObj = new Date(`${planDate}T12:00:00Z`);
   const dayOfWeek = dateObj.getUTCDay(); // 0=Sun, 6=Sat
-  if (dayOfWeek === 0 || dayOfWeek === 6) {
-    res.status(400).json({ error: "Production plans can only be scheduled on weekdays (Monday–Friday)." });
-    return;
+
+  // Managers and admins can create a plan for ANY date (past, today, future,
+  // weekend) — they sometimes need to backfill yesterday's plan or add an
+  // ad-hoc day. Everyone else is held to weekday-only, no-past-dates.
+  let role = req.session.userRole;
+  if (!role && req.session.userId) {
+    const [u] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
+    if (u?.role) {
+      role = u.role as "admin" | "manager" | "viewer";
+      req.session.userRole = role;
+    }
   }
-  // Disallow scheduling production plans in the past
-  if (!isTodayOrFuture(planDate)) {
-    res.status(400).json({ error: "Production plans cannot be scheduled for past dates." });
-    return;
+  const canPickAnyDate = role === "admin" || role === "manager";
+
+  if (!canPickAnyDate) {
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+      res.status(400).json({ error: "Production plans can only be scheduled on weekdays (Monday–Friday)." });
+      return;
+    }
+    if (!isTodayOrFuture(planDate)) {
+      res.status(400).json({ error: "Production plans cannot be scheduled for past dates." });
+      return;
+    }
   }
   const batchNumber = julianBatchNumber(dateObj);
 
@@ -5260,6 +5274,86 @@ router.patch("/:id/items/:itemId/eight-pack-bag-count", async (req, res) => {
     .returning({ eightPackBagCount: productionPlanItemsTable.eightPackBagCount });
 
   res.json({ itemId, eightPackBagCount: updated.eightPackBagCount });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// POST /:id/add-recipe — add a single recipe to an existing plan, in place.
+// Lets a manager drop a calzone recipe onto a locked/active plan WITHOUT a reset
+// (a reset would zero all batch progress). If the recipe is already on the plan,
+// the given batch count is added to its existing target. Completed plans only are
+// refused. Does not touch orders — nothing is regenerated.
+// ──────────────────────────────────────────────────────────────────────────────
+router.post("/:id/add-recipe", async (req, res) => {
+  const role = req.session.userRole;
+  if (role !== "admin" && role !== "manager") {
+    res.status(403).json({ error: "Admin or manager role required" });
+    return;
+  }
+  const planId = Number(req.params.id);
+  const recipeId = Number(req.body?.recipeId);
+  const batches = Number(req.body?.batches);
+  if (!Number.isInteger(recipeId) || recipeId <= 0) {
+    res.status(400).json({ error: "Body must contain a valid recipeId" });
+    return;
+  }
+  if (!Number.isInteger(batches) || batches < 1) {
+    res.status(400).json({ error: "Body must contain { batches } as a positive integer (1 or more)" });
+    return;
+  }
+
+  const [plan] = await db
+    .select({ id: productionPlansTable.id, status: productionPlansTable.status })
+    .from(productionPlansTable)
+    .where(eq(productionPlansTable.id, planId));
+  if (!plan) { res.status(404).json({ error: "Plan not found" }); return; }
+  if (plan.status === "complete") {
+    res.status(409).json({ error: "Cannot add a recipe to a completed plan." });
+    return;
+  }
+
+  const [recipe] = await db
+    .select({ id: recipesTable.id, name: recipesTable.name, tinSize: recipesTable.tinSize, maxBatchesPerTin: recipesTable.maxBatchesPerTin })
+    .from(recipesTable)
+    .where(eq(recipesTable.id, recipeId));
+  if (!recipe) { res.status(404).json({ error: "Recipe not found" }); return; }
+
+  // Already on the plan? Top up its batch target rather than duplicating the row.
+  const [existingItem] = await db
+    .select({ id: productionPlanItemsTable.id, batchesTarget: productionPlanItemsTable.batchesTarget })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.planId, planId), eq(productionPlanItemsTable.recipeId, recipeId)));
+
+  if (existingItem) {
+    const [updated] = await db
+      .update(productionPlanItemsTable)
+      .set({ batchesTarget: sql`${productionPlanItemsTable.batchesTarget} + ${batches}` })
+      .where(eq(productionPlanItemsTable.id, existingItem.id))
+      .returning({ id: productionPlanItemsTable.id, batchesTarget: productionPlanItemsTable.batchesTarget });
+    res.json({ itemId: updated.id, recipeId, recipeName: recipe.name, batchesTarget: updated.batchesTarget, toppedUp: true });
+    return;
+  }
+
+  // New recipe — append at the end of the build order.
+  const [{ maxPos }] = await db
+    .select({ maxPos: sql<number>`COALESCE(MAX(${productionPlanItemsTable.orderPosition}), -1)` })
+    .from(productionPlanItemsTable)
+    .where(eq(productionPlanItemsTable.planId, planId));
+  const orderPosition = Number(maxPos) + 1;
+
+  const [created] = await db
+    .insert(productionPlanItemsTable)
+    .values({
+      planId,
+      recipeId,
+      batchesTarget: batches,
+      orderPosition,
+      tinSize: recipe.tinSize ?? null,
+      maxBatchesPerTin: recipe.maxBatchesPerTin ?? null,
+      status: "pending",
+    })
+    .returning({ id: productionPlanItemsTable.id, batchesTarget: productionPlanItemsTable.batchesTarget });
+
+  res.status(201).json({ itemId: created.id, recipeId, recipeName: recipe.name, batchesTarget: created.batchesTarget, toppedUp: false });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
