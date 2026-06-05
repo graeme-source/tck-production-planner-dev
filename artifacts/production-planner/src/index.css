@@ -155,6 +155,17 @@
   --break-action-foreground: 0 0% 100%;
 }
 
+/* Dev-only environment tint. The `dev-env` class is added to <html> by main.tsx
+   only when running under the Vite dev server (never in the Railway production
+   build), so this green background is a glanceable "I'm on the test DB" signal
+   that can't leak to live. Element+class selectors out-specify :root / .dark. */
+html.dev-env {
+  --background: 128 44% 92%;
+}
+html.dev-env.dark {
+  --background: 135 24% 11%;
+}
+
 @layer base {
   * {
     @apply border-border;

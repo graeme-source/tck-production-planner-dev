@@ -14,4 +14,12 @@ import "./index.css";
   document.cookie = `tck_device=${deviceType}; path=/; max-age=31536000; samesite=lax`;
 })();
 
+// Dev-environment tint: the Vite dev server (localhost, or accessed from the
+// iPad over the LAN) compiles import.meta.env.DEV to true; the Railway
+// production build compiles it to false. So this green background can only ever
+// appear on the Dev site, never on live — a glanceable "this is the test DB" cue.
+if (import.meta.env.DEV) {
+  document.documentElement.classList.add("dev-env");
+}
+
 createRoot(document.getElementById("root")!).render(<App />);
