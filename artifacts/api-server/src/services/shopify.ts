@@ -952,6 +952,21 @@ export async function addTagToOrder(orderId: number, currentTags: string, newTag
   await shopifyPut(`/orders/${orderId}.json`, { order: { id: orderId, tags: updated } });
 }
 
+/** Add several tags to an order in a single write. Returns the updated tag string. */
+export async function addTagsToOrder(orderId: number, currentTags: string, newTags: string[]): Promise<string> {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const t of [...currentTags.split(","), ...newTags].map(t => t.trim()).filter(Boolean)) {
+    const key = t.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(t);
+  }
+  const updated = result.join(", ");
+  await shopifyPut(`/orders/${orderId}.json`, { order: { id: orderId, tags: updated } });
+  return updated;
+}
+
 /** Replace a specific tag on an order. Removes oldTag and adds newTag. */
 export async function replaceTagOnOrder(orderId: number, currentTags: string, oldTag: string, newTag: string): Promise<string> {
   const existing = currentTags.split(",").map(t => t.trim()).filter(Boolean);

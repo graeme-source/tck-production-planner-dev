@@ -1,0 +1,288 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { PackageCheck, Loader2, AlertTriangle, CheckCircle2, ArrowRight } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { toast } from "@/hooks/use-toast";
+
+const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
+
+interface QueueLine {
+  lineId: number;
+  productTitle: string | null;
+  variantTitle: string | null;
+  quantity: number;
+  recipeId: number | null;
+  recipeName: string | null;
+}
+interface QueueOrder {
+  orderId: number;
+  name: string;
+  customerName: string;
+  tags: string;
+  existingDateTag: string | null;
+  proposedDeliveryDate: string;
+  lines: QueueLine[];
+}
+interface PlanInfo { planId: number; planDate: string; status: string; recipeIds: number[]; }
+interface QueuePayload {
+  generatedAt: string;
+  today: string;
+  deliveryDates: string[];
+  plansByDespatchDate: Record<string, PlanInfo>;
+  orders: QueueOrder[];
+}
+
+const DEFAULT_8PACK_ROLES: Record<string, boolean> = { admin: true, manager: true, employee: false, viewer: false };
+
+function use8PackBannerRoles() {
+  const [roles, setRoles] = useState<Record<string, boolean>>(DEFAULT_8PACK_ROLES);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    fetch(`${BASE}/api/app-settings/dashboard_8pack_banner_roles`, { credentials: "include" })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d?.value) { try { setRoles({ ...DEFAULT_8PACK_ROLES, ...JSON.parse(d.value) }); } catch { /* keep defaults */ } } })
+      .catch(() => {})
+      .finally(() => setLoaded(true));
+  }, []);
+  return { roles, loaded };
+}
+
+// ── date helpers (string math, UTC-noon) ──
+function addDaysStr(s: string, n: number): string {
+  const d = new Date(`${s}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+function fmtNice(s: string): string {
+  return new Date(`${s}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+}
+
+type OrderStatus =
+  | { ok: true; planId: number; despatchDate: string }
+  | { ok: false; reason: string };
+
+function evaluate(order: QueueOrder, deliveryDate: string, plans: Record<string, PlanInfo>): OrderStatus {
+  const despatchDate = addDaysStr(deliveryDate, -1);
+  const plan = plans[despatchDate];
+  if (!plan) return { ok: false, reason: `No production plan for ${fmtNice(despatchDate)} (despatch day)` };
+  const planRecipes = new Set(plan.recipeIds);
+  const unmapped = order.lines.filter(l => l.recipeId == null);
+  if (unmapped.length) return { ok: false, reason: `Unrecognised product: ${unmapped.map(l => l.productTitle ?? "?").join(", ")}` };
+  const missing = order.lines.filter(l => l.recipeId != null && !planRecipes.has(l.recipeId));
+  if (missing.length) return { ok: false, reason: `Not on the ${fmtNice(plan.planDate)} plan: ${missing.map(l => l.recipeName).join(", ")}` };
+  return { ok: true, planId: plan.planId, despatchDate };
+}
+
+export function EightPackOrdersBanner({ userRole }: { userRole?: string }) {
+  const { roles, loaded: rolesLoaded } = use8PackBannerRoles();
+  const [data, setData] = useState<QueuePayload | null>(null);
+  const [open, setOpen] = useState(false);
+  const allowed = rolesLoaded && !!userRole && roles[userRole] === true;
+
+  async function fetchQueue() {
+    try {
+      const res = await fetch(`${BASE}/api/wholesale-bags/queue`, { credentials: "include" });
+      if (!res.ok) return;
+      setData(await res.json());
+    } catch (err) {
+      console.warn("[8PackBanner] fetch failed:", err);
+    }
+  }
+
+  useEffect(() => {
+    if (!allowed) return;
+    fetchQueue();
+    const interval = setInterval(fetchQueue, 30000);
+    return () => clearInterval(interval);
+  }, [allowed]);
+
+  if (!allowed || !data || data.orders.length === 0) return null;
+
+  const count = data.orders.length;
+
+  return (
+    <div className="sticky top-0 z-20 -mx-6 px-6 pb-2 pt-0 bg-background/80 backdrop-blur-sm">
+      <div className="rounded-xl border border-indigo-300 dark:border-indigo-800 bg-card overflow-hidden shadow-sm">
+        <button
+          onClick={() => setOpen(true)}
+          className="w-full flex items-center gap-2 px-4 py-2.5 bg-indigo-50 dark:bg-indigo-950/30 border-b border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100/70 dark:hover:bg-indigo-900/30 transition-colors text-left"
+        >
+          <PackageCheck className="w-4 h-4 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
+          <span className="text-sm font-semibold text-indigo-700 dark:text-indigo-300">
+            {count} order{count !== 1 ? "s" : ""} with 8-pack bags to process
+          </span>
+          <span className="ml-auto flex items-center gap-1 text-xs font-medium text-indigo-600/70 dark:text-indigo-400/70">
+            Review &amp; process <ArrowRight className="w-3.5 h-3.5" />
+          </span>
+        </button>
+      </div>
+
+      {open && (
+        <ReviewDialog
+          data={data}
+          onClose={() => setOpen(false)}
+          onProcessed={fetchQueue}
+        />
+      )}
+    </div>
+  );
+}
+
+function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onClose: () => void; onProcessed: () => void }) {
+  // per-order selected delivery date
+  const [selected, setSelected] = useState<Record<number, string>>(() => {
+    const init: Record<number, string> = {};
+    for (const o of data.orders) init[o.orderId] = o.proposedDeliveryDate;
+    return init;
+  });
+  const [processing, setProcessing] = useState<number | null>(null);
+  const [done, setDone] = useState<Set<number>>(new Set());
+
+  async function processOrder(order: QueueOrder) {
+    const deliveryDate = selected[order.orderId];
+    setProcessing(order.orderId);
+    try {
+      const res = await fetch(`${BASE}/api/wholesale-bags/process`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: order.orderId, deliveryDate }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) {
+        toast({ title: `Processed ${order.name}`, description: `Bags added for delivery ${fmtNice(deliveryDate)}.` });
+        setDone(prev => new Set(prev).add(order.orderId));
+        onProcessed();
+      } else if (res.status === 207) {
+        toast({ title: `${order.name}: tagged, but check bags`, description: body.warning ?? "Some bags need adding manually.", variant: "destructive" });
+        setDone(prev => new Set(prev).add(order.orderId));
+        onProcessed();
+      } else {
+        const detail = body.recipesNotOnPlan?.length
+          ? `Not on plan: ${body.recipesNotOnPlan.join(", ")}`
+          : body.unmappedProducts?.length
+            ? `Unrecognised: ${body.unmappedProducts.join(", ")}`
+            : body.error ?? "Could not process.";
+        toast({ title: `Couldn't process ${order.name}`, description: detail, variant: "destructive" });
+      }
+    } catch (err) {
+      toast({ title: "Process failed", description: err instanceof Error ? err.message : "Network error", variant: "destructive" });
+    } finally {
+      setProcessing(null);
+    }
+  }
+
+  const remaining = data.orders.filter(o => !done.has(o.orderId));
+  const readyCount = remaining.filter(o => evaluate(o, selected[o.orderId], data.plansByDespatchDate).ok).length;
+
+  async function processAllReady() {
+    for (const o of remaining) {
+      if (evaluate(o, selected[o.orderId], data.plansByDespatchDate).ok) {
+        // sequential to keep Shopify writes orderly
+        // eslint-disable-next-line no-await-in-loop
+        await processOrder(o);
+      }
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <PackageCheck className="w-5 h-5 text-indigo-500" /> Process 8-pack bag orders
+          </DialogTitle>
+          <DialogDescription>
+            Pick a delivery day (Tue–Sat) for each order. Processing adds the bags to the despatch-day production plan and tags the order with the delivery date + <span className="font-medium">production</span>.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          {data.orders.map(order => {
+            const isDone = done.has(order.orderId);
+            const delivery = selected[order.orderId];
+            const status = evaluate(order, delivery, data.plansByDespatchDate);
+            // merge the proposed date into options if it's outside the standard window
+            const options = data.deliveryDates.includes(order.proposedDeliveryDate)
+              ? data.deliveryDates
+              : [order.proposedDeliveryDate, ...data.deliveryDates];
+            return (
+              <div
+                key={order.orderId}
+                className={cn(
+                  "rounded-xl border p-3",
+                  isDone ? "border-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20 opacity-70"
+                    : status.ok ? "border-border bg-card"
+                      : "border-amber-300 dark:border-amber-700 bg-amber-50/40 dark:bg-amber-950/10",
+                )}
+              >
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <div className="min-w-0">
+                    <span className="font-semibold">{order.name}</span>
+                    {order.customerName && <span className="text-sm text-muted-foreground ml-2">{order.customerName}</span>}
+                    {order.existingDateTag && (
+                      <span className="text-xs ml-2 px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">requested {fmtNice(order.existingDateTag)}</span>
+                    )}
+                  </div>
+                  {isDone && <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />}
+                </div>
+
+                <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-sm mb-2">
+                  {order.lines.map(l => (
+                    <span key={l.lineId} className={cn(l.recipeId == null && "text-amber-600 dark:text-amber-400")}>
+                      <span className="font-bold tabular-nums">{l.quantity}×</span> {l.recipeName ?? l.productTitle ?? "?"}
+                      {l.recipeId == null && " (unrecognised)"}
+                    </span>
+                  ))}
+                </div>
+
+                {!isDone && (
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <label className="text-sm text-muted-foreground">Deliver</label>
+                    <select
+                      value={delivery}
+                      onChange={e => setSelected(prev => ({ ...prev, [order.orderId]: e.target.value }))}
+                      className="px-2 py-1.5 border border-border rounded-lg text-sm bg-background"
+                    >
+                      {options.map(d => <option key={d} value={d}>{fmtNice(d)}</option>)}
+                    </select>
+
+                    {status.ok ? (
+                      <span className="text-xs text-muted-foreground">→ {fmtNice(status.despatchDate)} production</span>
+                    ) : (
+                      <span className="flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400">
+                        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" /> {status.reason}
+                      </span>
+                    )}
+
+                    <button
+                      onClick={() => processOrder(order)}
+                      disabled={!status.ok || processing === order.orderId}
+                      className="ml-auto flex items-center gap-1.5 text-sm px-3 py-1.5 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50"
+                    >
+                      {processing === order.orderId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PackageCheck className="w-3.5 h-3.5" />}
+                      Process
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {readyCount > 1 && (
+          <div className="flex justify-end pt-2 border-t border-border">
+            <button
+              onClick={processAllReady}
+              disabled={processing !== null}
+              className="flex items-center gap-1.5 text-sm px-4 py-2 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50"
+            >
+              {processing !== null ? <Loader2 className="w-4 h-4 animate-spin" /> : <PackageCheck className="w-4 h-4" />}
+              Process all ready ({readyCount})
+            </button>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}

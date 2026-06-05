@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useListProductionPlans, useListDispatchOrders, useGetProductionPlan } from "@workspace/api-client-react";
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
+import { EightPackOrdersBanner } from "@/components/eight-pack-orders-banner";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { format, isToday, startOfWeek, addWeeks } from "date-fns";
 import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X, Sparkles } from "lucide-react";
@@ -509,6 +510,8 @@ export default function Dashboard() {
       />
 
       {showIssueBanner && <AndonBanner userRole={userRole} />}
+
+      <EightPackOrdersBanner userRole={userRole} />
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <StatCard
