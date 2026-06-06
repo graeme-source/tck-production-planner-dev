@@ -266,7 +266,7 @@ const REPORTS_NAV_ITEMS: ReportsNavItem[] = [
   { id: "breaks", label: "Breaks & Lunches", icon: Coffee },
   { id: "haccp", label: "HACCP", icon: ShieldCheck },
   { id: "risk-assessments", label: "Documents", icon: ClipboardList },
-  { id: "improvements", label: "Improvements & Struggles", icon: Lightbulb },
+  { id: "improvements", label: "Improvements", icon: Lightbulb },
   { id: "issues", label: "Issue Log", icon: AlertTriangle },
   { id: "leftover-filling", label: "Leftover Filling", icon: Droplets },
   { id: "employees", label: "Employee Records", icon: UserCog },
@@ -2484,7 +2484,7 @@ const IMPROVEMENT_TIER_OPTIONS = [
   { value: "major", label: "Major" },
 ];
 
-function ImprovementsTab({ userRole, currentUserName }: { userRole: string; currentUserName: string | null }) {
+export function ImprovementsTab({ userRole, currentUserName }: { userRole: string; currentUserName: string | null }) {
   const [improvements, setImprovements] = useState<ImprovementRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<number | null>(null);
@@ -2683,8 +2683,8 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
           className="px-3 py-2 border border-border rounded-xl text-sm bg-background focus-ring"
         >
           <option value="">All types</option>
-          <option value="improvement">Improvement</option>
-          <option value="struggle">Struggle</option>
+          <option value="improvement">Idea</option>
+          <option value="struggle">Niggle</option>
         </select>
 
         {(filterSearch || filterStatus || filterStation || filterTier || filterType) && (
@@ -2741,7 +2741,7 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
                         ? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
                         : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
                     )}>
-                      {(imp.type ?? "improvement") === "struggle" ? "Struggle" : "Improvement"}
+                      {(imp.type ?? "improvement") === "struggle" ? "Niggle" : "Idea"}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
@@ -2835,7 +2835,7 @@ function ImprovementsTab({ userRole, currentUserName }: { userRole: string; curr
                       ? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
                       : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
                   )}>
-                    {(selectedImp.type ?? "improvement") === "struggle" ? "Struggle" : "Improvement"}
+                    {(selectedImp.type ?? "improvement") === "struggle" ? "Niggle" : "Idea"}
                   </span>
                   <span className={cn("px-2 py-0.5 rounded-full text-xs", statusBadgeClass(selectedImp.progressStatus))}>
                     {IMPROVEMENT_PROGRESS_OPTIONS.find(o => o.value === selectedImp.progressStatus)?.label ?? selectedImp.progressStatus}

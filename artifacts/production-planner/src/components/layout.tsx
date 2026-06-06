@@ -52,6 +52,7 @@ export const navItems: NavItem[] = [
   { name: "Production Plans", href: "/plans", icon: CalendarDays },
   { name: "Dispatches", href: "/dispatches", icon: Truck },
   { name: "Suppliers", href: "/suppliers", icon: Building2 },
+  { name: "Improvements", href: "/improvements", icon: TrendingUp },
   { name: "Analytics", href: "/reports", icon: BarChart2 },
 ];
 

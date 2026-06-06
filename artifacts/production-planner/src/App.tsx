@@ -29,6 +29,7 @@ import Supplies from "@/pages/supplies";
 import Settings from "@/pages/settings";
 import LeanCave from "@/pages/lean-cave";
 import Reports from "@/pages/reports";
+import Improvements from "@/pages/improvements";
 import EmployeeHub from "@/pages/employee-hub";
 import Fulfilment from "@/pages/fulfilment";
 import FulfilmentPackCycle from "@/pages/fulfilment-pack-cycle";
@@ -132,6 +133,7 @@ function Router() {
               <Route path="/sub-recipes" component={SubRecipes} />
               <Route path="/recipes" component={Recipes} />
               <Route path="/plans" component={ProductionPlans} />
+              <Route path="/improvements" component={Improvements} />
               <Route path="/stock" component={Stock} />
               <Route path="/sales">{() => <ProtectedRoute component={Sales} pageKey="/sales" />}</Route>
               <Route path="/dispatches" component={Dispatches} />
