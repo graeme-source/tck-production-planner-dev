@@ -126,6 +126,29 @@ async function runStartupMigrations() {
         UNIQUE(shopify_order_id, service_code)
       )
     `);
+    // Bundle calculator — saved product bundles + their line items.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS bundles (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        bundle_price NUMERIC(10,2) NOT NULL DEFAULT 0,
+        box_size TEXT NOT NULL DEFAULT 'large',
+        notes TEXT,
+        created_by INTEGER,
+        created_by_name TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS bundle_items (
+        id SERIAL PRIMARY KEY,
+        bundle_id INTEGER NOT NULL REFERENCES bundles(id) ON DELETE CASCADE,
+        recipe_id INTEGER NOT NULL,
+        quantity INTEGER NOT NULL DEFAULT 1
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_bundle_items_bundle ON bundle_items (bundle_id)`);
     await db.execute(sql`
       ALTER TABLE recipes ADD COLUMN IF NOT EXISTS is_current_special BOOLEAN NOT NULL DEFAULT FALSE
     `);

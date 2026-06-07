@@ -663,6 +663,11 @@ function PnLDashboard() {
                   value={settings?.large_box_cost ?? "3.50"}
                   onSave={(v) => updateSetting.mutate({ key: "large_box_cost", value: v })}
                 />
+                <SettingInput
+                  label="Courier Cost per Order (£)"
+                  value={settings?.courier_cost ?? "5.37"}
+                  onSave={(v) => updateSetting.mutate({ key: "courier_cost", value: v })}
+                />
               </div>
             </div>
 
