@@ -3,13 +3,14 @@ import { useListRecipes } from "@workspace/api-client-react";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import {
-  Loader2, ClipboardList, Beaker, AlertTriangle, Copy, Check, Tag, Settings2, Printer,
+  Loader2, ClipboardList, Beaker, AlertTriangle, Copy, Check, Tag, Settings2, Printer, Calculator,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { BundleCalculator } from "@/components/bundle-calculator";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type TabType = "decks" | "nutritionals" | "labels";
+type TabType = "decks" | "nutritionals" | "labels" | "bundles";
 
 type NutritionalsData = {
   recipeName: string;
@@ -478,6 +479,7 @@ export default function ProductHub() {
     { key: "decks", label: "Ingredient Decks", icon: ClipboardList },
     { key: "nutritionals", label: "Nutritionals", icon: Beaker },
     { key: "labels", label: "Label Preview", icon: Tag },
+    { key: "bundles", label: "Bundle Calculator", icon: Calculator },
   ];
 
   return (
@@ -485,7 +487,7 @@ export default function ProductHub() {
       <PageHeader title="Product Hub" subtitle="Nutritional data, ingredient decks, and labelling" />
 
       <div className="px-6 pb-6 space-y-6">
-        <div className="flex gap-1 p-1 bg-secondary/40 rounded-xl max-w-lg">
+        <div className="flex gap-1 p-1 bg-secondary/40 rounded-xl max-w-3xl">
           {tabs.map(t => (
             <button
               key={t.key}
@@ -502,6 +504,10 @@ export default function ProductHub() {
           ))}
         </div>
 
+        {activeTab === "bundles" ? (
+          <BundleCalculator />
+        ) : (
+        <>
         <MayContainEditor />
 
         {isLoading ? (
@@ -530,6 +536,8 @@ export default function ProductHub() {
               </button>
             ))}
           </div>
+        )}
+        </>
         )}
       </div>
 

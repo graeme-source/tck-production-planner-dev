@@ -149,6 +149,16 @@ async function runStartupMigrations() {
       )
     `);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_bundle_items_bundle ON bundle_items (bundle_id)`);
+    // Bundle lines can also be manual (misc gifts) or seeded from an ingredient,
+    // so recipe_id is optional and manual lines carry their own label/cost/rrp.
+    await db.execute(sql`ALTER TABLE bundle_items ALTER COLUMN recipe_id DROP NOT NULL`);
+    await db.execute(sql`ALTER TABLE bundle_items ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'recipe'`);
+    await db.execute(sql`ALTER TABLE bundle_items ADD COLUMN IF NOT EXISTS label TEXT`);
+    await db.execute(sql`ALTER TABLE bundle_items ADD COLUMN IF NOT EXISTS unit_cost NUMERIC(10,2)`);
+    await db.execute(sql`ALTER TABLE bundle_items ADD COLUMN IF NOT EXISTS unit_rrp NUMERIC(10,2)`);
+    // A free giveaway line still counts its RRP (perceived value) and cost (we
+    // bear it), but contributes nothing to what the customer pays.
+    await db.execute(sql`ALTER TABLE bundle_items ADD COLUMN IF NOT EXISTS is_free BOOLEAN NOT NULL DEFAULT false`);
     await db.execute(sql`
       ALTER TABLE recipes ADD COLUMN IF NOT EXISTS is_current_special BOOLEAN NOT NULL DEFAULT FALSE
     `);

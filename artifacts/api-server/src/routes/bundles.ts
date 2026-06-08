@@ -1,9 +1,11 @@
 // Bundle calculator — saved product bundles for working out discount + margin.
 //
-// Products are recipes; their per-pack costs and RRPs come from /api/recipes,
-// so the calculator does the bundle maths client-side. This route only persists
-// named bundles and exposes the packaging-&-postage inputs (box packaging +
-// courier) from the P&L so the margin uses a single source of truth.
+// Lines are one of:
+//   - recipe : a product from the recipe library (cost/RRP from /api/recipes)
+//   - manual : a misc item (free gift, or seeded from an ingredient) with its
+//              own label, unit cost and unit RRP entered by the user
+// The P&P inputs (box packaging + courier) come from the P&L so the margin uses
+// a single source of truth.
 
 import { Router, type IRouter, type Request, type Response } from "express";
 import { db, usersTable } from "@workspace/db";
@@ -25,7 +27,20 @@ type BundleRow = {
   id: number; name: string; bundle_price: string; box_size: string;
   notes: string | null; created_by_name: string | null; created_at: string; updated_at: string;
 };
-type ItemRow = { id: number; bundle_id: number; recipe_id: number; quantity: number; };
+type ItemRow = {
+  id: number; bundle_id: number; kind: string; recipe_id: number | null;
+  label: string | null; unit_cost: string | null; unit_rrp: string | null; quantity: number; is_free: boolean;
+};
+type LineInput =
+  | { kind: "recipe"; recipeId: number; quantity: number; free: boolean }
+  | { kind: "manual"; label: string; unitCost: number; unitRrp: number; quantity: number; free: boolean };
+
+function mapItem(i: ItemRow) {
+  if (i.kind === "manual") {
+    return { kind: "manual" as const, label: i.label ?? "", unitCost: Number(i.unit_cost ?? 0), unitRrp: Number(i.unit_rrp ?? 0), quantity: i.quantity, free: i.is_free };
+  }
+  return { kind: "recipe" as const, recipeId: i.recipe_id as number, quantity: i.quantity, free: i.is_free };
+}
 
 function mapBundle(b: BundleRow, items: ItemRow[]) {
   return {
@@ -37,8 +52,14 @@ function mapBundle(b: BundleRow, items: ItemRow[]) {
     createdByName: b.created_by_name,
     createdAt: b.created_at,
     updatedAt: b.updated_at,
-    items: items.map(i => ({ recipeId: i.recipe_id, quantity: i.quantity })),
+    items: items.map(mapItem),
   };
+}
+
+async function loadItems(bundleId: number): Promise<ItemRow[]> {
+  return (await db.execute<ItemRow>(
+    sql`SELECT id, bundle_id, kind, recipe_id, label, unit_cost, unit_rrp, quantity, is_free FROM bundle_items WHERE bundle_id = ${bundleId} ORDER BY id`,
+  )).rows;
 }
 
 // GET /cost-inputs — the P&P numbers the bundle margin deducts (once per bundle).
@@ -60,7 +81,7 @@ router.get("/cost-inputs", async (_req: Request, res: Response) => {
 router.get("/", async (_req: Request, res: Response) => {
   try {
     const bundles = (await db.execute<BundleRow>(sql`SELECT * FROM bundles ORDER BY updated_at DESC`)).rows;
-    const items = (await db.execute<ItemRow>(sql`SELECT id, bundle_id, recipe_id, quantity FROM bundle_items`)).rows;
+    const items = (await db.execute<ItemRow>(sql`SELECT id, bundle_id, kind, recipe_id, label, unit_cost, unit_rrp, quantity, is_free FROM bundle_items ORDER BY id`)).rows;
     const byBundle = new Map<number, ItemRow[]>();
     for (const it of items) {
       if (!byBundle.has(it.bundle_id)) byBundle.set(it.bundle_id, []);
@@ -79,15 +100,37 @@ function parseBody(req: Request) {
   const boxSize = req.body?.boxSize === "small" ? "small" : "large";
   const notes = req.body?.notes ? String(req.body.notes) : null;
   const itemsIn = Array.isArray(req.body?.items) ? req.body.items : [];
-  const items = itemsIn
-    .map((i: { recipeId: unknown; quantity: unknown }) => ({ recipeId: Number(i.recipeId), quantity: Number(i.quantity) }))
-    .filter((i: { recipeId: number; quantity: number }) => Number.isInteger(i.recipeId) && i.recipeId > 0 && Number.isInteger(i.quantity) && i.quantity > 0);
+  const items: LineInput[] = [];
+  for (const raw of itemsIn) {
+    const quantity = Number(raw?.quantity);
+    if (!Number.isInteger(quantity) || quantity <= 0) continue;
+    const free = raw?.free === true;
+    if (raw?.kind === "manual") {
+      const label = String(raw?.label ?? "").trim();
+      if (!label) continue;
+      items.push({ kind: "manual", label, unitCost: Number(raw?.unitCost) || 0, unitRrp: Number(raw?.unitRrp) || 0, quantity, free });
+    } else {
+      const recipeId = Number(raw?.recipeId);
+      if (!Number.isInteger(recipeId) || recipeId <= 0) continue;
+      items.push({ kind: "recipe", recipeId, quantity, free });
+    }
+  }
   return { name, bundlePrice, boxSize, notes, items };
 }
 
-async function insertItems(bundleId: number, items: Array<{ recipeId: number; quantity: number }>) {
+async function insertItems(bundleId: number, items: LineInput[]) {
   for (const it of items) {
-    await db.execute(sql`INSERT INTO bundle_items (bundle_id, recipe_id, quantity) VALUES (${bundleId}, ${it.recipeId}, ${it.quantity})`);
+    if (it.kind === "manual") {
+      await db.execute(sql`
+        INSERT INTO bundle_items (bundle_id, kind, label, unit_cost, unit_rrp, quantity, is_free)
+        VALUES (${bundleId}, 'manual', ${it.label}, ${it.unitCost}, ${it.unitRrp}, ${it.quantity}, ${it.free})
+      `);
+    } else {
+      await db.execute(sql`
+        INSERT INTO bundle_items (bundle_id, kind, recipe_id, quantity, is_free)
+        VALUES (${bundleId}, 'recipe', ${it.recipeId}, ${it.quantity}, ${it.free})
+      `);
+    }
   }
 }
 
@@ -115,7 +158,7 @@ router.post("/", async (req: Request, res: Response) => {
     await insertItems(bundleId, items);
 
     const [bundle] = (await db.execute<BundleRow>(sql`SELECT * FROM bundles WHERE id = ${bundleId}`)).rows;
-    res.status(201).json(mapBundle(bundle, items.map((i: { recipeId: number; quantity: number }, idx: number) => ({ id: idx, bundle_id: bundleId, recipe_id: i.recipeId, quantity: i.quantity }))));
+    res.status(201).json(mapBundle(bundle, await loadItems(bundleId)));
   } catch (err) {
     console.error("[bundles] create failed:", err);
     res.status(500).json({ error: "Failed to create bundle" });
@@ -142,7 +185,7 @@ router.put("/:id", async (req: Request, res: Response) => {
     await insertItems(id, items);
 
     const [bundle] = (await db.execute<BundleRow>(sql`SELECT * FROM bundles WHERE id = ${id}`)).rows;
-    res.json(mapBundle(bundle, items.map((i: { recipeId: number; quantity: number }, idx: number) => ({ id: idx, bundle_id: id, recipe_id: i.recipeId, quantity: i.quantity }))));
+    res.json(mapBundle(bundle, await loadItems(id)));
   } catch (err) {
     console.error("[bundles] update failed:", err);
     res.status(500).json({ error: "Failed to update bundle" });
