@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import {
   Search, Plus, Trash2, Edit2, Loader2, ExternalLink, Upload,
   FileText, CheckCircle2, XCircle, AlertTriangle, RefreshCw,
-  Carrot, Box, Printer, X, ChefHat, ClipboardList,
+  Carrot, Box, Printer, X, ChefHat, ClipboardList, QrCode,
 } from "lucide-react";
 import {
   buildIngredientPayload,
@@ -25,6 +25,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import Papa from "papaparse";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSearch } from "wouter";
+import { toast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/auth-context";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -109,26 +111,26 @@ async function printKanban(ingredientId: number) {
   .page { width: 148mm; height: 105mm; position: relative; page-break-after: always; overflow: hidden; }
 
   /* === FRONT SIDE === */
-  .front { background: #fffdf0; border: 2px solid #919b5f; }
-  .front .header { background: #919b5f; color: white; padding: 6mm 8mm 5mm; }
-  .front .header h1 { font-size: 16pt; font-weight: 700; letter-spacing: 0.5px; }
+  .front { background: #fffdf0; border: 2px solid #16a34a; }
+  .front .header { background: #16a34a; color: white; padding: 6mm 8mm 5mm; }
+  .front .header h1 { font-size: 24pt; font-weight: 700; letter-spacing: 0.5px; line-height: 1.1; }
   .front .header .subtitle { font-size: 8pt; opacity: 0.85; margin-top: 1mm; text-transform: uppercase; letter-spacing: 1px; }
   .front .body { display: flex; padding: 5mm 8mm 4mm; gap: 6mm; }
   .front .fields { flex: 1; display: flex; flex-direction: column; gap: 3.5mm; }
   .front .field { border-bottom: 1px solid #d6c38c; padding-bottom: 2.5mm; }
-  .front .field-label { font-size: 7pt; text-transform: uppercase; letter-spacing: 0.8px; color: #919b5f; font-weight: 600; margin-bottom: 1mm; }
-  .front .field-value { font-size: 11pt; font-weight: 600; color: #3b4317; }
+  .front .field-label { font-size: 7pt; text-transform: uppercase; letter-spacing: 0.8px; color: #16a34a; font-weight: 600; margin-bottom: 1mm; }
+  .front .field-value { font-size: 11pt; font-weight: 600; color: #14532d; }
   .front .qr-section { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 64mm; }
   .front .qr-section img { width: 60mm; height: 60mm; }
-  .front .qr-label { font-size: 6pt; color: #919b5f; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2mm; text-align: center; }
-  .front .footer { position: absolute; bottom: 0; left: 0; right: 0; background: #3b4317; color: #fffdf0; text-align: center; padding: 2.5mm; font-size: 7pt; letter-spacing: 1px; text-transform: uppercase; }
+  .front .qr-label { font-size: 6pt; color: #16a34a; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2mm; text-align: center; }
+  .front .footer { position: absolute; bottom: 0; left: 0; right: 0; background: #14532d; color: #fffdf0; text-align: center; padding: 2.5mm; font-size: 7pt; letter-spacing: 1px; text-transform: uppercase; }
 
   /* === BACK SIDE (flipped for fold) === */
   .back { background: #ffbe23; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; transform: rotate(180deg); }
   .back .alert-icon { font-size: 36pt; margin-bottom: 4mm; }
-  .back .alert-title { font-size: 20pt; font-weight: 800; color: #3b4317; text-transform: uppercase; letter-spacing: 1.5px; line-height: 1.2; }
-  .back .alert-subtitle { font-size: 10pt; color: #3b4317; margin-top: 3mm; font-weight: 500; }
-  .back .item-name { font-size: 13pt; font-weight: 700; color: #3b4317; margin-top: 5mm; padding: 2mm 6mm; background: rgba(255,255,255,0.4); border-radius: 3mm; }
+  .back .alert-title { font-size: 20pt; font-weight: 800; color: #14532d; text-transform: uppercase; letter-spacing: 1.5px; line-height: 1.2; }
+  .back .alert-subtitle { font-size: 10pt; color: #14532d; margin-top: 3mm; font-weight: 500; }
+  .back .item-name { font-size: 13pt; font-weight: 700; color: #14532d; margin-top: 5mm; padding: 2mm 6mm; background: rgba(255,255,255,0.4); border-radius: 3mm; }
 
   .no-print { text-align: center; padding: 16px; background: #f5f5f5; }
   .no-print button { padding: 10px 32px; font-size: 14px; cursor: pointer; border: 1px solid #ccc; border-radius: 8px; background: white; margin: 0 8px; }
@@ -375,6 +377,30 @@ export default function Inventory() {
   const { data: suppliers } = useListSuppliers();
   const { createIngredient, updateIngredient, deleteIngredient } = useAppMutations();
   const queryClient = useQueryClient();
+  const { state: authState } = useAuth();
+  const canManage = authState.status === "authenticated" && (authState.user.role === "admin" || authState.user.role === "manager");
+  const [generatingQr, setGeneratingQr] = useState(false);
+
+  // Generate QR codes for every ingredient that doesn't have one yet (one tap).
+  // QR images are auto-created for new ingredients; this fills in any missing.
+  const generateQrCodes = async () => {
+    setGeneratingQr(true);
+    try {
+      const res = await fetch(`${BASE}/api/ingredients/backfill-qr`, { method: "POST", credentials: "include" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed");
+      if (data.total === 0) {
+        toast({ title: "All ingredients already have a QR code" });
+      } else {
+        toast({ title: `Generated ${data.success} QR code${data.success === 1 ? "" : "s"}`, description: data.failed ? `${data.failed} failed — check server logs` : "Kanban cards are ready to print." });
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/ingredients"] });
+    } catch (e: any) {
+      toast({ title: "Couldn't generate QR codes", description: e.message, variant: "destructive" });
+    } finally {
+      setGeneratingQr(false);
+    }
+  };
 
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search);
@@ -443,6 +469,11 @@ export default function Inventory() {
         description="Manage your ingredients, packaging and supplies — one system for everything you stock."
         action={
           <div className="flex items-center gap-2">
+            {activeTab === "ingredients" && canManage && (
+              <button onClick={generateQrCodes} disabled={generatingQr} className="px-4 py-2.5 border border-border rounded-xl font-medium flex items-center gap-2 hover:bg-secondary/50 transition-colors text-sm disabled:opacity-50" title="Generate QR codes for any ingredients that don't have one yet">
+                {generatingQr ? <Loader2 className="w-4 h-4 animate-spin" /> : <QrCode className="w-4 h-4" />} Generate QR codes
+              </button>
+            )}
             {activeTab === "ingredients" && (
               <button onClick={() => setIsImportOpen(true)} className="px-4 py-2.5 border border-border rounded-xl font-medium flex items-center gap-2 hover:bg-secondary/50 transition-colors text-sm">
                 <Upload className="w-4 h-4" /> Import CSV
@@ -633,9 +664,19 @@ export default function Inventory() {
                     <td className="py-3 px-3">
                       <div className="flex items-center gap-1 justify-end">
                         {activeTab === "ingredients" && (
-                          <button onClick={() => printKanban(item.id)} className="p-1.5 text-foreground bg-secondary/30 hover:bg-secondary/60 transition-colors rounded-lg" title="Print Kanban">
-                            <Printer className="w-3.5 h-3.5" />
-                          </button>
+                          <>
+                            <button onClick={() => printKanban(item.id)} className="p-1.5 text-foreground bg-secondary/30 hover:bg-secondary/60 transition-colors rounded-lg" title="Print Kanban card">
+                              <Printer className="w-3.5 h-3.5" />
+                            </button>
+                            <a
+                              href={`${BASE}/api/qr/ingredient/${item.id}?download=1`}
+                              download={`qr-${item.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.png`}
+                              className="p-1.5 text-foreground bg-secondary/30 hover:bg-secondary/60 transition-colors rounded-lg inline-flex"
+                              title="Download QR code only"
+                            >
+                              <QrCode className="w-3.5 h-3.5" />
+                            </a>
+                          </>
                         )}
                         <button onClick={() => openEdit(item)} className="p-1.5 text-foreground bg-secondary/30 hover:bg-secondary/60 transition-colors rounded-lg" title="Edit">
                           <Edit2 className="w-3.5 h-3.5" />

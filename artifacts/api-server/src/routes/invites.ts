@@ -9,7 +9,11 @@ import { sendEmail, inviteEmailHtml, inviteEmailText, resetEmailHtml, resetEmail
 
 const router: IRouter = Router();
 
-const APP_URL = process.env["APP_URL"] ?? `https://${process.env["REPLIT_DEV_DOMAIN"]}`;
+// Base URL for invite / password-reset links. Prefer APP_URL (set this if you
+// move to a custom domain); otherwise default to the live Railway URL. The old
+// fallback was the now-dead Replit domain, which sent invite links to a stale
+// host (→ login screen).
+const APP_URL = process.env["APP_URL"] ?? "https://tck-production-planner-dev-production.up.railway.app";
 
 function generateToken(): string {
   return crypto.randomBytes(32).toString("hex");

@@ -414,6 +414,21 @@ router.post("/:id/pull", async (req, res) => {
   res.json(mapRow(full));
 });
 
+// Undo a pull (e.g. scanned by mistake during testing) — back to active,
+// clear the pull metadata and order-day target so it drops out of ordering.
+router.post("/:id/unpull", async (req, res) => {
+  const id = Number(req.params.id);
+  const [existing] = await db.select({ id: kanbanItemsTable.id }).from(kanbanItemsTable).where(eq(kanbanItemsTable.id, id));
+  if (!existing) { res.status(404).json({ error: "Kanban not found" }); return; }
+  await db.update(kanbanItemsTable).set({
+    status: "active",
+    pulledAt: null,
+    pulledByUserId: null,
+    orderDayTarget: null,
+  }).where(eq(kanbanItemsTable.id, id));
+  res.json({ ok: true });
+});
+
 router.post("/:id/order", async (req, res) => {
   const id = Number(req.params.id);
 

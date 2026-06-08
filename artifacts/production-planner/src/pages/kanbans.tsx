@@ -203,6 +203,23 @@ export default function Kanbans() {
     onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
+  const unpullMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`${BASE}/api/kanbans/${id}/unpull`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "Failed to undo pull");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/kanbans"] });
+      toast({ title: "Pull undone", description: "Kanban set back to active." });
+    },
+    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
       const res = await fetch(`${BASE}/api/kanbans/${id}`, {
@@ -465,6 +482,51 @@ export default function Kanbans() {
           </div>
         }
       />
+
+      {(() => {
+        const pulled = (kanbans ?? []).filter((k: KanbanItemData) => k.status === "pulled");
+        if (pulled.length === 0) return null;
+        return (
+          <div className="rounded-2xl border border-blue-500/30 bg-blue-500/5 p-4 sm:p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <ScanLine className="w-4 h-4 text-blue-600" />
+              <h2 className="text-sm font-semibold">Pulled — awaiting order <span className="text-muted-foreground font-normal">({pulled.length})</span></h2>
+              <span className="text-xs text-muted-foreground ml-auto">Review what's been pulled — undo any that were scanned by mistake.</span>
+            </div>
+            <div className="space-y-2">
+              {pulled.map((k: KanbanItemData) => (
+                <div key={k.id} className="flex items-center gap-3 flex-wrap bg-card border border-border rounded-xl px-3 py-2.5">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium truncate">{k.ingredientName ?? `Ingredient #${k.ingredientId}`}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {k.kanbanQuantity != null ? `${k.kanbanQuantity} ${k.ingredientUnit ?? ""}`.trim() : "—"}
+                      {k.supplierName ? ` · ${k.supplierName}` : ""}
+                      {k.pulledByName ? ` · pulled by ${k.pulledByName}` : ""}
+                      {k.pulledAt ? ` · ${new Date(k.pulledAt).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}` : ""}
+                    </p>
+                  </div>
+                  <span className={cn(
+                    "text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap",
+                    k.isDueToday ? "bg-emerald-500/15 text-emerald-600" : "bg-secondary text-muted-foreground",
+                  )}>
+                    {k.isDueToday ? "Orders today" : `Orders ${k.orderDayLabel}`}
+                  </span>
+                  {canEdit && (
+                    <button
+                      onClick={() => unpullMutation.mutate(k.id)}
+                      disabled={unpullMutation.isPending}
+                      className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-secondary/60 transition-colors disabled:opacity-50 whitespace-nowrap"
+                      title="Undo this pull — set back to active"
+                    >
+                      Undo
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="rounded-2xl border border-border bg-card p-4 flex items-center gap-3">

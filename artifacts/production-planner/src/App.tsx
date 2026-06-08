@@ -193,9 +193,7 @@ function AuthGate() {
   }
 
   const user = state.user;
-  if (user.onboardingRequired && !user.onboardingCompletedAt) {
-    return <Onboarding onComplete={async () => { await refreshUser(); }} />;
-  }
+  // Order: set password (accept-invite) → set PIN → onboarding form → app.
   if (!user.hasPin) {
     return (
       <PinSetupModal
@@ -207,6 +205,10 @@ function AuthGate() {
         }}
       />
     );
+  }
+
+  if (user.onboardingRequired && !user.onboardingCompletedAt) {
+    return <Onboarding onComplete={async () => { await refreshUser(); }} />;
   }
 
   return (

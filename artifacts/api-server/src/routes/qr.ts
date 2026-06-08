@@ -25,6 +25,13 @@ router.get("/:sourceType/:id", async (req, res) => {
     const [row] = await db.select({ qrCodeUrl: ingredientsTable.qrCodeUrl }).from(ingredientsTable).where(eq(ingredientsTable.id, id));
     if (!row) { res.status(404).json({ error: "Ingredient not found" }); return; }
     qrCodeUrl = row.qrCodeUrl;
+    // Lazily generate the QR if this ingredient never got one (e.g. created before QR
+    // support, or generation failed). Means the print-kanban card always has a scannable
+    // code without needing a separate backfill step first.
+    if (!qrCodeUrl) {
+      qrCodeUrl = await generateQrCode("ingredient", id);
+      await db.update(ingredientsTable).set({ qrCodeUrl }).where(eq(ingredientsTable.id, id));
+    }
   } else {
     const [row] = await db.select({ qrCodeUrl: kanbanItemsTable.qrCodeUrl })
       .from(kanbanItemsTable)
