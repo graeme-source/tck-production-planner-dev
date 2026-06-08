@@ -19,4 +19,6 @@ export * from "./checklists";
 export * from "./shopify_fulfilment_tracking";
 export * from "./notifications";
 export * from "./risk_assessments";
+export * from "./training";
+export * from "./onboarding";
 export * from "./morning_meetings";

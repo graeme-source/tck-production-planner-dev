@@ -58,6 +58,10 @@ router.post("/invites", requireAdmin, validate(CreateInviteBody), async (req, re
 
   const inviteUrl = `${APP_URL}/accept-invite?token=${token}`;
 
+  // Track whether the email actually sent. The invite (and its link) is valid
+  // either way, so we still return 201 — but the client can surface the link as
+  // a manual fallback when emailSent is false instead of falsely claiming "sent".
+  let emailSent = false;
   try {
     await sendEmail({
       to: email,
@@ -65,6 +69,7 @@ router.post("/invites", requireAdmin, validate(CreateInviteBody), async (req, re
       html: inviteEmailHtml(inviteUrl, admin?.name ?? "An admin"),
       text: inviteEmailText(inviteUrl, admin?.name ?? "An admin"),
     });
+    emailSent = true;
   } catch (err) {
     console.error("Failed to send invite email:", err);
   }
@@ -74,7 +79,10 @@ router.post("/invites", requireAdmin, validate(CreateInviteBody), async (req, re
     email: invite.email,
     role: invite.role,
     expiresAt: invite.expiresAt.toISOString(),
-    inviteUrl,
+    emailSent,
+    // Only expose the link as a manual fallback when the email didn't send —
+    // on success the token never reaches the browser.
+    ...(emailSent ? {} : { inviteUrl }),
   });
 });
 
@@ -127,6 +135,8 @@ router.post("/invites/:token/accept", validate(AcceptInviteBody), async (req, re
       passwordHash,
       role: invite.role as "admin" | "manager" | "viewer",
       isActive: true,
+      // Gate the new starter into the pre-arrival onboarding form once.
+      onboardingRequired: true,
     }).returning();
 
     await db.update(userInvitesTable)
@@ -183,6 +193,43 @@ router.post("/forgot-password", validate(ForgotPasswordBody), async (req, res) =
   } catch (err) {
     console.error("Failed to send reset email:", err);
   }
+});
+
+// Authenticated self-service: generate a reset link for the CURRENT user and
+// email it. Unlike /forgot-password this RETURNS the link so the profile page
+// can display it (handy for testing and as a manual fallback). Safe because it
+// only ever targets the logged-in user's own account.
+router.post("/my-password-reset", async (req, res) => {
+  const userId = req.session?.userId;
+  if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+
+  const [user] = await db.select({ id: usersTable.id, email: usersTable.email })
+    .from(usersTable)
+    .where(and(eq(usersTable.id, userId), eq(usersTable.isActive, true)));
+  if (!user) { res.status(404).json({ error: "User not found" }); return; }
+
+  const token = generateToken();
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+  await db.insert(passwordResetsTable).values({ token, userId: user.id, expiresAt });
+
+  const resetUrl = `${APP_URL}/reset-password?token=${token}`;
+
+  let emailSent = false;
+  try {
+    await sendEmail({
+      to: user.email,
+      subject: "Reset your TCK Production Planner password",
+      html: resetEmailHtml(resetUrl),
+      text: resetEmailText(resetUrl),
+    });
+    emailSent = true;
+  } catch (err) {
+    console.error("Failed to send reset email:", err);
+  }
+
+  // Email-only by design: never return the token to the browser. The reset link
+  // travels through the inbox (a separate channel), not the on-screen session.
+  res.json({ emailSent, email: user.email });
 });
 
 router.get("/reset-password/:token", async (req, res) => {

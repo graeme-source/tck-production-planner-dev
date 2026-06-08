@@ -20,6 +20,7 @@ const KNOWN_PAGES = [
   { pageKey: "/kanbans", label: "Kanbans" },
   { pageKey: "/product-hub", label: "Product Hub" },
   { pageKey: "/deliveries/receive", label: "Receive Deliveries (front door)" },
+  { pageKey: "/training", label: "Training Matrix" },
 ];
 
 const DEFAULT_PERMISSIONS: Record<string, string> = {
@@ -29,6 +30,7 @@ const DEFAULT_PERMISSIONS: Record<string, string> = {
   "/locations": "admin",
   "/dispatch-tag": "manager",
   "/deliveries/receive": "viewer",
+  "/training": "manager",
 };
 
 // GET /api/page-permissions

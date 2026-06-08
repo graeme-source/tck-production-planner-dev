@@ -18,6 +18,10 @@ export const usersTable = pgTable("app_users", {
   pinLockedUntil: timestamp("pin_locked_until"),
   avatarUrl: text("avatar_url"),
   plandayEmployeeId: integer("planday_employee_id"),
+  // Set true when a user is created by accepting an invite, so they're gated
+  // into the pre-arrival onboarding form once. Existing staff stay false.
+  onboardingRequired: boolean("onboarding_required").notNull().default(false),
+  onboardingCompletedAt: timestamp("onboarding_completed_at"),
 });
 
 export const insertUserSchema = createInsertSchema(usersTable).omit({ id: true, createdAt: true, updatedAt: true });

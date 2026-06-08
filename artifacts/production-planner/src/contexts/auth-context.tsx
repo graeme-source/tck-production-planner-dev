@@ -9,6 +9,8 @@ export type AuthUser = {
   role: "admin" | "manager" | "viewer";
   avatarUrl: string | null;
   hasPin: boolean;
+  onboardingRequired?: boolean;
+  onboardingCompletedAt?: string | null;
 };
 
 type AuthState =

@@ -1,12 +1,14 @@
 import { useState, useEffect, type FormEvent } from "react";
 import { useLocation, useSearch } from "wouter";
 import { Loader2, CheckCircle2 } from "lucide-react";
+import { useAuth } from "@/contexts/auth-context";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 export default function AcceptInvite() {
   const search = useSearch();
   const [, setLocation] = useLocation();
+  const { refreshUser } = useAuth();
   const token = new URLSearchParams(search).get("token") ?? "";
 
   const [invite, setInvite] = useState<{ email: string; role: string } | null>(null);
@@ -46,7 +48,11 @@ export default function AcceptInvite() {
     setSaving(false);
     if (!res.ok) { setError(data.error ?? "Failed to create account."); return; }
     setDone(true);
-    setTimeout(() => setLocation("/"), 2000);
+    // The account is created and the session is set server-side. Refresh the
+    // auth state so AuthGate sees the new (authenticated) user and routes them
+    // into the onboarding form.
+    await refreshUser();
+    setTimeout(() => setLocation("/"), 1500);
   };
 
   return (

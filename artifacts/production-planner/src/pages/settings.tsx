@@ -12,6 +12,7 @@ import {
   Lock, Timer, BarChart2, Coffee, Truck, Mail, Warehouse,
   Camera, User, CircleDot, ToggleRight, Boxes, UtensilsCrossed,
   AlertTriangle, Scale, ThermometerSnowflake, BookOpen, Megaphone, CalendarDays,
+  Copy, Check,
 } from "lucide-react";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { Switch } from "@/components/ui/switch";
@@ -320,6 +321,90 @@ function ProfileSection() {
   );
 }
 
+// Read-only link + copy button — used for reset links and invite links.
+function CopyableLink({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        readOnly
+        value={url}
+        onFocus={(e) => e.currentTarget.select()}
+        className="flex-1 min-w-0 px-3 py-2 bg-background border border-border rounded-lg text-xs font-mono text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+      />
+      <button
+        onClick={copy}
+        className="flex-shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-secondary text-foreground text-xs font-medium hover:bg-secondary/70 transition-colors border border-border"
+      >
+        {copied ? <><Check className="w-3.5 h-3.5" /> Copied</> : <><Copy className="w-3.5 h-3.5" /> Copy</>}
+      </button>
+    </div>
+  );
+}
+
+function PasswordResetSection() {
+  const { state } = useAuth();
+  const user = state.status === "authenticated" ? state.user : null;
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<{ emailSent: boolean } | null>(null);
+
+  if (!user) return null;
+
+  const send = async () => {
+    setLoading(true);
+    setResult(null);
+    try {
+      const res = await fetch(`${BASE}/api/auth/my-password-reset`, { method: "POST", credentials: "include" });
+      const data = await res.json();
+      if (!res.ok) {
+        toast({ title: "Couldn't send reset link", description: data.error, variant: "destructive" });
+      } else {
+        setResult({ emailSent: data.emailSent });
+      }
+    } catch {
+      toast({ title: "Couldn't send reset link", description: "Something went wrong", variant: "destructive" });
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div>
+      <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
+        <KeyRound className="w-4 h-4 text-primary" /> Password
+      </h2>
+      <div className="rounded-2xl border border-border bg-card p-6 space-y-4">
+        <p className="text-sm text-muted-foreground">
+          We'll email a secure link to <span className="font-medium text-foreground">{user.email}</span> to set a new password. For your security the link is only sent by email — it isn't shown on screen. It expires in 1 hour.
+        </p>
+        {result ? (
+          result.emailSent ? (
+            <p className="text-sm text-green-700 dark:text-green-400 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> Reset link emailed to {user.email}. Check your inbox.
+            </p>
+          ) : (
+            <p className="text-sm text-amber-600 dark:text-amber-400 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" /> We couldn't send the email. Try again, or ask an admin to set your password.
+            </p>
+          )
+        ) : (
+          <button
+            onClick={send}
+            disabled={loading}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+          >
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />} Email me a reset link
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function PinSection() {
   const { state, refreshUser } = useAuth();
   const user = state.status === "authenticated" ? state.user : null;
@@ -453,7 +538,7 @@ function TeamAccessContent({
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"admin" | "manager" | "viewer">("viewer");
   const [inviteSending, setInviteSending] = useState(false);
-  const [inviteResult, setInviteResult] = useState<{ url: string; email: string } | null>(null);
+  const [inviteResult, setInviteResult] = useState<{ url: string | null; email: string; emailSent: boolean } | null>(null);
 
   const createDefaults: CreateValues = {
     name: "", email: "", password: "", role: "viewer", isActive: true,
@@ -471,7 +556,7 @@ function TeamAccessContent({
       });
       const data = await res.json();
       if (!res.ok) { toast({ title: "Invite failed", description: data.error, variant: "destructive" }); }
-      else { setInviteResult({ url: data.inviteUrl, email: data.email }); }
+      else { setInviteResult({ url: data.inviteUrl ?? null, email: data.email, emailSent: data.emailSent }); }
     } catch {
       toast({ title: "Invite failed", description: "Something went wrong", variant: "destructive" });
     }
@@ -538,10 +623,25 @@ function TeamAccessContent({
             </DialogHeader>
             {inviteResult ? (
               <div className="space-y-4">
-                <div className="flex items-center gap-2 text-green-700 dark:text-green-400">
-                  <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
-                  <p className="text-sm font-medium">Invite email sent to {inviteResult.email}</p>
-                </div>
+                {inviteResult.emailSent ? (
+                  <div className="flex items-center gap-2 text-green-700 dark:text-green-400">
+                    <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+                    <p className="text-sm font-medium">Invite email sent to {inviteResult.email}</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-start gap-2 text-amber-600 dark:text-amber-400">
+                      <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                      <p className="text-sm font-medium">Invite created, but the email didn't send to {inviteResult.email}. Share the link below directly.</p>
+                    </div>
+                    {inviteResult.url && (
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Invite link (fallback)</label>
+                        <CopyableLink url={inviteResult.url} />
+                      </div>
+                    )}
+                  </>
+                )}
                 <p className="text-xs text-muted-foreground">The link expires in 48 hours.</p>
                 <button onClick={() => { setIsInviteOpen(false); setInviteResult(null); }}
                   className="w-full py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90">
@@ -893,6 +993,7 @@ export default function Settings() {
           {activeSection === "profile" && (
             <>
               <ProfileSection />
+              <PasswordResetSection />
               <PinSection />
             </>
           )}

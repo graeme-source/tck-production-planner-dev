@@ -20,7 +20,11 @@ export interface EmailPayload {
 }
 
 const APP_NAME = "TCK Production Planner";
-const FROM_EMAIL = process.env["FROM_EMAIL"] ?? "noreply@thecalzonekitchen.co.uk";
+// Must be an address on a domain VERIFIED in Resend. The apex
+// thecalzonekitchen.co.uk is NOT verified — only the `notify.` subdomain is —
+// so sending from the apex returns a 403 and silently fails. Default to the
+// verified subdomain; override with FROM_EMAIL only if you verify another domain.
+const FROM_EMAIL = process.env["FROM_EMAIL"] ?? "noreply@notify.thecalzonekitchen.co.uk";
 
 export async function sendEmail(payload: EmailPayload): Promise<void> {
   // Staging: never actually send mail. Log it instead so the invite/reset

@@ -43,7 +43,7 @@ import { NotificationBell } from "@/components/notification-bell";
 import { NotificationFlash } from "@/components/notification-flash";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { FoundersAssistant, ASSISTANT_NAME } from "@/components/founders-assistant";
-import { BookOpen, Bot } from "lucide-react";
+import { BookOpen, Bot, GraduationCap } from "lucide-react";
 
 export type NavItem = { name: string; href: string; icon: React.ComponentType<{ className?: string }> };
 
@@ -53,6 +53,7 @@ export const navItems: NavItem[] = [
   { name: "Dispatches", href: "/dispatches", icon: Truck },
   { name: "Suppliers", href: "/suppliers", icon: Building2 },
   { name: "Improvements", href: "/improvements", icon: TrendingUp },
+  { name: "Training", href: "/training", icon: GraduationCap },
   { name: "Analytics", href: "/reports", icon: BarChart2 },
 ];
 

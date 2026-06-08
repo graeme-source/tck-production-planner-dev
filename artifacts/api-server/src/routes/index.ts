@@ -54,6 +54,8 @@ import labelStockRouter from "./label-stock";
 import icePacksRouter from "./ice-packs";
 import wholesaleBagsRouter from "./wholesale-bags";
 import bundlesRouter from "./bundles";
+import trainingRouter from "./training";
+import onboardingRouter from "./onboarding";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -106,6 +108,7 @@ async function requireAdminOrManager(req: Request, res: Response, next: NextFunc
 
 // Protected routes
 router.use("/users", usersRouter);
+router.use("/onboarding", onboardingRouter);
 router.use("/category-defaults", categoryDefaultsRouter);
 router.use("/suppliers", suppliersRouter);
 router.use("/ingredients", ingredientsRouter);
@@ -153,6 +156,7 @@ router.use("/label-stock", labelStockRouter);
 router.use("/ice-packs", icePacksRouter);
 router.use("/wholesale-bags", requireAdminOrManager, wholesaleBagsRouter);
 router.use("/bundles", requireAdminOrManager, bundlesRouter);
+router.use("/training", requireAdminOrManager, trainingRouter);
 
 const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
 async function requireFounder(req: Request, res: Response, next: NextFunction) {

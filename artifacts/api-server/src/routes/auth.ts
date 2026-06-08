@@ -108,6 +108,8 @@ router.post("/login", loginLimiter, validate(LoginBody), async (req, res) => {
       role: user.role,
       avatarUrl: user.avatarUrl ?? null,
       hasPin: !!user.pinHash,
+      onboardingRequired: user.onboardingRequired ?? false,
+      onboardingCompletedAt: user.onboardingCompletedAt ? user.onboardingCompletedAt.toISOString() : null,
     });
   });
 });
@@ -146,6 +148,8 @@ router.get("/me", async (req, res) => {
     avatarUrl: user.avatarUrl ?? null,
     hasPin: !!user.pinHash,
     pinRequired,
+    onboardingRequired: user.onboardingRequired ?? false,
+    onboardingCompletedAt: user.onboardingCompletedAt ? user.onboardingCompletedAt.toISOString() : null,
   });
 });
 
@@ -274,6 +278,8 @@ router.post("/pin/login", loginLimiter, async (req, res) => {
       role: user.role,
       avatarUrl: user.avatarUrl ?? null,
       hasPin: true,
+      onboardingRequired: user.onboardingRequired ?? false,
+      onboardingCompletedAt: user.onboardingCompletedAt ? user.onboardingCompletedAt.toISOString() : null,
     });
   });
 });

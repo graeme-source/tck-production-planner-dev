@@ -41,6 +41,8 @@ import FounderView from "@/pages/founder";
 import FounderPnL from "@/pages/founder-pnl";
 import StockControl from "@/pages/stock-control";
 import ProductHub from "@/pages/product-hub";
+import TrainingMatrix from "@/pages/training-matrix";
+import Onboarding from "@/pages/onboarding";
 import NotFound from "@/pages/not-found";
 import FireActionNoticePrint from "@/pages/print/fire-action-notice";
 import FireSafetyEquipmentAuditPrint from "@/pages/print/fire-safety-equipment-audit";
@@ -149,6 +151,7 @@ function Router() {
               <Route path="/founder" component={FounderView} />
               <Route path="/founder/pnl" component={FounderPnL} />
               <Route path="/reports">{() => <ProtectedRoute component={Reports} pageKey="/reports" />}</Route>
+              <Route path="/training">{() => <ProtectedRoute component={TrainingMatrix} pageKey="/training" />}</Route>
               <Route path="/lean-cave" component={LeanCave} />
               <Route path="/hub" component={EmployeeHub} />
               <Route path="/settings" component={Settings} />
@@ -190,6 +193,9 @@ function AuthGate() {
   }
 
   const user = state.user;
+  if (user.onboardingRequired && !user.onboardingCompletedAt) {
+    return <Onboarding onComplete={async () => { await refreshUser(); }} />;
+  }
   if (!user.hasPin) {
     return (
       <PinSetupModal
