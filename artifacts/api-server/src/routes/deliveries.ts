@@ -815,6 +815,129 @@ router.patch("/:id/checks", async (req, res) => {
   });
 });
 
+// Completely undo a received delivery (received by mistake): reverse the stock
+// it added, untick every line, remove the receipt record, and put the PO back
+// to "placed" so it returns to the awaiting-delivery list and can be re-received.
+router.post("/:id/unreceive", async (req, res) => {
+  const poId = Number(req.params.id);
+  if (!Number.isInteger(poId)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  const [order] = await db.select().from(purchaseOrdersTable).where(eq(purchaseOrdersTable.id, poId));
+  if (!order) { res.status(404).json({ error: "Purchase order not found" }); return; }
+  if (order.status !== "received" && order.status !== "partially_received") {
+    res.status(400).json({ error: "This delivery hasn't been received" });
+    return;
+  }
+
+  // Lines + ingredient info, so we can recompute the stock each line added.
+  const lines = await db
+    .select({
+      id: purchaseOrderLinesTable.id,
+      ingredientId: purchaseOrderLinesTable.ingredientId,
+      ingredientName: ingredientsTable.name,
+      quantityReceived: purchaseOrderLinesTable.quantityReceived,
+      unit: purchaseOrderLinesTable.unit,
+      ingredientCategory: ingredientsTable.category,
+      ingredientUnit: ingredientsTable.unit,
+      packWeight: ingredientsTable.packWeight,
+      perishable: ingredientsTable.perishable,
+    })
+    .from(purchaseOrderLinesTable)
+    .leftJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
+    .where(eq(purchaseOrderLinesTable.purchaseOrderId, poId));
+
+  // Aggregate the stock this delivery added, per ingredient+location, using the
+  // exact same conversion the receive handler uses.
+  const reversals = new Map<string, { ingredientId: number; location: string; unit: string; qty: number }>();
+  for (const line of lines) {
+    const received = Number(line.quantityReceived);
+    if (!line.ingredientId || received <= 0) continue;
+    const location = resolveStorageLocation(line.ingredientCategory, line.ingredientName, line.perishable);
+    const isCountUnit = line.unit === "packs" || line.unit === "bottles" || line.unit === "pallets";
+    const pw = Number(line.packWeight) || 1;
+    const stockQty = isCountUnit ? received * pw : received;
+    const stockUnit = isCountUnit ? (line.ingredientUnit ?? "kg") : line.unit;
+    const key = `${line.ingredientId}|${location}`;
+    const prev = reversals.get(key);
+    if (prev) prev.qty += stockQty;
+    else reversals.set(key, { ingredientId: line.ingredientId, location, unit: stockUnit, qty: stockQty });
+  }
+
+  try {
+    await db.transaction(async (tx) => {
+      // Reverse stock: append a correcting snapshot that drops each
+      // ingredient+location back by what this delivery added (clamped at 0),
+      // mirroring how receiving appends a cumulative snapshot.
+      const ingredientIds = [...new Set([...reversals.values()].map((r) => r.ingredientId))];
+      const latest: Record<string, number> = {};
+      if (ingredientIds.length > 0) {
+        const rows = await tx
+          .select({ ingredientId: stockEntriesTable.ingredientId, location: stockEntriesTable.location, quantity: stockEntriesTable.quantity })
+          .from(stockEntriesTable)
+          .where(and(eq(stockEntriesTable.itemType, "ingredient"), inArray(stockEntriesTable.ingredientId, ingredientIds)))
+          .orderBy(desc(stockEntriesTable.checkedAt));
+        for (const row of rows) {
+          const key = `${row.ingredientId}|${row.location}`;
+          if (latest[key] === undefined) latest[key] = Number(row.quantity);
+        }
+      }
+      for (const r of reversals.values()) {
+        const current = latest[`${r.ingredientId}|${r.location}`] ?? 0;
+        const corrected = Math.max(0, current - r.qty);
+        await tx.insert(stockEntriesTable).values({
+          ingredientId: r.ingredientId,
+          itemType: "ingredient",
+          quantity: String(corrected),
+          unit: r.unit,
+          location: r.location,
+          notes: `Undo delivery PO #${poId}`,
+        });
+      }
+
+      // Untick every line.
+      await tx.update(purchaseOrderLinesTable)
+        .set({ quantityReceived: "0", goodsInChecked: false, useByDate: null })
+        .where(eq(purchaseOrderLinesTable.purchaseOrderId, poId));
+
+      // Remove the receipt record(s) — check results cascade.
+      await tx.delete(deliveryRecordsTable).where(eq(deliveryRecordsTable.purchaseOrderId, poId));
+
+      // Back to awaiting delivery.
+      await tx.update(purchaseOrdersTable).set({ status: "placed" }).where(eq(purchaseOrdersTable.id, poId));
+    });
+
+    res.json({ id: poId, status: "placed", stockReversed: reversals.size });
+  } catch (err) {
+    console.error("[deliveries] unreceive failed:", err);
+    res.status(500).json({ error: "Failed to undo the delivery" });
+  }
+});
+
+// Edit the received date of an already-received delivery (accepted on the wrong day).
+router.patch("/:id/received-date", async (req, res) => {
+  const poId = Number(req.params.id);
+  const { receivedAt } = req.body as { receivedAt?: string };
+  if (!receivedAt) { res.status(400).json({ error: "receivedAt is required" }); return; }
+  const date = new Date(receivedAt);
+  if (Number.isNaN(date.getTime())) { res.status(400).json({ error: "Invalid date" }); return; }
+
+  const [record] = await db
+    .select()
+    .from(deliveryRecordsTable)
+    .where(eq(deliveryRecordsTable.purchaseOrderId, poId))
+    .orderBy(desc(deliveryRecordsTable.receivedAt))
+    .limit(1);
+  if (!record) { res.status(404).json({ error: "Receive the delivery before editing its date" }); return; }
+
+  const [updated] = await db
+    .update(deliveryRecordsTable)
+    .set({ receivedAt: date })
+    .where(eq(deliveryRecordsTable.id, record.id))
+    .returning();
+
+  res.json({ id: updated.id, receivedAt: updated.receivedAt.toISOString() });
+});
+
 router.get("/:id/history", async (req, res) => {
   const poId = Number(req.params.id);
   const records = await db

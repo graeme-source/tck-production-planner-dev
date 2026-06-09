@@ -5,13 +5,14 @@ import {
   Truck, ChevronLeft, ChevronRight, Calendar, Package, Thermometer,
   Check, AlertTriangle, Loader2, ClipboardCheck, X,
   CheckCircle2, AlertCircle, PackageCheck, ArrowRightLeft, Plus, Minus,
-  FileText, Boxes, Pencil, Eye, EyeOff,
+  FileText, Boxes, Pencil, Eye, EyeOff, RotateCcw,
 } from "lucide-react";
 import { format, startOfWeek, addDays, isSameDay, parseISO, isToday } from "date-fns";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
+import { toast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { packNoun, packDescriptor, fmtQty, formatLineQty, formatLineQtyParts, packSizeHint } from "@/pages/station/shared/prep-helpers";
 import { NumberInput } from "@/components/ui/number-input";
@@ -909,6 +910,52 @@ export default function Deliveries() {
     },
   });
 
+  // Completely undo a received delivery (received by mistake).
+  const unreceiveMutation = useMutation({
+    mutationFn: async (orderId: number) => {
+      const res = await fetch(`${BASE}/api/deliveries/${orderId}/unreceive`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to undo the delivery");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ predicate: (q) => String(q.queryKey[0]).includes("/api/deliveries") });
+      queryClient.invalidateQueries({ queryKey: ["/api/stock-entries"] });
+      toast({ title: "Delivery undone", description: "Stock reversed and the delivery is back to awaiting." });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't undo", description: e.message, variant: "destructive" }),
+  });
+
+  // Edit the received date of an already-received delivery.
+  const [editingDateOrderId, setEditingDateOrderId] = useState<number | null>(null);
+  const editDateMutation = useMutation({
+    mutationFn: async ({ orderId, receivedAt }: { orderId: number; receivedAt: string }) => {
+      const res = await fetch(`${BASE}/api/deliveries/${orderId}/received-date`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ receivedAt }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to update the received date");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ predicate: (q) => String(q.queryKey[0]).includes("/api/deliveries") });
+      setEditingDateOrderId(null);
+      toast({ title: "Received date updated" });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't update date", description: e.message, variant: "destructive" }),
+  });
+
   const ordersByDay = useMemo(() => {
     const map: Record<string, DeliveryOrder[]> = {};
     for (const day of weekDays) {
@@ -1170,14 +1217,52 @@ export default function Deliveries() {
                         </button>
                       )}
                       {canReceive && isReceived && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); openReceiving(order.id); }}
-                          className="px-3 py-2 rounded-xl border border-border text-sm font-medium hover:bg-secondary/50 transition-colors flex items-center gap-1.5"
-                          title="Edit received quantities"
-                        >
-                          <Pencil className="w-4 h-4" />
-                          Edit
-                        </button>
+                        <>
+                          {editingDateOrderId === order.id ? (
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="date"
+                                autoFocus
+                                className="px-2 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+                                defaultValue={format(new Date(), "yyyy-MM-dd")}
+                                onChange={(e) => { if (e.target.value) editDateMutation.mutate({ orderId: order.id, receivedAt: e.target.value }); }}
+                              />
+                              <button onClick={() => setEditingDateOrderId(null)} className="p-1.5 rounded-lg hover:bg-secondary/50 text-muted-foreground">
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setEditingDateOrderId(order.id)}
+                              className="p-2 rounded-xl border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
+                              title="Change the received date"
+                            >
+                              <Calendar className="w-4 h-4" />
+                            </button>
+                          )}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); openReceiving(order.id); }}
+                            className="px-3 py-2 rounded-xl border border-border text-sm font-medium hover:bg-secondary/50 transition-colors flex items-center gap-1.5"
+                            title="Edit received quantities"
+                          >
+                            <Pencil className="w-4 h-4" />
+                            Edit
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (confirm(`Undo this delivery from ${order.supplierName}? It will untick all items, reverse the stock it added, and go back to awaiting delivery.`)) {
+                                unreceiveMutation.mutate(order.id);
+                              }
+                            }}
+                            disabled={unreceiveMutation.isPending}
+                            className="px-3 py-2 rounded-xl border border-destructive/40 text-destructive text-sm font-medium hover:bg-destructive/10 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                            title="Undo this receipt completely"
+                          >
+                            <RotateCcw className="w-4 h-4" />
+                            Undo
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
