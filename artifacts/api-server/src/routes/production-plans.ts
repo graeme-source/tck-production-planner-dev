@@ -246,7 +246,7 @@ export async function resolveDefaultDoughDate(planDate: string): Promise<string>
   return applyOffset(planDate, offset);
 }
 
-function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?: string | null; portionsPerBatch?: number | null; packSize?: number | null; fillWeightGrams?: string | null; baseType?: string | null; baseWeightGrams?: string | null; wrappingComplete?: boolean | null; recipeColor?: string | null; targetBuildSeconds?: number | null; recipeCategory?: string | null; dietaryCategory?: string | null }, stationCompletions?: Record<string, number>) {
+function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?: string | null; portionsPerBatch?: number | null; packSize?: number | null; fillWeightGrams?: string | null; baseType?: string | null; baseWeightGrams?: string | null; wrappingComplete?: boolean | null; recipeColor?: string | null; targetBuildSeconds?: number | null; recipeCategory?: string | null; dietaryCategory?: string | null }, stationCompletions?: Record<string, number>, buildingProgress?: Record<string, { extraPacks: number; movedOnAt: string | null }>) {
   return {
     ...i,
     recipeName: i.recipeName ?? "",
@@ -260,6 +260,9 @@ function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?
     wrappingComplete: i.wrappingComplete ?? false,
     targetBuildSeconds: i.targetBuildSeconds ?? null,
     stationCompletions: stationCompletions ?? {},
+    // Per-builder building progress, keyed by station_type. Lets the building
+    // UI show each builder their OWN extras and move-on state.
+    buildingProgress: buildingProgress ?? {},
   };
 }
 
@@ -275,6 +278,23 @@ const STATION_DEPENDENCIES: Record<string, string[]> = {
 
 function getPreviousStations(stationType: string): string[] {
   return STATION_DEPENDENCIES[stationType] ?? [];
+}
+
+// Per-builder building progress lives in building_station_progress (each
+// builder's own loose extra packs). The item-level extra_packs_built cache is
+// DERIVED as the SUM across both builders, so the whole downstream pipeline
+// (ovens, wrapping, dispatch) keeps reading production_plan_items unchanged and
+// sees the combined total. Nothing here touches builder_marked_complete_at —
+// "moving on" is pure navigation now and no recipe is ever auto-marked complete.
+async function recomputeItemFromProgress(planItemId: number): Promise<void> {
+  await db.execute(sql`
+    UPDATE production_plan_items SET
+      extra_packs_built = COALESCE((
+        SELECT SUM(extra_packs)::int FROM building_station_progress
+        WHERE plan_item_id = ${planItemId}
+      ), 0)
+    WHERE id = ${planItemId}
+  `);
 }
 
 const CreatePlanBody = z.object({
@@ -2097,7 +2117,24 @@ router.get("/:id", async (req, res) => {
     }
   }
 
-  res.json({ ...mapPlan(plan), items: items.map(it => mapItem(it, completionsByItem[it.id] ?? {})) });
+  // Per-builder building progress (own extras + own moved-on), keyed by station.
+  const progressByItem: Record<number, Record<string, { extraPacks: number; movedOnAt: string | null }>> = {};
+  if (itemIds.length > 0) {
+    const progressRows = await db.execute(sql`
+      SELECT plan_item_id, station_type, extra_packs, moved_on_at
+      FROM building_station_progress
+      WHERE plan_item_id IN (${sql.join(itemIds.map(id => sql`${id}`), sql`, `)})
+    `);
+    for (const row of progressRows.rows as Array<{ plan_item_id: number; station_type: string; extra_packs: number; moved_on_at: string | Date | null }>) {
+      if (!progressByItem[row.plan_item_id]) progressByItem[row.plan_item_id] = {};
+      progressByItem[row.plan_item_id][row.station_type] = {
+        extraPacks: Number(row.extra_packs) || 0,
+        movedOnAt: row.moved_on_at == null ? null : (row.moved_on_at instanceof Date ? row.moved_on_at.toISOString() : String(row.moved_on_at)),
+      };
+    }
+  }
+
+  res.json({ ...mapPlan(plan), items: items.map(it => mapItem(it, completionsByItem[it.id] ?? {}, progressByItem[it.id] ?? {})) });
 });
 
 // GET /:id/lock-pdf — Render a printable PDF snapshot of a plan's core
@@ -2488,13 +2525,15 @@ router.post("/:id/batch-completions", async (req, res) => {
   const isWrapping = stationType === "wrapping";
 
   // packsPerBatch mirrors recipe-completion.ts: floor(portionsPerBatch / 2),
-  // min 1. On a partial-batch commit, we subtract ppb from extra_packs_built
-  // — i.e. record the slot's shortfall as a negative-going adjustment to
-  // extras — so the existing `combinedBuildCount × ppb + extras` totals
-  // throughout the codebase keep producing the correct pack count.
+  // min 1. On a partial-batch commit, we subtract ppb from the COMMITTING
+  // builder's per-station extra_packs — i.e. record the slot's shortfall as a
+  // negative-going adjustment to that builder's extras — so the existing
+  // `combinedBuildCount × ppb + extras` totals (extras = sum across builders)
+  // keep producing the correct pack count.
   const ppb = Math.max(1, Math.floor((Number(planItem.portionsPerBatch) || 10) / 2));
   const partialPacksValue = isPartial ? Number(partialPacks) : null;
   const extrasDelta = isPartial ? -ppb : 0;
+  const isBuildingStation = stationType === "building_1" || stationType === "building_2";
 
   // Unconditional insert — no target/combined caps. Building is never blocked;
   // ovens/wrapping were already gated by the cascade pre-check above.
@@ -2503,7 +2542,6 @@ router.post("/:id/batch-completions", async (req, res) => {
       UPDATE production_plan_items
       SET
         batches_complete = CASE WHEN ${isWrapping}::boolean THEN batches_complete + 1 ELSE batches_complete END,
-        extra_packs_built = extra_packs_built + ${extrasDelta},
         status = 'in-progress'
       WHERE id = ${Number(planItemId)}
       RETURNING id
@@ -2528,13 +2566,23 @@ router.post("/:id/batch-completions", async (req, res) => {
     return;
   }
 
+  // Partial-batch slot: adjust the committing builder's own extra_packs, then
+  // recompute the item-level extra_packs_built cache (= sum across builders).
+  if (isPartial && isBuildingStation && extrasDelta !== 0) {
+    await db.execute(sql`
+      INSERT INTO building_station_progress (plan_item_id, station_type, extra_packs, updated_at)
+      VALUES (${Number(planItemId)}, ${stationType}, ${extrasDelta}, NOW())
+      ON CONFLICT (plan_item_id, station_type)
+      DO UPDATE SET extra_packs = building_station_progress.extra_packs + ${extrasDelta}, updated_at = NOW()
+    `);
+    await recomputeItemFromProgress(Number(planItemId));
+  }
+
   const row = rows[0];
 
   // Oven-station weight record — written after the batch_completions row lands
   // so failed caps don't create orphan weight rows. Target = pack_size × portion
-  // cooked weight + tray weight. `is_last_batch_of_recipe` flips on the batch
-  // whose new oven count equals the effective target (post-builder-complete
-  // the target is the combined building count).
+  // cooked weight + tray weight.
   if (stationType === "ovens" && planItem.recipeId && !isMacCheeseRecipe) {
     try {
       const settings = await getWeightAppSettings();
@@ -2552,24 +2600,11 @@ router.post("/:id/batch-completions", async (req, res) => {
       `);
       const ovenCount = (ovenCountRes.rows[0] as { cnt: number })?.cnt ?? 0;
 
-      // HACCP last-batch flag (chill-start anchor) only flips once building is
-      // FINISHED — i.e. the builder has marked the recipe complete. While
-      // building is still open we never flag a last batch, because an extra
-      // over-target tray could still land and the chill timer must anchor to
-      // the genuinely-final tray. Once finished, the effective target is the
-      // combined building count (includes partial-batch slots), so the last
-      // oven batch (= last building slot) correctly carries the anchor.
-      let isLastBatchOfRecipe = false;
-      if (planItem.builderMarkedCompleteAt) {
-        const buildRes = await db.execute(sql`
-          SELECT COUNT(*)::int AS cnt FROM batch_completions
-          WHERE plan_item_id = ${Number(planItemId)}
-            AND station_type IN ('building_1', 'building_2')
-        `);
-        const effectiveTarget = (buildRes.rows[0] as { cnt: number })?.cnt ?? (planItem.batchesTarget ?? 0);
-        isLastBatchOfRecipe = effectiveTarget > 0 && ovenCount >= effectiveTarget;
-      }
-
+      // HACCP last-batch (chill-start anchor) is detected from the oven QUEUE,
+      // independently of building: the just-cooked batch is never immediately
+      // "last". Instead, when the oven moves on to a DIFFERENT recipe, the batch
+      // we just left behind becomes that recipe's last batch (see below). So
+      // this record always inserts false; the switch handler back-fills it.
       await db.insert(batchWeightRecordsTable).values({
         planId,
         planItemId: Number(planItemId),
@@ -2584,9 +2619,47 @@ router.post("/:id/batch-completions", async (req, res) => {
         toleranceUnderG: String(settings.toleranceUnderG),
         toleranceOverG: String(settings.toleranceOverG),
         withinTolerance,
-        isLastBatchOfRecipe,
+        isLastBatchOfRecipe: false,
         userId: sessionUserId,
       });
+
+      // Auto-detect the previous recipe's last batch: find the most recent OTHER
+      // oven batch in this plan before the one we just cooked. If the oven just
+      // switched flavour (previous oven batch was a different plan item), that
+      // previous recipe's run has ended → its most recent weight record becomes
+      // its last batch (chill-start anchor). We also clear any stale last-batch
+      // flag on the recipe we're now cooking, so revisiting a recipe (cooking
+      // more of it later) correctly re-opens it and re-anchors on the new tail.
+      const prevRes = await db.execute(sql`
+        SELECT bc.plan_item_id AS pid
+        FROM batch_completions bc
+        JOIN production_plan_items pi ON pi.id = bc.plan_item_id
+        WHERE pi.plan_id = ${planId} AND bc.station_type = 'ovens' AND bc.id <> ${Number(row.id)}
+        ORDER BY bc.completed_at DESC, bc.id DESC
+        LIMIT 1
+      `);
+      const prevPlanItemId = (prevRes.rows[0] as { pid: number } | undefined)?.pid ?? null;
+      if (prevPlanItemId != null && prevPlanItemId !== Number(planItemId)) {
+        // We're (re)starting this recipe — it's in progress again, not finished.
+        await db.execute(sql`
+          UPDATE batch_weight_records SET is_last_batch_of_recipe = false
+          WHERE plan_item_id = ${Number(planItemId)}
+        `);
+        // The recipe we just left is finished (for now) — anchor its last batch.
+        await db.execute(sql`
+          UPDATE batch_weight_records SET is_last_batch_of_recipe = false
+          WHERE plan_item_id = ${prevPlanItemId}
+        `);
+        await db.execute(sql`
+          UPDATE batch_weight_records SET is_last_batch_of_recipe = true
+          WHERE id = (
+            SELECT id FROM batch_weight_records
+            WHERE plan_item_id = ${prevPlanItemId}
+            ORDER BY recorded_at DESC, id DESC
+            LIMIT 1
+          )
+        `);
+      }
     } catch (err) {
       console.error("[batch-completions] weight record insert failed:", err);
     }
@@ -4755,55 +4828,6 @@ router.delete("/:id/items/:itemId/wonly", async (req, res) => {
   res.json({ itemId, wonlyCount: updated.wonlyCount, wonlyTotal: updated.wonlyTotal });
 });
 
-// ──────────────────────────────────────────────────────────────────────────────
-// POST /:id/items/:itemId/builder-complete — builder marks recipe complete
-// early (e.g. ran out of filling). Idempotent: no-op if already set.
-//
-// Once set, downstream stations (ovens, wrapping) use the builder's current
-// combined batch count as the effective target and pack output becomes
-// `batchesComplete × packsPerBatch + extraPacksBuilt`.
-//
-// Presence guard: refuses to set the flag while the OTHER building station
-// has a fresh (<60s) presence ping for this item — that means another
-// builder is mid-batch on this recipe and a close would orphan their work.
-// Returns 409 with code OTHER_BUILDER_ACTIVE in that case.
-// ──────────────────────────────────────────────────────────────────────────────
-router.post("/:id/items/:itemId/builder-complete", async (req, res) => {
-  const planId = Number(req.params.id);
-  const itemId = Number(req.params.itemId);
-
-  const [item] = await db.select({
-    id: productionPlanItemsTable.id,
-    builderMarkedCompleteAt: productionPlanItemsTable.builderMarkedCompleteAt,
-  })
-    .from(productionPlanItemsTable)
-    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
-
-  if (!item) {
-    res.status(404).json({ error: "Plan item not found" });
-    return;
-  }
-
-  // Pure SOFT signal: "we've stopped building this recipe (possibly short of
-  // target)". It NEVER blocks the other builder — anyone mid-batch can still
-  // record their batch (building completions are never rejected), and the
-  // downstream effective target follows the actual built count. Idempotent:
-  // marking an already-complete recipe is a no-op that returns the existing
-  // timestamp.
-  if (item.builderMarkedCompleteAt) {
-    res.json({ itemId, builderMarkedCompleteAt: item.builderMarkedCompleteAt });
-    return;
-  }
-
-  const [updated] = await db
-    .update(productionPlanItemsTable)
-    .set({ builderMarkedCompleteAt: new Date() })
-    .where(eq(productionPlanItemsTable.id, itemId))
-    .returning({ builderMarkedCompleteAt: productionPlanItemsTable.builderMarkedCompleteAt });
-
-  res.json({ itemId, builderMarkedCompleteAt: updated.builderMarkedCompleteAt });
-});
-
 // POST /:id/items/:itemId/manual-batch — admin rectification for a missed
 // batch on an already-closed (or in-progress) recipe. Inserts a
 // batch_completions row attributed to a correction, optionally as a partial
@@ -4892,34 +4916,6 @@ router.post("/:id/items/:itemId/manual-batch", async (req, res) => {
     correctionByUserId: row.correction_by_user_id ?? null,
     correctionNote: row.correction_note ?? null,
   });
-});
-
-// DELETE /:id/items/:itemId/builder-complete — admin-only undo.
-router.delete("/:id/items/:itemId/builder-complete", async (req, res) => {
-  const planId = Number(req.params.id);
-  const itemId = Number(req.params.itemId);
-
-  const admin = await isAdminUser(req);
-  if (!admin) {
-    res.status(403).json({ error: "Only admins can revert a recipe completion" });
-    return;
-  }
-
-  const [exists] = await db.select({ id: productionPlanItemsTable.id })
-    .from(productionPlanItemsTable)
-    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
-
-  if (!exists) {
-    res.status(404).json({ error: "Plan item not found" });
-    return;
-  }
-
-  await db
-    .update(productionPlanItemsTable)
-    .set({ builderMarkedCompleteAt: null })
-    .where(eq(productionPlanItemsTable.id, itemId));
-
-  res.json({ itemId, builderMarkedCompleteAt: null });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -5041,37 +5037,53 @@ router.patch("/:id/items/:itemId/wrapping-complete", async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// PATCH /:id/items/:itemId/extra-packs-built — set extra individual packs built
-// Used by building station to record partial last-batch packs or extra-ball packs
+// PATCH /:id/items/:itemId/extra-packs-built — add/remove a loose "extra" pack
+// for ONE builder. Body: { delta: 1 | -1, stationType: 'building_1'|'building_2' }
+//
+// Each builder's extras are tracked independently in building_station_progress;
+// the item-level extra_packs_built cache is the SUM across both builders, so the
+// oven/wrapping/dispatch pipeline still sees the combined total. One builder
+// adding packs no longer changes what the other builder sees.
 // ──────────────────────────────────────────────────────────────────────────────
 router.patch("/:id/items/:itemId/extra-packs-built", async (req, res) => {
   const planId = Number(req.params.id);
   const itemId = Number(req.params.itemId);
-  const { delta } = req.body; // +1 or -1
+  const { delta, stationType } = req.body; // delta: +1 or -1
   if (typeof delta !== "number" || (delta !== 1 && delta !== -1)) {
     res.status(400).json({ error: "Body must contain { delta: 1 | -1 }" });
     return;
   }
-
-  const [item] = await db.select({ id: productionPlanItemsTable.id, extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt })
-    .from(productionPlanItemsTable)
-    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
-
-  if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
-  if (delta === -1 && (item.extraPacksBuilt ?? 0) <= 0) {
-    res.status(409).json({ error: "Extra packs count is already 0" });
+  if (stationType !== "building_1" && stationType !== "building_2") {
+    res.status(400).json({ error: "stationType must be building_1 or building_2" });
     return;
   }
 
-  const [updated] = await db
-    .update(productionPlanItemsTable)
-    .set({ extraPacksBuilt: delta === 1
-      ? sql`${productionPlanItemsTable.extraPacksBuilt} + 1`
-      : sql`GREATEST(${productionPlanItemsTable.extraPacksBuilt} - 1, 0)` })
-    .where(eq(productionPlanItemsTable.id, itemId))
-    .returning({ extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt });
+  const [item] = await db.select({ id: productionPlanItemsTable.id })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
+  if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
 
-  res.json({ itemId, extraPacksBuilt: updated.extraPacksBuilt });
+  // Upsert this builder's extras, clamped at 0. (+1 on a fresh row → 1; −1 → 0.)
+  const upserted = (await db.execute(sql`
+    INSERT INTO building_station_progress (plan_item_id, station_type, extra_packs, updated_at)
+    VALUES (${itemId}, ${stationType}, GREATEST(${delta}, 0), NOW())
+    ON CONFLICT (plan_item_id, station_type)
+    DO UPDATE SET extra_packs = GREATEST(building_station_progress.extra_packs + ${delta}, 0), updated_at = NOW()
+    RETURNING extra_packs
+  `)).rows[0] as { extra_packs: number } | undefined;
+
+  await recomputeItemFromProgress(itemId);
+
+  const [refreshed] = await db.select({ extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt })
+    .from(productionPlanItemsTable)
+    .where(eq(productionPlanItemsTable.id, itemId));
+
+  res.json({
+    itemId,
+    stationType,
+    stationExtraPacks: upserted?.extra_packs ?? 0,
+    extraPacksBuilt: refreshed?.extraPacksBuilt ?? 0,
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────

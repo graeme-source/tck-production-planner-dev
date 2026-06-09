@@ -31,7 +31,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
 import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisplay } from "../shared/constants";
-import { effectiveBatchesTarget, packsPerBatch } from "../shared/recipe-completion";
+import { packsPerBatch } from "../shared/recipe-completion";
 
 import {
   DndContext,
@@ -482,30 +482,23 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   // finished the recipe — the other builder (who was on the penultimate batch)
   // moves straight to the next recipe.
   const myLastBatchItemIdRef = useRef<number | null>(null);
-  // Active-build pin. The recipe this builder currently has a batch IN FLIGHT
-  // on — set the moment they begin assembling (first checklist tick / auto-lock
-  // / a build already locked on load) or deliberately arm an extra batch. While
-  // it's set, that recipe stays "current" and its BATCH DONE stays enabled
-  // until the batch is recorded — so a started batch can ALWAYS be finished, no
-  // matter what the other builder does (hits target, marks complete, etc.).
-  // Persisted to localStorage so a refresh / network-drop mid-batch re-pins the
-  // same recipe and the batch is still completable.
-  const pinKey = `active_build_${plan.id}_${stationType}_${userId}`;
-  const [activeBuildItemId, setActiveBuildItemIdRaw] = useState<number | null>(() => {
-    try { const raw = localStorage.getItem(pinKey); return raw != null && raw !== "" ? Number(raw) : null; }
+  // The recipe this builder is currently working on. Free navigation: the
+  // builder taps any recipe (or the "Move to Next Recipe" button) to select it.
+  // Targets never dictate this — a builder can build any recipe, in any order,
+  // backwards and forwards, over or under target. Persisted to localStorage so
+  // a refresh keeps them on the same recipe.
+  const selKey = `building_selected_${plan.id}_${stationType}_${userId}`;
+  const [selectedItemId, setSelectedItemIdRaw] = useState<number | null>(() => {
+    try { const raw = localStorage.getItem(selKey); return raw != null && raw !== "" ? Number(raw) : null; }
     catch { return null; }
   });
-  const setActiveBuildItemId = useCallback((id: number | null) => {
-    setActiveBuildItemIdRaw(id);
+  const setSelectedItemId = useCallback((id: number | null) => {
+    setSelectedItemIdRaw(id);
     try {
-      if (id == null) localStorage.removeItem(pinKey);
-      else localStorage.setItem(pinKey, String(id));
-    } catch { /* storage unavailable — pin still works in-memory */ }
-  }, [pinKey]);
-  // Deliberate over-target arm — the "obvious action" required to START a fresh
-  // batch once the target is already met. Finishing an in-flight batch never
-  // needs this. Cleared after one extra is recorded.
-  const [armedExtraItemId, setArmedExtraItemId] = useState<number | null>(null);
+      if (id == null) localStorage.removeItem(selKey);
+      else localStorage.setItem(selKey, String(id));
+    } catch { /* storage unavailable — selection still works in-memory */ }
+  }, [selKey]);
   // Part-batch calculator dialog — tracks which item's calculator is open.
   const [calcOpenItemId, setCalcOpenItemId] = useState<number | null>(null);
 
@@ -515,30 +508,38 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     return getStationCount(it, "building_1") + getStationCount(it, "building_2");
   }
 
-  function getEffectiveTarget(it: ProductionPlanItem) {
-    return effectiveBatchesTarget(it, getCombinedBuildCount(it));
+  // The planned target is REFERENCE ONLY — it's the "what to expect" goal shown
+  // to builders. It never gates building: builders may stop short, hit it, or
+  // go over freely. (Downstream stations follow the real built count via the
+  // shared effectiveBatchesTarget helper, not this.)
+  function getTargetRef(it: ProductionPlanItem) {
+    return it.batchesTarget ?? 0;
+  }
+
+  // This builder's own loose extra packs on a recipe, independent of the other
+  // builder. Falls back to zero when no row exists yet.
+  function getMyProgress(it: ProductionPlanItem): { extraPacks: number } {
+    const bp = (it as any).buildingProgress as Record<string, { extraPacks: number }> | undefined;
+    return bp?.[stationType] ?? { extraPacks: 0 };
   }
 
   const items = [...(plan.items ?? [])].sort(compareItemsForDisplay);
-  // Natural pick: the first recipe that still has batches left to build. Both
-  // builders can always take the next available batch — the server never
-  // rejects a building completion, so simultaneous taps both land.
-  const firstWithWork = items.find(it => getCombinedBuildCount(it) < getEffectiveTarget(it));
-  // The active-build pin always wins: a recipe with a batch in flight stays
-  // current so it is NEVER yanked away mid-assembly (e.g. by the other builder
-  // hitting target or marking it complete). The pin is cleared once the batch
-  // is recorded, after which selection falls back to the next recipe with work.
-  const pinnedItem = activeBuildItemId != null ? items.find(it => it.id === activeBuildItemId) : null;
-  const currentItem = pinnedItem ?? firstWithWork;
+  // Current = the selected recipe; default to the first recipe still under its
+  // reference target (just a sensible starting point — the builder can tap any
+  // recipe to switch). Targets never restrict which recipe is current.
+  const selectedItem = selectedItemId != null ? items.find(it => it.id === selectedItemId) : null;
+  const defaultItem = items.find(it => getCombinedBuildCount(it) < getTargetRef(it)) ?? items[0];
+  const currentItem = selectedItem ?? defaultItem;
 
   const buildingCount = currentItem ? getCombinedBuildCount(currentItem) : 0;
-  const effectiveBatches = currentItem ? getEffectiveTarget(currentItem) : 0;
+  const targetRef = currentItem ? getTargetRef(currentItem) : 0;
   const myCount = currentItem ? getStationCount(currentItem, stationType) : 0;
   // Building is the start of the dependency chain — no mixing dependency.
-  // remaining = planned batches still to build on the current recipe.
-  const remaining = currentItem ? Math.max(0, effectiveBatches - buildingCount) : 0;
+  // remaining = planned batches still to build toward the reference target
+  // (purely informational; building is never blocked when it reaches 0).
+  const remaining = currentItem ? Math.max(0, targetRef - buildingCount) : 0;
   const allDone = items.length > 0 && items.every(it =>
-    getCombinedBuildCount(it) >= getEffectiveTarget(it)
+    getCombinedBuildCount(it) >= getTargetRef(it)
   );
 
   // checklistPending is computed below but we need it here for the timer.
@@ -572,9 +573,6 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
           setChecklistLockedForItem(currentItem.id);
           // Checklist already done — cancel changeover (returning builder)
           setChangeoverStartedAt(null);
-          // A locked checklist means a batch is in flight on this recipe —
-          // re-pin it so a refresh mid-batch keeps the recipe completable.
-          setActiveBuildItemId(currentItem.id);
         }
         setChecklistLoadedForItem(currentItem.id);
       })
@@ -591,8 +589,6 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
       setCheckedItemsItemId(curId);
       setChecklistLockedForItem(null);
       setChecklistLoadedForItem(null);
-      // Any over-target arm belonged to the previous recipe — drop it.
-      setArmedExtraItemId(null);
       // Start changeover timer for this recipe
       setChangeoverStartedAt(new Date());
       setChangeoverElapsedMs(0);
@@ -608,11 +604,10 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     return () => window.clearInterval(id);
   }, [changeoverStartedAt, changeoverActive, isOnBreak]);
 
-  // (Builder presence heartbeat removed.) The old fragile 60s-presence guard —
-  // which let one builder's "mark complete" block the other mid-batch — is
-  // gone. Coordination is now handled entirely by the active-build pin (a
-  // started batch is always completable) and a server that never rejects a
-  // building completion.
+  // (No presence guard, no "active-build pin", no per-recipe locking.) The two
+  // builders work fully independently: each navigates recipes freely and the
+  // server never rejects a building completion. Coordination is implicit — both
+  // builders' output simply adds up for the oven station.
 
   // Auto-lock checklist when all items checked
   useEffect(() => {
@@ -630,9 +625,6 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     asm.assemblyItems.forEach((a, i) => allKeys.push(`${a.sourceType}-${a.sourceId}-${i}`));
     if (allKeys.length > 0 && allKeys.every(k => checkedItems[k])) {
       setChecklistLockedForItem(currentItem.id);
-      // Assembly is done — a batch is now in flight. Pin the recipe so it can't
-      // be yanked away before this builder records it.
-      setActiveBuildItemId(currentItem.id);
       fetch(`/api/app-settings/${checklistKey(currentItem.id)}`, {
         method: "PUT", credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -670,7 +662,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
       // Only show extra packs prompt if the previous recipe is actually done
       // (not just skipped by last-batch coordination logic)
       const prevItem = items.find(it => it.id === prevCurrentItemId);
-      if (prevItem && getCombinedBuildCount(prevItem) >= getEffectiveTarget(prevItem)) {
+      if (prevItem && getCombinedBuildCount(prevItem) >= getTargetRef(prevItem)) {
         // Only show the prompt to the builder who actually completed the last
         // batch. The other builder (who finished the penultimate batch) should
         // move straight to the next recipe without being interrupted.
@@ -713,26 +705,16 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     return checklistLockedForItem !== currentItem.id;
   })();
 
-  // Records a batch immediately, bypassing the oven-settings gate. Used by
-  // the gate's "Checked oven settings" button so the same finger-tap that
-  // confirms the temperature also lands the batch — operators were having
-  // to tap "Done" twice (once to dismiss the prompt, once to record).
-  // True when the builder may record a batch on this item right now: there's
-  // still planned work, OR they have a batch in flight on it (pin), OR they've
-  // deliberately armed an over-target extra.
-  const canRecordBatch = (item: ProductionPlanItem) => {
-    const itemAvail = Math.max(0, getEffectiveTarget(item) - getCombinedBuildCount(item));
-    return itemAvail > 0 || activeBuildItemId === item.id || armedExtraItemId === item.id;
-  };
+  // Building is never gated by the target — a builder can record a batch on the
+  // current recipe at any time (over, under, or at the reference target).
+  const canRecordBatch = (_item: ProductionPlanItem) => true;
 
-  // Shared post-completion bookkeeping: the in-flight batch is now recorded, so
-  // release the pin (selection falls through to the next recipe with work) and
-  // disarm any extra. Remember the last-batch tap so the extra-packs prompt is
-  // shown to the builder who actually finished the recipe.
+  // Post-completion bookkeeping: remember the last-batch tap so the optional
+  // extra-packs prompt is shown to the builder who reached the target. Recording
+  // a batch does NOT move the builder — they stay on the recipe to build more or
+  // press "Move to Next Recipe" when they're done.
   const afterBatchRecorded = (completingItemId: number, wasLastBatchTap: boolean) => {
     if (wasLastBatchTap) myLastBatchItemIdRef.current = completingItemId;
-    setActiveBuildItemId(null);
-    setArmedExtraItemId(null);
   };
 
   const recordBatchNow = (item: typeof currentItem) => {
@@ -798,7 +780,8 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
 
   const handlePartialBatchComplete = () => {
     if (!currentItem || pendingTap || isOnBreak || checklistPending || partialCompletePending) return;
-    const partialPacks = currentItem.extraPacksBuilt ?? 0;
+    // This builder's OWN loose packs (not the combined item total).
+    const partialPacks = getMyProgress(currentItem).extraPacks;
     if (partialPacks <= 0) return;
     const completingItemId = currentItem.id;
     const wasLastBatchTap = remaining === 1;
@@ -819,6 +802,22 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     );
   };
 
+  // "Move to Next Recipe" — PURE NAVIGATION. It just selects the next recipe in
+  // the list. It logs nothing special (every batch is already recorded to the
+  // oven line as it's built), marks nothing complete, and never touches the
+  // other builder. The builder can come straight back to this recipe later.
+  const selectRecipe = (itemId: number) => {
+    if (isOnBreak) return;
+    setSelectedItemId(itemId);
+    setExpandedItemId(itemId);
+  };
+  const moveToNextRecipe = (item: ProductionPlanItem) => {
+    if (isOnBreak) return;
+    const idx = items.findIndex(it => it.id === item.id);
+    const next = idx >= 0 && idx < items.length - 1 ? items[idx + 1] : items[0];
+    if (next) selectRecipe(next.id);
+  };
+
   // A blast chiller tray is 10 packs. Mac cheese only. If fewer than 10 packs
   // of work are left, the button shows "Add Final N Packs" and advances the
   // remainder in one tap (same pattern the wrapping station uses for its
@@ -828,7 +827,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
   });
   const blastAddCount = (item: ProductionPlanItem): number => {
-    const remaining = Math.max(0, getEffectiveTarget(item) - getCombinedBuildCount(item));
+    const remaining = Math.max(0, getTargetRef(item) - getCombinedBuildCount(item));
     const cap = isAdmin ? BLAST_TRAY_SIZE : Math.min(BLAST_TRAY_SIZE, remaining);
     return cap;
   };
@@ -883,8 +882,8 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     }
   }, [activeBreakMinutes]);
 
-  const pct = currentItem && effectiveBatches > 0
-    ? Math.round((buildingCount / effectiveBatches) * 100)
+  const pct = currentItem && targetRef > 0
+    ? Math.round((buildingCount / targetRef) * 100)
     : 0;
 
   // Split totals by product category. Calzone items are tracked as "batches";
@@ -892,9 +891,9 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   // portionsPerBatch=2, packsPerBatch=1).
   const calzoneItems = items.filter(it => !isMacCheese(it as any));
   const macItems = items.filter(it => isMacCheese(it as any));
-  const totalBatchesTarget = calzoneItems.reduce((s, it) => s + getEffectiveTarget(it), 0);
+  const totalBatchesTarget = calzoneItems.reduce((s, it) => s + getTargetRef(it), 0);
   const totalBatchesDone = calzoneItems.reduce((s, it) => s + getCombinedBuildCount(it), 0);
-  const totalMacPacksTarget = macItems.reduce((s, it) => s + getEffectiveTarget(it), 0);
+  const totalMacPacksTarget = macItems.reduce((s, it) => s + getTargetRef(it), 0);
   const totalMacPacksDone = macItems.reduce((s, it) => s + getCombinedBuildCount(it), 0);
   const combinedTarget = totalBatchesTarget + totalMacPacksTarget;
   const combinedDone = totalBatchesDone + totalMacPacksDone;
@@ -1001,6 +1000,8 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
               isOnBreak={isOnBreak}
               hasFilling={(assemblyMap[extraPromptItem.id]?.fillingWeightPerBatch ?? 0) > 0}
               assemblyData={assemblyMap[extraPromptItem.id]}
+              stationType={stationType}
+              stationExtraPacks={getMyProgress(extraPromptItem).extraPacks}
               onDone={() => setExtraPromptItemId(null)}
             />
           )}
@@ -1017,6 +1018,8 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
               isOnBreak={isOnBreak}
               hasFilling={(assemblyMap[editPromptItem.id]?.fillingWeightPerBatch ?? 0) > 0}
               assemblyData={assemblyMap[editPromptItem.id]}
+              stationType={stationType}
+              stationExtraPacks={getMyProgress(editPromptItem).extraPacks}
               onDone={() => setEditPromptItemId(null)}
               mode="edit"
             />
@@ -1138,26 +1141,21 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
             const isExpanded = expandedItemId === item.id;
             const isCurrent = item.id === currentItem?.id;
             const combinedCount = getCombinedBuildCount(item);
-            const effTarget = getEffectiveTarget(item);
-            const isDone = combinedCount >= effTarget;
+            const effTarget = getTargetRef(item); // reference target (planned)
+            const targetReached = combinedCount >= effTarget;
             const itemMyCount = getStationCount(item, stationType);
-            // Building is the start of the chain — available = remaining to build
-            const itemAvailable = Math.max(0, effTarget - combinedCount);
+            // Informational only — how many batches are left to hit the planned
+            // target. Building is NEVER blocked when this reaches 0.
             const itemRemaining = Math.max(0, effTarget - combinedCount);
             const itemPct = effTarget > 0 ? Math.round((combinedCount / effTarget) * 100) : 0;
             const asm = assemblyMap[item.id];
-            const isPartialMode = (item.extraPacksBuilt ?? 0) > 0 && itemAvailable > 0;
+            const myExtraPacks = getMyProgress(item).extraPacks;
+            // Loose packs ready to commit as a partial batch (this builder's own).
+            const isPartialMode = myExtraPacks > 0;
             const busyWithTap = pendingTap || (isPartialMode && partialCompletePending);
-            const itemArmedExtra = armedExtraItemId === item.id;
-            const itemInFlight = activeBuildItemId === item.id;
-            // Can this builder tap BATCH DONE right now? Yes if there's planned
-            // work left, OR they're finishing an in-flight batch (pinned), OR
-            // they've deliberately armed an over-target extra. A started batch
-            // is therefore ALWAYS completable, even once target is met.
-            const canRecordThis = itemAvailable > 0 || itemInFlight || itemArmedExtra;
 
             const rowHasFilling = (asm?.fillingWeightPerBatch ?? 0) > 0;
-            const showEditBtn = isDone && rowHasFilling;
+            const showEditBtn = targetReached && rowHasFilling;
             return (
               <div key={item.id}>
                 {/* Collapsed summary row — toggle button + optional edit pencil as sibling */}
@@ -1170,7 +1168,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                         : "bg-blue-50/60 dark:bg-blue-900/15"
                       : isCurrent
                         ? "bg-primary/5"
-                        : isDone
+                        : targetReached
                           ? "bg-emerald-50/30 dark:bg-emerald-900/10"
                           : "hover:bg-secondary/20"
                   )}
@@ -1186,7 +1184,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                   <span
                     className={cn(
                       "flex-1 font-bold text-sm truncate",
-                      isDone && !isExpanded ? "line-through opacity-60" : ""
+                      targetReached && !isExpanded ? "line-through opacity-60" : ""
                     )}
                     style={{ color: item.recipeColor || undefined }}
                   >
@@ -1205,7 +1203,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                   )}
 
                   {/* Status icon */}
-                  {isDone ? (
+                  {targetReached ? (
                     <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
                   ) : (
                     <ChevronDown className={cn(
@@ -1239,7 +1237,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                       <h2 className="font-display text-2xl font-bold leading-tight flex-1 truncate" style={{ color: item.recipeColor || undefined }}>
                         {item.recipeName ?? `Recipe #${item.recipeId}`}
                       </h2>
-                      {isDone && (
+                      {targetReached && (
                         <span className="flex items-center gap-1 text-sm text-emerald-600 dark:text-emerald-400 font-medium">
                           <CheckCircle2 className="w-4 h-4" /> Complete
                         </span>
@@ -1269,11 +1267,6 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                             const isLocked = checklistLockedForItem === item.id;
                             const toggleCheck = (key: string) => {
                               if (isLocked) return;
-                              // First interaction with the checklist = this builder
-                              // has begun assembling a batch on this recipe. Pin it
-                              // immediately so the other builder hitting target can't
-                              // yank the recipe away before they finish.
-                              setActiveBuildItemId(item.id);
                               setCheckedItems(prev => ({ ...prev, [key]: !prev[key] }));
                             };
 
@@ -1350,77 +1343,38 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                             <p className="text-xs text-muted-foreground text-center mt-0.5">{itemRemaining} left</p>
                           </div>
 
-                          {/* Target met for this item — show status + the deliberate
-                              over-target / move-on controls. Finishing an in-flight
-                              batch is handled by the BATCH DONE button below (which
-                              stays enabled while pinned); these are for what to do
-                              once the target is reached. */}
-                          {itemAvailable <= 0 && (
-                            <div className="w-full space-y-2 mb-2">
-                              <div className="w-full flex items-center justify-center gap-1 px-2 py-1.5 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 rounded-lg">
-                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                                <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300">
-                                  {isMacCheese(item as any) ? "All packs built" : "All batches built"}
-                                </p>
-                              </div>
-                              {!isOnBreak && !itemArmedExtra && (
-                                <div className="flex items-stretch gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => { setActiveBuildItemId(null); setArmedExtraItemId(null); }}
-                                    className="flex-1 py-2.5 rounded-lg text-sm font-semibold border border-border text-foreground hover:bg-secondary/60 transition-colors"
-                                  >
-                                    Next recipe →
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const unit = isMacCheese(item as any) ? "pack" : "batch";
-                                      if (!window.confirm(
-                                        `Build an extra ${unit} of ${item.recipeName ?? "this recipe"} on top of the target of ${item.batchesTarget ?? 0}?`
-                                      )) return;
-                                      setArmedExtraItemId(item.id);
-                                      setActiveBuildItemId(item.id);
-                                      // Re-arm assembly so the builder re-confirms ingredients
-                                      // for the extra batch (no-op for recipes with no checklist).
-                                      setChecklistLockedForItem(null);
-                                      setCheckedItems({});
-                                      setCheckedItemsItemId(item.id);
-                                      setChangeoverStartedAt(new Date());
-                                      setChangeoverElapsedMs(0);
-                                    }}
-                                    className="flex-1 py-2.5 rounded-lg text-sm font-semibold border-2 border-violet-400 dark:border-violet-600 bg-violet-50 dark:bg-violet-900/20 text-violet-800 dark:text-violet-200 hover:bg-violet-100 dark:hover:bg-violet-900/40 transition-colors"
-                                  >
-                                    + Build extra {isMacCheese(item as any) ? "pack" : "batch"}
-                                  </button>
-                                </div>
-                              )}
+                          {/* Target reached — purely informational. Building is NOT
+                              blocked: the builder can keep tapping BATCH DONE to go
+                              over, or press "Move to Next Recipe" when they're done. */}
+                          {targetReached && (
+                            <div className="w-full flex items-center justify-center gap-1 px-2 py-1.5 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 rounded-lg mb-2">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                              <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                                Target reached — build more or move on
+                              </p>
                             </div>
                           )}
 
-                          {/* BATCH COMPLETE button (swaps to PARTIAL BATCH COMPLETE when extras added) */}
+                          {/* BATCH DONE — always available (build over/under/at target
+                              freely). Swaps to PARTIAL BATCH DONE when loose packs exist. */}
                         <button
                           onClick={isPartialMode ? handlePartialBatchComplete : handleBatchComplete}
-                          disabled={busyWithTap || isOnBreak || checklistPending || !canRecordThis}
+                          disabled={busyWithTap || isOnBreak || checklistPending}
                           className={cn(
                             "relative overflow-hidden w-full h-[200px] rounded-2xl text-xl sm:text-2xl font-bold transition-all select-none active:scale-95 flex flex-col items-center justify-center gap-1",
-                            !canRecordThis
-                              ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 border-2 border-emerald-400 opacity-60 cursor-not-allowed"
-                              : isOnBreak
-                                ? "bg-amber-100 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 border-2 border-amber-300 cursor-not-allowed opacity-70"
-                                : checklistPending
-                                  ? changeoverActive
-                                    ? "bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400 border-2 border-blue-300 dark:border-blue-700 cursor-not-allowed"
-                                    : "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 border-2 border-slate-300 dark:border-slate-600 cursor-not-allowed opacity-70"
-                                  : busyWithTap
-                                    ? "bg-primary/60 text-primary-foreground cursor-wait"
-                                    : isPartialMode
-                                      ? "bg-amber-500 text-white border-2 border-amber-600 shadow-lg hover:bg-amber-600 hover:shadow-xl"
-                                      : itemArmedExtra
-                                        ? "bg-violet-600 text-white border-2 border-violet-700 shadow-lg hover:bg-violet-700 hover:shadow-xl"
-                                        : buildTimer.alerted
-                                          ? "bg-amber-500 text-white border-2 border-amber-600 shadow-lg animate-pulse"
-                                          : "bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg hover:shadow-xl"
+                            isOnBreak
+                              ? "bg-amber-100 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 border-2 border-amber-300 cursor-not-allowed opacity-70"
+                              : checklistPending
+                                ? changeoverActive
+                                  ? "bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400 border-2 border-blue-300 dark:border-blue-700 cursor-not-allowed"
+                                  : "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 border-2 border-slate-300 dark:border-slate-600 cursor-not-allowed opacity-70"
+                                : busyWithTap
+                                  ? "bg-primary/60 text-primary-foreground cursor-wait"
+                                  : isPartialMode
+                                    ? "bg-amber-500 text-white border-2 border-amber-600 shadow-lg hover:bg-amber-600 hover:shadow-xl"
+                                    : buildTimer.alerted
+                                      ? "bg-amber-500 text-white border-2 border-amber-600 shadow-lg animate-pulse"
+                                      : "bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg hover:shadow-xl"
                           )}
                         >
                           {/* Changeover count-up timer */}
@@ -1441,17 +1395,13 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                           <span>
                             {isOnBreak
                               ? "On Break"
-                              : !canRecordThis
-                                ? "All Done ✓"
-                                : checklistPending
-                                  ? (changeoverActive ? "Changeover" : "Tick items ←")
-                                  : busyWithTap
-                                    ? "Recording..."
-                                    : isPartialMode
-                                      ? "PARTIAL BATCH DONE ✓"
-                                      : itemArmedExtra
-                                        ? (isMacCheese(item as any) ? "EXTRA PACK DONE ✓" : "EXTRA BATCH DONE ✓")
-                                        : isMacCheese(item as any) ? "PACK DONE ✓" : "BATCH DONE ✓"}
+                              : checklistPending
+                                ? (changeoverActive ? "Changeover" : "Tick items ←")
+                                : busyWithTap
+                                  ? "Recording..."
+                                  : isPartialMode
+                                    ? "PARTIAL BATCH DONE ✓"
+                                    : isMacCheese(item as any) ? "PACK DONE ✓" : "BATCH DONE ✓"}
                           </span>
                           {timerConfig.enabled && buildTimer.running && !allDone && !isOnBreak && (
                             <div
@@ -1544,20 +1494,18 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                           </button>
                         )}
 
-                          {/* Pack adjustment */}
-                          <PackAdjustment planId={plan.id} item={item} isOnBreak={isOnBreak} />
+                          {/* Pack adjustment — this builder's OWN loose packs */}
+                          <PackAdjustment planId={plan.id} item={item} isOnBreak={isOnBreak} stationType={stationType} stationExtraPacks={myExtraPacks} />
 
-                          {/* Recipe-level close — a SOFT signal that the builders have
-                              stopped on this recipe (possibly short of target). Never
-                              blocks the other builder: anyone mid-batch can still record
-                              theirs, and downstream targets follow the real built count. */}
-                          <MarkCompleteButton
-                            planId={plan.id}
+                          {/* Move to next recipe — a PER-BUILDER action. Logs what
+                              this builder has built so far to the oven line and advances
+                              THEM only. The other builder keeps building on this recipe;
+                              it becomes globally complete once both have moved on. */}
+                          <MoveToNextRecipeButton
                             item={item}
                             combinedCount={combinedCount}
                             isOnBreak={isOnBreak}
-                            stationType={stationType}
-                            onMarked={() => setExtraPromptItemId(item.id)}
+                            onMoveOn={() => moveToNextRecipe(item)}
                           />
 
                           {/* Part-batch calculator shortcut — useful when short on packs
@@ -1651,9 +1599,17 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                             </div>
                           </div>
                         </div>
-                        <PackAdjustment planId={plan.id} item={item} isOnBreak={isOnBreak} />
-                        {isAdmin && item.builderMarkedCompleteAt && (
-                          <AdminAddMissedBatch planId={plan.id} item={item} />
+                        <PackAdjustment planId={plan.id} item={item} isOnBreak={isOnBreak} stationType={stationType} stationExtraPacks={getMyProgress(item).extraPacks} />
+                        {/* Free navigation — switch to this recipe to build it with
+                            the full controls (checklist, BATCH DONE, packs). */}
+                        {!isOnBreak && (
+                          <button
+                            type="button"
+                            onClick={() => selectRecipe(item.id)}
+                            className="w-full mt-2 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold border border-primary/40 rounded-lg text-primary hover:bg-primary/10 transition-colors"
+                          >
+                            Switch to this recipe
+                          </button>
                         )}
                       </div>
                     )}
@@ -1679,12 +1635,14 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   );
 }
 
-function RecipeCompleteDialogBody({ planId, item, isOnBreak, hasFilling, assemblyData, onDone, mode = "complete" }: {
+function RecipeCompleteDialogBody({ planId, item, isOnBreak, hasFilling, assemblyData, stationType, stationExtraPacks, onDone, mode = "complete" }: {
   planId: number;
   item: ProductionPlanItem;
   isOnBreak: boolean;
   hasFilling: boolean;
   assemblyData?: AssemblyData;
+  stationType: "building_1" | "building_2";
+  stationExtraPacks: number;
   onDone: () => void;
   mode?: "complete" | "edit";
 }) {
@@ -1738,7 +1696,7 @@ function RecipeCompleteDialogBody({ planId, item, isOnBreak, hasFilling, assembl
           </p>
         </div>
       </div>
-      <PackAdjustment planId={planId} item={item} isOnBreak={isOnBreak} />
+      <PackAdjustment planId={planId} item={item} isOnBreak={isOnBreak} stationType={stationType} stationExtraPacks={stationExtraPacks} />
 
       {hasFilling && (
         <div className="border border-border rounded-xl px-4 py-3 space-y-3">
@@ -1861,64 +1819,36 @@ function BatchDivision({ assemblyData, portionsPerBatch }: { assemblyData: Assem
   );
 }
 
-function MarkCompleteButton({
-  planId,
+function MoveToNextRecipeButton({
   item,
   combinedCount,
   isOnBreak,
-  stationType,
-  onMarked,
+  onMoveOn,
 }: {
-  planId: number;
   item: ProductionPlanItem;
   combinedCount: number;
   isOnBreak: boolean;
-  stationType: "building_1" | "building_2";
-  onMarked: () => void;
+  onMoveOn: () => void;
 }) {
-  const queryClient = useQueryClient();
-  const [runAction, busy] = useGuardedAction({
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(planId) }),
-  });
-
-  // Already marked → nothing to do here.
-  if (item.builderMarkedCompleteAt) return null;
-  // Only expose the close once at least one batch is in.
-  if (combinedCount < 1) return null;
-
   const target = item.batchesTarget ?? 0;
-  const ppb = packsPerBatch(item);
-  const extras = item.extraPacksBuilt ?? 0;
-  const projectedPacks = combinedCount * ppb + extras;
   const isShort = combinedCount < target;
 
   const handleClick = () => {
-    if (isOnBreak || busy) return;
-    const heading = isShort
-      ? `Mark ${item.recipeName ?? "this recipe"} complete at ${combinedCount}/${target} batches?`
-      : `Mark ${item.recipeName ?? "this recipe"} complete (${combinedCount}/${target})?`;
+    if (isOnBreak) return;
+    const built = `${combinedCount}/${target} batch${target === 1 ? "" : "es"} built so far (both builders combined)`;
     const msg =
-      `${heading}\n\n` +
-      `Net output passed to ovens: ${projectedPacks} pack${projectedPacks === 1 ? "" : "s"}.\n\n` +
-      `This won't block the other builder — anyone mid-batch can still record theirs.`;
+      `Move on to your next recipe?\n\n` +
+      `${built}. Whatever's been built is logged to the oven station.\n\n` +
+      `This only moves YOU on — the other builder can keep building this recipe.`;
     if (!window.confirm(msg)) return;
-    // Pure soft signal — the server never rejects this, so there's no
-    // "other builder is mid-batch" race to handle any more.
-    runAction(async (signal) => {
-      await guardedFetch(`/api/production-plans/${planId}/items/${item.id}/builder-complete`, {
-        method: "POST", signal,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stationType }),
-      });
-      onMarked();
-    });
+    onMoveOn();
   };
 
   return (
     <button
       type="button"
       onClick={handleClick}
-      disabled={busy || isOnBreak}
+      disabled={isOnBreak}
       className={cn(
         "w-full mt-3 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold border-2 transition-colors disabled:opacity-40",
         isShort
@@ -1927,43 +1857,34 @@ function MarkCompleteButton({
       )}
     >
       {isShort ? <AlertTriangle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
-      Mark Recipe Complete ({combinedCount}/{target})
+      Move to Next Recipe →
     </button>
   );
 }
 
-function PackAdjustment({ planId, item, isOnBreak }: { planId: number; item: ProductionPlanItem; isOnBreak: boolean }) {
+function PackAdjustment({ planId, item, isOnBreak, stationType, stationExtraPacks }: { planId: number; item: ProductionPlanItem; isOnBreak: boolean; stationType: "building_1" | "building_2"; stationExtraPacks: number }) {
   const queryClient = useQueryClient();
   const [runAction, busy] = useGuardedAction({
     onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(planId) }),
   });
 
-  // extraPacksBuilt can be negative after a partial-batch commit (shortfall is
-  // recorded as a negative-going adjustment to extras). The on-screen tally
-  // only ever represents an in-progress partial batch, so clamp to ≥ 0.
-  const extraPacks = Math.max(0, item.extraPacksBuilt ?? 0);
+  // THIS builder's own loose packs (independent of the other builder). Clamp to
+  // ≥ 0 — the tally only represents an in-progress partial batch on this station.
+  const extraPacks = Math.max(0, stationExtraPacks);
 
-  const addExtra = () => {
+  const adjust = (delta: 1 | -1) => {
     if (isOnBreak) return;
+    if (delta === -1 && extraPacks <= 0) return;
     runAction((signal) =>
       guardedFetch(`/api/production-plans/${planId}/items/${item.id}/extra-packs-built`, {
         method: "PATCH", signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ delta: 1 }),
+        body: JSON.stringify({ delta, stationType }),
       })
     );
   };
-
-  const removeExtra = () => {
-    if (extraPacks <= 0) return;
-    runAction((signal) =>
-      guardedFetch(`/api/production-plans/${planId}/items/${item.id}/extra-packs-built`, {
-        method: "PATCH", signal,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ delta: -1 }),
-      })
-    );
-  };
+  const addExtra = () => adjust(1);
+  const removeExtra = () => adjust(-1);
 
   return (
     <div className="border border-border rounded-xl px-3 py-2 mt-3">
@@ -1986,7 +1907,7 @@ function PackAdjustment({ planId, item, isOnBreak }: { planId: number; item: Pro
             disabled={busy || isOnBreak}
             className="h-9 px-3 rounded-lg text-sm font-semibold border border-border bg-background hover:bg-secondary/60 disabled:opacity-40 transition-all active:scale-95"
           >
-            + Extra Pack
+            + Add Pack
           </button>
         </div>
       </div>

@@ -91,6 +91,26 @@ export const builderPresenceTable = pgTable("builder_presence", {
   unique("uq_builder_presence").on(table.planItemId, table.stationType),
 ]);
 
+// Per-builder progress on a recipe. The two builders (building_1, building_2)
+// share one recipe's batchesTarget but work independently: each accumulates
+// their own loose "extra packs" toward a partial batch, and each decides when
+// they have moved on to the next recipe. The item-level caches are derived from
+// these rows by the server: production_plan_items.extra_packs_built = SUM of
+// extra_packs across both stations, and builder_marked_complete_at is set only
+// once BOTH stations have moved on — so the entire downstream pipeline (ovens,
+// wrapping, dispatch) keeps reading those item columns unchanged.
+export const buildingStationProgressTable = pgTable("building_station_progress", {
+  id: serial("id").primaryKey(),
+  planItemId: integer("plan_item_id").notNull().references(() => productionPlanItemsTable.id, { onDelete: "cascade" }),
+  stationType: text("station_type").notNull(), // 'building_1' | 'building_2'
+  extraPacks: integer("extra_packs").notNull().default(0),
+  movedOnAt: timestamp("moved_on_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  unique("uq_building_station_progress").on(table.planItemId, table.stationType),
+]);
+
 export const stationChangeoversTable = pgTable("station_changeovers", {
   id: serial("id").primaryKey(),
   planItemId: integer("plan_item_id").notNull().references(() => productionPlanItemsTable.id, { onDelete: "cascade" }),
@@ -300,6 +320,7 @@ export type ProductionPlan = typeof productionPlansTable.$inferSelect;
 export type ProductionPlanItem = typeof productionPlanItemsTable.$inferSelect;
 export type BatchCompletion = typeof batchCompletionsTable.$inferSelect;
 export type BuilderPresence = typeof builderPresenceTable.$inferSelect;
+export type BuildingStationProgress = typeof buildingStationProgressTable.$inferSelect;
 export type StationChangeover = typeof stationChangeoversTable.$inferSelect;
 export type StationBreak = typeof stationBreaksTable.$inferSelect;
 export type DptSetting = typeof dptSettingsTable.$inferSelect;

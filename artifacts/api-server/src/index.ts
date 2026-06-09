@@ -1227,6 +1227,23 @@ async function runStartupMigrations() {
       )
     `);
 
+    // Per-builder building-station progress. Each of the two builders tracks
+    // their own loose extra packs and their own "moved on" state independently;
+    // the server derives production_plan_items.extra_packs_built (= SUM) and
+    // builder_marked_complete_at (= both moved on) from these rows.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS building_station_progress (
+        id SERIAL PRIMARY KEY,
+        plan_item_id INTEGER NOT NULL REFERENCES production_plan_items(id) ON DELETE CASCADE,
+        station_type TEXT NOT NULL,
+        extra_packs INTEGER NOT NULL DEFAULT 0,
+        moved_on_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_building_station_progress UNIQUE (plan_item_id, station_type)
+      )
+    `);
+
     // Oven-station batch weight records (HACCP cooling log + variance tracking).
     // Every oven batch gets a row with the actual pack weight, the computed
     // target (tray + pack_size × portion), and the variance. The final batch

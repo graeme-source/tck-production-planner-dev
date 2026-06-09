@@ -660,7 +660,12 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
           {items.map((item, idx) => {
             const isExpanded = expandedItemId === item.id;
             const isCurrent = item.id === currentItem?.id;
-            const isComplete = getStationCount(item, "ovens") >= effTarget(item);
+            // effTarget = what's actually been BUILT (ovens process real output,
+            // not the plan). "Caught up" = cooked everything built so far; a
+            // recipe with nothing built yet is pending, not complete.
+            const builtSoFar = effTarget(item);
+            const plannedTarget = item.batchesTarget ?? 0;
+            const isComplete = builtSoFar > 0 && getStationCount(item, "ovens") >= builtSoFar;
             const gPacks = grossPacks(item);
             const nTwoPacks = netTwoPacks(item);
             const nPacks = netPacks(item);
@@ -701,18 +706,20 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                     {item.recipeName ?? `Recipe #${item.recipeId}`}
                   </span>
 
-                  {/* Batch + pack count */}
+                  {/* Cooked / built so far — ovens track ACTUAL build output.
+                      The planned target rides alongside as a muted reference. */}
                   <span className="text-sm tabular-nums font-medium flex-shrink-0 text-right">
                     {isMacCheese(item as any) ? (
-                      <>{getStationCount(item, "ovens")}/{effTarget(item)}</>
+                      <>{getStationCount(item, "ovens")}/{builtSoFar}</>
                     ) : (
                       <>
-                        {getStationCount(item, "ovens")}/{effTarget(item)}
+                        {getStationCount(item, "ovens")}/{builtSoFar}
                         <span className="text-muted-foreground ml-1.5">
                           ({ovenPacksDone(item)}/{ovenPacksTarget(item)} pk)
                         </span>
                       </>
                     )}
+                    <span className="text-muted-foreground/70 ml-1.5 font-normal">· plan {plannedTarget}</span>
                   </span>
 
                   {/* Status icon */}
