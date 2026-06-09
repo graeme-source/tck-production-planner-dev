@@ -17,6 +17,27 @@ function getBucketAndPrefix(): { bucketName: string; prefix: string } {
   };
 }
 
+export type QrSourceType = "ingredient" | "recipe" | "sub_recipe";
+
+const QR_OPTIONS = {
+  type: "png" as const,
+  width: 300,
+  margin: 2,
+  errorCorrectionLevel: "M" as const,
+};
+
+// Generate the QR PNG directly in-memory. The payload is a tiny deterministic
+// {type,id} blob, so there's no benefit to persisting it — we regenerate on
+// demand. This has no external dependency (unlike generateQrCode, which needs
+// Replit object storage and so only works on Replit, not Railway).
+export async function generateQrPngBuffer(
+  sourceType: QrSourceType,
+  id: number,
+): Promise<Buffer> {
+  const payload = JSON.stringify({ type: sourceType, id });
+  return QRCode.toBuffer(payload, QR_OPTIONS);
+}
+
 export async function generateQrCode(
   sourceType: "ingredient" | "recipe" | "sub_recipe",
   id: number,

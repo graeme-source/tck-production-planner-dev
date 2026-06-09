@@ -1,7 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, ingredientsTable, kanbanItemsTable } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
-import { generateQrCode, getQrCodeBuffer } from "../lib/qr-code";
+import { generateQrPngBuffer, type QrSourceType } from "../lib/qr-code";
 
 const router: IRouter = Router();
 
@@ -19,48 +17,17 @@ router.get("/:sourceType/:id", async (req, res) => {
     return;
   }
 
-  let qrCodeUrl: string | null = null;
+  // The QR encodes a deterministic {type,id} payload, so we generate it on the
+  // fly every request rather than persisting it. No object storage needed, which
+  // means it works on Railway as well as Replit.
+  const buffer = await generateQrPngBuffer(sourceType as QrSourceType, id);
 
-  if (sourceType === "ingredient") {
-    const [row] = await db.select({ qrCodeUrl: ingredientsTable.qrCodeUrl }).from(ingredientsTable).where(eq(ingredientsTable.id, id));
-    if (!row) { res.status(404).json({ error: "Ingredient not found" }); return; }
-    qrCodeUrl = row.qrCodeUrl;
-    // Lazily generate the QR if this ingredient never got one (e.g. created before QR
-    // support, or generation failed). Means the print-kanban card always has a scannable
-    // code without needing a separate backfill step first.
-    if (!qrCodeUrl) {
-      qrCodeUrl = await generateQrCode("ingredient", id);
-      await db.update(ingredientsTable).set({ qrCodeUrl }).where(eq(ingredientsTable.id, id));
-    }
-  } else {
-    const [row] = await db.select({ qrCodeUrl: kanbanItemsTable.qrCodeUrl })
-      .from(kanbanItemsTable)
-      .where(
-        and(
-          eq(kanbanItemsTable.sourceType, sourceType),
-          sourceType === "recipe"
-            ? eq(kanbanItemsTable.recipeId, id)
-            : eq(kanbanItemsTable.subRecipeId, id)
-        )
-      );
-    if (!row) { res.status(404).json({ error: "QR code not found" }); return; }
-    qrCodeUrl = row.qrCodeUrl;
-  }
-
-  if (!qrCodeUrl) {
-    res.status(404).json({ error: "QR code not generated yet" });
-    return;
-  }
-
-  const result = await getQrCodeBuffer(qrCodeUrl);
-  if (!result) {
-    res.status(404).json({ error: "QR code image not found in storage" });
-    return;
-  }
-
-  res.setHeader("Content-Type", result.contentType);
+  res.setHeader("Content-Type", "image/png");
   res.setHeader("Cache-Control", "public, max-age=86400");
-  res.send(result.buffer);
+  if (req.query.download !== undefined) {
+    res.setHeader("Content-Disposition", `attachment; filename="qr-${sourceType}-${id}.png"`);
+  }
+  res.send(buffer);
 });
 
 export default router;
