@@ -42,6 +42,7 @@ import {
   computeBuilderBatchesPerHourForDay,
   computePackingOrdersPerHourForDay,
 } from "../lib/yesterday-kpis";
+import { getPreviousDispatchDayAsync } from "./production-plans";
 
 const router: IRouter = Router();
 
@@ -163,7 +164,10 @@ function isoDateMinusDays(iso: string, days: number): string {
 router.get("/dashboard", async (_req: Request, res: Response) => {
   try {
     const today = londonDateString();
-    const yesterday = isoDateMinusDays(today, 1);
+    // "Yesterday's numbers" should mean the previous PRODUCTION day, not the
+    // previous calendar day — so on Monday we show Friday, on Friday Thursday,
+    // and bank holidays are skipped (Mon-Fri minus non-dispatch dates).
+    const yesterday = await getPreviousDispatchDayAsync(today);
     const tomorrow = isoDateMinusDays(today, -1);
 
     // ── Today's special ─────────────────────────────────────────────

@@ -505,7 +505,7 @@ const DEFAULT_TEMPLATE_SLIDES = [
   { kind: "bag_orders",          title: "Bag Orders" },
   { kind: "safety_issues",       title: "Safety Issues" },
   { kind: "new_sops",            title: "New & Updated SOPs" },
-  { kind: "struggles",           title: "Struggles" },
+  { kind: "struggles",           title: "Improvements Required" },
   { kind: "lesson",              title: "Today's Lean Lesson" },
   { kind: "gratitude",           title: "Gratitude" },
 ] as const;

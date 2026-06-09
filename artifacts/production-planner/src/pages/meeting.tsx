@@ -98,12 +98,17 @@ const CHOICE_STRETCH = { name: "Choose one of your own", emoji: "🤸", descript
 const STRETCH_POOL: ReadonlyArray<{ name: string; emoji: string; description: string }> = [
   { name: "Neck rolls",        emoji: "🦒", description: "Slow circles, both directions." },
   { name: "Shoulder rolls",    emoji: "🤷", description: "Backwards then forwards." },
-  { name: "Side bend",         emoji: "🧍", description: "Lean to each side." },
-  { name: "Forward fold",      emoji: "🙇", description: "Soft knees, drop the head." },
+  { name: "Cross-body arm",    emoji: "💪", description: "Pull one arm across the chest, then swap." },
+  { name: "Triceps stretch",   emoji: "🙋", description: "Elbow up, gently pull behind the head." },
   { name: "Wrist + finger",    emoji: "👐", description: "Roll wrists, splay fingers." },
-  { name: "Calf stretch",      emoji: "🚶", description: "Push the back heel down." },
-  { name: "Torso twist",       emoji: "🌀", description: "Hands on hips, slow rotation." },
   { name: "Chest opener",      emoji: "🫁", description: "Hands behind back, lift the chest." },
+  { name: "Side bend",         emoji: "🧍", description: "Lean to each side." },
+  { name: "Torso twist",       emoji: "🌀", description: "Hands on hips, slow rotation." },
+  { name: "Forward fold",      emoji: "🙇", description: "Soft knees, drop the head." },
+  { name: "Quad stretch",      emoji: "🦵", description: "Hold one foot behind, knees together." },
+  { name: "Hamstring reach",   emoji: "🤸", description: "Heel out front, hinge forward." },
+  { name: "Standing lunge",    emoji: "🤺", description: "Step one foot back, sink the hips." },
+  { name: "Calf stretch",      emoji: "🚶", description: "Push the back heel down." },
   { name: "Hip circles",       emoji: "🕺", description: "Hands on hips, draw slow circles." },
   { name: "Ankle rolls",       emoji: "🦶", description: "One foot at a time." },
 ];
@@ -233,7 +238,7 @@ const SLIDE_KIND_META: Record<SlideKind, { icon: React.ElementType; color: strin
   safety_issues:       { icon: AlertCircle,   color: "text-red-500",     fallbackTitle: "Safety Issues" },
   system_updates:      { icon: Sparkles,      color: "text-purple-500",  fallbackTitle: "System Updates" },
   new_sops:            { icon: FileText,      color: "text-cyan-500",    fallbackTitle: "New & Updated SOPs" },
-  struggles:           { icon: MessageCircle, color: "text-pink-500",    fallbackTitle: "Struggles" },
+  struggles:           { icon: MessageCircle, color: "text-pink-500",    fallbackTitle: "Improvements Required" },
   lesson:              { icon: BookOpen,      color: "text-purple-500",  fallbackTitle: "Today's Lean Lesson" },
   gratitude:           { icon: Heart,         color: "text-rose-500",    fallbackTitle: "Gratitude" },
   custom_markdown:     { icon: BookOpen,      color: "text-slate-500",   fallbackTitle: "Note" },
@@ -1709,7 +1714,7 @@ function StrugglesSlide({ data, onRefresh, slide }: { data: DashboardData; onRef
   };
   return (
     <div>
-      <SectionTitle>{slide.title || "Struggles"}</SectionTitle>
+      <SectionTitle>{slide.title || "Improvements Required"}</SectionTitle>
       <SectionLead>What's getting in the way? No blame — just name it. We'll action it from the kaizen board.</SectionLead>
       {data.struggles.length > 0 && (
         <div className="glass-panel rounded-2xl overflow-hidden mb-6">
@@ -1926,7 +1931,7 @@ const SLIDE_KIND_CATALOG: Array<{ kind: SlideKind; label: string; description: s
   { kind: "safety_issues",       label: "Safety Issues",        description: "Open andons + log new" },
   { kind: "system_updates",      label: "System Updates",       description: "Auto-pulls recent commits to the planner" },
   { kind: "new_sops",            label: "New & Updated SOPs",   description: "SOPs touched in last 7 days" },
-  { kind: "struggles",           label: "Struggles",            description: "Open struggles + log new" },
+  { kind: "struggles",           label: "Improvements Required",            description: "Open struggles + log new" },
   { kind: "lesson",              label: "Lean Lesson",          description: "Today's principle + example" },
   { kind: "gratitude",           label: "Gratitude",            description: "Capture shout-outs" },
   { kind: "custom_markdown",     label: "Custom note",          description: "Freeform markdown slide" },
