@@ -626,6 +626,7 @@ function usePlanSubRecipeRequirements(planId: number) {
 
 export function PrepBasesStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const [selectedItem, setSelectedItem] = useState<"tomato_base" | number>("tomato_base");
+  const [hideCompleted, setHideCompleted] = useState(false);
   const [completedSubRecipeIds, setCompletedSubRecipeIds] = useState<Set<number>>(new Set());
   // ?direct=1 — see main-prep-station for rationale.
   const search = useSearch();
@@ -838,11 +839,24 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
         {/* LEFT — Tomato Base pinned at top, then sauce ingredients by recipe */}
         <div className="lg:w-80 xl:w-96 flex-shrink-0">
           <div className="bg-card border border-border rounded-xl overflow-hidden">
-            <div className="px-4 py-2.5 bg-secondary/30 border-b border-border">
+            <div className="px-4 py-2.5 bg-secondary/30 border-b border-border flex items-center justify-between gap-2">
               <p className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Prep Items</p>
+              <button
+                type="button"
+                onClick={() => setHideCompleted(v => !v)}
+                className={cn(
+                  "text-xs font-medium px-2 py-1 rounded-md border transition-colors",
+                  hideCompleted
+                    ? "bg-yellow-500 border-yellow-500 text-white hover:bg-yellow-600"
+                    : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60"
+                )}
+              >
+                {hideCompleted ? "Show all" : "Hide completed"}
+              </button>
             </div>
             <div className="max-h-[calc(100vh-300px)] overflow-y-auto">
-              {/* Tomato Base — special pinned item */}
+              {/* Tomato Base — special pinned item (hidden when done + Hide completed is on) */}
+              {!(hideCompleted && tomatoBaseDone && selectedItem !== "tomato_base") && (
               <button
                 onClick={() => setSelectedItem("tomato_base")}
                 className={cn(
@@ -879,9 +893,18 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                 </div>
                 {!tomatoBaseDone && <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
               </button>
+              )}
 
               {/* Sauce ingredients grouped by recipe */}
-              {leftGroups.map((group, gi) => (
+              {leftGroups.map((group, gi) => {
+                // When "Hide completed" is on, drop fully-done items (keeping the
+                // selected one visible) and skip the whole group if nothing's left.
+                const visibleItems = hideCompleted
+                  ? group.items.filter(({ ing }) =>
+                      !recipeIngredientStatus(ing, group.recipeId).allDone || selectedItem === ing.ingredientId)
+                  : group.items;
+                if (visibleItems.length === 0) return null;
+                return (
                 <div key={group.recipeId} className={cn(gi > 0 && "border-t border-border")}>
                   <div className="px-4 py-2 bg-yellow-50/60 dark:bg-yellow-950/20 flex items-center justify-between">
                     <p className="text-sm font-bold uppercase tracking-wider text-yellow-800 dark:text-yellow-300 truncate">
@@ -891,7 +914,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                       {group.batchesTarget} batch{group.batchesTarget !== 1 ? "es" : ""}
                     </span>
                   </div>
-                  {group.items.map(({ ing }) => {
+                  {visibleItems.map(({ ing }) => {
                     const rStatus = recipeIngredientStatus(ing, group.recipeId);
                     const isSelected = selectedItem === ing.ingredientId;
                     const ingLinkedItems = linkedItems[ing.ingredientId] ?? [];
@@ -977,7 +1000,8 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                     );
                   })}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
