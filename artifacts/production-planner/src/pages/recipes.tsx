@@ -66,6 +66,19 @@ type FormValues = z.infer<typeof schema>;
 
 function fmt(n: number | undefined | null) { return (Number(n) || 0).toFixed(2); }
 
+// Display a per-recipe cooked/raw quantity. These amounts are tiny, so
+// kilograms are shown as grams (0.01 kg → "10 g") for readability — fewer
+// decimals as the number grows. Any other unit is shown as-is to 2dp.
+function fmtQty(n: number | undefined | null, unit: string | undefined | null): string {
+  const v = Number(n) || 0;
+  if (unit === "kg") {
+    const g = v * 1000;
+    const decimals = g >= 10 ? 0 : g >= 1 ? 1 : 2;
+    return `${g.toFixed(decimals)} g`;
+  }
+  return `${v.toFixed(2)} ${unit ?? ""}`.trim();
+}
+
 /** Chip-style tag editor used inside the recipe form. Suggestions
  *  come from the union of tags already used on other recipes so the
  *  operator doesn't end up with "GF" / "gluten-free" / "GLUTEN FREE"
@@ -1328,7 +1341,7 @@ function SubRecipeBreakdownRow({ sub, servingUnit }: { sub: BreakdownSubRecipe; 
           </button>
         </td>
         <td className="px-2 py-2.5 text-xs text-muted-foreground text-right">
-          {sub.quantity} {sub.unit}
+          {fmtQty(sub.quantity, sub.unit)}
         </td>
         <td className="px-2 py-2.5 text-xs text-muted-foreground text-right">
           £{fmt(sub.subCostPerUnit)}/{sub.unit}
@@ -1344,7 +1357,7 @@ function SubRecipeBreakdownRow({ sub, servingUnit }: { sub: BreakdownSubRecipe; 
             <span className="text-accent/40 mr-1">└</span>{b.ingredientName ?? "—"}
           </td>
           <td className="px-2 py-1.5 text-xs text-muted-foreground text-right">
-            {fmt(b.quantity)} {b.unit}
+            {fmtQty(b.quantity, b.unit)}
           </td>
           <td className="px-2 py-1.5 text-xs text-muted-foreground text-right">
             £{fmt(b.costPerUnit)}/{b.unit}
@@ -1422,9 +1435,9 @@ function RecipeCostBreakdownDialog({ id, open, onOpenChange }: { id: number; ope
                   <tr key={i} className="hover:bg-secondary/10">
                     <td className="pl-4 pr-2 py-2.5 font-medium text-sm">{r.ingredientName ?? "—"}</td>
                     <td className="px-2 py-2.5 text-right">
-                      <span className="text-xs text-muted-foreground">{fmt(r.quantity)} {r.unit}</span>
+                      <span className="text-xs text-muted-foreground">{fmtQty(r.quantity, r.unit)}</span>
                       {r.processingRatio < 1 && (
-                        <span className="block text-xs text-muted-foreground/60">{r.rawQuantity.toFixed(4)} raw</span>
+                        <span className="block text-xs text-muted-foreground/60">{fmtQty(r.rawQuantity, r.unit)} raw</span>
                       )}
                     </td>
                     <td className="px-2 py-2.5 text-xs text-muted-foreground text-right">£{fmt(r.costPerUnit)}/{r.unit}</td>

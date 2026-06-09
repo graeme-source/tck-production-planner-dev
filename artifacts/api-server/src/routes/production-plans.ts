@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, stationChangeoversTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, prepDeferralsTable, prepTinOverridesTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, fridgeStockBatchesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable, batchWeightRecordsTable, temperatureRecordsTable, builderPresenceTable } from "@workspace/db";
+import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, stationChangeoversTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, prepDeferralsTable, prepTinOverridesTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, fridgeStockBatchesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable, batchWeightRecordsTable, temperatureRecordsTable } from "@workspace/db";
 import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as drizzleSum, ne, isNotNull, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
@@ -2449,48 +2449,24 @@ router.post("/:id/batch-completions", async (req, res) => {
     }
   }
 
-  // Once the builder has marked this recipe complete, the building pipeline
-  // is locked. Downstream stations (ovens, wrapping) must still be allowed to
-  // catch up to the truncated output — their effective cap is enforced by the
-  // cascade check below (prevCount from building stations).
-  if (planItem.builderMarkedCompleteAt && stationType !== "ovens" && stationType !== "wrapping") {
-    res.status(409).json({ error: "Recipe was marked complete by the builder" });
-    return;
-  }
-
-  // Effective target: raw plan target (the ceiling-math path is deprecated —
-  // builders now use the Mark Recipe Complete override for under-runs).
-  const target = planItem.batchesTarget ?? 0;
-
-  // Per-station cap check: count THIS station's completions (not the shared batches_complete)
-  if (stationType && target > 0) {
-    const stationCountResult = await db.execute(sql`
-      SELECT COUNT(*)::int as cnt FROM batch_completions
-      WHERE plan_item_id = ${Number(planItemId)} AND station_type = ${stationType}
-    `);
-    const stationCount = (stationCountResult.rows[0] as { cnt: number })?.cnt ?? 0;
-    if (stationCount >= target) {
-      res.status(409).json({ error: "Batch target already met for this station" });
-      return;
-    }
-
-    // Combined building count check: building_1 + building_2 must not exceed target
-    if (stationType === "building_1" || stationType === "building_2") {
-      const combinedResult = await db.execute(sql`
-        SELECT COUNT(*)::int as cnt FROM batch_completions
-        WHERE plan_item_id = ${Number(planItemId)}
-          AND station_type IN ('building_1', 'building_2')
-      `);
-      const combinedCount = (combinedResult.rows[0] as { cnt: number })?.cnt ?? 0;
-      if (combinedCount >= target) {
-        res.status(409).json({ error: "Batch target already met" });
-        return;
-      }
-    }
-
-    // Cascade check: previous station(s) must have enough completions
+  // Building is reality-logging: a builder can ALWAYS record the batch in their
+  // hands. The plan target is a guide, not a ceiling — over-target builds are a
+  // deliberate floor action — and "mark recipe complete" is a soft signal, so
+  // building_1/building_2 are never capped or blocked here (this is what lets a
+  // started batch always be finished, regardless of the other builder).
+  //
+  // The only hard rule that remains is the CASCADE: a downstream station
+  // (ovens, then wrapping) can never get ahead of the station(s) that feed it.
+  // That naturally bounds ovens/wrapping to the actual building output — under
+  // OR over target — without a separate target cap.
+  if (stationType) {
     const prevStations = getPreviousStations(stationType);
     if (prevStations.length > 0) {
+      const stationCountResult = await db.execute(sql`
+        SELECT COUNT(*)::int as cnt FROM batch_completions
+        WHERE plan_item_id = ${Number(planItemId)} AND station_type = ${stationType}
+      `);
+      const stationCount = (stationCountResult.rows[0] as { cnt: number })?.cnt ?? 0;
       const prevCountResult = await db.execute(sql`
         SELECT COUNT(*)::int as cnt FROM batch_completions
         WHERE plan_item_id = ${Number(planItemId)}
@@ -2511,8 +2487,6 @@ router.post("/:id/batch-completions", async (req, res) => {
   const startedAtDate = startedAt ? new Date(startedAt) : null;
   const isWrapping = stationType === "wrapping";
 
-  const isBuilding = stationType === "building_1" || stationType === "building_2";
-
   // packsPerBatch mirrors recipe-completion.ts: floor(portionsPerBatch / 2),
   // min 1. On a partial-batch commit, we subtract ppb from extra_packs_built
   // — i.e. record the slot's shortfall as a negative-going adjustment to
@@ -2522,26 +2496,16 @@ router.post("/:id/batch-completions", async (req, res) => {
   const partialPacksValue = isPartial ? Number(partialPacks) : null;
   const extrasDelta = isPartial ? -ppb : 0;
 
+  // Unconditional insert — no target/combined caps. Building is never blocked;
+  // ovens/wrapping were already gated by the cascade pre-check above.
   const result = await db.execute(sql`
-    WITH station_check AS (
-      SELECT COUNT(*)::int as cnt FROM batch_completions
-      WHERE plan_item_id = ${Number(planItemId)}
-        AND station_type = ${stationType ?? ''}
-    ),
-    combined_check AS (
-      SELECT COUNT(*)::int as cnt FROM batch_completions
-      WHERE plan_item_id = ${Number(planItemId)}
-        AND station_type IN ('building_1', 'building_2')
-    ),
-    incremented AS (
+    WITH incremented AS (
       UPDATE production_plan_items
       SET
         batches_complete = CASE WHEN ${isWrapping}::boolean THEN batches_complete + 1 ELSE batches_complete END,
         extra_packs_built = extra_packs_built + ${extrasDelta},
         status = 'in-progress'
       WHERE id = ${Number(planItemId)}
-        AND (${target} = 0 OR (SELECT cnt FROM station_check) < ${target})
-        AND (NOT ${isBuilding}::boolean OR ${target} = 0 OR (SELECT cnt FROM combined_check) < ${target})
       RETURNING id
     )
     INSERT INTO batch_completions (plan_item_id, station_type, user_id, started_at, completed_at, partial_packs)
@@ -2558,8 +2522,9 @@ router.post("/:id/batch-completions", async (req, res) => {
 
   const rows = result.rows as Array<Record<string, unknown>>;
   if (rows.length === 0) {
-    // Increment was blocked — target already met by concurrent request
-    res.status(409).json({ error: "Batch target already met" });
+    // The UPDATE matches on id only, so 0 rows means the plan item no longer
+    // exists (deleted out from under us). Building is never blocked otherwise.
+    res.status(404).json({ error: "Plan item not found" });
     return;
   }
 
@@ -2587,21 +2552,23 @@ router.post("/:id/batch-completions", async (req, res) => {
       `);
       const ovenCount = (ovenCountRes.rows[0] as { cnt: number })?.cnt ?? 0;
 
-      // Effective target mirrors effectiveBatchesTarget() on the client:
-      // if the builder marked complete, the ceiling is the combined building
-      // count — which now includes any partial-batch slots, so the last oven
-      // batch (= last building slot, possibly partial) correctly gets flagged
-      // and carries the HACCP chill-start anchor.
-      let effectiveTarget = planItem.batchesTarget ?? 0;
+      // HACCP last-batch flag (chill-start anchor) only flips once building is
+      // FINISHED — i.e. the builder has marked the recipe complete. While
+      // building is still open we never flag a last batch, because an extra
+      // over-target tray could still land and the chill timer must anchor to
+      // the genuinely-final tray. Once finished, the effective target is the
+      // combined building count (includes partial-batch slots), so the last
+      // oven batch (= last building slot) correctly carries the anchor.
+      let isLastBatchOfRecipe = false;
       if (planItem.builderMarkedCompleteAt) {
         const buildRes = await db.execute(sql`
           SELECT COUNT(*)::int AS cnt FROM batch_completions
           WHERE plan_item_id = ${Number(planItemId)}
             AND station_type IN ('building_1', 'building_2')
         `);
-        effectiveTarget = (buildRes.rows[0] as { cnt: number })?.cnt ?? effectiveTarget;
+        const effectiveTarget = (buildRes.rows[0] as { cnt: number })?.cnt ?? (planItem.batchesTarget ?? 0);
+        isLastBatchOfRecipe = effectiveTarget > 0 && ovenCount >= effectiveTarget;
       }
-      const isLastBatchOfRecipe = effectiveTarget > 0 && ovenCount >= effectiveTarget;
 
       await db.insert(batchWeightRecordsTable).values({
         planId,
@@ -2664,36 +2631,19 @@ router.post("/:id/batch-completions/bulk", async (req, res) => {
     return;
   }
 
-  // Builder has locked in a truncated output. Downstream stations (ovens,
-  // wrapping) may still catch up to the truncated count; earlier stations are
-  // blocked. The cascade check below enforces the ovens/wrapping cap.
-  if (planItem.builderMarkedCompleteAt && stationType !== "ovens" && stationType !== "wrapping") {
-    res.status(409).json({ error: "Recipe was marked complete by the builder" });
-    return;
-  }
-
-  // Use batchesTarget directly as the cap. Extra packs don't create extra batch slots.
-  const target = planItem.batchesTarget ?? 0;
-
-  if (stationType && target > 0) {
-    // For building stations, check COMBINED count across both tables (they share the target).
-    // For other stations, check per-station count.
-    const isBuildingType = stationType === "building_1" || stationType === "building_2";
-    const stationCountResult = await db.execute(sql`
-      SELECT COUNT(*)::int as cnt FROM batch_completions
-      WHERE plan_item_id = ${Number(planItemId)}
-        AND ${isBuildingType
-          ? sql`station_type IN ('building_1', 'building_2')`
-          : sql`station_type = ${stationType}`}
-    `);
-    const stationCount = (stationCountResult.rows[0] as { cnt: number })?.cnt ?? 0;
-    if (stationCount + n > target) {
-      res.status(409).json({ error: `Adding ${n} would exceed target (${stationCount}/${target})` });
-      return;
-    }
-
+  // Building / mac-cheese blast-tray completions are reality-logging: they are
+  // NEVER rejected for a business reason (target met, builder marked complete).
+  // The only guard that survives is the cascade — a downstream station
+  // (ovens, wrapping) cannot outrun the actual output of the station feeding it.
+  if (stationType) {
     const prevStations = getPreviousStations(stationType);
     if (prevStations.length > 0) {
+      const stationCountResult = await db.execute(sql`
+        SELECT COUNT(*)::int as cnt FROM batch_completions
+        WHERE plan_item_id = ${Number(planItemId)}
+          AND station_type = ${stationType}
+      `);
+      const stationCount = (stationCountResult.rows[0] as { cnt: number })?.cnt ?? 0;
       const prevCountResult = await db.execute(sql`
         SELECT COUNT(*)::int as cnt FROM batch_completions
         WHERE plan_item_id = ${Number(planItemId)}
@@ -2701,7 +2651,8 @@ router.post("/:id/batch-completions/bulk", async (req, res) => {
       `);
       const prevCount = (prevCountResult.rows[0] as { cnt: number })?.cnt ?? 0;
       if (prevCount < stationCount + n) {
-        res.status(409).json({ error: `Previous station must complete more batches first` });
+        const prevLabel = prevStations.length === 1 ? prevStations[0] : prevStations.join("/");
+        res.status(409).json({ error: `Previous station (${prevLabel}) must complete more batches first` });
         return;
       }
     }
@@ -4817,12 +4768,9 @@ router.delete("/:id/items/:itemId/wonly", async (req, res) => {
 // builder is mid-batch on this recipe and a close would orphan their work.
 // Returns 409 with code OTHER_BUILDER_ACTIVE in that case.
 // ──────────────────────────────────────────────────────────────────────────────
-const PRESENCE_FRESH_SECONDS = 60;
-
 router.post("/:id/items/:itemId/builder-complete", async (req, res) => {
   const planId = Number(req.params.id);
   const itemId = Number(req.params.itemId);
-  const fromStation: string | null = typeof req.body?.stationType === "string" ? req.body.stationType : null;
 
   const [item] = await db.select({
     id: productionPlanItemsTable.id,
@@ -4836,30 +4784,15 @@ router.post("/:id/items/:itemId/builder-complete", async (req, res) => {
     return;
   }
 
+  // Pure SOFT signal: "we've stopped building this recipe (possibly short of
+  // target)". It NEVER blocks the other builder — anyone mid-batch can still
+  // record their batch (building completions are never rejected), and the
+  // downstream effective target follows the actual built count. Idempotent:
+  // marking an already-complete recipe is a no-op that returns the existing
+  // timestamp.
   if (item.builderMarkedCompleteAt) {
     res.json({ itemId, builderMarkedCompleteAt: item.builderMarkedCompleteAt });
     return;
-  }
-
-  // Presence guard. Only enforce when the caller tells us which station
-  // they're on (clients are expected to send stationType); admins overriding
-  // via tools may omit it.
-  if (fromStation === "building_1" || fromStation === "building_2") {
-    const otherStation = fromStation === "building_1" ? "building_2" : "building_1";
-    const presenceRes = await db.execute(sql`
-      SELECT last_seen_at FROM builder_presence
-      WHERE plan_item_id = ${itemId}
-        AND station_type = ${otherStation}
-        AND last_seen_at > NOW() - (${PRESENCE_FRESH_SECONDS} || ' seconds')::interval
-      LIMIT 1
-    `);
-    if (presenceRes.rows.length > 0) {
-      res.status(409).json({
-        error: "Another builder is mid-batch on this recipe — wait for them to finish before marking it complete.",
-        code: "OTHER_BUILDER_ACTIVE",
-      });
-      return;
-    }
   }
 
   const [updated] = await db
@@ -4868,60 +4801,7 @@ router.post("/:id/items/:itemId/builder-complete", async (req, res) => {
     .where(eq(productionPlanItemsTable.id, itemId))
     .returning({ builderMarkedCompleteAt: productionPlanItemsTable.builderMarkedCompleteAt });
 
-  // Clear stale presence rows for this item — recipe is closed, no one's
-  // working on it any more.
-  await db.execute(sql`DELETE FROM builder_presence WHERE plan_item_id = ${itemId}`);
-
   res.json({ itemId, builderMarkedCompleteAt: updated.builderMarkedCompleteAt });
-});
-
-// POST /:id/items/:itemId/presence — heartbeat from the building station while
-// a builder is actively on a recipe. Upserts (planItemId, stationType).
-router.post("/:id/items/:itemId/presence", async (req, res) => {
-  const planId = Number(req.params.id);
-  const itemId = Number(req.params.itemId);
-  const stationType: string | null = typeof req.body?.stationType === "string" ? req.body.stationType : null;
-  const sessionUserId = (req.session as { userId?: number }).userId ?? null;
-
-  if (stationType !== "building_1" && stationType !== "building_2") {
-    res.status(400).json({ error: "stationType must be building_1 or building_2" });
-    return;
-  }
-
-  const [item] = await db.select({ id: productionPlanItemsTable.id })
-    .from(productionPlanItemsTable)
-    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
-  if (!item) {
-    res.status(404).json({ error: "Plan item not found" });
-    return;
-  }
-
-  await db.execute(sql`
-    INSERT INTO builder_presence (plan_item_id, station_type, user_id, last_seen_at)
-    VALUES (${itemId}, ${stationType}, ${sessionUserId}, NOW())
-    ON CONFLICT (plan_item_id, station_type)
-    DO UPDATE SET user_id = EXCLUDED.user_id, last_seen_at = NOW()
-  `);
-
-  res.status(204).end();
-});
-
-// DELETE /:id/items/:itemId/presence — explicit clear (builder moved off
-// this recipe). The 60-second TTL also makes this self-cleaning.
-router.delete("/:id/items/:itemId/presence", async (req, res) => {
-  const itemId = Number(req.params.itemId);
-  const stationType: string | null = typeof (req.query as { stationType?: unknown }).stationType === "string"
-    ? String((req.query as { stationType?: unknown }).stationType)
-    : null;
-  if (stationType !== "building_1" && stationType !== "building_2") {
-    res.status(400).json({ error: "stationType query param must be building_1 or building_2" });
-    return;
-  }
-  await db.execute(sql`
-    DELETE FROM builder_presence
-    WHERE plan_item_id = ${itemId} AND station_type = ${stationType}
-  `);
-  res.status(204).end();
 });
 
 // POST /:id/items/:itemId/manual-batch — admin rectification for a missed

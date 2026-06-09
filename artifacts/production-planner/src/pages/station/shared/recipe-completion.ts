@@ -14,19 +14,27 @@ export function packsPerBatch(item: ProductionPlanItem): number {
 }
 
 /**
- * Effective batches target for a plan item.
+ * Effective batches target for a plan item — building output is the source of
+ * truth (the count is never a hard ceiling).
  *
- * - If the builder has marked this recipe complete, the effective target is
- *   whatever the combined building count was at that moment (we read the
- *   current combined count; once marked complete the builder can't add more).
- * - Otherwise, the original plan target applies.
+ * - Once the builder has marked the recipe finished (e.g. stopped short on
+ *   filling), the effective target is exactly what was built — downstream
+ *   (ovens/wrapping) process the real trays and never wait for phantom ones.
+ * - While building is still open, it's at least the planned target, but rises
+ *   to include any over-target batches already built so every real tray gets
+ *   cooked/wrapped.
+ *
+ * NOTE: the building station no longer uses this to gate "can I build" — a
+ * started batch is always completable and over-target builds are a deliberate
+ * action (see building-station.tsx). This helper is for downstream targets and
+ * progress display.
  */
 export function effectiveBatchesTarget(
   item: ProductionPlanItem,
   combinedBuildingCount: number,
 ): number {
   if (item.builderMarkedCompleteAt) return combinedBuildingCount;
-  return item.batchesTarget ?? 0;
+  return Math.max(item.batchesTarget ?? 0, combinedBuildingCount);
 }
 
 /**
