@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
 import { ShoppingBag, Package, RefreshCw, AlertCircle, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight, Scan, Tag, CheckCircle2, XCircle, RotateCcw, Loader2, SlidersHorizontal, MapPin, ShieldCheck } from "lucide-react";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
-import { format, startOfWeek, addWeeks, isSameWeek, parseISO } from "date-fns";
+import { format, startOfWeek, addWeeks, addDays, isSameWeek, parseISO } from "date-fns";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { useLocation } from "wouter";
 
@@ -173,7 +173,9 @@ export default function Dispatches() {
   const isCurrentWeek = weekOffset === 0;
   const todayStr = format(today, "yyyy-MM-dd");
 
-  const [dateTag, setDateTag] = useState(format(new Date(), "yyyy-MM-dd"));
+  // Default the delivery-date lookup to tomorrow — dispatches are almost always
+  // prepped the day before, so tomorrow is the date you usually want on load.
+  const [dateTag, setDateTag] = useState(format(addDays(new Date(), 1), "yyyy-MM-dd"));
   const [queryTag, setQueryTag] = useState<string | null>(null);
   const [postcodeIssues, setPostcodeIssues] = useState<PostcodeIssue[] | null>(null);
   const [postcodeLoading, setPostcodeLoading] = useState(false);
