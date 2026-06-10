@@ -12,7 +12,7 @@ import {
   Lock, Timer, BarChart2, Coffee, Truck, Mail, Warehouse,
   Camera, User, CircleDot, ToggleRight, Boxes, UtensilsCrossed,
   AlertTriangle, Scale, ThermometerSnowflake, BookOpen, Megaphone, CalendarDays,
-  Copy, Check,
+  Copy, Check, IdCard, FileText, ExternalLink,
 } from "lucide-react";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { Switch } from "@/components/ui/switch";
@@ -92,6 +92,108 @@ function RoleBadge({ role }: { role: Role }) {
       <Icon className="w-3.5 h-3.5" />
       {r.label}
     </span>
+  );
+}
+
+// Read-only view of everything stored against a user: their account details
+// plus the pre-arrival onboarding submission (contact + emergency contact +
+// uploaded documents). Loaded from GET /api/onboarding/:userId (admin/manager).
+function UserDetailsDialog({ user, onClose }: { user: AppUser; onClose: () => void }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["onboarding", user.id],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/onboarding/${user.id}`, {
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) throw new Error(`Request failed (${res.status})`);
+      return res.json() as Promise<{
+        submission: {
+          phone: string | null;
+          address: string | null;
+          emergencyContactName: string | null;
+          emergencyContactPhone: string | null;
+          emergencyContactRelationship: string | null;
+          submittedAt: string | null;
+        } | null;
+        documents: { id: number; kind: string; fileName: string | null }[];
+      }>;
+    },
+  });
+  const s = data?.submission;
+  const docs = data?.documents ?? [];
+  const kindLabel: Record<string, string> = {
+    right_to_work: "Right to work / ID",
+    food_hygiene: "Food Hygiene certificate",
+    other: "Document",
+  };
+  const Row = ({ label, value }: { label: string; value: string | null | undefined }) => (
+    <div className="flex justify-between gap-3 py-1.5 border-b border-border last:border-0">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="text-sm text-right break-words">{value || <span className="text-muted-foreground/50">—</span>}</span>
+    </div>
+  );
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-[480px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="font-display text-xl">{user.name}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 mt-1">
+          {/* Account */}
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Account</p>
+            <Row label="Email" value={user.email} />
+            <div className="flex justify-between gap-3 py-1.5 border-b border-border">
+              <span className="text-xs text-muted-foreground">Access level</span>
+              <RoleBadge role={user.role} />
+            </div>
+            <Row label="Status" value={user.isActive ? "Active" : "Inactive"} />
+            <Row label="Created" value={new Date(user.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} />
+          </div>
+
+          {isLoading ? (
+            <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+          ) : !s && docs.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-2">{user.name} hasn't submitted their onboarding form yet — no contact or emergency details on file.</p>
+          ) : (
+            <>
+              {/* Contact */}
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Contact</p>
+                <Row label="Mobile" value={s?.phone} />
+                <Row label="Address" value={s?.address} />
+              </div>
+              {/* Emergency contact */}
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Emergency contact</p>
+                <Row label="Name" value={s?.emergencyContactName} />
+                <Row label="Phone" value={s?.emergencyContactPhone} />
+                <Row label="Relationship" value={s?.emergencyContactRelationship} />
+              </div>
+              {/* Documents */}
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Documents</p>
+                {docs.length === 0 ? (
+                  <p className="text-sm text-muted-foreground/50">None uploaded</p>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {docs.map(d => (
+                      <li key={d.id} className="flex items-center justify-between gap-2 text-sm bg-secondary/40 rounded-lg px-3 py-2">
+                        <span className="flex items-center gap-2 min-w-0"><FileText className="w-4 h-4 text-primary flex-shrink-0" /><span className="truncate">{kindLabel[d.kind] ?? d.kind}</span></span>
+                        <a href={`${BASE}/api/onboarding/documents/${d.id}/file`} target="_blank" rel="noopener noreferrer" className="flex-shrink-0 inline-flex items-center gap-1 text-xs text-primary hover:underline">
+                          <ExternalLink className="w-3.5 h-3.5" /> Open
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -534,6 +636,7 @@ function TeamAccessContent({
   const { createUser, updateUser, deleteUser } = useAppMutations();
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<AppUser | null>(null);
+  const [viewingUser, setViewingUser] = useState<AppUser | null>(null);
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"admin" | "manager" | "viewer">("viewer");
@@ -734,6 +837,11 @@ function TeamAccessContent({
           </Dialog>
         )}
 
+        {/* View details dialog */}
+        {viewingUser && (
+          <UserDetailsDialog user={viewingUser} onClose={() => setViewingUser(null)} />
+        )}
+
         {isLoading ? (
           <div className="flex justify-center py-12">
             <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
@@ -788,6 +896,13 @@ function TeamAccessContent({
                     </td>
                     <td className="px-5 py-3.5 text-right">
                       <div className="flex items-center justify-end gap-1">
+                        <button
+                          onClick={() => setViewingUser(u as AppUser)}
+                          className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
+                          title="View details"
+                        >
+                          <IdCard className="w-4 h-4" />
+                        </button>
                         <button
                           onClick={() => setEditingUser(u as AppUser)}
                           className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
