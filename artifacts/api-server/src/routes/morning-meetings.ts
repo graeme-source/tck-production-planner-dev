@@ -315,9 +315,9 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
       .orderBy(desc(andonIssuesTable.createdAt))
       .limit(10);
 
-    // ── Open struggles (improvements tagged type='struggle', not yet
-    //    completed or rejected — match the existing kaizen board) ────
-    const struggles = await db
+    // ── Improvements required (open improvements — ideas + struggles are
+    //    now one concept; show anything not yet complete or rejected) ───
+    const improvementsRequired = await db
       .select({
         id: improvementSubmissionsTable.id,
         title: improvementSubmissionsTable.title,
@@ -325,12 +325,23 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
         createdAt: improvementSubmissionsTable.createdAt,
       })
       .from(improvementSubmissionsTable)
-      .where(and(
-        eq(improvementSubmissionsTable.type, "struggle"),
-        notInArray(improvementSubmissionsTable.progressStatus, ["complete", "rejected"]),
-      ))
+      .where(notInArray(improvementSubmissionsTable.progressStatus, ["complete", "rejected"]))
       .orderBy(desc(improvementSubmissionsTable.createdAt))
       .limit(10);
+
+    // ── Recently completed improvements (for the "Recent Improvements"
+    //    meeting slide). Newest completions first. ─────────────────────
+    const recentImprovements = await db
+      .select({
+        id: improvementSubmissionsTable.id,
+        title: improvementSubmissionsTable.title,
+        description: improvementSubmissionsTable.description,
+        updatedAt: improvementSubmissionsTable.updatedAt,
+      })
+      .from(improvementSubmissionsTable)
+      .where(eq(improvementSubmissionsTable.progressStatus, "complete"))
+      .orderBy(desc(improvementSubmissionsTable.updatedAt))
+      .limit(8);
 
     // ── SOPs updated in the last 7 days ────────────────────────────
     // Reads from the new standards_sops table (the Standards & SOPs
@@ -442,7 +453,10 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
       tomorrowNonCoreItems,
       todayDeliveries,
       safetyIssues,
-      struggles,
+      improvementsRequired,
+      // Back-compat alias so any cached/older client still renders.
+      struggles: improvementsRequired,
+      recentImprovements,
       recentSops: (recentSops.rows ?? recentSops).map((r: any) => ({
         id: r.id,
         title: r.title,

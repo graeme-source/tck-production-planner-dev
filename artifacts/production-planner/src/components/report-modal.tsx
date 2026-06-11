@@ -111,7 +111,7 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
   const enabledTabs: { key: Tab; settingKey: keyof QuickIdeaTabSettings }[] = [
     { key: "pullKanban", settingKey: "kanban" },
     { key: "improvements", settingKey: "idea" },
-    { key: "struggle", settingKey: "struggle" },
+    // "Struggle" merged into "Improvement" — one improvements concept now.
     { key: "andon", settingKey: "issue" },
     { key: "ai", settingKey: "ai" },
   ].filter(t => tabSettings[t.settingKey]) as { key: Tab; settingKey: keyof QuickIdeaTabSettings }[];
@@ -472,19 +472,7 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
                 )}
               >
                 <Lightbulb className="w-4 h-4 shrink-0" />
-                <span className="hidden sm:inline">Improvement</span> Idea
-              </button>}
-              {tabSettings.struggle && <button
-                onClick={() => setActiveTab("struggle")}
-                className={cn(
-                  "flex items-center gap-1.5 flex-1 justify-center px-2.5 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all whitespace-nowrap min-w-0",
-                  activeTab === "struggle"
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                <HandHelping className="w-4 h-4 shrink-0" />
-                Struggle
+                Improvement
               </button>}
               {tabSettings.issue && <button
                 onClick={() => setActiveTab("andon")}

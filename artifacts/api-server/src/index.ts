@@ -202,6 +202,27 @@ async function runStartupMigrations() {
         updated_at timestamp NOT NULL DEFAULT now()
       )
     `);
+    // Improvements consolidation: "struggles" are now just improvements.
+    // Idempotent — a no-op once no struggle rows remain.
+    await db.execute(sql`
+      UPDATE improvement_submissions SET type = 'improvement' WHERE type = 'struggle'
+    `);
+    // Photos & videos attached to an improvement (multiple per improvement),
+    // stored as bytea like SOP step media so it works without object storage.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS improvement_attachments (
+        id serial PRIMARY KEY,
+        improvement_id integer NOT NULL REFERENCES improvement_submissions(id) ON DELETE CASCADE,
+        kind text NOT NULL,
+        mime text NOT NULL,
+        data bytea NOT NULL,
+        file_name text,
+        created_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS improvement_attachments_improvement_idx ON improvement_attachments (improvement_id)
+    `);
     await db.execute(sql`
       ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS short_count INTEGER NOT NULL DEFAULT 0
     `);
@@ -1530,6 +1551,10 @@ async function runStartupMigrations() {
 
     // Dedicated supplier ordering phone (WhatsApp) — separate from `phone`.
     await db.execute(sql`ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS ordering_phone text`);
+
+    // Case size (in packs) for case-rounding the order quantity. Null = order
+    // in individual packs. Only affects the orders page; stock check unchanged.
+    await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS case_size_packs INTEGER`);
 
     console.log("Startup migrations OK");
   } catch (err) {

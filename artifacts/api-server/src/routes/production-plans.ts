@@ -3541,6 +3541,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       recipeId: productionPlanItemsTable.recipeId,
       batchesTarget: productionPlanItemsTable.batchesTarget,
       recipeName: recipesTable.name,
+      recipeCategory: recipesTable.category,
       portionsPerBatch: recipesTable.portionsPerBatch,
       sopUrlFromItem: productionPlanItemsTable.sopUrl,
       sopUrlFromRecipe: recipesTable.sopUrl,
@@ -3869,6 +3870,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
     result.push({
       recipeId: planItem.recipeId,
       recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
+      recipeCategory: planItem.recipeCategory ?? null,
       batchesTarget,
       sopUrl: planItem.sopUrlFromItem ?? planItem.sopUrlFromRecipe ?? null,
       tinSize: planItem.tinSize ?? null,

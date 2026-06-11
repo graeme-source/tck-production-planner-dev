@@ -33,6 +33,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
+import { ImprovementAttachments } from "@/components/improvement-attachments";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -66,6 +67,8 @@ interface DashboardData {
   todayDeliveries: Array<{ id: number; supplierName: string; status: string }>;
   safetyIssues: Array<{ id: number; category: string; severity: string; description: string | null; createdAt: string }>;
   struggles: Array<{ id: number; title: string; description: string; createdAt: string }>;
+  improvementsRequired: Array<{ id: number; title: string; description: string; createdAt: string }>;
+  recentImprovements: Array<{ id: number; title: string; description: string; updatedAt: string }>;
   recentSops: Array<{ id: number; title: string; updatedAt: string }>;
   lesson: {
     id: number; weekNumber: number; title: string; summary: string;
@@ -223,6 +226,7 @@ type SlideKind =
   | "system_updates"
   | "new_sops"
   | "struggles"
+  | "recent_improvements"
   | "lesson"
   | "gratitude"
   | "custom_markdown";
@@ -239,6 +243,7 @@ const SLIDE_KIND_META: Record<SlideKind, { icon: React.ElementType; color: strin
   system_updates:      { icon: Sparkles,      color: "text-purple-500",  fallbackTitle: "System Updates" },
   new_sops:            { icon: FileText,      color: "text-cyan-500",    fallbackTitle: "New & Updated SOPs" },
   struggles:           { icon: MessageCircle, color: "text-pink-500",    fallbackTitle: "Improvements Required" },
+  recent_improvements: { icon: CheckCircle2,  color: "text-green-500",   fallbackTitle: "Recent Improvements" },
   lesson:              { icon: BookOpen,      color: "text-purple-500",  fallbackTitle: "Today's Lean Lesson" },
   gratitude:           { icon: Heart,         color: "text-rose-500",    fallbackTitle: "Gratitude" },
   custom_markdown:     { icon: BookOpen,      color: "text-slate-500",   fallbackTitle: "Note" },
@@ -886,6 +891,7 @@ function SlideBody({ slide, data, onRefresh, isPreviewing }: { slide: MeetingSli
     case "system_updates": return <SystemUpdatesSlide slide={slide} />;
     case "new_sops": return <NewSopsSlide data={data} slide={slide} />;
     case "struggles": return <StrugglesSlide data={data} onRefresh={onRefresh} slide={slide} />;
+    case "recent_improvements": return <RecentImprovementsSlide data={data} slide={slide} />;
     case "lesson":
     case "learning": return <LearningSlide data={data} slide={slide} />;
     case "gratitude": return <GratitudeSlide data={data} onRefresh={onRefresh} slide={slide} />;
@@ -1704,7 +1710,7 @@ function StrugglesSlide({ data, onRefresh, slide }: { data: DashboardData; onRef
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, description, station: "morning-meeting", type: "struggle", reportContext: "Raised in morning meeting" }),
+        body: JSON.stringify({ title, description, station: "morning-meeting", type: "improvement", reportContext: "Raised in morning meeting" }),
       });
       if (!res.ok) throw new Error("Failed");
       setTitle(""); setDescription("");
@@ -1722,7 +1728,7 @@ function StrugglesSlide({ data, onRefresh, slide }: { data: DashboardData; onRef
       <SectionLead>What's getting in the way? No blame — just name it. We'll action it from the kaizen board.</SectionLead>
       {data.struggles.length > 0 && (
         <div className="glass-panel rounded-2xl overflow-hidden mb-6">
-          <p className="text-base font-semibold uppercase tracking-wide text-muted-foreground px-6 py-3 border-b border-border/50">Open struggles</p>
+          <p className="text-base font-semibold uppercase tracking-wide text-muted-foreground px-6 py-3 border-b border-border/50">Open improvements</p>
           {data.struggles.map(s => (
             <div key={s.id} className="px-6 py-4 border-b border-border/50 last:border-0">
               <p className="text-2xl font-semibold leading-tight">{s.title}</p>
@@ -1751,6 +1757,45 @@ function StrugglesSlide({ data, onRefresh, slide }: { data: DashboardData; onRef
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function RecentImprovementsSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
+  const [openId, setOpenId] = useState<number | null>(null);
+  const items = data.recentImprovements ?? [];
+  return (
+    <div>
+      <SectionTitle>{slide.title || "Recent Improvements"}</SectionTitle>
+      <SectionLead>What we&apos;ve shipped — tap one to see the photos &amp; videos.</SectionLead>
+      {items.length === 0 ? (
+        <div className="glass-panel rounded-2xl p-8 text-3xl text-muted-foreground italic text-center">
+          No improvements completed recently.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {items.map(imp => (
+            <div key={imp.id} className="glass-panel rounded-2xl overflow-hidden">
+              <button
+                onClick={() => setOpenId(o => (o === imp.id ? null : imp.id))}
+                className="w-full text-left px-6 py-4 flex items-start gap-4"
+              >
+                <CheckCircle2 className="w-7 h-7 text-green-500 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-2xl font-semibold leading-snug">{imp.title}</p>
+                  {imp.description && <p className="text-lg text-muted-foreground mt-1 line-clamp-2">{imp.description}</p>}
+                </div>
+                <ChevronRight className={cn("w-6 h-6 text-muted-foreground transition-transform mt-1", openId === imp.id && "rotate-90")} />
+              </button>
+              {openId === imp.id && (
+                <div className="px-6 pb-5 pt-1">
+                  <ImprovementAttachments improvementId={imp.id} thumbSize="w-40 h-40" />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1935,7 +1980,8 @@ const SLIDE_KIND_CATALOG: Array<{ kind: SlideKind; label: string; description: s
   { kind: "safety_issues",       label: "Safety Issues",        description: "Open andons + log new" },
   { kind: "system_updates",      label: "System Updates",       description: "Auto-pulls recent commits to the planner" },
   { kind: "new_sops",            label: "New & Updated SOPs",   description: "SOPs touched in last 7 days" },
-  { kind: "struggles",           label: "Improvements Required",            description: "Open struggles + log new" },
+  { kind: "struggles",           label: "Improvements Required",            description: "Open improvements + log new" },
+  { kind: "recent_improvements", label: "Recent Improvements",  description: "Recently completed improvements + photos/videos" },
   { kind: "lesson",              label: "Lean Lesson",          description: "Today's principle + example" },
   { kind: "gratitude",           label: "Gratitude",            description: "Capture shout-outs" },
   { kind: "custom_markdown",     label: "Custom note",          description: "Freeform markdown slide" },

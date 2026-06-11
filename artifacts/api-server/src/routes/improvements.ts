@@ -1,9 +1,17 @@
 import { Router, type IRouter, type Request, type Response } from "express";
+import multer from "multer";
 import { db, improvementSubmissionsTable, improvementCommentsTable, usersTable } from "@workspace/db";
-import { eq, desc, asc } from "drizzle-orm";
+import { eq, desc, asc, sql } from "drizzle-orm";
 import type { ImprovementSubmission } from "@workspace/db";
 
 const router: IRouter = Router();
+
+// One file per upload. 100MB cap covers short demo clips; images are checked
+// against a tighter 10MB limit after the fact. Stored in Postgres as bytea
+// (same approach as SOP step media) so no object storage is needed.
+const mediaUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+const IMAGE_MIMES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+const VIDEO_MIMES = ["video/mp4", "video/webm", "video/quicktime", "video/ogg"];
 
 router.get("/", async (req: Request, res: Response) => {
   try {
@@ -166,6 +174,76 @@ router.post("/:id/comments", async (req: Request, res: Response) => {
     console.error("Error creating comment:", err);
     res.status(500).json({ error: "Failed to create comment" });
   }
+});
+
+// ── Attachments (photos & videos) ────────────────────────────────────────
+
+interface AttachmentRow { id: number; kind: string; mime: string; file_name: string | null; created_at: Date | string; }
+const toRows = <T,>(r: unknown): T[] => ((r as { rows?: T[] }).rows ?? (r as T[]));
+
+// List attachment metadata for an improvement (no bytes).
+router.get("/:id/attachments", async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const rows = toRows<AttachmentRow>(await db.execute(sql`
+    SELECT id, kind, mime, file_name, created_at
+    FROM improvement_attachments WHERE improvement_id = ${id} ORDER BY created_at ASC
+  `));
+  res.json(rows.map(a => ({
+    id: a.id, kind: a.kind, mime: a.mime, fileName: a.file_name,
+    createdAt: a.created_at instanceof Date ? a.created_at.toISOString() : a.created_at,
+  })));
+});
+
+// Upload a photo or video to an improvement.
+router.post("/:id/attachments", mediaUpload.single("file"), async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  if (!req.file) { res.status(400).json({ error: "No file uploaded" }); return; }
+  const mime = req.file.mimetype;
+  const isImage = IMAGE_MIMES.includes(mime);
+  const isVideo = VIDEO_MIMES.includes(mime);
+  if (!isImage && !isVideo) {
+    res.status(400).json({ error: "Unsupported file type. Use JPEG/PNG/WebP/GIF or MP4/WebM/MOV/OGG." });
+    return;
+  }
+  if (isImage && req.file.size > 10 * 1024 * 1024) {
+    res.status(400).json({ error: "Image too large (max 10MB)." });
+    return;
+  }
+  const exists = toRows<{ id: number }>(await db.execute(sql`SELECT id FROM improvement_submissions WHERE id = ${id}`));
+  if (exists.length === 0) { res.status(404).json({ error: "Improvement not found" }); return; }
+  const rows = toRows<{ id: number }>(await db.execute(sql`
+    INSERT INTO improvement_attachments (improvement_id, kind, mime, data, file_name)
+    VALUES (${id}, ${isImage ? "image" : "video"}, ${mime}, ${req.file.buffer}, ${req.file.originalname ?? null})
+    RETURNING id
+  `));
+  res.status(201).json({ id: rows[0]?.id, kind: isImage ? "image" : "video", mime });
+});
+
+// Stream the bytes of a single attachment.
+router.get("/attachments/:attId", async (req: Request, res: Response) => {
+  const attId = parseInt(String(req.params.attId), 10);
+  if (isNaN(attId)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const rows = toRows<{ mime: string; data: Buffer; kind: string }>(await db.execute(sql`
+    SELECT mime, data, kind FROM improvement_attachments WHERE id = ${attId}
+  `));
+  const row = rows[0];
+  if (!row || !row.data || !row.mime) { res.status(404).json({ error: "Not found" }); return; }
+  res.setHeader("Content-Type", row.mime);
+  res.setHeader("Cache-Control", "private, max-age=300");
+  if (row.kind === "video") res.setHeader("Accept-Ranges", "bytes");
+  res.send(row.data);
+});
+
+// Delete an attachment (manager/admin).
+router.delete("/attachments/:attId", async (req: Request, res: Response) => {
+  const role = req.session.userRole;
+  if (role !== "admin" && role !== "manager") { res.status(403).json({ error: "Manager or admin access required" }); return; }
+  const attId = parseInt(String(req.params.attId), 10);
+  if (isNaN(attId)) { res.status(400).json({ error: "Invalid id" }); return; }
+  await db.execute(sql`DELETE FROM improvement_attachments WHERE id = ${attId}`);
+  res.json({ ok: true });
 });
 
 export default router;

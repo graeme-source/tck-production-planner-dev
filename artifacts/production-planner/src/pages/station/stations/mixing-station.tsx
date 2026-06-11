@@ -369,7 +369,9 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
     const interval = setInterval(() => {
       fetch(`/api/production-plans/${plan.id}/prep-requirements-by-recipe?station=prep_meat`, { credentials: "include" })
         .then(r => r.json())
-        .then((d: { recipes?: PrepRecipeDetail[] }) => setCookingRecipes(d.recipes ?? []))
+        // Mac & Cheese prep (incl. its pigs-in-blankets cook temp) lives on the
+        // Mac & Cheese station — keep it out of the mixing tray-cooking flow.
+        .then((d: { recipes?: PrepRecipeDetail[] }) => setCookingRecipes((d.recipes ?? []).filter(r => !isMacCheese({ recipeCategory: r.recipeCategory }))))
         .catch((err) => { console.warn("[MixingStation] Cooking recipes poll failed:", err); });
     }, 10000);
     return () => clearInterval(interval);

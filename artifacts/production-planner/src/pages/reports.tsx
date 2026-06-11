@@ -3,6 +3,7 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useSearch, useLocation } from "wouter";
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
+import { ImprovementAttachments } from "@/components/improvement-attachments";
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, subWeeks, subMonths, isToday, isYesterday, isSameDay, addDays, addWeeks, differenceInCalendarDays } from "date-fns";
 import {
   Loader2, Coffee, Utensils, Clock, Users,
@@ -2676,20 +2677,9 @@ export function ImprovementsTab({ userRole, currentUserName }: { userRole: strin
           {IMPROVEMENT_TIER_OPTIONS.filter(o => o.value).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
 
-        {/* Type filter */}
-        <select
-          value={filterType}
-          onChange={e => setFilterType(e.target.value)}
-          className="px-3 py-2 border border-border rounded-xl text-sm bg-background focus-ring"
-        >
-          <option value="">All types</option>
-          <option value="improvement">Idea</option>
-          <option value="struggle">Niggle</option>
-        </select>
-
-        {(filterSearch || filterStatus || filterStation || filterTier || filterType) && (
+        {(filterSearch || filterStatus || filterStation || filterTier) && (
           <button
-            onClick={() => { setFilterSearch(""); setFilterStatus(""); setFilterStation(""); setFilterTier(""); setFilterType(""); }}
+            onClick={() => { setFilterSearch(""); setFilterStatus(""); setFilterStation(""); setFilterTier(""); }}
             className="text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
           >
             Clear filters
@@ -2735,13 +2725,8 @@ export function ImprovementsTab({ userRole, currentUserName }: { userRole: strin
                     {imp.description && <p className="text-xs text-muted-foreground mt-0.5 max-w-xs line-clamp-2">{imp.description}</p>}
                   </td>
                   <td className="px-4 py-3 text-center">
-                    <span className={cn(
-                      "px-2 py-0.5 rounded-full text-xs font-medium",
-                      (imp.type ?? "improvement") === "struggle"
-                        ? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
-                        : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                    )}>
-                      {(imp.type ?? "improvement") === "struggle" ? "Niggle" : "Idea"}
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+                      Improvement
                     </span>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
@@ -2829,13 +2814,8 @@ export function ImprovementsTab({ userRole, currentUserName }: { userRole: strin
             <>
               <DialogHeader>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className={cn(
-                    "px-2.5 py-0.5 rounded-full text-xs font-medium",
-                    (selectedImp.type ?? "improvement") === "struggle"
-                      ? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
-                      : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                  )}>
-                    {(selectedImp.type ?? "improvement") === "struggle" ? "Niggle" : "Idea"}
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+                    Improvement
                   </span>
                   <span className={cn("px-2 py-0.5 rounded-full text-xs", statusBadgeClass(selectedImp.progressStatus))}>
                     {IMPROVEMENT_PROGRESS_OPTIONS.find(o => o.value === selectedImp.progressStatus)?.label ?? selectedImp.progressStatus}
@@ -2861,6 +2841,12 @@ export function ImprovementsTab({ userRole, currentUserName }: { userRole: strin
                 <div className="bg-secondary/30 rounded-xl p-4">
                   <p className="text-sm font-medium text-muted-foreground mb-1">Description</p>
                   <p className="text-sm whitespace-pre-wrap">{selectedImp.description}</p>
+                </div>
+
+                {/* Photos & videos */}
+                <div className="bg-secondary/30 rounded-xl p-4">
+                  <p className="text-sm font-medium text-muted-foreground mb-2">Photos &amp; videos</p>
+                  <ImprovementAttachments improvementId={selectedImp.id} editable />
                 </div>
 
                 {/* Report context */}
