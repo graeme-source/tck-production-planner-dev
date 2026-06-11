@@ -1,7 +1,7 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { db, stockEntriesTable, recipesTable, ingredientsTable, storageLocationsTable } from "@workspace/db";
 import { productionPlanItemsTable, productionPlansTable } from "@workspace/db";
-import { and, desc, eq, gte, lt } from "drizzle-orm";
+import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -241,6 +241,38 @@ router.get("/history", async (req: Request, res: Response) => {
   const days = Math.min(Math.max(parseInt(daysRaw, 10) || 7, 1), 90);
 
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  // Production-fridge recipes: serve the append-only change log so wrapping
+  // additions and despatch decrements show alongside manual checks. The
+  // delta/source are stored directly (no row-to-row diffing needed).
+  if (location === "production_fridge" && itemType === "recipe") {
+    const changeRows = ((r: unknown) => (r as { rows?: any[] }).rows ?? (r as any[]))(
+      await db.execute(sql`
+        SELECT id, pack_size, delta, resulting_qty, source, note, created_at
+        FROM fridge_stock_changes
+        WHERE recipe_id = ${itemId} AND created_at >= ${since}
+        ORDER BY created_at DESC
+      `),
+    ) as Array<{ id: number; pack_size: number; delta: number; resulting_qty: number; source: string; note: string | null; created_at: Date | string }>;
+    res.json({
+      location,
+      itemType,
+      itemId,
+      days,
+      baselineQuantity: null,
+      entries: changeRows.map(r => ({
+        id: r.id,
+        checkedAt: r.created_at instanceof Date ? r.created_at.toISOString() : r.created_at,
+        quantity: Number(r.resulting_qty),
+        delta: Number(r.delta),
+        unit: Number(r.pack_size) === 8 ? "8-pack bags" : "packs",
+        notes: r.note,
+        source: r.source,
+      })),
+    });
+    return;
+  }
+
   const itemFilter = itemType === "recipe"
     ? eq(stockEntriesTable.recipeId, itemId)
     : eq(stockEntriesTable.ingredientId, itemId);

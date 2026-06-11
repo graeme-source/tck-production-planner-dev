@@ -1556,6 +1556,28 @@ async function runStartupMigrations() {
     // in individual packs. Only affects the orders page; stock check unchanged.
     await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS case_size_packs INTEGER`);
 
+    // Append-only audit log of every production-fridge stock change (manual
+    // checks/adjustments, wrapping additions, despatch decrements). The
+    // aggregate stock_entries row stays the live total; this records each delta
+    // so the team can see what built the number up day to day.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS fridge_stock_changes (
+        id serial PRIMARY KEY,
+        recipe_id integer NOT NULL,
+        pack_size integer NOT NULL DEFAULT 2,
+        delta integer NOT NULL,
+        resulting_qty integer NOT NULL,
+        source text NOT NULL,
+        user_id integer,
+        note text,
+        created_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS idx_fridge_stock_changes_recipe_pack_time
+        ON fridge_stock_changes (recipe_id, pack_size, created_at DESC)
+    `);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

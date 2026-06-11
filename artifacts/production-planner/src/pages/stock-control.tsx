@@ -189,6 +189,7 @@ interface AdjustmentHistoryEntry {
   delta: number | null;
   unit: string;
   notes: string | null;
+  source?: string | null;
 }
 
 interface AdjustmentHistoryResponse {
@@ -938,8 +939,19 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
                                 <span className="w-16 text-right font-medium tabular-nums">
                                   {Math.round(entry.quantity * 100) / 100}
                                 </span>
-                                <span className="flex-1 pl-3 text-muted-foreground truncate" title={entry.notes ?? ""}>
-                                  {entry.notes ?? ""}
+                                <span className="flex-1 pl-3 text-muted-foreground truncate flex items-center gap-1.5" title={entry.notes ?? ""}>
+                                  {entry.source && (
+                                    <span className={cn(
+                                      "px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0",
+                                      entry.source === "wrapping" && "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
+                                      entry.source === "fulfilment" && "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300",
+                                      entry.source === "reset" && "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
+                                      (entry.source === "manual" || !["wrapping", "fulfilment", "reset"].includes(entry.source)) && "bg-secondary text-muted-foreground",
+                                    )}>
+                                      {entry.source === "wrapping" ? "Wrapped" : entry.source === "fulfilment" ? "Despatch" : entry.source === "reset" ? "Reset" : "Manual"}
+                                    </span>
+                                  )}
+                                  <span className="truncate">{entry.notes ?? ""}</span>
                                 </span>
                               </div>
                             );

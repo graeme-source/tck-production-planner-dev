@@ -33,6 +33,7 @@ import {
   fridgeStockBatchesTable,
   recipesTable,
 } from "@workspace/db";
+import { logFridgeStockChange, type FridgeChangeSource } from "./fridge-stock-log";
 
 /** Sentinel batch number used when an operator adds packs to the fridge
  *  but doesn't supply a real batch number. Stored as a real row in
@@ -51,6 +52,11 @@ export interface AdjustFridgeStockInput {
   useByDate?: string | null;
   packSize?: number;
   reason: string;
+  /** Where this change came from — drives the Stock Control history label.
+   *  Defaults to "manual". */
+  source?: FridgeChangeSource;
+  /** Operator who made the change, for the audit log. */
+  userId?: number | null;
 }
 
 export interface AdjustFridgeStockResult {
@@ -121,6 +127,18 @@ export async function adjustFridgeStock(
         notes: reason,
       });
     }
+
+    // Audit-log row (covers both add and remove). Keeps the Stock Control
+    // history complete alongside wrapping/despatch changes.
+    await logFridgeStockChange(tx, {
+      recipeId,
+      packSize,
+      delta,
+      resultingQty: newAggregateQty,
+      source: input.source ?? "manual",
+      note: reason,
+      userId: input.userId ?? null,
+    });
 
     // ── Batch-level update ───────────────────────────────────────────
     if (delta > 0) {

@@ -79,6 +79,9 @@ router.get("/factory-numbers", async (_req, res) => {
     .where(and(
       eq(stockEntriesTable.itemType, "recipe"),
       eq(stockEntriesTable.location, "production_fridge"),
+      // 2-pack reading only — 8-pack bags are tracked separately and must not
+      // out-rank the 2-pack factory number on recency.
+      eq(stockEntriesTable.packSize, 2),
     ))
     .orderBy(desc(stockEntriesTable.checkedAt));
 
@@ -154,6 +157,8 @@ router.post("/", validate(CreateStockEntryBody), async (req, res) => {
       delta,
       packSize,
       reason: notes ?? "Manual stock-control entry",
+      source: "manual",
+      userId: req.session.userId ?? null,
     });
     const row = await readLatestProductionFridgeRow(recipeId, packSize);
     if (!row) { res.status(500).json({ error: "Adjustment failed to produce a row" }); return; }
