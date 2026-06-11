@@ -185,6 +185,11 @@ async function runStartupMigrations() {
     await db.execute(sql`
       ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS extra_packs_built INTEGER NOT NULL DEFAULT 0
     `);
+    // Per-SOP manual override for the print-to-PDF layout (steps per page,
+    // 1-6). NULL = auto-detect a balanced number per page.
+    await db.execute(sql`
+      ALTER TABLE standards_sops ADD COLUMN IF NOT EXISTS steps_per_page INTEGER
+    `);
     await db.execute(sql`
       ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS short_count INTEGER NOT NULL DEFAULT 0
     `);

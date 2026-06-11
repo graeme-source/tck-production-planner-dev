@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   BookOpen, X, Loader2, Plus, Upload, Trash2, Filter, ChevronLeft, ChevronRight,
   Edit2, ArrowUp, ArrowDown, FileText, Image as ImageIcon, Camera, CheckCircle2,
-  Search, ChevronDown, Check,
+  Search, ChevronDown, Check, Printer,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -20,6 +20,8 @@ interface SopSummary {
   stepCount: number;
   coverImageStepId: number | null;
   updatedAt: string;
+  // Manual override for the print-to-PDF layout (1-6). null = auto-detect.
+  stepsPerPage: number | null;
 }
 
 interface SopStep {
@@ -991,6 +993,15 @@ function Viewer({
           )}
         </div>
         <div className="flex items-center gap-2">
+          {sop && (
+            <button
+              onClick={() => window.open(`/print/sop/${sop.id}`, "_blank", "noopener")}
+              className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-secondary"
+              title="Open a printable PDF of this SOP's steps"
+            >
+              <Printer className="w-4 h-4" /> Print PDF
+            </button>
+          )}
           {canEdit && sop && (
             <button onClick={onEdit} className="text-sm px-3 py-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-secondary">
               Edit
@@ -1165,6 +1176,7 @@ function Editor({
   const [pickerIds, setPickerIds] = useState<Set<string>>(new Set());
   const [tags, setTags] = useState<string[]>([]);
   const [tagDraft, setTagDraft] = useState("");
+  const [stepsPerPage, setStepsPerPage] = useState<number | null>(null);
 
   const fetchDetail = useCallback(async () => {
     try {
@@ -1175,6 +1187,7 @@ function Editor({
       setTitle(data.title);
       setPickerIds(realKeysToPickerIds(data.stations));
       setTags(data.tags ?? []);
+      setStepsPerPage(data.stepsPerPage ?? null);
     } catch (err) {
       toast({ title: "Failed to load", description: String(err), variant: "destructive" });
     }
@@ -1185,7 +1198,7 @@ function Editor({
     fetchDetail().finally(() => setLoading(false));
   }, [fetchDetail]);
 
-  const saveMeta = async (next: { title?: string; stations?: string[]; tags?: string[] }) => {
+  const saveMeta = async (next: { title?: string; stations?: string[]; tags?: string[]; stepsPerPage?: number | null }) => {
     try {
       await fetch(`/api/standards/${sopId}`, {
         method: "PUT",
@@ -1400,6 +1413,28 @@ function Editor({
                       </div>
                     );
                   })()}
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium block mb-1.5">Steps per page (PDF print)</label>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    How many steps go on each printed A4 page. <strong>Auto</strong> picks a balanced
+                    layout (max 6 per page); set a fixed number to always use that.
+                  </p>
+                  <select
+                    value={stepsPerPage ?? ""}
+                    onChange={e => {
+                      const v = e.target.value === "" ? null : Number(e.target.value);
+                      setStepsPerPage(v);
+                      saveMeta({ stepsPerPage: v });
+                    }}
+                    className="text-sm px-2.5 py-1.5 bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  >
+                    <option value="">Auto</option>
+                    {[1, 2, 3, 4, 5, 6].map(n => (
+                      <option key={n} value={n}>{n} per page</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 

@@ -38,6 +38,7 @@ interface SopRow {
   author_name: string | null;
   step_count: number;
   first_image_step_id: number | null;
+  steps_per_page: number | null;
 }
 
 function shapeSop(row: SopRow) {
@@ -52,6 +53,7 @@ function shapeSop(row: SopRow) {
     updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
     stepCount: Number(row.step_count) || 0,
     coverImageStepId: row.first_image_step_id,
+    stepsPerPage: row.steps_per_page ?? null,
   };
 }
 
@@ -61,7 +63,7 @@ router.get("/", requireAuth, async (req, res) => {
     const station = typeof req.query.station === "string" ? req.query.station : null;
     const rows = station
       ? await db.execute<SopRow>(sql`
-          SELECT s.id, s.title, s.stations, s.tags, s.author_id, s.created_at, s.updated_at,
+          SELECT s.id, s.title, s.stations, s.tags, s.author_id, s.created_at, s.updated_at, s.steps_per_page,
                  u.name AS author_name,
                  (SELECT COUNT(*)::int FROM sop_steps st WHERE st.sop_id = s.id) AS step_count,
                  (SELECT st.id FROM sop_steps st WHERE st.sop_id = s.id AND st.image_mime IS NOT NULL ORDER BY st.position ASC LIMIT 1) AS first_image_step_id
@@ -71,7 +73,7 @@ router.get("/", requireAuth, async (req, res) => {
           ORDER BY s.updated_at DESC
         `)
       : await db.execute<SopRow>(sql`
-          SELECT s.id, s.title, s.stations, s.tags, s.author_id, s.created_at, s.updated_at,
+          SELECT s.id, s.title, s.stations, s.tags, s.author_id, s.created_at, s.updated_at, s.steps_per_page,
                  u.name AS author_name,
                  (SELECT COUNT(*)::int FROM sop_steps st WHERE st.sop_id = s.id) AS step_count,
                  (SELECT st.id FROM sop_steps st WHERE st.sop_id = s.id AND st.image_mime IS NOT NULL ORDER BY st.position ASC LIMIT 1) AS first_image_step_id
@@ -105,7 +107,7 @@ router.get("/:id", requireAuth, async (req, res) => {
     return;
   }
   const sopRows = await db.execute<SopRow>(sql`
-    SELECT s.id, s.title, s.stations, s.tags, s.author_id, s.created_at, s.updated_at,
+    SELECT s.id, s.title, s.stations, s.tags, s.author_id, s.created_at, s.updated_at, s.steps_per_page,
            u.name AS author_name,
            (SELECT COUNT(*)::int FROM sop_steps st WHERE st.sop_id = s.id) AS step_count,
            (SELECT st.id FROM sop_steps st WHERE st.sop_id = s.id AND st.image_mime IS NOT NULL ORDER BY st.position ASC LIMIT 1) AS first_image_step_id
@@ -211,6 +213,23 @@ router.put("/:id", requireAuth, async (req, res) => {
   if (tags !== null) {
     const tagsLiteral = arrayLiteral(tags);
     await db.execute(sql`UPDATE standards_sops SET tags = ${tagsLiteral}::text[], updated_at = NOW() WHERE id = ${id}`);
+  }
+  // steps_per_page: manual override for the print layout. Absent key = leave
+  // unchanged; null = clear (auto-detect); 1-6 = fixed steps per printed page.
+  if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "stepsPerPage")) {
+    const raw = req.body.stepsPerPage;
+    let value: number | null;
+    if (raw === null) {
+      value = null;
+    } else {
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n < 1 || n > 6) {
+        res.status(400).json({ error: "stepsPerPage must be an integer 1-6 or null" });
+        return;
+      }
+      value = n;
+    }
+    await db.execute(sql`UPDATE standards_sops SET steps_per_page = ${value}, updated_at = NOW() WHERE id = ${id}`);
   }
   res.json({ ok: true });
 });
