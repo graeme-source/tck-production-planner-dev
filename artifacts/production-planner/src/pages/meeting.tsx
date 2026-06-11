@@ -603,10 +603,20 @@ function MeetingShell({
       {/* Slide body — fills the screen vertically. Short slides centre
           so the iPad/TV canvas isn't dominated by whitespace; long
           slides (Order of Production, deliveries) overflow scroll. */}
-      <div className="flex-1 overflow-y-auto px-8 py-6 flex flex-col">
-        <div className="max-w-6xl mx-auto w-full my-auto">
+      <div className={cn(
+        "flex-1 flex flex-col",
+        // Gratitude goes full-bleed (image fills the area between header and
+        // footer, with just a little padding); every other slide stays in the
+        // centred reading column.
+        slide.kind === "gratitude" ? "overflow-hidden p-4 sm:p-6" : "overflow-y-auto px-8 py-6",
+      )}>
+        {slide.kind === "gratitude" ? (
           <SlideBody slide={slide} data={data} onRefresh={onRefresh} isPreviewing={isPreviewing} />
-        </div>
+        ) : (
+          <div className="max-w-6xl mx-auto w-full my-auto">
+            <SlideBody slide={slide} data={data} onRefresh={onRefresh} isPreviewing={isPreviewing} />
+          </div>
+        )}
       </div>
 
       {/* Footer — compact Back / Next buttons sit either side of the
@@ -2044,71 +2054,94 @@ function GratitudeSlide({ data, slide, onRefresh }: { data: DashboardData; slide
   const showImage = hasPhoto || !fallbackFailed;
   const imageSrc = hasPhoto ? uploadedUrl : fallbackUrl;
 
+  // Heavy text shadow so the overlaid caption stays legible over ANY photo,
+  // light or dark, from across the room.
+  const captionShadow = { textShadow: "0 4px 24px rgba(0,0,0,0.85), 0 2px 6px rgba(0,0,0,0.95)" } as const;
+  const labelShadow = { textShadow: "0 2px 8px rgba(0,0,0,0.9)" } as const;
+  const overlayText = hasPhoto ? serverCaption : prompt.line;
+
   return (
-    <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-rose-100 via-amber-50 to-emerald-100 dark:from-rose-900/30 dark:via-amber-900/20 dark:to-emerald-900/30 p-8 md:p-12 min-h-[420px] flex flex-col items-center justify-center text-center gap-6 shadow-inner">
-      {/* Soft floating shapes for a touch of motion / warmth */}
-      <div className="absolute -top-20 -left-20 w-72 h-72 rounded-full bg-rose-200/40 dark:bg-rose-500/10 blur-3xl" />
-      <div className="absolute -bottom-24 -right-16 w-80 h-80 rounded-full bg-amber-200/40 dark:bg-amber-500/10 blur-3xl" />
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full bg-emerald-200/30 dark:bg-emerald-500/10 blur-3xl" />
-
-      <div className="relative z-10 flex flex-col items-center gap-5 w-full">
-        {showImage ? (
-          <>
-            <div className="relative w-full max-w-2xl aspect-[3/2] rounded-3xl overflow-hidden shadow-xl ring-1 ring-black/5">
-              <img
-                key={imageSrc}
-                src={imageSrc}
-                alt={hasPhoto ? (serverCaption || "Today's gratitude photo") : "Something to be grateful for"}
-                className="w-full h-full object-cover"
-                onError={() => { if (!hasPhoto) setFallbackFailed(true); }}
-              />
-            </div>
-            {hasPhoto && serverCaption ? (
-              <h2 className="font-display text-3xl md:text-4xl font-bold text-foreground leading-tight max-w-3xl">{serverCaption}</h2>
-            ) : (
-              <p className="text-xl text-muted-foreground max-w-xl">{prompt.line}</p>
-            )}
-          </>
-        ) : (
-          <>
-            <div className="text-8xl leading-none">{prompt.emoji}</div>
-            <h2 className="font-display text-4xl md:text-5xl font-bold text-foreground leading-tight max-w-3xl">{prompt.line}</h2>
-            <p className="text-xl text-muted-foreground max-w-xl">{prompt.sub}</p>
-          </>
-        )}
-        <p className="text-xs uppercase tracking-widest text-muted-foreground mt-1">Gratitude</p>
-      </div>
-
-      {/* Host controls — only once today's meeting exists. */}
-      {meetingId && (
-        <div className="relative z-10 w-full max-w-2xl flex flex-wrap items-center justify-center gap-2">
-          <input
-            value={caption}
-            onChange={e => setCaption(e.target.value)}
-            placeholder="Add a caption (optional)"
-            maxLength={300}
-            className="flex-1 min-w-[180px] bg-background/80 border border-border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+    <div className="relative w-full flex-1 min-h-0 rounded-3xl overflow-hidden shadow-inner bg-gradient-to-br from-rose-100 via-amber-50 to-emerald-100 dark:from-rose-900/30 dark:via-amber-900/20 dark:to-emerald-900/30">
+      {showImage ? (
+        <>
+          {/* Full-bleed photo */}
+          <img
+            key={imageSrc}
+            src={imageSrc}
+            alt={hasPhoto ? (serverCaption || "Today's gratitude photo") : "Something to be grateful for"}
+            className="absolute inset-0 w-full h-full object-cover"
+            onError={() => { if (!hasPhoto) setFallbackFailed(true); }}
           />
-          {hasPhoto && (
-            <button onClick={saveCaption} disabled={savingCaption} className="px-3 py-2 rounded-xl bg-secondary text-secondary-foreground text-sm font-medium disabled:opacity-50 inline-flex items-center gap-1.5">
-              {savingCaption ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save caption
-            </button>
-          )}
-          <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(f); e.target.value = ""; }} />
-          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(f); e.target.value = ""; }} />
-          <button onClick={() => cameraRef.current?.click()} disabled={busy} className="px-3 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50">
-            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />} Take photo
-          </button>
-          <button onClick={() => fileRef.current?.click()} disabled={busy} className="px-3 py-2 rounded-xl bg-primary/90 text-primary-foreground text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50">
-            <ImageIcon className="w-4 h-4" /> {hasPhoto ? "Replace" : "Add photo"}
-          </button>
-          {hasPhoto && (
-            <button onClick={removePhoto} disabled={busy} className="px-3 py-2 rounded-xl bg-destructive/10 text-destructive text-sm font-medium inline-flex items-center gap-1.5 disabled:opacity-50">
-              <Trash2 className="w-4 h-4" /> Remove
-            </button>
+          {/* Scrim — darkens top + bottom so the label and caption read over
+              any image without hiding the middle of the photo. */}
+          <div className="absolute inset-0 bg-gradient-to-b from-black/35 via-transparent to-black/65" />
+        </>
+      ) : (
+        <>
+          {/* Offline / image-service down → original warm emoji + prompt. */}
+          <div className="absolute -top-20 -left-20 w-72 h-72 rounded-full bg-rose-200/40 dark:bg-rose-500/10 blur-3xl" />
+          <div className="absolute -bottom-24 -right-16 w-80 h-80 rounded-full bg-amber-200/40 dark:bg-amber-500/10 blur-3xl" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-center gap-5 p-8">
+            <div className="text-8xl leading-none">{prompt.emoji}</div>
+            <h2 className="font-display text-4xl md:text-6xl font-bold text-foreground leading-tight max-w-4xl">{prompt.line}</h2>
+            <p className="text-xl text-muted-foreground max-w-xl">{prompt.sub}</p>
+          </div>
+        </>
+      )}
+
+      {/* Overlay layout: label up top, big caption anchored at the bottom,
+          host controls below it. Pointer-events pass through except on the
+          actual controls so swipe/nav still works over the image. */}
+      <div className="absolute inset-0 flex flex-col p-4 sm:p-6 pointer-events-none">
+        {showImage && (
+          <div className="flex justify-center">
+            <span className="px-3 py-1 rounded-full bg-black/30 backdrop-blur-sm text-white/95 text-xs uppercase tracking-widest" style={labelShadow}>Gratitude</span>
+          </div>
+        )}
+
+        {/* Big caption — fills the space and sits just above the controls. */}
+        <div className="flex-1 flex items-end justify-center text-center pb-3">
+          {showImage && overlayText && (
+            <h2
+              className="font-display font-extrabold text-white leading-[1.05] max-w-5xl text-5xl sm:text-6xl md:text-7xl"
+              style={captionShadow}
+            >
+              {overlayText}
+            </h2>
           )}
         </div>
-      )}
+
+        {/* Host controls — only once today's meeting exists. */}
+        {meetingId && (
+          <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-2 rounded-2xl bg-black/40 backdrop-blur-md p-2" data-no-swipe>
+            <input
+              value={caption}
+              onChange={e => setCaption(e.target.value)}
+              placeholder="Add a caption (optional)"
+              maxLength={300}
+              className="flex-1 min-w-[180px] bg-white/90 text-foreground placeholder:text-muted-foreground border border-white/40 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+            />
+            {hasPhoto && (
+              <button onClick={saveCaption} disabled={savingCaption} className="px-3 py-2 rounded-xl bg-white/90 text-foreground text-sm font-medium disabled:opacity-50 inline-flex items-center gap-1.5">
+                {savingCaption ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save caption
+              </button>
+            )}
+            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(f); e.target.value = ""; }} />
+            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(f); e.target.value = ""; }} />
+            <button onClick={() => cameraRef.current?.click()} disabled={busy} className="px-3 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50">
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />} Take photo
+            </button>
+            <button onClick={() => fileRef.current?.click()} disabled={busy} className="px-3 py-2 rounded-xl bg-primary/90 text-primary-foreground text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50">
+              <ImageIcon className="w-4 h-4" /> {hasPhoto ? "Replace" : "Add photo"}
+            </button>
+            {hasPhoto && (
+              <button onClick={removePhoto} disabled={busy} className="px-3 py-2 rounded-xl bg-destructive/80 text-white text-sm font-medium inline-flex items-center gap-1.5 disabled:opacity-50">
+                <Trash2 className="w-4 h-4" /> Remove
+              </button>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
