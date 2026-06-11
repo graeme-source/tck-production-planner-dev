@@ -1562,6 +1562,50 @@ async function runStartupMigrations() {
     await db.execute(sql`ALTER TABLE morning_meetings ADD COLUMN IF NOT EXISTS gratitude_photo_mime TEXT`);
     await db.execute(sql`ALTER TABLE morning_meetings ADD COLUMN IF NOT EXISTS gratitude_caption TEXT`);
 
+    // Govee temperature-sensor integration: discovered sensors (mapped to
+    // storage locations + cached latest reading), append-only reading history,
+    // and web-push subscriptions for alerts. All additive — safe to re-run.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS govee_sensors (
+        id                    SERIAL PRIMARY KEY,
+        device                TEXT NOT NULL UNIQUE,
+        sku                   TEXT NOT NULL DEFAULT '',
+        name                  TEXT NOT NULL DEFAULT '',
+        storage_location_id   INTEGER REFERENCES storage_locations(id) ON DELETE SET NULL,
+        enabled               BOOLEAN NOT NULL DEFAULT TRUE,
+        last_temperature_c    NUMERIC(5,1),
+        last_humidity_percent INTEGER,
+        last_online           BOOLEAN,
+        last_reading_at       TIMESTAMP,
+        created_at            TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at            TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS govee_readings (
+        id               SERIAL PRIMARY KEY,
+        device           TEXT NOT NULL,
+        temperature_c    NUMERIC(5,1),
+        humidity_percent INTEGER,
+        online           BOOLEAN NOT NULL DEFAULT TRUE,
+        recorded_at      TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_govee_readings_device_time ON govee_readings (device, recorded_at)`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id           SERIAL PRIMARY KEY,
+        user_id      INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+        endpoint     TEXT NOT NULL UNIQUE,
+        p256dh       TEXT NOT NULL,
+        auth         TEXT NOT NULL,
+        user_agent   TEXT,
+        created_at   TIMESTAMP NOT NULL DEFAULT now(),
+        last_seen_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_push_subscriptions_user ON push_subscriptions (user_id)`);
+
     // Append-only audit log of every production-fridge stock change (manual
     // checks/adjustments, wrapping additions, despatch decrements). The
     // aggregate stock_entries row stays the live total; this records each delta
@@ -1671,6 +1715,12 @@ async function startup() {
     // later; just un-comment the two lines below.
     // const { startFulfilmentPoller } = await import("./lib/fulfilment-poller");
     // startFulfilmentPoller().catch(err => console.error("[fulfilment-poller] start failed:", err));
+
+    // Govee temperature-sensor poller — self-gates on the runtime settings
+    // (off unless the master switch + a feature is enabled), so it's a no-op
+    // until configured. Lean: one Govee fetch per cycle.
+    const { startGoveePoller } = await import("./lib/govee-poller");
+    startGoveePoller();
   } catch (err) {
     console.error(
       "Background startup tasks failed:",

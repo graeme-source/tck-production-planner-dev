@@ -51,6 +51,9 @@ Thumbs.db
 # Environment files
 .env
 .env.*
+# …but DO track the example files (no secrets, documents required vars)
+!.env.example
+!**/.env.example
 
 # Imported SOP archive (PDFs + page renders + extracted photos) — kept
 # locally for reference, data lives in the DB. Do not commit (hundreds of MB).

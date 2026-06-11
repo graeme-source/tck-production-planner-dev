@@ -861,6 +861,9 @@ function LocationTemperatures({ data, planId, kind }: { data: unknown[]; planId:
   const items = data as LocationTempRow[];
   const [values, setValues] = useState<Record<number, string>>({});
   const [saving, setSaving] = useState<Record<number, boolean>>({});
+  // Live Govee sensor reading per storage location (when checklist-assist is on).
+  const [sensorTemps, setSensorTemps] = useState<Record<number, number>>({});
+  const [assistOn, setAssistOn] = useState(false);
 
   const isClosing = kind === "closing";
 
@@ -872,6 +875,44 @@ function LocationTemperatures({ data, planId, kind }: { data: unknown[]; planId:
     }
     setValues(init);
   }, [data, isClosing]);
+
+  // Pull live sensor readings for prefill (no-op unless the integration + the
+  // checklist-assist toggle are on).
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${BASE}/api/govee/live`, { credentials: "include" })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (cancelled || !d || !d.enabled || !d.checklistAssistEnabled) return;
+        const map: Record<number, number> = {};
+        for (const s of d.sensors ?? []) {
+          if (s.storageLocationId != null && s.temperatureC != null) map[s.storageLocationId] = s.temperatureC;
+        }
+        setSensorTemps(map);
+        setAssistOn(true);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  // Prefill any not-yet-recorded, empty field with the live sensor reading so
+  // staff confirm rather than read-and-type. They can still overwrite it.
+  useEffect(() => {
+    if (!assistOn) return;
+    setValues(prev => {
+      const next = { ...prev };
+      let changed = false;
+      for (const item of items) {
+        const recorded = isClosing ? item.closingTemperatureC : item.openingTemperatureC;
+        const sensor = sensorTemps[item.storageLocationId];
+        if (recorded == null && (next[item.storageLocationId] == null || next[item.storageLocationId] === "") && sensor != null) {
+          next[item.storageLocationId] = String(sensor);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [assistOn, sensorTemps, data, isClosing]);
 
   const saveTemp = async (locationId: number) => {
     const raw = values[locationId];
@@ -930,6 +971,15 @@ function LocationTemperatures({ data, planId, kind }: { data: unknown[]; planId:
                 <p className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
                   <CheckCircle2 className="w-3 h-3" /> Recorded
                 </p>
+              )}
+              {assistOn && sensorTemps[item.storageLocationId] != null && (
+                <button
+                  type="button"
+                  onClick={() => setValues(v => ({ ...v, [item.storageLocationId]: String(sensorTemps[item.storageLocationId]) }))}
+                  className="text-xs text-cyan-600 dark:text-cyan-400 hover:underline mt-0.5"
+                >
+                  Sensor: {sensorTemps[item.storageLocationId].toFixed(1)}°C — use
+                </button>
               )}
             </div>
             <div className="flex items-center gap-1.5 shrink-0">

@@ -560,6 +560,8 @@ export default function Dashboard() {
         />
       </div>
 
+      <GoveeTempTile />
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
         <Link href="/plans" className="glass-panel rounded-2xl flex flex-col group cursor-pointer hover-lift">
           <div className="p-6 border-b border-border flex items-center justify-between">
@@ -728,6 +730,61 @@ export default function Dashboard() {
 
       <UpcomingProductionPanel />
     </div>
+  );
+}
+
+interface GoveeLiveSensor {
+  device: string; name: string; locationName: string | null; zone: string | null;
+  temperatureC: number | null; humidityPercent: number | null; online: boolean | null;
+  thresholdC: number | null; breaching: boolean; readingAt: string | null;
+}
+
+// Live fridge/freezer temperatures from the Govee sensors. Renders nothing
+// unless the feature + tile are enabled and at least one sensor is mapped.
+function GoveeTempTile() {
+  const { data } = useQuery<{ enabled: boolean; tileEnabled: boolean; sensors: GoveeLiveSensor[] }>({
+    queryKey: ["govee-live"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/govee/live`, { credentials: "include" });
+      if (!res.ok) throw new Error("failed");
+      return res.json();
+    },
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    retry: false,
+  });
+
+  if (!data?.enabled || !data?.tileEnabled) return null;
+  const sensors = data.sensors ?? [];
+  if (sensors.length === 0) return null;
+
+  return (
+    <Link href="/reports?tab=haccp" className="glass-panel rounded-2xl p-4 mt-6 block hover-lift cursor-pointer">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="font-display font-bold text-lg flex items-center gap-2">
+          <Thermometer className="w-5 h-5 text-cyan-500" /> Fridge &amp; Freezer
+        </h3>
+        <span className="text-xs uppercase tracking-widest text-muted-foreground">live</span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {sensors.map((s) => (
+          <div
+            key={s.device}
+            className={`rounded-xl p-3 border ${s.breaching ? "border-red-500/50 bg-red-500/10" : "border-border bg-card"}`}
+          >
+            <p className="text-sm font-medium truncate">{s.name}</p>
+            <p className={`text-2xl font-display font-bold leading-tight ${s.breaching ? "text-red-500" : "text-foreground"}`}>
+              {s.temperatureC != null ? `${s.temperatureC.toFixed(1)}°C` : "—"}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {s.humidityPercent != null ? `${s.humidityPercent}% RH` : ""}
+              {s.online === false ? " · offline" : ""}
+              {s.breaching ? " · over range" : ""}
+            </p>
+          </div>
+        ))}
+      </div>
+    </Link>
   );
 }
 

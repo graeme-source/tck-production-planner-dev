@@ -12,8 +12,12 @@ import {
   Lock, Timer, BarChart2, Coffee, Truck, Mail, Warehouse,
   Camera, User, CircleDot, ToggleRight, Boxes, UtensilsCrossed,
   AlertTriangle, Scale, ThermometerSnowflake, BookOpen, Megaphone, CalendarDays,
-  Copy, Check, IdCard, FileText, ExternalLink,
+  Copy, Check, IdCard, FileText, ExternalLink, Bell, RefreshCw, Smartphone, Thermometer,
 } from "lucide-react";
+import {
+  isPushSupported, isStandalone, isSubscribedOnThisDevice,
+  enablePushOnThisDevice, disablePushOnThisDevice, sendTestPush,
+} from "@/lib/push";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { Switch } from "@/components/ui/switch";
 import { NumberInput } from "@/components/ui/number-input";
@@ -613,7 +617,7 @@ function PinSection() {
   );
 }
 
-type SettingsSection = "profile" | "team" | "production" | "storage" | "sops" | "features";
+type SettingsSection = "profile" | "team" | "production" | "storage" | "sops" | "features" | "sensors";
 
 const NAV_ITEMS: { id: SettingsSection; label: string; icon: typeof User }[] = [
   { id: "profile", label: "My Profile", icon: User },
@@ -621,6 +625,7 @@ const NAV_ITEMS: { id: SettingsSection; label: string; icon: typeof User }[] = [
   { id: "production", label: "Production", icon: BarChart2 },
   { id: "storage", label: "Storage & Inventory", icon: Warehouse },
   { id: "sops", label: "Standards & SOPs", icon: BookOpen },
+  { id: "sensors", label: "Temperature Sensors", icon: Thermometer },
   { id: "features", label: "Features", icon: ToggleRight },
 ];
 
@@ -1037,6 +1042,316 @@ function BroadcastNotificationSection() {
   );
 }
 
+interface GoveeSettingsT {
+  enabled: boolean; tileEnabled: boolean; historyEnabled: boolean; alertsEnabled: boolean;
+  checklistAssistEnabled: boolean; fridgeMaxC: number; freezerMaxC: number;
+  alertEmail: string; alertRecipientUserIds: number[]; pollMinutes: number; alertBreachMinutes: number;
+}
+interface GoveeSensorRow {
+  device: string; sku: string; name: string; enabled: boolean; storageLocationId: number | null;
+  lastTemperatureC: number | null; lastHumidityPercent: number | null; lastOnline: boolean | null;
+  lastReadingAt: string | null; locationName: string | null; zone: string | null;
+}
+interface GoveeLocationOpt { id: number; name: string; zone: string; }
+interface GoveeRecipientRow { id: number; name: string; email: string; role: string; hasPushDevice: boolean; isRecipient: boolean; }
+
+function GoveeSensorsSection({ currentUserId }: { currentUserId: number | null }) {
+  const [loading, setLoading] = useState(true);
+  const [configured, setConfigured] = useState(false);
+  const [pushConfigured, setPushConfigured] = useState(false);
+  const [settings, setSettings] = useState<GoveeSettingsT | null>(null);
+  const [sensors, setSensors] = useState<GoveeSensorRow[]>([]);
+  const [locations, setLocations] = useState<GoveeLocationOpt[]>([]);
+  const [recipients, setRecipients] = useState<GoveeRecipientRow[]>([]);
+  const [syncing, setSyncing] = useState(false);
+  // Per-device push state
+  const [deviceSubscribed, setDeviceSubscribed] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const pushSupported = isPushSupported();
+  const standalone = isStandalone();
+
+  const loadAll = async () => {
+    try {
+      const [statusRes, sensorsRes, recipientsRes] = await Promise.all([
+        fetch(`${BASE}/api/govee/status`, { credentials: "include" }),
+        fetch(`${BASE}/api/govee/sensors`, { credentials: "include" }),
+        fetch(`${BASE}/api/govee/recipients`, { credentials: "include" }),
+      ]);
+      const status = await statusRes.json();
+      setConfigured(Boolean(status.configured));
+      setPushConfigured(Boolean(status.pushConfigured));
+      setSettings(status.settings);
+      const sensorsData = await sensorsRes.json();
+      setSensors(sensorsData.sensors ?? []);
+      setLocations(sensorsData.locations ?? []);
+      setRecipients(await recipientsRes.json());
+    } catch {
+      toast({ title: "Couldn't load sensor settings", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { void loadAll(); }, []);
+  useEffect(() => { if (pushSupported) isSubscribedOnThisDevice().then(setDeviceSubscribed).catch(() => {}); }, [pushSupported]);
+
+  const saveSettings = async (patch: Partial<GoveeSettingsT>) => {
+    if (!settings) return;
+    const optimistic = { ...settings, ...patch };
+    setSettings(optimistic);
+    try {
+      const res = await fetch(`${BASE}/api/govee/settings`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) throw new Error();
+      setSettings(await res.json());
+    } catch {
+      toast({ title: "Couldn't save setting", variant: "destructive" });
+      void loadAll();
+    }
+  };
+
+  const updateSensor = async (device: string, patch: Partial<Pick<GoveeSensorRow, "storageLocationId" | "enabled">>) => {
+    setSensors(prev => prev.map(s => s.device === device ? { ...s, ...patch } : s));
+    try {
+      const res = await fetch(`${BASE}/api/govee/sensors/${encodeURIComponent(device)}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      toast({ title: "Couldn't update sensor", variant: "destructive" });
+      void loadAll();
+    }
+  };
+
+  const syncSensors = async () => {
+    setSyncing(true);
+    try {
+      const res = await fetch(`${BASE}/api/govee/sync`, { method: "POST", credentials: "include" });
+      if (!res.ok) throw new Error();
+      const { count } = await res.json();
+      toast({ title: `Found ${count} sensor${count === 1 ? "" : "s"}` });
+      await loadAll();
+    } catch {
+      toast({ title: "Sync failed — check the API key", variant: "destructive" });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const toggleRecipient = (userId: number, on: boolean) => {
+    if (!settings) return;
+    const next = on
+      ? Array.from(new Set([...settings.alertRecipientUserIds, userId]))
+      : settings.alertRecipientUserIds.filter(id => id !== userId);
+    setRecipients(prev => prev.map(r => r.id === userId ? { ...r, isRecipient: on } : r));
+    void saveSettings({ alertRecipientUserIds: next });
+  };
+
+  const enableThisDevice = async () => {
+    setPushBusy(true);
+    try {
+      await enablePushOnThisDevice();
+      setDeviceSubscribed(true);
+      toast({ title: "Alerts enabled on this device" });
+      void loadAll();
+    } catch (err) {
+      toast({ title: err instanceof Error ? err.message : "Couldn't enable", variant: "destructive" });
+    } finally {
+      setPushBusy(false);
+    }
+  };
+  const disableThisDevice = async () => {
+    setPushBusy(true);
+    try {
+      await disablePushOnThisDevice();
+      setDeviceSubscribed(false);
+      toast({ title: "Alerts disabled on this device" });
+      void loadAll();
+    } finally {
+      setPushBusy(false);
+    }
+  };
+  const testThisDevice = async () => {
+    try {
+      const n = await sendTestPush();
+      toast({ title: n > 0 ? `Test sent to ${n} device${n === 1 ? "" : "s"}` : "No devices enabled yet" });
+    } catch {
+      toast({ title: "Test failed", variant: "destructive" });
+    }
+  };
+
+  if (loading) {
+    return <div className="flex items-center gap-2 text-muted-foreground py-8"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>;
+  }
+
+  const toggleRow = (label: string, desc: string, key: keyof GoveeSettingsT, disabled = false) => (
+    <div className={cn("flex items-center justify-between gap-4 p-4 bg-card border border-border rounded-xl", disabled && "opacity-50")}>
+      <div className="min-w-0">
+        <p className="text-sm font-semibold">{label}</p>
+        <p className="text-sm text-muted-foreground mt-0.5">{desc}</p>
+      </div>
+      <Switch checked={Boolean(settings?.[key])} disabled={disabled} onCheckedChange={(c) => saveSettings({ [key]: c } as Partial<GoveeSettingsT>)} />
+    </div>
+  );
+
+  const masterOff = !settings?.enabled;
+
+  return (
+    <div className="space-y-8">
+      <div>
+        <h2 className="text-base font-semibold mb-1 flex items-center gap-2">
+          <Thermometer className="w-5 h-5 text-primary" /> Temperature Sensors (Govee)
+        </h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          Pull live fridge/freezer temperatures from your Govee sensors, log history, and alert when a unit goes out of range.
+        </p>
+
+        {/* Connection */}
+        <div className="flex items-center justify-between gap-4 p-4 bg-card border border-border rounded-xl mb-4">
+          <div className="flex items-center gap-2 min-w-0">
+            {configured
+              ? <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0" />
+              : <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />}
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">{configured ? "Connected to Govee" : "Not connected"}</p>
+              <p className="text-sm text-muted-foreground">{configured ? "API key detected." : "Set GOVEE_API_KEY on the server."}</p>
+            </div>
+          </div>
+          <button onClick={syncSensors} disabled={!configured || syncing}
+            className="px-3 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50">
+            {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Sync sensors
+          </button>
+        </div>
+
+        {/* Master + feature toggles */}
+        <div className="space-y-3">
+          {toggleRow("Master switch", "Turn the whole Govee integration on or off.", "enabled")}
+          {toggleRow("Live dashboard tile", "Show current fridge/freezer temps on the dashboard.", "tileEnabled", masterOff)}
+          {toggleRow("History logging", "Record readings over time for HACCP reports.", "historyEnabled", masterOff)}
+          {toggleRow("Out-of-range alerts", "Email + push when a unit breaches its safe range.", "alertsEnabled", masterOff)}
+          {toggleRow("Checklist auto-assist", "Prefill the fridge/freezer temperature checklist from sensors.", "checklistAssistEnabled", masterOff)}
+        </div>
+      </div>
+
+      {/* Sensor mapping */}
+      <div>
+        <h3 className="text-sm font-semibold mb-3">Sensors</h3>
+        {sensors.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No sensors yet — press “Sync sensors”.</p>
+        ) : (
+          <div className="space-y-3">
+            {sensors.map(s => (
+              <div key={s.device} className="p-4 bg-card border border-border rounded-xl">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold">{s.name || s.device}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {s.lastTemperatureC != null ? `${s.lastTemperatureC.toFixed(1)}°C` : "—"}
+                      {s.lastHumidityPercent != null ? ` · ${s.lastHumidityPercent}% RH` : ""}
+                      {s.lastOnline === false ? " · offline" : ""}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <select
+                      value={s.storageLocationId ?? ""}
+                      onChange={(e) => updateSensor(s.device, { storageLocationId: e.target.value ? Number(e.target.value) : null })}
+                      className="bg-background border border-border rounded-lg px-2 py-1.5 text-sm max-w-[200px]"
+                    >
+                      <option value="">— Map to location —</option>
+                      {locations.map(l => <option key={l.id} value={l.id}>{l.name} ({l.zone})</option>)}
+                    </select>
+                    <Switch checked={s.enabled} onCheckedChange={(c) => updateSensor(s.device, { enabled: c })} />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Thresholds */}
+      <div>
+        <h3 className="text-sm font-semibold mb-3">Safe-range thresholds</h3>
+        <div className="grid grid-cols-2 gap-3 max-w-md">
+          <label className="text-sm">
+            <span className="text-muted-foreground">Fridge max (°C)</span>
+            <input type="number" step="0.5" defaultValue={settings?.fridgeMaxC}
+              onBlur={(e) => saveSettings({ fridgeMaxC: Number(e.target.value) })}
+              className="mt-1 w-full bg-background border border-border rounded-lg px-3 py-2 text-sm" />
+          </label>
+          <label className="text-sm">
+            <span className="text-muted-foreground">Freezer max (°C)</span>
+            <input type="number" step="0.5" defaultValue={settings?.freezerMaxC}
+              onBlur={(e) => saveSettings({ freezerMaxC: Number(e.target.value) })}
+              className="mt-1 w-full bg-background border border-border rounded-lg px-3 py-2 text-sm" />
+          </label>
+        </div>
+        <p className="text-xs text-muted-foreground mt-2">A unit must stay above its ceiling for {settings?.alertBreachMinutes ?? 20} minutes before an alert fires.</p>
+      </div>
+
+      {/* Alerts: email + recipients + this device */}
+      <div>
+        <h3 className="text-sm font-semibold mb-3">Alert recipients</h3>
+        <label className="text-sm block mb-4 max-w-md">
+          <span className="text-muted-foreground">Alert email</span>
+          <input type="email" defaultValue={settings?.alertEmail}
+            onBlur={(e) => saveSettings({ alertEmail: e.target.value })}
+            className="mt-1 w-full bg-background border border-border rounded-lg px-3 py-2 text-sm" />
+        </label>
+
+        {/* This device push enrolment */}
+        <div className="p-4 bg-card border border-border rounded-xl mb-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2 min-w-0">
+              <Smartphone className="w-5 h-5 text-primary shrink-0" />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">Phone notifications on this device</p>
+                <p className="text-xs text-muted-foreground">
+                  {!pushSupported ? "This browser doesn't support notifications."
+                    : !standalone ? "Add the app to your Home Screen first, then open it and enable here."
+                    : deviceSubscribed ? "Enabled on this device." : "Not enabled on this device yet."}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {deviceSubscribed
+                ? <button onClick={disableThisDevice} disabled={pushBusy} className="px-3 py-2 rounded-xl bg-secondary text-secondary-foreground text-sm font-medium inline-flex items-center gap-1.5 disabled:opacity-50">{pushBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Bell className="w-4 h-4" />} Disable</button>
+                : <button onClick={enableThisDevice} disabled={pushBusy || !pushSupported} className="px-3 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50">{pushBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Bell className="w-4 h-4" />} Enable on this device</button>}
+              {deviceSubscribed && <button onClick={testThisDevice} className="px-3 py-2 rounded-xl border border-border text-sm font-medium">Test</button>}
+            </div>
+          </div>
+          {!pushConfigured && <p className="text-xs text-amber-600 mt-2">Server push keys (VAPID) not configured.</p>}
+        </div>
+
+        <p className="text-sm text-muted-foreground mb-2">Tick who should receive push alerts. A person also has to enable alerts on their own device.</p>
+        <div className="space-y-2">
+          {recipients.map(r => (
+            <div key={r.id} className="flex items-center justify-between gap-3 p-3 bg-card border border-border rounded-xl">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold flex items-center gap-2">
+                  {r.name}
+                  {r.id === currentUserId && <span className="text-xs text-muted-foreground">(you)</span>}
+                </p>
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  {r.hasPushDevice
+                    ? <><CheckCircle2 className="w-3 h-3 text-green-500" /> device enabled</>
+                    : <><XCircle className="w-3 h-3 text-muted-foreground" /> no device yet</>}
+                </p>
+              </div>
+              <Switch checked={r.isRecipient} onCheckedChange={(c) => toggleRecipient(r.id, c)} />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Settings() {
   const { data: users, isLoading } = useListUsers();
   const { state, requireSensitivePin } = useAuth();
@@ -1051,7 +1366,7 @@ export default function Settings() {
 
   const params = new URLSearchParams(search);
   const sectionParam = params.get("section") as SettingsSection | null;
-  const validSections: SettingsSection[] = ["profile", "team", "production", "storage", "sops", "features"];
+  const validSections: SettingsSection[] = ["profile", "team", "production", "storage", "sops", "features", "sensors"];
   const activeSection: SettingsSection = sectionParam && validSections.includes(sectionParam) ? sectionParam : "profile";
 
   const setSection = (s: SettingsSection) => {
@@ -1146,6 +1461,18 @@ export default function Settings() {
               {user?.role === "admin" && <BreakDefaultsSection />}
               {user?.role === "admin" && <ApcServiceCodesSection />}
             </div>
+          )}
+
+          {activeSection === "sensors" && (
+            user?.role === "admin" ? (
+              <GoveeSensorsSection currentUserId={user?.id ?? null} />
+            ) : (
+              <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
+                <Lock className="w-8 h-8 mx-auto mb-3 opacity-50" />
+                <p className="font-medium">Admin access required</p>
+                <p className="text-sm mt-1">Only admins can manage temperature sensors.</p>
+              </div>
+            )
           )}
 
           {activeSection === "features" && user?.role === "admin" && (

@@ -22,3 +22,4 @@ export * from "./risk_assessments";
 export * from "./training";
 export * from "./onboarding";
 export * from "./morning_meetings";
+export * from "./govee";
