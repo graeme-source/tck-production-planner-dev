@@ -190,6 +190,18 @@ async function runStartupMigrations() {
     await db.execute(sql`
       ALTER TABLE standards_sops ADD COLUMN IF NOT EXISTS steps_per_page INTEGER
     `);
+    // Curated "system updates" changelog shown on the morning-meeting slide.
+    // body holds the bullet lines (one per line).
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS system_updates (
+        id serial PRIMARY KEY,
+        title text,
+        body text NOT NULL,
+        published boolean NOT NULL DEFAULT true,
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
     await db.execute(sql`
       ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS short_count INTEGER NOT NULL DEFAULT 0
     `);

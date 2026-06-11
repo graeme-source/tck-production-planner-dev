@@ -9,10 +9,12 @@
  * `available: false` flag so the frontend renders an honest empty
  * state rather than hanging or 500-ing.
  */
-import { Router, type IRouter, type Request, type Response } from "express";
+import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
+import { db, usersTable } from "@workspace/db";
+import { sql, eq } from "drizzle-orm";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 
 const execFileP = promisify(execFile);
@@ -273,14 +275,127 @@ async function findRepoRoot(): Promise<string | null> {
   return null;
 }
 
+// ── Curated updates (DB-backed) ──────────────────────────────────────────
+// A simple admin-managed changelog. When a published entry exists it is the
+// source of truth for the morning-meeting slide; otherwise we fall back to
+// the git/GitHub commit feed above so nothing regresses.
+
+interface UpdateRow {
+  id: number;
+  title: string | null;
+  body: string;
+  published: boolean;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+const toRows = <T,>(r: unknown): T[] => ((r as { rows?: T[] }).rows ?? (r as T[]));
+const iso = (d: Date | string) => (d instanceof Date ? d.toISOString() : d);
+
+/** Split a body blob into clean bullet lines (strip any leading -, •, * marker). */
+function bodyToBullets(body: string): string[] {
+  return body
+    .split("\n")
+    .map(l => l.replace(/^\s*[-•*]\s*/, "").trim())
+    .filter(Boolean);
+}
+
+async function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  if (req.session.userRole === "admin") { next(); return; }
+  if (req.session.userId && !req.session.userRole) {
+    const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
+    if (user) {
+      req.session.userRole = user.role as "admin" | "manager" | "viewer";
+      if (user.role === "admin") { next(); return; }
+    }
+  }
+  res.status(403).json({ error: "Admin access required" });
+}
+
+// Public (for the meeting slide): latest published curated entry, else the
+// git/GitHub commit feed.
 router.get("/", async (_req: Request, res: Response) => {
   try {
-    const feed = await loadCommits();
-    res.json(feed);
+    const rows = toRows<UpdateRow>(await db.execute(sql`
+      SELECT id, title, body, published, created_at, updated_at
+      FROM system_updates WHERE published = true
+      ORDER BY created_at DESC LIMIT 1
+    `));
+    const latest = rows[0];
+    if (latest) {
+      res.json({
+        available: true,
+        summary: bodyToBullets(latest.body),
+        updateTitle: latest.title,
+        updateDate: iso(latest.created_at),
+        last24h: [],
+        last7Days: [],
+      });
+      return;
+    }
+    // No curated entry — fall back to the commit feed.
+    res.json(await loadCommits());
   } catch (err) {
     console.error("[system-updates] handler failed:", err);
     res.status(500).json({ error: "Failed to load system updates" });
   }
+});
+
+// Admin list — all entries, newest first.
+router.get("/admin", requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const rows = toRows<UpdateRow>(await db.execute(sql`
+      SELECT id, title, body, published, created_at, updated_at
+      FROM system_updates ORDER BY created_at DESC
+    `));
+    res.json(rows.map(r => ({
+      id: r.id,
+      title: r.title,
+      body: r.body,
+      published: r.published,
+      createdAt: iso(r.created_at),
+      updatedAt: iso(r.updated_at),
+    })));
+  } catch (err) {
+    console.error("[system-updates] admin list failed:", err);
+    res.status(500).json({ error: "Failed to load updates" });
+  }
+});
+
+router.post("/", requireAdmin, async (req: Request, res: Response) => {
+  const title = typeof req.body?.title === "string" && req.body.title.trim() ? req.body.title.trim() : null;
+  const body = typeof req.body?.body === "string" ? req.body.body.trim() : "";
+  const published = req.body?.published === false ? false : true;
+  if (!body) { res.status(400).json({ error: "body (bullets) is required" }); return; }
+  const rows = toRows<{ id: number }>(await db.execute(sql`
+    INSERT INTO system_updates (title, body, published) VALUES (${title}, ${body}, ${published}) RETURNING id
+  `));
+  res.status(201).json({ id: rows[0]?.id });
+});
+
+router.put("/:id", requireAdmin, async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  if (typeof req.body?.title !== "undefined") {
+    const title = typeof req.body.title === "string" && req.body.title.trim() ? req.body.title.trim() : null;
+    await db.execute(sql`UPDATE system_updates SET title = ${title}, updated_at = now() WHERE id = ${id}`);
+  }
+  if (typeof req.body?.body === "string") {
+    const body = req.body.body.trim();
+    if (!body) { res.status(400).json({ error: "body cannot be empty" }); return; }
+    await db.execute(sql`UPDATE system_updates SET body = ${body}, updated_at = now() WHERE id = ${id}`);
+  }
+  if (typeof req.body?.published === "boolean") {
+    await db.execute(sql`UPDATE system_updates SET published = ${req.body.published}, updated_at = now() WHERE id = ${id}`);
+  }
+  res.json({ ok: true });
+});
+
+router.delete("/:id", requireAdmin, async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  await db.execute(sql`DELETE FROM system_updates WHERE id = ${id}`);
+  res.json({ ok: true });
 });
 
 export default router;

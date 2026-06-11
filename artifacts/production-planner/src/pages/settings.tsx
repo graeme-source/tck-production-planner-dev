@@ -1154,6 +1154,7 @@ export default function Settings() {
               <QuickIdeaTabsSection />
               <DashboardBannerRolesSection />
               <EightPackBannerRolesSection />
+              <SystemUpdatesSection />
             </div>
           )}
 
@@ -4067,6 +4068,141 @@ function EightPackBannerRolesSection() {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+interface SysUpdate { id: number; title: string | null; body: string; published: boolean; createdAt: string; updatedAt: string; }
+
+function SystemUpdatesSection() {
+  const [entries, setEntries] = useState<SysUpdate[] | null>(null);
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editBody, setEditBody] = useState("");
+
+  const load = () => fetch(`${BASE}/api/system-updates/admin`, { credentials: "include" })
+    .then(r => (r.ok ? r.json() : []))
+    .then(setEntries)
+    .catch(() => setEntries([]));
+  useEffect(() => { load(); }, []);
+
+  const bullets = (b: string) => b.split("\n").map(l => l.replace(/^\s*[-•*]\s*/, "").trim()).filter(Boolean);
+
+  const add = async () => {
+    if (!body.trim()) { setMsg("Add at least one bullet"); setTimeout(() => setMsg(null), 2000); return; }
+    setSaving(true);
+    try {
+      const r = await fetch(`${BASE}/api/system-updates`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: title.trim() || null, body }),
+      });
+      if (!r.ok) throw new Error();
+      setTitle(""); setBody(""); setMsg("Added"); setTimeout(() => setMsg(null), 2000); load();
+    } catch { setMsg("Error saving"); setTimeout(() => setMsg(null), 2000); } finally { setSaving(false); }
+  };
+
+  const saveEdit = async (id: number) => {
+    await fetch(`${BASE}/api/system-updates/${id}`, {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: editTitle.trim() || null, body: editBody }),
+    });
+    setEditingId(null); load();
+  };
+  const togglePublished = async (e: SysUpdate) => {
+    await fetch(`${BASE}/api/system-updates/${e.id}`, {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ published: !e.published }),
+    });
+    load();
+  };
+  const remove = async (id: number) => {
+    if (!confirm("Delete this update?")) return;
+    await fetch(`${BASE}/api/system-updates/${id}`, { method: "DELETE", credentials: "include" });
+    load();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-base font-semibold flex items-center gap-2">
+          <Megaphone className="w-4 h-4 text-primary" /> System Updates
+        </h2>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          Bulleted changes shown on the morning-meeting "System Updates" slide. The most recent published entry is displayed. One bullet per line.
+        </p>
+      </div>
+
+      <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+        <input
+          value={title}
+          onChange={e => setTitle(e.target.value)}
+          placeholder="Title (optional, e.g. 11 Jun 2026)"
+          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+        />
+        <textarea
+          value={body}
+          onChange={e => setBody(e.target.value)}
+          rows={5}
+          placeholder={"One bullet per line, e.g.\nPacking is now a single screen\nSOPs can be printed to PDF for the factory wall"}
+          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+        />
+        <div className="flex items-center gap-3">
+          <button onClick={add} disabled={saving} className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium disabled:opacity-50">
+            <Plus className="w-4 h-4" /> Add update
+          </button>
+          {msg && <span className="text-xs text-muted-foreground">{msg}</span>}
+        </div>
+      </div>
+
+      {entries === null ? (
+        <div className="flex justify-center p-4"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+      ) : entries.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No updates yet.</p>
+      ) : (
+        <div className="space-y-3">
+          {entries.map(e => (
+            <div key={e.id} className="bg-card border border-border rounded-xl p-4">
+              {editingId === e.id ? (
+                <div className="space-y-2">
+                  <input value={editTitle} onChange={ev => setEditTitle(ev.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                  <textarea value={editBody} onChange={ev => setEditBody(ev.target.value)} rows={5} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                  <div className="flex gap-2">
+                    <button onClick={() => saveEdit(e.id)} className="px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-sm">Save</button>
+                    <button onClick={() => setEditingId(null)} className="px-3 py-1.5 border border-border rounded-lg text-sm">Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between gap-3 mb-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold truncate">{e.title || "(untitled)"}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {new Date(e.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                        {e.published ? "" : " · hidden"}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Switch checked={e.published} onCheckedChange={() => togglePublished(e)} />
+                      <button onClick={() => { setEditingId(e.id); setEditTitle(e.title || ""); setEditBody(e.body); }} className="p-1.5 text-muted-foreground hover:text-foreground"><Edit2 className="w-4 h-4" /></button>
+                      <button onClick={() => remove(e.id)} className="p-1.5 text-red-500 hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
+                    </div>
+                  </div>
+                  <ul className="text-sm text-muted-foreground list-disc pl-5 space-y-0.5">
+                    {bullets(e.body).map((l, i) => <li key={i}>{l}</li>)}
+                  </ul>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

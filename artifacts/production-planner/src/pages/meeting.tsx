@@ -1551,6 +1551,8 @@ function SystemUpdatesSlide({ slide }: { slide: MeetingSlide }) {
     last24h: SystemCommit[];
     last7Days: SystemCommit[];
     summary: string[] | null;
+    updateTitle?: string | null;
+    updateDate?: string | null;
   }>({
     queryKey: ["system-updates"],
     queryFn: async () => {
@@ -1564,90 +1566,92 @@ function SystemUpdatesSlide({ slide }: { slide: MeetingSlide }) {
   const last24 = data?.last24h ?? [];
   const summary = data?.summary ?? null;
   const last7 = data?.last7Days ?? [];
+  const updateTitle = data?.updateTitle ?? null;
+  const updateDate = data?.updateDate ?? null;
 
   return (
     <div>
       <SectionTitle>{slide.title || "System Updates"}</SectionTitle>
-      <SectionLead>What's changed in the planner — auto-summarised from the last 24 hours of deploys.</SectionLead>
+      <SectionLead>Recent updates to the planner — run through these with the team.</SectionLead>
 
       {isLoading ? (
         <div className="glass-panel rounded-2xl p-6 flex justify-center">
           <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
         </div>
+      ) : summary && summary.length > 0 ? (
+        // Primary focus — the plain-English bullets (curated entry, or AI
+        // summary of recent commits). Big and unembellished so the host can
+        // read them out from across the kitchen.
+        <div className="glass-panel rounded-2xl p-6 border-2 border-primary/30 bg-primary/5">
+          {(updateTitle || updateDate) && (
+            <p className="text-base text-muted-foreground mb-3">
+              {updateTitle ?? "Latest update"}
+              {updateDate ? ` · ${format(new Date(updateDate), "EEE d MMM")}` : ""}
+            </p>
+          )}
+          <ul className="space-y-3">
+            {summary.map((line, i) => (
+              <li key={i} className="flex items-start gap-4 text-2xl leading-snug">
+                <span className="text-primary font-bold shrink-0 mt-1">•</span>
+                <span>{line}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : !data?.available ? (
         <div className="glass-panel rounded-2xl p-6 text-2xl text-muted-foreground">
-          System update feed isn't available in this environment.
+          No system updates yet — add one in Settings → System Updates.
         </div>
       ) : last24.length === 0 ? (
         <div className="glass-panel rounded-2xl p-8 text-3xl text-muted-foreground italic text-center">
           No changes shipped in the last 24 hours.
         </div>
       ) : (
-        <>
-          {/* Primary focus — the plain-English summary. Bullets are
-              big and unembellished so the host can read them out
-              from across the kitchen. */}
-          {summary && summary.length > 0 ? (
-            <div className="glass-panel rounded-2xl p-6 border-2 border-primary/30 bg-primary/5">
-              <ul className="space-y-3">
-                {summary.map((line, i) => (
-                  <li key={i} className="flex items-start gap-4 text-2xl leading-snug">
-                    <span className="text-primary font-bold shrink-0 mt-1">•</span>
-                    <span>{line}</span>
-                  </li>
-                ))}
-              </ul>
+        // Fallback: raw commit subjects when no curated entry / AI summary.
+        <div className="glass-panel rounded-2xl overflow-hidden">
+          {last24.map((c, i) => (
+            <div key={c.sha} className={cn("px-6 py-4 text-2xl leading-snug", i > 0 && "border-t border-border/50")}>
+              {c.subject}
             </div>
-          ) : (
-            // No AI summary available (Claude key missing on this
-            // env, or the summariser failed) — fall back to the raw
-            // commit subjects so the meeting still has content.
-            <div className="glass-panel rounded-2xl overflow-hidden">
-              {last24.map((c, i) => (
-                <div key={c.sha} className={cn("px-6 py-4 text-2xl leading-snug", i > 0 && "border-t border-border/50")}>
-                  {c.subject}
-                </div>
-              ))}
-            </div>
-          )}
+          ))}
+        </div>
+      )}
 
-          {/* Last 7 days — collapsible table for context, never the
-              focus. Click the header to expand. */}
-          {last7.length > 0 && (
-            <div className="mt-6">
-              <button
-                type="button"
-                onClick={() => setShow7Days(s => !s)}
-                className="flex items-center gap-2 text-base font-medium text-muted-foreground hover:text-foreground"
-              >
-                <ChevronRight className={cn("w-4 h-4 transition-transform", show7Days && "rotate-90")} />
-                {show7Days ? "Hide" : "Show"} all changes this week ({last7.length})
-              </button>
-              {show7Days && (
-                <div className="glass-panel rounded-xl overflow-hidden mt-2">
-                  <table className="w-full text-base">
-                    <thead>
-                      <tr className="bg-secondary/40 border-b border-border/50">
-                        <th className="text-left px-4 py-2 text-sm font-medium text-muted-foreground">When</th>
-                        <th className="text-left px-4 py-2 text-sm font-medium text-muted-foreground">Change</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {last7.map((c, i) => (
-                        <tr key={c.sha} className={cn(i > 0 && "border-t border-border/50")}>
-                          <td className="px-4 py-2 text-sm text-muted-foreground tabular-nums whitespace-nowrap align-top">
-                            {format(new Date(c.date), "EEE d MMM HH:mm")}
-                          </td>
-                          <td className="px-4 py-2">{c.subject}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+      {/* Last 7 days — collapsible context, only present when the git/commit
+          feed is the source (curated entries don't carry commit history). */}
+      {!isLoading && last7.length > 0 && (
+        <div className="mt-6">
+          <button
+            type="button"
+            onClick={() => setShow7Days(s => !s)}
+            className="flex items-center gap-2 text-base font-medium text-muted-foreground hover:text-foreground"
+          >
+            <ChevronRight className={cn("w-4 h-4 transition-transform", show7Days && "rotate-90")} />
+            {show7Days ? "Hide" : "Show"} all changes this week ({last7.length})
+          </button>
+          {show7Days && (
+            <div className="glass-panel rounded-xl overflow-hidden mt-2">
+              <table className="w-full text-base">
+                <thead>
+                  <tr className="bg-secondary/40 border-b border-border/50">
+                    <th className="text-left px-4 py-2 text-sm font-medium text-muted-foreground">When</th>
+                    <th className="text-left px-4 py-2 text-sm font-medium text-muted-foreground">Change</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {last7.map((c, i) => (
+                    <tr key={c.sha} className={cn(i > 0 && "border-t border-border/50")}>
+                      <td className="px-4 py-2 text-sm text-muted-foreground tabular-nums whitespace-nowrap align-top">
+                        {format(new Date(c.date), "EEE d MMM HH:mm")}
+                      </td>
+                      <td className="px-4 py-2">{c.subject}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );
