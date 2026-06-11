@@ -166,6 +166,7 @@ router.get("/calculate", async (req, res) => {
       kanbanUnit: ingredientsTable.kanbanUnit,
       orderingUrl: ingredientsTable.orderingUrl,
       stockInPacks: ingredientsTable.stockInPacks,
+      caseSizePacks: ingredientsTable.caseSizePacks,
     })
     .from(ingredientsTable)
     .where(inArray(ingredientsTable.id, ingredientIds));
@@ -293,6 +294,9 @@ router.get("/calculate", async (req, res) => {
       // happened and stock levels look sane.
       belowRequirement: boolean;
       stockInPacks: boolean;
+      // Packs per case, when ordered by the case. Sent so the front-end can
+      // re-apply case rounding after the operator edits the stock count.
+      caseSizePacks: number | null;
     }>;
   }> = {};
 
@@ -342,7 +346,15 @@ router.get("/calculate", async (req, res) => {
       : dailyRequirement * (surplusPercent / 100);
 
     const rawOrderQty = Math.max(0, ing.totalRequired + surplusTarget - stockOnHand);
-    const packsToOrder = packWeight > 0 ? Math.ceil(rawOrderQty / packWeight) : 0;
+    let packsToOrder = packWeight > 0 ? Math.ceil(rawOrderQty / packWeight) : 0;
+    // Case rounding: when this ingredient is ordered by the case, round the
+    // pack count UP to the nearest whole case (e.g. need 8 tins, case of 12 →
+    // order 12). Only kicks in when we're actually ordering something; a
+    // shortfall of 0 stays 0. Stock check is unaffected — this is ordering only.
+    const caseSizePacks = Number(detail.caseSizePacks) || 0;
+    if (caseSizePacks > 0 && packsToOrder > 0) {
+      packsToOrder = Math.ceil(packsToOrder / caseSizePacks) * caseSizePacks;
+    }
     const orderQty = packsToOrder * packWeight;
 
     // Suppress weekly stock-check items on non-scheduled days unless there's
@@ -395,6 +407,7 @@ router.get("/calculate", async (req, res) => {
       orderingUrl: detail.orderingUrl ?? null,
       lastStockCheckAt: stockCheckTimestamps[iid] ?? null,
       stockInPacks: (detail.stockInPacks ?? false) && packWeight > 0,
+      caseSizePacks: caseSizePacks > 0 ? caseSizePacks : null,
       belowRequirement,
     });
   }
@@ -471,6 +484,8 @@ router.get("/calculate", async (req, res) => {
         lastStockCheckAt: stockCheckTimestamps[d.id] ?? null,
         belowRequirement: false,
         stockInPacks: (d.stockInPacks ?? false) && packWeight > 0,
+        // Kanban order amounts are fixed quantities; no case rounding applies.
+        caseSizePacks: null,
       });
     }
   }

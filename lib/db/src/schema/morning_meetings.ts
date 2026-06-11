@@ -19,7 +19,7 @@
  * window — backfilled into the new principle/example tables on
  * startup, then made read-only.
  */
-import { pgTable, serial, text, integer, timestamp, boolean, date, unique, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, boolean, date, unique, jsonb, customType } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { usersTable } from "./users";
 
@@ -112,6 +112,14 @@ export const templateSlidesTable = pgTable("template_slides", {
 
 // ── Per-meeting state ───────────────────────────────────────────────
 
+// Postgres `bytea` — stored / returned as a Buffer (same pattern as
+// risk_assessments / onboarding). Used for the optional gratitude-slide photo.
+const bytea = customType<{ data: Buffer; notNull: false; default: false }>({
+  dataType() {
+    return "bytea";
+  },
+});
+
 export const morningMeetingsTable = pgTable("morning_meetings", {
   id: serial("id").primaryKey(),
   meetingDate: date("meeting_date").notNull(),
@@ -122,6 +130,12 @@ export const morningMeetingsTable = pgTable("morning_meetings", {
   lessonId: integer("lesson_id"),
   // Pointer to the example that was picked for the lesson slide.
   exampleId: integer("example_id").references(() => leanExamplesTable.id, { onDelete: "set null" }),
+  // Optional photo + caption shown on the closing gratitude slide. Stored
+  // per-meeting (i.e. fresh each day) inline as bytea — no object storage
+  // needed. When absent, the slide falls back to a live themed image.
+  gratitudePhoto: bytea("gratitude_photo"),
+  gratitudePhotoMime: text("gratitude_photo_mime"),
+  gratitudeCaption: text("gratitude_caption"),
   startedAt: timestamp("started_at").notNull().defaultNow(),
   endedAt: timestamp("ended_at"),
 }, (table) => [

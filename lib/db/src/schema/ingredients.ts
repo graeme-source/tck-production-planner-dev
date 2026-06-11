@@ -35,6 +35,11 @@ export const ingredientsTable = pgTable("ingredients", {
   // whole packs (e.g. bottles of milk) rather than its native weight/volume.
   // Recipes and prep always use the native unit. Requires packWeight > 0.
   stockInPacks: boolean("stock_in_packs").notNull().default(false),
+  // Number of packs that make up one supplier case (e.g. a case of 12 tins of
+  // tomato paste). When set, the orders page rounds the pack count to order UP
+  // to the nearest whole case. Null/0 means "order in individual packs" — no
+  // case rounding. Stock check is unaffected; this only shapes ordering.
+  caseSizePacks: integer("case_size_packs"),
   kanbanEnabled: boolean("kanban_enabled").notNull().default(false),
   kanbanQuantity: numeric("kanban_quantity", { precision: 10, scale: 4 }).notNull().default("0"),
   kanbanUnit: text("kanban_unit").notNull().default("weight"),

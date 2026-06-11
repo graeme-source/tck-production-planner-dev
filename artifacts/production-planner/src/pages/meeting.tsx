@@ -23,7 +23,7 @@ import {
   Sparkles, ChefHat, Truck, ShoppingBag, AlertCircle, FileText, MessageCircle,
   HeartHandshake, Activity, BookOpen, Award, Loader2, ClipboardCheck, Sun,
   CheckCircle2, Heart, Settings, Edit3, Calendar, GripVertical, Plus, Trash2, Save,
-  Shuffle,
+  Shuffle, Camera, Image as ImageIcon,
 } from "lucide-react";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import type { DragEndEvent } from "@dnd-kit/core";
@@ -33,6 +33,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
+import { ImprovementAttachments } from "@/components/improvement-attachments";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -66,6 +67,8 @@ interface DashboardData {
   todayDeliveries: Array<{ id: number; supplierName: string; status: string }>;
   safetyIssues: Array<{ id: number; category: string; severity: string; description: string | null; createdAt: string }>;
   struggles: Array<{ id: number; title: string; description: string; createdAt: string }>;
+  improvementsRequired: Array<{ id: number; title: string; description: string; createdAt: string }>;
+  recentImprovements: Array<{ id: number; title: string; description: string; updatedAt: string }>;
   recentSops: Array<{ id: number; title: string; updatedAt: string }>;
   lesson: {
     id: number; weekNumber: number; title: string; summary: string;
@@ -76,7 +79,7 @@ interface DashboardData {
     principleId?: number;
     principleTitle?: string;
   } | null;
-  meeting: { id: number; hostName: string | null; startedAt: string; endedAt: string | null; lessonId: number | null; exampleId: number | null } | null;
+  meeting: { id: number; hostName: string | null; startedAt: string; endedAt: string | null; lessonId: number | null; exampleId: number | null; gratitudeCaption: string | null; hasGratitudePhoto: boolean } | null;
   slides: MeetingSlide[];
   gratitude: Array<{ id: number; fromName: string; toName: string | null; content: string }>;
 }
@@ -223,6 +226,7 @@ type SlideKind =
   | "system_updates"
   | "new_sops"
   | "struggles"
+  | "recent_improvements"
   | "lesson"
   | "gratitude"
   | "custom_markdown";
@@ -239,6 +243,7 @@ const SLIDE_KIND_META: Record<SlideKind, { icon: React.ElementType; color: strin
   system_updates:      { icon: Sparkles,      color: "text-purple-500",  fallbackTitle: "System Updates" },
   new_sops:            { icon: FileText,      color: "text-cyan-500",    fallbackTitle: "New & Updated SOPs" },
   struggles:           { icon: MessageCircle, color: "text-pink-500",    fallbackTitle: "Improvements Required" },
+  recent_improvements: { icon: CheckCircle2,  color: "text-green-500",   fallbackTitle: "Recent Improvements" },
   lesson:              { icon: BookOpen,      color: "text-purple-500",  fallbackTitle: "Today's Lean Lesson" },
   gratitude:           { icon: Heart,         color: "text-rose-500",    fallbackTitle: "Gratitude" },
   custom_markdown:     { icon: BookOpen,      color: "text-slate-500",   fallbackTitle: "Note" },
@@ -598,10 +603,20 @@ function MeetingShell({
       {/* Slide body — fills the screen vertically. Short slides centre
           so the iPad/TV canvas isn't dominated by whitespace; long
           slides (Order of Production, deliveries) overflow scroll. */}
-      <div className="flex-1 overflow-y-auto px-8 py-6 flex flex-col">
-        <div className="max-w-6xl mx-auto w-full my-auto">
+      <div className={cn(
+        "flex-1 flex flex-col",
+        // Gratitude goes full-bleed (image fills the area between header and
+        // footer, with just a little padding); every other slide stays in the
+        // centred reading column.
+        slide.kind === "gratitude" ? "overflow-hidden p-4 sm:p-6" : "overflow-y-auto px-8 py-6",
+      )}>
+        {slide.kind === "gratitude" ? (
           <SlideBody slide={slide} data={data} onRefresh={onRefresh} isPreviewing={isPreviewing} />
-        </div>
+        ) : (
+          <div className="max-w-6xl mx-auto w-full my-auto">
+            <SlideBody slide={slide} data={data} onRefresh={onRefresh} isPreviewing={isPreviewing} />
+          </div>
+        )}
       </div>
 
       {/* Footer — compact Back / Next buttons sit either side of the
@@ -886,6 +901,7 @@ function SlideBody({ slide, data, onRefresh, isPreviewing }: { slide: MeetingSli
     case "system_updates": return <SystemUpdatesSlide slide={slide} />;
     case "new_sops": return <NewSopsSlide data={data} slide={slide} />;
     case "struggles": return <StrugglesSlide data={data} onRefresh={onRefresh} slide={slide} />;
+    case "recent_improvements": return <RecentImprovementsSlide data={data} slide={slide} />;
     case "lesson":
     case "learning": return <LearningSlide data={data} slide={slide} />;
     case "gratitude": return <GratitudeSlide data={data} onRefresh={onRefresh} slide={slide} />;
@@ -1551,6 +1567,8 @@ function SystemUpdatesSlide({ slide }: { slide: MeetingSlide }) {
     last24h: SystemCommit[];
     last7Days: SystemCommit[];
     summary: string[] | null;
+    updateTitle?: string | null;
+    updateDate?: string | null;
   }>({
     queryKey: ["system-updates"],
     queryFn: async () => {
@@ -1564,90 +1582,92 @@ function SystemUpdatesSlide({ slide }: { slide: MeetingSlide }) {
   const last24 = data?.last24h ?? [];
   const summary = data?.summary ?? null;
   const last7 = data?.last7Days ?? [];
+  const updateTitle = data?.updateTitle ?? null;
+  const updateDate = data?.updateDate ?? null;
 
   return (
     <div>
       <SectionTitle>{slide.title || "System Updates"}</SectionTitle>
-      <SectionLead>What's changed in the planner — auto-summarised from the last 24 hours of deploys.</SectionLead>
+      <SectionLead>Recent updates to the planner — run through these with the team.</SectionLead>
 
       {isLoading ? (
         <div className="glass-panel rounded-2xl p-6 flex justify-center">
           <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
         </div>
+      ) : summary && summary.length > 0 ? (
+        // Primary focus — the plain-English bullets (curated entry, or AI
+        // summary of recent commits). Big and unembellished so the host can
+        // read them out from across the kitchen.
+        <div className="glass-panel rounded-2xl p-6 border-2 border-primary/30 bg-primary/5">
+          {(updateTitle || updateDate) && (
+            <p className="text-base text-muted-foreground mb-3">
+              {updateTitle ?? "Latest update"}
+              {updateDate ? ` · ${format(new Date(updateDate), "EEE d MMM")}` : ""}
+            </p>
+          )}
+          <ul className="space-y-3">
+            {summary.map((line, i) => (
+              <li key={i} className="flex items-start gap-4 text-2xl leading-snug">
+                <span className="text-primary font-bold shrink-0 mt-1">•</span>
+                <span>{line}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : !data?.available ? (
         <div className="glass-panel rounded-2xl p-6 text-2xl text-muted-foreground">
-          System update feed isn't available in this environment.
+          No system updates yet — add one in Settings → System Updates.
         </div>
       ) : last24.length === 0 ? (
         <div className="glass-panel rounded-2xl p-8 text-3xl text-muted-foreground italic text-center">
           No changes shipped in the last 24 hours.
         </div>
       ) : (
-        <>
-          {/* Primary focus — the plain-English summary. Bullets are
-              big and unembellished so the host can read them out
-              from across the kitchen. */}
-          {summary && summary.length > 0 ? (
-            <div className="glass-panel rounded-2xl p-6 border-2 border-primary/30 bg-primary/5">
-              <ul className="space-y-3">
-                {summary.map((line, i) => (
-                  <li key={i} className="flex items-start gap-4 text-2xl leading-snug">
-                    <span className="text-primary font-bold shrink-0 mt-1">•</span>
-                    <span>{line}</span>
-                  </li>
-                ))}
-              </ul>
+        // Fallback: raw commit subjects when no curated entry / AI summary.
+        <div className="glass-panel rounded-2xl overflow-hidden">
+          {last24.map((c, i) => (
+            <div key={c.sha} className={cn("px-6 py-4 text-2xl leading-snug", i > 0 && "border-t border-border/50")}>
+              {c.subject}
             </div>
-          ) : (
-            // No AI summary available (Claude key missing on this
-            // env, or the summariser failed) — fall back to the raw
-            // commit subjects so the meeting still has content.
-            <div className="glass-panel rounded-2xl overflow-hidden">
-              {last24.map((c, i) => (
-                <div key={c.sha} className={cn("px-6 py-4 text-2xl leading-snug", i > 0 && "border-t border-border/50")}>
-                  {c.subject}
-                </div>
-              ))}
-            </div>
-          )}
+          ))}
+        </div>
+      )}
 
-          {/* Last 7 days — collapsible table for context, never the
-              focus. Click the header to expand. */}
-          {last7.length > 0 && (
-            <div className="mt-6">
-              <button
-                type="button"
-                onClick={() => setShow7Days(s => !s)}
-                className="flex items-center gap-2 text-base font-medium text-muted-foreground hover:text-foreground"
-              >
-                <ChevronRight className={cn("w-4 h-4 transition-transform", show7Days && "rotate-90")} />
-                {show7Days ? "Hide" : "Show"} all changes this week ({last7.length})
-              </button>
-              {show7Days && (
-                <div className="glass-panel rounded-xl overflow-hidden mt-2">
-                  <table className="w-full text-base">
-                    <thead>
-                      <tr className="bg-secondary/40 border-b border-border/50">
-                        <th className="text-left px-4 py-2 text-sm font-medium text-muted-foreground">When</th>
-                        <th className="text-left px-4 py-2 text-sm font-medium text-muted-foreground">Change</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {last7.map((c, i) => (
-                        <tr key={c.sha} className={cn(i > 0 && "border-t border-border/50")}>
-                          <td className="px-4 py-2 text-sm text-muted-foreground tabular-nums whitespace-nowrap align-top">
-                            {format(new Date(c.date), "EEE d MMM HH:mm")}
-                          </td>
-                          <td className="px-4 py-2">{c.subject}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+      {/* Last 7 days — collapsible context, only present when the git/commit
+          feed is the source (curated entries don't carry commit history). */}
+      {!isLoading && last7.length > 0 && (
+        <div className="mt-6">
+          <button
+            type="button"
+            onClick={() => setShow7Days(s => !s)}
+            className="flex items-center gap-2 text-base font-medium text-muted-foreground hover:text-foreground"
+          >
+            <ChevronRight className={cn("w-4 h-4 transition-transform", show7Days && "rotate-90")} />
+            {show7Days ? "Hide" : "Show"} all changes this week ({last7.length})
+          </button>
+          {show7Days && (
+            <div className="glass-panel rounded-xl overflow-hidden mt-2">
+              <table className="w-full text-base">
+                <thead>
+                  <tr className="bg-secondary/40 border-b border-border/50">
+                    <th className="text-left px-4 py-2 text-sm font-medium text-muted-foreground">When</th>
+                    <th className="text-left px-4 py-2 text-sm font-medium text-muted-foreground">Change</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {last7.map((c, i) => (
+                    <tr key={c.sha} className={cn(i > 0 && "border-t border-border/50")}>
+                      <td className="px-4 py-2 text-sm text-muted-foreground tabular-nums whitespace-nowrap align-top">
+                        {format(new Date(c.date), "EEE d MMM HH:mm")}
+                      </td>
+                      <td className="px-4 py-2">{c.subject}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );
@@ -1700,7 +1720,7 @@ function StrugglesSlide({ data, onRefresh, slide }: { data: DashboardData; onRef
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, description, station: "morning-meeting", type: "struggle", reportContext: "Raised in morning meeting" }),
+        body: JSON.stringify({ title, description, station: "morning-meeting", type: "improvement", reportContext: "Raised in morning meeting" }),
       });
       if (!res.ok) throw new Error("Failed");
       setTitle(""); setDescription("");
@@ -1718,7 +1738,7 @@ function StrugglesSlide({ data, onRefresh, slide }: { data: DashboardData; onRef
       <SectionLead>What's getting in the way? No blame — just name it. We'll action it from the kaizen board.</SectionLead>
       {data.struggles.length > 0 && (
         <div className="glass-panel rounded-2xl overflow-hidden mb-6">
-          <p className="text-base font-semibold uppercase tracking-wide text-muted-foreground px-6 py-3 border-b border-border/50">Open struggles</p>
+          <p className="text-base font-semibold uppercase tracking-wide text-muted-foreground px-6 py-3 border-b border-border/50">Open improvements</p>
           {data.struggles.map(s => (
             <div key={s.id} className="px-6 py-4 border-b border-border/50 last:border-0">
               <p className="text-2xl font-semibold leading-tight">{s.title}</p>
@@ -1747,6 +1767,45 @@ function StrugglesSlide({ data, onRefresh, slide }: { data: DashboardData; onRef
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function RecentImprovementsSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
+  const [openId, setOpenId] = useState<number | null>(null);
+  const items = data.recentImprovements ?? [];
+  return (
+    <div>
+      <SectionTitle>{slide.title || "Recent Improvements"}</SectionTitle>
+      <SectionLead>What we&apos;ve shipped — tap one to see the photos &amp; videos.</SectionLead>
+      {items.length === 0 ? (
+        <div className="glass-panel rounded-2xl p-8 text-3xl text-muted-foreground italic text-center">
+          No improvements completed recently.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {items.map(imp => (
+            <div key={imp.id} className="glass-panel rounded-2xl overflow-hidden">
+              <button
+                onClick={() => setOpenId(o => (o === imp.id ? null : imp.id))}
+                className="w-full text-left px-6 py-4 flex items-start gap-4"
+              >
+                <CheckCircle2 className="w-7 h-7 text-green-500 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-2xl font-semibold leading-snug">{imp.title}</p>
+                  {imp.description && <p className="text-lg text-muted-foreground mt-1 line-clamp-2">{imp.description}</p>}
+                </div>
+                <ChevronRight className={cn("w-6 h-6 text-muted-foreground transition-transform mt-1", openId === imp.id && "rotate-90")} />
+              </button>
+              {openId === imp.id && (
+                <div className="px-6 pb-5 pt-1">
+                  <ImprovementAttachments improvementId={imp.id} thumbSize="w-40 h-40" />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1886,29 +1945,202 @@ const GRATITUDE_PROMPTS: ReadonlyArray<{ emoji: string; line: string; sub: strin
   { emoji: "🎈", line: "Celebrate something small.", sub: "Birthdays, milestones, a clean station." },
 ];
 
-function pickGratitudeForDay(dateIso: string) {
-  const seed = dateIso.split("-").reduce((acc, part) => acc * 31 + Number(part), 0);
-  return GRATITUDE_PROMPTS[seed % GRATITUDE_PROMPTS.length];
+function dateSeed(dateIso: string): number {
+  return dateIso.split("-").reduce((acc, part) => acc * 31 + Number(part), 0);
 }
 
-function GratitudeSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide; onRefresh: () => void }) {
+function pickGratitudeForDay(dateIso: string) {
+  return GRATITUDE_PROMPTS[dateSeed(dateIso) % GRATITUDE_PROMPTS.length];
+}
+
+// "Things that are free in life that we can be grateful for" — one theme is
+// chosen per day (deterministically from the date) when no photo is uploaded.
+const GRATITUDE_PHOTO_THEMES = [
+  "sunset", "flowers", "food", "nature,landscape", "ocean,beach",
+  "mountains", "garden,flowers", "sky,clouds", "forest", "coffee",
+] as const;
+
+// Live, key-less themed image for the fallback. LoremFlickr serves a random
+// Creative-Commons photo matching the tag; `lock=<seed>` pins it for the whole
+// day so it doesn't reshuffle on every render, but rotates day to day.
+function fallbackGratitudePhotoUrl(dateIso: string): string {
+  const seed = dateSeed(dateIso);
+  const theme = GRATITUDE_PHOTO_THEMES[seed % GRATITUDE_PHOTO_THEMES.length];
+  return `https://loremflickr.com/1200/800/${encodeURIComponent(theme)}?lock=${seed}`;
+}
+
+function GratitudeSlide({ data, slide, onRefresh }: { data: DashboardData; slide: MeetingSlide; onRefresh: () => void }) {
   void slide;
   const todayIso = data.today || new Date().toISOString().slice(0, 10);
   const prompt = pickGratitudeForDay(todayIso);
-  return (
-    <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-rose-100 via-amber-50 to-emerald-100 dark:from-rose-900/30 dark:via-amber-900/20 dark:to-emerald-900/30 p-12 min-h-[420px] flex flex-col items-center justify-center text-center gap-6 shadow-inner">
-      {/* Soft floating shapes for a touch of motion / warmth */}
-      <div className="absolute -top-20 -left-20 w-72 h-72 rounded-full bg-rose-200/40 dark:bg-rose-500/10 blur-3xl" />
-      <div className="absolute -bottom-24 -right-16 w-80 h-80 rounded-full bg-amber-200/40 dark:bg-amber-500/10 blur-3xl" />
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full bg-emerald-200/30 dark:bg-emerald-500/10 blur-3xl" />
+  const meetingId = data.meeting?.id ?? null;
+  const hasPhoto = Boolean(data.meeting?.hasGratitudePhoto);
+  const serverCaption = data.meeting?.gratitudeCaption ?? "";
 
-      <div className="relative z-10 flex flex-col items-center gap-6">
-        <div className="text-8xl leading-none">{prompt.emoji}</div>
-        <h2 className="font-display text-4xl md:text-5xl font-bold text-foreground leading-tight max-w-3xl">
-          {prompt.line}
-        </h2>
-        <p className="text-xl text-muted-foreground max-w-xl">{prompt.sub}</p>
-        <p className="text-xs uppercase tracking-widest text-muted-foreground mt-4">Gratitude</p>
+  // Bumped on each upload/remove so the browser refetches the streamed image
+  // instead of showing a cached previous photo after a replace.
+  const [photoVersion, setPhotoVersion] = useState(0);
+  const [caption, setCaption] = useState(serverCaption);
+  const [busy, setBusy] = useState(false);
+  const [savingCaption, setSavingCaption] = useState(false);
+  const [fallbackFailed, setFallbackFailed] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const cameraRef = useRef<HTMLInputElement | null>(null);
+
+  // Keep the caption box in sync when the dashboard refetches.
+  useEffect(() => { setCaption(serverCaption); }, [serverCaption]);
+
+  const uploadedUrl = meetingId ? `${BASE}/api/morning-meetings/${meetingId}/gratitude-photo?v=${photoVersion}` : "";
+  const fallbackUrl = fallbackGratitudePhotoUrl(todayIso);
+
+  const uploadPhoto = async (file: File) => {
+    if (!meetingId) { toast({ title: "Start the meeting first", variant: "destructive" }); return; }
+    if (file.size > 10 * 1024 * 1024) { toast({ title: "Image too large (max 10MB)", variant: "destructive" }); return; }
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      if (caption.trim()) form.append("caption", caption.trim());
+      const res = await fetch(`${BASE}/api/morning-meetings/${meetingId}/gratitude-photo`, { method: "POST", credentials: "include", body: form });
+      if (!res.ok) throw new Error("Failed");
+      setPhotoVersion(v => v + 1);
+      onRefresh();
+      toast({ title: "Photo added" });
+    } catch {
+      toast({ title: "Upload failed", variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveCaption = async () => {
+    if (!meetingId) return;
+    setSavingCaption(true);
+    try {
+      const res = await fetch(`${BASE}/api/morning-meetings/${meetingId}/gratitude-caption`, {
+        method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ caption: caption.trim() }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      onRefresh();
+      toast({ title: "Caption saved" });
+    } catch {
+      toast({ title: "Couldn't save caption", variant: "destructive" });
+    } finally {
+      setSavingCaption(false);
+    }
+  };
+
+  const removePhoto = async () => {
+    if (!meetingId) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`${BASE}/api/morning-meetings/${meetingId}/gratitude-photo`, { method: "DELETE", credentials: "include" });
+      if (!res.ok) throw new Error("Failed");
+      setCaption("");
+      setPhotoVersion(v => v + 1);
+      onRefresh();
+      toast({ title: "Photo removed" });
+    } catch {
+      toast({ title: "Couldn't remove photo", variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Show an image whenever we have an uploaded one, or the live themed fallback
+  // hasn't failed to load. If the fallback can't load (e.g. offline), drop back
+  // to the original emoji + prompt so the slide is never blank.
+  const showImage = hasPhoto || !fallbackFailed;
+  const imageSrc = hasPhoto ? uploadedUrl : fallbackUrl;
+
+  // Heavy text shadow so the overlaid caption stays legible over ANY photo,
+  // light or dark, from across the room.
+  const captionShadow = { textShadow: "0 4px 24px rgba(0,0,0,0.85), 0 2px 6px rgba(0,0,0,0.95)" } as const;
+  const labelShadow = { textShadow: "0 2px 8px rgba(0,0,0,0.9)" } as const;
+  const overlayText = hasPhoto ? serverCaption : prompt.line;
+
+  return (
+    <div className="relative w-full flex-1 min-h-0 rounded-3xl overflow-hidden shadow-inner bg-gradient-to-br from-rose-100 via-amber-50 to-emerald-100 dark:from-rose-900/30 dark:via-amber-900/20 dark:to-emerald-900/30">
+      {showImage ? (
+        <>
+          {/* Full-bleed photo */}
+          <img
+            key={imageSrc}
+            src={imageSrc}
+            alt={hasPhoto ? (serverCaption || "Today's gratitude photo") : "Something to be grateful for"}
+            className="absolute inset-0 w-full h-full object-cover"
+            onError={() => { if (!hasPhoto) setFallbackFailed(true); }}
+          />
+          {/* Scrim — darkens top + bottom so the label and caption read over
+              any image without hiding the middle of the photo. */}
+          <div className="absolute inset-0 bg-gradient-to-b from-black/35 via-transparent to-black/65" />
+        </>
+      ) : (
+        <>
+          {/* Offline / image-service down → original warm emoji + prompt. */}
+          <div className="absolute -top-20 -left-20 w-72 h-72 rounded-full bg-rose-200/40 dark:bg-rose-500/10 blur-3xl" />
+          <div className="absolute -bottom-24 -right-16 w-80 h-80 rounded-full bg-amber-200/40 dark:bg-amber-500/10 blur-3xl" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-center gap-5 p-8">
+            <div className="text-8xl leading-none">{prompt.emoji}</div>
+            <h2 className="font-display text-4xl md:text-6xl font-bold text-foreground leading-tight max-w-4xl">{prompt.line}</h2>
+            <p className="text-xl text-muted-foreground max-w-xl">{prompt.sub}</p>
+          </div>
+        </>
+      )}
+
+      {/* Overlay layout: label up top, big caption anchored at the bottom,
+          host controls below it. Pointer-events pass through except on the
+          actual controls so swipe/nav still works over the image. */}
+      <div className="absolute inset-0 flex flex-col p-4 sm:p-6 pointer-events-none">
+        {showImage && (
+          <div className="flex justify-center">
+            <span className="px-3 py-1 rounded-full bg-black/30 backdrop-blur-sm text-white/95 text-xs uppercase tracking-widest" style={labelShadow}>Gratitude</span>
+          </div>
+        )}
+
+        {/* Big caption — fills the space and sits just above the controls. */}
+        <div className="flex-1 flex items-end justify-center text-center pb-3">
+          {showImage && overlayText && (
+            <h2
+              className="font-display font-extrabold text-white leading-[1.05] max-w-5xl text-5xl sm:text-6xl md:text-7xl"
+              style={captionShadow}
+            >
+              {overlayText}
+            </h2>
+          )}
+        </div>
+
+        {/* Host controls — only once today's meeting exists. */}
+        {meetingId && (
+          <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-2 rounded-2xl bg-black/40 backdrop-blur-md p-2" data-no-swipe>
+            <input
+              value={caption}
+              onChange={e => setCaption(e.target.value)}
+              placeholder="Add a caption (optional)"
+              maxLength={300}
+              className="flex-1 min-w-[180px] bg-white/90 text-foreground placeholder:text-muted-foreground border border-white/40 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+            />
+            {hasPhoto && (
+              <button onClick={saveCaption} disabled={savingCaption} className="px-3 py-2 rounded-xl bg-white/90 text-foreground text-sm font-medium disabled:opacity-50 inline-flex items-center gap-1.5">
+                {savingCaption ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save caption
+              </button>
+            )}
+            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(f); e.target.value = ""; }} />
+            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(f); e.target.value = ""; }} />
+            <button onClick={() => cameraRef.current?.click()} disabled={busy} className="px-3 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50">
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />} Take photo
+            </button>
+            <button onClick={() => fileRef.current?.click()} disabled={busy} className="px-3 py-2 rounded-xl bg-primary/90 text-primary-foreground text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50">
+              <ImageIcon className="w-4 h-4" /> {hasPhoto ? "Replace" : "Add photo"}
+            </button>
+            {hasPhoto && (
+              <button onClick={removePhoto} disabled={busy} className="px-3 py-2 rounded-xl bg-destructive/80 text-white text-sm font-medium inline-flex items-center gap-1.5 disabled:opacity-50">
+                <Trash2 className="w-4 h-4" /> Remove
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1931,7 +2163,8 @@ const SLIDE_KIND_CATALOG: Array<{ kind: SlideKind; label: string; description: s
   { kind: "safety_issues",       label: "Safety Issues",        description: "Open andons + log new" },
   { kind: "system_updates",      label: "System Updates",       description: "Auto-pulls recent commits to the planner" },
   { kind: "new_sops",            label: "New & Updated SOPs",   description: "SOPs touched in last 7 days" },
-  { kind: "struggles",           label: "Improvements Required",            description: "Open struggles + log new" },
+  { kind: "struggles",           label: "Improvements Required",            description: "Open improvements + log new" },
+  { kind: "recent_improvements", label: "Recent Improvements",  description: "Recently completed improvements + photos/videos" },
   { kind: "lesson",              label: "Lean Lesson",          description: "Today's principle + example" },
   { kind: "gratitude",           label: "Gratitude",            description: "Capture shout-outs" },
   { kind: "custom_markdown",     label: "Custom note",          description: "Freeform markdown slide" },

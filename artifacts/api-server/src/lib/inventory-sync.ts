@@ -252,7 +252,7 @@ export async function decrementFridgeForShopifyOrder(
     if (packs <= 0) continue;
     try {
       // Decrement aggregate stock entry
-      await syncRecipeFridgeStock(recipeId, -packs);
+      await syncRecipeFridgeStock(recipeId, -packs, 2, db, { source: "fulfilment", note: "Despatch fulfilment" });
 
       // FIFO batch deduction — oldest use-by date first
       let remaining = packs;

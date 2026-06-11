@@ -7,6 +7,7 @@ import * as z from "zod";
 import { resolveRecipeIngredients, resolveSubRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
 import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag } from "../services/shopify";
 import { getFactoryNumberCoreMenuOnly, getShopifyFreezerSyncEnabled } from "../lib/inventory-sync";
+import { logFridgeStockChange, type FridgeChangeSource } from "../lib/fridge-stock-log";
 import { londonDateString, londonStartOfDay } from "../lib/london-time";
 // Type-only import — purely compile-time, no runtime cost. The actual
 // PDF renderer (and the heavy @react-pdf/renderer dep tree it pulls in)
@@ -34,7 +35,13 @@ const router: IRouter = Router();
  *  delta = fulfilment removed packs. Floors at 0. Exported so the
  *  inventory-sync helper can call it from the fulfilment decrement
  *  path and the one-off reset endpoint. */
-export async function syncRecipeFridgeStock(recipeId: number, deltaQty: number, packSize: number = 2, txOrDb: typeof db = db) {
+export async function syncRecipeFridgeStock(
+  recipeId: number,
+  deltaQty: number,
+  packSize: number = 2,
+  txOrDb: typeof db = db,
+  meta: { source?: FridgeChangeSource; note?: string | null; userId?: number | null } = {},
+) {
   const existing = await txOrDb
     .select({ id: stockEntriesTable.id, quantity: stockEntriesTable.quantity })
     .from(stockEntriesTable)
@@ -47,22 +54,36 @@ export async function syncRecipeFridgeStock(recipeId: number, deltaQty: number, 
     .orderBy(desc(stockEntriesTable.checkedAt))
     .limit(1);
 
+  let resultingQty: number;
   if (existing.length > 0) {
-    const newQty = Math.max(0, Number(existing[0].quantity) + deltaQty);
+    resultingQty = Math.max(0, Number(existing[0].quantity) + deltaQty);
     await txOrDb.update(stockEntriesTable)
-      .set({ quantity: String(newQty), checkedAt: new Date() })
+      .set({ quantity: String(resultingQty), checkedAt: new Date() })
       .where(eq(stockEntriesTable.id, existing[0].id));
   } else {
+    resultingQty = Math.max(0, deltaQty);
     await txOrDb.insert(stockEntriesTable).values({
       recipeId,
       itemType: "recipe",
-      quantity: String(Math.max(0, deltaQty)),
+      quantity: String(resultingQty),
       unit: packSize === 8 ? "8-pack bags" : "packs",
       location: "production_fridge",
       packSize,
       notes: packSize === 8 ? "Auto-created from wrapping station (8-pack bags)" : "Auto-created from wrapping station",
     });
   }
+
+  // Append an audit-log row so wrapping/despatch changes show in the
+  // Stock Control history (not just manual checks).
+  await logFridgeStockChange(txOrDb, {
+    recipeId,
+    packSize,
+    delta: deltaQty,
+    resultingQty,
+    source: meta.source ?? "wrapping",
+    note: meta.note ?? null,
+    userId: meta.userId ?? null,
+  });
 }
 
 async function syncRecipeFreezerStock(recipeId: number, deltaQty: number) {
@@ -587,11 +608,11 @@ router.get("/calculate", async (req, res) => {
     }
   }
 
-  // Factory Number reflects production_fridge stock only — that's the spec
-  // the kitchen works to. Previously this excluded freezers but pooled all
-  // other locations, so a stale row from any other non-freezer location
-  // could out-rank an operator's production_fridge update on checkedAt
-  // recency and silently override their reading.
+  // Factory Number reflects the 2-pack production_fridge reading — the figure
+  // the kitchen works to and that Create Plan shows. We deliberately filter to
+  // pack_size = 2: 8-pack bags live in their own rows, and without this filter
+  // a newer 8-pack row (e.g. 9 bags) would out-rank the 2-pack factory number
+  // (e.g. 100) on checkedAt recency and show as a false shortage.
   const stockRows = await db
     .select({
       recipeId: stockEntriesTable.recipeId,
@@ -602,6 +623,7 @@ router.get("/calculate", async (req, res) => {
     .where(and(
       eq(stockEntriesTable.itemType, "recipe"),
       eq(stockEntriesTable.location, "production_fridge"),
+      eq(stockEntriesTable.packSize, 2),
     ))
     .orderBy(asc(stockEntriesTable.checkedAt));
 
@@ -3541,6 +3563,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       recipeId: productionPlanItemsTable.recipeId,
       batchesTarget: productionPlanItemsTable.batchesTarget,
       recipeName: recipesTable.name,
+      recipeCategory: recipesTable.category,
       portionsPerBatch: recipesTable.portionsPerBatch,
       sopUrlFromItem: productionPlanItemsTable.sopUrl,
       sopUrlFromRecipe: recipesTable.sopUrl,
@@ -3869,6 +3892,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
     result.push({
       recipeId: planItem.recipeId,
       recipeName: planItem.recipeName ?? `Recipe #${planItem.recipeId}`,
+      recipeCategory: planItem.recipeCategory ?? null,
       batchesTarget,
       sopUrl: planItem.sopUrlFromItem ?? planItem.sopUrlFromRecipe ?? null,
       tinSize: planItem.tinSize ?? null,
@@ -5329,7 +5353,11 @@ router.post("/:id/items/:itemId/fridge", async (req, res) => {
       fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
     });
 
-  await syncRecipeFridgeStock(item.recipeId, qty, packSize);
+  await syncRecipeFridgeStock(item.recipeId, qty, packSize, db, {
+    source: "wrapping",
+    note: packSize === 8 ? "Wrapped (8-pack bags)" : "Wrapped",
+    userId: req.session.userId ?? null,
+  });
 
   // Upsert batch-level fridge stock tracking
   const [plan] = await db.select({ batchNumber: productionPlansTable.batchNumber, planDate: productionPlansTable.planDate })
@@ -5385,7 +5413,11 @@ router.delete("/:id/items/:itemId/fridge", async (req, res) => {
       fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
     });
 
-  await syncRecipeFridgeStock(item.recipeId, -qty, packSize);
+  await syncRecipeFridgeStock(item.recipeId, -qty, packSize, db, {
+    source: "wrapping",
+    note: "Undo wrapped",
+    userId: req.session.userId ?? null,
+  });
 
   // Decrement batch-level fridge stock tracking
   const [plan] = await db.select({ batchNumber: productionPlansTable.batchNumber })

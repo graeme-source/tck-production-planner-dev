@@ -257,6 +257,7 @@ export interface PrepMarinadeDetail {
 export interface PrepRecipeDetail {
   recipeId: number;
   recipeName: string;
+  recipeCategory?: string | null;
   batchesTarget: number;
   sopUrl: string | null;
   tinSize: string | null;

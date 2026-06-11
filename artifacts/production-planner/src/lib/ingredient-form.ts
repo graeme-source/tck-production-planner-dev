@@ -65,6 +65,9 @@ export const ingredientFormSchema = z.object({
   surplusAbsoluteQty: nullableNumber((n) => n.min(0)),
   shelfLifeDays: nullableNumber((n) => n.int().positive()),
   requiresUseByDate: z.boolean().optional(),
+  // Packs per supplier case. When set, the orders page rounds the pack count to
+  // order up to the nearest whole case. Empty = order in individual packs.
+  caseSizePacks: nullableNumber((n) => n.int().positive()),
 
   // Kanban
   kanbanEnabled: z.boolean().optional(),
@@ -149,6 +152,7 @@ export function emptyIngredientFormDefaults(
     surplusAbsoluteQty: null,
     shelfLifeDays: null,
     requiresUseByDate: false,
+    caseSizePacks: null,
     kanbanEnabled: false,
     kanbanQuantity: 0,
     kanbanUnit: "weight" as const,
@@ -225,6 +229,7 @@ export function ingredientToFormValues(
     surplusAbsoluteQty: num(it.surplusAbsoluteQty),
     shelfLifeDays: num(it.shelfLifeDays),
     requiresUseByDate: bool(it.requiresUseByDate),
+    caseSizePacks: num(it.caseSizePacks),
     kanbanEnabled: bool(it.kanbanEnabled),
     kanbanQuantity: num(it.kanbanQuantity) ?? 0,
     kanbanUnit: (it.kanbanUnit as "weight" | "pack" | "bottle" | undefined) ?? "weight",
@@ -286,6 +291,7 @@ export function buildIngredientPayload(data: IngredientFormValues) {
       data.surplusMode === "absolute" ? (data.surplusAbsoluteQty ?? null) : null,
     shelfLifeDays: data.shelfLifeDays ?? null,
     requiresUseByDate: data.requiresUseByDate ?? false,
+    caseSizePacks: data.caseSizePacks ?? null,
     kanbanEnabled: data.kanbanEnabled ?? false,
     kanbanQuantity: data.kanbanQuantity ?? 0,
     kanbanUnit: data.kanbanUnit ?? "weight",

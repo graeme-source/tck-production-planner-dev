@@ -190,6 +190,39 @@ async function runStartupMigrations() {
     await db.execute(sql`
       ALTER TABLE standards_sops ADD COLUMN IF NOT EXISTS steps_per_page INTEGER
     `);
+    // Curated "system updates" changelog shown on the morning-meeting slide.
+    // body holds the bullet lines (one per line).
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS system_updates (
+        id serial PRIMARY KEY,
+        title text,
+        body text NOT NULL,
+        published boolean NOT NULL DEFAULT true,
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+    // Improvements consolidation: "struggles" are now just improvements.
+    // Idempotent — a no-op once no struggle rows remain.
+    await db.execute(sql`
+      UPDATE improvement_submissions SET type = 'improvement' WHERE type = 'struggle'
+    `);
+    // Photos & videos attached to an improvement (multiple per improvement),
+    // stored as bytea like SOP step media so it works without object storage.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS improvement_attachments (
+        id serial PRIMARY KEY,
+        improvement_id integer NOT NULL REFERENCES improvement_submissions(id) ON DELETE CASCADE,
+        kind text NOT NULL,
+        mime text NOT NULL,
+        data bytea NOT NULL,
+        file_name text,
+        created_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS improvement_attachments_improvement_idx ON improvement_attachments (improvement_id)
+    `);
     await db.execute(sql`
       ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS short_count INTEGER NOT NULL DEFAULT 0
     `);
@@ -1519,6 +1552,82 @@ async function runStartupMigrations() {
     // Dedicated supplier ordering phone (WhatsApp) — separate from `phone`.
     await db.execute(sql`ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS ordering_phone text`);
 
+    // Case size (in packs) for case-rounding the order quantity. Null = order
+    // in individual packs. Only affects the orders page; stock check unchanged.
+    await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS case_size_packs INTEGER`);
+
+    // Optional photo + caption for the morning-meeting gratitude slide. Stored
+    // per-day on the meeting row; NULL falls back to a live themed image.
+    await db.execute(sql`ALTER TABLE morning_meetings ADD COLUMN IF NOT EXISTS gratitude_photo BYTEA`);
+    await db.execute(sql`ALTER TABLE morning_meetings ADD COLUMN IF NOT EXISTS gratitude_photo_mime TEXT`);
+    await db.execute(sql`ALTER TABLE morning_meetings ADD COLUMN IF NOT EXISTS gratitude_caption TEXT`);
+
+    // Govee temperature-sensor integration: discovered sensors (mapped to
+    // storage locations + cached latest reading), append-only reading history,
+    // and web-push subscriptions for alerts. All additive — safe to re-run.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS govee_sensors (
+        id                    SERIAL PRIMARY KEY,
+        device                TEXT NOT NULL UNIQUE,
+        sku                   TEXT NOT NULL DEFAULT '',
+        name                  TEXT NOT NULL DEFAULT '',
+        storage_location_id   INTEGER REFERENCES storage_locations(id) ON DELETE SET NULL,
+        enabled               BOOLEAN NOT NULL DEFAULT TRUE,
+        last_temperature_c    NUMERIC(5,1),
+        last_humidity_percent INTEGER,
+        last_online           BOOLEAN,
+        last_reading_at       TIMESTAMP,
+        created_at            TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at            TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS govee_readings (
+        id               SERIAL PRIMARY KEY,
+        device           TEXT NOT NULL,
+        temperature_c    NUMERIC(5,1),
+        humidity_percent INTEGER,
+        online           BOOLEAN NOT NULL DEFAULT TRUE,
+        recorded_at      TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_govee_readings_device_time ON govee_readings (device, recorded_at)`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id           SERIAL PRIMARY KEY,
+        user_id      INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+        endpoint     TEXT NOT NULL UNIQUE,
+        p256dh       TEXT NOT NULL,
+        auth         TEXT NOT NULL,
+        user_agent   TEXT,
+        created_at   TIMESTAMP NOT NULL DEFAULT now(),
+        last_seen_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_push_subscriptions_user ON push_subscriptions (user_id)`);
+
+    // Append-only audit log of every production-fridge stock change (manual
+    // checks/adjustments, wrapping additions, despatch decrements). The
+    // aggregate stock_entries row stays the live total; this records each delta
+    // so the team can see what built the number up day to day.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS fridge_stock_changes (
+        id serial PRIMARY KEY,
+        recipe_id integer NOT NULL,
+        pack_size integer NOT NULL DEFAULT 2,
+        delta integer NOT NULL,
+        resulting_qty integer NOT NULL,
+        source text NOT NULL,
+        user_id integer,
+        note text,
+        created_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS idx_fridge_stock_changes_recipe_pack_time
+        ON fridge_stock_changes (recipe_id, pack_size, created_at DESC)
+    `);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);
@@ -1606,6 +1715,12 @@ async function startup() {
     // later; just un-comment the two lines below.
     // const { startFulfilmentPoller } = await import("./lib/fulfilment-poller");
     // startFulfilmentPoller().catch(err => console.error("[fulfilment-poller] start failed:", err));
+
+    // Govee temperature-sensor poller — self-gates on the runtime settings
+    // (off unless the master switch + a feature is enabled), so it's a no-op
+    // until configured. Lean: one Govee fetch per cycle.
+    const { startGoveePoller } = await import("./lib/govee-poller");
+    startGoveePoller();
   } catch (err) {
     console.error(
       "Background startup tasks failed:",

@@ -3,6 +3,7 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useSearch, useLocation } from "wouter";
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
+import { ImprovementAttachments } from "@/components/improvement-attachments";
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, subWeeks, subMonths, isToday, isYesterday, isSameDay, addDays, addWeeks, differenceInCalendarDays } from "date-fns";
 import {
   Loader2, Coffee, Utensils, Clock, Users,
@@ -160,7 +161,7 @@ type TabId = "kpis" | "breaks" | "haccp" | "risk-assessments" | "improvements" |
 // HACCP is being built out into a full food-safety system, so it gets its
 // own sub-navigation. Temperature Log lives here too — fridge, freezer, and
 // cooked-core readings are all food-safety evidence.
-type HaccpSubTabId = "evidence" | "temperatures" | "cooling-weights";
+type HaccpSubTabId = "evidence" | "temperatures" | "cooling-weights" | "sensors";
 
 interface ImprovementRecord {
   id: number;
@@ -253,7 +254,7 @@ function DateShortcutsDropdown({ onSelect }: { onSelect: (from: string, to: stri
 }
 
 const VALID_TABS: TabId[] = ["kpis", "breaks", "haccp", "risk-assessments", "improvements", "issues", "leftover-filling", "employees", "printables"];
-const VALID_HACCP_SUBTABS: HaccpSubTabId[] = ["evidence", "temperatures", "cooling-weights"];
+const VALID_HACCP_SUBTABS: HaccpSubTabId[] = ["evidence", "temperatures", "cooling-weights", "sensors"];
 
 interface ReportsNavItem {
   id: TabId;
@@ -283,6 +284,7 @@ const HACCP_SUB_NAV_ITEMS: HaccpSubNavItem[] = [
   { id: "evidence", label: "Evidence Log", icon: ShieldCheck },
   { id: "temperatures", label: "Temperature Log", icon: Thermometer },
   { id: "cooling-weights", label: "Cooling & Weights", icon: Hourglass },
+  { id: "sensors", label: "Sensor History", icon: Activity },
 ];
 
 // Tabs only visible to admins (not managers). Empty — no admin-gated tabs right now.
@@ -521,6 +523,7 @@ export default function Reports() {
               {haccpSubTab === "evidence" && <HaccpTab fromDate={fromDate} toDate={toDate} />}
               {haccpSubTab === "temperatures" && <TemperatureRecordsTab />}
               {haccpSubTab === "cooling-weights" && <BatchWeightsTab fromDate={fromDate} toDate={toDate} />}
+              {haccpSubTab === "sensors" && <GoveeSensorHistoryTab />}
             </>
           )}
           {activeTab === "risk-assessments" && <RiskAssessmentsTab userRole={userRole} currentUserName={state.status === "authenticated" ? state.user.name : null} />}
@@ -1095,6 +1098,152 @@ function isReadingSafe(zone: "fridge" | "freezer", temp: number): boolean {
 // calendar so spotting missing readings is glanceable: each fridge/freezer
 // gets an AM (opening) and PM (closing) slot per day. Cooked-core readings
 // sit in a collapsible section below the day detail.
+interface GoveeHistorySensor { device: string; name: string; zone: string | null; thresholdC: number | null; }
+interface GoveeHistoryPoint { temperatureC: number | null; humidityPercent: number | null; online: boolean; recordedAt: string; }
+
+// Cold-chain history from the Govee sensors. Lists each mapped sensor, a time
+// range, summary stats and a lightweight SVG trend line — no chart library.
+function GoveeSensorHistoryTab() {
+  const [sensors, setSensors] = useState<GoveeHistorySensor[]>([]);
+  const [enabled, setEnabled] = useState(true);
+  const [device, setDevice] = useState<string>("");
+  const [hours, setHours] = useState<number>(24);
+  const [points, setPoints] = useState<GoveeHistoryPoint[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`${BASE}/api/govee/live`, { credentials: "include" })
+      .then(r => r.json())
+      .then(d => {
+        setEnabled(Boolean(d.enabled));
+        const list: GoveeHistorySensor[] = (d.sensors ?? []).map((s: { device: string; name: string; zone: string | null; thresholdC: number | null }) => ({
+          device: s.device, name: s.name, zone: s.zone, thresholdC: s.thresholdC,
+        }));
+        setSensors(list);
+        if (list.length > 0) setDevice(prev => prev || list[0].device);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (!device) return;
+    setLoading(true);
+    fetch(`${BASE}/api/govee/history?device=${encodeURIComponent(device)}&hours=${hours}`, { credentials: "include" })
+      .then(r => r.json())
+      .then((rows: GoveeHistoryPoint[]) => setPoints(Array.isArray(rows) ? rows : []))
+      .catch(() => setPoints([]))
+      .finally(() => setLoading(false));
+  }, [device, hours]);
+
+  const selected = sensors.find(s => s.device === device) ?? null;
+  const temps = points.map(p => p.temperatureC).filter((t): t is number => t != null);
+  const min = temps.length ? Math.min(...temps) : null;
+  const max = temps.length ? Math.max(...temps) : null;
+  const avg = temps.length ? temps.reduce((a, b) => a + b, 0) / temps.length : null;
+  const current = points.length ? points[0].temperatureC : null;
+  const threshold = selected?.thresholdC ?? null;
+
+  // Build an SVG polyline (oldest → newest left-to-right).
+  const chrono = [...points].reverse().filter(p => p.temperatureC != null);
+  const W = 600, H = 140, PAD = 8;
+  const lo = min != null ? Math.min(min, threshold ?? min) - 1 : 0;
+  const hi = max != null ? Math.max(max, threshold ?? max) + 1 : 1;
+  const span = hi - lo || 1;
+  const pointsAttr = chrono.map((p, i) => {
+    const x = PAD + (chrono.length <= 1 ? 0 : (i / (chrono.length - 1)) * (W - 2 * PAD));
+    const y = PAD + (1 - ((p.temperatureC! - lo) / span)) * (H - 2 * PAD);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const thresholdY = threshold != null ? PAD + (1 - ((threshold - lo) / span)) * (H - 2 * PAD) : null;
+
+  if (loading && sensors.length === 0) {
+    return <div className="flex items-center gap-2 text-muted-foreground py-8"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>;
+  }
+  if (!enabled) {
+    return <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
+      <Activity className="w-8 h-8 mx-auto mb-3 opacity-50" />
+      <p className="font-medium">Temperature sensors are turned off</p>
+      <p className="text-sm mt-1">Enable them in Settings → Temperature Sensors.</p>
+    </div>;
+  }
+  if (sensors.length === 0) {
+    return <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
+      <p className="font-medium">No sensors mapped yet</p>
+      <p className="text-sm mt-1">Map your Govee sensors in Settings → Temperature Sensors.</p>
+    </div>;
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <select value={device} onChange={e => setDevice(e.target.value)} className="bg-background border border-border rounded-lg px-3 py-2 text-sm">
+          {sensors.map(s => <option key={s.device} value={s.device}>{s.name}</option>)}
+        </select>
+        <div className="flex gap-1">
+          {[{ h: 24, l: "24h" }, { h: 24 * 7, l: "7d" }, { h: 24 * 30, l: "30d" }].map(opt => (
+            <button key={opt.h} onClick={() => setHours(opt.h)}
+              className={cn("px-3 py-2 rounded-lg text-sm font-medium", hours === opt.h ? "bg-primary text-primary-foreground" : "bg-secondary/60 text-muted-foreground")}>
+              {opt.l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[{ label: "Current", v: current }, { label: "Min", v: min }, { label: "Max", v: max }, { label: "Average", v: avg }].map(stat => (
+          <div key={stat.label} className="bg-card border border-border rounded-xl p-3">
+            <p className="text-xs text-muted-foreground">{stat.label}</p>
+            <p className={cn("text-2xl font-display font-bold", stat.label === "Max" && threshold != null && stat.v != null && stat.v > threshold ? "text-red-500" : "")}>
+              {stat.v != null ? `${stat.v.toFixed(1)}°C` : "—"}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      {chrono.length > 1 && (
+        <div className="bg-card border border-border rounded-xl p-3">
+          <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
+            {thresholdY != null && (
+              <line x1={PAD} x2={W - PAD} y1={thresholdY} y2={thresholdY} stroke="currentColor" strokeDasharray="4 4" className="text-red-400" strokeWidth="1" />
+            )}
+            <polyline points={pointsAttr} fill="none" stroke="currentColor" className="text-cyan-500" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+          </svg>
+          {threshold != null && <p className="text-xs text-muted-foreground mt-1">Dashed line = safe ceiling ({threshold}°C)</p>}
+        </div>
+      )}
+
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="max-h-[360px] overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-card border-b border-border">
+              <tr className="text-left text-muted-foreground">
+                <th className="px-4 py-2 font-medium">Time</th>
+                <th className="px-4 py-2 font-medium">Temp</th>
+                <th className="px-4 py-2 font-medium">Humidity</th>
+              </tr>
+            </thead>
+            <tbody>
+              {points.length === 0 ? (
+                <tr><td colSpan={3} className="px-4 py-6 text-center text-muted-foreground">No readings recorded yet for this range.</td></tr>
+              ) : points.map((p, i) => {
+                const breaching = threshold != null && p.temperatureC != null && p.temperatureC > threshold;
+                return (
+                  <tr key={i} className="border-b border-border/50 last:border-0">
+                    <td className="px-4 py-2 tabular-nums text-muted-foreground">{format(new Date(p.recordedAt), "d MMM HH:mm")}</td>
+                    <td className={cn("px-4 py-2 tabular-nums font-medium", breaching && "text-red-500")}>{p.temperatureC != null ? `${p.temperatureC.toFixed(1)}°C` : "—"}{!p.online ? " (offline)" : ""}</td>
+                    <td className="px-4 py-2 tabular-nums text-muted-foreground">{p.humidityPercent != null ? `${p.humidityPercent}%` : "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TemperatureRecordsTab() {
   const [records, setRecords] = useState<TemperatureRecord[]>([]);
   const [locations, setLocations] = useState<StorageLocationLite[]>([]);
@@ -2676,20 +2825,9 @@ export function ImprovementsTab({ userRole, currentUserName }: { userRole: strin
           {IMPROVEMENT_TIER_OPTIONS.filter(o => o.value).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
 
-        {/* Type filter */}
-        <select
-          value={filterType}
-          onChange={e => setFilterType(e.target.value)}
-          className="px-3 py-2 border border-border rounded-xl text-sm bg-background focus-ring"
-        >
-          <option value="">All types</option>
-          <option value="improvement">Idea</option>
-          <option value="struggle">Niggle</option>
-        </select>
-
-        {(filterSearch || filterStatus || filterStation || filterTier || filterType) && (
+        {(filterSearch || filterStatus || filterStation || filterTier) && (
           <button
-            onClick={() => { setFilterSearch(""); setFilterStatus(""); setFilterStation(""); setFilterTier(""); setFilterType(""); }}
+            onClick={() => { setFilterSearch(""); setFilterStatus(""); setFilterStation(""); setFilterTier(""); }}
             className="text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
           >
             Clear filters
@@ -2735,13 +2873,8 @@ export function ImprovementsTab({ userRole, currentUserName }: { userRole: strin
                     {imp.description && <p className="text-xs text-muted-foreground mt-0.5 max-w-xs line-clamp-2">{imp.description}</p>}
                   </td>
                   <td className="px-4 py-3 text-center">
-                    <span className={cn(
-                      "px-2 py-0.5 rounded-full text-xs font-medium",
-                      (imp.type ?? "improvement") === "struggle"
-                        ? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
-                        : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                    )}>
-                      {(imp.type ?? "improvement") === "struggle" ? "Niggle" : "Idea"}
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+                      Improvement
                     </span>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
@@ -2829,13 +2962,8 @@ export function ImprovementsTab({ userRole, currentUserName }: { userRole: strin
             <>
               <DialogHeader>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className={cn(
-                    "px-2.5 py-0.5 rounded-full text-xs font-medium",
-                    (selectedImp.type ?? "improvement") === "struggle"
-                      ? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
-                      : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                  )}>
-                    {(selectedImp.type ?? "improvement") === "struggle" ? "Niggle" : "Idea"}
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+                    Improvement
                   </span>
                   <span className={cn("px-2 py-0.5 rounded-full text-xs", statusBadgeClass(selectedImp.progressStatus))}>
                     {IMPROVEMENT_PROGRESS_OPTIONS.find(o => o.value === selectedImp.progressStatus)?.label ?? selectedImp.progressStatus}
@@ -2861,6 +2989,12 @@ export function ImprovementsTab({ userRole, currentUserName }: { userRole: strin
                 <div className="bg-secondary/30 rounded-xl p-4">
                   <p className="text-sm font-medium text-muted-foreground mb-1">Description</p>
                   <p className="text-sm whitespace-pre-wrap">{selectedImp.description}</p>
+                </div>
+
+                {/* Photos & videos */}
+                <div className="bg-secondary/30 rounded-xl p-4">
+                  <p className="text-sm font-medium text-muted-foreground mb-2">Photos &amp; videos</p>
+                  <ImprovementAttachments improvementId={selectedImp.id} editable />
                 </div>
 
                 {/* Report context */}

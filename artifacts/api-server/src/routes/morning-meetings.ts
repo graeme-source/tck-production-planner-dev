@@ -16,6 +16,7 @@
  * up on the kaizen / problem-log boards the team already use.
  */
 import { Router, type IRouter, type Request, type Response } from "express";
+import multer from "multer";
 import {
   db,
   productionPlansTable,
@@ -45,6 +46,11 @@ import {
 import { getPreviousDispatchDayAsync } from "./production-plans";
 
 const router: IRouter = Router();
+
+// Gratitude-slide photo upload. In-memory, 10MB image cap, stored as bytea on
+// the meeting row (same approach as improvement attachments / SOP media).
+const photoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const GRATITUDE_IMAGE_MIMES = ["image/jpeg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif"];
 
 /** Picks this week's principle and the default example for today
  *  within that principle (rotates by weekday). The week index is
@@ -315,9 +321,9 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
       .orderBy(desc(andonIssuesTable.createdAt))
       .limit(10);
 
-    // ── Open struggles (improvements tagged type='struggle', not yet
-    //    completed or rejected — match the existing kaizen board) ────
-    const struggles = await db
+    // ── Improvements required (open improvements — ideas + struggles are
+    //    now one concept; show anything not yet complete or rejected) ───
+    const improvementsRequired = await db
       .select({
         id: improvementSubmissionsTable.id,
         title: improvementSubmissionsTable.title,
@@ -325,12 +331,23 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
         createdAt: improvementSubmissionsTable.createdAt,
       })
       .from(improvementSubmissionsTable)
-      .where(and(
-        eq(improvementSubmissionsTable.type, "struggle"),
-        notInArray(improvementSubmissionsTable.progressStatus, ["complete", "rejected"]),
-      ))
+      .where(notInArray(improvementSubmissionsTable.progressStatus, ["complete", "rejected"]))
       .orderBy(desc(improvementSubmissionsTable.createdAt))
       .limit(10);
+
+    // ── Recently completed improvements (for the "Recent Improvements"
+    //    meeting slide). Newest completions first. ─────────────────────
+    const recentImprovements = await db
+      .select({
+        id: improvementSubmissionsTable.id,
+        title: improvementSubmissionsTable.title,
+        description: improvementSubmissionsTable.description,
+        updatedAt: improvementSubmissionsTable.updatedAt,
+      })
+      .from(improvementSubmissionsTable)
+      .where(eq(improvementSubmissionsTable.progressStatus, "complete"))
+      .orderBy(desc(improvementSubmissionsTable.updatedAt))
+      .limit(8);
 
     // ── SOPs updated in the last 7 days ────────────────────────────
     // Reads from the new standards_sops table (the Standards & SOPs
@@ -400,8 +417,20 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
     //    array. Auto-clone the default template the first time anyone
     //    interacts with today's meeting (handled by /start), so by the
     //    time the slideshow opens this list is always populated ────
+    // Select explicit columns (NOT the gratitude_photo bytea) so the heavy
+    // dashboard poll never drags the image bytes along. The slide loads the
+    // photo lazily from its own streaming endpoint when hasGratitudePhoto.
     const [meeting] = await db
-      .select()
+      .select({
+        id: morningMeetingsTable.id,
+        hostName: morningMeetingsTable.hostName,
+        lessonId: morningMeetingsTable.lessonId,
+        exampleId: morningMeetingsTable.exampleId,
+        startedAt: morningMeetingsTable.startedAt,
+        endedAt: morningMeetingsTable.endedAt,
+        gratitudeCaption: morningMeetingsTable.gratitudeCaption,
+        hasGratitudePhoto: sql<boolean>`${morningMeetingsTable.gratitudePhoto} IS NOT NULL`,
+      })
       .from(morningMeetingsTable)
       .where(eq(morningMeetingsTable.meetingDate, today))
       .limit(1);
@@ -442,7 +471,10 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
       tomorrowNonCoreItems,
       todayDeliveries,
       safetyIssues,
-      struggles,
+      improvementsRequired,
+      // Back-compat alias so any cached/older client still renders.
+      struggles: improvementsRequired,
+      recentImprovements,
       recentSops: (recentSops.rows ?? recentSops).map((r: any) => ({
         id: r.id,
         title: r.title,
@@ -457,6 +489,8 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
             endedAt: meeting.endedAt?.toISOString() ?? null,
             lessonId: meeting.lessonId,
             exampleId: meeting.exampleId ?? null,
+            gratitudeCaption: meeting.gratitudeCaption ?? null,
+            hasGratitudePhoto: Boolean(meeting.hasGratitudePhoto),
           }
         : null,
       slides: slides.map((s) => ({
@@ -547,6 +581,73 @@ router.post("/:id/gratitude", async (req: Request, res: Response) => {
     .values({ meetingId: id, fromName, toName: toName ?? null, content })
     .returning();
   res.status(201).json(row);
+});
+
+/** Upload (or replace) the gratitude-slide photo for a meeting. Multipart:
+ *  `file` (image) required, `caption` (text) optional. Stored inline as bytea
+ *  on the meeting row, so it's naturally per-day. */
+router.post("/:id/gratitude-photo", photoUpload.single("file"), async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid meeting id" }); return; }
+  if (!req.file) { res.status(400).json({ error: "No file uploaded" }); return; }
+  const mime = req.file.mimetype;
+  if (!GRATITUDE_IMAGE_MIMES.includes(mime)) {
+    res.status(400).json({ error: "Unsupported image type. Use JPEG, PNG, WebP, GIF or HEIC." });
+    return;
+  }
+  // multer already caps at 10MB, but guard explicitly in case the limit ever changes.
+  if (req.file.size > 10 * 1024 * 1024) { res.status(400).json({ error: "Image too large (max 10MB)." }); return; }
+  const captionRaw = typeof req.body?.caption === "string" ? req.body.caption.trim() : "";
+  const caption = captionRaw.length > 0 ? captionRaw.slice(0, 300) : null;
+  const [row] = await db
+    .update(morningMeetingsTable)
+    .set({ gratitudePhoto: req.file.buffer, gratitudePhotoMime: mime, gratitudeCaption: caption })
+    .where(eq(morningMeetingsTable.id, id))
+    .returning({ id: morningMeetingsTable.id });
+  if (!row) { res.status(404).json({ error: "Meeting not found" }); return; }
+  res.status(201).json({ ok: true, hasGratitudePhoto: true, gratitudeCaption: caption });
+});
+
+/** Update just the caption (without re-uploading the photo). */
+router.patch("/:id/gratitude-caption", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid meeting id" }); return; }
+  const captionRaw = typeof req.body?.caption === "string" ? req.body.caption.trim() : "";
+  const caption = captionRaw.length > 0 ? captionRaw.slice(0, 300) : null;
+  const [row] = await db
+    .update(morningMeetingsTable)
+    .set({ gratitudeCaption: caption })
+    .where(eq(morningMeetingsTable.id, id))
+    .returning({ id: morningMeetingsTable.id });
+  if (!row) { res.status(404).json({ error: "Meeting not found" }); return; }
+  res.json({ ok: true, gratitudeCaption: caption });
+});
+
+/** Remove the gratitude photo + caption — reverts the slide to the live
+ *  themed fallback image. */
+router.delete("/:id/gratitude-photo", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid meeting id" }); return; }
+  await db
+    .update(morningMeetingsTable)
+    .set({ gratitudePhoto: null, gratitudePhotoMime: null, gratitudeCaption: null })
+    .where(eq(morningMeetingsTable.id, id));
+  res.json({ ok: true, hasGratitudePhoto: false });
+});
+
+/** Stream the gratitude photo bytes for a meeting. 404 when none uploaded. */
+router.get("/:id/gratitude-photo", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid meeting id" }); return; }
+  const [row] = await db
+    .select({ photo: morningMeetingsTable.gratitudePhoto, mime: morningMeetingsTable.gratitudePhotoMime })
+    .from(morningMeetingsTable)
+    .where(eq(morningMeetingsTable.id, id))
+    .limit(1);
+  if (!row || !row.photo) { res.status(404).json({ error: "No photo" }); return; }
+  res.setHeader("Content-Type", row.mime ?? "image/jpeg");
+  res.setHeader("Cache-Control", "private, max-age=300");
+  res.send(row.photo);
 });
 
 /** Recent meeting history — last 14 days, for the "past meetings"

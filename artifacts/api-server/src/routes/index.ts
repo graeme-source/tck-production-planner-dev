@@ -56,6 +56,7 @@ import wholesaleBagsRouter from "./wholesale-bags";
 import bundlesRouter from "./bundles";
 import trainingRouter from "./training";
 import onboardingRouter from "./onboarding";
+import goveeRouter from "./govee";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -157,6 +158,7 @@ router.use("/ice-packs", icePacksRouter);
 router.use("/wholesale-bags", requireAdminOrManager, wholesaleBagsRouter);
 router.use("/bundles", requireAdminOrManager, bundlesRouter);
 router.use("/training", requireAdminOrManager, trainingRouter);
+router.use("/govee", goveeRouter);
 
 const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
 async function requireFounder(req: Request, res: Response, next: NextFunction) {
