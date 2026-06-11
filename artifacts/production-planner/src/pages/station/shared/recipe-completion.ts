@@ -25,10 +25,13 @@ export function packsPerBatch(item: ProductionPlanItem): number {
  * reference goal; it does NOT use this helper for its own progress.
  */
 export function effectiveBatchesTarget(
-  _item: ProductionPlanItem,
+  item: ProductionPlanItem,
   combinedBuildingCount: number,
 ): number {
-  return combinedBuildingCount;
+  // Show at least the planned target so downstream stations (ovens, wrapping)
+  // display the expected batches up front — not 0/0 until building has
+  // completed them — while still growing past the plan if builders over-build.
+  return Math.max(item.batchesTarget ?? 0, combinedBuildingCount);
 }
 
 /**
