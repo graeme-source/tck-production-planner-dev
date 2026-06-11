@@ -420,7 +420,7 @@ function ReceivingDialog({
                 <span
                   className={cn(
                     "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-semibold text-white",
-                    expectedIsToday ? "bg-[#919b5f]" : "bg-red-600"
+                    expectedIsToday ? "bg-[#7cb342]" : "bg-red-600"
                   )}
                 >
                   <Calendar className="w-4 h-4" />
@@ -624,7 +624,7 @@ function ReceivingDialog({
                               next[idx] = { ...next[idx], quantityReceived: stored };
                               editLines(next);
                             }}
-                            className="flex-1 min-w-0 px-2 py-2 bg-background text-center text-xl font-bold tabular-nums text-[#919b5f] focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            className="flex-1 min-w-0 px-2 py-2 bg-background text-center text-xl font-bold tabular-nums text-[#7cb342] focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                           />
                           <button
                             type="button"

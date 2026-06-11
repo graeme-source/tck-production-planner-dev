@@ -1280,7 +1280,7 @@ function EditRecipeDialog({
                   Unsaved ingredient edits show after you Save and reopen. */}
               <div className="mt-4 border-t border-border pt-4">
                 <div className="flex items-center gap-2 mb-1">
-                  <ClipboardList className="w-4 h-4 text-[#919b5f]" />
+                  <ClipboardList className="w-4 h-4 text-[#7cb342]" />
                   <h4 className="text-sm font-semibold">Ingredient Deck</h4>
                 </div>
                 <p className="text-xs text-muted-foreground mb-2">Generated from the saved recipe. Save and reopen to see edits reflected.</p>
@@ -1500,7 +1500,7 @@ function RecipeCostBreakdownDialog({ id, open, onOpenChange }: { id: number; ope
             {/* Live ingredient deck — what's in it, as it appears on the label */}
             <div className="border-t border-border pt-4">
               <div className="flex items-center gap-2 mb-1">
-                <ClipboardList className="w-4 h-4 text-[#919b5f]" />
+                <ClipboardList className="w-4 h-4 text-[#7cb342]" />
                 <h4 className="text-sm font-semibold">Ingredient Deck</h4>
               </div>
               <RecipeIngredientDeckPanel id={id} active={open && !isLoading} />
@@ -1764,8 +1764,8 @@ function RecipeCard({ recipe, onEdit, onDelete, onBreakdown, onDuplicate }: { re
         </div>
         <div className="flex items-center justify-end">
           <div className="flex items-center gap-1">
-            <button onClick={() => setNutritionalsOpen(true)} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-[#919b5f] transition-colors shadow-sm" title="Nutritionals"><Beaker className="w-3 h-3" /></button>
-            <button onClick={() => setDeckOpen(true)} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-[#919b5f] transition-colors shadow-sm" title="Ingredient Deck"><ClipboardList className="w-3 h-3" /></button>
+            <button onClick={() => setNutritionalsOpen(true)} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-[#7cb342] transition-colors shadow-sm" title="Nutritionals"><Beaker className="w-3 h-3" /></button>
+            <button onClick={() => setDeckOpen(true)} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-[#7cb342] transition-colors shadow-sm" title="Ingredient Deck"><ClipboardList className="w-3 h-3" /></button>
             <button onClick={onBreakdown} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur flex items-center justify-center hover:text-white transition-colors shadow-sm" style={recipeColor ? { color: recipeColor } : undefined} title="Cost Breakdown"><BarChart2 className="w-3 h-3" /></button>
             <button onClick={onEdit} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-foreground transition-colors shadow-sm" title="Edit"><Edit2 className="w-3 h-3" /></button>
             <button onClick={onDuplicate} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-foreground transition-colors shadow-sm" title="Duplicate"><Copy className="w-3 h-3" /></button>
