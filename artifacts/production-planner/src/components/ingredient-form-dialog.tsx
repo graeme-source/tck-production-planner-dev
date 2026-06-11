@@ -600,6 +600,13 @@ export function IngredientFormDialog({
             </div>
           )}
 
+          <div>
+            <label className="text-sm font-medium mb-1 block">Case size <span className="text-xs font-normal text-muted-foreground">(packs per case)</span></label>
+            <input type="number" step="1" min="1" {...register("caseSizePacks")} className={cn(numInputClass, "max-w-[160px]")} placeholder="e.g. 12" />
+            <p className="text-xs text-muted-foreground mt-1">Leave blank to order in individual packs. When set, the orders page rounds the amount to order up to the nearest whole case (e.g. needing 8 packs with a case of 12 orders 12). Stock check is unaffected.</p>
+            {errors.caseSizePacks && <span className="text-destructive text-xs">{String(errors.caseSizePacks.message)}</span>}
+          </div>
+
           {!isIngredient && (
             <div>
               <label className="text-sm font-medium mb-1 block">Pallet Size <span className="text-xs font-normal text-muted-foreground">(packs per pallet)</span></label>

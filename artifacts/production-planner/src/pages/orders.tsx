@@ -69,6 +69,9 @@ type OrderLine = {
   // When true, Required / Surplus / Ordered render in whole packs; recipes
   // and internal maths still use native units.
   stockInPacks?: boolean;
+  // Packs per supplier case. When set, the pack count to order rounds up to the
+  // nearest whole case. Null/absent means order in individual packs.
+  caseSizePacks?: number | null;
   // Misc one-off lines not tied to an ingredient record. ingredientId is a
   // synthetic negative number for UI purposes; serialiser sends null.
   isMisc?: boolean;
@@ -971,9 +974,14 @@ export default function Orders() {
       const updated = { ...prev };
       const lines = [...(updated[supplierId] || [])];
       const line = { ...lines[idx], editedStock: Math.max(0, newStock), stockDirty: true };
-      // Recalculate packs based on new stock
+      // Recalculate packs based on new stock. Mirror the backend: round up to
+      // whole packs, then up to the nearest whole case when ordered by the case.
       const rawOrderQty = Math.max(0, line.totalRequired + line.surplusTarget - Math.max(0, newStock));
-      const packsToOrder = line.packWeight > 0 ? Math.ceil(rawOrderQty / line.packWeight) : 0;
+      let packsToOrder = line.packWeight > 0 ? Math.ceil(rawOrderQty / line.packWeight) : 0;
+      const caseSizePacks = line.caseSizePacks ?? 0;
+      if (caseSizePacks > 0 && packsToOrder > 0) {
+        packsToOrder = Math.ceil(packsToOrder / caseSizePacks) * caseSizePacks;
+      }
       line.editedPacks = packsToOrder;
       lines[idx] = line;
       updated[supplierId] = lines;

@@ -31,6 +31,7 @@ function mapRow(r: typeof ingredientsTable.$inferSelect) {
     kanbanOrderAmount: r.kanbanOrderAmount != null ? Number(r.kanbanOrderAmount) : null,
     perishable: r.perishable ?? true,
     palletSize: r.palletSize ?? null,
+    caseSizePacks: (r as unknown as { caseSizePacks?: number | null }).caseSizePacks ?? null,
     energyKj: r.energyKj != null ? Number(r.energyKj) : null,
     energyKcal: r.energyKcal != null ? Number(r.energyKcal) : null,
     fat: r.fat != null ? Number(r.fat) : null,
@@ -116,7 +117,7 @@ function validateProcessingRatio(value: unknown): string | null {
 }
 
 router.post("/", validate(CreateIngredientBody), async (req, res) => {
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, prepCountPerPortion, isPasta, stockInPacks, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, requiresUseByDate, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens, nutritionalsAiEstimated } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, prepCountPerPortion, isPasta, stockInPacks, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, requiresUseByDate, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, caseSizePacks, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens, nutritionalsAiEstimated } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const packsError = validateStockInPacks(stockInPacks, packWeight);
@@ -159,6 +160,7 @@ router.post("/", validate(CreateIngredientBody), async (req, res) => {
     kanbanOrderAmount: kanbanOrderAmount != null ? String(kanbanOrderAmount) : null,
     perishable: perishable !== false,
     palletSize: palletSize != null ? Number(palletSize) : null,
+    caseSizePacks: caseSizePacks != null ? Number(caseSizePacks) : null,
     energyKj: energyKj != null ? String(energyKj) : null,
     energyKcal: energyKcal != null ? String(energyKcal) : null,
     fat: fat != null ? String(fat) : null,
@@ -294,7 +296,7 @@ router.get("/:id/usage", async (req, res) => {
 
 router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, prepCountPerPortion, isPasta, stockInPacks, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, requiresUseByDate, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens, nutritionalsAiEstimated } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, prepCountPerPortion, isPasta, stockInPacks, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, requiresUseByDate, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, caseSizePacks, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens, nutritionalsAiEstimated } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   // Need the effective packWeight: explicit override in body or fall back to the
@@ -344,6 +346,7 @@ router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
     ...(kanbanOrderAmount !== undefined ? { kanbanOrderAmount: kanbanOrderAmount != null ? String(kanbanOrderAmount) : null } : {}),
     ...(perishable !== undefined ? { perishable } : {}),
     ...(palletSize !== undefined ? { palletSize: palletSize != null ? Number(palletSize) : null } : {}),
+    ...(caseSizePacks !== undefined ? { caseSizePacks: caseSizePacks != null ? Number(caseSizePacks) : null } : {}),
     ...(energyKj !== undefined ? { energyKj: energyKj != null ? String(energyKj) : null } : {}),
     ...(energyKcal !== undefined ? { energyKcal: energyKcal != null ? String(energyKcal) : null } : {}),
     ...(fat !== undefined ? { fat: fat != null ? String(fat) : null } : {}),
