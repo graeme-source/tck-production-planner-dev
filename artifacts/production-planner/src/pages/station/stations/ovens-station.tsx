@@ -902,30 +902,12 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                         the chiller lane. Showing Gross − 8-pack = Net makes that
                         split obvious at a glance. */}
                     {(() => {
-                      const eightPackPacks = eightPacks * 4;
                       const showEightPackBreakdown = eightPacks > 0;
                       return (
                         <div className="rounded-xl border border-cyan-300 dark:border-cyan-800 bg-cyan-50/40 dark:bg-cyan-950/20 p-4">
                           <div className="flex items-center gap-2 text-base font-bold text-cyan-700 dark:text-cyan-300 uppercase tracking-wider mb-3">
                             <Snowflake className="w-5 h-5" /> Blast Chiller
                           </div>
-
-                          {showEightPackBreakdown && (
-                            <div className="mb-3 rounded-lg border border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-950/30 px-3 py-2">
-                              <p className="text-xs font-semibold text-indigo-700 dark:text-indigo-300 mb-1.5 uppercase tracking-wide">
-                                8-pack bag split
-                              </p>
-                              <div className="flex items-baseline gap-1.5 flex-wrap text-sm">
-                                <span className="font-bold text-indigo-700 dark:text-indigo-300 tabular-nums">{eightPacks}</span>
-                                <span className="text-indigo-700 dark:text-indigo-300">× 8-pack bag =</span>
-                                <span className="font-bold text-indigo-700 dark:text-indigo-300 tabular-nums">{eightPackPacks}</span>
-                                <span className="text-indigo-700 dark:text-indigo-300">packs prep'd into 8-pack bags</span>
-                              </div>
-                              <p className="text-[11px] text-indigo-600/80 dark:text-indigo-400/80 mt-0.5">
-                                These come off the same oven run but skip the 2-pack lane — they go straight into an 8-pack bag for the chiller.
-                              </p>
-                            </div>
-                          )}
 
                           {showEightPackBreakdown ? (
                             <div className="flex items-stretch justify-center gap-2">
@@ -939,7 +921,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                               <div className="flex-1 text-center bg-indigo-50 dark:bg-indigo-950/30 rounded-lg border border-indigo-300 dark:border-indigo-700 py-2">
                                 <p className="text-[10px] text-indigo-700 dark:text-indigo-300 font-medium mb-0.5">8-pack</p>
                                 <p className="text-2xl font-bold tabular-nums text-indigo-700 dark:text-indigo-300 leading-tight">
-                                  {eightPackPacks}
+                                  {eightPacks}
                                 </p>
                               </div>
                               <div className="flex items-center text-xl text-muted-foreground font-light">=</div>
@@ -1115,17 +1097,12 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                       );
                     })()}
 
-                    {/* 8-Pack Bags — each + click adds ONE bag. The
-                        derived "= N two-packs used" line below makes it
-                        unmistakable that the number is bags (not packs
-                        going into a bag). Previously the value was
-                        confused for the latter, leading to extra bags
-                        being assembled. */}
+                    {/* 8-Pack Bags — each + click adds ONE bag. The counter
+                        shows the number of 8-pack bags being assembled. */}
                     <div className="border-t border-border pt-3">
                       <div className="flex items-center justify-between mb-2">
                         <div>
                           <p className="text-sm font-semibold text-foreground">8-Pack Bags assembled</p>
-                          <p className="text-xs text-muted-foreground">Each bag holds 4 × 2-packs</p>
                         </div>
                         <div className="flex items-center gap-2">
                           <button
@@ -1152,17 +1129,6 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                           </button>
                         </div>
                       </div>
-                      {(item.eightPackBagCount ?? 0) > 0 && (
-                        <div className="text-xs bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-200/60 dark:border-indigo-800/60 rounded-lg px-3 py-1.5 flex items-center justify-between">
-                          <span className="text-indigo-700 dark:text-indigo-300">
-                            <span className="font-bold tabular-nums">{item.eightPackBagCount ?? 0}</span> bag{(item.eightPackBagCount ?? 0) === 1 ? "" : "s"}
-                            <span className="mx-1.5 text-indigo-500/70">×</span>
-                            <span className="font-bold tabular-nums">4</span> 2-packs each
-                            <span className="mx-1.5 text-indigo-500/70">=</span>
-                            <span className="font-bold tabular-nums">{(item.eightPackBagCount ?? 0) * 4}</span> 2-packs used
-                          </span>
-                        </div>
-                      )}
                     </div>
                   </div>
                 )}
