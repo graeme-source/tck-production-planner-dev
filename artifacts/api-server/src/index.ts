@@ -1556,6 +1556,12 @@ async function runStartupMigrations() {
     // in individual packs. Only affects the orders page; stock check unchanged.
     await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS case_size_packs INTEGER`);
 
+    // Optional photo + caption for the morning-meeting gratitude slide. Stored
+    // per-day on the meeting row; NULL falls back to a live themed image.
+    await db.execute(sql`ALTER TABLE morning_meetings ADD COLUMN IF NOT EXISTS gratitude_photo BYTEA`);
+    await db.execute(sql`ALTER TABLE morning_meetings ADD COLUMN IF NOT EXISTS gratitude_photo_mime TEXT`);
+    await db.execute(sql`ALTER TABLE morning_meetings ADD COLUMN IF NOT EXISTS gratitude_caption TEXT`);
+
     // Append-only audit log of every production-fridge stock change (manual
     // checks/adjustments, wrapping additions, despatch decrements). The
     // aggregate stock_entries row stays the live total; this records each delta

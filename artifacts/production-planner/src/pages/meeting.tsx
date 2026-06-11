@@ -23,7 +23,7 @@ import {
   Sparkles, ChefHat, Truck, ShoppingBag, AlertCircle, FileText, MessageCircle,
   HeartHandshake, Activity, BookOpen, Award, Loader2, ClipboardCheck, Sun,
   CheckCircle2, Heart, Settings, Edit3, Calendar, GripVertical, Plus, Trash2, Save,
-  Shuffle,
+  Shuffle, Camera, Image as ImageIcon,
 } from "lucide-react";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import type { DragEndEvent } from "@dnd-kit/core";
@@ -79,7 +79,7 @@ interface DashboardData {
     principleId?: number;
     principleTitle?: string;
   } | null;
-  meeting: { id: number; hostName: string | null; startedAt: string; endedAt: string | null; lessonId: number | null; exampleId: number | null } | null;
+  meeting: { id: number; hostName: string | null; startedAt: string; endedAt: string | null; lessonId: number | null; exampleId: number | null; gratitudeCaption: string | null; hasGratitudePhoto: boolean } | null;
   slides: MeetingSlide[];
   gratitude: Array<{ id: number; fromName: string; toName: string | null; content: string }>;
 }
@@ -1935,30 +1935,180 @@ const GRATITUDE_PROMPTS: ReadonlyArray<{ emoji: string; line: string; sub: strin
   { emoji: "🎈", line: "Celebrate something small.", sub: "Birthdays, milestones, a clean station." },
 ];
 
-function pickGratitudeForDay(dateIso: string) {
-  const seed = dateIso.split("-").reduce((acc, part) => acc * 31 + Number(part), 0);
-  return GRATITUDE_PROMPTS[seed % GRATITUDE_PROMPTS.length];
+function dateSeed(dateIso: string): number {
+  return dateIso.split("-").reduce((acc, part) => acc * 31 + Number(part), 0);
 }
 
-function GratitudeSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide; onRefresh: () => void }) {
+function pickGratitudeForDay(dateIso: string) {
+  return GRATITUDE_PROMPTS[dateSeed(dateIso) % GRATITUDE_PROMPTS.length];
+}
+
+// "Things that are free in life that we can be grateful for" — one theme is
+// chosen per day (deterministically from the date) when no photo is uploaded.
+const GRATITUDE_PHOTO_THEMES = [
+  "sunset", "flowers", "food", "nature,landscape", "ocean,beach",
+  "mountains", "garden,flowers", "sky,clouds", "forest", "coffee",
+] as const;
+
+// Live, key-less themed image for the fallback. LoremFlickr serves a random
+// Creative-Commons photo matching the tag; `lock=<seed>` pins it for the whole
+// day so it doesn't reshuffle on every render, but rotates day to day.
+function fallbackGratitudePhotoUrl(dateIso: string): string {
+  const seed = dateSeed(dateIso);
+  const theme = GRATITUDE_PHOTO_THEMES[seed % GRATITUDE_PHOTO_THEMES.length];
+  return `https://loremflickr.com/1200/800/${encodeURIComponent(theme)}?lock=${seed}`;
+}
+
+function GratitudeSlide({ data, slide, onRefresh }: { data: DashboardData; slide: MeetingSlide; onRefresh: () => void }) {
   void slide;
   const todayIso = data.today || new Date().toISOString().slice(0, 10);
   const prompt = pickGratitudeForDay(todayIso);
+  const meetingId = data.meeting?.id ?? null;
+  const hasPhoto = Boolean(data.meeting?.hasGratitudePhoto);
+  const serverCaption = data.meeting?.gratitudeCaption ?? "";
+
+  // Bumped on each upload/remove so the browser refetches the streamed image
+  // instead of showing a cached previous photo after a replace.
+  const [photoVersion, setPhotoVersion] = useState(0);
+  const [caption, setCaption] = useState(serverCaption);
+  const [busy, setBusy] = useState(false);
+  const [savingCaption, setSavingCaption] = useState(false);
+  const [fallbackFailed, setFallbackFailed] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const cameraRef = useRef<HTMLInputElement | null>(null);
+
+  // Keep the caption box in sync when the dashboard refetches.
+  useEffect(() => { setCaption(serverCaption); }, [serverCaption]);
+
+  const uploadedUrl = meetingId ? `${BASE}/api/morning-meetings/${meetingId}/gratitude-photo?v=${photoVersion}` : "";
+  const fallbackUrl = fallbackGratitudePhotoUrl(todayIso);
+
+  const uploadPhoto = async (file: File) => {
+    if (!meetingId) { toast({ title: "Start the meeting first", variant: "destructive" }); return; }
+    if (file.size > 10 * 1024 * 1024) { toast({ title: "Image too large (max 10MB)", variant: "destructive" }); return; }
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      if (caption.trim()) form.append("caption", caption.trim());
+      const res = await fetch(`${BASE}/api/morning-meetings/${meetingId}/gratitude-photo`, { method: "POST", credentials: "include", body: form });
+      if (!res.ok) throw new Error("Failed");
+      setPhotoVersion(v => v + 1);
+      onRefresh();
+      toast({ title: "Photo added" });
+    } catch {
+      toast({ title: "Upload failed", variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveCaption = async () => {
+    if (!meetingId) return;
+    setSavingCaption(true);
+    try {
+      const res = await fetch(`${BASE}/api/morning-meetings/${meetingId}/gratitude-caption`, {
+        method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ caption: caption.trim() }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      onRefresh();
+      toast({ title: "Caption saved" });
+    } catch {
+      toast({ title: "Couldn't save caption", variant: "destructive" });
+    } finally {
+      setSavingCaption(false);
+    }
+  };
+
+  const removePhoto = async () => {
+    if (!meetingId) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`${BASE}/api/morning-meetings/${meetingId}/gratitude-photo`, { method: "DELETE", credentials: "include" });
+      if (!res.ok) throw new Error("Failed");
+      setCaption("");
+      setPhotoVersion(v => v + 1);
+      onRefresh();
+      toast({ title: "Photo removed" });
+    } catch {
+      toast({ title: "Couldn't remove photo", variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Show an image whenever we have an uploaded one, or the live themed fallback
+  // hasn't failed to load. If the fallback can't load (e.g. offline), drop back
+  // to the original emoji + prompt so the slide is never blank.
+  const showImage = hasPhoto || !fallbackFailed;
+  const imageSrc = hasPhoto ? uploadedUrl : fallbackUrl;
+
   return (
-    <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-rose-100 via-amber-50 to-emerald-100 dark:from-rose-900/30 dark:via-amber-900/20 dark:to-emerald-900/30 p-12 min-h-[420px] flex flex-col items-center justify-center text-center gap-6 shadow-inner">
+    <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-rose-100 via-amber-50 to-emerald-100 dark:from-rose-900/30 dark:via-amber-900/20 dark:to-emerald-900/30 p-8 md:p-12 min-h-[420px] flex flex-col items-center justify-center text-center gap-6 shadow-inner">
       {/* Soft floating shapes for a touch of motion / warmth */}
       <div className="absolute -top-20 -left-20 w-72 h-72 rounded-full bg-rose-200/40 dark:bg-rose-500/10 blur-3xl" />
       <div className="absolute -bottom-24 -right-16 w-80 h-80 rounded-full bg-amber-200/40 dark:bg-amber-500/10 blur-3xl" />
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full bg-emerald-200/30 dark:bg-emerald-500/10 blur-3xl" />
 
-      <div className="relative z-10 flex flex-col items-center gap-6">
-        <div className="text-8xl leading-none">{prompt.emoji}</div>
-        <h2 className="font-display text-4xl md:text-5xl font-bold text-foreground leading-tight max-w-3xl">
-          {prompt.line}
-        </h2>
-        <p className="text-xl text-muted-foreground max-w-xl">{prompt.sub}</p>
-        <p className="text-xs uppercase tracking-widest text-muted-foreground mt-4">Gratitude</p>
+      <div className="relative z-10 flex flex-col items-center gap-5 w-full">
+        {showImage ? (
+          <>
+            <div className="relative w-full max-w-2xl aspect-[3/2] rounded-3xl overflow-hidden shadow-xl ring-1 ring-black/5">
+              <img
+                key={imageSrc}
+                src={imageSrc}
+                alt={hasPhoto ? (serverCaption || "Today's gratitude photo") : "Something to be grateful for"}
+                className="w-full h-full object-cover"
+                onError={() => { if (!hasPhoto) setFallbackFailed(true); }}
+              />
+            </div>
+            {hasPhoto && serverCaption ? (
+              <h2 className="font-display text-3xl md:text-4xl font-bold text-foreground leading-tight max-w-3xl">{serverCaption}</h2>
+            ) : (
+              <p className="text-xl text-muted-foreground max-w-xl">{prompt.line}</p>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="text-8xl leading-none">{prompt.emoji}</div>
+            <h2 className="font-display text-4xl md:text-5xl font-bold text-foreground leading-tight max-w-3xl">{prompt.line}</h2>
+            <p className="text-xl text-muted-foreground max-w-xl">{prompt.sub}</p>
+          </>
+        )}
+        <p className="text-xs uppercase tracking-widest text-muted-foreground mt-1">Gratitude</p>
       </div>
+
+      {/* Host controls — only once today's meeting exists. */}
+      {meetingId && (
+        <div className="relative z-10 w-full max-w-2xl flex flex-wrap items-center justify-center gap-2">
+          <input
+            value={caption}
+            onChange={e => setCaption(e.target.value)}
+            placeholder="Add a caption (optional)"
+            maxLength={300}
+            className="flex-1 min-w-[180px] bg-background/80 border border-border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+          {hasPhoto && (
+            <button onClick={saveCaption} disabled={savingCaption} className="px-3 py-2 rounded-xl bg-secondary text-secondary-foreground text-sm font-medium disabled:opacity-50 inline-flex items-center gap-1.5">
+              {savingCaption ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save caption
+            </button>
+          )}
+          <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(f); e.target.value = ""; }} />
+          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(f); e.target.value = ""; }} />
+          <button onClick={() => cameraRef.current?.click()} disabled={busy} className="px-3 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />} Take photo
+          </button>
+          <button onClick={() => fileRef.current?.click()} disabled={busy} className="px-3 py-2 rounded-xl bg-primary/90 text-primary-foreground text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50">
+            <ImageIcon className="w-4 h-4" /> {hasPhoto ? "Replace" : "Add photo"}
+          </button>
+          {hasPhoto && (
+            <button onClick={removePhoto} disabled={busy} className="px-3 py-2 rounded-xl bg-destructive/10 text-destructive text-sm font-medium inline-flex items-center gap-1.5 disabled:opacity-50">
+              <Trash2 className="w-4 h-4" /> Remove
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
