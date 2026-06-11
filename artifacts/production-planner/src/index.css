@@ -70,7 +70,7 @@
   --popover-foreground: 20 14% 16%;
   --popover-border: 30 20% 92%;
   
-  --primary: 68 24% 49%; /* Olive Sage #919b5f */
+  --primary: 89 46% 48%; /* Fresh Basil #7cb342 */
   --primary-foreground: 0 0% 100%;
   
   --secondary: 30 40% 94%; /* Warm Sand/Peach */
@@ -87,20 +87,20 @@
   
   --border: 30 20% 88%;
   --input: 30 20% 88%;
-  --ring: 68 24% 49%;
-  
+  --ring: 89 46% 48%;
+
   --sidebar: 45 29% 95%;
   --sidebar-foreground: 20 14% 16%;
   --sidebar-border: 30 20% 88%;
-  --sidebar-primary: 68 24% 49%;
+  --sidebar-primary: 89 46% 48%;
   --sidebar-primary-foreground: 0 0% 100%;
   --sidebar-accent: 30 40% 90%;
   --sidebar-accent-foreground: 20 14% 16%;
-  --sidebar-ring: 68 24% 49%;
+  --sidebar-ring: 89 46% 48%;
 
   --radius: 0.75rem;
 
-  --chart-1: 68 24% 49%;
+  --chart-1: 89 46% 48%;
   --chart-2: 25 40% 45%;
   --chart-3: 35 60% 60%;
   --chart-4: 180 20% 45%;
@@ -123,8 +123,8 @@
   --popover-foreground: 45 29% 95%;
   --popover-border: 20 10% 20%;
   
-  --primary: 142 30% 45%;
-  --primary-foreground: 20 14% 12%;
+  --primary: 89 46% 48%;
+  --primary-foreground: 0 0% 100%;
   
   --secondary: 20 10% 20%;
   --secondary-foreground: 45 29% 95%;
@@ -140,16 +140,16 @@
   
   --border: 20 10% 22%;
   --input: 20 10% 22%;
-  --ring: 142 30% 45%;
-  
+  --ring: 89 46% 48%;
+
   --sidebar: 20 14% 10%;
   --sidebar-foreground: 45 29% 95%;
   --sidebar-border: 20 10% 20%;
-  --sidebar-primary: 142 30% 45%;
-  --sidebar-primary-foreground: 20 14% 12%;
+  --sidebar-primary: 89 46% 48%;
+  --sidebar-primary-foreground: 0 0% 100%;
   --sidebar-accent: 20 10% 20%;
   --sidebar-accent-foreground: 45 29% 95%;
-  --sidebar-ring: 142 30% 45%;
+  --sidebar-ring: 89 46% 48%;
 
   --break-action: 38 85% 45%;
   --break-action-foreground: 0 0% 100%;

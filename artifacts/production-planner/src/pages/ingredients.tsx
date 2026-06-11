@@ -1167,11 +1167,11 @@ export default function Ingredients() {
             </div>
 
             {/* Nutritionals & Labelling - Collapsible */}
-            <div className="border border-[#919b5f]/30 rounded-xl overflow-hidden">
+            <div className="border border-[#7cb342]/30 rounded-xl overflow-hidden">
               <button
                 type="button"
                 onClick={() => setNutritionalsOpen(!nutritionalsOpen)}
-                className="w-full flex items-center justify-between px-4 py-3 bg-[#919b5f]/10 hover:bg-[#919b5f]/15 transition-colors"
+                className="w-full flex items-center justify-between px-4 py-3 bg-[#7cb342]/10 hover:bg-[#7cb342]/15 transition-colors"
               >
                 <span className="text-sm font-semibold text-[#3b4317]">Nutritionals &amp; Labelling</span>
                 <ChevronDown className={cn("w-4 h-4 text-[#3b4317] transition-transform", nutritionalsOpen && "rotate-180")} />
@@ -1249,8 +1249,8 @@ export default function Ingredients() {
                             className={cn(
                               "px-2.5 py-1 rounded-full text-xs font-medium border transition-colors",
                               isSelected
-                                ? "bg-[#919b5f] text-white border-[#919b5f]"
-                                : "bg-background border-border text-muted-foreground hover:border-[#919b5f]/50"
+                                ? "bg-[#7cb342] text-white border-[#7cb342]"
+                                : "bg-background border-border text-muted-foreground hover:border-[#7cb342]/50"
                             )}
                           >
                             {a.label}

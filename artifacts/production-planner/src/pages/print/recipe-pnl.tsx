@@ -147,8 +147,8 @@ export default function RecipePnLReport() {
         .pnl-controls label { display: flex; align-items: center; gap: 6px; font-weight: 500; }
         .pnl-controls select { padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; background: white; font: inherit; }
         .pnl-controls .pnl-checkbox { display: flex; align-items: center; gap: 6px; cursor: pointer; }
-        .pnl-print-btn { margin-left: auto; padding: 7px 14px; background: #919b5f; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; }
-        .pnl-print-btn:hover { background: #7a8350; }
+        .pnl-print-btn { margin-left: auto; padding: 7px 14px; background: #7cb342; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; }
+        .pnl-print-btn:hover { background: #6da139; }
 
         /* ── Report header ─────────────────────────────────────────────── */
         .pnl-header { display: flex; justify-content: space-between; align-items: flex-end; padding-bottom: 6mm; border-bottom: 2pt solid #111; margin-bottom: 5mm; }
