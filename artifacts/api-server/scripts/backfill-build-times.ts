@@ -68,6 +68,10 @@ async function main() {
     WHERE bc.station_type IN ('building_1', 'building_2')
       AND bc.completed_at >= NOW() - ($1 || ' days')::interval
       AND bc.correction_by_user_id IS NULL
+      -- Mac cheese "completions" are blast-tray pack logs, not builds — their
+      -- gaps say nothing about build pace, and the day schedule excludes the
+      -- category anyway.
+      AND r.category IS DISTINCT FROM 'Macaroni Cheese'
     ORDER BY bc.plan_item_id, bc.station_type, bc.completed_at
   `, [DAYS]);
 
