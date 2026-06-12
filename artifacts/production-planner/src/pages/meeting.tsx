@@ -23,8 +23,9 @@ import {
   Sparkles, ChefHat, Truck, ShoppingBag, AlertCircle, FileText, MessageCircle,
   HeartHandshake, Activity, BookOpen, Award, Loader2, ClipboardCheck, Sun,
   CheckCircle2, Heart, Settings, Edit3, Calendar, GripVertical, Plus, Trash2, Save,
-  Shuffle, Camera, Image as ImageIcon,
+  Shuffle, Camera, Image as ImageIcon, Info,
 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import type { DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
@@ -1205,6 +1206,25 @@ type ProductionPlanRow = {
   stock: { have: number; need: number; surplus: number; tone: "ok" | "warn" | "bad" } | null;
 };
 
+function HeaderInfo({ children }: { children: React.ReactNode }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label="More info"
+          className="flex mx-auto mt-1 text-muted-foreground/60 hover:text-foreground transition-colors"
+        >
+          <Info className="w-4 h-4" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="end" className="w-64 text-sm font-normal normal-case leading-snug">
+        {children}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function ProductionPlanSlide({ data, slide, isPreviewing }: { data: DashboardData; slide: MeetingSlide; isPreviewing: boolean }) {
   // In a live meeting the pack is today's; in a preview of tomorrow's
   // meeting it's tomorrow's. Matches the old Short-on-pack behaviour.
@@ -1290,7 +1310,7 @@ function ProductionPlanSlide({ data, slide, isPreviewing }: { data: DashboardDat
   const dispatchLabel = fmtDay(calc?.dispatchDates?.[1]);
   const deliveryLabel = fmtDay(calc?.deliveryDates?.[1]);
 
-  const cols = "grid-cols-[2.5rem_4.5rem_1fr_7rem_4.5rem_4.5rem_4.5rem]";
+  const cols = "grid-cols-[2rem_4rem_1fr_5.25rem_6rem_5.25rem_6.5rem]";
 
   return (
     <div>
@@ -1306,20 +1326,20 @@ function ProductionPlanSlide({ data, slide, isPreviewing }: { data: DashboardDat
       ) : (
         <div className="glass-panel rounded-2xl overflow-hidden">
           {/* Header */}
-          <div className={cn("grid gap-3 px-5 py-2 bg-secondary/30 text-xs uppercase tracking-wide text-muted-foreground font-semibold", cols)}>
+          <div className={cn("grid gap-1.5 px-5 py-3 bg-secondary/30 text-base leading-snug font-bold text-muted-foreground items-start", cols)}>
             <span>#</span>
             <span>Start</span>
             <span>Recipe</span>
-            <span className="text-right">Make</span>
-            <span className="text-right leading-tight">
-              Have
-              <span className="block text-[10px] font-normal normal-case opacity-70">fridge</span>
+            <span className="text-center">
+              What's in stock
+              <HeaderInfo>What's counted in the fridge right now — we pack from this before making anything new.</HeaderInfo>
             </span>
-            <span className="text-right leading-tight">
-              Need
-              <span className="block text-[10px] font-normal normal-case opacity-70">{dispatchLabel} · {deliveryLabel}</span>
+            <span className="text-center">
+              Going out in today's pack
+              <HeaderInfo>Covers the pack going out: dispatch {dispatchLabel} · delivery {deliveryLabel}.</HeaderInfo>
             </span>
-            <span className="text-right">+/−</span>
+            <span className="text-center">The difference</span>
+            <span className="text-center self-stretch border-l-2 border-border/60 pl-3">Today's production</span>
           </div>
           {rows.map((r, i) => {
             const tone = r.stock?.tone;
@@ -1341,7 +1361,7 @@ function ProductionPlanSlide({ data, slide, isPreviewing }: { data: DashboardDat
                 )}
                 <div
                   className={cn(
-                    "grid gap-3 items-center px-5 py-3 border-l-4",
+                    "grid gap-1.5 items-center px-5 py-3 border-l-4",
                     cols,
                     toneClass,
                     i > 0 && !firstUnplanned && "border-t border-border/50",
@@ -1358,14 +1378,14 @@ function ProductionPlanSlide({ data, slide, isPreviewing }: { data: DashboardDat
                       <span className="text-xs uppercase tracking-wide bg-amber-500/10 text-amber-700 dark:text-amber-300 px-2.5 py-0.5 rounded-full font-bold shrink-0">Mac</span>
                     )}
                   </div>
-                  <span className="text-2xl font-bold tabular-nums text-right whitespace-nowrap">
+                  <span className="text-2xl font-bold tabular-nums text-center">{r.stock ? r.stock.have : "—"}</span>
+                  <span className="text-2xl font-bold tabular-nums text-center">{r.stock ? r.stock.need : "—"}</span>
+                  <span className={cn("text-2xl font-bold tabular-nums text-center", numClass)}>
+                    {r.stock ? (r.stock.surplus > 0 ? `+${r.stock.surplus}` : r.stock.surplus) : "—"}
+                  </span>
+                  <span className="text-2xl font-bold tabular-nums text-center whitespace-nowrap self-stretch flex items-center justify-center border-l-2 border-border/60 pl-3">
                     {r.target ?? "—"}
                     {r.target !== null && <span className="text-xs font-medium text-muted-foreground ml-1">{r.unit === "packs" ? "pk" : "bt"}</span>}
-                  </span>
-                  <span className="text-2xl font-bold tabular-nums text-right">{r.stock ? r.stock.have : "—"}</span>
-                  <span className="text-2xl font-bold tabular-nums text-right">{r.stock ? r.stock.need : "—"}</span>
-                  <span className={cn("text-2xl font-bold tabular-nums text-right", numClass)}>
-                    {r.stock ? (r.stock.surplus > 0 ? `+${r.stock.surplus}` : r.stock.surplus) : "—"}
                   </span>
                 </div>
               </div>
@@ -1642,7 +1662,7 @@ function SystemUpdatesSlide({ slide }: { slide: MeetingSlide }) {
         </div>
       ) : last24.length === 0 ? (
         <div className="glass-panel rounded-2xl p-8 text-3xl text-muted-foreground italic text-center">
-          No changes shipped in the last 24 hours.
+          No changes shipped since yesterday's meeting.
         </div>
       ) : (
         // Fallback: raw commit subjects when no curated entry / AI summary.

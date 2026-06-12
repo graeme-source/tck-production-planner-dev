@@ -50,70 +50,132 @@ const summaryCache = new Map<string, string[]>();
 const FIELD_SEP = "\x1f"; // unit separator — unlikely to appear in commit text
 const RECORD_SEP = "\x1e"; // record separator
 
+/** A commit source (local git or GitHub) plus a way to ask it for the
+ *  exact range of commits that landed after a known baseline SHA. */
+interface SourceResult {
+  headSha: string | null;
+  /** Date-based window — fallback when we have no baseline snapshot. */
+  last24h: Commit[];
+  last7Days: Commit[];
+  range: (baselineSha: string) => Promise<Commit[] | null>;
+}
+
 async function loadCommits(): Promise<CachedFeed> {
   const now = Date.now();
   if (cache && now - cache.fetchedAt < CACHE_TTL_MS) return cache;
 
-  // 1. Try local `git log` — works in dev where .git is on disk.
-  const local = await loadCommitsFromLocalGit();
-  if (local) {
-    const summary = await summariseLast24h(local.last24h);
-    const feed: CachedFeed = { fetchedAt: now, ...local, summary };
-    cache = feed;
-    return feed;
+  // Local `git log` works in dev where .git is on disk; GitHub's REST
+  // API covers production where the runtime container doesn't ship
+  // .git. Reads from master so the feed always reflects what's deployed.
+  const src = (await loadCommitsFromLocalGit()) ?? (await loadCommitsFromGithub());
+  if (!src) {
+    // Neither path worked. Cache the empty state briefly so we
+    // don't hammer either source on every dashboard refresh.
+    const empty: CachedFeed = { fetchedAt: now, available: false, last24h: [], last7Days: [], summary: null };
+    cache = empty;
+    return empty;
   }
 
-  // 2. Fall back to GitHub's REST API — works in production where
-  //    the runtime container doesn't ship .git. Reads from master
-  //    so the feed always reflects what's deployed.
-  const remote = await loadCommitsFromGithub();
-  if (remote) {
-    const summary = await summariseLast24h(remote.last24h);
-    const feed: CachedFeed = { fetchedAt: now, ...remote, summary };
-    cache = feed;
-    return feed;
-  }
-
-  // 3. Neither path worked. Cache the empty state briefly so we
-  //    don't hammer either source on every dashboard refresh.
-  const empty: CachedFeed = { fetchedAt: now, available: false, last24h: [], last7Days: [], summary: null };
-  cache = empty;
-  return empty;
+  const fresh = await commitsSinceLastMeeting(src);
+  const summary = await summariseLast24h(fresh);
+  const feed: CachedFeed = { fetchedAt: now, available: true, last24h: fresh, last7Days: src.last7Days, summary };
+  cache = feed;
+  return feed;
 }
 
-async function loadCommitsFromLocalGit(): Promise<Omit<CachedFeed, "fetchedAt" | "summary"> | null> {
+/** "What shipped since yesterday's meeting?" — a pure author-date filter
+ *  misses it: dev work committed days ago only reaches master (= live)
+ *  when it's merged and deployed at night, by which point the commits
+ *  look "old". So each time the feed is built we snapshot master's HEAD,
+ *  and the slide shows every commit that became reachable since the most
+ *  recent snapshot that's at least 20h old (≈ yesterday's meeting).
+ *  Falls back to the 24h date window when there's no usable snapshot
+ *  (first run, rebased history, DB hiccup). */
+async function commitsSinceLastMeeting(src: SourceResult): Promise<Commit[]> {
+  if (!src.headSha) return src.last24h;
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS system_updates_feed_state (
+        id serial PRIMARY KEY,
+        sha text NOT NULL,
+        seen_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    const baselineRows = toRows<{ sha: string }>(await db.execute(sql`
+      SELECT sha FROM system_updates_feed_state
+      WHERE seen_at <= now() - interval '20 hours'
+      ORDER BY seen_at DESC LIMIT 1
+    `));
+    const newestRows = toRows<{ sha: string }>(await db.execute(sql`
+      SELECT sha FROM system_updates_feed_state ORDER BY seen_at DESC LIMIT 1
+    `));
+    if (newestRows[0]?.sha !== src.headSha) {
+      await db.execute(sql`INSERT INTO system_updates_feed_state (sha) VALUES (${src.headSha})`);
+      await db.execute(sql`DELETE FROM system_updates_feed_state WHERE seen_at < now() - interval '30 days'`);
+    }
+
+    const baseline = baselineRows[0]?.sha;
+    if (!baseline) return src.last24h;
+    if (baseline === src.headSha) return []; // nothing deployed since yesterday
+    return (await src.range(baseline)) ?? src.last24h;
+  } catch (err) {
+    console.warn("[system-updates] feed state failed:", err instanceof Error ? err.message : err);
+    return src.last24h;
+  }
+}
+
+function parseGitLog(stdout: string): Commit[] {
+  return stdout
+    .split(RECORD_SEP)
+    .map(rec => rec.trim())
+    .filter(Boolean)
+    .map(rec => {
+      const [sha, date, author, subject, body] = rec.split(FIELD_SEP);
+      return {
+        sha,
+        shortSha: sha.slice(0, 7),
+        date,
+        author: author ?? "",
+        subject: subject ?? "",
+        body: (body ?? "").trim(),
+      };
+    });
+}
+
+async function gitLog(repoRoot: string, refArgs: string[]): Promise<Commit[]> {
+  const format = `%H${FIELD_SEP}%aI${FIELD_SEP}%an${FIELD_SEP}%s${FIELD_SEP}%b${RECORD_SEP}`;
+  const { stdout } = await execFileP("git", [
+    "log",
+    "--no-merges",
+    `--pretty=format:${format}`,
+    ...refArgs,
+  ], { cwd: repoRoot, maxBuffer: 5 * 1024 * 1024 });
+  return parseGitLog(stdout);
+}
+
+async function loadCommitsFromLocalGit(): Promise<SourceResult | null> {
   const repoRoot = await findRepoRoot();
   if (!repoRoot) return null;
 
   try {
-    const format = `%H${FIELD_SEP}%aI${FIELD_SEP}%an${FIELD_SEP}%s${FIELD_SEP}%b${RECORD_SEP}`;
-    const { stdout } = await execFileP("git", [
-      "log",
-      "--no-merges",
-      "--since=7 days ago",
-      `--pretty=format:${format}`,
-      "HEAD",
-    ], { cwd: repoRoot, maxBuffer: 5 * 1024 * 1024 });
-
-    const all: Commit[] = stdout
-      .split(RECORD_SEP)
-      .map(rec => rec.trim())
-      .filter(Boolean)
-      .map(rec => {
-        const [sha, date, author, subject, body] = rec.split(FIELD_SEP);
-        return {
-          sha,
-          shortSha: sha.slice(0, 7),
-          date,
-          author: author ?? "",
-          subject: subject ?? "",
-          body: (body ?? "").trim(),
-        };
-      });
+    const all = await gitLog(repoRoot, ["--since=7 days ago", "HEAD"]);
+    const { stdout: headOut } = await execFileP("git", ["rev-parse", "HEAD"], { cwd: repoRoot });
 
     const cutoff24h = Date.now() - 24 * 60 * 60_000;
     const last24h = all.filter(c => new Date(c.date).getTime() >= cutoff24h);
-    return { available: true, last24h, last7Days: all };
+    return {
+      headSha: headOut.trim() || null,
+      last24h,
+      last7Days: all,
+      range: async (baselineSha) => {
+        if (!/^[0-9a-f]{7,40}$/i.test(baselineSha)) return null;
+        try {
+          return await gitLog(repoRoot, [`${baselineSha}..HEAD`]);
+        } catch {
+          return null; // baseline unknown to this clone (e.g. rebased away)
+        }
+      },
+    };
   } catch (err) {
     console.warn("[system-updates] local git log failed:", err instanceof Error ? err.message : err);
     return null;
@@ -135,51 +197,79 @@ interface GithubCommitResponse {
   };
 }
 
-async function loadCommitsFromGithub(): Promise<Omit<CachedFeed, "fetchedAt" | "summary"> | null> {
-  const since = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
-  const url = `https://api.github.com/repos/${GITHUB_REPO}/commits?sha=${encodeURIComponent(GITHUB_BRANCH)}&since=${encodeURIComponent(since)}&per_page=100`;
-
+function githubHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
     "User-Agent": "tck-production-planner",
   };
   if (GITHUB_TOKEN) headers.Authorization = `Bearer ${GITHUB_TOKEN}`;
+  return headers;
+}
+
+function mapGithubCommit(r: GithubCommitResponse): Commit {
+  const msg = r.commit.message;
+  const newlineIdx = msg.indexOf("\n");
+  const subject = newlineIdx === -1 ? msg : msg.slice(0, newlineIdx).trim();
+  const body = newlineIdx === -1 ? "" : msg.slice(newlineIdx + 1).trim();
+  return {
+    sha: r.sha,
+    shortSha: r.sha.slice(0, 7),
+    date: r.commit.author?.date ?? new Date().toISOString(),
+    author: r.commit.author?.name ?? "",
+    subject,
+    body,
+  };
+}
+
+async function loadCommitsFromGithub(): Promise<SourceResult | null> {
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
+  const url = `https://api.github.com/repos/${GITHUB_REPO}/commits?sha=${encodeURIComponent(GITHUB_BRANCH)}&since=${encodeURIComponent(since)}&per_page=100`;
 
   try {
-    const res = await fetch(url, { headers });
+    const res = await fetch(url, { headers: githubHeaders() });
     if (!res.ok) {
       console.warn(`[system-updates] github fetch ${res.status}:`, await res.text().catch(() => ""));
       return null;
     }
     const rows = (await res.json()) as GithubCommitResponse[];
 
-    // GitHub returns merge commits too; filter them out by checking
-    // for the conventional double-newline-separated body. Easier:
-    // walk all commits and skip ones whose subject starts with
-    // "Merge ". Matches what `git log --no-merges` does.
+    // GitHub returns merge commits too; skip ones whose subject starts
+    // with "Merge ". Matches what `git log --no-merges` does. The head
+    // SHA is taken from the unfiltered list — the branch tip is often
+    // itself a merge commit.
+    const headSha = rows[0]?.sha ?? null;
     const all: Commit[] = rows
       .filter(r => !r.commit.message.startsWith("Merge "))
-      .map(r => {
-        const msg = r.commit.message;
-        const newlineIdx = msg.indexOf("\n");
-        const subject = newlineIdx === -1 ? msg : msg.slice(0, newlineIdx).trim();
-        const body = newlineIdx === -1 ? "" : msg.slice(newlineIdx + 1).trim();
-        return {
-          sha: r.sha,
-          shortSha: r.sha.slice(0, 7),
-          date: r.commit.author?.date ?? new Date().toISOString(),
-          author: r.commit.author?.name ?? "",
-          subject,
-          body,
-        };
-      });
+      .map(mapGithubCommit);
 
     const cutoff24h = Date.now() - 24 * 60 * 60_000;
     const last24h = all.filter(c => new Date(c.date).getTime() >= cutoff24h);
-    return { available: true, last24h, last7Days: all };
+    return { headSha, last24h, last7Days: all, range: githubCompareRange };
   } catch (err) {
     console.warn("[system-updates] github fetch failed:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+/** Commits on the deployed branch that aren't reachable from `baselineSha`,
+ *  newest first — GitHub's equivalent of `git log baseline..HEAD`. */
+async function githubCompareRange(baselineSha: string): Promise<Commit[] | null> {
+  if (!/^[0-9a-f]{7,40}$/i.test(baselineSha)) return null;
+  const url = `https://api.github.com/repos/${GITHUB_REPO}/compare/${baselineSha}...${encodeURIComponent(GITHUB_BRANCH)}`;
+  try {
+    const res = await fetch(url, { headers: githubHeaders() });
+    if (!res.ok) {
+      console.warn(`[system-updates] github compare ${res.status}:`, await res.text().catch(() => ""));
+      return null;
+    }
+    const data = (await res.json()) as { commits?: GithubCommitResponse[] };
+    return (data.commits ?? [])
+      .filter(r => !r.commit.message.startsWith("Merge "))
+      .map(mapGithubCommit)
+      .reverse(); // compare lists oldest→newest; the feed wants newest first
+  } catch (err) {
+    console.warn("[system-updates] github compare failed:", err instanceof Error ? err.message : err);
     return null;
   }
 }
@@ -207,7 +297,7 @@ async function summariseLast24h(commits: Commit[]): Promise<string[] | null> {
     .join("\n\n")
     .slice(0, 8_000);
 
-  const prompt = `You're summarising what changed in the TCK Production Planner over the last 24 hours for the kitchen team's morning meeting.
+  const prompt = `You're summarising what changed in the TCK Production Planner since yesterday's morning meeting for the kitchen team.
 
 The audience: cooks and shift managers, not developers. They want to know "what's different today?" — what bugs got fixed, what new features they can use, what numbers will now look different. They do not care about code, schemas, refactors, or commit hygiene.
 
@@ -312,13 +402,16 @@ async function requireAdmin(req: Request, res: Response, next: NextFunction) {
   res.status(403).json({ error: "Admin access required" });
 }
 
-// Public (for the meeting slide): latest published curated entry, else the
-// git/GitHub commit feed.
+// Public (for the meeting slide): a published curated entry overrides the
+// automatic feed for 24 hours after it's written — long enough to carry one
+// morning meeting — then the git/GitHub commit feed resumes. (It used to
+// override forever, which froze the slide on a stale entry.)
 router.get("/", async (_req: Request, res: Response) => {
   try {
     const rows = toRows<UpdateRow>(await db.execute(sql`
       SELECT id, title, body, published, created_at, updated_at
-      FROM system_updates WHERE published = true
+      FROM system_updates
+      WHERE published = true AND created_at >= now() - interval '24 hours'
       ORDER BY created_at DESC LIMIT 1
     `));
     const latest = rows[0];
